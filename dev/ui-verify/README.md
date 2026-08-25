@@ -4,13 +4,17 @@ Renders the operator web UI, screenshots every page, and asserts the
 presentation contracts that past regressions violated. Two modes, and the
 difference between them matters.
 
+Run the Node and `capture_fixtures.py` commands from this directory
+(`dev/ui-verify`); the results-server command below is repo-root relative.
+
     npm install playwright && npx playwright install chromium
 
 ## Mode 1 (preferred): drive the real results-server
 
-The results-server mounts the UI at `/` and the API at `/api/v1/*`
-(`operator/results_server.py:237-239`), so one process serves the whole stack
-from source — no cluster, image build, or deploy:
+The results-server registers the `/api/v1/*` routers and then mounts the UI as
+static files at `/` (`create_app` in `src/aiperf/operator/results_server.py`), so
+one process serves the whole stack from source — no cluster, image build, or
+deploy:
 
     .venv/bin/python -c "import uvicorn; from pathlib import Path; \
       from aiperf.operator.results_server import create_app; \
@@ -30,10 +34,15 @@ Get a PVC tree by tarring the sweep dirs out of the operator pod:
 
 ## Mode 2 (offline): replay captured fixtures
 
+    mkdir -p fixtures    # serve.mjs reads fixtures/api.json; the dir is not in git
     python3 capture_fixtures.py --base http://127.0.0.1:8098 \
         --namespace <ns> --sweep <sweep> > fixtures/api.json
-    node serve.mjs                                  # http://127.0.0.1:8099
+    node serve.mjs                                  # PORT, default 8099
     BASE=http://127.0.0.1:8099 NAMESPACE=<namespace> node shoot.mjs
+
+Repeat `--sweep` once per sweep. `shoot.mjs` visits a fixed set of sweeps
+(`gemma-bo4`, `gemma-bo5`, `gemma-conc2`, `cp-sweep`) inside `NAMESPACE`, so
+capture those names to exercise every page.
 
 `serve.mjs` answers unmatched paths with an empty-but-valid body so the SPA
 does not render an error card. That convenience is also this mode's blind spot:
@@ -81,5 +90,6 @@ The UI loads its vendored Preact, HTM, Signals, and Chart.js runtime from the
 same origin. The fixture server must therefore serve `.mjs` files as
 `text/javascript`; `serve.mjs` includes that mapping.
 
-Screenshots and their report default to gitignored `artifacts/ui-verify/shots`.
-Set `SHOT_DIR` to use another output directory.
+Screenshots and `report.json` default to the gitignored repo-root
+`artifacts/ui-verify/shots`. Set `SHOT_DIR` to use another output directory; a
+relative value resolves against `dev/ui-verify`, not the repo root.

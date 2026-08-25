@@ -16,7 +16,9 @@ import aiofiles
 import aiohttp
 import zstandard as zstd
 
-CHUNK_SIZE = 64 * 1024
+from aiperf.common.environment import Environment
+
+CHUNK_SIZE = Environment.COMPRESSION.CHUNK_SIZE
 
 
 class StreamingDecompressor(Protocol):
@@ -69,7 +71,7 @@ async def save_transcoded_zstd(
     """Atomically decompress the wire body and re-compress it as zstd."""
     zst_path = dest_path.parent / (dest_path.name + ".zst")
     part_path = zst_path.parent / (zst_path.name + ".part")
-    cctx = zstd.ZstdCompressor(level=3)
+    cctx = zstd.ZstdCompressor(level=Environment.COMPRESSION.ZSTD_LEVEL)
     compressor = cctx.compressobj()
 
     try:

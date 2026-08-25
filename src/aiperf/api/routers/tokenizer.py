@@ -33,7 +33,7 @@ from fastapi.responses import StreamingResponse
 
 from aiperf.common.environment import Environment
 
-_CHUNK_SIZE = 1 << 16  # 64 KiB
+_CHUNK_SIZE = Environment.COMPRESSION.CHUNK_SIZE
 
 # Allowlist of tokenizer-related filenames in an HF snapshot dir. Anything
 # outside this set (notably ``*.safetensors`` / ``*.bin`` weight shards) is

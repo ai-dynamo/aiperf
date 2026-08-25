@@ -24,11 +24,11 @@ Each section flags the AIPerf-coupling level:
 
 - `@pytest.mark.k8s_slow` — every chaos test carries this so the suite is opt-in (`-m k8s_slow`) and never runs on a default `pytest` invocation. Tests routinely wait 30 s for grace, 15 s for operator restart, or up to 2 minutes for benchmark completion.
 - `@pytest.mark.asyncio` — all tests are async.
-- `@pytest.mark.timeout(300)` — applied to long scenarios.
+- `@pytest.mark.timeout(N)` — applied to long scenarios; current values range from 300 s to 1200 s (the sweep-controller kill).
 
 **Convention: cleanup in `finally`.** *Generic.* Every chaos test wraps fault injection in `try/finally`. `finally` clauses force-delete the CR/namespace and call `await injector.reset()` (toxiproxy) or `await injector.restore()` (mock server) so a leaked fault never poisons the next test. Belt-and-suspenders intentional.
 
-**Convention: `xfail` with flip-to-pass condition.** *Generic.* Scenarios that depend on unavailable infra ship as `@pytest.mark.xfail(strict=False, reason=...)` with a concrete condition in the reason string. `strict=True` is forbidden — chaos scenarios are exploratory by definition.
+**Convention: `xfail` with flip-to-pass condition.** *Generic.* Scenarios that depend on unavailable infra ship as `@pytest.mark.xfail(strict=False, reason=...)` with a concrete condition in the reason string. `strict=True` is forbidden — chaos scenarios are exploratory by definition. No scenario currently carries an `xfail`; every test in the suite is expected to pass.
 
 ## 2. ChaosInjector (kubectl-level faults)
 
@@ -58,6 +58,7 @@ The following are real and useful inside the AIPerf suite but assume AIPerfJob C
 - `wait_for_phase(namespace, name, phases, *, current_phase)` — `.status.phase` + `.status.currentPhase` composite waiter; the *idea* (composite waiter on phase + sub-phase) is generic, the field paths are not.
 - `get_controller_pod_name(namespace, job_name)`, `get_worker_pod_names(namespace, job_name)` — hardcoded JobSet `replicatedjob-name` label and `aiperf-<job>` naming.
 - `get_mock_server_pod_name(namespace, deployment)` — `app=aiperf-mock-server` selector.
+- `wait_for_operator_ready(timeout)` — block until every container of the operator pod reports Ready; hardcoded `aiperf-system` namespace and operator selector.
 - `create_invalid_cr(namespace, name, spec_patch)` — builds a minimal AIPerfJob manifest and applies it; the *idea* (apply a malformed CR via patch overlay) is generic, the embedded manifest is not.
 
 ### 2d. Timing dataclass
@@ -68,7 +69,7 @@ The following are real and useful inside the AIPerf suite but assume AIPerfJob C
 
 [`toxiproxy.py`](toxiproxy.py) — async REST client for a cluster-deployed [Toxiproxy](https://github.com/Shopify/toxiproxy) Deployment + Service. *Generic.*
 
-**Fixture manifest.** [`fixtures/toxiproxy.yaml`](fixtures/toxiproxy.yaml) deploys Toxiproxy into namespace `aiperf-chaos-toxiproxy` with the admin API on `:8474` and a small pool of named listen ports (20000-20010) for per-test proxies. Cluster-internal DNS: `toxiproxy.aiperf-chaos-toxiproxy.svc`.
+**Fixture manifest.** [`fixtures/toxiproxy.yaml`](fixtures/toxiproxy.yaml) deploys Toxiproxy into namespace `aiperf-chaos-toxiproxy` with the admin API on `:8474` and a small pool of named listen ports (`proxy-0`..`proxy-5` on 20000-20005, plus `mock-server` on 20010) for per-test proxies. Cluster-internal DNS: `toxiproxy.aiperf-chaos-toxiproxy.svc`.
 
 **Reserved listen ports** (stable across reruns so operator env-var overrides are deterministic):
 
@@ -77,7 +78,7 @@ The following are real and useful inside the AIPerf suite but assume AIPerfJob C
 | 20000 | Operator -> apiserver (C15) |
 | 20002 | Operator -> controller HTTP (C16) |
 | 20010 | Benchmark -> mock-server (B3 latency injection) |
-| 20001, 20003-20009 | Unreserved generic slots |
+| 20001, 20003-20005 | Unreserved generic slots |
 
 **Fixture lifecycle.** Package-scoped `toxiproxy_injector` in [`conftest.py:44-61`](conftest.py).
 
@@ -101,9 +102,9 @@ The following are real and useful inside the AIPerf suite but assume AIPerfJob C
 
 ## 4. Composite fixtures (toxiproxy-routed operator)
 
-[`conftest.py:133-243`](conftest.py) — fixtures that combine the toxiproxy injector with an operator redeploy so test code doesn't have to re-render the Deployment manifest. *Mixed: mechanism is generic, env-var names are AIPerf-specific.*
+[`conftest.py:133-265`](conftest.py) — function-scoped fixtures that combine the toxiproxy injector with an operator redeploy so test code doesn't have to re-render the Deployment manifest. Both restore a plain (non-routed) operator on teardown even under `--k8s-skip-cleanup`, because the env overrides are shared mutable cluster state. *Mixed: mechanism is generic, env-var names are AIPerf-specific.*
 
-- `operator_ready_toxiproxy_routed` — operator redeployed with `AIPERF_K8S_CONTROLLER_HTTP_URL_OVERRIDE` pointed at `http://toxiproxy.aiperf-chaos-toxiproxy.svc:20002`, so operator -> controller HTTP traverses Toxiproxy.
+- `operator_ready_toxiproxy_routed` — operator redeployed with `AIPERF_K8S_CONTROLLER_HTTP_URL_OVERRIDE` pointed at `http://toxiproxy.aiperf-chaos-toxiproxy.svc.cluster.local:20002`, so operator -> controller HTTP traverses Toxiproxy.
 - `operator_ready_apiserver_toxiproxy_routed` — operator redeployed with `KUBERNETES_SERVICE_HOST` / `KUBERNETES_SERVICE_PORT` pinned at the Toxiproxy Service, `AIPERF_K8S_APISERVER_TLS_SERVER_NAME_OVERRIDE=kubernetes.default.svc` to preserve SNI through the TCP proxy. The apiserver proxy is created *before* operator deployment because kopf logs in immediately on startup.
 
 Both fixtures call a private `_assert_live_operator_env` precondition that diffs `kubectl set env deployment/aiperf-operator --list` against the expected env-var map and fails loudly when the override didn't land. Catches "redeployed but the env wasn't applied" without waiting for the assertion to time out 90 s later.
@@ -120,11 +121,11 @@ Both fixtures call a private `_assert_live_operator_env` precondition that diffs
 - `patch_env(namespace, env_var, value, deployment)` — `kubectl set env` to inject behavior (e.g. `AIPERF_MOCK_FORCE_STATUS=500` to force 5xx responses).
 - `restore()` — reverse every mutation applied during the test in LIFO order. Called automatically by the fixture teardown.
 
-**Pattern worth porting.** Internally the class tracks an `_applied_ops: list[_AppliedOp]` and rolls back in `restore()` based on op kind (`env`, `scale`, `restart-annotation`). Each fault method appends one entry. Tests never track restore state themselves. Generic and worth lifting verbatim for any "perturb a Deployment in tests" use case.
+**Pattern worth porting.** Internally the class tracks an `_applied_ops: list[_AppliedOp]` and rolls back in `restore()` based on op kind (`env`, `scale`, `restart-annotation`). Each state-mutating fault method appends one entry; `delete_pod` appends none because the Deployment controller owns pod re-creation and there is nothing to unwind. Tests never track restore state themselves. Generic and worth lifting verbatim for any "perturb a Deployment in tests" use case.
 
 ## 6. Helm chart integration
 
-[`deploy/helm/aiperf-operator/values.yaml:122-128`](../../../deploy/helm/aiperf-operator/values.yaml) ships `podTemplate.shareProcessNamespace: false` (production default) and `AIPERF_K8S_SHARE_PROCESS_NAMESPACE` env (chart-value override). When true, JobSet pods are rendered with `Pod.spec.shareProcessNamespace: true`, enabling cross-container `kill` via `kubectl exec` (Section 2b).
+[`deploy/helm/aiperf-operator/values.yaml:120-128`](../../../deploy/helm/aiperf-operator/values.yaml) ships `podTemplate.shareProcessNamespace: false` (production default), which [`templates/deployment.yaml`](../../../deploy/helm/aiperf-operator/templates/deployment.yaml) renders into the operator's `AIPERF_K8S_SHARE_PROCESS_NAMESPACE` env var. When true, JobSet pods are rendered with `Pod.spec.shareProcessNamespace: true`, enabling cross-container `kill` via `kubectl exec` (Section 2b).
 
 The opt-in-for-chaos, default-off-in-production tension is the load-bearing piece. *Generic pattern, AIPerf-specific env-var name.*
 
@@ -140,6 +141,7 @@ The full scenario table lives in [`README.md`](README.md). The *taxonomy* — us
 - **API disruption** — apiserver pause (TLS-preserving toxiproxy), intra-operator HTTP blackhole.
 - **Workload runtime** — upstream 5xx burst, upstream Deployment restart, latency injection.
 - **Infrastructure** — image-pull failures, DNS failures, namespace quota exhaustion.
+- **Sweep controller** — kill the sweep-controller pod mid-sweep and assert the restarted pod resumes rather than re-running completed variations.
 
 ## 8. Bug shapes chaos runs have surfaced
 
@@ -147,4 +149,5 @@ Past chaos sessions found (and led to fixes for) recurring bug *shapes*: stale i
 
 ## 9. Known gaps
 
-- **`_kill_process_by_cmdline_fragment` is unimplemented.** [`README.md`](README.md) section "Shared PID namespace" claims `ChaosInjector._kill_process_by_cmdline_fragment` walks `/proc/*/cmdline` to discover a target PID inside a distroless container (which lacks `pkill` / `pidof` / `pgrep`). No such method exists in [`chaos_injector.py`](chaos_injector.py). `kill_container_by_pid` currently requires the caller to pass `container_pid: int` and the docstring suggests `pgrep -n <name>` upstream — which does not work against the actual runtime image. Either implement the helper or update the docstring to reflect a workflow that succeeds against distroless.
+- **PID discovery lives in a test module, not the injector.** `kill_container_by_pid` requires the caller to pass `container_pid: int`, so every cross-container kill first needs a PID. The only implementation of that lookup is the module-level `_find_pid_by_cmdline` helper in [`test_chaos_jobset_pods.py`](test_chaos_jobset_pods.py), which walks `/proc/[0-9]*/cmdline` through the shared PID namespace. Nothing in [`chaos_injector.py`](chaos_injector.py) exposes it, so a new scenario in another module has to import the private helper or reimplement the walk. Promoting it to `ChaosInjector` would close the gap.
+- **`kill_container_by_pid`'s docstring points at a tool the runtime image lacks.** It suggests obtaining the PID via `kubectl exec <pod> -c <any> -- pgrep -n <name>`; the distroless-python runtime image has no `pgrep`, which is exactly why `_find_pid_by_cmdline` exists.

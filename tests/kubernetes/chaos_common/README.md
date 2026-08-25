@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # AIPerf Chaos Common — Unified Fault-Injection Module
 
 This module hosts the shared fault-injection primitives (registries, ABCs,
@@ -18,9 +23,9 @@ separate environment and are not runnable from this worktree.
 
 ### Why this matters
 
-D704 (`tests/kubernetes/chaos_dynamo/test_chaos_d7xx_infra.py::test_d704_hf_hub_egress_blackhole`,
-a Phase 4 forward-reference; this file does not exist yet)
-needs a NetworkPolicy-aware CNI to inject the fault it claims to: a
+D704 (`tests/kubernetes/chaos_dynamo/test_chaos_d7xx_infra.py::test_chaos_d704_hf_hub_egress_blackhole`,
+a Phase 4 forward-reference; neither the directory nor the file exists in
+this worktree) needs a NetworkPolicy-aware CNI to inject the fault it claims to: a
 blackhole on egress to the Hugging Face Hub. The default Kind CNI
 (`kindnet`) is NOT NetworkPolicy-aware — it silently ignores egress
 rules. Without Cilium (or Calico, or a real cluster whose CNI honors
@@ -30,13 +35,14 @@ against, and any "passing" result would be a false positive.
 ### The decision (option c)
 
 D704 ships with `@cilium_on_kind_required` from
-`tests/kubernetes/chaos_common/marks.py`. When `KIND_HAS_CILIUM` is unset
-(the default), the mark expands to
-`pytest.mark.xfail(condition=True, strict=True, reason=...)`, which
-xfail-skips the test in CI while keeping it visibly present in the suite
-with a documented flip-to-pass condition. When the env var is set, the
-xfail constraint stays strict — a real failure on a Cilium-enforcing
-cluster becomes a loud pytest failure rather than a silent skip.
+`tests/kubernetes/chaos_common/marks.py`, which is
+`pytest.mark.xfail(condition=not os.environ.get("KIND_HAS_CILIUM"), strict=True, reason=...)`.
+When `KIND_HAS_CILIUM` is unset (the default), the condition is true, so
+the test still runs but its failure is recorded as an expected failure —
+visibly present in the suite with a documented flip-to-pass condition.
+When the env var is set, the condition is false and the mark does not
+apply at all: a real failure on a Cilium-enforcing cluster becomes a loud
+pytest failure rather than a recorded xfail.
 
 ### Recipe to make D704 actually pass
 
@@ -103,9 +109,8 @@ time of running if 1.16.4 has aged out; the helm repo URL
 
 If neither A nor B is feasible (e.g. a developer laptop without
 permission to install Cilium and no access to a real cluster), D704
-stays xfail-skipped and the suite's effective coverage is
-9-of-10. Document this in the run report; do not silently delete the
-test.
+stays a recorded xfail and the D7xx suite runs one scenario short.
+Document this in the run report; do not silently delete the test.
 
 ### Verifying the flip
 
@@ -113,15 +118,17 @@ Quick sanity check that the gate behaves correctly:
 
 ```bash
 KIND_HAS_CILIUM=1 uv run pytest \
-  tests/kubernetes/chaos_dynamo/test_chaos_d7xx_infra.py::test_d704_hf_hub_egress_blackhole -v
+  tests/kubernetes/chaos_dynamo/test_chaos_d7xx_infra.py::test_chaos_d704_hf_hub_egress_blackhole -v
 ```
 
 If Cilium is enforcing NetworkPolicy, the test passes. If the env var is
 set but Cilium is NOT actually enforcing (misconfigured install, wrong
-context, kindnet still on the path), the test fails LOUDLY because
-`xfail(strict=True)` flips the constraint: an xfail-marked test that
-unexpectedly passes is itself a failure. That loud failure is the
-design — better than a silent false positive.
+context, kindnet still on the path), the mark does not apply and the test
+fails LOUDLY as an ordinary failure. The reverse mistake is caught too:
+with the env var unset, `strict=True` turns an unexpected pass into a
+failure, so a cluster that quietly does enforce policy cannot masquerade
+as an expected failure. Either way the mismatch surfaces — better than a
+silent false positive.
 
 ## Running the unified chaos suite
 
@@ -174,7 +181,7 @@ which expands to `xfail(strict=True)` unless `KIND_HAS_CILIUM=1` is set.
 
 ```bash
 KIND_HAS_CILIUM=1 uv run pytest \
-    tests/kubernetes/chaos_dynamo/test_chaos_d7xx_infra_control_plane.py \
+    tests/kubernetes/chaos_dynamo/test_chaos_d7xx_infra.py \
     -k test_chaos_d704_hf_hub_egress_blackhole -v
 ```
 

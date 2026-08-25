@@ -41,9 +41,9 @@ required at estimate time.
 **Consumers of estimator output:**
 
 - `aiperf kube generate` — prints the full estimate to **stderr** (so stdout
-  stays a clean `kubectl apply -f -` stream) before emitting the manifests.
-- `aiperf kube profile` — prints the full estimate and warnings before
-  submitting the job.
+  stays a clean `kubectl apply -f -` stream) after emitting the manifests.
+- `aiperf kube profile` — prints the full estimate and warnings to **stderr**
+  before submitting the job.
 - Operator preflight (`src/aiperf/operator/preflight/_resources.py`) — runs the
   estimator as the `Memory Estimation` check. If `estimate.warnings` is
   non-empty the check returns `WARN` with `estimate.recommendations` as hints;
@@ -64,7 +64,7 @@ groups:
 | `total_workers` | Total worker processes across all pods. |
 | `workers_per_pod` | Worker processes per worker pod. |
 | `num_worker_pods` | Worker pod replica count (`ceil(total_workers / workers_per_pod)`). |
-| `record_processors_per_pod` | Record processors per worker pod (`workers_per_pod // RECORD_PROCESSOR_SCALE_FACTOR`). |
+| `record_processors_per_pod` | Record processors per worker pod (`max(1, workers_per_pod // RECORD_PROCESSOR_SCALE_FACTOR)`). The estimator always derives this from the scale factor; an explicit `benchmark.runtime.record_processors_per_pod` is honored by the deployment but not by `_derive_topology`. |
 
 ### Load profile
 
@@ -96,7 +96,7 @@ groups:
 
 `MemoryEstimationParams.from_config(config, total_workers, workers_per_pod,
 connections_per_worker)` is the normal entry point: it derives all of the above
-from an `AIPerfConfig` plus three CLI flags.
+from an `AIPerfConfig` plus three deployment parameters.
 
 ---
 
@@ -139,10 +139,16 @@ $$C = \max(1024, \text{ceil\_pow2}(N))$$
 $$\text{columns} = C \times \left((M - 1 + 3 + 4) \times 8\text{B} + 6 \times 4\text{B} + 2\text{B}\right) \times 1.05$$
 $$\text{intern} = (N + \min(N, D)) \times 136\text{B}$$
 
-The column counts match the current `MetricsAccumulator.process_record`
-layout: $M-1$ scalar metrics (the 25th standard metric is list-valued ICL),
-three request timestamps, four numeric metadata columns, six categorical
-`int32` code columns, and two boolean `uint8` columns. The intern term models a
+The column counts model the `MetricsAccumulator.process_record` layout: $M-1$
+scalar metrics (the 25th standard metric is list-valued ICL), three request
+timestamps, four numeric metadata columns, six categorical `int32` code
+columns, and two boolean `uint8` columns. The categorical, boolean, and
+timestamp counts match `process_record` exactly. `process_record` passes five
+numeric metadata keys (`session_num`, `credit_issued_ns`, `request_ack_ns`,
+`cancellation_time_ns`, `turn_index`), but `ColumnStore.ingest_metadata`
+allocates a column only for non-`None` values, so the deployed column count is
+four for the default streaming workload — three without streaming, five once
+cancellation is enabled. The intern term models a
 conservative request-unique `x_correlation_id` plus `conversation_id` values
 bounded by dataset cardinality.
 
@@ -155,8 +161,9 @@ For $S > 0$, the first ragged term holds every ICL value as `float64` and its
 request index as `int32`; the second is the per-request `int64` offsets array.
 When $S = 0$, no ICL backend is created and the term is zero. Buffered
 responses also contribute no ICL storage. With
-`AIPERF_METRICS_LIST_BACKEND=tdigest`, the entire ICL term is a bounded 4 KiB
-sketch regardless of request count or OSL.
+`AIPERF_METRICS_LIST_BACKEND=tdigest`, the entire ICL term collapses to a
+bounded 4 KiB sketch (`_TDIGEST_LIST_BACKEND_BYTES`) regardless of request
+count, and to zero when $O \le 1$.
 
 The final variable estimate is `columns + intern + ICL + 1 MiB tracker`.
 
@@ -215,8 +222,8 @@ One process per worker. Memory = connection pool + in-flight request records
 + session cache (multi-turn only).
 
 Source: `_estimate_worker`, `components.py`. Shares the
-`_per_request_bytes(avg_isl, avg_osl, streaming)` helper with RecordProcessor
-so the two stay consistent.
+`_per_request_bytes(avg_isl, avg_osl, *, streaming)` helper with
+RecordProcessor so the two stay consistent.
 
 Per in-flight request:
 
@@ -323,7 +330,8 @@ Key constants:
   `formula` string this component reports still says `x 1.5`; the arithmetic
   uses the constant, and the display string is stale.
 
-Returns zero if no DCGM URLs are configured.
+Returns zero when `num_gpus == 0` — no DCGM URLs, or GPU telemetry disabled.
+The operator omits the container entirely in that case.
 
 **Scales with:** `num_gpus`, `duration_s / sample_interval_s`,
 `num_gpu_metrics`.
@@ -360,7 +368,7 @@ ClusterMemoryEstimate
 │   └── at_risk (property)                    # headroom < 15%
 ├── worker_pod: PodEstimate                   # single-pod, multiplied by replicas
 ├── operator: PodEstimate                     # fixed 256 MiB
-├── warnings: list[str]                       # ordered by severity
+├── warnings: list[str]                       # fixed emission order
 └── recommendations: list[str]                # actionable tuning suggestions
 ```
 
@@ -368,10 +376,13 @@ The `replicas` field on `worker_pod` is the number of worker pods; use
 `worker_pod.total_steady_state_mib * worker_pod.replicas` for the cluster-wide
 worker footprint.
 
-Every `ComponentEstimate` carries a `formula` string and a `dominant_factor`
-string for display purposes — `format_estimate()` in
-`formatting.py` renders the full human-readable report, which is what
-`aiperf kube profile` prints.
+Every `ComponentEstimate` also carries a `formula` string and a
+`dominant_factor` string that spell out how its number was derived. Neither is
+rendered by `format_estimate()` in `formatting.py` — the report that
+`aiperf kube profile` prints shows the topology header, per-pod steady/peak
+tables with a `[!]` marker on warned components, the cluster total, and then
+the `warnings` and `recommendations` lists. Read `formula` programmatically if
+you need the breakdown.
 
 ---
 
@@ -425,7 +436,8 @@ with open("bench.yaml") as fh:
 est = estimate_memory(
     config,
     total_workers=10,
-    workers_per_pod=None,      # None = use config.runtime.workers_per_pod
+    workers_per_pod=None,      # None = config.benchmark.runtime.workers_per_pod,
+                               # else AIPERF_WORKER_DEFAULT_WORKERS_PER_POD
     connections_per_worker=200,
 )
 print(format_estimate(est))
@@ -440,11 +452,12 @@ if est.controller.at_risk:
 ### Via CLI
 
 `aiperf kube profile` derives `MemoryEstimationParams.from_config(...)` from
-the rendered config and prints the full report — including per-pod tables,
-warnings, and recommendations — before any cluster resources are created.
+the rendered config and prints the full report to **stderr** — including
+per-pod tables, warnings, and recommendations — before any cluster resources
+are created.
 
 `aiperf kube generate` runs the same estimate and prints it to **stderr**
-before writing the manifests to stdout. The rendered manifests take their
+after writing the manifests to stdout. The rendered manifests take their
 `resources.requests` / `resources.limits` from the `AIPERF_K8S_*` resource
 settings, not from `recommended_request_mib` / `recommended_limit_mib` — read
 the report, then set the env vars yourself if it says you need to.
@@ -462,17 +475,20 @@ hints; it never blocks admission.
 
 1. Run `aiperf kube profile` and look at the `RecordsManager` row in the
    Controller Pod table.
-2. If `RecordsManager uses N% of controller limit` appears in warnings, the
-   report's formula separates fixed `ColumnStore` columns, categorical intern
-   entries, and ICL storage. For streaming runs, ragged ICL scales as
-   `requests × (OSL - 1)` and can dominate by gigabytes.
+2. If `RecordsManager uses N% of controller limit` appears in warnings, read
+   that component's `formula` string (not printed by the report — see
+   [Output schema](#output-schema)): it separates fixed `ColumnStore` columns,
+   categorical intern entries, and ICL storage. For streaming runs, ragged ICL
+   scales as `requests × (OSL - 1)` and can dominate by gigabytes.
 3. If exact ICL percentiles and ICL-aware sweep curves are not required, set
    `AIPERF_METRICS_LIST_BACKEND=tdigest`. This bounds ICL aggregation to about
    4 KiB while retaining exact count/sum/min/max/average/std and approximate
    percentiles. Otherwise, provision for the ragged estimate.
-4. Bump `AIPERF_K8S_RECORDS_MANAGER_MEMORY` (and its CPU sibling) on the
-   operator to at least `recommended_limit_mib`. Controller resource keys are
-   listed in `CONTROLLER_RESOURCE_KEYS` in `aiperf.kubernetes.environment`.
+4. Bump `AIPERF_K8S_RECORDS_MANAGER_MEMORY` (and `AIPERF_K8S_RECORDS_MANAGER_CPU`)
+   on the operator. `current_limit_mib` for the controller pod is the **sum** of
+   the memory limits across `CONTROLLER_RESOURCE_KEYS` (see
+   `aiperf.kubernetes.environment`), so raise that sum until it clears the
+   pod-level `recommended_limit_mib`.
 
 ### "Workers OOM mid-ramp on a large-token workload"
 
@@ -480,10 +496,17 @@ Check the RecordProcessor warning first. If `in-flight records use X MiB` fires
 with `ISL+OSL > 10_000`, you have hit the tokenization-queue-depth
 amplification — at ISL+OSL=173K the queue reaches 10x `conc_per_rp`. Options:
 
-- Increase `workers_per_pod` to drop concurrency-per-RP.
-- Increase `record_processors_per_pod` so each RP processes fewer records.
-- Bump the worker pod's memory limit via the estimator's
-  `recommended_limit_mib`.
+- Raise `--total-workers`. In the estimator's model `conc_per_rp` reduces to
+  `max_concurrency / total_workers` at the default
+  `AIPERF_K8S_RECORD_PROCESSOR_SCALE_FACTOR=1` (one RP per worker), because
+  `workers_per_pod` scales the pod's concurrency and its RP count by the same
+  factor — increasing `workers_per_pod` alone does not move the number.
+- Bump the worker pod's memory limit (`AIPERF_K8S_WORKER_POD_MEMORY`) to the
+  estimator's `recommended_limit_mib`.
+
+Setting `benchmark.runtime.record_processors_per_pod` does add RPs to the real
+deployment, but `_derive_topology` ignores it, so the estimate will not reflect
+the change.
 
 ### "Tokenizer cache dominates each RP"
 

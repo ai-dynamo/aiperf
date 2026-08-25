@@ -27,6 +27,7 @@ from aiperf.common.compression import (
 )
 from aiperf.common.constants import IS_WINDOWS
 from aiperf.common.enums import MessageType
+from aiperf.common.environment import Environment
 from aiperf.common.hooks import on_message
 from aiperf.common.messages import ProcessAllResultsMessage
 from aiperf.common.mixins.message_bus_mixin import MessageBusClientMixin
@@ -119,10 +120,12 @@ async def get_results(component: ResultsDep) -> BenchmarkResultsResponse:
 async def list_results(component: ResultsDep) -> ResultsListResponse:
     """List available result files in the artifacts directory.
 
-    Lists only regular files at the top level of the artifact directory,
-    sorted by name. Files are listed as soon as they exist — there is no
-    readiness gate, so partial exports may appear while a run is still
-    writing them.
+    Fail-closed on the readiness marker: top-level files are withheld until
+    ``write_ready_marker`` commits, so a partial export never reads as a
+    result set. Checkpoint artifacts under ``checkpoints/`` are listed
+    recursively regardless of readiness because they are written
+    incrementally by design. Names are relative to the artifact directory
+    and sorted; the readiness marker itself is never listed.
     """
     results_dir = component.run.cfg.artifacts.artifact_directory
     if not await aio_os.path.exists(results_dir):
@@ -165,8 +168,10 @@ async def get_result_file(
 ) -> StreamingResponse:
     """Download a result file by name.
 
-    Any file inside the artifact directory is downloadable as soon as it
-    exists; paths escaping the artifact directory are rejected with 400.
+    Paths escaping the artifact directory are rejected with 400. Top-level
+    files 404 until the readiness marker commits, so consumers cannot read a
+    half-written export; checkpoint artifacts under ``checkpoints/`` bypass
+    that gate. The marker file itself is never served.
     """
     artifact_dir = component.run.cfg.artifacts.artifact_directory
     file_path = (artifact_dir / filename).resolve()
@@ -246,7 +251,7 @@ async def upload_result_file(
     temporary_path = raw_records_dir / f".{filename}.{uuid.uuid4().hex}.uploading"
     try:
         async with aiofiles.open(temporary_path, "wb") as f:
-            while chunk := await file.read(64 * 1024):
+            while chunk := await file.read(Environment.COMPRESSION.CHUNK_SIZE):
                 await f.write(chunk)
             await f.flush()
         await asyncio.to_thread(_commit_uploaded_file, temporary_path, dest_path)

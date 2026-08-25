@@ -4,14 +4,10 @@
 
 from __future__ import annotations
 
-import asyncio
-import os
-import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import quote
 
-import aiofiles
 import aiohttp
 import orjson
 
@@ -26,84 +22,25 @@ from aiperf.kubernetes.console import (
     print_warning,
 )
 from aiperf.kubernetes.constants import DEFAULT_OPERATOR_NAMESPACE
+from aiperf.kubernetes.environment import K8sEnvironment
 from aiperf.kubernetes.port_forward import port_forward_with_status
 from aiperf.kubernetes.results_operator_common import (
+    RESULTS_SERVER_PORT,
+    _REDIRECT_STATUSES,
+    _download_and_decompress,
+    _get_no_redirects,
     _is_refused_name,
     _JobDownloadOutcome,
+    _verify_operator_health as _shared_verify_operator_health,
 )
 
 if TYPE_CHECKING:
     from kubernetes_asyncio.client import ApiClient
 
 
-RESULTS_SERVER_PORT = int(os.environ.get("AIPERF_RESULTS_SERVER_PORT", "8081"))
-_REDIRECT_STATUSES = {301, 302, 307, 308}
-
-
-def _get_no_redirects(
-    session: aiohttp.ClientSession,
-    url: str,
-    **kwargs: object,
-) -> object:
-    try:
-        return session.get(url, allow_redirects=False, **kwargs)
-    except TypeError as e:
-        if "allow_redirects" not in str(e):
-            raise
-        return session.get(url, **kwargs)
-
-
-async def _download_and_decompress(
-    resp: aiohttp.ClientResponse, dest_path: Path, content_encoding: str
-) -> None:
-    import zlib
-
-    if content_encoding == "zstd":
-        import zstandard
-
-        dctx = zstandard.ZstdDecompressor()
-        decompressor = dctx.decompressobj()
-    elif content_encoding == "gzip":
-        decompressor = zlib.decompressobj(wbits=31)
-    else:
-        decompressor = None
-
-    temp_path = dest_path.with_name(f".{dest_path.name}.{uuid.uuid4().hex}.tmp")
-    replaced = False
-    try:
-        async with aiofiles.open(temp_path, "wb") as f:
-            async for chunk in resp.content.iter_chunked(64 * 1024):
-                if decompressor is not None:
-                    chunk = decompressor.decompress(chunk)
-                if chunk:
-                    await f.write(chunk)
-            if decompressor is not None:
-                remaining = decompressor.flush()
-                if remaining:
-                    await f.write(remaining)
-        await asyncio.to_thread(os.replace, temp_path, dest_path)
-        replaced = True
-    finally:
-        if not replaced:
-            await asyncio.to_thread(temp_path.unlink, missing_ok=True)
-
-
 async def _verify_operator_health(api_base: str) -> bool:
-    from aiperf.transports.aiohttp_client import create_tcp_connector
-
-    timeout = aiohttp.ClientTimeout(total=10)
-    connector = create_tcp_connector()
-    async with aiohttp.ClientSession(timeout=timeout, connector=connector) as session:
-        try:
-            async with session.get(f"{api_base}/healthz") as resp:
-                if resp.status != 200:
-                    print_error("Operator results server not healthy")
-                    return False
-        except aiohttp.ClientError as e:
-            print_error(f"Could not connect to operator results server: {e}")
-            return False
-    return True
-
+    """Preserve this module's configured results-server health timeout."""
+    return await _shared_verify_operator_health(api_base, 10)
 
 def _sweep_artifacts_base_url(
     api_base: str, namespace: str, sweep_name: str, run: str
@@ -226,7 +163,9 @@ async def _download_all_sweep_operator_files(
     """
     from aiperf.transports.aiohttp_client import create_tcp_connector
 
-    timeout = aiohttp.ClientTimeout(total=300)
+    timeout = aiohttp.ClientTimeout(
+        total=K8sEnvironment.RESULTS.DOWNLOAD_TIMEOUT_SECONDS
+    )
     connector = create_tcp_connector()
     async with aiohttp.ClientSession(
         timeout=timeout,

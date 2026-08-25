@@ -58,6 +58,7 @@ async def shutdown(
         from aiperf.kubernetes import console as kube_console
         from aiperf.kubernetes.client import k8s_client
         from aiperf.kubernetes.client_pods import find_controller_pod
+        from aiperf.kubernetes.environment import K8sEnvironment
         from aiperf.kubernetes.port_forward import port_forward_to_controller
 
         resolved = cli_helpers.resolve_job_id_and_namespace(
@@ -91,7 +92,9 @@ async def shutdown(
             aiohttp.ClientSession() as session,
             session.post(
                 f"http://localhost:{port}/api/shutdown",
-                timeout=aiohttp.ClientTimeout(total=30),
+                timeout=aiohttp.ClientTimeout(
+                    total=K8sEnvironment.RESULTS.CONTROL_REQUEST_TIMEOUT_SECONDS
+                ),
             ) as resp,
         ):
             if resp.status == 409:

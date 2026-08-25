@@ -7,8 +7,8 @@ sidebar-title: Config Validation
 # Config Validation
 
 `aiperf kube validate` performs **client-side** validation of one or more
-`AIPerfJob` **or** `AIPerfSweep` YAML files against the full CRD schema, the
-Pydantic spec models, and Kubernetes resource-naming rules. It dispatches per
+`AIPerfJob` **or** `AIPerfSweep` YAML files against the Pydantic spec models that
+generate the CRD schema, plus Kubernetes resource-naming rules. It dispatches per
 document on the `kind:` field (`validate.py` `SUPPORTED_KINDS = {AIPerfJob,
 AIPerfSweep}`), routing to `AIPerfJobSpec` or `AIPerfSweepSpec`. It does not
 contact the cluster — making it safe to run in CI, pre-commit hooks, and local
@@ -29,8 +29,8 @@ editors.
 | Situation | Tool |
 |---|---|
 | Validate YAML before `kubectl apply` or `aiperf kube profile` | `aiperf kube validate` (this doc) |
-| Check that a *live cluster* can actually schedule the job (quotas, GPU availability, operator health) | `aiperf kube preflight` |
-| Confirm the operator is installed and responsive | `aiperf kube list` |
+| Check that a *live cluster* can actually schedule the job (JobSet CRD, RBAC, quotas, node capacity) | `aiperf kube preflight` |
+| Confirm the AIPerf CRDs are installed and see existing jobs | `aiperf kube list` |
 
 Think of `validate` as the offline static check and `preflight` as the online
 dynamic check. Both are cheap; run `validate` on every commit and `preflight`
@@ -88,7 +88,8 @@ aiperf kube validate -o json aiperfjob.yaml | jq '.[] | select(.passed==false)'
 that make later checks impossible short-circuit the file (remaining checks are
 skipped for that file only).
 
-1. **File reachability** — the path exists and is a regular file.
+1. **File reachability** — the path exists, is a regular file, and passes the
+   shared `safe_read_template_path` safety check.
 2. **YAML parse** — the document is valid YAML and decodes to a mapping.
 3. **Required top-level fields**:
    - `apiVersion` must equal the current operator API version
@@ -102,9 +103,9 @@ skipped for that file only).
      `endpoint`.
 4. **Kubernetes naming** — `metadata.name` must:
    - be at most **253 characters** (`K8S_NAME_MAX_LENGTH`), and
-   - match the RFC 1123 subdomain pattern `[a-z0-9]([a-z0-9-]*[a-z0-9])?`
-     (lowercase alphanumerics and hyphens; must start and end with an
-     alphanumeric).
+   - match `K8S_NAME_PATTERN`, the RFC 1123 *label* pattern
+     `^[a-z0-9]([a-z0-9-]*[a-z0-9])?$` (lowercase alphanumerics and hyphens only;
+     must start and end with an alphanumeric — dots are rejected).
 5. **Unknown field detection** (warning by default, error with `--strict`):
    - **Top-level `spec`** is compared against `KNOWN_SPEC_FIELDS`
      (`validate.py`) — the deployment fields `image`, `imagePullPolicy`,
@@ -132,13 +133,23 @@ skipped for that file only).
 9. **Endpoint credential transport** — credential-bearing endpoint fields
    must have the matching Secret-backed pod environment (`AIPERF_INJECTED_API_KEY`,
    `AIPERF_INJECTED_HEADERS`, or `AIPERF_INJECTED_ENDPOINT_URLS`). Literal
-   secrets and plain-value environment variables fail before deployment.
+   secrets and plain-value environment variables fail before deployment. This
+   check is skipped when steps 6–8 already produced an error, since it needs a
+   well-formed config and deployment to inspect.
 10. **Worker-count calculation** — `calculate_workers()` must return a value
-   `>= 1` given the current `concurrency`, `connectionsPerWorker`, and mode.
-11. **Kind-specific spec validation** — the Config-v2 envelope is rendered
-    before the complete `AIPerfJobSpec` or `AIPerfSweepSpec` check. Raw Jinja
-    values therefore validate as their resolved numeric or structured types,
-    while unknown variables and invalid rendered values still fail closed.
+   `>= 1`. It honours an explicit `benchmark.runtime.workers` override, otherwise
+   computes `ceil(max phase concurrency / connectionsPerWorker)`. Unparsable
+   concurrency and worker values fall back to `1` rather than raising, so in
+   practice this step only reports a malformed `connectionsPerWorker`
+   (`Worker calculation failed: ...`).
+11. **Kind/sweep cardinality and kind-specific spec validation** —
+    `spec.sweep` must be absent on an `AIPerfJob` and a non-empty mapping on an
+    `AIPerfSweep`, mirroring each CRD's CEL rule. Then the Config-v2 envelope is
+    rendered (unknown top-level keys stripped first, so pydantic does not
+    re-report them) before the complete `AIPerfJobSpec` or `AIPerfSweepSpec`
+    check. Raw Jinja values therefore validate as their resolved numeric or
+    structured types, while unknown variables and invalid rendered values still
+    fail closed.
 
 > Note: `validate` is intentionally conservative about what it considers
 > "unknown". Any key in `CONFIG_FIELDS` (every `BenchmarkConfig` field, its
@@ -176,6 +187,9 @@ corresponds to one input file, in the order given on the command line.
 
 ### Example — multiple errors
 
+Unknown-field messages land in `warnings` by default and move into `errors`
+under `--strict`:
+
 ```json
 [
   {
@@ -184,10 +198,11 @@ corresponds to one input file, in the order given on the command line.
     "errors": [
       "kind: expected one of ['AIPerfJob', 'AIPerfSweep'], got 'AIPerfConfig'",
       "metadata.name: 'My_Benchmark' is not a valid Kubernetes resource name (must match [a-z0-9][a-z0-9-]*[a-z0-9])",
-      "Unknown spec fields (did you mean to put these under spec.benchmark?): models, endpoint",
       "endpoint.urls: 'localhost:8000' must start with http:// or https://"
     ],
-    "warnings": []
+    "warnings": [
+      "Unknown spec fields (did you mean to put these under spec.benchmark?): models, endpoint"
+    ]
   }
 ]
 ```

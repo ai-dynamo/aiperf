@@ -8,9 +8,10 @@ sidebar-title: Direct Mode (no operator)
 
 Direct mode runs an AIPerf benchmark on Kubernetes without requiring the AIPerf
 operator (and the `AIPerfJob` CRD it owns) to be installed. The `aiperf kube`
-CLI instead creates the underlying Kubernetes resources — `Namespace`,
-`ConfigMap`, `Role`, `RoleBinding`, and `JobSet` — directly against the API
-server via `kubernetes_asyncio`.
+CLI instead creates the underlying Kubernetes resources — `Role`,
+`RoleBinding`, `ConfigMap`, and `JobSet`, plus a `Namespace` when
+`--namespace` is omitted — directly against the API server via
+`kubernetes_asyncio`.
 
 It is triggered explicitly with `--no-operator`:
 
@@ -35,8 +36,11 @@ Direct mode still uses:
 - The same container image (`--image`) and the same JobSet topology (one
   controller pod plus N worker pods).
 - The same `ConfigMap` containing the run config.
-- The same per-namespace `Role` / `RoleBinding` that lets the controller pod
-  read and update its own run state.
+- The same per-namespace `Role` / `RoleBinding` (`RBACSpec`), which grants the
+  benchmark's ServiceAccount read/watch on pods, pod logs, and jobs; full CRUD
+  on ConfigMaps and JobSets; create/delete on Services and Endpoints; and
+  create/patch on Events — all scoped to the benchmark namespace. The
+  `aiperfjobs` rule is included too and is simply inert without the CRD.
 - The same live attach workflow (`aiperf kube attach`), which streams
   WebSocket progress through a port-forward to the controller pod.
 
@@ -55,18 +59,18 @@ overlay that YAML with the same precedence used in operator mode.
 
 | Feature                                   | Operator mode                                       | Direct mode                                                                         |
 | ----------------------------------------- | --------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| Submission object                         | `AIPerfJob` CR                                      | `Namespace` + `ConfigMap` + `Role` + `RoleBinding` + `JobSet`                       |
+| Submission object                         | `AIPerfJob` CR                                      | `Role` + `RoleBinding` + `ConfigMap` + `JobSet` (+ `Namespace` if auto-created)     |
 | Status surface                            | `AIPerfJob.status.phase` reconciled by the operator | `JobSet` + pod status only (`kubectl get jobset`, `kubectl get pods`)               |
 | Web dashboard (port 8081)                 | Served by operator Deployment                       | Not available                                                                       |
 | Analytics: leaderboard / compare / history | Served by operator (cross-job view over PVC)       | Not available (no cross-job storage)                                                |
-| Results persistence                       | Controller publishes to operator PVC (durable)      | Results live only on the controller pod's ephemeral volume + the inline sidecar     |
+| Results persistence                       | Controller publishes to operator PVC (durable)      | Results live only on the controller pod's ephemeral `emptyDir` volume              |
 | Automated TTL / cleanup                   | Operator reconciles terminal CRs and prunes them    | Relies on `JobSet.spec.ttlSecondsAfterFinished` (direct-mode default: 8 hours)      |
 | Preflight checks                          | Operator-side preflight before admitting the CR     | None automatically — run `aiperf kube preflight` yourself first                      |
 | Parameter sweeps and multi-run orchestration | `AIPerfSweep` + sweep-controller pod              | Not supported; `generate --no-operator` rejects these configs                        |
 | RBAC footprint                            | Cluster-scoped ServiceAccount for the operator      | Benchmark namespace only: one `Role` + `RoleBinding` per run                        |
 | Multi-user fairness (Kueue)               | Operator submits with Kueue labels end-to-end       | Supported — Kueue labels still flow through the `JobSet` spec                       |
 | `aiperf kube results` default path        | Pulls from the operator PVC (works post-pod-GC)     | Requires `--from-pods`; pulls from the controller pod while it's still alive        |
-| Concurrent benchmark isolation            | Operator reconciles; CR conflicts rejected          | CLI refuses to overwrite a `Running` or `Pending` same-named resource; you clean up |
+| Concurrent benchmark isolation            | Operator reconciles; CR conflicts rejected          | CLI fails closed on any same-named non-Namespace resource, whatever its phase; you clean up |
 
 ## When direct mode is appropriate
 
@@ -112,16 +116,24 @@ aiperf kube attach --namespace aiperf-bench
 aiperf kube results --from-pods --shutdown --namespace aiperf-bench
 ```
 
-On a successful deploy the CLI prints a summary of the created resources,
-for example:
+On a successful deploy the CLI prints one `Created <Kind>/<name>` line per
+resource. All names derive from the benchmark name as `aiperf-<name>` (the
+ConfigMap adds a `-config` suffix), where `<name>` is either your `--name` or
+the auto-generated `<model>-<endpoint-type>-<phase-type>` slug
+(`generate_benchmark_name`). For the run above — `--namespace aiperf-bench` is
+explicit, so the Namespace is not created:
 
 ```
-Created Namespace/aiperf-bench
-Created Role/aiperf-bench-benchmark-1a2b3c
-Created RoleBinding/aiperf-bench-benchmark-1a2b3c
-Created ConfigMap/aiperf-bench-benchmark-1a2b3c-config
-Created JobSet/aiperf-bench-benchmark-1a2b3c
+Created Role/aiperf-<name>
+Created RoleBinding/aiperf-<name>
+Created ConfigMap/aiperf-<name>-config
+Created JobSet/aiperf-<name>
 ```
+
+A `Created Namespace/aiperf-benchmarks` line is prepended only when
+`--namespace` is omitted, in which case the CLI creates the default
+benchmark namespace (`aiperf-benchmarks`) itself. An already-existing
+namespace is reused and reported as `Namespace/<name> already exists`.
 
 ## Dry-run inspection
 
@@ -147,18 +159,22 @@ In operator mode, `aiperf kube results` retrieves results from the operator's
 PVC — this works even after the benchmark pods have been garbage-collected.
 
 In direct mode there is no operator PVC. Results must be pulled via
-`--from-pods`, which:
+`--from-pods`, which port-forwards to the controller pod's API service
+(port 9090) and downloads the exported artifacts (`metrics.json`,
+`profile_export_aiperf.json`, console exports, parquet files, and checkpoint
+data). `--all` is the default; pass `--summary-only` to fetch just the
+summary results.
 
-1. Port-forwards to the controller pod's API service and downloads the
-   exported artifacts (`metrics.json`, `profile_export_aiperf.json`,
-   console exports, parquet files, plus checkpoint data under
-   `--all`).
-2. Falls back to `kubectl cp` from the controller pod's shared `/results`
-   volume if the API service is not reachable.
+There is one fallback, and only on the `--summary-only` path: if the API
+call fails, the CLI retries with `kubectl cp` against the `control-plane`
+container's `/results` directory. The default `--all` path has no such
+fallback — if the controller API is unreachable, retrieval fails outright.
 
-The controller pod runs a small results sidecar that serves those files from
-the shared `/results` volume (see `src/aiperf/kubernetes/results_sidecar.py`),
-so the files survive even after the main controller container exits.
+The controller pod also runs a small results sidecar on port 9091 that serves
+the same `/results` volume (see `src/aiperf/kubernetes/results_sidecar.py`)
+and outlives the main controller container, but `aiperf kube results
+--from-pods` never targets it — only the operator's completion fetch does, so
+that fallback is unavailable in direct mode.
 
 **The pod must still exist when you run `aiperf kube results --from-pods`.**
 The direct-mode JobSet sets `ttlSecondsAfterFinished` to 8 hours by default
@@ -171,13 +187,17 @@ before the pod is deleted. Pass `--ttl-seconds` on `profile` to override.
 Operator mode cleans up by deleting the `AIPerfJob` CR; the operator
 reconciles the deletion and removes all child resources.
 
-Direct mode has no CR, so cleanup is manual. Once results are safely pulled:
+Direct mode has no CR, so cleanup is manual — `aiperf kube delete` and
+`aiperf kube cleanup` both operate on `AIPerfJob` / `AIPerfSweep` CRs and
+will not find a direct-mode run. Every resource is named
+`aiperf-<name>` (the ConfigMap adds `-config`), so once results are safely
+pulled:
 
 ```bash
-kubectl delete jobset <job-name>      -n <namespace>
-kubectl delete configmap <job-name>-config -n <namespace>
-kubectl delete role <job-name>        -n <namespace>
-kubectl delete rolebinding <job-name> -n <namespace>
+kubectl delete jobset     aiperf-<name>        -n <namespace>
+kubectl delete configmap  aiperf-<name>-config -n <namespace>
+kubectl delete role       aiperf-<name>        -n <namespace>
+kubectl delete rolebinding aiperf-<name>       -n <namespace>
 ```
 
 Or, if you created a dedicated namespace for the run and don't need it
@@ -212,8 +232,9 @@ accumulate).
   direct mode. JobSet-native `ttlSecondsAfterFinished` and `keepFailedPods`
   still apply.
 - **No CR-level status.** `kubectl get aiperfjob` does not work. Use
-  `kubectl get jobset` and `kubectl get pods -l app.kubernetes.io/part-of=aiperf` (plus
-  `aiperf kube logs` and `aiperf kube list`) to observe the run.
+  `kubectl get jobset` and `kubectl get pods -l app=aiperf` (plus
+  `aiperf kube logs` and `aiperf kube list`, which falls back to listing
+  JobSets when no `AIPerfJob` CRs are found) to observe the run.
 - **Existing resources with the same name.** Direct mode can safely reuse the
   Namespace, but it refuses to adopt an existing Role, RoleBinding, ConfigMap,
   or JobSet because there is no owner CR or immutable run UID that can prove

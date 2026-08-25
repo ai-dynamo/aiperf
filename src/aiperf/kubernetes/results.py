@@ -31,6 +31,7 @@ from aiperf.kubernetes.console import (
 )
 from aiperf.kubernetes.constants import DEFAULT_OPERATOR_NAMESPACE, Containers
 from aiperf.kubernetes.enums import PodPhase
+from aiperf.kubernetes.environment import K8sEnvironment
 from aiperf.kubernetes.port_forward import port_forward_with_status
 from aiperf.kubernetes.results_artifacts import (
     API_RESULTS_FILES_PATH,
@@ -199,7 +200,7 @@ async def _download_api_file(
     filename: str,
     output_dir: Path,
     *,
-    max_retries: int = 2,
+    max_retries: int = K8sEnvironment.RESULTS.DOWNLOAD_MAX_RETRIES,
 ) -> bool:
     """Download one key result file with retries.
 
@@ -250,7 +251,8 @@ async def retrieve_results_from_api(
 ) -> bool:
     """Retrieve results from the API service via port-forward.
 
-    Downloads metrics.json and other key result files from the running controller pod.
+    Downloads metrics.json and other key result files from the controller pod
+    while it is still in a retrievable phase (``Running`` or ``Succeeded``).
 
     Returns True if results were successfully retrieved, False otherwise.
     """
@@ -280,7 +282,9 @@ async def retrieve_results_from_api(
             files_base = f"http://localhost:{port}{API_RESULTS_FILES_PATH}"
 
             downloaded_any = False
-            timeout = aiohttp.ClientTimeout(total=30)
+            timeout = aiohttp.ClientTimeout(
+                total=K8sEnvironment.RESULTS.DOWNLOAD_TIMEOUT_SECONDS
+            )
             connector = create_tcp_connector()
             async with aiohttp.ClientSession(
                 timeout=timeout, connector=connector
@@ -488,7 +492,8 @@ async def shutdown_api_service(
         local_port: Local port for port-forward.
 
     Returns:
-        True if shutdown was successfully requested.
+        True if shutdown was successfully requested, or if the controller pod
+        exists but is no longer running so there is nothing to shut down.
     """
     from aiperf.transports.aiohttp_client import create_tcp_connector
 
@@ -515,7 +520,9 @@ async def shutdown_api_service(
             kubeconfig=kubeconfig,
             kube_context=kube_context,
         ) as port:
-            timeout = aiohttp.ClientTimeout(total=10)
+            timeout = aiohttp.ClientTimeout(
+                total=K8sEnvironment.RESULTS.CONTROL_REQUEST_TIMEOUT_SECONDS
+            )
             connector = create_tcp_connector()
             async with (
                 aiohttp.ClientSession(timeout=timeout, connector=connector) as session,
@@ -599,7 +606,8 @@ async def _fetch_children_manifest(
     """Fetch the per-epoch children manifest from the operator results server.
 
     Port-forwards to the operator pod and GETs
-    ``/api/v1/sweeps/{namespace}/{sweep_name}/children`` (latest epoch). Returns
+    ``/api/v1/sweeps/{namespace}/{sweep_name}/children``, pinned to ``run`` via
+    an ``?epoch=`` query parameter when given, otherwise the latest epoch. Returns
     the parsed JSON document, or ``None`` if the operator pod is missing, the
     endpoint returns 404, or any HTTP error occurs. Errors print actionable
     messages via the kube console — callers translate ``None`` into a False
@@ -641,7 +649,9 @@ async def _fetch_children_manifest(
             url = f"http://localhost:{port}/api/v1/sweeps/{namespace}/{sweep_name}/children"
             if run is not None:
                 url = f"{url}?epoch={run}"
-            timeout = aiohttp.ClientTimeout(total=30)
+            timeout = aiohttp.ClientTimeout(
+                total=K8sEnvironment.RESULTS.REQUEST_TIMEOUT_SECONDS
+            )
             connector = create_tcp_connector()
             async with (
                 aiohttp.ClientSession(timeout=timeout, connector=connector) as session,
@@ -772,10 +782,11 @@ async def retrieve_sweep_results_from_operator(
     ``output_dir/v<variation_index>-t<trial_index>/``. The manifest itself is
     persisted to ``output_dir/sweep_manifest.json`` to aid downstream tooling.
 
-    Returns True iff the parent manifest fetch and ALL child downloads
-    succeeded. On any child failure, prints which child failed and continues
-    retrieving the rest before returning False — so the user sees as much data
-    as possible from a partially-successful run.
+    Returns True iff the parent manifest fetch, the sweep-level aggregate
+    artifact download, and ALL child downloads succeeded. On any child failure,
+    prints which child failed and continues retrieving the rest before
+    returning False — so the user sees as much data as possible from a
+    partially-successful run.
     """
     manifest = await _fetch_children_manifest(
         api=api,

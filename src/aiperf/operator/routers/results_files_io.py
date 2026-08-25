@@ -19,6 +19,7 @@ import orjson
 from fastapi import HTTPException, Request
 from fastapi.responses import StreamingResponse
 
+from aiperf.common.environment import Environment
 from aiperf.common.redact import redact_endpoint_spec
 from aiperf.common.results_markers import (
     CHECKPOINTS_DIR_NAME,
@@ -29,7 +30,7 @@ from aiperf.operator.artifact_names import key_export_names_from_run_dir
 from aiperf.operator.results_layout import resolve_run_dir
 from aiperf.operator.routers.results_schemas import FileEntry, JobEntry
 
-CHUNK_SIZE = 64 * 1024
+CHUNK_SIZE = Environment.COMPRESSION.CHUNK_SIZE
 PROFILE_EXPORT_FILENAME = "profile_export_aiperf.json"
 JOB_SPEC_FILENAME = "job_spec.json"
 _ARTIFACT_MEDIA_TYPES = {
@@ -403,7 +404,9 @@ async def _stream_zstd_to_gzip(file_path: Path) -> AsyncIterator[bytes]:
 
     import zstandard
 
-    gzip_obj = zlib.compressobj(level=6, wbits=31)
+    gzip_obj = zlib.compressobj(
+        level=Environment.COMPRESSION.GZIP_LEVEL, wbits=31
+    )
     dctx = zstandard.ZstdDecompressor()
 
     # zstandard's stream_reader needs a synchronous file object, so aiofiles is

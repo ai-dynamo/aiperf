@@ -40,7 +40,7 @@ print(json.dumps({
 "
 
 # Pod-level triage (container states, recent events, node pressure)
-aiperf kube debug --job <NAME> --namespace <NS>
+aiperf kube debug --job-id <NAME> --namespace <NS>
 ```
 
 ### Decision Tree
@@ -77,8 +77,9 @@ phase == "Running", and `aiperf kube debug` reports an OOM-killed pod
 phase == "Running", but status.phases.*.requestsCompleted is not advancing
   -> Go to [Stalled Benchmark](#stalled-benchmark).
 
-phase == "Running", and error_count / request_count > 0.05 in
-status.liveMetrics.metrics
+phase == "Running", and request_error_rate.avg > 5 (percent) in
+status.liveMetrics.metrics -- or error_request_count.avg / request_count.avg
+> 0.05 when the derived rate is absent
   -> Go to [High Error Rate](#high-error-rate).
 
 phase == "Running" and none of the above
@@ -291,18 +292,17 @@ for c in pod['status'].get('containerStatuses', []):
 
 ### Fixes (in priority order)
 
-1. **Reduce connections per worker** -- Lower `spec.connectionsPerWorker` (default: 100). Each connection holds request/response buffers in memory.
+1. **Reduce connections per worker** -- Lower `spec.connectionsPerWorker` (default: 100). Each connection holds request/response buffers in memory. The field is immutable after creation, so this means recreating the AIPerfJob.
 
 2. **Increase workers, reduce per-pod** -- Use more pods with fewer workers each. Lower `spec.benchmark.runtime.workersPerPod` in the CR (the cluster-wide worker total stays `--total-workers`; this knob only controls how that total is fanned across pods).
 
-3. **Override memory limits** via environment variables:
-   ```yaml
-   spec:
-     podTemplate:
-       env:
-         - name: AIPERF_K8S_WORKER_POD_MEMORY
-           value: "8192Mi"
+3. **Raise the worker-pod memory budget** -- `AIPERF_K8S_WORKER_POD_MEMORY` (default `4Gi`) is read by the process that renders the JobSet, so it must be set on the operator container. Putting it in `spec.podTemplate.env` has no effect on container resources:
+   ```bash
+   kubectl set env -n aiperf-system deploy/aiperf-operator \
+     AIPERF_K8S_WORKER_POD_MEMORY=8Gi
    ```
+
+4. **Drop the cgroup ceiling** -- `spec.resourceMode: burstable` (the default) sets requests without limits, so a container is not cgroup-OOM-killed for exceeding its request. Only `guaranteed` mode applies `requests == limits`. This field is also immutable after creation.
 
 ---
 
@@ -361,23 +361,32 @@ aiperf kube results <JOB_ID> --output ./artifacts
 # Retrieve directly from benchmark pods instead of operator storage
 aiperf kube results <JOB_ID> --from-pods --output ./artifacts
 
-# Read the summary metrics
+# Read the summary metrics. Top-level keys are AIPerf metric tags; each maps
+# to an object of stats (unit, avg, p50, p90, p99, min, max, std, count, sum).
 cat ./artifacts/profile_export_aiperf.json | python3 -c "
 import sys, json
 data = json.load(sys.stdin)
+def stat(tag, key='avg'):
+    m = data.get(tag)
+    return m.get(key) if isinstance(m, dict) else None
 print(json.dumps({
-    'request_throughput': data.get('request_throughput'),
-    'request_latency_avg': data.get('request_latency_avg'),
-    'request_latency_p99': data.get('request_latency_p99'),
-    'ttft_avg': data.get('time_to_first_token_avg'),
-    'ttft_p99': data.get('time_to_first_token_p99'),
-    'itl_avg': data.get('inter_token_latency_avg'),
-    'output_token_throughput': data.get('output_token_throughput'),
-    'total_requests': data.get('request_count'),
-    'error_count': data.get('error_count'),
+    'request_throughput': stat('request_throughput'),
+    'request_latency_avg': stat('request_latency'),
+    'request_latency_p99': stat('request_latency', 'p99'),
+    'ttft_avg': stat('time_to_first_token'),
+    'ttft_p99': stat('time_to_first_token', 'p99'),
+    'itl_avg': stat('inter_token_latency'),
+    'output_token_throughput': stat('output_token_throughput'),
+    'request_count': stat('request_count'),
+    'error_request_count': stat('error_request_count'),
+    'request_error_rate_pct': stat('request_error_rate'),
 }, indent=2))
 "
 ```
+
+`request_count` counts successful requests only and `error_request_count`
+counts failures, so the grand total is their sum. `error_request_count` is
+omitted entirely on a clean run.
 
 ## Preflight JSON Schema
 
@@ -391,7 +400,7 @@ Output from `aiperf kube preflight -o json`:
     {
       "name": "Cluster Connectivity",
       "status": "pass",
-      "message": "Connected to cluster",
+      "message": "Connected to Kubernetes cluster",
       "details": [],
       "hints": [],
       "duration_ms": 45.2
@@ -400,7 +409,7 @@ Output from `aiperf kube preflight -o json`:
       "name": "JobSet CRD",
       "status": "fail",
       "message": "JobSet CRD not found",
-      "details": ["API group jobset.x-k8s.io not registered"],
+      "details": [],
       "hints": ["Install JobSet: kubectl apply --server-side -f https://github.com/kubernetes-sigs/jobset/releases/latest/download/manifests.yaml"],
       "duration_ms": 12.1
     }
@@ -445,10 +454,13 @@ Output from `aiperf kube validate -o json benchmark.yaml`:
     "path": "benchmark.yaml",
     "passed": true,
     "errors": [],
-    "warnings": ["Unknown spec field: foo"]
+    "warnings": ["Unknown spec fields (did you mean to put these under spec.benchmark?): foo"]
   }
 ]
 ```
+
+Add `--strict` to promote those warnings to errors. The command exits `1` when
+any file fails.
 
 ---
 

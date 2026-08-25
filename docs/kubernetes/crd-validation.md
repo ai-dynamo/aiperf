@@ -13,12 +13,15 @@ resource:
 1. **Structural schema** — types, enums, `minimum`/`maximum`, `required`. If
    this layer rejects, the resource is never persisted.
 2. **CEL `x-kubernetes-validations`** — cross-field invariants compiled into
-   the CRD. These mirror the Pydantic `@model_validator` rules on
-   `AIPerfConfig` and `AIPerfSweepSpec`, but fire at admission time so a bad
-   CR is rejected with a clear message before any pod is scheduled.
+   the CRD. These mirror the Pydantic `@model_validator` rules on the
+   underlying config models (`EndpointConfig`, `RuntimeConfig`,
+   `MultiRunConfig`) and on `AIPerfJobSpec` / `AIPerfSweepSpec`, but fire at
+   admission time so a bad CR is rejected with a clear message before any pod
+   is scheduled.
 
-The CRD that defines both layers is auto-generated from the AIPerfConfig
-Pydantic models — see [the dev flow doc](../dev/kubernetes-flow.md#crd-generator)
+The CRD that defines both layers is auto-generated from the `AIPerfJobSpec` and
+`AIPerfSweepSpec` Pydantic models in `src/aiperf/kubernetes/crd_models.py` —
+see [the dev flow doc](../dev/kubernetes-flow.md#crd-generator)
 for how to add new rules.
 
 The lifecycle fields `spec.cancel` and `spec.skipEndpointCheck` are native
@@ -29,15 +32,19 @@ values, so native schema typing is part of the lifecycle safety boundary.
 
 ## Shorthand acceptance
 
-The structural `required` list on `spec.benchmark` is just `[endpoint]`, and
-`spec.benchmark` carries an **empty** `x-kubernetes-validations: []` block — the
-canonical fields (`models`, `datasets`, `phases`) and their shorthand siblings
-(`model`, `dataset`, `warmup`, `profiling`) are all typeless
-preserve-unknown fields, so no CEL rule requires or excludes any of them. The
-apiserver accepts either idiom purely because none is `required` and unknown
-keys are preserved; the operator's before-validator does the actual
-shorthand↔canonical normalization on reconcile. This means **kubectl apply
-accepts the CLI-YAML idiom** without rewriting:
+The whole structural `required` chain is `spec: [benchmark]`,
+`spec.benchmark: [endpoint]`, `endpoint: [urls]`, and `spec.benchmark` carries
+an **empty** `x-kubernetes-validations: []` block. `models` and every
+shorthand sibling (`model`, `dataset`, `warmup`, `profiling`) are typeless
+`x-kubernetes-preserve-unknown-fields` properties; `datasets` and `phases` are
+`type: array` with opaque preserve-unknown items (`datasets` additionally
+carries `minItems: 1` / `maxItems: 1` because the runtime loads exactly one
+dataset, `phases` carries `minItems: 1`). No CEL rule requires or excludes any
+of them: a typeless field cannot be `has()`-ed and opaque array items cannot be
+dereferenced. So the apiserver accepts either idiom, and the operator's
+before-validator does the actual shorthand↔canonical normalization on
+reconcile. This means **kubectl apply accepts the CLI-YAML idiom** without
+rewriting:
 
 ```yaml
 # Shorthand form — accepted by the apiserver, normalized by the operator's
@@ -55,7 +62,8 @@ spec:
 ```
 
 ```yaml
-# Canonical form — also accepted; identical post-normalization shape.
+# Canonical form — also accepted; same post-normalization shape, except that
+# the `dataset:` shorthand above injects `name: default` rather than `main`.
 spec:
   benchmark:
     endpoint:
@@ -75,8 +83,8 @@ You **cannot** mix the two forms for the same slot — the operator's
 (`status.phase=Failed` with `'dataset' cannot be used with 'datasets'. Use
 'dataset' for a single dataset or 'datasets' for multiple named datasets.`).
 The check can't move to CEL because the shorthand fields are typeless
-preserve-unknown siblings — see the "Rules NOT enforced at apiserver level"
-table below.
+preserve-unknown siblings — see
+[Operator-side (Pydantic) invariants](#operator-side-pydantic-invariants) below.
 
 ## Rule catalog
 
@@ -92,9 +100,13 @@ are enforced by Pydantic on the operator side instead — see
 | CEL rule | Message |
 |---|---|
 | `!has(self.type) \|\| self.type != 'template' \|\| has(self.template)` | `endpoint.template is required when endpoint.type='template'` |
-| `!has(self.template) \|\| !has(self.type) \|\| self.type == 'template'` | `endpoint.template is only used when endpoint.type='template' (omit type to auto-detect)` |
-| `!has(self.requestContentType) \|\| self.requestContentType != 'multipart/form-data' \|\| !has(self.type) \|\| self.type in ['image_edit', 'video_generation']` | `requestContentType='multipart/form-data' is only supported on form-data endpoint types` |
+| `!has(self.template) \|\| !has(self.type) \|\| self.type == 'template'` | `endpoint.template is only used when endpoint.type='template' (omit type to have it inferred)` |
+| `!has(self.requestContentType) \|\| self.requestContentType != 'multipart/form-data' \|\| !has(self.type) \|\| self.type in ['audio_transcription', 'image_edit', 'video_generation']` | `requestContentType='multipart/form-data' is only supported on endpoint types that accept form data: audio_transcription, image_edit, video_generation` |
 | `!has(self.path) \|\| self.path.startsWith('/')` | `endpoint.path must start with '/' (e.g. '/v1/chat/completions', not 'v1/chat/completions')` |
+
+The form-data endpoint list in the third rule is derived at generation time
+from the `requires_form_data` plugin metadata in
+`src/aiperf/plugin/plugins.yaml`, so it cannot drift from the Pydantic gate.
 
 ### Runtime rules — `spec.benchmark.runtime` (both kinds)
 
@@ -172,8 +184,9 @@ reconcile (they are also run client-side by `aiperf kube validate`):
 
 | Python validator (`src/aiperf/config/config.py` unless noted) | What it enforces |
 |---|---|
-| `normalize_before_validation` (via `normalizers._check_mutual_exclusivity`) | shorthand↔canonical mutual exclusion (`model`/`models`, `dataset`/`datasets`, `warmup`+`profiling`/`phases`) |
-| `parse_datasets` / `parse_datasets_input` (`loader/normalizers.py`) | each `datasets[]` entry is a mapping with a required `name` |
+| `normalize_before_validation` (via `normalizers._check_mutual_exclusivity`) | shorthand↔canonical mutual exclusion (`model`/`models`, `dataset`/`datasets`, `warmup`+`profiling`/`phases`), plus `warmup` without `profiling` |
+| `parse_phases` | `phases` must already be a list by validation time (the dict shape is rejected with a migration pointer) |
+| `parse_datasets` → `parse_datasets_input` (`loader/normalizers.py`) | each `datasets[]` entry is a mapping with a required `name` |
 | `validate_phase_names_unique` | duplicate phase names within `phases` |
 | `validate_profiling_phase_required` | at least one non-warmup profiling phase |
 | `validate_seamless_not_on_first_phase` | first phase may not set `seamless=true` |
@@ -181,9 +194,11 @@ reconcile (they are also run client-side by `aiperf kube validate`):
 | `validate_prefill_requires_streaming` | a phase with `prefill_concurrency` requires `endpoint.streaming=true` |
 | `validate_sweep_no_dashboard_ui` | `sweep` set ⇒ `runtime.ui` is not `dashboard` |
 | `_apply_consistent_seed_default` | auto-fills a consistent random seed for cross-trial sweeps when none is given |
+| `_validate_image_non_empty` (`kubernetes/crd_models.py`) | `spec.image` is non-blank (the CRD also enforces `minLength: 1`, but that accepts `" "`) |
 | `_reject_orchestration_on_aiperfjob` (`kubernetes/crd_models.py`) | AIPerfJob rejects sweep and multi-run orchestration (mirrors its two kind-specific CEL rules) |
 | `_require_sweep_on_aiperfsweep` (`kubernetes/crd_models.py`) | AIPerfSweep requires a `sweep` block (mirrors the `has(self.sweep)` CEL rule) |
-| `_reject_non_finite_sweep_knobs` (`kubernetes/crd_models.py`) | rejects NaN/inf on sweep tuning knobs |
+| `_reject_non_finite_sweep_knobs` (`kubernetes/crd_models.py`) | rejects NaN/inf on `sweep.cooldownSeconds`, `sweep.plateauThreshold`, `sweep.slaWarmupSeconds` |
+| `_reject_repeated_iteration_with_convergence` (`kubernetes/crd_models.py`) | AIPerfSweep rejects `sweep.iterationOrder='repeated'` together with `multiRun.convergence` |
 
 > There is no `validate_datasets_unique_names` or `validate_dataset_references`
 > validator — dataset-name presence is checked by `parse_datasets_input` and
@@ -231,12 +246,12 @@ Adding a new CEL rule is a small change in `tools/generate_crd.py`:
 3. Add a structural assertion to
    `tests/unit/operator/test_aiperfsweep_crd_generation.py`.
 
-A shape detector keys off property names, so **renaming a field silently
-retires every rule attached to its node** — the detector stops matching and
-the generator reports nothing. Two decorators had been inert this way. When
-you rename or nest a spec field, re-read the detector that fingerprints it,
-and prefer a structural test that asserts the rule is present on both kinds
-over one that only asserts a rule's text.
+   A shape detector keys off property names, so **renaming a field silently
+   retires every rule attached to its node** — the detector stops matching and
+   the generator reports nothing. Two decorators had been inert this way. When
+   you rename or nest a spec field, re-read the detector that fingerprints it,
+   and prefer a structural test that asserts the rule is present on both kinds
+   over one that only asserts a rule's text.
 4. Regenerate (`uv run python tools/generate_crd.py`) and verify the regen
    is idempotent (`tools/generate_crd.py --check`).
 5. Round-trip against a real apiserver (kind cluster + `kubectl apply
@@ -249,7 +264,7 @@ CEL constraints that aren't obvious from the Pydantic side:
   schema. Properties under `x-kubernetes-preserve-unknown-fields` are
   invisible to CEL.
 - Array items emitted as opaque preserve-unknown blobs cannot be
-  dereferenced (no `phases[].name`, no `datasets[0].seamless`).
+  dereferenced (no `phases[].name`, no `phases[0].seamless`).
 - `oldSelf` is only available in transition rules and triggers on update.
   Use `!has(oldSelf.X) || oldSelf.X == self.X` for "first-set freezes"
   semantics.

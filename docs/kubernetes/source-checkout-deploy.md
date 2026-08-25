@@ -168,7 +168,7 @@ helm upgrade --install aiperf-operator deploy/helm/aiperf-operator \
   --set 'imagePullSecrets[0].name=aiperf-registry'
 ```
 
-The chart default for `defaults.image` is empty, which means AIPerfJob pods use `<image.repository>:<image.tag>`. Set `defaults.image` only when benchmark pods should run a different image from the operator.
+The chart default for `defaults.image` is empty, which means AIPerfJob pods use `<image.repository>:<image.tag>`, falling back to the chart's `appVersion` when `image.tag` is also empty. Set `defaults.image` only when benchmark pods should run a different image from the operator.
 
 Wait for the operator and results server:
 

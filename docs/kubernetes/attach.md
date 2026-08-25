@@ -59,7 +59,7 @@ aiperf kube attach [JOB_ID] [OPTIONS]
 | `-p`, `--port` | `0` | Local port for the `kubectl port-forward` tunnel. `0` asks the kernel for an ephemeral port, which avoids conflicts with other `aiperf kube` sessions on the same machine. |
 | `-v`, `--variation` | unset | When `JOB_ID` names an `AIPerfSweep`, the child variation index (`0`..`199`). Resolves to the child `AIPerfJob` named `<sweep>-v<idx:02d>`. |
 | `-t`, `--trial` | unset | Trial index (`0`..`9`) within a sweep variation, resolving to `<sweep>-v<idx:02d>-t<trial>`. Requires `-v`. |
-| `--namespace` | last-benchmark namespace, else `aiperf-benchmarks` | Kubernetes namespace containing the `AIPerfJob`. |
+| `-n`, `--namespace` | last-benchmark namespace, else `aiperf-benchmarks` | Kubernetes namespace containing the `AIPerfJob`. |
 | `--kubeconfig` | unset | Path to a kubeconfig file. When unset, the CLI first tries in-cluster config, then the default kubeconfig resolution. |
 | `--kube-context` | unset | Context name to select inside the kubeconfig. |
 
@@ -75,7 +75,7 @@ If you do not pass a positional `job_id`, the CLI resolves it from the file writ
 ~/.aiperf/last_kube_benchmark.json
 ```
 
-The file stores a `{"job_id", "namespace", "name"}` record (see `save_last_benchmark` / `get_last_benchmark` in `aiperf.kubernetes.console`). `resolve_job_id_and_namespace` reads it and prints a one-line info banner so you can confirm which job you are attaching to.
+The file stores a `{"job_id", "namespace", "name", "kind"}` record — `job_id` and `namespace` are always present, `name` and `kind` are written only when known (see `save_last_benchmark` / `get_last_benchmark` in `aiperf.kubernetes.console`). `resolve_job_id_and_namespace` reads it and prints a one-line info banner so you can confirm which job you are attaching to.
 
 **Multi-cluster pitfall.** The last-benchmark file is keyed by nothing except "the last `aiperf kube` deploy that ran on this workstation". If you routinely switch between clusters or kubeconfig contexts, the stored `job_id` / `namespace` may belong to a *different* cluster than the one your current `--kube-context` targets. The symptom is "No AIPerf job found with ID: ..." even though you just deployed successfully — the job exists, but not on the cluster you are now pointing at. Pass the `job_id` explicitly, or re-confirm your context with `kubectl config current-context` before attaching.
 
@@ -127,7 +127,7 @@ The port-forward is managed by `aiperf.kubernetes.port_forward` and is shared by
 
 | Parameter | Value | Purpose |
 |---|---|---|
-| `_PORT_FORWARD_TIMEOUT` | `60.0` | Total budget for `kubectl port-forward` to print its `"Forwarding from ..."` ready line. |
+| `_PORT_FORWARD_TIMEOUT` | `60.0` | Single wall-clock budget covering both `kubectl port-forward` printing its `"Forwarding from ..."` ready line and the `/health` probe answering. Exceeding it during verification raises `"Port-forward API verification exceeded budget (60.0s)"`. |
 | `_API_INITIAL_DELAY` | `0.5` | Grace delay before the first `GET /health` probe, giving kubectl time to wire the tunnel. |
 | `_API_RETRY_DELAY` | `2.0` | Sleep between port-forward restart attempts when `/health` fails. |
 | `_API_MAX_RETRIES` | `10` | Maximum number of port-forward restarts while waiting for the API to answer. |
@@ -152,7 +152,7 @@ After 10 consecutive failed reconnects, `ConnectionError` is raised with the und
 | Benchmark completes (`ALL_RECORDS_RECEIVED`) | `0` | Port-forward is torn down cleanly; the `AIPerfJob` continues running to completion on the cluster. |
 | Short-circuit on `phase=Completed` / `phase=Failed` | `0` | No port-forward is opened; the CLI prints a pointer to `results` / `logs`. |
 | `Ctrl-C` during streaming (`KeyboardInterrupt`) | non-zero | `exit_on_error` deliberately re-raises `KeyboardInterrupt` rather than swallowing it. **The remote benchmark is not affected** — attach only tears down its own port-forward and WebSocket. |
-| `resolve_job` could not find the CR or JobSet | `1` | Printed via `print_error`; re-run `aiperf kube list` to enumerate available jobs. |
+| `resolve_job` could not find the CR or JobSet | `0` | The error is printed via `print_error`, but the command returns without raising, so the shell sees success. Re-run `aiperf kube list` to enumerate available jobs, and do not use `aiperf kube attach` as a CI existence check. |
 | WebSocket reconnection budget exhausted | `1` | Wrapped by `cli_utils.exit_on_error(title="Error Attaching to Benchmark")`. |
 | `kubectl port-forward` budget exhausted | `1` | Same error wrapper; stderr from `kubectl` is surfaced in the message. |
 
@@ -167,14 +167,14 @@ Attach is safe to interrupt at any time. The CR, JobSet, and pods are owned by t
 - **Operator-mode** (the default): `aiperf kube profile` creates an `AIPerfJob` CR, and the in-cluster operator reconciles it into a JobSet. `find_aiperf_job` matches the CR directly.
 - **Direct-mode**: `aiperf kube profile --no-operator` skips the CR and creates a JobSet. When no `AIPerfJob` exists, `resolve_job` falls back to `find_jobset` and wraps the returned `JobSetInfo` as a minimal `AIPerfJobInfo` so the rest of the attach flow is identical.
 
-You do not need to tell `attach` which mode the job was deployed in — the fallback is automatic. The only visible difference is that direct-mode jobs will never report `phase=Completed` via the CR (there is no CR), so the short-circuit branch that suggests `aiperf kube results` does not trigger for them; the attach flow detects completion via the `ALL_RECORDS_RECEIVED` WebSocket message instead.
+You do not need to tell `attach` which mode the job was deployed in — the fallback is automatic. In direct mode the `phase` that drives the terminal short-circuit comes from `JobSetInfo._parse_status`, which maps the JobSet's `Completed` condition to `"Completed"` and a `Failed` condition with a failed `controller` replicated job to `"Failed"`. Everything else — including a JobSet that has failed only on the worker side — reports `"Running"`, so `attach` will proceed to look for the controller pod. A run that is still in flight is detected as complete the same way in both modes: via the `ALL_RECORDS_RECEIVED` WebSocket message.
 
 ---
 
 ## Troubleshooting
 
 **"No AIPerf job found with ID: ..."**
-The `job_id` you passed (or the one stored in `~/.aiperf/last_kube_benchmark.json`) does not exist in the requested namespace, or in any namespace if `--namespace` was omitted. Run `aiperf kube list` to see what is actually deployed, and confirm your current kubeconfig context matches the cluster you deployed to.
+The `job_id` you passed (or the one stored in `~/.aiperf/last_kube_benchmark.json`) does not exist in the resolved namespace. Note that omitting `--namespace` does **not** search cluster-wide: `resolve_job_id_and_namespace` substitutes the namespace from the last-benchmark file, or `aiperf-benchmarks` when you passed an explicit `job_id`. Run `aiperf kube list -A` to see what is actually deployed, and confirm your current kubeconfig context matches the cluster you deployed to.
 
 **"Port-forward did not become ready within 60.0s"**
 `kubectl port-forward` never printed its ready line. Common causes: the controller pod is `CrashLoopBackOff`, the pod was evicted, or a network policy is blocking pod-to-apiserver traffic. Check `aiperf kube debug` for pod phases and `aiperf kube logs --container control-plane` for the controller's startup errors.
@@ -193,6 +193,7 @@ In an interactive terminal, `Unauthorized` (HTTP 401) causes AIPerf to wait whil
 you complete your normal Kubernetes login in another terminal, then reload the
 selected kubeconfig and retry. Press **Ctrl+C** to stop waiting. `Forbidden`
 (HTTP 403) means the current identity is authenticated but lacks permissions and
-is not retried. At minimum attach needs `get/list/watch` on `aiperfjobs` (or
-`jobsets`), `pods`, and `pods/portforward`. See [RBAC and Security](rbac-security.md)
-for the full CLI-user role.
+is not retried. At minimum attach needs `get`/`list` on `aiperfjobs` (or
+`jobsets`), `list` on `pods`, `create` on `pods/portforward`, and — for the
+last-30-lines tail printed when a job is already `Failed` — `get` on `pods/log`.
+See [RBAC and Security](rbac-security.md) for the full CLI-user role.

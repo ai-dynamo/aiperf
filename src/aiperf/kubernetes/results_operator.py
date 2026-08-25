@@ -4,14 +4,10 @@
 
 from __future__ import annotations
 
-import asyncio
-import os
-import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import quote
 
-import aiofiles
 import aiohttp
 import orjson
 
@@ -27,10 +23,16 @@ from aiperf.kubernetes.console import (
     print_warning,
 )
 from aiperf.kubernetes.constants import DEFAULT_OPERATOR_NAMESPACE
+from aiperf.kubernetes.environment import K8sEnvironment
 from aiperf.kubernetes.port_forward import port_forward_with_status
 from aiperf.kubernetes.results_operator_common import (
+    RESULTS_SERVER_PORT,
+    _REDIRECT_STATUSES,
+    _download_and_decompress,
+    _get_no_redirects,
     _is_refused_name,
     _JobDownloadOutcome,
+    _verify_operator_health as _shared_verify_operator_health,
 )
 from aiperf.kubernetes.results_operator_sweeps import (
     _download_all_sweep_operator_files as _download_all_sweep_operator_files,
@@ -49,9 +51,9 @@ if TYPE_CHECKING:
     from kubernetes_asyncio.client import ApiClient
 
 
-RESULTS_SERVER_PORT = int(os.environ.get("AIPERF_RESULTS_SERVER_PORT", "8081"))
-_REDIRECT_STATUSES = {301, 302, 307, 308}
-
+async def _verify_operator_health(api_base: str) -> bool:
+    """Preserve this module's configured results-server health timeout."""
+    return await _shared_verify_operator_health(api_base, K8sEnvironment.RESULTS.CONTROL_REQUEST_TIMEOUT_SECONDS)
 
 def _result_base_url(
     api_base: str, namespace: str, job_id: str, run: str | None
@@ -96,7 +98,9 @@ async def _download_and_decompress(
     replaced = False
     try:
         async with aiofiles.open(temp_path, "wb") as f:
-            async for chunk in resp.content.iter_chunked(64 * 1024):
+            async for chunk in resp.content.iter_chunked(
+                Environment.COMPRESSION.CHUNK_SIZE
+            ):
                 if decompressor is not None:
                     chunk = decompressor.decompress(chunk)
                 if chunk:
@@ -159,7 +163,9 @@ async def _download_operator_file(
 async def _verify_operator_health(api_base: str) -> bool:
     from aiperf.transports.aiohttp_client import create_tcp_connector
 
-    timeout = aiohttp.ClientTimeout(total=10)
+    timeout = aiohttp.ClientTimeout(
+        total=K8sEnvironment.RESULTS.CONTROL_REQUEST_TIMEOUT_SECONDS
+    )
     connector = create_tcp_connector()
     async with aiohttp.ClientSession(timeout=timeout, connector=connector) as session:
         try:
@@ -268,7 +274,9 @@ async def _download_all_operator_files(
     """
     from aiperf.transports.aiohttp_client import create_tcp_connector
 
-    timeout = aiohttp.ClientTimeout(total=300)
+    timeout = aiohttp.ClientTimeout(
+        total=K8sEnvironment.RESULTS.DOWNLOAD_TIMEOUT_SECONDS
+    )
     connector = create_tcp_connector()
     async with aiohttp.ClientSession(
         timeout=timeout,

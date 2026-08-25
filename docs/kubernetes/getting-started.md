@@ -288,12 +288,12 @@ aiperf kube profile \
 What happens:
 
 1. AIPerf builds an `AIPerfJob` custom resource from your flags
-2. Submits it to the cluster via the AIPerf operator
-3. The operator creates a ConfigMap, RBAC, and a JobSet with a controller pod and worker pods
+2. Submits it to the cluster, where the AIPerf operator picks it up
+3. The operator creates RBAC, a ConfigMap, and a JobSet with a controller pod and worker pods
 4. Workers send requests to the Dynamo frontend
-5. AIPerf attaches to the controller and streams live progress to your terminal
+5. AIPerf polls the `AIPerfJob` status and streams progress to your terminal
 
-You will see real-time output showing request throughput, latency percentiles, and progress.
+You will see the job phase, worker readiness (`ready/total`), and each status condition as the operator reports it. In `--no-operator` mode AIPerf attaches to the controller pod and tails its output instead.
 
 Press **Ctrl+C** to detach. The benchmark continues running in the cluster. To cancel it, run `aiperf kube cancel` or patch the CR directly:
 
@@ -480,7 +480,7 @@ This downloads the full results package including:
 
 - `profile_export_aiperf.json` -- Summary metrics (throughput, latency percentiles, TTFT, ITL)
 - `inputs.json` -- Dataset that was used
-- `server_metrics_export.json` -- Dynamo server metrics (frontend throughput, KV cache stats, component latencies)
+- `server_metrics_export.json` -- Dynamo server metrics (frontend throughput, KV cache stats, component latencies); empty when discovery found no scrapable endpoints
 
 To retrieve results from a specific job:
 
@@ -488,11 +488,13 @@ To retrieve results from a specific job:
 aiperf kube results dynamo-benchmark
 ```
 
-Results are stored on the operator's persistent volume by default, so `aiperf kube results` works even after benchmark pods are deleted. To retrieve directly from the benchmark pods instead (tries the controller API first, then falls back to `kubectl cp`):
+Results are stored on the operator's persistent volume by default, so `aiperf kube results` works even after benchmark pods are deleted. To retrieve directly from the benchmark pods instead (downloads every artifact through the controller's results API, so the controller pod must still be running):
 
 ```bash
 aiperf kube results dynamo-benchmark --from-pods
 ```
+
+Adding `--summary-only` narrows the download to the summary files and falls back to `kubectl cp` when the controller API is unreachable.
 
 ### Dynamo Server Metrics
 
@@ -514,12 +516,12 @@ aiperf kube list
 ```
 
 ```
-NAME                 NAMESPACE           PHASE      WORKERS  PROGRESS  THROUGHPUT  LATENCY  AGE
-dynamo-benchmark     aiperf-benchmarks   Completed  10       100%      142.3 rps   187ms    5m
-disagg-test          aiperf-benchmarks   Running    10       42%       98.1 rps    201ms    2m
+NAME                 NAMESPACE           PHASE      WORKERS  PROGRESS  THROUGHPUT  LATENCY   AGE
+dynamo-benchmark     aiperf-benchmarks   Completed  10/10    100%      142.3 rps   187.0 ms  5m
+disagg-test          aiperf-benchmarks   Running    10/10    42%       98.1 rps    201.4 ms  2m
 ```
 
-Use `--wide` to see model and endpoint columns.
+`WORKERS` is `ready/total` and `LATENCY` is the p99 request latency. Use `--wide` to add model, endpoint, and error columns.
 
 Filter by status:
 
@@ -554,6 +556,7 @@ The dashboard provides:
 - **Dashboard** -- Overview with KPI cards, active jobs, and throughput trends
 - **Jobs** -- Sortable table of all benchmark jobs with phase filters
 - **Job Detail** -- Live metrics, charts, phase progress, and pod status for a single job
+- **Launch** -- Submit a new AIPerfJob from the browser
 - **Leaderboard** -- Rank benchmark runs by any metric
 - **Compare** -- Side-by-side comparison of multiple jobs
 - **History** -- Time-series charts showing metrics across runs
@@ -620,11 +623,11 @@ aiperf kube generate --no-operator \
 | Run without waiting | `aiperf kube profile ... --detach` |
 | Preview without deploying | `aiperf kube profile ... --dry-run` |
 | Attach to a running job | `aiperf kube attach` |
-| Diagnose a job | `aiperf kube debug` |
+| Diagnose a stuck or failed job | `aiperf kube debug` |
 | List all jobs | `aiperf kube list` |
 | Get results | `aiperf kube results` |
 | Get logs | `aiperf kube logs` |
-| Debug a stuck job | `aiperf kube debug` |
+| Cancel a running job | `aiperf kube cancel` |
 
 ---
 

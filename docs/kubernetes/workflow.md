@@ -26,12 +26,12 @@ flowchart TD
     init["aiperf kube init<br/>(local)"] --> validate["aiperf kube validate<br/>(local)"]
     validate --> preflight["aiperf kube preflight<br/>(cluster)"]
     preflight --> profile["aiperf kube profile<br/>(cluster)"]
-    profile -->|foreground| attach_inline["streams logs<br/>until completion"]
+    profile -->|foreground| attach_inline["blocks until completion:<br/>CR heartbeats (operator)<br/>controller logs (direct)"]
     profile -->|--detach| detached["returns immediately;<br/>CR running in cluster"]
     attach_inline --> results["aiperf kube results<br/>(cluster)"]
-    detached --> attach["aiperf kube attach<br/>(re-stream logs)"]
+    detached --> attach["aiperf kube attach<br/>(re-stream progress)"]
     attach --> results
-    results --> cleanup["kubectl delete<br/>aiperfjob / jobset"]
+    results --> cleanup["aiperf kube delete<br/>or kubectl delete"]
 ```
 
 The commands on the left-hand column (init, validate, preflight) are
@@ -135,8 +135,11 @@ operator mode without that cluster-scoped discovery request, or
 - **Operator mode (default when CRD is present).** `profile` creates a
   single `AIPerfJob` custom resource. The in-cluster operator reconciles the
   CR and owns the lifecycle of the downstream `JobSet`, `ConfigMap`, `Role`,
-  and `RoleBinding`. Results are fetched into a shared operator PVC as the
-  benchmark runs. When `--namespace` is explicit, `profile` treats that
+  and `RoleBinding`. When the run reaches a terminal phase the operator's
+  completion handler copies the results onto a shared operator PVC; on a
+  failure it instead salvages whatever partial checkpoint files the controller
+  had written. Nothing is harvested incrementally mid-run. When `--namespace`
+  is explicit, `profile` treats that
   namespace as pre-provisioned and does not issue a Namespace-create request.
   This lets namespace-scoped tenants submit AIPerfJobs without cluster-wide
   CRD-read or Namespace-create permission by combining `--operator` with
@@ -162,12 +165,18 @@ multi-document YAML in direct mode.
 Once the resource is created, `profile` decides whether to block:
 
 - **Foreground (the default, when stdout is a TTY).** In operator mode the CLI
-  polls the AIPerfJob CR every 2 seconds via `watch_job` until the benchmark
-  finishes or a hard 600-second timeout is reached. It does not port-forward to
-  the controller pod; use `aiperf kube attach` after submission for real-time log
-  streaming. Ctrl+C returns to the shell but leaves the cluster-side run intact.
-  For benchmarks that run longer than 600 seconds, pass `--detach` and monitor
-  separately with `aiperf kube attach`.
+  polls the AIPerfJob CR every 2 seconds via `watch_job`, logging phase/worker
+  heartbeats and condition transitions, until the phase reaches `Completed`,
+  `Failed`, or `Cancelled` — or a hard 600-second timeout raises `TimeoutError`.
+  It does not port-forward to the controller pod; use `aiperf kube attach` after
+  submission for real-time progress streaming. Ctrl+C returns to the shell but
+  leaves the cluster-side run intact. For benchmarks that run longer than 600
+  seconds, pass `--detach` and monitor separately with `aiperf kube attach`.
+  Direct mode takes a different foreground path (`wait_or_detach` ->
+  `auto_attach_workflow`): it waits up to 300 seconds for the controller pod to
+  reach `Running`, tails that pod's `control-plane` container, and on completion
+  downloads all artifacts plus per-pod logs into `./artifacts/<job_id>/`, so a
+  separate `aiperf kube results` call is not required.
 - **`--detach` (or any non-interactive stdout, e.g. a pipe or CI).** The CLI
   submits the resource, prints "Detached" with a hint about how to re-attach,
   and exits immediately. The benchmark continues running in the cluster.
@@ -345,7 +354,10 @@ requested result download fails. This makes a successful exit safe to use as
 the artifact-collection gate in CI; partial sweep downloads also fail the
 command even though successfully downloaded child artifacts remain on disk.
 
-Output directory defaults to `./artifacts/{benchmark-name}`.
+Output directory defaults to `./artifacts/{benchmark-name}`, or
+`./artifacts/{namespace}__{benchmark-name}__{epoch}` when you pin a historical
+run with `--run` (see `aiperf kube results list-runs`) so the pinned download
+cannot overwrite the latest-run directory.
 
 ## Intermediate commands
 
@@ -374,13 +386,20 @@ CR name) sooner.
 
 - **Operator mode:**
   ```bash
+  aiperf kube delete my-benchmark -n aiperf-benchmarks
+  # or, equivalently, straight through kubectl:
   kubectl delete aiperfjob my-benchmark -n aiperf-benchmarks
   ```
-  The operator cleans up the downstream JobSet, ConfigMap, and RBAC as part
-  of CR finalization. The `last_kube_benchmark.json` entry is not cleared
-  automatically — subsequent `attach`/`results` calls will report
-  "not found". Pass the job ID (positional) and `-n` / `--namespace`
-  explicitly, or deploy a new benchmark to repopulate.
+  The downstream JobSet, ConfigMap, Role, and RoleBinding carry
+  ownerReferences back to the CR, so Kubernetes garbage-collects them. The
+  operator's `on_delete` handler deliberately does not delete them itself; it
+  only sets the in-process cancellation flag, closes the cached
+  `ProgressClient`, and drops the job's `runs_index` rows. Deleting through
+  `aiperf kube delete` also clears the matching `last_kube_benchmark.json`
+  entry; deleting through `kubectl` leaves it stale, so subsequent
+  `attach`/`results` calls will report "not found" until you pass the job ID
+  (positional) and `-n` / `--namespace` explicitly, or deploy a new benchmark
+  to repopulate.
 
 - **Direct mode:**
   ```bash
@@ -396,8 +415,8 @@ CR name) sooner.
 ## Last benchmark persistence
 
 The file `~/.aiperf/last_kube_benchmark.json` is the glue that lets
-`attach`, `results`, `logs`, and `debug` default to the most
-recently deployed benchmark.
+`attach`, `results`, `logs`, `debug`, `cancel`, `delete`, and `shutdown`
+default to the most recently deployed benchmark.
 
 The format is:
 
@@ -405,12 +424,15 @@ The format is:
 {
   "job_id": "qwen3-0-6b-openai-throughput",
   "namespace": "aiperf-benchmarks",
-  "name": "my-benchmark"
+  "name": "my-benchmark",
+  "kind": "AIPerfJob"
 }
 ```
 
-`job_id` and `namespace` are always present; `name` is the
-user-supplied-or-generated friendly name and is optional. See
+`job_id` and `namespace` are always present. `name` is the
+user-supplied-or-generated friendly name and is written only when set.
+`kind` is `AIPerfJob` or `AIPerfSweep` and is absent for direct-mode and
+legacy records; any other value is discarded on read. See
 `LastBenchmarkInfo`, `save_last_benchmark`, and `get_last_benchmark` in
 `src/aiperf/kubernetes/console.py`.
 
@@ -433,11 +455,16 @@ staging and `results` is reading from prod" is an easy way to chase a ghost.
 | `kube validate` | no | no | Offline YAML validation. |
 | `kube preflight` | no | no | Uses `--namespace`; no job concept. |
 | `kube profile` | no | **yes** (on successful submit) | Both operator and direct paths write the file. |
+| `kube sweep` | no | **yes** (on successful submit) | Records `kind: AIPerfSweep`. |
 | `kube generate` | no | no | Prints manifests; never hits cluster state. |
 | `kube attach` | yes (if `job_id` omitted) | no | |
 | `kube results` | yes (if `job_id` omitted) | no | |
 | `kube logs` | yes (if `job_id` omitted) | no | |
 | `kube debug` | yes (if `-j` and `-n` both omitted and `-A` not set) | no | |
+| `kube cancel` | yes (if `job_id` omitted) | no | Also reads the stored `kind` to disambiguate. |
+| `kube shutdown` | yes (if `job_id` omitted) | no | |
+| `kube delete` | yes (if `job_id` omitted) | **clears it** | Only when the stored record names the deleted benchmark. |
+| `kube cleanup` | no | **clears it** | Cleared per removed benchmark that matches the stored record. |
 | `kube list` | no | no | Enumerates the cluster directly. |
 | `kube dashboard` | no | no | Operator-scoped, not job-scoped. |
 

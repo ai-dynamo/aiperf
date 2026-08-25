@@ -20,9 +20,12 @@ For the HTTP endpoints that power it, see [`results-api.md`](results-api.md).
 ## Accessing the Dashboard
 
 The dashboard and the Results API are served by the same FastAPI process and
-share port **8081** inside the cluster. The SPA is mounted as a catch-all
-`StaticFiles` handler, so any path that isn't an `/api/v1/...` route returns
-`index.html` and lets the client-side router take over.
+share port **8081** inside the cluster. `results_server.py` mounts
+`StaticFiles(directory=<operator>/ui, html=True)` at `/` after every API router,
+so `/` serves `index.html` and every sibling asset resolves by filename. Client
+routes are hash-based (`#/jobs/...`), so the browser only ever requests `/` —
+there is no server-side SPA fallback, and an unknown *file* path returns `404`
+rather than `index.html`.
 
 ### Recommended: `aiperf kube dashboard`
 
@@ -31,9 +34,10 @@ aiperf kube dashboard
 ```
 
 This command locates the operator pod, opens a `kubectl port-forward` directly
-to that pod on the results server port (`RESULTS_SERVER_PORT = 8081`), and
-launches your default browser at the forwarded URL. The port-forward stays
-open until you press `Ctrl+C`.
+to that pod on the results server port (`RESULTS_SERVER_PORT`, default `8081`,
+overridable with `AIPERF_RESULTS_SERVER_PORT`), and launches your default
+browser at the forwarded URL. The port-forward stays open until you press
+`Ctrl+C`, auto-reconnecting with backoff in between.
 
 Useful flags:
 
@@ -75,27 +79,35 @@ reloads the browser when `.html`, `.js`, or `.css` files change.
 
 ### Authentication
 
-The dashboard inherits the Results API's read-only access model: **no per-user
+The dashboard inherits the Results API's access model: **no per-user
 authentication** is performed for reads. Access control is the port-forward
 itself — whoever can reach port 8081 inside the cluster (or through a forward)
-can view every job and every result. Browser mutating actions are disabled by
-default because the static SPA has no safe bearer-token delivery path; create
-and cancel jobs from an authenticated terminal with `aiperf kube` or `kubectl`.
-Do not expose this port via an unauthenticated Ingress.
+can view every job and every result. Do not expose this port via an
+unauthenticated Ingress.
+
+Mutating actions (launch a job or sweep, cancel a run) *are* reachable from the
+browser, but only through the operator's bearer token. `lib/api.js` routes them
+through `mutatingFetch`, which requires a token in `sessionStorage`; the first
+attempt without one raises a `TOKEN_REQUIRED` error, the page opens
+`components/token-modal.js` to collect it, and the action retries. A `401`
+clears the stored token and re-prompts. The token lives only in
+`sessionStorage`, so it is gone when the tab closes and is never persisted to
+disk. If the operator has not set `AIPERF_OPERATOR_MUTATING_ROUTES_ENABLED`, the
+server answers `403` no matter what the browser sends — use `aiperf kube` or
+`kubectl` in that case.
 
 ---
 
 ## Navigation
 
-The UI is a **flat, dark-mode single-page app** with a text-led operator
-sidebar — there is no namespace-picker landing page and no per-namespace URL
-tier. Namespace is only ever a path
-parameter (`:ns`) on a job/sweep detail route or a `?ns=` query filter on the
-list pages; it is never a routing gate, and nothing about the last namespace is
-persisted.
+The UI is a **flat single-page app** with a text-led horizontal top bar — there
+is no namespace-picker landing page and no per-namespace URL tier. Namespace is
+only ever a path parameter (`:ns`) on a job/sweep detail route or a `?ns=` query
+filter on the list pages; it is never a routing gate, and nothing about the last
+namespace is persisted.
 
 Routes are hash-based, so reloading any page works without server-side route
-configuration. The full route table (`src/aiperf/operator/ui/app.js:51-83`):
+configuration. The full route table (`src/aiperf/operator/ui/app.js:52-86`):
 
 | Route | Page | Purpose |
 |---|---|---|
@@ -110,7 +122,7 @@ configuration. The full route table (`src/aiperf/operator/ui/app.js:51-83`):
 | `/compare` | `Compare` | Multi-run comparison (metric table, bar/Pareto charts). |
 | `/compare/:ns/:name/:epochA/:epochB` | `CompareEpochs` | Two-epoch diff of one run. |
 | `/history` | `History` | A metric's value over time across runs. |
-| `/launch` | `Launch` | Read-only YAML helper (copy-only; see below). |
+| `/launch` | `Launch` | YAML editor that can copy or submit a manifest (see below). |
 
 Any other path renders a "Not Found" stub.
 
@@ -125,34 +137,41 @@ flowchart TB
     launch["/launch"]
 ```
 
-### Operator sidebar
+### Operator top bar
 
-`TopNav` (`components/top-nav.js`) renders two text groups in the left-hand
-sidebar:
+`TopNav` (`components/top-nav.js`) renders a sticky horizontal bar: the
+`AIPerf Operator` logo and two labelled tab groups on the left, the search
+trigger on the right.
 
-- **Operate:** Dashboard, Jobs, Sweeps, Launch.
-- **Analyze:** Leaderboard, Compare, History.
+- **OPERATE:** Dashboard, Jobs, Sweeps, Launch.
+- **ANALYZE:** Leaderboard, Compare, History.
 
-When `/api/v1/config/features` reports `dashboard_enabled: true`, a third group
-adds an external **"Plots ↗"** link (see below). The workspace uses a fixed
-graphite dark palette; NVIDIA green is reserved for deliberate actions and live
-or successful status. Search is available at the base of the sidebar with
-`Ctrl+K`.
+When `/api/v1/config/features` reports `dashboard_enabled: true`, a third
+(unlabelled) group adds an external **"Plots ↗"** link (see below). NVIDIA green
+is reserved for deliberate actions and live or successful status. The search
+button sits at the right end of the bar and shows its `Ctrl+K` shortcut as a
+`kbd` hint.
 
 ### Breadcrumb
 
-Below the top bar, `Breadcrumb` (`components/breadcrumb.js`) renders a
+Below the top bar, in the workspace chrome, `Breadcrumb`
+(`components/breadcrumb.js`) renders a
 **route-path** breadcrumb derived from the current hash — e.g. `Jobs / <ns> /
 <name> / runs / <epoch>` on a job-epoch route. It is a plain path trail with
 clickable ancestors; there is **no** namespace dropdown or namespace switcher.
 
-### Read-only launch helper
+### Launch helper
 
-`/launch` (`pages/launch.js`) is a YAML editor with template pills. Browser
-job submission is **hard-disabled** — `lib/api.js` sets
-`DASHBOARD_MUTATIONS_ENABLED = false`, so `api.createJob()` throws and the
-"Launch" button stays disabled; the working action is **Copy**. Copy the YAML,
-then apply it from an authenticated terminal:
+`/launch` (`pages/launch.js`) is a YAML editor with template tabs and two
+actions: **Copy** and **Launch**. Copy puts the manifest on the clipboard for
+`kubectl apply -f`; Launch parses the YAML locally (exactly one document,
+non-empty, `metadata.name` present), then POSTs it — `api.createSweep()` for
+`kind: AIPerfSweep`, `api.createJob()` otherwise. Both are mutating routes, so
+the first attempt without a stored token opens the token modal and retries on
+confirm. On success the page reports the created namespace/name.
+
+If the operator has mutating routes disabled, the POST returns `403` and the
+error surfaces inline; fall back to copying the YAML:
 
 ```bash
 kubectl apply -f benchmark.yaml
@@ -164,9 +183,13 @@ the job workbench (handed off through `sessionStorage`, not a POST).
 ### External Plots link
 
 The "Plots ↗" link points at `/dashboard/` — the optional Plotly Dash sidecar.
-The results server mounts an **httpx reverse-proxy router**
-(`operator/routers/dashboard_proxy.py`, wired in `results_server.py:219-223`)
-that forwards `/dashboard/*` to the dashboard sidecar. The link is gated by
+The results server mounts an **aiohttp reverse-proxy router**
+(`operator/routers/dashboard_proxy.py`, wired in `results_server.py` right
+before the static-UI mount) that forwards `/dashboard/{path:path}` to the
+dashboard sidecar for GET, POST, PUT, DELETE, PATCH, and OPTIONS. Paths
+containing `.` or `..` segments are rejected with `400` so a decoded traversal
+cannot escape the `/dashboard/` prefix and reach the sidecar's unauthenticated
+`POST /admin/refresh`. The link is gated by
 `/api/v1/config/features`'s `dashboard_enabled` flag, and the proxy returns
 `503` when the sidecar is disabled or unreachable. (The Dash app itself uses
 `WSGIMiddleware` inside the sidecar's own `dashboard_server.py`, not on the
@@ -194,8 +217,9 @@ The cluster-wide landing view (`pages/dashboard.js`).
 - **Recent-jobs table** — newest completed/failed runs with headline metrics.
 
 **Endpoints consumed:** `GET /api/v1/jobs` (5s), `GET /api/v1/cluster` (10s),
-`GET /api/v1/analytics/leaderboard` + per-entry
-`GET /api/v1/analytics/summary/{ns}/{jobId}` (15s).
+`GET /api/v1/analytics/scatter` (30s). The scatter poll is a single query that
+replaced the old leaderboard-plus-per-entry-summary fan-out, and it feeds both
+the scatter chart and the KPI tiles.
 
 ### Jobs (`/jobs`)
 
@@ -215,9 +239,12 @@ selector), conditions, a `PhaseBar` (Phases), record-processing, and a
 
 **While running:** a live-throughput line chart, a latency-distribution
 histogram, a realtime KPI grid, and a diagnostics panel (Events / Logs /
-Conditions / Pods tabs). A per-job WebSocket feeds live data. A cancel button
-exists but is **disabled** (`DASHBOARD_MUTATIONS_ENABLED = false`); it renders a
-read-only notice pointing to `aiperf kube` / `kubectl`.
+Conditions / Pods tabs). A per-job WebSocket feeds live data. A **Cancel run**
+button is live: clicking it swaps in an inline confirm/keep-running pair, and
+confirming calls `POST /api/v1/jobs/{ns}/{name}/cancel` (prompting for the
+bearer token if none is stored). The button shows a spinner while the patch is
+in flight and stays pending until the next poll moves the phase out of running;
+a failure is reported inline as "Cancel failed: …".
 
 **After completion:** SLA compliance, server metrics, job configuration (with a
 View-YAML modal), run metadata, per-record analysis (from
@@ -225,11 +252,15 @@ View-YAML modal), run metadata, per-record analysis (from
 latency-timeline charts, ISL distribution, a full metrics-breakdown table, and
 a result-files card.
 
-**Endpoints consumed:** `GET /api/v1/jobs/{ns}/{name}[?epoch=]` (3s),
-`.../epochs`, `GET /api/v1/config/{ns}/{name}`,
-`GET /api/v1/results/{ns}/{name}/runs/{epoch}/...` (file listing +
-`server_metrics_export.json` + `profile_export.jsonl`), and a per-job
-WebSocket.
+**Endpoints consumed:** `GET /api/v1/jobs/{ns}/{name}[?epoch=]` (every 3s, or
+8s while the WebSocket is connected, since the socket already carries the live
+numbers), `.../epochs`, `GET /api/v1/config/{ns}/{name}`, and the run-scoped
+file endpoints `GET /api/v1/results/{ns}/{name}/runs/{epoch}` plus the
+per-record and server-metrics artifacts *named by that listing*
+(`per_record_filename` / `server_metrics_filename` — not hardcoded filenames),
+and a per-job WebSocket. The non-epoch results endpoint is deliberately never
+called: until the route is pinned to `/runs/<epoch>`, the artifact cards render
+as unavailable.
 
 ### Job epoch view (`/jobs/:ns/:name/runs/:epoch`)
 
@@ -259,7 +290,7 @@ Adaptive search has a deliberately state-aware surface:
 | Live adaptive search | **Optimization study** with a **Current leader** | The best observation seen so far is provisional; the planner is still sampling and no final recommendation is shown. |
 | Successful terminal adaptive search with `search_summary.best_trials` | **Planner verdict** | The planner's final operating point, stopping evidence, and any SLA boundary. |
 | Failed, cancelled, unknown, or terminal adaptive search without a verdict | **No final recommendation** | The UI directs the reader to the trial history and search artifact; it never promotes a partial result to a winner. |
-| Grid/generator sweep | **Variation analysis** | The curve and table are the result; no browser-derived winner summary is shown. |
+| Grid/generator sweep | **Variation curve** | The curve and table are the result; no browser-derived winner summary is shown. |
 
 Pareto analysis appears only for a sweep that declared more than one objective.
 It is not used as a decorative throughput-versus-latency chart for a
@@ -307,20 +338,24 @@ Deep-linkable via a `?cluster=` query param. Requires ≥2 selections.
 ### Compare epochs (`/compare/:ns/:name/:epochA/:epochB`)
 
 A fixed nine-metric diff of two epoch-pinned run summaries of a single run
-(`pages/compare-epochs.js`) — columns Metric / Run A / Run B / Δ.
-`GET /api/v1/results/{ns}/{name}/runs/{epoch}/profile_export_aiperf.json` for
-each side.
+(`pages/compare-epochs.js`) — columns Metric / Run A / Run B / Δ. Each side is
+fetched through the quick-export alias
+`GET /api/v1/results/{ns}/{name}/runs/{epoch}/profile_export`, so a run whose
+`artifacts.prefix` renamed the summary file still diffs. When one side has no
+summary, that column reads `n/a` instead of failing the page.
 
 ### History (`/history`)
 
 One metric's value over time across runs (`pages/history.js`): a line chart
 plus a data-points table, with namespace / model / endpoint filters synced to
-the URL. `GET /api/v1/analytics/history?metric=&stat=`.
+the URL. `GET /api/v1/analytics/history?metric=&stat=&namespace=&model=&endpoint=&limit=10000`
+— the filters are pushed to the server *and* re-applied client-side, and the
+table warns "may be truncated" once the response hits the 10000-row request cap.
 
 ### Launch (`/launch`)
 
-Read-only YAML helper — see [Read-only launch helper](#read-only-launch-helper)
-under Navigation. Copy-only; browser submission is disabled.
+YAML helper — see [Launch helper](#launch-helper) under Navigation. Copy the
+manifest, or submit it directly with the operator's bearer token.
 
 ### Log strip (bottom bar)
 
@@ -336,10 +371,11 @@ Filter tabs: All / Warn / Error. Each entry links to the run workbench. It is
 
 ## Command Palette
 
-Press **`Ctrl+K`** (or `Cmd+K` on macOS) to open the command palette. The
-search icon in the top-right corner of the navigation bar opens the same modal.
+Press **`Ctrl+K`** (or `Cmd+K` on macOS) to toggle the command palette — the
+same shortcut closes it. The search button at the right end of the top bar opens
+the same modal.
 
-The palette (`components/command-palette.js:6-14`) indexes:
+The palette (`components/command-palette.js:9-17`) indexes:
 
 - The seven nav pages — Dashboard, Jobs, Sweeps, Launch, Leaderboard, Compare,
   History — each with the sub-label "Page".
@@ -355,6 +391,7 @@ sub-label; matching is in-order-character, not substring. Navigation:
 | `↑` / `↓` | Move highlight |
 | `Home` / `End` | Jump to first / last |
 | `Enter` | Select the highlighted item |
+| `Tab` | Suppressed — focus is trapped on the search input so it cannot escape to the page behind the modal |
 | `Escape` or backdrop click | Close |
 | Mouse hover | Move highlight |
 
@@ -362,20 +399,28 @@ sub-label; matching is in-order-character, not substring. Navigation:
 
 ## Theme and Layout
 
-The dashboard has a **three-way theme toggle** — auto / light / dark — in the
-top-right of the navigation bar (`lib/theme-switch.js`, rendered by
-`top-nav.js`). Clicking it cycles auto → light → dark and persists the choice
-to `localStorage['aiperfTheme']`; `auto` follows the OS `prefers-color-scheme`
-and updates live. The resolved theme is applied via
+The dashboard supports three theme preferences — auto / light / dark — resolved
+by `lib/theme-switch.js` and persisted in `localStorage['aiperfTheme']`; `auto`
+follows the OS `prefers-color-scheme` and updates live. `index.html` resolves
+the stored preference in a synchronous inline script before the stylesheet loads
+so a reload does not flash the wrong theme. The resolved value is applied via
 `document.documentElement.dataset.theme`, and the color tokens live in
-`src/aiperf/operator/ui/lib/theme.js` / `style.css`. Model colors in charts are
-assigned deterministically from a hash of the model name, so the same model
-keeps the same color across pages and reloads.
+`src/aiperf/operator/ui/lib/theme.js` / `style.css`.
 
-The layout is a single column with a fixed top navigation bar, a breadcrumb
-row, an ALPHA banner, an optional global error banner, the current page, and a
-persistent log strip at the bottom. The SPA is responsive down to tablet
-widths; very narrow viewports are not a supported target.
+There is currently **no in-app control** to change the preference: `app.js`
+calls only `initTheme()`, and the `cycleTheme()` / `setTheme()` exports have no
+caller. Until a toggle is wired up, the effective theme is whatever the OS
+reports (dark unless the OS prefers light), overridable by setting
+`localStorage.aiperfTheme` from the browser console.
+
+Model colors in charts are assigned deterministically from a hash of the model
+name, so the same model keeps the same color across pages and reloads.
+
+The layout is a single column: the sticky top bar, then a workspace chrome strip
+holding the breadcrumb, an `EXPERIMENTAL / Operator UI preview` banner, the
+data-freshness strip, and an optional global error banner; then the current
+page; then a persistent log strip at the bottom. The SPA is responsive down to
+tablet widths; very narrow viewports are not a supported target.
 
 ---
 
@@ -384,9 +429,10 @@ widths; very narrow viewports are not a supported target.
 ### Blank page with console 404s for `/app.js`
 
 The UI assets were not baked into the operator image, or `ui_dir.is_dir()`
-returned false at startup. Verify the image tag includes
-`src/aiperf/operator/ui/` and check the Results server logs for
-"UI static files mounted" output.
+returned false at startup, in which case `create_app()` silently skips the
+`StaticFiles` mount — there is no log line for it either way. Verify the image
+tag includes `src/aiperf/operator/ui/`; `curl -sI http://localhost:8081/app.js`
+returning `404` while `/healthz` returns `200` confirms the mount is missing.
 
 ### "Error: API 503 …" banners
 
@@ -400,15 +446,17 @@ kubectl logs -n aiperf-system deploy/aiperf-operator -c results-server --tail=20
 
 If the line `kubernetes_asyncio client initialized for UI endpoints` is
 missing, the live job and cluster endpoints will stay unavailable even after
-the analytics engine comes up. The Dashboard page surfaces this as a
-"Cluster endpoint unavailable — data may be stale" banner.
+the analytics engine comes up (the startup path logs
+"Kubernetes client unavailable, live job endpoints disabled" instead). The
+Dashboard page surfaces this as a "Cluster endpoint unavailable — GPU/node
+counts may be stale" banner.
 
-### Dashboard KPI tiles show "—" for throughput
+### Dashboard KPI tiles show `---` for throughput
 
 The Dashboard's KPI tiles (Peak Throughput, Best TTFT, Token Throughput) and
 the throughput-vs-latency scatter only populate from **completed** jobs whose
 summary carries the relevant fields (e.g. `request_throughput.avg`). If your
-runs never finished, the tiles fall back to "—". Open the run workbench from
+runs never finished, the tiles fall back to `---`. Open the run workbench from
 the recent-jobs table to inspect individual runs instead.
 
 ### Port-forward drops during operator rollout
@@ -418,24 +466,28 @@ port across reconnects, so an open browser tab keeps working after a rollout
 that terminates the operator pod — no need to re-run the command. Press
 `Ctrl+C` to stop the forward.
 
-### Mutating action is unavailable from the dashboard
+### Launch or cancel fails from the dashboard
 
-Launch and cancel are intentionally not exposed as unauthenticated browser
-actions. Use an authenticated terminal instead:
+Launch and cancel are never unauthenticated: the browser must supply the
+operator's bearer token. A `401` means the token you entered is wrong (the SPA
+discards it and re-prompts); a `403` means the server has mutating routes turned
+off entirely, or has them on with no token configured, and no browser input can
+get past that. Verify the operator has
+`AIPERF_OPERATOR_MUTATING_ROUTES_ENABLED=true` and a non-empty
+`AIPERF_OPERATOR_MUTATING_ROUTES_TOKEN`. Read-only dashboard/API calls continue
+to work without this token.
+
+When mutating routes are off, use an authenticated terminal instead:
 
 ```bash
 # Cancel a running AIPerfJob.
 kubectl patch aiperfjob <name> -n <namespace> --type=merge -p '{"spec":{"cancel":true}}'
-
 ```
 
-If an API or CLI client receives 401/403 from `POST /api/v1/jobs` or
-`POST /api/v1/jobs/{ns}/{name}/cancel`, verify
-that the operator has `AIPERF_OPERATOR_MUTATING_ROUTES_ENABLED=true` and a
-non-empty `AIPERF_OPERATOR_MUTATING_ROUTES_TOKEN`, then send
-`Authorization: Bearer <token>`. Read-only dashboard/API calls continue to work
-without this token. `POST /admin/index/rebuild` is mounted disabled and returns
-503 regardless of credentials; restart the operator pod to rebuild the index.
+Two related notes: cancelling an *archived* run (PVC results present, CR
+deleted) returns `400` — there is nothing left to patch. And
+`POST /admin/index/rebuild` is mounted disabled and returns `503` regardless of
+credentials; restart the operator pod to rebuild the index.
 
 ---
 
