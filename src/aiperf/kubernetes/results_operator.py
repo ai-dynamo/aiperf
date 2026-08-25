@@ -27,11 +27,11 @@ from aiperf.kubernetes.environment import K8sEnvironment
 from aiperf.kubernetes.port_forward import port_forward_with_status
 from aiperf.kubernetes.results_operator_common import (
     _REDIRECT_STATUSES,
-    RESULTS_SERVER_PORT,
     _download_and_decompress,
     _get_no_redirects,
     _is_refused_name,
     _JobDownloadOutcome,
+    _results_server_port,
 )
 from aiperf.kubernetes.results_operator_common import (
     _verify_operator_health as _shared_verify_operator_health,
@@ -51,6 +51,9 @@ from aiperf.kubernetes.results_operator_sweeps import (
 
 if TYPE_CHECKING:
     from kubernetes_asyncio.client import ApiClient
+
+
+RESULTS_SERVER_PORT = _results_server_port()
 
 
 async def _verify_operator_health(api_base: str) -> bool:
