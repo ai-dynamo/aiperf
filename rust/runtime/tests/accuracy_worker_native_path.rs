@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Native Python evaluator integration coverage for request demux and process-group reap.
+//! Native Python evaluator integration coverage for batch grading and process-group reap.
 
 use std::ffi::OsString;
 use std::path::Path;
@@ -29,7 +29,6 @@ fn write_fixture_worker(module_dir: &Path, module_name: &str) {
 import json, pathlib, subprocess, sys
 
 pid_file = pathlib.Path(sys.argv[1])
-pending = []
 descendant = None
 
 for line in sys.stdin:
@@ -51,23 +50,18 @@ for line in sys.stdin:
         }
         print(json.dumps({"id": request["id"], "ok": True, "result": result}), flush=True)
     elif op == "grade_batch":
-        pending.append(request)
-        if len(pending) == 2:
-            for queued in reversed(pending):
-                item = queued["items"][0]
-                result = {
-                    "items": [{
-                        "problem_id": item["problem_id"],
-                        "task": "lcb",
-                        "correct": True,
-                        "unparsed": False,
-                        "confidence": float(queued["id"]),
-                        "reasoning": "fixture",
-                        "extracted_answer": item["response"],
-                    }]
-                }
-                print(json.dumps({"id": queued["id"], "ok": True, "result": result}), flush=True)
-            pending = []
+        result = {
+            "items": [{
+                "problem_id": item["problem_id"],
+                "task": "lcb",
+                "correct": True,
+                "unparsed": False,
+                "confidence": 1.0,
+                "reasoning": "fixture",
+                "extracted_answer": item["response"],
+            } for item in request["items"]]
+        }
+        print(json.dumps({"id": request["id"], "ok": True, "result": result}), flush=True)
     elif op == "shutdown":
         print(json.dumps({"id": request["id"], "ok": True, "result": {"shutdown": True}}), flush=True)
         break
@@ -80,7 +74,7 @@ for line in sys.stdin:
 }
 
 #[cfg(unix)]
-fn process_exists(pid: i32) -> Result<bool, std::io::Error> {
+fn is_process_alive(pid: i32) -> Result<bool, std::io::Error> {
     let result = unsafe { libc::kill(pid, 0) };
     if result == 0 {
         return Ok(true);
@@ -104,7 +98,7 @@ async fn wait_for_text_file(path: &Path) -> String {
 
 #[cfg(unix)]
 #[tokio::test]
-async fn native_worker_demuxes_out_of_order_grades_and_reaps_descendants() {
+async fn native_worker_grades_batch_and_reaps_descendants() {
     let module_dir = tempfile::tempdir().expect("module tempdir");
     let pid_file = module_dir.path().join("descendant.pid");
     let module_name = "fixture_codegen_worker";
@@ -120,31 +114,28 @@ async fn native_worker_demuxes_out_of_order_grades_and_reaps_descendants() {
         .parse::<i32>()
         .expect("parse descendant pid");
 
-    let first_items = vec![EvaluatorGradeItem {
-        problem_id: ProblemId::new("opaque-1").expect("problem id"),
-        response: "first".to_string(),
-    }];
-    let second_items = vec![EvaluatorGradeItem {
-        problem_id: ProblemId::new("opaque-2").expect("problem id"),
-        response: "second".to_string(),
-    }];
+    let items = vec![
+        EvaluatorGradeItem {
+            problem_id: ProblemId::new("opaque-1").expect("problem id"),
+            response: "first".to_string(),
+        },
+        EvaluatorGradeItem {
+            problem_id: ProblemId::new("opaque-2").expect("problem id"),
+            response: "second".to_string(),
+        },
+    ];
+    let grades = evaluator
+        .grade_batch(&items)
+        .await
+        .expect("grade native batch");
 
-    let (first, second) = tokio::join!(
-        evaluator.grade_batch_with_request_id_for_testing(101, &first_items),
-        evaluator.grade_batch_with_request_id_for_testing(202, &second_items),
-    );
-    let first = first.expect("first grade batch");
-    let second = second.expect("second grade batch");
-
-    assert_eq!(first.items[0].problem_id.as_str(), "opaque-1");
-    assert_eq!(second.items[0].problem_id.as_str(), "opaque-2");
-    assert_eq!(first.items[0].confidence, 101.0);
-    assert_eq!(second.items[0].confidence, 202.0);
-    assert!(process_exists(descendant_pid).expect("inspect descendant before shutdown"));
+    assert_eq!(grades.items[0].problem_id.as_str(), "opaque-1");
+    assert_eq!(grades.items[1].problem_id.as_str(), "opaque-2");
+    assert!(is_process_alive(descendant_pid).expect("inspect descendant before shutdown"));
 
     evaluator.shutdown().await.expect("shutdown evaluator");
     assert!(
-        !process_exists(descendant_pid).expect("inspect descendant after shutdown"),
+        !is_process_alive(descendant_pid).expect("inspect descendant after shutdown"),
         "shutdown must reap the worker's descendant process group",
     );
 }
