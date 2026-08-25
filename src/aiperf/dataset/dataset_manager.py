@@ -701,6 +701,47 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
                 "dataset cache directory."
             )
 
+    def _reject_system_prompt_for_raw_payload(
+        self, conversations: list[Conversation]
+    ) -> None:
+        """Refuse a verbatim system prompt when the dataset authors its own payloads.
+
+        ``inference_client`` ships ``Turn.raw_payload`` verbatim and never calls
+        ``format_payload``, which is the only place a conversation-level
+        ``system_message`` becomes wire bytes. The prompt would therefore be
+        composed, stored, and silently never sent -- measuring prefix-cache hit
+        rate and TTFT against a system prompt the server never saw.
+
+        Gated on ``any`` rather than ``all``: a dataset where only some
+        conversations carry ``raw_payload`` falls back to the CONVERSATION mmap
+        format and never reaches ``_select_mmap_format``'s PAYLOAD_BYTES guard,
+        but its raw turns are still dispatched verbatim.
+
+        Must run BEFORE ``_preformat_payloads``. Payloads synthesized there go
+        through ``format_payload`` with ``system_message`` attached, so they
+        carry the prompt correctly -- checking afterwards cannot tell a
+        natively-authored ``raw_payload`` from a pre-formatted one and would
+        reject a run that works.
+        """
+        if self.run.cfg.get_system_prompt() is None:
+            return
+        if not any(
+            turn.raw_payload is not None
+            for conv in conversations
+            for turn in conv.turns
+        ):
+            return
+        raise ValueError(
+            "--system-prompt/--system-prompt-file is incompatible with a dataset "
+            "whose turns carry their own raw_payload (raw_payload, inputs_json, "
+            "and mooncake_trace in payload mode). Those payloads are sent to the "
+            "server byte-for-byte, bypassing the payload formatting that puts the "
+            "system message on the wire, so the prompt would be silently dropped. "
+            "Either author the system message directly into the trace payloads, or "
+            "use a dataset type that produces structured turns (e.g. single_turn / "
+            "multi_turn / dag_jsonl)."
+        )
+
     def _select_mmap_format(self, conversations: list[Conversation]) -> MemoryMapFormat:
         """Pick the dataset mmap format and refuse PAYLOAD_BYTES for body-mutators.
 
@@ -938,6 +979,11 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             for conv in conversations
             for turn in conv.turns
         )
+
+        # Same pre-preformat window as the capture above, for the same reason:
+        # once _preformat_payloads runs, a synthesized raw_payload (which does
+        # carry the system message) is indistinguishable from an authored one.
+        self._reject_system_prompt_for_raw_payload(conversations)
 
         endpoint_meta: EndpointMetadata = plugins.get_endpoint_metadata(
             self.run.cfg.endpoint.type
