@@ -698,6 +698,12 @@ class MetricConsoleGroup(CaseInsensitiveStrEnum):
     """Phase-active-only time-weighted analyzer outputs — throughput restricted to
     intervals where the relevant phase has at least one request in flight."""
 
+    SPEC_DECODE = "spec_decode"
+    """Speculative-decoding acceptance metrics (acceptance length, draft
+    acceptance rate, accepted-per-verified, spec-decode steps). Rendered in a
+    dedicated `Spec Decode` console section, followed by a one-line pooled
+    accepted-draft histogram from a separate exporter."""
+
     GPU_POWER_EFFICIENCY_NVIDIA = "gpu_power_efficiency_nvidia"
     """NVIDIA cross-GPU power efficiency totals (power, energy, tokens/J,
     energy/user). Rendered in their own vendor-attributed console section rather
