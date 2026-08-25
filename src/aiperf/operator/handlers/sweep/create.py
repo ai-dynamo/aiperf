@@ -618,8 +618,8 @@ async def _create_sweep_controller_jobset(
     namespace: str,
     sweep_uid: str,
     epoch: str,
-    resource_mode: Literal["guaranteed", "burstable", "none"],
     template_spec: dict[str, Any],
+    resource_mode: Literal["guaranteed", "burstable", "none"] = "burstable",
 ) -> None:
     """Create a JobSet whose single replica runs `python -m aiperf.sweep_controller.main`.
 
