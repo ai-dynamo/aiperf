@@ -94,16 +94,16 @@ pub fn material_paths(
         })?;
         let target = match role {
             "controller" => BootstrapMaterialTarget::Role(NativeK8sRole::Controller),
-            cell if let Some(cell_id) = cell.strip_prefix("cell-") => {
+            cell => {
+                let Some(cell_id) = cell.strip_prefix("cell-") else {
+                    return Err(KubeError::Decode(format!(
+                        "--bootstrap-material names unknown role or cell identity {cell}"
+                    )));
+                };
                 let cell_id = cell_id.parse().map_err(|_| {
                     KubeError::Decode(format!("--bootstrap-material has invalid cell id {cell}"))
                 })?;
                 BootstrapMaterialTarget::Cell(cell_id)
-            }
-            other => {
-                return Err(KubeError::Decode(format!(
-                    "--bootstrap-material names unknown role or cell identity {other}"
-                )));
             }
         };
         if selected
