@@ -13,6 +13,7 @@ import orjson
 from pydantic import (
     ConfigDict,
     Field,
+    NonNegativeInt,
     PlainSerializer,
     PrivateAttr,
     RootModel,
@@ -481,6 +482,17 @@ class ProfileResults(AIPerfBaseModel):
     phase_records: list[PhaseProfileResults] | None = Field(
         default=None,
         description="Internal per-phase metric summaries used for phase artifacts.",
+    )
+    pooled_spec_decode_acceptance_histogram: (
+        dict[NonNegativeInt, NonNegativeInt] | None
+    ) = Field(
+        default=None,
+        description="Run-level pooled speculative-decoding acceptance histogram "
+        "for this phase: accepted-draft count j mapped to the total number of "
+        "verify steps that accepted exactly j draft tokens, summed elementwise "
+        "across every request. Its counts sum to ``total_spec_decode_steps``. "
+        "None when spec decode is off; forwarded to the aggregate JSON export and "
+        "the dedicated console histogram line.",
     )
 
     def get(self, tag: MetricTagT) -> MetricResult | None:
@@ -1607,6 +1619,13 @@ class MetricRecordInfo(AIPerfBaseModel):
         description="Comprehensive trace data captured via a trace config with wall-clock timestamps. "
         "Includes detailed timing for connection establishment, DNS resolution, request/response events, etc. "
         "The type of the trace data is determined by the transport and library used.",
+    )
+    spec_decode_acceptance: SpecDecodeAcceptanceRecord | None = Field(
+        default=None,
+        description="Engine-neutral per-request speculative-decoding acceptance "
+        "record (histogram, per-step counts, and aggregate tallies) carried into "
+        "the records trace at --export-level records. None when spec decode is off "
+        "or the request had no verify steps.",
     )
     error: ErrorDetails | None = Field(
         default=None,
