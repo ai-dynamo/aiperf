@@ -88,19 +88,10 @@ def test_handshake_reports_source_lock_packages_and_runtime() -> None:
         source_digest.update(relative)
         source_digest.update(len(payload).to_bytes(8, "big"))
         source_digest.update(payload)
-    lock = Path(worker_module.__file__).resolve().parents[3] / (
-        "requirements/accuracy-worker.txt"
-    )
     assert identity["worker_source_sha256"] == source_digest.hexdigest()
-    assert (
-        identity["dependency_lock_sha256"]
-        == hashlib.sha256(lock.read_bytes()).hexdigest()
-    )
+    assert identity["dependency_lock_sha256"] is None
     assert identity["python_executable"] == sys.executable
     assert set(worker_module._LOCKED_PACKAGE_VERSIONS) <= set(identity["packages"])
-    lock_text = lock.read_text()
-    for package, version in worker_module._LOCKED_PACKAGE_VERSIONS.items():
-        assert f"{package}=={version} " in lock_text
 
 
 def test_pinned_dataset_adapter_injects_and_enforces_revision() -> None:

@@ -26,8 +26,8 @@ Sol plan, TDD evidence, verification, and the required Graham review.
 
 | Order | Upstream commit | Subject | Status | Evidence |
 | --- | --- | --- | --- | --- |
-| 1 | `817a8d84ddb9` | fix(accuracy): grade LCB codegen in an out-of-process worker (#1145) (#1175) | rust-porting | Merge commit `1c03271dac3e` has upstream as its second parent. Focused upstream tests: 35 passed, 1 skipped. The native evaluator's LCB batch path still forks via `asyncio.to_thread`; the port spec is `docs/specs/2026-08-25-native-lcb-codegen-worker.md`. |
-+| 2 | `0883bd1aee` | chore: bump aiperf version to 0.12.0 (#1194) | pending | — |
+| 1 | `817a8d84ddb9` | fix(accuracy): grade LCB codegen in an out-of-process worker (#1145) (#1175) | complete | Merge `1c03271dac3e`; port commits `63eb01a355`, `e62454bfcd`, and `9e859f6110`; Graham approved. Focused Python verification: 53 passed, 2 skipped, 2 deselected. Rust evaluator-worker verification: 7 passed. |
+| 2 | `0883bd1aee` | chore: bump aiperf version to 0.12.0 (#1194) | pending | — |
 | 3 | `34b2be2ee1` | feat: support Speculative Decoding metrics in AIPerf (#1153) | pending | — |
 | 4 | `6db948524e` | fix: uncaught valueerror in sagemaker loader (#1199) | pending | — |
 | 5 | `ce715ae849` | fix(agentic): preserve trace think time with global idle guard (#1201) | pending | — |
@@ -127,3 +127,27 @@ native Rust evaluation route. The selected correction reuses the merged
 - A feature spec and Sol-produced plan if any Rust delta is applicable.
 - TDD red/green evidence and all applicable tests.
 - A full Graham review with every finding resolved.
+
+### Completion evidence
+
+The Sol plan was executed through the SDD task ledger at
+`.superpowers/sdd/2026-08-25-native-lcb-codegen-worker/progress.md`. The
+initial Graham finding about JSONL loss of nested `detail.pass@1` scores was
+corrected in `9e859f6110`; the re-review in
+`.superpowers/sdd/2026-08-25-native-lcb-codegen-worker/graham-rereview-1.md`
+is approved with no Important or Critical findings.
+
+Fresh focused verification after that correction reported 53 passed, 2
+skipped, and 2 deselected across the accuracy-worker, codegen-worker, and LCB
+integration suites. The two skips/deselections are selected test outcomes; the
+run emitted Docker-owned temporary-directory cleanup warnings after tests
+completed. `cargo test -p aiperf-runtime --features engine --lib
+accuracy_core::worker`, with `CARGO_TARGET_DIR` under `/mnt/4tb`, reported 7
+passed. That build emitted four pre-existing compiler warnings outside this
+port's files.
+
+The Python suite additionally exposed a stale handshake test that attempted to
+read `requirements/accuracy-worker.txt`, although ancestor `f117f41388` had
+deleted that file and `_dependency_lock_digest()` returns `None` for an absent
+lock. The test now asserts that established absence behavior and retains the
+independent locked-package handshake assertion.
