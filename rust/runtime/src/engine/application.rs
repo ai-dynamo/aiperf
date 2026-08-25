@@ -68,6 +68,7 @@ impl Application {
         dataset_inputs: Arc<dyn DatasetInputAdapterResolver>,
         sidecar_inputs: Arc<dyn SidecarInputAdapterResolver>,
     ) -> Result<Self> {
+        crate::endpoints::implementation::capture_endpoint_policy();
         let distribution_id = distribution_id.into();
         let coordinator = Coordinator::new(
             distribution_id.clone(),

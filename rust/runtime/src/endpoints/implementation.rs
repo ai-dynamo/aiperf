@@ -4,6 +4,7 @@
 //! Core endpoint implementations.
 
 use std::collections::{BTreeMap, HashSet};
+use std::sync::OnceLock;
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
@@ -29,6 +30,20 @@ use crate::endpoints::registry::{
     ReadinessPolicy, ReadinessSuccess, WebSocketCapabilities, WebSocketConnectionModel,
     WebSocketDialect, format_legacy_payload,
 };
+
+static FORCE_CONTENT_PARTS: OnceLock<bool> = OnceLock::new();
+
+/// Capture endpoint wire-format policy once at runner bootstrap.
+pub fn capture_endpoint_policy() {
+    let _ = FORCE_CONTENT_PARTS.set(
+        std::env::var("AIPERF_ENDPOINT_FORCE_CONTENT_PARTS").is_ok_and(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes"
+            )
+        }),
+    );
+}
 
 /// Warmup prefix used by the completions endpoint.
 pub const WARMUP_SYSTEM_MESSAGE_PREFIX: &str =
@@ -1403,7 +1418,8 @@ fn render_turn_message(turn: &Turn, shape: PartShape) -> EndpointResult<Value> {
 }
 
 fn render_turn_content(turn: &Turn, shape: PartShape) -> EndpointResult<Value> {
-    if turn.texts.len() == 1
+    if !FORCE_CONTENT_PARTS.get().copied().unwrap_or(false)
+        && turn.texts.len() == 1
         && turn.texts[0].contents.len() == 1
         && turn.images.is_empty()
         && turn.audios.is_empty()
