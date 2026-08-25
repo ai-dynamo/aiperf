@@ -94,3 +94,13 @@ catalog-only fix passed 1/1, and the rebuilt native binary then passed the full
 present/absent E2E file 14/14. JSON validation, formatting, and diff hygiene
 also pass. Task 4 and the adjacent Task 3 default-catalog wiring remain gated
 on scoped independent review.
+
+Task 4 first review: NOT APPROVED at `f657dd91cbb7ce8298f5aaa8b76f7c5045c6792e`;
+see `task-4-independent-review.md`. One Important finding reproduced real
+default-profile CSV rows falling back to internal tags because the embedded
+resource omitted all eleven v1 headers and the five derived/aggregate scalar
+classifications. The strict corrected regression failed 0/1 on that exact
+missing header, then passed 1/1 after the resource-only fix. The mock fixture
+suite now passes 3/3, including zero-output tool calls; the rebuilt native
+binary passes the CSV-aware present/absent E2E 14/14. Scoped re-review remains
+required.

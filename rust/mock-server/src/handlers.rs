@@ -1060,6 +1060,48 @@ mod spec_decode_acceptance_tests {
             .expect("usage-only frame");
         assert!(finish_index < usage_index);
     }
+
+    #[tokio::test]
+    async fn zero_output_tool_call_defers_finish_to_stats_chunk() {
+        let state = AppState::build(MockServerConfig {
+            fast: true,
+            no_tokenizer: true,
+            fixed_output_tokens: Some(0),
+            tool_call_rate: 1.0,
+            spec_decode_acceptance: true,
+            ..Default::default()
+        });
+        let (content_type, body) = render_chat_completion_fast(&state, &request(true));
+        assert_eq!(content_type, "text/event-stream");
+        let frames = sse_values(&body);
+
+        let tool_frames: Vec<&Value> = frames
+            .iter()
+            .filter(|frame| frame["choices"][0]["delta"].get("tool_calls").is_some())
+            .collect();
+        assert_eq!(tool_frames.len(), 2);
+        assert!(
+            tool_frames
+                .iter()
+                .all(|frame| frame["choices"][0]["finish_reason"].is_null())
+        );
+
+        let (finish_index, finish) = frames
+            .iter()
+            .enumerate()
+            .find(|(_, frame)| frame["choices"][0]["finish_reason"] == "tool_calls")
+            .expect("finish-only stats frame");
+        assert_eq!(finish["choices"][0]["delta"], json!({}));
+        assert_eq!(
+            finish["choices"][0]["speculative_decoding_stats"],
+            expected_stats()
+        );
+        let usage_index = frames
+            .iter()
+            .position(|frame| frame["choices"] == json!([]) && frame.get("usage").is_some())
+            .expect("usage-only frame");
+        assert!(finish_index < usage_index);
+    }
 }
 
 pub async fn messages(

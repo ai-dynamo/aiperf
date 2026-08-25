@@ -32,14 +32,16 @@ const RECORD_METRICS: &[(&str, f64)] = &[
 ];
 
 async fn harness(is_enabled: bool) -> AIPerfHarness {
-    AIPerfHarness::new_with(MockServerConfig {
+    let mut config = MockServerConfig {
         fast: true,
         no_tokenizer: true,
         workers: 1,
-        spec_decode_acceptance: is_enabled,
         ..Default::default()
-    })
-    .await
+    };
+    if is_enabled {
+        config.spec_decode_acceptance = true;
+    }
+    AIPerfHarness::new_with(config).await
 }
 
 fn run_case(h: &AIPerfHarness) -> RunResult {
@@ -58,6 +60,14 @@ fn console_text(result: &RunResult) -> String {
         .find_file("**/profile_export_console.txt")
         .expect("profile_export_console.txt");
     std::fs::read_to_string(path).expect("read console artifact")
+}
+
+fn csv_text(result: &RunResult) -> String {
+    let path = result
+        .artifacts
+        .find_file("**/profile_export_aiperf.csv")
+        .expect("profile_export_aiperf.csv");
+    std::fs::read_to_string(path).expect("read CSV artifact")
 }
 
 fn metric_average(summary: &Value, name: &str) -> f64 {
@@ -125,6 +135,22 @@ async fn canonical_stats_flow_through_real_profile_console_and_artifacts() {
         "Accepted drafts per step (% of steps):  0: 12%   1: 12%   2: 25%   3: 38%   4: 12%"
     ));
 
+    let csv = csv_text(&result);
+    assert!(
+        csv.contains("Acceptance Length (ratio),"),
+        "CSV artifact:\n{csv}"
+    );
+    assert!(
+        csv.contains("Overall Draft Acceptance Rate (%),56.25"),
+        "CSV artifact:\n{csv}"
+    );
+    assert!(
+        csv.contains("Total Spec Decode Steps,16.00"),
+        "CSV artifact:\n{csv}"
+    );
+    assert!(!csv.contains("spec_decode_acceptance_length"));
+    assert!(!csv.contains("total_spec_decode_steps"));
+
     let records = result.artifacts.jsonl();
     assert_eq!(records.len(), REQUESTS);
     for record in &records {
@@ -159,6 +185,9 @@ async fn default_mock_suppresses_all_spec_decode_stats_and_outputs() {
     let console = console_text(&result);
     assert!(!console.contains("NVIDIA AIPerf: Spec Decode"));
     assert!(!console.contains("Accepted drafts per step"));
+    let csv = csv_text(&result);
+    assert!(!csv.contains("Spec Decode"));
+    assert!(!csv.contains("spec_decode"));
 
     let records = result.artifacts.jsonl();
     assert_eq!(records.len(), REQUESTS);
