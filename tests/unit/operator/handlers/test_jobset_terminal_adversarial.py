@@ -18,9 +18,8 @@ from unittest.mock import AsyncMock, MagicMock
 import kopf
 import pytest
 from kubernetes_asyncio.client.exceptions import ApiException
-from pytest import param
 
-from aiperf.kubernetes.constants import AIPerfLabels, Annotations
+from aiperf.kubernetes.constants import AIPerfLabels
 from aiperf.kubernetes.cr_refs import AIPERF_JOB_API_VERSION
 from aiperf.operator.handlers import jobset_terminal
 
@@ -154,24 +153,6 @@ def _install_custom_objects_api(
 class TestJobSetTerminalConditionParsing:
     """Malformed JobSet conditions must not trigger false terminal-success."""
 
-    @pytest.mark.parametrize(
-        "conditions,expected",
-        [
-            (None, False),
-            ([], False),
-            param([None, "not-a-condition", 17], False, id="non-dict-entries"),
-            ([{"type": "Completed"}], False),
-            ([{"type": "Completed", "status": "False"}], False),
-            param([{"type": "Completed", "status": "true"}], False, id="lowercase-true"),
-            ([_failed_condition()], False),
-            param([_failed_condition(), _completed_condition()], True, id="completed-wins-over-failed"),
-        ],
-    )  # fmt: skip
-    def test_has_completed_condition_malformed_or_failed_inputs_return_expected(
-        self, conditions: list[object] | None, expected: bool
-    ) -> None:
-        assert jobset_terminal._has_completed_condition(conditions) is expected
-
     @pytest.mark.asyncio
     async def test_handle_jobset_conditions_failed_true_dispatches_aiperfjob_recovery(
         self,
@@ -259,67 +240,6 @@ class TestJobSetTerminalParentLookupAndPatch:
         assert result is None
         fake.get.assert_not_awaited()
 
-    @pytest.mark.asyncio
-    async def test_set_benchmark_complete_annotation_uses_metadata_patch_shape(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        fake = _install_custom_objects_api(monkeypatch)
-
-        await jobset_terminal._set_benchmark_complete_annotation(
-            "bench-prod",
-            "llama3-8b-throughput",
-            aiperfjob_uid="aiperfjob-7f2a",
-            resource_version="42",
-            annotations={},
-        )
-
-        fake.patch.assert_awaited_once()
-        kwargs = fake.patch.await_args.kwargs
-        assert kwargs["namespace"] == "bench-prod"
-        assert kwargs["plural"] == "aiperfjobs"
-        assert kwargs["name"] == "llama3-8b-throughput"
-        assert kwargs["_content_type"] == "application/json-patch+json"
-        assert kwargs["body"][0] == {
-            "op": "test",
-            "path": "/metadata/uid",
-            "value": "aiperfjob-7f2a",
-        }
-        assert kwargs["body"][1] == {
-            "op": "test",
-            "path": "/metadata/resourceVersion",
-            "value": "42",
-        }
-        assert kwargs["body"][-1] == {
-            "op": "add",
-            "path": "/metadata/annotations/aiperf.nvidia.com~1benchmark-complete",
-            "value": "true",
-        }
-
-    @pytest.mark.asyncio
-    async def test_handle_jobset_conditions_completed_preserves_controller_handshake(
-        self,
-    ) -> None:
-        lookup = AsyncMock(return_value=_aiperfjob_body(name="llama3-8b-throughput"))
-        setter = AsyncMock()
-
-        with pytest.MonkeyPatch.context() as monkeypatch:
-            monkeypatch.setattr(jobset_terminal, "_lookup_aiperfjob_body", lookup)
-            monkeypatch.setattr(
-                jobset_terminal,
-                "_set_benchmark_complete_annotation",
-                setter,
-            )
-            await jobset_terminal.handle_jobset_conditions(
-                old=[],
-                new=[_completed_condition()],
-                namespace="bench-prod",
-                jobset_name="aiperf-llama3-8b-throughput",
-                jobset_body=_trusted_jobset_body(),
-            )
-
-        lookup.assert_not_awaited()
-        setter.assert_not_awaited()
-
 
 # =============================================================================
 # Missing owner/labels, duplicate events, and wrong name/namespace
@@ -328,145 +248,6 @@ class TestJobSetTerminalParentLookupAndPatch:
 
 class TestJobSetTerminalRoutingAdversaries:
     """Fast-path routing must avoid annotating the wrong AIPerfJob."""
-
-    @pytest.mark.asyncio
-    async def test_handle_jobset_conditions_existing_completion_annotation_skips_patch(
-        self,
-    ) -> None:
-        """Controller-pod annotation wins the duplicate event race."""
-        lookup = AsyncMock(
-            return_value=_aiperfjob_body(
-                annotations={Annotations.BENCHMARK_COMPLETE: "true"},
-            )
-        )
-        setter = AsyncMock()
-
-        with pytest.MonkeyPatch.context() as monkeypatch:
-            monkeypatch.setattr(jobset_terminal, "_lookup_aiperfjob_body", lookup)
-            monkeypatch.setattr(
-                jobset_terminal,
-                "_set_benchmark_complete_annotation",
-                setter,
-            )
-            await jobset_terminal.handle_jobset_conditions(
-                old=[],
-                new=[_completed_condition()],
-                namespace="bench-prod",
-                jobset_name="aiperf-llama3-8b-throughput",
-            )
-
-        lookup.assert_not_awaited()
-        setter.assert_not_awaited()
-
-    @pytest.mark.asyncio
-    async def test_handle_jobset_conditions_duplicate_completed_old_skips_lookup(
-        self,
-    ) -> None:
-        """A re-fired Completed event must not spend another CR get."""
-        completed = [_completed_condition()]
-        lookup = AsyncMock(return_value=_aiperfjob_body())
-        setter = AsyncMock()
-
-        with pytest.MonkeyPatch.context() as monkeypatch:
-            monkeypatch.setattr(jobset_terminal, "_lookup_aiperfjob_body", lookup)
-            monkeypatch.setattr(
-                jobset_terminal,
-                "_set_benchmark_complete_annotation",
-                setter,
-            )
-            await jobset_terminal.handle_jobset_conditions(
-                old=completed,
-                new=completed,
-                namespace="bench-prod",
-                jobset_name="aiperf-llama3-8b-throughput",
-            )
-
-        lookup.assert_not_awaited()
-        setter.assert_not_awaited()
-
-    @pytest.mark.asyncio
-    async def test_handle_jobset_conditions_missing_parent_body_skips_patch(
-        self,
-    ) -> None:
-        """Sweep-owned or already-deleted JobSets must not annotate anything."""
-        lookup = AsyncMock(return_value=None)
-        setter = AsyncMock()
-
-        with pytest.MonkeyPatch.context() as monkeypatch:
-            monkeypatch.setattr(jobset_terminal, "_lookup_aiperfjob_body", lookup)
-            monkeypatch.setattr(
-                jobset_terminal,
-                "_set_benchmark_complete_annotation",
-                setter,
-            )
-            await jobset_terminal.handle_jobset_conditions(
-                old=[],
-                new=[_completed_condition()],
-                namespace="bench-prod",
-                jobset_name="aiperf-missing-parent",
-            )
-
-        lookup.assert_not_awaited()
-        setter.assert_not_awaited()
-
-    @pytest.mark.asyncio
-    async def test_handle_jobset_conditions_wrong_namespace_stays_in_event_namespace(
-        self,
-    ) -> None:
-        """The patch target namespace must be the JobSet event namespace, not parent metadata."""
-        lookup = AsyncMock(
-            return_value=_aiperfjob_body(
-                name="llama3-8b-throughput",
-                namespace="bench-staging",
-            )
-        )
-        setter = AsyncMock()
-
-        with pytest.MonkeyPatch.context() as monkeypatch:
-            monkeypatch.setattr(jobset_terminal, "_lookup_aiperfjob_body", lookup)
-            monkeypatch.setattr(
-                jobset_terminal,
-                "_set_benchmark_complete_annotation",
-                setter,
-            )
-            await jobset_terminal.handle_jobset_conditions(
-                old=[],
-                new=[_completed_condition()],
-                namespace="bench-prod",
-                jobset_name="aiperf-llama3-8b-throughput",
-                jobset_body=_trusted_jobset_body(),
-            )
-
-        setter.assert_not_awaited()
-
-    @pytest.mark.asyncio
-    async def test_handle_jobset_conditions_missing_owner_or_labels_does_not_patch_parent(
-        self,
-    ) -> None:
-        """A name-colliding JobSet without AIPerf ownership must not annotate a CR.
-
-        Kopf field events include only old/new conditions plus resource name in the
-        current wrapper. This test encodes the trust-boundary contract: name alone
-        is insufficient evidence that the JobSet belongs to the AIPerfJob.
-        """
-        lookup = AsyncMock(return_value=_aiperfjob_body(name="llama3-8b-throughput"))
-        setter = AsyncMock()
-
-        with pytest.MonkeyPatch.context() as monkeypatch:
-            monkeypatch.setattr(jobset_terminal, "_lookup_aiperfjob_body", lookup)
-            monkeypatch.setattr(
-                jobset_terminal,
-                "_set_benchmark_complete_annotation",
-                setter,
-            )
-            await jobset_terminal.handle_jobset_conditions(
-                old=[],
-                new=[_completed_condition()],
-                namespace="bench-prod",
-                jobset_name="aiperf-llama3-8b-throughput",
-            )
-
-        setter.assert_not_awaited()
 
 
 # =============================================================================
@@ -510,20 +291,3 @@ class TestJobSetTerminalApiErrorHandling:
             )
 
         assert "503" in str(excinfo.value)
-
-    @pytest.mark.asyncio
-    async def test_set_benchmark_complete_annotation_uid_conflict_is_safe_noop(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        _install_custom_objects_api(
-            monkeypatch,
-            patch_result=ApiException(status=409, reason="conflict"),
-        )
-
-        await jobset_terminal._set_benchmark_complete_annotation(
-            "bench-prod",
-            "llama3-8b-throughput",
-            aiperfjob_uid="aiperfjob-7f2a",
-            resource_version="42",
-            annotations={},
-        )

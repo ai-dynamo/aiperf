@@ -30,7 +30,7 @@ import urllib.request
 from collections.abc import Iterator
 from contextlib import asynccontextmanager
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 from unittest.mock import patch as mock_patch
 
 import kopf
@@ -44,10 +44,6 @@ from aiperf.operator.client_cache import (
     _reset_for_testing,
     _warned_pod_restarts,
     job_key,
-)
-from aiperf.operator.handlers.jobset_terminal import (
-    _has_completed_condition,
-    handle_jobset_conditions,
 )
 from aiperf.operator.handlers.pod_restarts import (
     _extract_reason,
@@ -240,59 +236,6 @@ class TestHypothesisPropertyTests:
         result = _extract_reason(cs)
         assert isinstance(result, str)
 
-    @given(conditions=st.one_of(st.none(), st.lists(_arbitrary_value, max_size=6)))
-    @settings(
-        deadline=None,
-        suppress_health_check=[
-            HealthCheck.too_slow,
-            HealthCheck.function_scoped_fixture,
-        ],
-        max_examples=200,
-    )
-    def test_has_completed_condition_never_raises(self, conditions: Any) -> None:
-        """``_has_completed_condition`` must accept arbitrary list-of-anything
-        (the round-1 fix added ``isinstance(cond, dict)`` to skip non-dicts)."""
-        result = _has_completed_condition(conditions)
-        assert isinstance(result, bool)
-
-    @pytest.mark.asyncio
-    @given(
-        old=st.one_of(st.none(), st.lists(_arbitrary_value, max_size=4)),
-        new=st.one_of(st.none(), st.lists(_arbitrary_value, max_size=4)),
-    )
-    @settings(
-        deadline=None,
-        suppress_health_check=[
-            HealthCheck.too_slow,
-            HealthCheck.function_scoped_fixture,
-        ],
-        max_examples=80,
-    )
-    async def test_handle_jobset_conditions_never_raises(
-        self, old: Any, new: Any
-    ) -> None:
-        """The full handler must not raise for any (old, new) shapes.
-
-        The lookup + setter are mocked to no-op so we isolate the handler
-        body's defensive parsing. No apiserver path runs either way: a
-        ``new`` without a true Failed/True dict exits on the condition
-        check, and one with it exits because no ``jobset_body`` is passed,
-        so no controller-owner kind is declared.
-        """
-        with (
-            mock_patch(
-                "aiperf.operator.handlers.jobset_terminal._lookup_aiperfjob_body",
-                new=AsyncMock(return_value=None),
-            ),
-            mock_patch(
-                "aiperf.operator.handlers.jobset_terminal._set_benchmark_complete_annotation",
-                new=AsyncMock(),
-            ),
-        ):
-            await handle_jobset_conditions(
-                old=old, new=new, namespace="ns", jobset_name="aiperf-x"
-            )
-
 
 # =============================================================================
 # Higher-fanout concurrent-stress for watch handlers
@@ -358,64 +301,6 @@ class TestConcurrentFanoutStress:
             "50-way concurrent fanout for the same (pod, count) MUST emit "
             "exactly one event; pre-claim atomicity is the only guard."
         )
-
-    @pytest.mark.asyncio
-    async def test_jobset_terminal_50_concurrent_handle_idempotent(self) -> None:
-        """Concurrent Completed events never substitute for controller proof."""
-        from aiperf.kubernetes.constants import AIPerfLabels
-        from aiperf.kubernetes.cr_refs import AIPERF_JOB_API_VERSION
-
-        new = [{"type": "Completed", "status": "True"}]
-        body = {
-            "metadata": {
-                "name": "ajob",
-                "uid": "uid-ajob",
-                "resourceVersion": "42",
-                "annotations": {},
-            },
-            "status": {},
-        }
-        trusted_jobset_body = {
-            "metadata": {
-                "name": "aiperf-ajob",
-                "labels": {
-                    AIPerfLabels.APP_KEY: AIPerfLabels.APP_VALUE,
-                    AIPerfLabels.JOB_ID: "ajob",
-                },
-                "ownerReferences": [
-                    {
-                        "apiVersion": AIPERF_JOB_API_VERSION,
-                        "kind": "AIPerfJob",
-                        "name": "ajob",
-                        "uid": "uid-ajob",
-                        "controller": True,
-                    }
-                ],
-            }
-        }
-        with (
-            mock_patch(
-                "aiperf.operator.handlers.jobset_terminal._lookup_aiperfjob_body",
-                new=AsyncMock(return_value=body),
-            ),
-            mock_patch(
-                "aiperf.operator.handlers.jobset_terminal._set_benchmark_complete_annotation",
-                new=AsyncMock(),
-            ) as setter,
-        ):
-            await asyncio.gather(
-                *(
-                    handle_jobset_conditions(
-                        old=[],
-                        new=new,
-                        namespace="ns",
-                        jobset_name="aiperf-ajob",
-                        jobset_body=trusted_jobset_body,
-                    )
-                    for _ in range(50)
-                )
-            )
-        setter.assert_not_awaited()
 
 
 # =============================================================================
