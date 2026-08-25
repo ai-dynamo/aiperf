@@ -20,6 +20,7 @@ use dynamo_renderer::{ChatTemplate, ContextMixins, OAIChatLikeRequest, PromptFor
 use dynamo_tokenizers::HuggingFaceTokenizer as DynamoHuggingFaceTokenizer;
 use dynamo_tokenizers::traits::{Decoder as _, Encoder as _};
 use minijinja::Value as JinjaValue;
+use rayon::prelude::*;
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -44,6 +45,15 @@ use crate::transport::http::transport::http_transport::HttpTransport;
 pub trait TextTokenizer: Send + Sync {
     /// Encode text without automatically adding model special tokens.
     fn encode(&self, text: &str) -> Result<Vec<u32>>;
+
+    /// Encode an ordered batch without automatically adding model special tokens.
+    ///
+    /// A successful result contains exactly one token vector per input, and result
+    /// element `i` is semantically identical to `encode(texts[i])`. Empty input
+    /// returns an empty vector without invoking a tokenizer backend.
+    fn encode_batch(&self, texts: &[&str]) -> Result<Vec<Vec<u32>>> {
+        texts.par_iter().map(|text| self.encode(text)).collect()
+    }
 
     /// Decode token IDs while retaining explicit special tokens.
     fn decode(&self, token_ids: &[u32]) -> Result<String>;
@@ -750,6 +760,21 @@ impl TextTokenizer for HuggingFaceTokenizer {
             .map_err(|error| DatasetError::Tokenizer(error.to_string()))
     }
 
+    fn encode_batch(&self, texts: &[&str]) -> Result<Vec<Vec<u32>>> {
+        if texts.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.inner
+            .encode_batch(texts)
+            .map(|encodings| {
+                encodings
+                    .into_iter()
+                    .map(|encoding| encoding.token_ids().to_vec())
+                    .collect()
+            })
+            .map_err(|error| DatasetError::Tokenizer(error.to_string()))
+    }
+
     fn decode(&self, token_ids: &[u32]) -> Result<String> {
         self.inner
             .decode(token_ids, false)
@@ -1290,6 +1315,81 @@ mod tests {
     use std::thread;
 
     use super::*;
+
+    struct ScalarOnlyTokenizer;
+
+    impl TextTokenizer for ScalarOnlyTokenizer {
+        fn encode(&self, text: &str) -> Result<Vec<u32>> {
+            Ok(text.bytes().map(u32::from).collect())
+        }
+
+        fn decode(&self, _token_ids: &[u32]) -> Result<String> {
+            Err(DatasetError::Tokenizer(
+                "decode is not used by this test".into(),
+            ))
+        }
+
+        fn bos_token_id(&self) -> Option<u32> {
+            None
+        }
+
+        fn eos_token_id(&self) -> Option<u32> {
+            None
+        }
+
+        fn name(&self) -> &str {
+            "scalar-only"
+        }
+    }
+
+    #[test]
+    fn text_tokenizer_default_batch_is_ordered_and_empty_safe() {
+        let tokenizer = ScalarOnlyTokenizer;
+        let texts = ["second", "first", "third value"];
+        let expected = texts
+            .iter()
+            .map(|text| tokenizer.encode(text))
+            .collect::<Result<Vec<_>>>()
+            .unwrap();
+
+        assert_eq!(tokenizer.encode_batch(&texts).unwrap(), expected);
+        assert_eq!(tokenizer.encode_batch(&[]).unwrap(), Vec::<Vec<u32>>::new());
+    }
+
+    #[test]
+    fn hugging_face_batch_encoding_matches_scalar_order() {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(
+            directory.path().join("tokenizer.json"),
+            r#"{
+  "version":"1.0",
+  "truncation":null,
+  "padding":null,
+  "added_tokens":[
+    {"id":0,"content":"[UNK]","single_word":false,"lstrip":false,"rstrip":false,"normalized":false,"special":true},
+    {"id":1,"content":"<s>","single_word":false,"lstrip":false,"rstrip":false,"normalized":false,"special":true},
+    {"id":2,"content":"</s>","single_word":false,"lstrip":false,"rstrip":false,"normalized":false,"special":true}
+  ],
+  "normalizer":null,
+  "pre_tokenizer":{"type":"Whitespace"},
+  "post_processor":null,
+  "decoder":null,
+  "model":{"type":"WordLevel","vocab":{"[UNK]":0,"<s>":1,"</s>":2,"user":3,"hello":4,"assistant":5},"unk_token":"[UNK]"}
+}"#,
+        )
+        .unwrap();
+        let tokenizer =
+            HuggingFaceTokenizer::from_file(directory.path().join("tokenizer.json")).unwrap();
+        let texts = ["assistant hello", "", "user hello assistant", "hello"];
+        let scalar = texts
+            .iter()
+            .map(|text| tokenizer.encode(text))
+            .collect::<Result<Vec<_>>>()
+            .unwrap();
+
+        assert_eq!(tokenizer.encode_batch(&texts).unwrap(), scalar);
+        assert_eq!(tokenizer.encode_batch(&[]).unwrap(), Vec::<Vec<u32>>::new());
+    }
 
     /// Write a minimal but format-faithful `tiktoken.model`: single-byte tokens
     /// for bytes 0..=255 (ranks 0..=255) plus a couple of multi-byte merges, so

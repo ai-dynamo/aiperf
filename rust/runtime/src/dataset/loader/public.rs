@@ -32,6 +32,9 @@ use crate::dataset::model::{
 use crate::dataset::segment::{Role, SegmentPool};
 use crate::dataset::tokenizer::TextTokenizer;
 
+const SHAREGPT_TOKENIZER_BATCH_SIZE: usize = 4096;
+
+type ExtractedShareGptRows = Vec<Option<Vec<(String, String)>>>;
 type PreparedShareGptPair = (String, Vec<u32>, u32);
 type PreparedShareGptRows = Vec<Option<Vec<PreparedShareGptPair>>>;
 type PreparedHfConversationPair = (String, Option<u32>);
@@ -300,48 +303,72 @@ impl Composer for ShareGptComposer {
         let mut finalizer = config.finalizer()?;
         let mut conversations = Vec::new();
 
-        // Tokenizing every prompt/completion pair (and the min/max-length
-        // validity check that depends on those token counts) touches only the
-        // row's own JSON, not the shared segment pool or the session-id
-        // generator - precompute the whole per-row pair list (or `None` for a
-        // row that gets skipped) in parallel, then do the sequential
-        // segments/ids pass using the precomputed result.
-        let prepared_rows: PreparedShareGptRows = rows
-            .par_iter()
-            .map(|row| -> Result<Option<Vec<PreparedShareGptPair>>> {
-                let Some(messages) = row.value.get("conversations").and_then(Value::as_array)
-                else {
-                    return Ok(None);
-                };
+        let extracted_rows: ExtractedShareGptRows = rows
+            .iter()
+            .map(|row| {
+                let messages = row.value.get("conversations")?.as_array()?;
                 let pairs = sharegpt_pairs(messages);
-                if pairs.is_empty() {
-                    return Ok(None);
-                }
-                let mut prepared = Vec::with_capacity(pairs.len());
-                for (prompt, completion) in pairs {
-                    let prompt_tokens = tokenizer.encode(&prompt)?;
-                    let completion_tokens = tokenizer.encode(&completion)?;
-                    if !budget.pair_ok(
-                        prompt_tokens.len(),
-                        completion_tokens.len(),
-                        skip_min_output,
-                    ) {
-                        return Ok(None);
-                    }
-                    let completion_tokens =
-                        u32::try_from(completion_tokens.len()).map_err(|_| {
-                            DatasetError::Validation(
-                                "ShareGPT completion length exceeds the u32 request limit".into(),
-                            )
-                        })?;
-                    prepared.push((prompt, prompt_tokens, completion_tokens));
-                }
-                if prepared.is_empty() {
-                    return Ok(None);
-                }
-                Ok(Some(prepared))
+                (!pairs.is_empty()).then_some(pairs)
             })
-            .collect::<Result<Vec<_>>>()?;
+            .collect();
+        let texts = extracted_rows
+            .iter()
+            .flatten()
+            .flat_map(|pairs| pairs.iter())
+            .flat_map(|(prompt, completion)| [prompt.as_str(), completion.as_str()])
+            .collect::<Vec<_>>();
+        let expected = texts.len();
+        let mut encoded = Vec::with_capacity(expected);
+        for chunk in texts.chunks(SHAREGPT_TOKENIZER_BATCH_SIZE) {
+            encoded.extend(tokenizer.encode_batch(chunk)?);
+        }
+        let actual = encoded.len();
+        if actual != expected {
+            return Err(DatasetError::Tokenizer(format!(
+                "ShareGPT batch encoding result count mismatch: expected {expected}, actual {actual}"
+            )));
+        }
+
+        let mut encoded = encoded.into_iter();
+        let mut prepared_rows: PreparedShareGptRows = Vec::with_capacity(extracted_rows.len());
+        for pairs in extracted_rows {
+            let Some(pairs) = pairs else {
+                prepared_rows.push(None);
+                continue;
+            };
+            let mut prepared = Vec::with_capacity(pairs.len());
+            let mut is_valid = true;
+            for (prompt, _completion) in pairs {
+                let prompt_tokens = encoded.next().ok_or_else(|| {
+                    DatasetError::Tokenizer(
+                        "ShareGPT batch encoding ended during checked reconstruction".into(),
+                    )
+                })?;
+                let completion_tokens = encoded.next().ok_or_else(|| {
+                    DatasetError::Tokenizer(
+                        "ShareGPT batch encoding ended during checked reconstruction".into(),
+                    )
+                })?;
+                if !is_valid {
+                    continue;
+                }
+                if !budget.pair_ok(
+                    prompt_tokens.len(),
+                    completion_tokens.len(),
+                    skip_min_output,
+                ) {
+                    is_valid = false;
+                    continue;
+                }
+                let completion_tokens = u32::try_from(completion_tokens.len()).map_err(|_| {
+                    DatasetError::Validation(
+                        "ShareGPT completion length exceeds the u32 request limit".into(),
+                    )
+                })?;
+                prepared.push((prompt, prompt_tokens, completion_tokens));
+            }
+            prepared_rows.push(is_valid.then_some(prepared));
+        }
 
         for prepared in prepared_rows.into_iter().flatten() {
             let mut conversation = Conversation::new(ids.next_id());
@@ -2361,8 +2388,8 @@ mod tests {
     use std::io::Cursor;
     use std::sync::Arc;
     use std::sync::Mutex;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
-    use crate::rng::RngRoot;
     #[cfg(feature = "parquet")]
     use parquet::data_type::{ByteArray, ByteArrayType};
     #[cfg(feature = "parquet")]
@@ -2374,6 +2401,147 @@ mod tests {
     use super::*;
     use crate::dataset::loader::{DatasetFormatRegistration, LoaderRegistry};
     use crate::dataset::tokenizer::TiktokenTokenizer;
+    use crate::rng::{RngRoot, SamplingDistribution};
+
+    fn word_tokens(text: &str) -> Vec<u32> {
+        text.split_whitespace()
+            .map(|word| {
+                word.bytes().fold(1_u32, |hash, byte| {
+                    hash.wrapping_mul(31).wrapping_add(u32::from(byte))
+                })
+            })
+            .collect()
+    }
+
+    struct ScalarWordTokenizer;
+
+    impl TextTokenizer for ScalarWordTokenizer {
+        fn encode(&self, text: &str) -> Result<Vec<u32>> {
+            Ok(word_tokens(text))
+        }
+
+        fn decode(&self, _token_ids: &[u32]) -> Result<String> {
+            Err(DatasetError::Tokenizer(
+                "decode is not used by this test".into(),
+            ))
+        }
+
+        fn bos_token_id(&self) -> Option<u32> {
+            None
+        }
+
+        fn eos_token_id(&self) -> Option<u32> {
+            None
+        }
+
+        fn name(&self) -> &str {
+            "scalar-word"
+        }
+    }
+
+    struct BatchOnlyTokenizer {
+        expected_batch_sizes: &'static [usize],
+        next_batch: AtomicUsize,
+    }
+
+    impl BatchOnlyTokenizer {
+        fn accepting_any_bounded_batch() -> Self {
+            Self {
+                expected_batch_sizes: &[],
+                next_batch: AtomicUsize::new(0),
+            }
+        }
+
+        fn expecting(expected_batch_sizes: &'static [usize]) -> Self {
+            Self {
+                expected_batch_sizes,
+                next_batch: AtomicUsize::new(0),
+            }
+        }
+    }
+
+    impl TextTokenizer for BatchOnlyTokenizer {
+        fn encode(&self, _text: &str) -> Result<Vec<u32>> {
+            Err(DatasetError::Tokenizer(
+                "scalar encoding is forbidden".into(),
+            ))
+        }
+
+        fn encode_batch(&self, texts: &[&str]) -> Result<Vec<Vec<u32>>> {
+            if texts.len() > SHAREGPT_TOKENIZER_BATCH_SIZE {
+                return Err(DatasetError::Tokenizer(format!(
+                    "batch contains {} texts, maximum is {SHAREGPT_TOKENIZER_BATCH_SIZE}",
+                    texts.len()
+                )));
+            }
+            let batch = self.next_batch.fetch_add(1, Ordering::Relaxed);
+            if !self.expected_batch_sizes.is_empty()
+                && self.expected_batch_sizes.get(batch).copied() != Some(texts.len())
+            {
+                return Err(DatasetError::Tokenizer(format!(
+                    "batch {batch} contained {} texts, expected {:?}",
+                    texts.len(),
+                    self.expected_batch_sizes.get(batch)
+                )));
+            }
+            Ok(texts.iter().map(|text| word_tokens(text)).collect())
+        }
+
+        fn decode(&self, _token_ids: &[u32]) -> Result<String> {
+            Err(DatasetError::Tokenizer(
+                "decode is not used by this test".into(),
+            ))
+        }
+
+        fn bos_token_id(&self) -> Option<u32> {
+            None
+        }
+
+        fn eos_token_id(&self) -> Option<u32> {
+            None
+        }
+
+        fn name(&self) -> &str {
+            "batch-only"
+        }
+    }
+
+    struct ShortBatchTokenizer;
+
+    impl TextTokenizer for ShortBatchTokenizer {
+        fn encode(&self, _text: &str) -> Result<Vec<u32>> {
+            Err(DatasetError::Tokenizer(
+                "scalar encoding is forbidden".into(),
+            ))
+        }
+
+        fn encode_batch(&self, texts: &[&str]) -> Result<Vec<Vec<u32>>> {
+            let mut encodings = texts
+                .iter()
+                .map(|text| word_tokens(text))
+                .collect::<Vec<_>>();
+            encodings.pop();
+            Ok(encodings)
+        }
+
+        fn decode(&self, _token_ids: &[u32]) -> Result<String> {
+            Err(DatasetError::Tokenizer(
+                "decode is not used by this test".into(),
+            ))
+        }
+
+        fn bos_token_id(&self) -> Option<u32> {
+            None
+        }
+
+        fn eos_token_id(&self) -> Option<u32> {
+            None
+        }
+
+        fn name(&self) -> &str {
+            "short-batch"
+        }
+    }
 
     struct MockRevisionFetcher {
         info: Bytes,
@@ -2422,17 +2590,34 @@ mod tests {
         source: Value,
         options: Map<String, Value>,
     ) -> Result<crate::dataset::Dataset> {
+        let mut compose = ComposeConfig::new("model", RngRoot::new(Some(5)));
+        compose.format_options = options;
+        build_with_config(
+            loader,
+            composer,
+            source,
+            &compose,
+            &TiktokenTokenizer::builtin(),
+        )
+        .await
+    }
+
+    async fn build_with_config(
+        loader: Arc<dyn DatasetLoader>,
+        composer: Arc<dyn Composer>,
+        source: Value,
+        compose: &ComposeConfig,
+        tokenizer: &dyn TextTokenizer,
+    ) -> Result<crate::dataset::Dataset> {
         let mut registry = LoaderRegistry::new();
         let name = loader.name().to_string();
         registry.register(DatasetFormatRegistration::new(loader, composer))?;
-        let mut compose = ComposeConfig::new("model", RngRoot::new(Some(5)));
-        compose.format_options = options;
         registry
             .build_dataset(
                 Some(&name),
                 &LoadConfig::new(DatasetSource::Inline(source)),
-                &compose,
-                &TiktokenTokenizer::builtin(),
+                compose,
+                tokenizer,
             )
             .await
     }
@@ -2495,6 +2680,179 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(dataset.conversations()[0].turns.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn sharegpt_batch_reconstruction_preserves_semantics() {
+        let valid_row = json!({"conversations":[
+            {"from":"human","value":"one two three four"},
+            {"from":"gpt","value":"five six seven"},
+            {"from":"human","value":"eight nine"},
+            {"from":"gpt","value":"ten eleven"}
+        ]});
+        let mixed_source = Value::Array(vec![
+            json!({"conversations":[
+                {"from":"human","value":"short"},
+                {"from":"gpt","value":"two words"}
+            ]}),
+            valid_row.clone(),
+            json!({"conversations":[
+                {"from":"human","value":"one two three four five"},
+                {"from":"gpt","value":"six seven"}
+            ]}),
+            json!({"conversations":[
+                {"from":"human","value":"one two three four"},
+                {"from":"gpt","value":"five six seven eight"}
+            ]}),
+            json!({"conversations":[{"from":"human","value":"malformed only"}]}),
+        ]);
+        let configured = || {
+            let mut config = ComposeConfig::new("model", RngRoot::new(Some(5)));
+            config
+                .format_options
+                .insert("min_sequence_tokens".into(), Value::from(2));
+            config
+                .format_options
+                .insert("max_prompt_tokens".into(), Value::from(4));
+            config
+                .format_options
+                .insert("max_total_tokens".into(), Value::from(7));
+            config
+        };
+
+        let scalar = build_with_config(
+            Arc::new(ShareGptDatasetLoader),
+            Arc::new(ShareGptComposer),
+            mixed_source.clone(),
+            &configured(),
+            &ScalarWordTokenizer,
+        )
+        .await
+        .unwrap();
+        let batched = build_with_config(
+            Arc::new(ShareGptDatasetLoader),
+            Arc::new(ShareGptComposer),
+            mixed_source,
+            &configured(),
+            &BatchOnlyTokenizer::accepting_any_bounded_batch(),
+        )
+        .await
+        .unwrap();
+        let valid_only = build_with_config(
+            Arc::new(ShareGptDatasetLoader),
+            Arc::new(ShareGptComposer),
+            Value::Array(vec![valid_row]),
+            &configured(),
+            &ScalarWordTokenizer,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(batched.conversations(), scalar.conversations());
+        assert_eq!(batched.conversations().len(), 1);
+        assert_eq!(
+            batched.conversations()[0].session_id,
+            valid_only.conversations()[0].session_id
+        );
+        let turns = &batched.conversations()[0].turns;
+        assert_eq!(turns.len(), 2);
+        assert_eq!(turns[0].input_tokens, Some(4));
+        assert_eq!(turns[0].max_tokens, Some(3));
+        assert_eq!(turns[1].input_tokens, Some(2));
+        assert_eq!(turns[1].max_tokens, Some(2));
+        let first = turns[0].content[0].handles[0];
+        let second = turns[1].content[0].handles[0];
+        assert_eq!(
+            batched.segments().segment(second).unwrap().parent,
+            Some(first)
+        );
+        assert_eq!(batched.segments().len(), scalar.segments().len());
+        for index in 0..batched.segments().len() {
+            let handle = crate::dataset::Handle::new(u32::try_from(index).unwrap());
+            assert_eq!(
+                batched.segments().segment(handle),
+                scalar.segments().segment(handle)
+            );
+        }
+
+        let mut override_config = configured();
+        override_config.output_length_distribution =
+            Some(SamplingDistribution::fixed(9.0).unwrap());
+        let overridden = build_with_config(
+            Arc::new(ShareGptDatasetLoader),
+            Arc::new(ShareGptComposer),
+            json!([{"conversations":[
+                {"from":"human","value":"one two"},
+                {"from":"gpt","value":"short"}
+            ]}]),
+            &override_config,
+            &BatchOnlyTokenizer::accepting_any_bounded_batch(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(overridden.conversations().len(), 1);
+        assert_eq!(overridden.conversations()[0].turns[0].max_tokens, Some(1));
+    }
+
+    #[tokio::test]
+    async fn sharegpt_batch_encoding_is_bounded_at_4096_texts() {
+        let mut rows = (0..2_047)
+            .map(|index| {
+                json!({"conversations":[
+                    {"from":"human","value":format!("prompt {index} alpha beta")},
+                    {"from":"gpt","value":"completion gamma delta epsilon"}
+                ]})
+            })
+            .collect::<Vec<_>>();
+        rows.push(json!({"conversations":[
+            {"from":"human","value":"short"},
+            {"from":"gpt","value":"invalid first completion has four"},
+            {"from":"human","value":"valid second prompt words"},
+            {"from":"gpt","value":"valid second completion words"}
+        ]}));
+        rows.push(json!({"conversations":[
+            {"from":"human","value":"final prompt has exactly six words"},
+            {"from":"gpt","value":"final completion has five words"}
+        ]}));
+        let config = ComposeConfig::new("model", RngRoot::new(Some(5)));
+        let tokenizer = BatchOnlyTokenizer::expecting(&[4096, 4]);
+        let dataset = build_with_config(
+            Arc::new(ShareGptDatasetLoader),
+            Arc::new(ShareGptComposer),
+            Value::Array(rows),
+            &config,
+            &tokenizer,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(dataset.conversations().len(), 2_048);
+        assert_eq!(dataset.conversations()[0].turns[0].input_tokens, Some(4));
+        assert_eq!(dataset.conversations()[0].turns[0].max_tokens, Some(4));
+        assert_eq!(
+            dataset.conversations()[2_047].turns[0].input_tokens,
+            Some(6)
+        );
+        assert_eq!(dataset.conversations()[2_047].turns[0].max_tokens, Some(5));
+    }
+
+    #[tokio::test]
+    async fn sharegpt_rejects_batch_cardinality_mismatch_before_interning() {
+        let load = LoadConfig::new(DatasetSource::Inline(json!([{"conversations":[
+            {"from":"human","value":"one two three four"},
+            {"from":"gpt","value":"five six seven eight"}
+        ]}])));
+        let rows = ShareGptDatasetLoader.load(&load).await.unwrap();
+        let config = ComposeConfig::new("model", RngRoot::new(Some(5)));
+        let mut segments = SegmentPool::new();
+
+        let error = ShareGptComposer
+            .compose(rows, &config, &ShortBatchTokenizer, &mut segments)
+            .unwrap_err();
+
+        assert!(matches!(error, DatasetError::Tokenizer(_)));
+        assert!(error.to_string().contains("expected 2, actual 1"));
+        assert!(segments.freeze().segments().is_empty());
     }
 
     fn hf_auto_options(value: Value) -> Map<String, Value> {

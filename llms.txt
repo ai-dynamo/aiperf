@@ -640,6 +640,10 @@ Inputs, endpoints, and graph:
 - [`docs/specs/dataset.md`](docs/specs/dataset.md) — the content-addressed segment store,
   its pool/freeze/thaw write side, and the
   loader→compose→store→sampler→materializer pipeline.
+- [`docs/specs/2026-08-25-native-sharegpt-batch-encoding.md`](docs/specs/2026-08-25-native-sharegpt-batch-encoding.md) —
+  approved native ShareGPT configuration performance port: an ordered tokenizer
+  batch seam, bounded 4096-text composition batches, and exact preservation of
+  token IDs and row admission.
 - [`docs/specs/prompt-corpus.md`](docs/specs/prompt-corpus.md) — the shared `prompts.corpus`
   seam for synthetic, count/hash-based trace, and recorded-graph prompt synthesis over
   the `sonnet`, `coding`, and exact-length `random` corpora.
