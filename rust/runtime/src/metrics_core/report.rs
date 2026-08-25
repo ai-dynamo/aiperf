@@ -1092,7 +1092,7 @@ pub struct NativeReport {
     pub metrics: BTreeMap<String, MetricEntry>,
     /// Exact accepted-draft bucket counts pooled across the selected profiling phase.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub pooled_spec_decode_acceptance_histogram: Option<BTreeMap<u64, u64>>,
+    pub pooled_spec_decode_acceptance_histogram: Option<BTreeMap<u64, u128>>,
     /// Warmup metrics using the same representation.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub warmup_metrics: Option<BTreeMap<String, MetricEntry>>,
@@ -1447,6 +1447,11 @@ mod tests {
         assert_eq!(
             report.pooled_spec_decode_acceptance_histogram,
             Some(BTreeMap::from([(0, 1), (1, 1), (2, 2), (3, 3), (4, 1)]))
+        );
+        let serialized = serde_json::to_value(&report).unwrap();
+        assert_eq!(
+            serialized["pooled_spec_decode_acceptance_histogram"]["3"],
+            3
         );
     }
 

@@ -122,7 +122,9 @@ steps and token counts are neutral. Display orders are 5000, 5010, 5020, 5025,
 5030, 5040, 5050, 5060, 5140, 5150, and 5160 respectively.
 
 `ColumnStore` retains the optional canonical record beside each exact row and
-an exact pooled counter keyed by `(Phase, Option<phase_index>)`. Valid,
+an exact `u128` pooled counter keyed by `(Phase, Option<phase_index>)`. The
+cellular MessagePack form retains `u64` counts for compatibility and refuses a
+pooled value that cannot be narrowed exactly. Valid,
 non-cancelled records update the counter during insertion. `ExportContext`
 gains an optional concrete `phase_index`: exact row masks, bounded-memory
 sketch keys, and histogram selection all apply it when present; a phase-only

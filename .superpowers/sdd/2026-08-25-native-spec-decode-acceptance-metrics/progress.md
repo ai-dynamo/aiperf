@@ -27,7 +27,7 @@ Ruling: concrete phase-index selection applies to exact row masks, sketch keys, 
 ## Task state
 
 - Task 1: completed, GREEN, and independently approved
-- Task 2: completed and GREEN; independent review pending
+- Task 2: review fix completed and GREEN; scoped re-review pending
 - Task 3: pending
 - Task 4: pending
 
@@ -48,3 +48,14 @@ metrics-core sweep has one unrelated pre-existing golden mismatch caused by
 shared-head version drift (`0.12.0` actual versus `0.0.0` expected); no Task 2
 code or fixture owns that version string. Task 3 remains gated on independent
 Task 2 review.
+
+Task 2 first review: NOT APPROVED at `a222b4ae7d`. The reviewer confirmed five
+important failures: unchecked exact histogram overflow during ingest, append,
+and context pooling; suppression of a defined accepted-per-verified value;
+positional MessagePack incompatibility; missing exact-row canonical retention;
+and inconsistent index-only public contexts. The strict behavioral RED passed
+12 tests and failed the five intended regressions. The fix-round focused GREEN
+passed 20/20 with 1742 filtered tests, and formatting passed. The adjacent
+metrics-core sweep passed 130/131; its sole failure remains the unrelated
+shared-head `0.12.0` versus `0.0.0` report-golden drift. See `task-2-report.md`
+and `task-2-independent-review.md`. Task 3 remains gated on scoped re-review.

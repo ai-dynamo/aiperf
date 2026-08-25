@@ -498,6 +498,7 @@ mod tests {
             crate::metrics_core::MetricsStorageMode::Exact,
             crate::metrics_core::MetricsStorageMode::Sketch { compression: 100.0 },
         ] {
+            let is_exact = matches!(storage_mode, crate::metrics_core::MetricsStorageMode::Exact);
             let config = MetricsConfig {
                 storage_mode,
                 ..MetricsConfig::default()
@@ -512,8 +513,14 @@ mod tests {
             ]
             .into_iter()
             .map(|partition| {
-                ColumnStorePartition::from_bytes(&partition.to_bytes().expect("encode"))
-                    .expect("decode")
+                let restored =
+                    ColumnStorePartition::from_bytes(&partition.to_bytes().expect("encode"))
+                        .expect("decode");
+                assert_eq!(
+                    restored.store().spec_decode_acceptance(0).is_some(),
+                    is_exact
+                );
+                restored
             })
             .collect();
 
@@ -533,6 +540,59 @@ mod tests {
                 Some(3.0)
             );
         }
+    }
+
+    #[test]
+    fn spec_decode_histogram_wire_refuses_counts_beyond_u64() {
+        let mut record = RecordIngest::minimal(0, 1, Phase::Profiling);
+        record.phase_index = Some(0);
+        record.spec_decode_acceptance = Some(ObservedSpecDecodeAcceptance {
+            engine: "vllm".to_string(),
+            mean_acceptance_length: 1.0,
+            draft_acceptance_rate: 0.0,
+            acceptance_histogram: BTreeMap::from([(0, u64::MAX)]),
+            num_accepted_draft_tokens: 0,
+            num_draft_tokens: u64::MAX,
+            num_spec_steps: u64::MAX,
+            num_spec_tokens: Some(1),
+            completion_tokens: Some(u64::MAX),
+            per_step_accepted: None,
+            per_step_drafted: None,
+        });
+        let mut accumulator = MetricsAccumulator::new();
+        accumulator.process_record(&record);
+        record.start_ns = 2;
+        record.end_ns = 3;
+        record
+            .spec_decode_acceptance
+            .as_mut()
+            .unwrap()
+            .acceptance_histogram = BTreeMap::from([(0, 1)]);
+        record
+            .spec_decode_acceptance
+            .as_mut()
+            .unwrap()
+            .num_draft_tokens = 1;
+        record
+            .spec_decode_acceptance
+            .as_mut()
+            .unwrap()
+            .num_spec_steps = 1;
+        record
+            .spec_decode_acceptance
+            .as_mut()
+            .unwrap()
+            .completion_tokens = Some(1);
+        accumulator.process_record(&record);
+
+        let error = ColumnStorePartition::from_accumulator(0, &accumulator)
+            .to_bytes()
+            .expect_err("u128 count must not narrow silently");
+        assert!(
+            error
+                .to_string()
+                .contains("exceeds the MessagePack u64 wire")
+        );
     }
 
     #[test]

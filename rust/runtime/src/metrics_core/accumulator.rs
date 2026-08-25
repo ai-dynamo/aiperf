@@ -358,7 +358,7 @@ pub struct AccumulatorSummary {
     inference_series: Vec<InferenceMetricSeriesSummary>,
     sidecar_metrics: BTreeMap<String, SidecarMetric>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pooled_spec_decode_acceptance_histogram: Option<BTreeMap<u64, u64>>,
+    pooled_spec_decode_acceptance_histogram: Option<BTreeMap<u64, u128>>,
 }
 
 impl AccumulatorSummary {
@@ -443,7 +443,7 @@ impl AccumulatorSummary {
     }
 
     /// Returns the exact selected speculative-decoding acceptance histogram.
-    pub fn pooled_spec_decode_acceptance_histogram(&self) -> Option<&BTreeMap<u64, u64>> {
+    pub fn pooled_spec_decode_acceptance_histogram(&self) -> Option<&BTreeMap<u64, u128>> {
         self.pooled_spec_decode_acceptance_histogram.as_ref()
     }
 }
@@ -1774,6 +1774,26 @@ mod tests {
         record
     }
 
+    fn zero_acceptance_record(phase_index: usize, steps: u64) -> RecordIngest {
+        let mut record =
+            RecordIngest::minimal(phase_index as i64, phase_index as i64 + 1, Phase::Profiling);
+        record.phase_index = Some(phase_index);
+        record.spec_decode_acceptance = Some(ObservedSpecDecodeAcceptance {
+            engine: "vllm".to_string(),
+            mean_acceptance_length: 1.0,
+            draft_acceptance_rate: 0.0,
+            acceptance_histogram: BTreeMap::from([(0, steps)]),
+            num_accepted_draft_tokens: 0,
+            num_draft_tokens: steps,
+            num_spec_steps: steps,
+            num_spec_tokens: Some(1),
+            completion_tokens: Some(steps),
+            per_step_accepted: None,
+            per_step_drafted: None,
+        });
+        record
+    }
+
     fn assert_close(actual: Option<f64>, expected: f64) {
         let actual = actual.expect("metric is present");
         assert!(
@@ -1882,6 +1902,7 @@ mod tests {
             MetricsStorageMode::Exact,
             MetricsStorageMode::Sketch { compression: 100.0 },
         ] {
+            let is_exact = matches!(mode, MetricsStorageMode::Exact);
             let config = MetricsConfig {
                 storage_mode: mode,
                 ..MetricsConfig::default()
@@ -1895,6 +1916,14 @@ mod tests {
             left.process_record(&records[0]);
             right.process_record(&records[1]);
             left.merge(&right).expect("compatible stores append");
+            assert_eq!(
+                left.column_store().spec_decode_acceptance(0).is_some(),
+                is_exact
+            );
+            assert_eq!(
+                left.column_store().spec_decode_acceptance(1).is_some(),
+                is_exact
+            );
 
             for context in [
                 ExportContext::phase(Phase::Profiling),
@@ -1924,6 +1953,145 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn spec_decode_histogram_ingest_remains_exact_past_u64_max() {
+        let mut accumulator = MetricsAccumulator::new();
+        accumulator.process_record(&zero_acceptance_record(0, u64::MAX));
+        accumulator.process_record(&zero_acceptance_record(0, 1));
+
+        let summary = accumulator.export_results(&ExportContext::phase_index(Phase::Profiling, 0));
+        assert_eq!(
+            summary
+                .pooled_spec_decode_acceptance_histogram()
+                .and_then(|histogram| histogram.get(&0))
+                .copied()
+                .map(u128::from),
+            Some(u64::MAX as u128 + 1)
+        );
+    }
+
+    #[test]
+    fn spec_decode_histogram_append_remains_exact_past_u64_max() {
+        let mut left = MetricsAccumulator::new();
+        left.process_record(&zero_acceptance_record(0, u64::MAX));
+        let mut right = MetricsAccumulator::new();
+        right.process_record(&zero_acceptance_record(0, 1));
+        left.merge(&right).expect("compatible stores append");
+
+        let summary = left.export_results(&ExportContext::phase_index(Phase::Profiling, 0));
+        assert_eq!(
+            summary
+                .pooled_spec_decode_acceptance_histogram()
+                .and_then(|histogram| histogram.get(&0))
+                .copied()
+                .map(u128::from),
+            Some(u64::MAX as u128 + 1)
+        );
+    }
+
+    #[test]
+    fn spec_decode_histogram_context_pool_remains_exact_past_u64_max() {
+        let mut accumulator = MetricsAccumulator::new();
+        accumulator.process_record(&zero_acceptance_record(0, u64::MAX));
+        accumulator.process_record(&zero_acceptance_record(1, 1));
+
+        let summary = accumulator.export_results(&ExportContext::phase(Phase::Profiling));
+        assert_eq!(
+            summary
+                .pooled_spec_decode_acceptance_histogram()
+                .and_then(|histogram| histogram.get(&0))
+                .copied()
+                .map(u128::from),
+            Some(u64::MAX as u128 + 1)
+        );
+    }
+
+    #[test]
+    fn spec_decode_accepted_per_verified_keeps_large_valid_counts() {
+        let mut accumulator = MetricsAccumulator::new();
+        accumulator.process_record(&zero_acceptance_record(0, u64::MAX));
+
+        assert_close(
+            accumulator
+                .export_results(&ExportContext::phase(Phase::Profiling))
+                .finite_value(MetricTag::SpecDecodeAcceptedPerVerified),
+            0.5,
+        );
+    }
+
+    #[test]
+    fn spec_decode_phase_index_without_phase_aligns_exact_sketch_and_histogram_selection() {
+        let records = [
+            spec_decode_record(100, Phase::Profiling, Some(0), &[2, 3]),
+            spec_decode_record(200, Phase::Warmup, Some(0), &[1]),
+            spec_decode_record(300, Phase::Profiling, Some(1), &[4]),
+        ];
+        let context = ExportContext {
+            start_ns: None,
+            end_ns: None,
+            phase: None,
+            phase_index: Some(0),
+        };
+        let mut summaries = Vec::new();
+        for storage_mode in [
+            MetricsStorageMode::Exact,
+            MetricsStorageMode::Sketch { compression: 100.0 },
+        ] {
+            let mut accumulator = MetricsAccumulator::with_config(MetricsConfig {
+                storage_mode,
+                ..MetricsConfig::default()
+            });
+            for record in &records {
+                accumulator.process_record(record);
+            }
+            summaries.push(accumulator.export_results(&context));
+        }
+
+        assert_eq!(
+            summaries[0].finite_value(MetricTag::TotalSpecDecodeSteps),
+            Some(3.0)
+        );
+        assert_eq!(
+            summaries[0].pooled_spec_decode_acceptance_histogram(),
+            Some(&BTreeMap::from([(1, 1), (2, 1), (3, 1)]))
+        );
+        assert_eq!(
+            summaries[1].finite_value(MetricTag::TotalSpecDecodeSteps),
+            summaries[0].finite_value(MetricTag::TotalSpecDecodeSteps)
+        );
+        assert_eq!(
+            summaries[1].pooled_spec_decode_acceptance_histogram(),
+            summaries[0].pooled_spec_decode_acceptance_histogram()
+        );
+    }
+
+    #[test]
+    fn spec_decode_canonical_value_follows_exact_and_sketch_row_lifecycle() {
+        let record = spec_decode_record(100, Phase::Profiling, Some(0), &[2, 3]);
+        let expected = record.spec_decode_acceptance.as_ref().unwrap();
+
+        let mut exact = MetricsAccumulator::new();
+        exact.process_record(&record);
+        assert_eq!(
+            exact.column_store().spec_decode_acceptance(0),
+            Some(expected)
+        );
+
+        let mut sketch = MetricsAccumulator::with_config(MetricsConfig {
+            storage_mode: MetricsStorageMode::Sketch { compression: 100.0 },
+            ..MetricsConfig::default()
+        });
+        sketch.process_record(&record);
+        assert_eq!(sketch.record_count(), 0);
+        assert!(sketch.column_store().spec_decode_acceptance(0).is_none());
+        assert_eq!(
+            sketch
+                .export_results(&ExportContext::phase(Phase::Profiling))
+                .pooled_spec_decode_acceptance_histogram(),
+            Some(&BTreeMap::from([(2, 1), (3, 1)]))
+        );
     }
 
     /// Deterministic pseudo-random unit values (a small LCG — no wall clock).
