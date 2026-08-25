@@ -119,6 +119,53 @@ async fn test_server_metrics_multiple_endpoints_vllm_sglang() {
 }
 
 #[tokio::test]
+async fn sglang_speculative_console() {
+    let h = AIPerfHarness::new().await;
+    let sglang_url = &h.mock.server_metrics_urls()["sglang"];
+
+    let r = h.run(&format!(
+        "--model mock-model \
+         --tokenizer builtin \
+         --url {} \
+         --endpoint-type chat \
+         --streaming \
+         --request-count 4 \
+         --concurrency 1 \
+         --workers-max 1 \
+         --server-metrics {sglang_url}",
+        h.mock.url
+    ));
+    assert!(r.success(), "profile failed: {}", r.stderr);
+
+    let console_path = r
+        .artifacts
+        .find_file("**/profile_export_console.txt")
+        .expect("console export exists");
+    let console = std::fs::read_to_string(console_path).expect("read console export");
+    assert!(
+        console.contains("NVIDIA AIPerf | Server Metrics: Speculative Decoding"),
+        "speculative console table missing:\n{console}"
+    );
+    assert!(console.contains("Accept Rate (%)"));
+    assert!(console.contains("75.0"));
+    assert!(console.contains("Accept Length"));
+    assert!(console.contains("2.50"));
+
+    let server_metrics = server_metrics_json(&r);
+    let rate_series = server_metrics["metrics"]["sglang:spec_accept_rate"]["series"]
+        .as_array()
+        .and_then(|series| series.first())
+        .expect("speculative rate series exists");
+    assert_eq!(rate_series["stats"]["avg"].as_f64(), Some(0.75));
+    assert_eq!(
+        rate_series["labels"]["model_name"].as_str(),
+        Some("mock-model")
+    );
+    assert_eq!(rate_series["labels"]["pp_rank"].as_str(), Some("0"));
+    assert_eq!(rate_series["labels"]["tp_rank"].as_str(), Some("0"));
+}
+
+#[tokio::test]
 async fn test_server_metrics_all_endpoints() {
     let mut cfg = aiperf_mock_server::config::MockServerConfig::default();
     cfg.fast = true;
