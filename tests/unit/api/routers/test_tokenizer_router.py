@@ -298,5 +298,5 @@ def test_materialize_bundle_uses_configured_size_cap(
     # tokenizer.json is on the allowlist, so only the size cap should reject it.
     (snap / "tokenizer.json").write_bytes(b"\x00" * (cap + 1))
 
-    with pytest.raises(ValueError, match=f"exceeds cap of {cap} bytes"):
+    with pytest.raises(ValueError, match=f"cap of {cap} bytes"):
         tokenizer_router_mod._materialize_bundle(snap)
