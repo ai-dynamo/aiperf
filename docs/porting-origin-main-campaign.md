@@ -30,7 +30,7 @@ implementation, test run, or review.
 | 2 | `0883bd1aee` | version 0.12.0 | merged | not-applicable | Python metadata/docs only. |
 | 3 | `34b2be2ee1` | SGLang speculative metrics | merged | applicable | Native speed-bench recognition is not profile console-exporter parity. |
 | 4 | `6db948524e` | SageMaker malformed timestamp | merged | already-covered | Native loader returns validation error. |
-| 5 | `ce715ae849` | agentic think-time idle guard | pending | already-covered | Source comparison supports equivalent native behavior. |
+| 5 | `ce715ae849` | agentic think-time idle guard | complete | applicable | Merged in `6e8da730e8`; native scenario default/lock port in `ad4c2a54f4`, `6e78b41d35`, and `729c59f64a`; Graham approved. |
 | 6 | `93b6223373` | telemetry field rename | pending | applicable | Native artifact still emits `dcgm_url`; requires contract migration decision. |
 | 7 | `86ea3f7deb` | detailed JSONL fallback | pending | already-covered | Native aggregation uses `profile_export.jsonl`; separately sync independent Python profile. |
 | 8 | `5566aae1e1` | ShareGPT batch encoding | pending | applicable | Native composition has no batch-tokenizer seam. |
@@ -111,3 +111,32 @@ reported 7 passed using a target directory under `/mnt/4tb`.
 This closes the original out-of-process-worker port. It does not assert that
 later upstream request multiplexing and leader-exit descendant reaping (#35)
 are equivalent; those are separately pending.
+
+## Per-commit record: ce715ae849e5
+
+### Upstream intent and Rust comparison
+
+Upstream replaces AgentX MVP's per-trace compression with a ten-second global
+idle guard that preserves trace-local think time and forbids incompatible
+legacy timing caps. Native schedulers already implement global guard behavior,
+but `inferencex_agentx_mvp()` still injected a per-trace cap and the native
+scenario lock did not reject authored trace or inter-turn caps. This required
+a native scenario/resolver port.
+
+### Merge and implementation evidence
+
+`6e8da730e816683350bf4be09942af755c422791` is a two-parent merge with
+`ce715ae849e54d8b37141e7770aeadfc60985302` as its second parent. Native
+policy and pure-lock work landed in `ad4c2a54f4`; resolver projection and
+coverage landed in `6e78b41d35`; `729c59f64a` supplies the Graham-requested
+format-only correction. The design spec is
+`docs/specs/2026-08-25-native-agentx-global-idle-guard.md`, and the Sol plan
+and SDD evidence live under `.superpowers/sdd/2026-08-25-native-agentx-global-idle-guard/`.
+
+### Verification and review
+
+Fresh focused scenario policy verification reported 8 passed, and the native
+CLI resolver selector reported 2 passed using `/usr/bin/sccache` with a Cargo
+target below `/mnt/4tb`. Graham additionally exercised system-idle unit tests
+(3 passed) and real-binary E2E coverage (14 passed). The final re-review is
+`GRAHAM APPROVED` with no Important or Critical findings.
