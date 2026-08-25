@@ -308,7 +308,7 @@ class TestShowCategoriesOverview:
         )
         show_categories_overview()
 
-        assert_console_contains(mock_console, "aiperf plugins <category>")
+        assert_console_contains(mock_console, "aiperf-python plugins <category>")
 
 
 # =============================================================================
@@ -409,7 +409,7 @@ class TestShowCategoryTypes:
         )
         show_category_types("endpoint")
 
-        assert_console_contains(mock_console, "aiperf plugins endpoint <type>")
+        assert_console_contains(mock_console, "aiperf-python plugins endpoint <type>")
 
 
 # =============================================================================

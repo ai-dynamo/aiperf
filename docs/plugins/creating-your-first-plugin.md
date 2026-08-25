@@ -250,7 +250,7 @@ Check that AIPerf discovers your plugin:
 
 ```bash
 # List all plugins - your echo endpoint should appear
-aiperf plugins endpoint
+aiperf-python plugins endpoint
 ```
 
 You should see your plugin in the table:
@@ -268,7 +268,7 @@ Endpoint Types
 
 ```bash
 # View details about your endpoint
-aiperf plugins endpoint echo
+aiperf-python plugins endpoint echo
 ```
 
 You should see:
@@ -287,7 +287,7 @@ You should see:
 
 ```bash
 # Validate your plugin
-aiperf plugins --validate
+aiperf-python plugins --validate
 ```
 
 You should see:
@@ -484,7 +484,7 @@ TypeNotFoundError: Type 'echo' not found for category 'endpoint'.
 **Solutions:**
 1. Ensure `uv pip install -e .` completed successfully
 2. Check the entry point in `pyproject.toml` matches your package structure
-3. Run `aiperf plugins --validate` to check for errors
+3. Run `aiperf-python plugins --validate` to check for errors
 
 ### Import errors
 

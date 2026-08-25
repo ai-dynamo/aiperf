@@ -233,7 +233,7 @@ endpoint_meta = plugins.get_endpoint_metadata("chat")  # Returns EndpointMetadat
 | 1 | `my_endpoint.py` | Create class extending `BaseEndpoint` |
 | 2 | `plugins.yaml` | Register with class path, description, and metadata |
 | 3 | `pyproject.toml` | Add entry point: `my-package = "my_package:plugins.yaml"` |
-| 4 | Terminal | `uv pip install -e . && aiperf plugins endpoint my_custom` |
+| 4 | Terminal | `uv pip install -e . && aiperf-python plugins endpoint my_custom` |
 
 ### Minimal Endpoint Example
 
@@ -321,14 +321,14 @@ Category-specific metadata is validated against Pydantic models in `aiperf.plugi
 
 | Command | Output |
 |---------|--------|
-| `aiperf plugins` | Installed packages with versions and plugin counts |
-| `aiperf plugins --all` | All categories with registered plugins |
-| `aiperf plugins endpoint` | All endpoint types with descriptions |
-| `aiperf plugins endpoint chat` | Details: class path, package, metadata |
-| `aiperf plugins --validate` | Validates class paths and existence |
+| `aiperf-python plugins` | Installed packages with versions and plugin counts |
+| `aiperf-python plugins --all` | All categories with registered plugins |
+| `aiperf-python plugins endpoint` | All endpoint types with descriptions |
+| `aiperf-python plugins endpoint chat` | Details: class path, package, metadata |
+| `aiperf-python plugins --validate` | Validates class paths and existence |
 
 ```bash
-$ aiperf plugins endpoint chat
+$ aiperf-python plugins endpoint chat
 ╭───────────────── endpoint:chat ─────────────────╮
 │ Type: chat                                      │
 │ Category: endpoint                              │
@@ -466,7 +466,7 @@ TypeNotFoundError: Type 'my_plugin' not found for category 'endpoint'.
 1. Verify the plugin is registered in `plugins.yaml`
 2. Check the entry point is defined in `pyproject.toml`
 3. Reinstall the package in the active environment: `uv pip install -e .`
-4. Run `aiperf plugins --validate` to check for errors
+4. Run `aiperf-python plugins --validate` to check for errors
 
 ### Module Import Errors
 
@@ -488,7 +488,7 @@ AttributeError: Class 'MyClass' not found
 **Solutions**:
 1. Verify the class name matches exactly (case-sensitive)
 2. Ensure the class is exported from the module
-3. Run `aiperf plugins --validate` for detailed error
+3. Run `aiperf-python plugins --validate` for detailed error
 
 ### Conflict Resolution Issues
 
@@ -496,4 +496,4 @@ If your plugin is being shadowed by another:
 
 1. Use higher priority: `priority: 10` in `plugins.yaml`
 2. Access by full class path: `plugins.get_class("endpoint", "my_pkg.endpoints:MyEndpoint")`
-3. Check `aiperf plugins` to see which packages are loaded
+3. Check `aiperf-python plugins` to see which packages are loaded

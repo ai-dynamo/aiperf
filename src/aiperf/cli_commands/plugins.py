@@ -2,11 +2,11 @@
 # SPDX-License-Identifier: Apache-2.0
 """Plugin management CLI commands.
 
-aiperf plugins                       # Show installed packages with details
-aiperf plugins --all                 # Show all categories and plugins
-aiperf plugins endpoint              # List endpoint types
-aiperf plugins endpoint openai       # Details about openai endpoint
-aiperf plugins --validate            # Validate plugins.yaml
+aiperf-python plugins                       # Show installed packages with details
+aiperf-python plugins --all                 # Show all categories and plugins
+aiperf-python plugins endpoint              # List endpoint types
+aiperf-python plugins endpoint openai       # Details about openai endpoint
+aiperf-python plugins --validate            # Validate plugins.yaml
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ def plugins(
         Parameter(name=["--validate", "-v"], help="Validate plugins.yaml"),
     ] = False,
 ) -> None:
-    """Explore AIPerf plugins: aiperf plugins [category] [type]"""
+    """Explore AIPerf plugins: aiperf-python plugins [category] [type]"""
     match (all_plugins, validate, category, name):
         case (_, True, _, _):
             from aiperf.plugin.cli import run_validate

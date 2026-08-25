@@ -111,6 +111,7 @@ fn help_describes_the_native_command_surface_without_starting_python() {
     assert_eq!(output.status.code(), Some(0));
     assert!(stdout.contains("profile"), "help: {stdout}");
     assert!(stdout.contains("slurm"), "help: {stdout}");
+    assert!(!stdout.contains("plugins"), "help: {stdout}");
     assert!(!stdout.contains("service"), "help: {stdout}");
     assert!(!record.exists(), "Python test double was invoked");
 }
@@ -129,6 +130,7 @@ fn completion_describes_the_native_command_surface_without_starting_python() {
     assert_eq!(output.status.code(), Some(0));
     assert!(stdout.contains("profile"), "completion: {stdout}");
     assert!(stdout.contains("slurm"), "completion: {stdout}");
+    assert!(!stdout.contains("plugins"), "completion: {stdout}");
     assert!(!stdout.contains("service"), "completion: {stdout}");
     assert!(!record.exists(), "Python test double was invoked");
 }
@@ -161,6 +163,10 @@ fn service_and_unknown_commands_refuse_without_starting_python() {
         ),
         (
             ["--help", "service"].as_slice(),
+            "unsupported native aiperf command",
+        ),
+        (
+            ["plugins"].as_slice(),
             "unsupported native aiperf command",
         ),
         (

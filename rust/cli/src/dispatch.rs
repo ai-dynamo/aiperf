@@ -28,12 +28,11 @@ const PUBLIC_COMMANDS: &[&str] = &[
     "metrics",
     "analyze",
     "plot",
-    "plugins",
 ];
 
 fn print_help() {
     println!(
-        "AIPerf {}\n\nUsage: aiperf <COMMAND> [ARGS...]\n\nCommands:\n  {}\n\nPython utilities: analyze, plot, plugins\n\nOptions:\n  -h, --help                       Print help\n  -V, --version                    Print version\n      --install-completion <SHELL> Print completion script for bash, zsh, or fish",
+        "AIPerf {}\n\nUsage: aiperf <COMMAND> [ARGS...]\n\nCommands:\n  {}\n\nPython utilities: analyze, plot\n\nOptions:\n  -h, --help                       Print help\n  -V, --version                    Print version\n      --install-completion <SHELL> Print completion script for bash, zsh, or fish",
         env!("CARGO_PKG_VERSION"),
         PUBLIC_COMMANDS.join("\n  "),
     );
@@ -84,7 +83,7 @@ pub fn run(argv: &[String]) -> anyhow::Result<i32> {
         Some("speed-bench-report") => speed_bench::run(&argv[1..]),
         Some("synthesize") => synthesize::run(&argv[1..]),
         Some("metrics") => metrics_list::run(&argv[1..]),
-        Some("analyze" | "plot" | "plugins") => delegate::exec_python_utility(argv),
+        Some("analyze" | "plot") => delegate::exec_python_utility(argv),
         None => {
             print_help();
             Ok(0)
@@ -111,7 +110,7 @@ pub fn run(argv: &[String]) -> anyhow::Result<i32> {
             "aiperf service is unavailable from the native binary; use `aiperf-python service`"
         ),
         _ => anyhow::bail!(
-            "unsupported native aiperf command; supported Python utilities are analyze, plot, and plugins"
+            "unsupported native aiperf command; supported Python utilities are analyze and plot"
         ),
     }
 }

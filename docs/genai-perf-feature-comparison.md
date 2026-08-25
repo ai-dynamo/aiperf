@@ -35,7 +35,7 @@ This comparison matrix shows the supported CLI options between GenAI-Perf and AI
 | **create-template / config init** | Scaffold a template config | ✅ (GenAI-Perf: `create-template`) | ✅ | AIPerf: `aiperf config init -t <template>`; supports `--list`, `--search`, `--category` for discovery |
 | **config expand** | Preview a sweep without running it | ❌ | ✅ | Prints every variation the orchestrator would iterate; `--full`/`--index`/`--format` controls verbosity |
 | **config validate** | Pre-flight validate a config file | ❌ | ✅ | Runs the same load pipeline as `profile`; non-zero exit on fatal errors, warnings to stderr |
-| **plugins** | List/inspect registered plugins | ❌ | ✅ | `aiperf plugins` enumerates planners, recipes, exporters, dataset loaders, and more |
+| **plugins** | List/inspect registered plugins | ❌ | ✅ | `aiperf-python plugins` enumerates planners, recipes, exporters, dataset loaders, and more |
 | **synthesize** | Materialize a synthetic dataset to disk | ❌ | ✅ | Useful for caching dataset generation between repeated sweep cells |
 | **process-export-files** | Multi-node result aggregation | ✅ | **`N/A`** | AIPerf aggregates results in real-time |
 

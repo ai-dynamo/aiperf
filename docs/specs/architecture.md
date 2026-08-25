@@ -27,7 +27,7 @@ only to refuse unavailable hierarchical aggregation.
 
 Native commands include `profile`, `config`, `controller`, `cell`,
 `aggregator`, `results-sidecar`, `analyze-trace`, `chat`, `validate`,
-`speed-bench-report`, and `synthesize`. Only `analyze`, `plot`, and `plugins` delegate to external Python utility
+`speed-bench-report`, and `synthesize`. Only `analyze` and `plot` delegate to external Python utility
 processes; root help/completion are native and describe the native command
 surface. Both `slurm` subcommands (`run` and `generate`) are native. `service`
 and unknown public commands refuse rather than starting the Python product runtime.

@@ -48,6 +48,14 @@ from tools._core import (
 # =============================================================================
 
 OUTPUT_FILE = Path("docs/cli-options.md")
+PYTHON_ONLY_COMMANDS = frozenset({"plugins"})
+
+
+def _command_label(command: str) -> str:
+    """Return the installed executable and command path for generated docs."""
+    executable = "aiperf-python" if command.split()[0] in PYTHON_ONLY_COMMANDS else "aiperf"
+    return f"{executable} {command}"
+
 
 # NumPy-style docstring section headers that terminate description extraction.
 # Google-style ("Args:", "Examples:") are handled separately with startswith().
@@ -409,9 +417,11 @@ def generate_markdown(app: Any, data: dict[str, dict[str, list[Param]]]) -> str:
         lines.extend(["## `aiperf` Commands", ""])
         for name, desc in extract_commands(app):
             if name in data:
+                label = _command_label(name)
+                anchor = label.lower().replace(" ", "-")
                 lines.extend(
                     [
-                        f"### [`{name}`](#aiperf-{name.lower().replace(' ', '-')})",
+                        f"### [`{name}`](#{anchor})",
                         "",
                         desc,
                         "",
@@ -431,7 +441,7 @@ def generate_markdown(app: Any, data: dict[str, dict[str, list[Param]]]) -> str:
 
     # Command sections
     for cmd_name, groups in data.items():
-        lines.extend(["<hr/>", "", f"## `aiperf {cmd_name}`", ""])
+        lines.extend(["<hr/>", "", f"## `{_command_label(cmd_name)}`", ""])
 
         # Command help text — walks dotted names like "config init".
         cmd: Any = app

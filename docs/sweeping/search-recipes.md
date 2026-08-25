@@ -550,7 +550,7 @@ search_recipe:
       sweep_path: phases.profiling.concurrency
 ```
 
-The plugin loader picks it up at startup; `aiperf plugins --validate` exercises the registry. See [Plugin System](../plugins/plugin-system.md) for the broader registry shape.
+The plugin loader picks it up at startup; `aiperf-python plugins --validate` exercises the registry. See [Plugin System](../plugins/plugin-system.md) for the broader registry shape.
 
 ### Returning a grid recipe instead of BO
 
