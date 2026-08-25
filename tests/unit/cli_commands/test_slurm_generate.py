@@ -119,7 +119,7 @@ def test_shim_launcher_generates_script(config_path: Path, capsys: pytest.Captur
     assert shim_main(["slurm-generate", "--config", str(config_path), "--cells", "2"]) == 0
 
     captured = capsys.readouterr()
-    assert "#SBATCH --ntasks=3" in captured.out
+    assert captured.out == build_sbatch_script(config=config_path, cells=2)
 
 
 def test_python_slurm_command_routes_to_shim(config_path: Path, tmp_path: Path) -> None:
@@ -141,7 +141,7 @@ def test_python_slurm_command_routes_to_shim(config_path: Path, tmp_path: Path) 
         )
         is None
     )
-    assert "#SBATCH --ntasks=3" in output.read_text()
+    assert output.read_text() == build_sbatch_script(config=config_path, cells=2)
 
 
 def test_generate_missing_config_exits(tmp_path: Path) -> None:
