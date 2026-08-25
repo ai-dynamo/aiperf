@@ -14,14 +14,13 @@ is decorator-free so it can be unit-tested without kopf.
 
 from __future__ import annotations
 
-import logging
 from typing import Any
 
 import aiohttp
 import kopf
 
 from aiperf.common.endpoint_credentials import redact_sweep_public_data
-from aiperf.kubernetes.constants import AIPerfLabels, Annotations
+from aiperf.kubernetes.constants import AIPerfLabels
 from aiperf.kubernetes.cr_refs import (
     AIPERF_JOB_API_VERSION,
     AIPERF_JOB_KIND,
@@ -33,8 +32,6 @@ from aiperf.kubernetes.cr_refs import (
 )
 from aiperf.kubernetes.phase import format_timestamp
 from aiperf.operator.handlers.sweep.child_rollup import PARENT_TERMINAL_PHASES
-
-logger = logging.getLogger(__name__)
 
 JOBSET_TERMINAL_FIELD_MANAGER = "aiperf-operator-jobset-terminal"
 
@@ -49,16 +46,6 @@ def _has_true_condition(
         and condition.get("status") == "True"
         for condition in conditions or []
     )
-
-
-def _has_completed_condition(conditions: list[dict[str, Any]] | None) -> bool:
-    """Return True if any condition is ``type=Completed status=True``.
-
-    Defensive against non-dict entries (None / strings / numbers) that can
-    appear if a malformed JobSet status leaks through the apiserver — kopf
-    delivers the conditions list as-is, so we cannot assume well-formedness.
-    """
-    return _has_true_condition(conditions, "Completed")
 
 
 def _has_failed_condition(conditions: list[dict[str, Any]] | None) -> bool:
@@ -158,86 +145,6 @@ def _is_trusted_aiperf_jobset(
         and ref.get("controller") is True
         for ref in owner_refs
     )
-
-
-async def _set_benchmark_complete_annotation(
-    namespace: str,
-    aiperfjob_name: str,
-    *,
-    aiperfjob_uid: str,
-    resource_version: str,
-    annotations: dict[str, str],
-) -> None:
-    """Patch ``metadata.annotations[BENCHMARK_COMPLETE] = "true"`` on the AIPerfJob.
-
-    Has no production caller in this module: the only one it ever had keyed off
-    a JobSet ``Completed`` condition, which ``handle_jobset_conditions``
-    deliberately does not trust (Jobs exiting is not the controller's durable
-    results-ready handshake), so it was removed rather than left as a wired-up
-    way to forge the completion signal. The annotation itself is written by the
-    controller; this helper stays as the tested writer for that contract.
-
-    Setting the annotation makes kopf dispatch ``on_benchmark_complete``,
-    which is idempotent (it short-circuits if status.phase is terminal and
-    ``try_claim_completion`` returns False if already claimed). Racing the
-    controller pod (which also sets this annotation when done) is therefore
-    safe -- whichever fires first wins.
-    """
-    from kubernetes_asyncio.client import CustomObjectsApi
-    from kubernetes_asyncio.client.exceptions import ApiException
-
-    from aiperf.kubernetes.client import k8s_client
-    from aiperf.kubernetes.cr_refs import (
-        AIPERF_GROUP,
-        AIPERF_PLURAL,
-        AIPERF_VERSION,
-    )
-
-    try:
-        async with k8s_client() as api:
-            custom = CustomObjectsApi(api)
-            annotation_path = Annotations.BENCHMARK_COMPLETE.replace("~", "~0").replace(
-                "/", "~1"
-            )
-            await custom.patch_namespaced_custom_object(
-                group=AIPERF_GROUP,
-                version=AIPERF_VERSION,
-                namespace=namespace,
-                plural=AIPERF_PLURAL,
-                name=aiperfjob_name,
-                body=[
-                    {
-                        "op": "test",
-                        "path": "/metadata/uid",
-                        "value": aiperfjob_uid,
-                    },
-                    {
-                        "op": "test",
-                        "path": "/metadata/resourceVersion",
-                        "value": resource_version,
-                    },
-                    {
-                        "op": "add",
-                        "path": "/metadata/annotations",
-                        "value": annotations,
-                    },
-                    {
-                        "op": "add",
-                        "path": f"/metadata/annotations/{annotation_path}",
-                        "value": "true",
-                    },
-                ],
-                _content_type="application/json-patch+json",
-            )
-    except ApiException as e:
-        if e.status in (404, 409, 422):
-            return
-        logger.warning(
-            "Failed to set benchmark-complete annotation on AIPerfJob %s/%s: %s",
-            namespace,
-            aiperfjob_name,
-            e,
-        )
 
 
 def _trusted_sweep_owner(

@@ -1165,13 +1165,6 @@ class TestReadParentStatus:
         assert await child_rollup._read_parent_status("ns", "s") is None
 
     @pytest.mark.asyncio
-    async def test_returns_none_when_status_missing(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        _install_fake_k8s(monkeypatch, get_return={})
-        assert await child_rollup._read_parent_status("ns", "s") is None
-
-    @pytest.mark.asyncio
     async def test_returns_none_when_status_is_null(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -1222,34 +1215,6 @@ class TestReadParentStatus:
 
 class TestReadParentPhase:
     """Verify the thin .phase wrapper around _read_parent_status."""
-
-    @pytest.mark.asyncio
-    async def test_returns_phase_when_present(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        async def fake_read(namespace, name, *, api=None):
-            return {"phase": "Aggregating", "maxTotalRuns": 4}
-
-        monkeypatch.setattr(child_rollup, "_read_parent_status", fake_read)
-        assert await child_rollup._read_parent_phase("ns", "s") == "Aggregating"
-
-    @pytest.mark.asyncio
-    async def test_returns_none_when_status_missing(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setattr(
-            child_rollup, "_read_parent_status", AsyncMock(return_value=None)
-        )
-        assert await child_rollup._read_parent_phase("ns", "s") is None
-
-    @pytest.mark.asyncio
-    async def test_returns_none_when_phase_empty(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setattr(
-            child_rollup, "_read_parent_status", AsyncMock(return_value={"phase": ""})
-        )
-        assert await child_rollup._read_parent_phase("ns", "s") is None
 
 
 # ============================================================

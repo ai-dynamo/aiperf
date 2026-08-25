@@ -563,18 +563,6 @@ async def _read_parent_status(
     return (cr.get("status") or {}) or None
 
 
-async def _read_parent_phase(
-    namespace: str, name: str, *, api: ApiClient | None = None
-) -> str | None:
-    """Return parent AIPerfSweep status.phase, or None if missing/unreadable.
-
-    Thin wrapper around ``_read_parent_status`` retained for backwards
-    compatibility with existing tests that patch this symbol directly.
-    """
-    status = await _read_parent_status(namespace, name, api=api)
-    return (status or {}).get("phase") or None
-
-
 async def _conditional_phase_set(
     *,
     namespace: str,
