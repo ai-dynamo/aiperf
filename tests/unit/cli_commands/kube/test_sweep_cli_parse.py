@@ -25,7 +25,18 @@ sweep:
 """
 
 
-def _run_sweep_dry_run(tmp_path: Path, *placement_args: str) -> dict:
+# 150 characters, single unbreakable token: wider than the 80-column fallback
+# Rich uses when stdout is not a tty, so a Rich-routed payload wraps mid-token.
+_LONG_IMAGE = (
+    "registry.example.com/some-really-long-organization-name/"
+    "aiperf-benchmark-runner-with-extras:"
+    "v1.2.3-rc4-cuda12.6-py311-abcdef0123456789abcdef0123456789"
+)
+
+
+def _run_sweep_dry_run(
+    tmp_path: Path, *placement_args: str, image: str = "aiperf:test"
+) -> dict:
     """Run the public CLI and decode the dry-run AIPerfSweep JSON."""
     config_file = tmp_path / "sweep-config.yaml"
     config_file.write_text(_MIN_SWEEP_CONFIG)
@@ -40,7 +51,7 @@ def _run_sweep_dry_run(tmp_path: Path, *placement_args: str) -> dict:
             "-f",
             str(config_file),
             "--image",
-            "aiperf:test",
+            image,
             *placement_args,
             "--dry-run",
         ],
@@ -100,3 +111,16 @@ def test_sweep_cli_dry_run_accepts_repeated_key_value_node_selectors(
         "kubernetes.io/arch": "amd64",
         "nodeGroup": "customer-cpu",
     }
+
+
+def test_sweep_cli_dry_run_json_survives_tokens_wider_than_the_console(
+    tmp_path: Path,
+) -> None:
+    """A 150-char image reference must not be hard-wrapped into invalid JSON.
+
+    stdout is a pipe here, so the console resolves to 80 columns -- exactly the
+    condition that made the dry-run payload unparseable in CI.
+    """
+    cr = _run_sweep_dry_run(tmp_path, image=_LONG_IMAGE)
+
+    assert cr["spec"]["image"] == _LONG_IMAGE

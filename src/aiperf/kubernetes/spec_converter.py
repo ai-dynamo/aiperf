@@ -38,6 +38,39 @@ logger = logging.getLogger(__name__)
 # Must match DeploymentConfig.connections_per_worker default.
 DEFAULT_CONNECTIONS_PER_WORKER = 100
 
+
+def workers_for_concurrency(concurrency: Any, connections_per_worker: Any) -> int:
+    """Compute the worker fan-out for a concurrency target, tolerating bad divisors.
+
+    ``DeploymentConfig.connections_per_worker`` bounds the divisor ``ge=1`` and
+    the CRDs bound it ``minimum: 1``, so the operator reconcile path only ever
+    divides by a validated value. Every other caller divides a *raw, unvalidated*
+    spec dict: ``aiperf kube validate``, the unauthenticated
+    ``POST /api/v1/validate`` route, ``kube profile --dry-run``, and
+    ``kube generate --operator``. There a divisor below 1 makes the division
+    raise ``ZeroDivisionError`` (``0``, ``0.0``, ``-0.0``, and YAML ``false``,
+    which is an ``int``) or ``OverflowError`` (denormals such as ``1e-320``,
+    where the quotient overflows to ``inf`` and ``math.ceil`` cannot convert it)
+    — crashing the very callers whose job is to *report* the bad value.
+
+    Real numbers that are not ``>= 1`` — which includes NaN — therefore collapse
+    to ``1``. Non-numeric divisors pass through untouched so callers still see
+    the real ``TypeError`` and report it as a config error.
+
+    Args:
+        concurrency: Peak concurrency the fan-out must cover.
+        connections_per_worker: Connections a single worker handles.
+
+    Returns:
+        Worker count, never below 1.
+    """
+    if isinstance(connections_per_worker, int | float) and not (
+        connections_per_worker >= 1
+    ):
+        connections_per_worker = 1
+    return max(1, math.ceil(concurrency / connections_per_worker))
+
+
 # BenchmarkConfig field names — all keys that belong under spec.benchmark.
 # Used for validation to detect unknown benchmark fields. Includes camelCase
 # aliases (via BaseConfig's alias_generator) and shorthand aliases (model,
@@ -419,7 +452,7 @@ class AIPerfJobSpecConverter:
                 "connectionsPerWorker", DEFAULT_CONNECTIONS_PER_WORKER
             )
 
-        return max(1, math.ceil(concurrency / connections_per_worker))
+        return workers_for_concurrency(concurrency, connections_per_worker)
 
 
 def build_benchmark_run(

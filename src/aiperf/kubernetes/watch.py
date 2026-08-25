@@ -215,7 +215,8 @@ async def watch_job(
 
     Raises:
         TimeoutError: ``timeout`` seconds elapsed without a terminal phase.
-        ApiException: Non-404 Kubernetes API error while polling the CR.
+            Transient API/transport errors are logged and retried rather than
+            propagated, so the last one is attached as this error's ``__cause__``.
     """
     from aiperf.kubernetes.console import logger as cli_logger
     from aiperf.kubernetes.watchdog import BenchmarkWatchdog, K8sWatchdogSource

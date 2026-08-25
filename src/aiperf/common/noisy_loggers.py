@@ -3,8 +3,8 @@
 """Suppress noisy HTTP loggers emitted by Kubernetes client libraries.
 
 kubernetes_asyncio uses aiohttp internally and emits access-log-style
-lines for every request; the aiohttp + kubernetes_asyncio.rest loggers
-are raised to WARNING to keep logs readable.
+lines for every request; the aiohttp + kubernetes_asyncio.client.rest
+loggers are raised to WARNING to keep logs readable.
 """
 
 import logging

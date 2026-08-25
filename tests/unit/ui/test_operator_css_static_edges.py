@@ -150,6 +150,63 @@ def test_table_sticky_classes_keep_scroll_and_sticky_header_rules() -> None:
     assert "z-index: 1" in css
 
 
+_LIGHT_PALETTE_TOKENS = (
+    # Two of the light block's values that used to win the cascade outright:
+    # a dark-olive muted accent on a near-black surface, and a darkening
+    # .table-row:hover that cancelled hover feedback on a dark background.
+    "#5a6650",
+    "rgba(20, 20, 30, 0.03)",
+)
+
+
+def test_stylesheet_declares_no_theme_variant_selectors() -> None:
+    """The dashboard is dark-only, so no [data-theme] rule may exist.
+
+    ``initTheme`` used to resolve ``'auto'`` against ``prefers-color-scheme``,
+    which put ``data-theme="light"`` on ``<html>`` for every light-OS visitor.
+    The light palette was only partially neutralized further down the file, so
+    13 of its 73 custom properties still won the cascade. Both halves are gone
+    now; this fails if either comes back alone.
+    """
+    css = _css()
+
+    assert "[data-theme" not in css.replace("[data-theme] selector", "")
+    for token in _LIGHT_PALETTE_TOKENS:
+        assert token not in css, token
+
+
+def test_stylesheet_has_no_wholesale_duplicated_region() -> None:
+    """No long run of lines may appear twice byte-identically.
+
+    Guards the Milestone 11 regression: recovering a couple of classes by
+    pasting an older stylesheet in wholesale left 2653 lines (28.7% of the file)
+    byte-identical to its own preamble, so the rule you edited was usually not
+    the rule that rendered.
+    """
+    window = 40
+    lines = _css().splitlines()
+    substantive = [
+        idx
+        for idx, line in enumerate(lines)
+        if line.strip() and not line.strip().startswith(("/*", "*", "*/"))
+    ]
+
+    seen: dict[str, int] = {}
+    duplicates: list[str] = []
+    for start in range(len(substantive) - window + 1):
+        idxs = substantive[start : start + window]
+        block = "\n".join(lines[i] for i in idxs)
+        if block in seen:
+            duplicates.append(
+                f"lines {idxs[0] + 1}-{idxs[-1] + 1} duplicate "
+                f"a {window}-line run starting at line {seen[block] + 1}"
+            )
+        else:
+            seen[block] = idxs[0]
+
+    assert duplicates == [], duplicates[:5]
+
+
 def test_critical_selectors_do_not_have_conflicting_duplicate_blocks() -> None:
     bodies = _rule_bodies_by_selector(_css())
     critical_selectors = {

@@ -7,8 +7,9 @@ The user-visible contract under test:
     kubectl apply  -> first completion writes run at epoch_old
     kubectl delete
     kubectl apply  -> second completion writes run at epoch_new
-    Both run dirs coexist; /api/v1/results/<ns>/<name> serves the NEW run
-    while /api/v1/results/<ns>/<name>/runs/<epoch_old> still serves the OLD.
+    Both run dirs coexist and latest.txt points at epoch_new;
+    /api/v1/results/<ns>/<name> rejects the epoch-less lookup with 409 while
+    /api/v1/results/<ns>/<name>/runs/<epoch> serves either run independently.
 
 We drive the same disk-layout API the completion handler uses
 (``run_dir`` + ``write_latest`` + ``enforce_retention``) with two synthetic
@@ -79,7 +80,7 @@ def _complete_run(
 ) -> str:
     """Simulate the completion-handler success path for a single run.
 
-    Mirrors ``handlers/completion.py::_apply_results_to_status`` for the
+    Mirrors ``handlers/completion.py::_record_results_on_status`` for the
     ``has_files`` branch: write artifacts under the epoch-keyed run_dir,
     atomically update ``latest.txt``, and run a retention pass.
 

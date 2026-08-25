@@ -65,7 +65,7 @@ def test_the_truncation_marker_is_not_indexed(raw) -> None:
     """A marker means the values are UNKNOWN, not that they are these keys.
 
     Indexing it would mint one bogus group shared by every oversized variation.
-    Mirrors the read-side rule at kubernetes/results.py:704.
+    Mirrors the read-side rule at kubernetes/results.py:707.
     """
     values = _child_variation_values(
         {"variation_values": raw, "variation_label": "search_iter_0008"}

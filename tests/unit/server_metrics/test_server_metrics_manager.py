@@ -1203,7 +1203,7 @@ class TestProfileCompleteAndCancel:
         self,
         cfg_with_endpoint: CLIConfig,
     ) -> None:
-        """Cancelled before profiling began: the profiling window must be empty."""
+        """Cancelled before profiling began: the window must start after warmup."""
         from aiperf.common.messages import ProfileCancelCommand
 
         manager = ServerMetricsManager(run=make_run_from_cli(cfg_with_endpoint))

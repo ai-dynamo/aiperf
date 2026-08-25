@@ -5,7 +5,7 @@
 Focuses on:
 - Last benchmark persistence (save/get/clear lifecycle)
 - Metrics summary extraction and display logic
-- Jobs table rendering with various pod states
+- Jobs table rendering with various job phases
 - Print helper formatting behavior
 """
 
@@ -473,7 +473,7 @@ class TestPrintAIPerfJobTable:
             assert "ERROR" in col_names
 
     def test_progress_shown_when_present(self) -> None:
-        """Test that a job with progress_percent renders a percentage."""
+        """Test that a job with progress_percent renders without error."""
         job = _make_aiperfjob_info(progress_percent=42.0)
         with (
             patch("aiperf.kubernetes.console.console") as mock_console,
@@ -529,7 +529,7 @@ class TestPrintAIPerfJobTable:
             print_aiperfjob_table([job])
 
     def test_zero_workers_ready_renders(self) -> None:
-        """Test that zero workers ready renders with dim styling."""
+        """Test that zero workers ready renders without error."""
         job = _make_aiperfjob_info(workers_ready=0, workers_total=4)
         with (
             patch("aiperf.kubernetes.console.console") as mock_console,

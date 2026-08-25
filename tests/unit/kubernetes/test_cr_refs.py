@@ -31,7 +31,7 @@ _CRD_SWEEP_MANIFEST = _CRD_TEMPLATES_DIR / "crd-aiperfsweep.yaml"
 
 
 class TestAIPerfJobRefs:
-    """AIPerfJob CRD coordinates pin to the Helm chart manifest."""
+    """AIPerfJob CRD coordinate literals and their backward-compat aliases."""
 
     def test_group_version_plural_values(self) -> None:
         assert cr_refs.AIPERF_JOB_GROUP == "aiperf.nvidia.com"

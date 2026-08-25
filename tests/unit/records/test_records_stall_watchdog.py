@@ -130,7 +130,7 @@ class TestRecordStallWatchdog:
     async def test_finalizing_stamps_the_incomplete_reason(self) -> None:
         """The degradation must outlive the log stream.
 
-        ``_incomplete_reason`` is what ``_process_records`` turns into
+        ``_incomplete_reason`` is what ``_process_results`` turns into
         ``ProfileResults.is_complete=False`` / ``incomplete_reason``, which the
         ExporterManager renders as a console banner (see
         ``tests/unit/exporters/test_exporter_manager.py``).

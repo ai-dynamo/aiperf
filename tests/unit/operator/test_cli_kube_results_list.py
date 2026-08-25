@@ -16,8 +16,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import orjson
 import pytest
 
-from aiperf.cli_commands.kube.results import print_runs_table
-from aiperf.cli_commands.kube.results import _render_list_runs_payload, list_runs
+from aiperf.cli_commands.kube.results import (
+    _render_list_runs_payload,
+    list_runs,
+    print_runs_table,
+)
 from aiperf.config.kube import KubeManageOptions
 from aiperf.kubernetes.console import LastBenchmarkInfo
 from aiperf.kubernetes.models import AIPerfJobInfo

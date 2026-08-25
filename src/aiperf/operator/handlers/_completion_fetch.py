@@ -213,7 +213,7 @@ async def _fetch_with_progress_aware_retry(
     checkpoint on disk is still growing or new files are landing, we know
     the controller is still working and should keep waiting. Only if nothing
     changes across ``stagnation_limit`` consecutive attempts (wall-clock
-    ~60s at default cap) do we give up.
+    ~30s at the default limit of 5 and a 2s ``initial_delay``) do we give up.
 
     Progress signal: total bytes of all files directly under ``dest_dir``
     and its subtree. A file that grows counts as progress; a file that
@@ -445,14 +445,16 @@ async def fetch_results_with_retry(
 ) -> ControllerFetchResult:
     """Fetch results from controller pod with retry logic.
 
-    Uses the cached ProgressClient for the job. Falls back to creating
-    a temporary client if no cached one exists (e.g. after restart).
+    Uses the cached ProgressClient for the job, creating and caching one
+    if no entry exists yet (e.g. after restart).
 
     Args:
         controller_host: Controller pod DNS name.
         namespace: Kubernetes namespace (used for results directory scoping).
         job_id: Job identifier for results directory.
-        max_retries: Maximum retry attempts.
+        max_retries: Consecutive no-progress attempts tolerated before giving
+            up. It is not a hard attempt cap: retries continue indefinitely
+            while the results directory keeps growing.
         retry_delay: Delay between retries (with exponential backoff).
         dest_dir: Explicit destination directory for results. When None,
             derives the epoch-keyed path from ``body``; passing both as None

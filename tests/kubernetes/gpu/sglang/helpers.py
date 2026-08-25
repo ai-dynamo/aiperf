@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""SGLang deployment and GPU benchmark helpers for Kubernetes E2E tests."""
+"""SGLang deployment helpers for Kubernetes E2E tests."""
 
 from __future__ import annotations
 

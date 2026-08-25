@@ -127,7 +127,7 @@ sweep:
 def test_build_sweep_cr_dict_with_convergence_round_trips_all_fields(
     tmp_path: Path,
 ) -> None:
-    """--convergence-metric populates spec.multiRun.convergence with all four sub-fields."""
+    """--convergence-metric populates spec.multiRun.convergence with all three sub-fields."""
     config_file = tmp_path / "conv.yaml"
     config_file.write_text(
         _yaml_with(
@@ -315,7 +315,7 @@ def test_build_sweep_cr_dict_round_trips_through_pydantic_to_camelcase_keys(
     (apiserver strict-decoding rejects snake_case even though Pydantic accepts
     both via populate_by_name).
 
-    Excludes the immutable ``variables:`` map values (user-provided keys
+    Excludes the ``sweep.parameters`` keys (user-provided keys
     pass through verbatim) and outer envelope keys above ``spec``.
     """
     config_file = tmp_path / "strict.yaml"

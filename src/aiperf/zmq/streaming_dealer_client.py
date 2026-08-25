@@ -48,7 +48,7 @@ class ZMQStreamingDealerClient(BaseZMQClient):
     - DEALER connects to ROUTER with a unique identity
     - DEALER sends messages to ROUTER
     - DEALER receives messages from ROUTER (routed by identity)
-    - No request-response pairing - pure streaming
+    - Streaming by default; `request()` opts into `rid`/`cid`-correlated request-reply
     - Supports concurrent message processing
 
     Example:

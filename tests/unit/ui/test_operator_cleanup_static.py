@@ -23,8 +23,6 @@ _GLOBAL_LISTENER_ALLOWLIST = {
     # Router listeners are app-lifetime signal wiring installed once by module import.
     ("lib/router.js", "window", "hashchange"),
     ("lib/router.js", "window", "load"),
-    # Theme follows OS color-scheme changes for the whole app and is guarded by initialized.
-    ("lib/theme-switch.js", "mediaQuery", "change"),
 }
 
 # Keyed by the call text rather than by line number: an allowlist that drifts
@@ -217,6 +215,12 @@ def test_global_listener_modules_are_singleton_lifetimes() -> None:
 
     assert "window.addEventListener('hashchange', syncFromHash);" in router_src
     assert "window.addEventListener('load', syncFromHash);" in router_src
+    # theme-switch installs a module-level side effect on <html>, so it keeps the
+    # idempotence guard. It used to also register an uncleaned
+    # (prefers-color-scheme: light) listener, which this test allowlisted; the
+    # theme is now a constant, so the stronger property is that the module
+    # registers no listener at all.
     assert "let initialized = false;" in theme_src
     assert "if (!isBrowser() || initialized) return;" in theme_src
-    assert "mediaQuery.addEventListener('change', mediaListener);" in theme_src
+    assert "addEventListener" not in theme_src
+    assert "matchMedia" not in theme_src

@@ -6,8 +6,10 @@ The k8s test harness runs a single-replica ``aiperf-mock-server`` Deployment
 (see ``tests/kubernetes/conftest.py``); this module patches / restarts /
 scales / env-overrides it to exercise benchmark-runtime chaos (B1-B3).
 
-Every fault method records the mutation in ``self._applied_ops`` so
-``restore()`` can reverse them in LIFO order between tests.
+Fault methods that leave durable Deployment state record the mutation in
+``self._applied_ops`` so ``restore()`` can reverse them in LIFO order between
+tests; ``delete_pod`` records nothing because the Deployment respawns the pod
+on its own.
 
 Usage::
 
@@ -15,7 +17,7 @@ Usage::
         mock_server_injector: MockServerInjector,
     ) -> None:
         await mock_server_injector.patch_env(
-            "default", "AIPERF_MOCK_FORCE_STATUS", "500"
+            "default", "MOCK_SERVER_ERROR_RATE", "50"
         )
         # ... drive benchmark, assert error metrics ...
 """
@@ -77,8 +79,9 @@ class MockServerInjector:
     ) -> None:
         """Trigger a rolling restart via ``kubectl rollout restart``.
 
-        Records the operation so ``restore()`` knows the deployment was
-        perturbed even though no state mutation needs to be undone.
+        Records the operation so ``restore()`` strips kubectl's
+        ``restartedAt`` annotation and returns the Deployment to its
+        original podTemplate hash.
         """
         await self.kubectl.run(
             "rollout",
@@ -128,7 +131,7 @@ class MockServerInjector:
         """Scale the deployment to ``replicas``.
 
         Records the prior replica count so ``restore()`` can revert to
-        exactly one replica (the harness default).
+        whatever the deployment had before this call.
         """
         current = await self.kubectl.run(
             "get",
@@ -174,7 +177,7 @@ class MockServerInjector:
 
         Args:
             namespace: Deployment namespace.
-            env_var: Env var name, e.g. ``AIPERF_MOCK_FORCE_STATUS``.
+            env_var: Env var name, e.g. ``MOCK_SERVER_ERROR_RATE``.
             value: Value to set.
             deployment: Deployment name.
         """

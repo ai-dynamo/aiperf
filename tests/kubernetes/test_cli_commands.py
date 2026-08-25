@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for aiperf kube CLI commands (status, logs, results, cancel, delete)."""
+"""Tests for aiperf kube CLI commands (list, logs, results, generate, validate)."""
 
 from __future__ import annotations
 
@@ -308,7 +308,7 @@ class TestKubeGenerateCommand:
     async def test_generate_respects_workers_flag(
         self, project_root: Path, workers: int
     ) -> None:
-        """Verify generate command includes workers-max in the CR spec."""
+        """Verify generate accepts --total-workers and still emits an AIPerfJob CR."""
         import yaml
 
         result = await run_aiperf_command(
@@ -416,7 +416,7 @@ class TestKubeGenerateNoOperatorCommand:
     async def test_generate_no_operator_respects_workers_flag(
         self, project_root: Path, workers: int
     ) -> None:
-        """Verify --no-operator respects --total-workers flag."""
+        """Verify --no-operator accepts --total-workers and still emits a JobSet."""
         import yaml
 
         result = await run_aiperf_command(

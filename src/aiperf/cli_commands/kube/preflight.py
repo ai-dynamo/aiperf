@@ -105,19 +105,19 @@ async def _run_preflight(
     workers: int,
     output: Literal["text", "json"],
 ) -> None:
-    import logging
+    from contextlib import nullcontext
 
     import orjson
 
+    from aiperf.kubernetes import console as kube_console
     from aiperf.kubernetes.preflight import CLIPreflightChecker
 
-    # Suppress text output in JSON mode so only clean JSON goes to stdout
-    kube_logger = logging.getLogger("aiperf.kube")
-    original_level = kube_logger.level
-    if output == "json":
-        kube_logger.setLevel(logging.WARNING)
-
-    try:
+    # In JSON mode stdout must carry only the JSON document; the checker's own
+    # summary (including an ERROR record when checks fail) goes to stderr.
+    quiet = (
+        kube_console.machine_readable_stdout() if output == "json" else nullcontext()
+    )
+    with quiet:
         checker = CLIPreflightChecker(
             namespace=manage_options.namespace or "aiperf-benchmarks",
             kubeconfig=manage_options.kubeconfig,
@@ -130,17 +130,10 @@ async def _run_preflight(
         )
 
         results = await checker.run_all_checks()
-    finally:
-        kube_logger.setLevel(original_level)
 
     if output == "json":
-        from aiperf.kubernetes import console as kube_console
-
-        json_output = orjson.dumps(
-            results.to_dict(), option=orjson.OPT_INDENT_2
-        ).decode()
-        kube_console.console.print(
-            json_output, markup=False, highlight=False, soft_wrap=True
+        kube_console.emit_raw(
+            orjson.dumps(results.to_dict(), option=orjson.OPT_INDENT_2).decode()
         )
 
     if not results.passed:

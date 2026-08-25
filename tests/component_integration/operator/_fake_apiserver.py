@@ -9,7 +9,7 @@ apiserver. The store records every call so tests can assert call counts,
 patch shapes, and ordering.
 
 Public surface:
-    FakeApiserver(crs)          - holds CRs keyed by (ns, plural, name)
+    FakeApiserver()             - holds CRs keyed by (ns, plural, name)
     fake.add_cr(...)            - register a CR body
     fake.context()              - patches both k8s_client + CustomObjectsApi
     fake.get_call_count(name)   - count of get_namespaced_custom_object calls

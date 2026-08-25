@@ -357,12 +357,12 @@ async def on_aiperfjob_delete_index_cleanup(
 ) -> None:
     """Drop every index row for a deleted AIPerfJob.
 
-    Wired from ``main.on_aiperfjob_delete``. The CR delete handler in
-    ``lifecycle.on_delete`` does not touch disk (results retention is
-    independent of CR lifecycle), but the index entries become orphaned
-    when the CR is gone — ``aiperf kube history`` would still surface
-    them. Walk every epoch dir on disk plus every index row and drop
-    matching index rows; missing-on-both is a no-op.
+    Wired from ``main.on_delete`` via ``lifecycle.on_delete``. That handler
+    does not touch disk (results retention is independent of CR lifecycle),
+    but the index entries become orphaned when the CR is gone — ``aiperf kube
+    results list-runs`` would still surface them. Walk every epoch dir on disk
+    plus every index row and drop matching index rows; missing-on-both is a
+    no-op.
 
     Best-effort: any failure logs and swallows so on_delete remains fast.
     """

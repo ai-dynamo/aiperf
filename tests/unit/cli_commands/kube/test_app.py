@@ -68,7 +68,7 @@ class TestKubeAppIdentity:
 
 
 class TestKubeAppRegistration:
-    """Verify every expected subcommand is registered exactly once."""
+    """Verify every expected subcommand is registered, and no extras appear."""
 
     @pytest.mark.parametrize(
         "subcommand",

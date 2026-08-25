@@ -279,7 +279,7 @@ async def test_find_any_job_latest_pointer_without_summary_still_none(
     """The stub fallback only applies to explicit historical epochs.
 
     When the caller asks for "latest" (no epoch / ``"latest"``) and the
-    latest run dir has no summary yet, the live CR should still win —
+    latest run dir has no summary yet, no archived stub is synthesized —
     falling back to a stub here would mask in-flight runs as archived.
     """
     from aiperf.operator import job_union

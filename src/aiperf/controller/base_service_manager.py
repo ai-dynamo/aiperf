@@ -104,7 +104,7 @@ class BaseServiceManager(AIPerfLifecycleMixin, ABC):
     def _judge_stale_service(self, info: ServiceRunInfo) -> None:
         """Decide what a single stale service means, and act on it.
 
-        Split out of ``_monitor_heartbeats`` so the tick-level protections
+        Split out of ``_monitor_heartbeats_tick`` so the tick-level protections
         (catch-up detection, strike bookkeeping) stay readable next to the
         per-service verdict.
         """
@@ -180,7 +180,7 @@ class BaseServiceManager(AIPerfLifecycleMixin, ABC):
         on staleness, so a genuinely dead service produces an indefinite hang
         rather than a fail-fast.
 
-        Two protections against false-positive batch expiry, both earned in
+        Three protections against false-positive batch expiry, all earned in
         production at 285 worker-group managers where a controller stall
         flagged 141 of them dead in the same millisecond:
 

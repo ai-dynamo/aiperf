@@ -123,21 +123,19 @@ class AIPerfJobConfig:
     """
 
     random_seed: int | None = None
-    """Global random seed for dataset/sampling determinism. Maps to
-    ``BenchmarkConfig.random_seed`` so the operator-side run produces the same
-    seeded prompts as a ``--random-seed`` bare invocation."""
+    """Global random seed for dataset/sampling determinism. Maps to the
+    ``AIPerfConfig`` envelope's ``random_seed`` (emitted as ``spec.randomSeed``)
+    so the operator-side run produces the same seeded prompts as a
+    ``--random-seed`` bare invocation."""
 
     def to_flat_spec(self) -> dict[str, Any]:
-        """Generate flat CRD spec (config v3 format, no userConfig wrapper).
+        """Generate flat CRD spec (no userConfig wrapper).
 
-        Emits ``phases:`` as an ordered array. The CRD's apiserver schema
-        explicitly requires ``spec.benchmark.phases`` (see ``required:`` in
-        ``deploy/helm/aiperf-operator/templates/crd-aiperfjob.yaml``); the ``profiling:``
-        / ``warmup:`` top-level shorthand siblings are normalized into
-        ``phases:`` only by an operator Pydantic before-validator that runs
-        AFTER apiserver validation, so they cannot replace ``phases:`` from
-        the client side. Order in the list IS execution order: warmup (when
-        configured) precedes profiling.
+        Emits ``phases:`` as an ordered array rather than the ``profiling:`` /
+        ``warmup:`` top-level shorthand siblings, which the CRD advertises too
+        but which an operator Pydantic before-validator normalizes into
+        ``phases:`` only AFTER apiserver validation. Order in the list IS
+        execution order: warmup (when configured) precedes profiling.
         """
         profiling_phase: dict[str, Any] = {
             "name": "profiling",

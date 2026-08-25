@@ -71,7 +71,7 @@ benchmark traffic should ``add_proxy(name="mock-server",
 listen=f"0.0.0.0:{TOXIPROXY_MOCK_SERVER_PORT}", upstream=...)`` and
 point ``AIPerfJobConfig.endpoint_url`` at
 ``http://toxiproxy.aiperf-chaos-toxiproxy.svc.cluster.local:20010/v1``.
-Generic proxy slots (20000-20005) remain unreserved."""
+Of the generic proxy slots, 20001 and 20003-20005 remain unreserved."""
 
 TOXIPROXY_APISERVER_PORT = 20000
 """Reserved listen port for fronting operator -> apiserver traffic.
@@ -383,7 +383,7 @@ class ToxiproxyInjector:
 class ToxiproxyError(RuntimeError):
     """Raised when the toxiproxy admin API returns an unexpected status.
 
-    The message names the HTTP method, path, status code, and truncated
-    response body so test failures identify the offending call without
+    The message names the HTTP method, path, status code, and response
+    body so test failures identify the offending call without
     needing to re-run under verbose logging.
     """

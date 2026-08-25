@@ -144,7 +144,7 @@ class TestLifecycleEvents:
     def test_event_created(
         self, sample_body: dict[str, Any], mock_post_event: MagicMock
     ) -> None:
-        """Verify event_created posts correct event."""
+        """Verify events.created posts correct event."""
         events.created(sample_body, "job-123", 5)
 
         mock_post_event.assert_called_once_with(
@@ -156,7 +156,7 @@ class TestLifecycleEvents:
     def test_event_started(
         self, sample_body: dict[str, Any], mock_post_event: MagicMock
     ) -> None:
-        """Verify event_started posts correct event."""
+        """Verify events.started posts correct event."""
         events.started(sample_body, "job-456")
 
         mock_post_event.assert_called_once_with(
@@ -168,7 +168,7 @@ class TestLifecycleEvents:
     def test_event_completed_without_duration(
         self, sample_body: dict[str, Any], mock_post_event: MagicMock
     ) -> None:
-        """Verify event_completed posts correct event without duration."""
+        """Verify events.completed posts correct event without duration."""
         events.completed(sample_body, "job-789")
 
         mock_post_event.assert_called_once_with(
@@ -180,7 +180,7 @@ class TestLifecycleEvents:
     def test_event_completed_with_duration(
         self, sample_body: dict[str, Any], mock_post_event: MagicMock
     ) -> None:
-        """Verify event_completed includes duration when provided."""
+        """Verify events.completed includes duration when provided."""
         events.completed(sample_body, "job-789", 45.5)
 
         mock_post_event.assert_called_once_with(
@@ -192,7 +192,7 @@ class TestLifecycleEvents:
     def test_event_completed_with_zero_duration(
         self, sample_body: dict[str, Any], mock_post_event: MagicMock
     ) -> None:
-        """Verify event_completed includes zero duration (not omitted as falsy)."""
+        """Verify events.completed includes zero duration (not omitted as falsy)."""
         events.completed(sample_body, "job-789", 0.0)
 
         mock_post_event.assert_called_once_with(
@@ -204,7 +204,7 @@ class TestLifecycleEvents:
     def test_event_failed(
         self, sample_body: dict[str, Any], mock_post_event: MagicMock
     ) -> None:
-        """Verify event_failed posts warning event."""
+        """Verify events.failed posts warning event."""
         events.failed(sample_body, "job-err", "Connection refused")
 
         mock_post_event.assert_called_once_with(
@@ -217,7 +217,7 @@ class TestLifecycleEvents:
     def test_event_cancelled(
         self, sample_body: dict[str, Any], mock_post_event: MagicMock
     ) -> None:
-        """Verify event_cancelled posts warning event."""
+        """Verify events.cancelled posts warning event."""
         events.cancelled(sample_body, "job-cancel")
 
         mock_post_event.assert_called_once_with(
@@ -245,7 +245,7 @@ class TestValidationEvents:
     def test_event_spec_valid(
         self, sample_body: dict[str, Any], mock_post_event: MagicMock
     ) -> None:
-        """Verify event_spec_valid posts correct event."""
+        """Verify events.spec_valid posts correct event."""
         events.spec_valid(sample_body)
 
         mock_post_event.assert_called_once_with(
@@ -257,7 +257,7 @@ class TestValidationEvents:
     def test_event_spec_invalid(
         self, sample_body: dict[str, Any], mock_post_event: MagicMock
     ) -> None:
-        """Verify event_spec_invalid posts warning event."""
+        """Verify events.spec_invalid posts warning event."""
         events.spec_invalid(sample_body, "Missing required field")
 
         mock_post_event.assert_called_once_with(
@@ -270,7 +270,7 @@ class TestValidationEvents:
     def test_event_endpoint_reachable(
         self, sample_body: dict[str, Any], mock_post_event: MagicMock
     ) -> None:
-        """Verify event_endpoint_reachable posts correct event."""
+        """Verify events.endpoint_reachable posts correct event."""
         events.endpoint_reachable(sample_body, "http://api.example.com")
 
         mock_post_event.assert_called_once_with(
@@ -282,7 +282,7 @@ class TestValidationEvents:
     def test_event_endpoint_unreachable(
         self, sample_body: dict[str, Any], mock_post_event: MagicMock
     ) -> None:
-        """Verify event_endpoint_unreachable posts warning event."""
+        """Verify events.endpoint_unreachable posts warning event."""
         events.endpoint_unreachable(
             sample_body, "http://api.example.com", "Connection timeout"
         )
@@ -312,7 +312,7 @@ class TestResourceEvents:
     def test_event_resources_created(
         self, sample_body: dict[str, Any], mock_post_event: MagicMock
     ) -> None:
-        """Verify event_resources_created posts correct event."""
+        """Verify events.resources_created posts correct event."""
         events.resources_created(sample_body, "config-job-123", "jobset-job-123")
 
         mock_post_event.assert_called_once_with(
@@ -324,7 +324,7 @@ class TestResourceEvents:
     def test_event_workers_ready(
         self, sample_body: dict[str, Any], mock_post_event: MagicMock
     ) -> None:
-        """Verify event_workers_ready posts correct event."""
+        """Verify events.workers_ready posts correct event."""
         events.workers_ready(sample_body, 5, 5)
 
         mock_post_event.assert_called_once_with(
@@ -351,7 +351,7 @@ class TestResultsEvents:
     def test_event_results_stored(
         self, sample_body: dict[str, Any], mock_post_event: MagicMock
     ) -> None:
-        """Verify event_results_stored posts correct event."""
+        """Verify events.results_stored posts correct event."""
         events.results_stored(sample_body, "/results/job-123", 3)
 
         mock_post_event.assert_called_once_with(
@@ -363,7 +363,7 @@ class TestResultsEvents:
     def test_event_results_failed(
         self, sample_body: dict[str, Any], mock_post_event: MagicMock
     ) -> None:
-        """Verify event_results_failed posts warning event."""
+        """Verify events.results_failed posts warning event."""
         events.results_failed(sample_body, "Disk full")
 
         mock_post_event.assert_called_once_with(
@@ -376,7 +376,7 @@ class TestResultsEvents:
     def test_event_results_cleaned(
         self, sample_body: dict[str, Any], mock_post_event: MagicMock
     ) -> None:
-        """Verify event_results_cleaned posts correct event."""
+        """Verify events.results_cleaned posts correct event."""
         events.results_cleaned(sample_body, "job-old", 30)
 
         mock_post_event.assert_called_once_with(
@@ -403,7 +403,7 @@ class TestReliabilityEvents:
     def test_event_job_timeout(
         self, sample_body: dict[str, Any], mock_post_event: MagicMock
     ) -> None:
-        """Verify event_job_timeout posts warning event with elapsed time."""
+        """Verify events.job_timeout posts warning event with elapsed time."""
         events.job_timeout(sample_body, "job-slow", 3600.0)
 
         mock_post_event.assert_called_once_with(
@@ -416,7 +416,7 @@ class TestReliabilityEvents:
     def test_event_job_timeout_fractional_seconds(
         self, sample_body: dict[str, Any], mock_post_event: MagicMock
     ) -> None:
-        """Verify event_job_timeout formats fractional seconds correctly."""
+        """Verify events.job_timeout formats fractional seconds correctly."""
         events.job_timeout(sample_body, "job-slow", 123.7)
 
         mock_post_event.assert_called_once_with(
@@ -429,7 +429,7 @@ class TestReliabilityEvents:
     def test_event_pod_restarts(
         self, sample_body: dict[str, Any], mock_post_event: MagicMock
     ) -> None:
-        """Verify event_pod_restarts posts warning event with pod details."""
+        """Verify events.pod_restarts posts warning event with pod details."""
         events.pod_restarts(sample_body, "worker-0-0", 5, "OOMKilled")
 
         mock_post_event.assert_called_once_with(
@@ -442,7 +442,7 @@ class TestReliabilityEvents:
     def test_event_pod_restarts_crashloop(
         self, sample_body: dict[str, Any], mock_post_event: MagicMock
     ) -> None:
-        """Verify event_pod_restarts works with CrashLoopBackOff reason."""
+        """Verify events.pod_restarts works with CrashLoopBackOff reason."""
         events.pod_restarts(sample_body, "controller-0-0", 10, "CrashLoopBackOff")
 
         mock_post_event.assert_called_once_with(
@@ -470,7 +470,7 @@ class TestPreflightEvents:
     def test_event_preflight_passed(
         self, sample_body: dict[str, Any], mock_post_event: MagicMock
     ) -> None:
-        """Verify event_preflight_passed posts normal event with check count."""
+        """Verify events.preflight_passed posts normal event with check count."""
         events.preflight_passed(sample_body, 13)
 
         mock_post_event.assert_called_once_with(
@@ -482,7 +482,7 @@ class TestPreflightEvents:
     def test_event_preflight_passed_zero_checks(
         self, sample_body: dict[str, Any], mock_post_event: MagicMock
     ) -> None:
-        """Verify event_preflight_passed handles zero checks."""
+        """Verify events.preflight_passed handles zero checks."""
         events.preflight_passed(sample_body, 0)
 
         mock_post_event.assert_called_once_with(
@@ -494,7 +494,7 @@ class TestPreflightEvents:
     def test_event_preflight_failed(
         self, sample_body: dict[str, Any], mock_post_event: MagicMock
     ) -> None:
-        """Verify event_preflight_failed posts warning event with error message."""
+        """Verify events.preflight_failed posts warning event with error message."""
         events.preflight_failed(sample_body, "RBAC permissions missing")
 
         mock_post_event.assert_called_once_with(
@@ -507,7 +507,7 @@ class TestPreflightEvents:
     def test_event_preflight_failed_multiline_error(
         self, sample_body: dict[str, Any], mock_post_event: MagicMock
     ) -> None:
-        """Verify event_preflight_failed preserves full error string."""
+        """Verify events.preflight_failed preserves full error string."""
         events.preflight_failed(sample_body, "2 checks failed: RBAC, namespace")
 
         mock_post_event.assert_called_once_with(
@@ -520,7 +520,7 @@ class TestPreflightEvents:
     def test_event_preflight_warning(
         self, sample_body: dict[str, Any], mock_post_event: MagicMock
     ) -> None:
-        """Verify event_preflight_warning posts warning with check name and message."""
+        """Verify events.preflight_warning posts warning with check name and message."""
         events.preflight_warning(
             sample_body, "resource_quotas", "Quota limit near capacity"
         )

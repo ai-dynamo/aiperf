@@ -2,11 +2,13 @@
 # SPDX-License-Identifier: Apache-2.0
 """Integration tests for Helm-based AIPerf operator deployment.
 
-These tests deploy the operator using Helm on a minikube cluster, create AIPerfJob CRs,
-and verify the full benchmark lifecycle through the operator.
+These tests deploy the operator using Helm on the local test cluster (Kind by
+default), create AIPerfJob CRs, and verify the full benchmark lifecycle through
+the operator.
 
 Fixture scoping strategy:
-- Module-scoped: local_cluster, kubectl, helm_deployer (shared across all tests)
+- Package-scoped: local_cluster, kubectl (shared across the whole suite)
+- Module-scoped: helm_deployer, helm_deployed (shared across all tests here)
 - Function-scoped: Used only when test modifies state or needs fresh resources
 """
 
@@ -104,7 +106,7 @@ class TestHelmChartDeployment:
         helm_deployed: HelmDeployer,
         kubectl: KubectlClient,
     ) -> None:
-        """Verify ClusterRole is created with correct permissions."""
+        """Verify an aiperf ClusterRole is created."""
         result = await kubectl.run(
             "get",
             "clusterrole",

@@ -350,7 +350,7 @@ class TestNamedPhaseSemantics:
 
 
 class TestNamedPhaseStatus:
-    """The operator stamps names into CR status and kinds into phase details."""
+    """The operator stamps the named phase, not the legacy aggregate, into annotations."""
 
     def test_annotations_prefer_named_phase_over_legacy_aggregate(self) -> None:
         annotations = _build_progress_annotations(

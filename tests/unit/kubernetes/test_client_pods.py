@@ -282,7 +282,7 @@ class TestFindOperatorNamespace:
 
     @pytest.mark.asyncio
     async def test_returns_namespace_of_first_match(self) -> None:
-        """Picks the namespace from the first pod returned by list_pod_for_all_namespaces."""
+        """Picks the namespace of the operator pod found by list_pod_for_all_namespaces."""
         api = MagicMock(spec=ApiClient)
         mock_core = MagicMock()
         mock_core.list_pod_for_all_namespaces = AsyncMock(

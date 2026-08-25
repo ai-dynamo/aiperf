@@ -50,12 +50,20 @@ _SKIP_ENDPOINT_CHECK_PARAM = Parameter(
 _DRY_RUN_PARAM = Parameter(
     name="--dry-run",
     negative=(),
-    help="Print the AIPerfJob CR as JSON without submitting it.",
+    help=(
+        "Print what would be submitted to stdout, then exit without contacting the cluster. "
+        "Operator mode prints the AIPerfJob CR as JSON; --no-operator prints the Namespace, "
+        "Role, RoleBinding, ConfigMap and JobSet as a multi-document YAML stream. "
+        "Because no cluster is contacted, the mode shown is assumed, not detected: pass "
+        "--no-operator to preview direct mode. The CR is also printed before AIPerfJobSpec "
+        "validation, so a real submission may canonicalize snake_case keys to camelCase or "
+        "reject keys a dry run prints."
+    ),
 )
 _NO_OPERATOR_PARAM = Parameter(
     name="--no-operator",
     negative=(),
-    help="Force direct deployment without the operator. Automatically enabled if the AIPerfJob CRD is not installed on the cluster.",
+    help="Force direct deployment without the operator. On a real (non-dry-run) deploy this is enabled automatically if the AIPerfJob CRD is not installed on the cluster; --dry-run never probes, so it always previews operator mode unless you pass this flag.",
 )
 _OPERATOR_PARAM = Parameter(
     name="--operator",
@@ -298,6 +306,23 @@ def _check_resolved_config_for_sweep(config: AIPerfConfig) -> None:
     )
 
 
+def _warn_dry_run_mode_assumed() -> None:
+    """Tell the user the previewed mode was assumed, never detected.
+
+    Emitted on stderr only: ``--dry-run`` stdout is the machine-readable
+    payload that ``docs/kubernetes/direct-mode.md`` pipes into ``kubectl
+    apply``, so nothing advisory may go there.
+    """
+    from aiperf.kubernetes import console as kube_console
+
+    kube_console.stderr_console.print(
+        "Assuming operator mode: --dry-run does not probe the cluster for the "
+        "AIPerfJob CRD. Pass --no-operator to preview direct-mode manifests.",
+        highlight=False,
+        soft_wrap=True,
+    )
+
+
 @app.default
 async def profile(
     *,
@@ -318,6 +343,11 @@ async def profile(
     falls back to direct manifest creation (JobSet, ConfigMap, RBAC).
     Use --operator to force operator mode without CRD discovery, or
     --no-operator to force direct mode.
+
+    --dry-run deliberately skips CRD discovery so it works with no cluster
+    reachable at all, which means it previews operator mode unless you pass
+    --no-operator. See docs/kubernetes/workflow.md for the full dry-run
+    fidelity caveats.
 
     Examples:
         # Auto-detect (operator if available, direct otherwise)
@@ -362,8 +392,11 @@ async def profile(
         _print_memory_estimate(config, kube_options, spec)
 
         use_operator = not no_operator
-        if use_operator and not operator and not dry_run:
-            use_operator = await operator_available(kube_options)
+        if use_operator and not operator:
+            if dry_run:
+                _warn_dry_run_mode_assumed()
+            else:
+                use_operator = await operator_available(kube_options)
 
         deploy_kwargs: dict[str, Any] = {
             "dry_run": dry_run,

@@ -6,7 +6,7 @@ Generates DynamoGraphDeployment CRDs for the Dynamo operator.
 Supports agg, agg-router, and disagg modes with vLLM, TRT-LLM, or SGLang backends.
 
 For single-GPU local testing, use ``DynamoConfig.single_gpu_disagg()`` which
-skips nvidia.com/gpu resource requests and uses NVIDIA_VISIBLE_DEVICES=all
+skips nvidia.com/gpu resource requests and uses ``runtimeClassName: nvidia``
 so both prefill and decode pods share the same physical GPU.
 
 Requires the Dynamo operator to be installed in the cluster.
@@ -276,7 +276,7 @@ class DynamoDeployer:
     """Deploys and manages a Dynamo inference graph on Kubernetes.
 
     Uses the DynamoGraphDeployment CRD to deploy inference graphs via the
-    Dynamo operator. Supports both vLLM and TRT-LLM backends. Manifest shape
+    Dynamo operator. Supports vLLM, TRT-LLM, and SGLang backends. Manifest shape
     depends on ``config.api_version``: ``v1alpha1`` (default, matches the
     shipped helm chart) emits the legacy ``spec.services`` map with
     ``extraPodSpec.mainContainer``; ``v1beta1`` emits the forward-compat

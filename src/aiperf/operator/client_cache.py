@@ -96,7 +96,7 @@ _claim_timestamps = _JobCacheState.claim_timestamps
 def request_cancellation(key: str) -> None:
     """Signal that any in-flight handler work for this job should abort.
 
-    Called from on_delete. Long-running paths check
+    Called from on_delete and on_cancel. Long-running paths check
     ``is_cancellation_requested`` at each await boundary and exit early
     (skipping remaining retries, JobSet delete, status patches) so the
     CR deletion doesn't block on tens-of-seconds of fetch backoff.
@@ -389,8 +389,10 @@ def _build_claim_patch_ops(
     """Build the JSON-patch ops that atomically claim the completion annotation.
 
     Using a ``test`` op means a concurrent writer that also sets the
-    annotation will cause our patch to fail with 422, and we return
-    False (losing the race, which is the safe outcome).
+    annotation will cause our patch to be rejected with 422, so this call
+    never acquires the claim (the safe outcome). A 422 is not cached as a
+    lost race, so a later tick can retry; only a 409 whose live re-read
+    confirms the annotation counts as a decisive lost race.
 
     ``timestamp`` lets the caller reuse the exact value it later latches into
     the local body snapshot, so the same-tick transient-fetch retry gate sees

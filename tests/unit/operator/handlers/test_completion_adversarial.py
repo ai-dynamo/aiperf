@@ -307,7 +307,8 @@ class TestKeyFilesMaterializedValidation:
     ``profile_export_aiperf.json`` on disk. The old check passed on file
     EXISTENCE only, so the operator advanced ``latest.txt``/``runEpoch`` and
     served corrupt bytes as a Complete benchmark. Materialization now requires
-    the JSON export to decode and parse to a non-empty dict.
+    a key export to be non-empty and, for the JSON export, to decode and parse
+    to a non-empty dict; a csv-authoritative run still counts.
     """
 
     def _materialized(self, tmp_path: Path) -> bool:

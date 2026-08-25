@@ -4,9 +4,40 @@
 
 from __future__ import annotations
 
+import asyncio
+import gc
+import tracemalloc
+from collections.abc import Callable
+
+import orjson
 import pytest
 from pytest import param
 
+from aiperf.common.enums import CreditPhase
+from aiperf.common.messages import MetricRecordsData
+from aiperf.common.models import MetricRecordMetadata
+from aiperf.common.models.dataset_models import Text, Turn
+from aiperf.common.models.record_models import (
+    RecordContext,
+    RequestRecord,
+    SSEField,
+    SSEMessage,
+    TextResponse,
+)
+from aiperf.kubernetes._memory_estimator.components import _per_request_bytes
+from aiperf.kubernetes._memory_estimator.constants import (
+    _CATEGORICAL_INTERN_BYTES_PER_REQUEST,
+    _COLUMN_STORE_INITIAL_CAPACITY,
+    _COLUMN_STORE_LIST_METRIC_COLUMNS,
+    _COLUMN_STORE_METADATA_BOOL_COLUMNS,
+    _COLUMN_STORE_METADATA_CATEGORICAL_COLUMNS,
+    _COLUMN_STORE_METADATA_NUMERIC_COLUMNS,
+    _COLUMN_STORE_TIMESTAMP_COLUMNS,
+    _FLOAT64_BYTES,
+    _GROWABLE_ARRAY_OVERHEAD,
+    _INT32_BYTES,
+    _SSE_BYTES_PER_CHUNK,
+)
 from aiperf.kubernetes.memory_estimator import (
     ClusterMemoryEstimate,
     ComponentEstimate,
@@ -25,6 +56,8 @@ from aiperf.kubernetes.memory_estimator import (
     estimate_memory,
     format_estimate,
 )
+from aiperf.metrics.accumulator import MetricsAccumulator
+from tests.unit.conftest import make_benchmark_run
 
 # =============================================================================
 # Utility tests
@@ -183,14 +216,34 @@ class TestRecordsManagerEstimate:
         assert many.variable_mib > few.variable_mib
 
     def test_models_current_column_store_fixed_layout(self) -> None:
-        requests = 1000
-        est = _estimate_records_manager(requests, 25)
+        """The row width the estimate assumes matches the constants it is built from.
 
-        # 24 scalar metrics + 3 timestamps + 4 numeric metadata columns,
-        # plus 6 int32 categorical code columns and 2 uint8 booleans.
-        bytes_per_row = (24 + 3 + 4) * 8 + 6 * 4 + 2
-        column_bytes = 1024 * bytes_per_row * 1.05
-        intern_bytes = requests * 136
+        Deliberately derives ``bytes_per_row`` from the layout constants rather
+        than restating their literal values: hardcoding ``(24 + 3 + 4) * 8``
+        here made this test a mirror of ``constants.py`` that passed for any
+        value the constants held. The independent check that those constants
+        describe the real ``ColumnStore`` lives in
+        ``TestColumnStoreMetadataColumnDrift``.
+        """
+        requests = 1000
+        num_metrics = 25
+        est = _estimate_records_manager(requests, num_metrics)
+
+        scalar_metrics = num_metrics - _COLUMN_STORE_LIST_METRIC_COLUMNS
+        float64_columns = (
+            scalar_metrics
+            + _COLUMN_STORE_TIMESTAMP_COLUMNS
+            + _COLUMN_STORE_METADATA_NUMERIC_COLUMNS
+        )
+        bytes_per_row = (
+            float64_columns * _FLOAT64_BYTES
+            + _COLUMN_STORE_METADATA_CATEGORICAL_COLUMNS * _INT32_BYTES
+            + _COLUMN_STORE_METADATA_BOOL_COLUMNS
+        )
+        column_bytes = (
+            _COLUMN_STORE_INITIAL_CAPACITY * bytes_per_row * _GROWABLE_ARRAY_OVERHEAD
+        )
+        intern_bytes = requests * _CATEGORICAL_INTERN_BYTES_PER_REQUEST
         expected_mib = _mib(column_bytes + intern_bytes) + 1.0
 
         assert est.variable_mib == pytest.approx(expected_mib)
@@ -979,7 +1032,7 @@ class TestScalingScenarios:
         assert rp_high.steady_state_mib > rp_low.steady_state_mib * 3
 
     def test_streaming_vs_nonstreaming_worker_difference(self) -> None:
-        """Streaming uses SSE chunks (200B/token), non-streaming uses text (4B/token)."""
+        """Streaming retains one SSEMessage per chunk; buffered keeps one TextResponse."""
         sse = _make_params(streaming=True, avg_osl_tokens=512)
         text = _make_params(streaming=False, avg_osl_tokens=512)
         est_sse = MemoryEstimator(sse).estimate()
@@ -988,3 +1041,307 @@ class TestScalingScenarios:
         wp_text = est_text.worker_pod.total_steady_state_mib
         # SSE should use noticeably more memory at OSL=512
         assert wp_sse > wp_text
+
+
+# =============================================================================
+# Per-object byte constants vs measured heap
+# =============================================================================
+
+_MODEL = "meta-llama/Llama-3.1-8B-Instruct"
+
+
+def _sse_chunk_json(request_idx: int, chunk_idx: int) -> str:
+    """One OpenAI-compatible streaming chunk, shaped like the mock server's.
+
+    Mirrors ``tests/aiperf_mock_server/utils.py::stream_chat_completion``. Both
+    indices are interpolated so every chunk value is unique and CPython string
+    interning cannot deduplicate them into a flattering measurement.
+    """
+    return orjson.dumps(
+        {
+            "id": f"chatcmpl-{request_idx:08d}",
+            "object": "chat.completion.chunk",
+            "created": 1712345678,
+            "model": _MODEL,
+            "choices": [
+                {"index": 0, "delta": {"content": f" tok{chunk_idx}"}},
+            ],
+        }
+    ).decode()
+
+
+def _amortized_heap_bytes(factory: Callable[[int], object], n: int) -> float:
+    """Amortized marginal heap bytes per object built by ``factory``.
+
+    ``tracemalloc`` snapshot diff across ``n`` simultaneously-live instances,
+    after a warmup pass. Amortizing is the whole point: the one-off cost of
+    shared field-name strings, Pydantic validator/schema objects and interned
+    literals is paid by the first instance and must not be charged to the
+    marginal one. ``sys.getsizeof`` cannot be used — it sees only the
+    top-level object, missing ``__dict__`` / ``__pydantic_extra__`` and every
+    referenced string.
+    """
+    warmup = [factory(i) for i in range(16)]
+    del warmup
+    gc.collect()
+
+    tracemalloc.start()
+    gc.collect()
+    before = tracemalloc.take_snapshot()
+    live = [factory(i) for i in range(n)]
+    gc.collect()
+    after = tracemalloc.take_snapshot()
+    total = sum(stat.size_diff for stat in after.compare_to(before, "filename"))
+    tracemalloc.stop()
+
+    del live
+    gc.collect()
+    # Discount the holder list's own pointer storage, which the estimator's
+    # per-request model does not claim to cover.
+    return (total - n * 8) / n
+
+
+def _build_inflight_request(
+    i: int, avg_isl: int, avg_osl: int, *, streaming: bool
+) -> tuple[RequestRecord, Turn]:
+    """One in-flight request as a worker holds it: record + context + turn + responses."""
+    if streaming:
+        responses: list[SSEMessage] | list[TextResponse] = [
+            SSEMessage(
+                perf_ns=i * 1_000_000 + k,
+                packets=[SSEField(name="data", value=_sse_chunk_json(i, k))],
+            )
+            for k in range(avg_osl)
+        ]
+    else:
+        body = orjson.dumps(
+            {
+                "id": f"cmpl-{i:08d}",
+                "choices": [{"message": {"content": "y" * (avg_osl * 4)}}],
+            }
+        ).decode()
+        responses = [
+            TextResponse(perf_ns=i, content_type="application/json", text=body)
+        ]
+    record = RequestRecord(
+        request_info=RecordContext(
+            credit_num=i,
+            credit_phase=CreditPhase.PROFILING,
+            conversation_id=f"conv-{i:08d}",
+            turn_index=0,
+            x_request_id=f"6f1b0c9e-{i:08d}",
+            x_correlation_id=f"9a2d4f77-{i:08d}",
+        ),
+        model_name=_MODEL,
+        status=200,
+        responses=responses,
+    )
+    # ~4 chars per token, the ratio _TURN_BYTES_PER_TOKEN encodes.
+    prompt = f"{i:08d} " + "word " * (avg_isl * 4 // 5)
+    turn = Turn(role="user", texts=[Text(name="text", contents=[prompt])])
+    return record, turn
+
+
+class TestPerRequestBytesAgainstMeasuredHeap:
+    """``_per_request_bytes`` must stay on the conservative side of reality.
+
+    This is the guard that was missing when ``_REQUEST_RECORD_BASE_BYTES`` and
+    ``_TURN_BASE_BYTES`` survived a ``msgspec.Struct`` -> Pydantic migration at
+    2.2-5.5x low, and when ``_SSE_BYTES_PER_CHUNK`` stayed fitted against a
+    one-message-many-packets shape the transport never builds. Both defects
+    were invisible to every other test in this file because they all compare
+    the estimator against itself.
+
+    The assertion is one-sided-with-a-ceiling on purpose: the estimator feeds a
+    memory *recommendation*, so predicting slightly high is correct and
+    predicting low is the bug. The upper bound only catches a runaway
+    over-estimate that would inflate recommended limits.
+
+    Measurement is heap-shape-dependent, not timing-dependent, so it is stable
+    across machines for a given CPython build. It is sensitive to the CPython
+    version's object layout: a future interpreter that changes Pydantic model
+    or dataclass footprints should re-measure rather than widen the band.
+    """
+
+    # Ratios measured 2026-08-24 on CPython 3.12 sat in 1.01-1.07x.
+    _MIN_RATIO = 1.0
+    _MAX_RATIO = 1.6
+
+    @pytest.mark.parametrize(
+        "avg_isl, avg_osl, streaming, instances",
+        [
+            param(512, 128, True, 200, id="streaming_isl512_osl128"),
+            param(512, 128, False, 200, id="buffered_isl512_osl128"),
+            param(1024, 1024, True, 50, id="streaming_isl1024_osl1024"),
+            param(1024, 1024, False, 200, id="buffered_isl1024_osl1024"),
+        ],
+    )  # fmt: skip
+    def test_prediction_is_conservative_against_tracemalloc(
+        self, avg_isl: int, avg_osl: int, streaming: bool, instances: int
+    ) -> None:
+        measured = _amortized_heap_bytes(
+            lambda i: _build_inflight_request(i, avg_isl, avg_osl, streaming=streaming),
+            instances,
+        )
+        predicted = _per_request_bytes(avg_isl, avg_osl, streaming=streaming)
+        ratio = predicted / measured
+
+        assert self._MIN_RATIO <= ratio <= self._MAX_RATIO, (
+            f"_per_request_bytes(ISL={avg_isl}, OSL={avg_osl}, "
+            f"streaming={streaming}) predicts {predicted:,} B but "
+            f"{instances} live instances measure {measured:,.0f} B "
+            f"({ratio:.2f}x). Re-derive the per-object constants in "
+            f"_memory_estimator/constants.py from this measurement."
+        )
+
+    def test_streaming_chunk_constant_matches_one_message_per_chunk(self) -> None:
+        """The OSL slope must track the shape the transport actually builds.
+
+        ``aiohttp_client`` appends one ``SSEMessage`` per wire chunk to
+        ``RequestRecord.responses``, so the marginal cost per output token is a
+        whole message (message + packets list + SSEField + JSON string), not a
+        bare ``SSEField``. Fitting against one message holding many packets
+        yields ~112 B/chunk and is what made the streaming path under-predict.
+        """
+        low, high = 128, 1024
+        at_low = _amortized_heap_bytes(
+            lambda i: _build_inflight_request(i, 0, low, streaming=True), 200
+        )
+        at_high = _amortized_heap_bytes(
+            lambda i: _build_inflight_request(i, 0, high, streaming=True), 50
+        )
+        measured_slope = (at_high - at_low) / (high - low)
+
+        assert measured_slope <= _SSE_BYTES_PER_CHUNK, (
+            f"_SSE_BYTES_PER_CHUNK={_SSE_BYTES_PER_CHUNK} under-predicts the "
+            f"measured {measured_slope:.0f} B per streamed chunk."
+        )
+        assert measured_slope * 1.5 >= _SSE_BYTES_PER_CHUNK
+
+
+# =============================================================================
+# ColumnStore layout drift guard
+# =============================================================================
+
+
+class TestColumnStoreMetadataColumnDrift:
+    """``_COLUMN_STORE_METADATA_NUMERIC_COLUMNS`` vs the real ``ColumnStore``.
+
+    Drives records through the real ``MetricsAccumulator.process_record`` (and
+    therefore ``ColumnStore.ingest_metadata``) and counts the columns that were
+    actually *allocated*. ``ingest_metadata`` allocates lazily, skipping any
+    field whose value is None, so the resident count is workload-dependent and
+    the constant models the default streaming single-turn shape.
+
+    The test this replaced restated ``(24 + 3 + 4) * 8`` with a matching prose
+    comment, so it would have passed for any value the constant held.
+    """
+
+    @staticmethod
+    def _record(
+        session_num: int,
+        *,
+        request_ack_ns: int | None,
+        cancellation_time_ns: int | None = None,
+    ) -> MetricRecordsData:
+        """A record shaped like the worker emits.
+
+        ``credit_issued_ns`` is always set because ``Credit.issued_at_ns`` is a
+        non-optional field, so the worker populates it on every request
+        regardless of phase type. ``session_num`` and ``turn_index`` are
+        likewise always present. That leaves ``request_ack_ns`` (streaming
+        only) and ``cancellation_time_ns`` (cancelled requests only) as the two
+        workload-dependent columns.
+        """
+        return MetricRecordsData(
+            metadata=MetricRecordMetadata(
+                session_num=session_num,
+                request_start_ns=1_000_000 + session_num,
+                request_end_ns=2_000_000 + session_num,
+                credit_issued_ns=900_000 + session_num,
+                request_ack_ns=request_ack_ns,
+                cancellation_time_ns=cancellation_time_ns,
+                conversation_id=f"conv-{session_num}",
+                turn_index=0,
+                worker_id="worker-1",
+                record_processor_id="rp-1",
+                benchmark_phase=CreditPhase.PROFILING,
+                x_request_id=f"req-{session_num}",
+                x_correlation_id=f"corr-{session_num}",
+            ),
+            metrics={"request_latency": 1_000_000.0},
+            error=None,
+        )
+
+    @staticmethod
+    async def _allocated_numeric_columns(
+        records: list[MetricRecordsData], *, streaming: bool
+    ) -> set[str]:
+        accumulator = MetricsAccumulator(make_benchmark_run(streaming=streaming))
+        for record in records:
+            await accumulator.process_record(record)
+        return set(accumulator.column_store._metadata_numeric)
+
+    def test_default_streaming_workload_allocates_the_modeled_column_count(
+        self,
+    ) -> None:
+        """Default streaming single-turn: the shape the constant is calibrated for."""
+        records = [self._record(i, request_ack_ns=1_500_000 + i) for i in range(4)]
+        allocated = asyncio.run(
+            self._allocated_numeric_columns(records, streaming=True)
+        )
+
+        assert len(allocated) == _COLUMN_STORE_METADATA_NUMERIC_COLUMNS, (
+            f"ColumnStore allocated {len(allocated)} numeric metadata columns "
+            f"({sorted(allocated)}) for the default streaming workload, but "
+            f"_COLUMN_STORE_METADATA_NUMERIC_COLUMNS is "
+            f"{_COLUMN_STORE_METADATA_NUMERIC_COLUMNS}. Update the constant "
+            f"and the RecordsManager row-width formula together."
+        )
+
+    def test_buffered_workload_allocates_one_fewer_column(self) -> None:
+        """No ``request_ack_ns`` on the buffered path, so that column never allocates."""
+        records = [self._record(i, request_ack_ns=None) for i in range(4)]
+        allocated = asyncio.run(
+            self._allocated_numeric_columns(records, streaming=False)
+        )
+
+        assert len(allocated) == _COLUMN_STORE_METADATA_NUMERIC_COLUMNS - 1
+        assert "request_ack_ns" not in allocated
+
+    def test_cancellations_allocate_one_extra_column(self) -> None:
+        """A single cancelled request lifts the resident count above the default."""
+        records = [
+            self._record(0, request_ack_ns=1_500_000),
+            self._record(1, request_ack_ns=1_500_001, cancellation_time_ns=1_900_000),
+        ]
+        allocated = asyncio.run(
+            self._allocated_numeric_columns(records, streaming=True)
+        )
+
+        assert len(allocated) == _COLUMN_STORE_METADATA_NUMERIC_COLUMNS + 1
+        assert "cancellation_time_ns" in allocated
+
+    def test_lazy_allocation_skips_none_valued_fields(self) -> None:
+        """The mechanism itself: ``ingest_metadata`` allocates only non-None fields.
+
+        This is why the constant is 4 rather than the 5 numeric fields
+        ``process_record`` offers.
+        """
+        records = [self._record(0, request_ack_ns=None)]
+        allocated = asyncio.run(
+            self._allocated_numeric_columns(records, streaming=True)
+        )
+
+        offered = {
+            "session_num",
+            "credit_issued_ns",
+            "request_ack_ns",
+            "cancellation_time_ns",
+            "turn_index",
+        }
+        assert allocated < offered, (
+            "ingest_metadata allocated every offered numeric field; lazy "
+            "allocation is the premise _COLUMN_STORE_METADATA_NUMERIC_COLUMNS "
+            "is calibrated against."
+        )

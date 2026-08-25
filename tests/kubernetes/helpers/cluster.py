@@ -752,7 +752,7 @@ class LocalCluster:
     """Manages a local Kubernetes cluster for testing.
 
     Delegates to a runtime-specific backend (Kind or Minikube) based on
-    ``config.benchmark.runtime``.  Callers interact only with this facade.
+    ``config.runtime``.  Callers interact only with this facade.
     """
 
     config: ClusterConfig = field(default_factory=ClusterConfig)

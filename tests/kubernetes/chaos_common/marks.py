@@ -19,7 +19,8 @@ cilium_on_kind_required = pytest.mark.xfail(
 """
 Apply to tests that require a NetworkPolicy-aware CNI (currently only D704).
 
-When KIND_HAS_CILIUM is unset, the test is xfail-skipped. When set, the
-xfail constraint flips to strict - if the test fails on a Cilium cluster,
-pytest reports it loudly.
+When KIND_HAS_CILIUM is unset, the test still runs but is reported xfail;
+because ``strict=True``, an unexpected pass is reported as a failure. When
+KIND_HAS_CILIUM is set, the condition is False so the marker is inert and a
+failure on the Cilium cluster is reported loudly as a plain failure.
 """

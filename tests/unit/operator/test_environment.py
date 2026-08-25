@@ -284,12 +284,12 @@ class TestRootSettingsValidation:
 
 
 class TestEveryEnvVarMapsToField:
-    """Verify every AIPERF_* env var from deploy manifests maps to an OperatorEnvironment field.
+    """Verify a hand-maintained set of AIPERF_* env vars maps to an OperatorEnvironment field.
 
-    Each entry maps the env var name from the Helm chart values to a
-    (accessor_path, expected_default) tuple. If a new env var is added to the
-    deployment but not here, the test_all_env_vars_covered parametrization will
-    need updating, making drift obvious.
+    Each entry maps an env var name to a (accessor_path, expected_default)
+    tuple. The list is not derived from the deploy manifests, so it is a subset
+    of the env vars the chart actually sets; ``test_all_env_vars_covered`` only
+    pins its length, so edits to it stay deliberate.
     """
 
     ENV_VAR_MAP: list[tuple[str, str, object]] = [
@@ -363,7 +363,7 @@ class TestEveryEnvVarMapsToField:
         assert str(value) != "", f"{env_var} override produced empty value"
 
     def test_all_env_vars_covered(self) -> None:
-        """Guard: if this list changes, a deploy manifest env var was added or removed."""
+        """Guard: pin the list length so entries are not added or dropped silently."""
         assert len(self.ENV_VAR_MAP) == 10
 
 

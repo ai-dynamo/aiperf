@@ -3,9 +3,9 @@
 """K8sChildJobExecutor: creates AIPerfJob children, watches them, collects results.
 
 The single substantive seam between the shared MultiRunOrchestrator and the
-K8s sweep flow. Task 13 (separate) implements the execute()/watch/result-pull
-body; this module provides the helpers, identity check, and child-spec/metadata
-construction.
+K8s sweep flow. Owns child-spec/metadata construction, the ownership identity
+check, get-or-create with terminal-phase polling, per-cell summary pull with an
+operator-API fallback, and the per-child lineage manifest.
 """
 
 from __future__ import annotations
@@ -1036,7 +1036,7 @@ class K8sChildJobExecutor(RunExecutor):
     ) -> RunResult | None:
         """Poll the child until status.phase reaches a terminal value.
 
-        Periodic list-fallback rather than long-lived Watch: simpler under
+        Periodic per-child GET rather than a long-lived Watch: simpler under
         partial network failures, and AIPerfJob phase transitions are rare
         enough that a 5s poll is fine.
 

@@ -242,14 +242,11 @@ def test_job_detail_get_job_404_renders_page_level_error(harness):
     """`/jobs/<ns>/<name>` 404 must show ``job-detail-error``, NOT a
     permanent Loading skeleton.
 
-    BUG SURFACED: ``pages/job-detail.js:1563-1577`` calls poll() with NO
-    catch block in the closure body. On HTTP error, api.js::poll catches
-    the throw, increments the failure counter, but the page's ``error``
-    state stays null. So ``if (!job && !error)`` keeps returning the
-    LoadingPanel forever — the user sees "Loading ns/missing…" until the
-    global poll-threshold banner trips, then sees BOTH at once. There is
-    no path where the user lands on the documented job-detail-error card
-    via a poll failure.
+    The poll closure in ``pages/job-detail.js`` catches the first-load
+    throw and sets the page-level ``error`` state before re-throwing, so
+    ``if (!job && !error)`` stops returning the LoadingPanel and the
+    documented job-detail-error card renders instead of "Loading
+    ns/missing…" until the global poll-threshold banner trips.
     """
     harness.page.route(f"{_BASE}/jobs/{harness.ns}/missing*", _fulfill_status(404))
     harness.goto_job_detail(harness.ns, "missing")
@@ -260,8 +257,9 @@ def test_job_detail_get_job_404_renders_page_level_error(harness):
 def test_job_detail_get_job_500_renders_error_card(harness):
     """`/jobs/<ns>/<name>` 500 should produce the job-detail-error card.
 
-    Same underlying bug as the 404 case: the poll closure swallows the
-    page-level error setter, so the LoadingPanel never resolves.
+    Same first-load path as the 404 case: the poll closure sets the
+    page-level error before re-throwing, so the LoadingPanel resolves to
+    the error card.
     """
     harness.page.route(f"{_BASE}/jobs/{harness.ns}/exploding*", _fulfill_status(500))
     harness.goto_job_detail(harness.ns, "exploding")
@@ -337,11 +335,9 @@ def test_job_detail_get_job_returns_null_does_not_crash(harness):
     """``null`` is the most degenerate "valid JSON" body — the page must
     tolerate it via the ``data?.`` chain without throwing a pageerror.
 
-    BUG SURFACED: a ``null`` response leaves the page stuck on the
-    "Loading…" panel forever (``setJob(null)`` keeps ``!job && !error``
-    true). The contract should be: either resolve to a degraded job
-    header OR show ``job-detail-error``. Either way, the loading panel
-    must not be permanent.
+    A ``null`` body is treated as a first-load failure ("Empty response
+    from operator"), so the page resolves to either a degraded job header
+    or ``job-detail-error`` — never a permanent loading panel.
     """
     harness.page.route(f"{_BASE}/jobs/{harness.ns}/null-shape*", _fulfill_body(b"null"))
     harness.goto_job_detail(harness.ns, "null-shape")

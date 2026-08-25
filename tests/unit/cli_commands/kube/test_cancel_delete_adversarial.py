@@ -7,7 +7,7 @@ Focuses on:
 - namespace, kubeconfig, and kube-context propagation before mutating Kubernetes.
 - text/JSON cleanliness knobs that suppress fallback chatter for machine output.
 - idempotent 404 delete behavior versus non-404 conflict propagation.
-- confirmation-prompt abort semantics and last-benchmark clearing guards.
+- confirmation-prompt abort semantics.
 - AIPerfJob versus AIPerfSweep target distinction before a destructive action.
 
 Out of scope: live apiserver behavior and operator reconciliation after a cancel;
@@ -422,7 +422,7 @@ class TestCancelDeleteMutationBoundaries:
 
 
 class TestConfirmationAndLastBenchmarkGuards:
-    """User intent and persisted defaults are guarded before cleanup side effects."""
+    """User intent is confirmed before cleanup side effects."""
 
     @pytest.mark.parametrize(
         ("response", "expected"),

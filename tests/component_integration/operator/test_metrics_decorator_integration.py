@@ -69,8 +69,8 @@ def _all_decorated_handlers() -> list[tuple[str, Any]]:
 @pytest.mark.component_integration
 @pytest.mark.asyncio
 async def test_real_trampoline_increments_metrics_for_correct_label() -> None:
-    """Calling ``operator_main.monitor_progress`` runs through the real
-    ``@track_handler("monitor_progress")`` wrapper and increments the
+    """Calling ``operator_main.heartbeat_watchdog`` runs through the real
+    ``@track_handler("heartbeat_watchdog")`` wrapper and increments the
     matching Prometheus label.
     """
     # Make the underlying ``monitor.monitor_progress`` a no-op so the test

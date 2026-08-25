@@ -706,7 +706,8 @@ async def _purge_stale_aiperf_resources(
     When pytest is killed mid-run, finalizers pin AIPerfJob CRs, JobSets, and
     their pods. Those zombies then starve subsequent runs of scheduling
     capacity and cause mysterious 120s kubectl timeouts. We clear them before
-    anything else touches the cluster.
+    anything else touches the cluster, but only when the cluster is being
+    reused: a freshly created cluster has nothing to purge.
     """
     if not k8s_settings.reuse_cluster:
         yield
@@ -1258,7 +1259,7 @@ async def deployed_benchmark(
     """Deploy a benchmark and wait for completion (function-scoped).
 
     Use this when you need a fresh benchmark for each test.
-    For read-only tests, use deployed_benchmark_module instead.
+    For read-only tests, use deployed_small_benchmark_module instead.
     """
     result = await benchmark_deployer.deploy(
         config=benchmark_config,
@@ -1394,7 +1395,7 @@ def get_pod_logs(kubectl: KubectlClient):
 
         Args:
             result: Benchmark result.
-            container: Container name (default: control-plane for new single-container arch).
+            container: Container name (default: control-plane, the SystemController container).
             tail: Number of lines to tail.
 
         Returns:

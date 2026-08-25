@@ -32,11 +32,31 @@ The estimator answers three related questions:
    whether `RecordsManager` growable arrays, `RecordProcessor` tokenizer caches,
    or in-flight `Worker` records dominate — so tuning targets the right knob.
 
-The model is purely static: formulas are derived from code inspection and the
-constants were calibrated offline against real RSS measurements (see the
-provenance notes on each constant in
+The model is static: formulas are derived from code inspection, and the
+constants come from two different kinds of calibration (see the provenance
+notes on each constant in
 `src/aiperf/kubernetes/_memory_estimator/constants.py`). No runtime profiling is
 required at estimate time.
+
+- **Aggregate MiB baselines** — `_PYTHON_SUBPROCESS_BASE_MIB`,
+  `_SERVICE_BASE_MIB`, `_TOKENIZER_CACHE_MIB`, and the margin multipliers were
+  measured against real-cluster `container_memory_working_set_bytes` during the
+  2026-04-30 ISL/OSL sweep. Re-derive them only from a new cluster sweep.
+- **Per-object byte constants** — `_REQUEST_RECORD_BASE_BYTES`,
+  `_TURN_BASE_BYTES`, and the SSE / `TextResponse` terms are measured
+  in-process against the real model classes, as *amortized marginal* heap bytes
+  per instance via `tracemalloc` snapshot diffs over 1000–3000 live instances
+  after a warmup pass. Amortizing is required: the one-off cost of shared
+  field-name strings and Pydantic validator objects is paid by the first
+  instance and must not be charged to the marginal one. `sys.getsizeof` is not
+  usable — it sees only the top-level object and misses `__dict__` /
+  `__pydantic_extra__` and every referenced string.
+
+`TestPerRequestBytesAgainstMeasuredHeap` in
+`tests/unit/kubernetes/test_memory_estimator.py` re-runs that measurement on
+every test run and fails if `_per_request_bytes` drifts off the conservative
+side of it, so the per-object constants are reproducible without any external
+script.
 
 **Consumers of estimator output:**
 
@@ -147,8 +167,12 @@ timestamp counts match `process_record` exactly. `process_record` passes five
 numeric metadata keys (`session_num`, `credit_issued_ns`, `request_ack_ns`,
 `cancellation_time_ns`, `turn_index`), but `ColumnStore.ingest_metadata`
 allocates a column only for non-`None` values, so the deployed column count is
-four for the default streaming workload — three without streaming, five once
-cancellation is enabled. The intern term models a
+four for the default streaming workload — three without streaming (no
+`request_ack_ns`), five once any request is cancelled.
+`_COLUMN_STORE_METADATA_NUMERIC_COLUMNS = 4` therefore models the default, and
+`TestColumnStoreMetadataColumnDrift` guards it by driving records through the
+real `MetricsAccumulator.process_record` and counting the columns
+`ColumnStore` actually allocated. The intern term models a
 conservative request-unique `x_correlation_id` plus `conversation_id` values
 bounded by dataset cardinality.
 
@@ -227,11 +251,11 @@ RecordProcessor so the two stay consistent.
 
 Per in-flight request:
 
-$$\text{per\_request} = \underbrace{504}_{\text{record base}} + \underbrace{(408 + \text{ISL} \times 4)}_{\text{turn}} + \text{response}$$
+$$\text{per\_request} = \underbrace{3600}_{\text{record base}} + \underbrace{(2240 + \text{ISL} \times 4)}_{\text{turn}} + \text{response}$$
 
 Response depends on streaming mode:
 
-$$\text{response}_{\text{SSE}} = 136 + \text{OSL} \times 152 \qquad \text{response}_{\text{text}} = 152 + \text{OSL} \times 4$$
+$$\text{response}_{\text{SSE}} = 136 + \text{OSL} \times 420 \qquad \text{response}_{\text{text}} = 152 + \text{OSL} \times 4$$
 
 Pod-level:
 
@@ -239,15 +263,37 @@ $$\text{variable} = \text{pool} + \text{concurrency\_per\_worker} \times \text{p
 
 Key constants (`constants.py`):
 
-- `_REQUEST_RECORD_BASE_BYTES = 504` — `RequestRecord` (Pydantic `AIPerfBaseModel`) shell
-  (pympler-measured deep size of an empty record).
-- `_TURN_BASE_BYTES = 408`, `_TURN_BYTES_PER_TOKEN = 4`.
-- `_SSE_MESSAGE_BASE_BYTES = 136`, `_SSE_BYTES_PER_CHUNK = 152` — SSE per-token
-  cost is ~38x buffered text (152 B/chunk vs 4 B/token) because every chunk is
-  an `SSEField` object plus a short JSON string.
-- `_TEXT_RESPONSE_BASE_BYTES = 152`, `_TEXT_RESPONSE_BYTES_PER_TOKEN = 4`.
+- `_REQUEST_RECORD_BASE_BYTES = 3600` — the Pydantic `RequestRecord` shell plus
+  the `RecordContext` it carries, with empty turns/responses lists. Both are
+  counted here because `_per_request_bytes` has no separate context term.
+  Measured 1125 B bare record + 1896 B `RecordContext`, 3596 B for the
+  populated pair.
+- `_TURN_BASE_BYTES = 2240`, `_TURN_BYTES_PER_TOKEN = 4` — `Turn` + `Text` with
+  an empty content string measured 2235 B (`Turn` alone 1576 B, `Text` alone
+  592 B); the prompt text adds a measured 4.01 B/token.
+- `_SSE_MESSAGE_BASE_BYTES = 136`, `_SSE_BYTES_PER_CHUNK = 420` — SSE per-token
+  cost is ~105x buffered text (420 B/chunk vs 4 B/token). The transport appends
+  one whole `SSEMessage` per wire chunk to `RequestRecord.responses`, so the
+  marginal cost is a message plus its packets list, its `SSEField`, and the JSON
+  string — not a bare `SSEField`. Measured 418.7 B/chunk against the
+  OpenAI-compatible chunk envelope this repo's mock server emits; a minimal
+  `{"c":"<n>"}` envelope measures 286 B/chunk, so the per-chunk cost is
+  dominated by the provider's envelope rather than by the token.
+- `_TEXT_RESPONSE_BASE_BYTES = 152`, `_TEXT_RESPONSE_BYTES_PER_TOKEN = 4` — the
+  `TextResponse` `@dataclass(slots=True)` shell measured 86 B, so the base errs
+  high by a small and deliberate margin; the body adds a measured 4.00 B/token.
 - `_BYTES_PER_CONNECTION = 1024` — aiohttp per-connection kernel + userspace
   buffers.
+
+`RequestRecord` and `Turn` are Pydantic `AIPerfBaseModel` subclasses
+(`extra="allow"`, so each instance carries `__dict__` + `__pydantic_extra__` +
+`__pydantic_fields_set__`); `TextResponse`, `SSEMessage`, and `SSEField` are
+`@dataclass(slots=True)` and much cheaper. The record and turn constants were
+originally derived assuming `msgspec.Struct` layout, which left them 2.2–5.4x
+low, and `_SSE_BYTES_PER_CHUNK` was fitted against a one-message-many-packets
+shape the transport never builds. Both were corrected on 2026-08-24; the
+prediction now lands at 1.01–1.07x of measured across streaming and buffered
+shapes at ISL=512/OSL=128 and ISL=1024/OSL=1024.
 
 Session cache activates when `max_turns > 1`: prior-turn prompts stay resident
 for the session duration.
@@ -326,9 +372,9 @@ Key constants:
 - `_DEFAULT_GPU_METRICS = 12` (DCGM default set).
 - `gpu_sample_interval_s = 1.0` (default in `params.py`).
 - `_GROWABLE_ARRAY_OVERHEAD = 1.05` — applied as a single multiplier to the
-  total GPU telemetry footprint (same constant as RecordsManager). Note the
-  `formula` string this component reports still says `x 1.5`; the arithmetic
-  uses the constant, and the display string is stale.
+  total GPU telemetry footprint (same constant as RecordsManager). The
+  `formula` string this component reports interpolates the constant, so the
+  display and the arithmetic cannot diverge.
 
 Returns zero when `num_gpus == 0` — no DCGM URLs, or GPU telemetry disabled.
 The operator omits the container entirely in that case.
@@ -516,11 +562,25 @@ worker-pod memory limit — there is no per-process cache deduplication.
 
 ### "The estimator disagrees with measured RSS"
 
-Constants are calibrated but static, and the calibration harness that produced
-them is not checked into this branch. Update the constants in
-`src/aiperf/kubernetes/_memory_estimator/constants.py` against your own
-measured RSS and record the provenance in the constant's comment the way the
-existing ones do; do not edit the formulas ad-hoc.
+Constants are calibrated but static. Which class of constant is wrong decides
+how to fix it:
+
+- **A per-object byte constant.** Re-measure it. Extend
+  `TestPerRequestBytesAgainstMeasuredHeap` in
+  `tests/unit/kubernetes/test_memory_estimator.py` with your shape, read the
+  measured value out of the assertion message, and update the constant. The
+  test enforces `1.0 <= predicted / measured <= 1.6`, so a prediction that
+  lands *below* measured is a bug and a prediction slightly above it is
+  correct — the output is a limit recommendation. The per-chunk SSE cost is
+  dominated by the provider's chunk envelope, so a server with unusually large
+  chunks (per-chunk `usage`, `logprobs`) will legitimately exceed the model.
+- **An aggregate MiB baseline.** These come from a real-cluster
+  `container_memory_working_set_bytes` sweep and cannot be re-derived
+  in-process. Update them only from a new cluster measurement.
+
+Record the provenance in the constant's comment the way the existing ones do —
+state the method, the date, and the shape measured. Do not edit the formulas
+ad-hoc.
 
 ---
 

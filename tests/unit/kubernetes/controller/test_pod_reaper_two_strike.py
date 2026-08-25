@@ -63,7 +63,7 @@ def _observe(monitor: _Monitor, phase: PodPhase, *, waiting_reason: str = "") ->
 
 
 def test_a_single_unknown_snapshot_does_not_evict() -> None:
-    """The kubelet blip: one Unknown poll, then the pod reports Running again."""
+    """The kubelet blip: a single Unknown poll leaves the pod un-reaped."""
     monitor = _Monitor()
 
     _observe(monitor, PodPhase.UNKNOWN)

@@ -69,12 +69,8 @@ def show(
         doc["spec"]["benchmark"] = rendered_benchmark
         # width=inf prevents yaml from soft-wrapping long strings (image refs,
         # URLs) into ambiguous indentation that can confuse `kubectl apply`.
-        # markup/highlight disabled and soft_wrap=True keep Rich from mangling
-        # YAML when piped; end="" preserves the single trailing newline that
-        # yaml.safe_dump already emits.
+        # end="" preserves the single trailing newline yaml.safe_dump emits.
         output = yaml.safe_dump(
             doc, sort_keys=False, default_flow_style=False, width=float("inf")
         )
-        kube_console.console.print(
-            output, end="", markup=False, highlight=False, soft_wrap=True
-        )
+        kube_console.emit_raw(output, end="")

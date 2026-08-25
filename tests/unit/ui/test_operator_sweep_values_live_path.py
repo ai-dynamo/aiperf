@@ -214,7 +214,7 @@ def test_absent_or_unusable_values_leave_the_label_to_stand_alone(
     counts, so the carve-out is gone and every case now produces no entry.
 
     1. No writer can produce it. ``_bounded_variation_values_json``
-       (sweep_controller/k8s_executor.py:188-192) always emits
+       (sweep_controller/k8s_executor.py:258) always emits
        ``orjson.dumps(...)``, valid JSON in both the normal and the truncated
        branch. A string that fails ``JSON.parse`` is corruption, not authorship.
     2. The failure mode is inverted. ``valuesLabel`` is what every sweep surface
@@ -223,7 +223,7 @@ def test_absent_or_unusable_values_leave_the_label_to_stand_alone(
        ``search_iter_0008`` belongs -- the descriptor is not merely unhelpful,
        it displaces the identifier that still works.
     3. It contradicted the sibling implementations.
-       ``components/live-variations-card.parseVariationValues`` returned ``[]``
+       ``components/live-variations-helpers.parseVariationValues`` returned ``[]``
        for the same input, and ``kubernetes/results.py:_cell_values`` returned
        ``""`` while its docstring claimed "Same rule as the UI's
        ``formatVariationValues``". Two of three already agreed.

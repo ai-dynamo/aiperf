@@ -43,7 +43,7 @@ class TestGPUMetricsCollection:
         self,
         deployed_gpu_benchmark_module: BenchmarkResult,
     ) -> None:
-        """Verify request count matches configuration."""
+        """Verify at least one request was counted."""
         result = deployed_gpu_benchmark_module
 
         assert result.metrics is not None
@@ -76,7 +76,7 @@ class TestGPUMetricsReasonableness:
     ) -> None:
         """Verify throughput exceeds minimum for real GPU inference.
 
-        Even a small model on a single GPU should achieve > 0.3 req/s.
+        Even a small model on a single GPU should achieve > 0.1 req/s.
         """
         metrics = deployed_gpu_benchmark_module.metrics
         logger.info(

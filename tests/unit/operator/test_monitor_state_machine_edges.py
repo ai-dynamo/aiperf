@@ -11,10 +11,8 @@ This file targets edges not covered by the existing happy-path tests:
 
 * Forward and refused phase transitions (e.g. completed-CR no-op).
 * Job-timeout escalation (FAILED + JobSet delete).
-* Concurrent claim races (TOCTOU on completion-claim annotation).
+* JobSet terminal conditions: Completed never claims, non-True ignored.
 * Pod-state aggregation: all-pending, mixed, all-failed, controller-cascade.
-* Heartbeat / progress-tracking: missing/stale/backwards progress, no
-  progress endpoint yet.
 * Bootstrap / reconciliation paths after operator restart.
 * Orphan-claim recovery gating (only fire when the benchmark is done).
 
@@ -24,8 +22,9 @@ Mocking strategy:
       ``__aenter__``/``__aexit__``).
     * ``CustomObjectsApi`` patched to a ``MagicMock`` whose async methods
       are ``AsyncMock`` instances.
-    * ``is_cancellation_requested``/``try_claim_completion`` etc. are
-      monkeypatched on the monitor module symbol.
+    * ``try_claim_completion``/``handle_completion`` etc. are monkeypatched
+      on the monitor module symbol; cancellation is driven through the real
+      ``client_cache`` helpers.
     * Real ``kopf.PermanentError`` / ``kopf.TemporaryError`` only where
       the production code raises them — transient API errors (ApiException,
       aiohttp.ClientError, etc.) are re-raised as ``kopf.TemporaryError`` after
@@ -218,7 +217,7 @@ def _progress_obj(
 
 
 class TestStateMachineTransitions:
-    """Verify forward phase transitions and that terminal CRs are not re-driven."""
+    """Verify terminal and pre-resource CRs are not re-driven by the monitor."""
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(

@@ -11,15 +11,16 @@ into tiers:
 On failure, the operator sets the CR to Failed with actionable error messages
 and does not create any resources.
 
-This package is split into mixin modules for LLM-ergonomics (file-size limit);
-``client`` is re-exported here so tests can patch
-``aiperf.operator.preflight.client.*`` regardless of which submodule invokes it.
+This package is split into mixin modules for LLM-ergonomics (file-size limit).
+Submodules import ``kubernetes_asyncio.client`` directly; ``client`` is
+re-exported here purely as a stable patch target for tests
+(``aiperf.operator.preflight.client.*`` resolves to the same module object).
 """
 
 from __future__ import annotations
 
-# Re-exported so submodules and tests can resolve ``client.*`` via
-# ``aiperf.operator.preflight.client`` — keeps patches centralized.
+# Re-exported as the canonical patch target: this is the same module object
+# the submodules import, so patching it here reaches every check.
 from kubernetes_asyncio import client  # noqa: F401
 
 from aiperf.operator.preflight._checker import (

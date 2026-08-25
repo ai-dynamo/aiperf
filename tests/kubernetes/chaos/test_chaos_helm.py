@@ -151,8 +151,10 @@ async def test_h1_install_job_uninstall_reinstall_is_clean(
 ) -> None:
     """H1: install chart, run a tiny job, uninstall, re-install, run again.
 
-    Asserts the chart leaves no orphaned AIPerfJob CRs, PVCs, or
-    namespace finalizers. Exercises:
+    Asserts the release leaves the ``deployed`` state and no PVCs behind
+    (``helm uninstall`` deliberately retains CRDs and CR instances, so
+    leftover AIPerfJobs are GC'd here rather than asserted away).
+    Exercises:
 
     * ``HelmDeployer.install_chart`` / ``uninstall_chart``
     * operator create -> completed lifecycle end to end

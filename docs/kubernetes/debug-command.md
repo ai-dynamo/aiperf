@@ -110,7 +110,7 @@ projection so the detectors still run.
 
 | Finding | Trips when | Threshold env var |
 |---|---|---|
-| `high_error_rate` | `error_count / request_count` exceeds the threshold | `AIPERF_K8S_DIAGNOSIS_HIGH_ERROR_RATE_THRESHOLD` (default `0.05`) |
+| `high_error_rate` | the `request_error_rate` metric, converted from percentage points to a fraction, exceeds the threshold | `AIPERF_K8S_DIAGNOSIS_HIGH_ERROR_RATE_THRESHOLD` (default `0.05`) |
 | `high_latency` | request-latency p99 exceeds N x the average | `AIPERF_K8S_DIAGNOSIS_HIGH_LATENCY_P99_MULTIPLIER` (default `10.0`) |
 | `stalled_pending` | phase is `Pending` for longer than the threshold | `AIPERF_K8S_DIAGNOSIS_STALLED_PENDING_THRESHOLD_SECONDS` (default `60.0`) |
 | `stalled_running` | phase is `Running` past the threshold with **zero** throughput **and** zero completed requests | `AIPERF_K8S_DIAGNOSIS_STALLED_RUNNING_THRESHOLD_SECONDS` (default `30.0`) |
@@ -118,6 +118,18 @@ projection so the detectors still run.
 `stalled_running` deliberately requires both signals to be absent: throughput
 legitimately reads `0.0` between liveMetrics windows on a healthy run, so
 throughput alone would produce false alarms.
+
+`high_error_rate` reads `request_error_rate` rather than the raw counters
+because it is the only error signal that reaches `status.liveMetrics` at all:
+`error_request_count` carries `MetricFlags.ERROR_ONLY` and is filtered out
+before publication. Note the unit mismatch this creates — `request_error_rate`
+is in **percentage points** (`100 x errors / completed`) while
+`AIPERF_K8S_DIAGNOSIS_HIGH_ERROR_RATE_THRESHOLD` is a **fraction**, so the
+detector divides by 100 before comparing. The denominator is completed requests
+(successes + errors), taken from `completed_request_count`; `request_count`
+counts valid requests only and is never the denominator. The finding's detail
+line omits the `(errors/total)` counts on an all-error run, where no counter is
+published and only the rate survives.
 
 The section is omitted entirely when nothing trips, and when no specific job is
 targeted (`-A` or a bare namespace), since the detectors need one CR's status.

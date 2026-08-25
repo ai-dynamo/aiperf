@@ -508,7 +508,7 @@ async def handle_jobset_conditions(
     jobset_name: str,
     jobset_body: dict[str, Any] | None = None,
 ) -> None:
-    """React to sweep-controller failure transitions.
+    """React to a new JobSet Failed condition from either supported parent kind.
 
     A JobSet ``Completed`` condition proves that its Jobs exited, not that the
     controller has finished writing and exposing its result artifacts. The

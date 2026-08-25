@@ -170,13 +170,18 @@ class KubernetesServiceManager(PodMonitoringMixin, MultiProcessServiceManager):
         return await super().shutdown_all_services()
 
     async def check_pods_healthy(self) -> None:
-        """Verify all tracked pods are healthy before profiling starts.
+        """Verify tracked pods are healthy enough before profiling starts.
 
-        Performs a fresh pod status check and raises if any worker pod is in a
-        terminal failure state. Intended as a gate before PROFILE_START.
+        Performs a fresh pod status check and applies the same pod-loss
+        tolerance policy as the monitoring loop: losses below
+        ``POD.FAILURE_ABORT_THRESHOLD_PERCENT`` are warned about and the run
+        proceeds on the surviving pods. Intended as a gate before PROFILE_START.
+        Transient Kubernetes API errors are logged and swallowed so an advisory
+        check cannot abort a healthy run.
 
         Raises:
-            ServiceProcessDiedError: If any worker pod is Failed or Unknown.
+            ServiceProcessDiedError: If failed worker pods reach the abort
+                threshold.
         """
         namespace = os.environ.get("AIPERF_NAMESPACE")
         job_id = os.environ.get("AIPERF_JOB_ID")

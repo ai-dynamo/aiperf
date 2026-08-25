@@ -660,8 +660,9 @@ def _apply_endpoint_overrides(out: dict[str, Any], cli: CLIConfig) -> None:
     """Translate explicitly-set endpoint flags into ``out['endpoint']`` and
     ``out['models']``.
 
-    ``--model-names`` lives on the CLIConfig endpoint section but maps to the
-    ``models.items`` block on AIPerfConfig; everything else stays on ``endpoint``.
+    ``--model-names`` and ``--model-selection-strategy`` live on the CLIConfig
+    endpoint section but map to the ``models`` block on AIPerfConfig
+    (``items`` / ``strategy``); everything else stays on ``endpoint``.
     """
     ep_set = cli.model_fields_set & ENDPOINT_FIELDS
     if not ep_set:

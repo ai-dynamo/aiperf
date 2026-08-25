@@ -160,8 +160,11 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
     async def flush_buffer(self) -> None:
         """Flush the current internal buffer to disk.
 
-        Public counterpart to ``_flush_buffer``: swaps out the live buffer and
-        writes all pending records. Safe to call when the buffer is empty.
+        Public counterpart to ``_flush_buffer``: drains detached batch writes,
+        swaps out the live buffer, and writes all pending records. Safe to call
+        when the buffer is empty. Raises ``RuntimeError`` if any write has
+        failed or records remain unflushed, so callers can rely on it as a
+        fail-closed artifact-finalization barrier.
         """
         # Drain detached batch writes first. Their tasks can finish and remove
         # themselves from the tracking set while we await, so snapshot in a

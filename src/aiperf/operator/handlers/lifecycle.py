@@ -107,8 +107,10 @@ async def on_cancel(
     Side effects:
         - Sets the same sticky in-process cancellation flag as ``on_delete`` so
           in-flight completion/fetch paths cannot overwrite Cancelled.
-        - Deletes the JobSet custom object; non-404 failures raise
-          ``kopf.TemporaryError`` so the cancel field watcher retries.
+        - Deletes the JobSet custom object; a foreign same-name JobSet or a
+          UID-precondition conflict abandons the cancel with no status patch,
+          while transient read/delete failures raise ``kopf.TemporaryError``
+          so the cancel field watcher retries.
         - Closes the cached ProgressClient for this job after deletion succeeds.
         - Patches ``status.phase`` to ``Cancelled`` and sets completion time.
         - Emits a ``Cancelled`` kopf event on the CR.

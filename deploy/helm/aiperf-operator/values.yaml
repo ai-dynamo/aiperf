@@ -248,7 +248,11 @@ serviceAccount:
   # serviceAccount.create specifies whether to create a service account
   create: true
 
-  # serviceAccount.name is the service account name (auto-generated if empty)
+  # serviceAccount.name is the service account name (auto-generated when
+  # create=true and this is empty). REQUIRED when create=false: the chart binds
+  # no RBAC of its own then, and falling back to the namespace `default`
+  # ServiceAccount would leave the operator with no permissions. The render
+  # fails rather than installing an operator that 403s on every reconcile.
   name: ""
 
   # serviceAccount.annotations is a map of service account annotations

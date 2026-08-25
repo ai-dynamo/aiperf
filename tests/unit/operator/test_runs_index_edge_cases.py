@@ -271,7 +271,7 @@ class TestBootstrapEdgeCases:
     async def test_bootstrap_skips_unmatched_epoch_dirnames(
         self, tmp_path: Path, index_path: Path
     ) -> None:
-        """Epoch dirs not matching EPOCH_RE (^\\d{9,10}(\\d{6})?$) must be ignored."""
+        """Epoch dirs not matching EPOCH_RE (\\A\\d{9,10}(\\d{6})?\\Z) must be ignored."""
         base = tmp_path / "results"
         # "weird" doesn't match EPOCH_RE, "1714069323" does
         (base / "ns" / "job" / "weird").mkdir(parents=True)
@@ -398,7 +398,7 @@ class TestBootstrapEdgeCases:
     async def test_index_sweep_from_disk_running_no_aggregate(
         self, tmp_path: Path, index_path: Path
     ) -> None:
-        """Sweep dir with no aggregate.json yet (in-flight sweep) → returns False."""
+        """Sweep dir with no aggregate.json yet (in-flight sweep) → indexes zero rows."""
         epoch_dir = tmp_path / "ns" / "sweeps" / "s" / "1714069323"
         epoch_dir.mkdir(parents=True)
         ok = await runs_index._index_sweep_from_disk("ns", "s", "1714069323", epoch_dir)

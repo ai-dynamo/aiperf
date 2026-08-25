@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Kubernetes resource generation for AIPerf deployments.
 
-This module provides utilities for generating ConfigMaps, Services, RBAC
+This module provides utilities for generating Namespaces, ConfigMaps, RBAC
 resources, and orchestrating the complete deployment.
 """
 

@@ -334,6 +334,10 @@ _SUMMARY_TAGS: tuple[str, ...] = (
     "request_count",
     "good_request_count",
     "error_request_count",
+    # Successes + errors, and the source of the derived ``total_requests``.
+    # Mirrored so the curated summary shows the input to that scalar; the raw
+    # ``error_request_count`` above is ERROR_ONLY and absent on the live path.
+    "completed_request_count",
     "total_isl",
     "total_osl",
     "total_error_isl",
@@ -420,11 +424,20 @@ def _derived_scalars(
     total the export and console report — using ``request_count`` alone would
     undercount by every failed request.
 
+    ``completed_request_count`` is that same sum computed upstream, and it is
+    preferred because it is the only total that survives the live path.
+    ``error_request_count`` carries ``MetricFlags.ERROR_ONLY``, which
+    ``records_manager_processing.filter_display_metrics`` strips before anything
+    reaches ``status.liveMetrics`` or ``/api/metrics``, so on a running job the
+    sum would silently lose every failed request.
+
     ``error_rate`` is the fraction (0..1) of that grand total that failed.
     When the authoritative ``request_error_rate`` metric tag (a percent,
     ``100 * errors / total``) is present it is mirrored verbatim (``rate/100``)
     so ``status.summary`` agrees with the export exactly; otherwise it falls
-    back to ``errors / total``.
+    back to ``errors / total``. It is emitted even when no counter was
+    published, which is the all-error live case: every counter is either
+    error-only or has no valid rows, leaving the rate as the sole signal.
 
     Prefers the live per-tag counts; falls back to the top-level scalars a
     round-tripped ``status.summary`` / ``profile_export_aiperf.json`` keeps for
@@ -438,6 +451,7 @@ def _derived_scalars(
     out: dict[str, Any] = {}
     rc = (by_tag.get("request_count") or {}).get("avg")
     ec = (by_tag.get("error_request_count") or {}).get("avg")
+    crc = (by_tag.get("completed_request_count") or {}).get("avg")
     rer = (by_tag.get("request_error_rate") or {}).get("avg")
     # Distinguish "absent" (None -> counts as 0) from "present but non-finite"
     # (NaN/inf -> unknown): a NaN error count must not surface as a bogus 0.0
@@ -446,13 +460,16 @@ def _derived_scalars(
     ec_bad = ec is not None and not is_finite_value(ec)
     successes = float(rc) if is_finite_value(rc) else 0.0
     errors = float(ec) if is_finite_value(ec) else 0.0
-    total = successes + errors
+    completed = float(crc) if is_finite_value(crc) else 0.0
+    total = completed if completed > 0 else successes + errors
     if total > 0:
         out["total_requests"] = int(total)
-        if is_finite_value(rer):
-            out["error_rate"] = float(rer) / 100.0
-        elif not rc_bad and not ec_bad:
-            out["error_rate"] = errors / total
+    if is_finite_value(rer):
+        # PERCENT unit; clamp so a malformed payload cannot violate the
+        # 0..1 bound the CR status and AIPerfJobInfo both declare.
+        out["error_rate"] = min(1.0, max(0.0, float(rer) / 100.0))
+    elif total > 0 and not rc_bad and not ec_bad:
+        out["error_rate"] = errors / total
     if "error_rate" not in out and is_finite_value(metrics.get("error_rate")):
         out["error_rate"] = float(metrics["error_rate"])
     if "total_requests" not in out and is_finite_value(metrics.get("request_count")):

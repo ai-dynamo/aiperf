@@ -24,8 +24,8 @@ async def results(
     *,
     manage_options: KubeManageOptions | None = None,
     output: Annotated[Path | None, Parameter(help="Output directory for results (default: ./artifacts/{name}).")] = None,
-    from_pods: Annotated[bool, Parameter(name="--from-pods", help="Retrieve results from benchmark pods instead of the operator. Tries the controller API first, falls back to kubectl cp.")] = False,
-    all_artifacts: Annotated[bool, Parameter(name=["--all", "-a"], negative="--summary-only", help="Download all artifacts. Use --summary-only to download only summary results.")] = True,
+    from_pods: Annotated[bool, Parameter(name="--from-pods", help="Retrieve results from benchmark pods instead of the operator, via the controller API. Only --summary-only adds a kubectl cp fallback.")] = False,
+    all_artifacts: Annotated[bool, Parameter(name=["--all", "-a"], negative="--summary-only", help="Download all artifacts (with --from-pods: controller API only, no fallback). Use --summary-only to download only summary results, which with --from-pods tries the controller API first and falls back to kubectl cp.")] = True,
     shutdown: Annotated[bool, Parameter(name="--shutdown", help="Shut down the API service after downloading results. Only takes effect with --from-pods.")] = False,
     port: Annotated[int, Parameter(name="--port", help="Local port for API port-forward (default: 0 = ephemeral).")] = 0,
     operator_namespace: Annotated[str | None, Parameter(name="--operator-namespace", help="Namespace where the operator is deployed. Auto-detected (cluster-wide pod search) when omitted.")] = None,
@@ -37,7 +37,9 @@ async def results(
 
     Defaults to retrieving from the operator's PVC storage (works even after
     benchmark pods are deleted). Use --from-pods to retrieve directly from the
-    benchmark pods: tries the controller API first, falls back to kubectl cp.
+    benchmark pods over the controller API. On the default --all path that API
+    is the only tier -- there is no fallback; only --summary-only tries the API
+    first and falls back to kubectl cp.
     Use --summary-only to download only summary results. Use --shutdown with
     --from-pods to shut down the API service after downloading, allowing the
     controller pod to exit cleanly. If no job_id is given, uses the last
@@ -559,11 +561,8 @@ def _render_list_runs_payload(
     if output == "json":
         from aiperf.kubernetes import console as kube_console
 
-        kube_console.console.print(
-            orjson.dumps(payload, option=orjson.OPT_INDENT_2).decode(),
-            markup=False,
-            highlight=False,
-            soft_wrap=True,
+        kube_console.emit_raw(
+            orjson.dumps(payload, option=orjson.OPT_INDENT_2).decode()
         )
     else:
         print_runs_table(payload, preview=preview)

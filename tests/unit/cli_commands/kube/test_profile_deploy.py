@@ -2,9 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Unit tests for `aiperf kube profile` deploy helpers.
 
-`test_profile.py` already covers the top-level `profile()` command's
-`--skip-endpoint-check` wiring. This file targets the helpers that
-`profile` delegates to:
+This file targets the helpers that `profile` delegates to:
     - `profile._try_load_aiperfjob_cr`   — CR-vs-plain-config detection
     - `profile.generate_benchmark_name`  — deterministic DNS-safe name
     - `profile_deploy._build_cr`         — CR envelope construction
@@ -443,6 +441,215 @@ class TestProfileModeSelection:
     async def test_conflicting_explicit_modes_are_rejected(self) -> None:
         with pytest.raises(SystemExit):
             await self._run(operator=True, no_operator=True)
+
+
+class TestDryRunModeSelectionFidelity:
+    """`--dry-run` never probes the cluster; the mode shown is the assumed one.
+
+    Documented in ``docs/kubernetes/workflow.md`` under "--dry-run fidelity".
+    Skipping the probe is deliberate -- it is what lets
+    ``--no-operator --dry-run > bench.yaml`` work with no cluster reachable
+    (``docs/kubernetes/direct-mode.md``) -- so these tests pin the divergence
+    rather than treat it as a defect.
+    """
+
+    async def _run(
+        self,
+        *,
+        dry_run: bool,
+        operator: bool = False,
+        no_operator: bool = False,
+        crd_present: bool = True,
+        probe_error: BaseException | None = None,
+    ) -> tuple[str, bool, list[str]]:
+        """Return ``(mode, probed, stderr_lines)`` for one decision-table cell."""
+        events: list[str] = []
+        notes: list[str] = []
+
+        async def _probe(_: KubeOptions) -> bool:
+            events.append("probe")
+            if probe_error is not None:
+                raise probe_error
+            return crd_present
+
+        async def _operator_deploy(*_: Any, **__: Any) -> None:
+            events.append("operator")
+
+        async def _direct_deploy(*_: Any, **__: Any) -> None:
+            events.append("direct")
+
+        cli_config = MagicMock()
+        cli_config.config_file = None
+        stderr = MagicMock()
+        stderr.print.side_effect = lambda msg, **_: notes.append(str(msg))
+
+        with (
+            patch(
+                "aiperf.cli_commands.kube.profile._resolve_spec_and_name",
+                return_value=({"image": "aiperf:latest"}, MagicMock(), "job-a"),
+            ),
+            patch("aiperf.cli_commands.kube.profile._check_config_file_for_sweep_keys"),
+            patch("aiperf.cli_commands.kube.profile._check_resolved_config_for_sweep"),
+            patch("aiperf.cli_commands.kube.profile._print_memory_estimate"),
+            patch("aiperf.kubernetes.console.stderr_console", stderr),
+            patch("aiperf.cli_commands.kube.profile_deploy.operator_available", _probe),
+            patch(
+                "aiperf.cli_commands.kube.profile_deploy.deploy_via_operator",
+                _operator_deploy,
+            ),
+            patch(
+                "aiperf.cli_commands.kube.profile_deploy_direct.deploy_direct",
+                _direct_deploy,
+            ),
+        ):
+            await profile(
+                cli_config=cli_config,
+                kube_options=KubeOptions(
+                    namespace="tenant-a", image="registry.example/aiperf:latest"
+                ),
+                dry_run=dry_run,
+                operator=operator,
+                no_operator=no_operator,
+                detach=True,
+            )
+
+        mode = next(e for e in events if e != "probe")
+        return mode, "probe" in events, notes
+
+    @pytest.mark.parametrize(
+        "dry_run,operator,no_operator,crd_present,expected_mode,expected_probed",
+        [
+            param(True, False, False, True, "operator", False, id="dry-unset-crd-present"),
+            param(True, False, False, False, "operator", False, id="dry-unset-crd-absent"),
+            param(True, True, False, True, "operator", False, id="dry-force-operator-crd-present"),
+            param(True, True, False, False, "operator", False, id="dry-force-operator-crd-absent"),
+            param(True, False, True, True, "direct", False, id="dry-no-operator-crd-present"),
+            param(True, False, True, False, "direct", False, id="dry-no-operator-crd-absent"),
+            param(False, False, False, True, "operator", True, id="real-unset-crd-present"),
+            param(False, False, False, False, "direct", True, id="real-unset-crd-absent"),
+            param(False, True, False, True, "operator", False, id="real-force-operator-crd-present"),
+            param(False, True, False, False, "operator", False, id="real-force-operator-crd-absent"),
+            param(False, False, True, True, "direct", False, id="real-no-operator-crd-present"),
+            param(False, False, True, False, "direct", False, id="real-no-operator-crd-absent"),
+        ],
+    )  # fmt: skip
+    async def test_mode_selection_decision_table(
+        self,
+        dry_run: bool,
+        operator: bool,
+        no_operator: bool,
+        crd_present: bool,
+        expected_mode: str,
+        expected_probed: bool,
+    ) -> None:
+        """Only the dry-run/unset-flag/CRD-absent cell diverges from a real run."""
+        mode, probed, _ = await self._run(
+            dry_run=dry_run,
+            operator=operator,
+            no_operator=no_operator,
+            crd_present=crd_present,
+        )
+        assert mode == expected_mode
+        assert probed is expected_probed
+
+    @pytest.mark.parametrize(
+        "operator,no_operator,expect_note",
+        [
+            param(False, False, True, id="unset-warns"),
+            param(True, False, False, id="explicit-operator-silent"),
+            param(False, True, False, id="explicit-no-operator-silent"),
+        ],
+    )  # fmt: skip
+    async def test_dry_run_note_only_when_mode_is_assumed(
+        self, operator: bool, no_operator: bool, expect_note: bool
+    ) -> None:
+        """The advisory goes to stderr, and only when neither mode flag is given."""
+        _, _, notes = await self._run(
+            dry_run=True, operator=operator, no_operator=no_operator
+        )
+        assert bool(notes) is expect_note
+        if expect_note:
+            assert "--no-operator" in notes[0]
+
+    @pytest.mark.parametrize(
+        "no_operator,expected_mode",
+        [
+            param(False, "operator", id="operator-preview"),
+            param(True, "direct", id="direct-preview"),
+        ],
+    )  # fmt: skip
+    async def test_dry_run_succeeds_with_no_cluster_reachable(
+        self, no_operator: bool, expected_mode: str
+    ) -> None:
+        """A probe that would abort must never run under ``--dry-run``.
+
+        ``operator_available`` raises ``SystemExit`` for anything other than a
+        clean 404, which is what an unreachable apiserver produces. Dry-run
+        completing here is the offline-preview guarantee.
+        """
+        mode, probed, _ = await self._run(
+            dry_run=True,
+            no_operator=no_operator,
+            probe_error=SystemExit("apiserver unreachable"),
+        )
+        assert mode == expected_mode
+        assert probed is False
+
+    async def test_real_run_still_aborts_when_the_probe_fails(self) -> None:
+        """The offline allowance must not leak into a real submission."""
+        with pytest.raises(SystemExit):
+            await self._run(
+                dry_run=False, probe_error=SystemExit("apiserver unreachable")
+            )
+
+
+class TestDryRunSkipsSpecValidation:
+    """`--dry-run` prints the pre-validation spec, so the payload can differ.
+
+    The second, independent dry-run/real-run divergence documented in
+    ``docs/kubernetes/workflow.md``: a real submission replaces the spec with
+    ``validate_job_spec(spec).model_dump(by_alias=True)``, which canonicalizes
+    snake_case envelope keys to camelCase and rejects unknown keys.
+    """
+
+    async def _dry_run_payload(self, spec: dict[str, Any]) -> dict[str, Any]:
+        validate = MagicMock()
+        emit = MagicMock()
+        with (
+            patch("aiperf.kubernetes.spec_converter.validate_job_spec", validate),
+            patch("aiperf.kubernetes.console.emit_raw", emit),
+        ):
+            await deploy_via_operator(
+                dict(spec),
+                KubeOptions(image="aiperf:latest"),
+                MagicMock(),
+                "job-a",
+                "tenant-a",
+                dry_run=True,
+                detach=True,
+                no_wait=False,
+                attach_port=0,
+            )
+        import orjson
+
+        validate.assert_not_called()
+        emit.assert_called_once()
+        return orjson.loads(emit.call_args.args[0])
+
+    async def test_dry_run_emits_authored_keys_verbatim(self) -> None:
+        """snake_case envelope keys survive to stdout instead of being canonicalized."""
+        cr = await self._dry_run_payload(
+            {"image": "aiperf:latest", "ttl_seconds_after_finished": 1800}
+        )
+        assert cr["spec"]["ttl_seconds_after_finished"] == 1800
+        assert "ttlSecondsAfterFinished" not in cr["spec"]
+
+    async def test_dry_run_emits_keys_a_real_submission_would_reject(self) -> None:
+        """An unknown envelope key is printed, not rejected, under ``--dry-run``."""
+        cr = await self._dry_run_payload(
+            {"image": "aiperf:latest", "service_account_name": "bench-sa"}
+        )
+        assert cr["spec"]["service_account_name"] == "bench-sa"
 
 
 class TestDeployViaOperatorPersistence:

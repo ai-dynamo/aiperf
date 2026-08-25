@@ -13,9 +13,9 @@ class AggregateConfidenceCsvExporter(AggregateBaseExporter):
     """Exports confidence aggregate results to CSV format.
 
     Creates a simple CSV with:
-    - Metadata section (key-value pairs)
-    - Blank line separator
     - Metrics table (statistics as columns)
+    - Blank line separator
+    - Metadata section (key-value pairs)
 
     Uses similar formatting approach as MetricsCsvExporter for consistency.
     """
@@ -123,7 +123,7 @@ class AggregateConfidenceCsvExporter(AggregateBaseExporter):
             decimals: Number of decimal places
 
         Returns:
-            str: Formatted number or empty string if None
+            str: Formatted number, or empty string for None and NaN
         """
         if value is None:
             return ""

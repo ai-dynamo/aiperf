@@ -120,7 +120,7 @@ async def test_b1_mock_server_500s_mid_run(
 
     Exercises the worker error-handling path in
     ``src/aiperf/workers/`` when the inference server returns HTTP 500s:
-    the worker must record a ``RequestFailure`` credit (not hang), the
+    the worker must return the credit with its error set (not hang), the
     records-manager must surface it as a non-zero ``error_request_count``
     metric, and the system-controller must still drive the CR to
     ``Completed`` rather than stalling on the bad endpoint.

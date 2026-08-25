@@ -91,7 +91,7 @@ class TestPluginRegistration:
         assert issubclass(cls, BaseServiceManager)
 
     def test_system_controller_getattr_probe_sees_the_member(self) -> None:
-        """The probe at system_controller.py must now resolve, not fall back."""
+        """The probe at dataset_manager.py must now resolve, not fall back."""
         from aiperf.plugin import enums
 
         assert getattr(enums.ServiceRunType, "KUBERNETES", None) == "kubernetes"

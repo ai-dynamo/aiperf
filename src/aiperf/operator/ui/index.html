@@ -12,20 +12,13 @@ SPDX-License-Identifier: Apache-2.0
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 
-  <!-- Resolve theme synchronously to avoid FOUC on reload -->
+  <!--
+    Set the theme before the stylesheet loads to avoid FOUC. The dashboard is
+    dark-only (see lib/theme-switch.js), so this is a constant rather than a
+    resolved preference — no localStorage read, no prefers-color-scheme query.
+  -->
   <script>
-    (function() {
-      try {
-        var stored = localStorage.getItem('aiperfTheme') || 'auto';
-        var resolved = stored;
-        if (stored === 'auto') {
-          resolved = window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
-        }
-        document.documentElement.dataset.theme = resolved;
-      } catch (e) {
-        document.documentElement.dataset.theme = 'dark';
-      }
-    })();
+    document.documentElement.dataset.theme = 'dark';
   </script>
 
   <link rel="stylesheet" href="./style.css">

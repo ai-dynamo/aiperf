@@ -51,7 +51,7 @@ class ContainerInfo:
 class WatchdogPodSnapshot:
     """Snapshot of a Kubernetes pod's status.
 
-    Distinct from ``aiperf.kubernetes.controller.kubernetes_service_manager.PodInfo``
+    Distinct from ``aiperf.kubernetes.controller.kubernetes_pod_helpers.PodInfo``
     (service-manager bookkeeping); this model is the watchdog's internal
     pod view.
     """

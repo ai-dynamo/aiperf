@@ -526,10 +526,10 @@ async def test_c8_kill_event_bus_sidecar_unified(
     Exercises the same ``_maybe_recover_terminated_controller`` salvage
     path as C6, triggered indirectly: when the event-bus-proxy dies the
     controller loses its XPUB/XSUB transport, which either trips
-    ``_check_sibling_containers_alive`` (if still in configure loop) or
-    causes SystemController to fail fast with a ZMQ error. Either way
-    the control-plane container terminates non-zero and the operator
-    salvages.
+    ``kubernetes_service_manager._check_dead_sibling_containers`` (if
+    still in configure loop) or causes SystemController to fail fast
+    with a ZMQ error. Either way the control-plane container terminates
+    non-zero and the operator salvages.
 
     Outcome may be ``Completed`` (preferred, salvage fetched results)
     or ``Failed`` (controller died before the results were ready).
@@ -602,10 +602,11 @@ async def test_c9_kill_results_sidecar_mid_fetch_unified(
     terminal transition so we don't double-fetch.
 
     This is a RACE test -- if the fetch finishes before we land the kill,
-    the test passes trivially on the first path (already-complete).
-    To defend against silent triviality we verify the sidecar actually
-    restarted (``restartCount > 0``) whenever the kill landed; a missed
-    window is acceptable but documented as such.
+    the test passes trivially on the first path (already-complete). When
+    the kill lands we additionally wait (best-effort, TimeoutError
+    suppressed) for the sidecar's ``restartCount`` to rise; only the
+    final ``phase == "Completed"`` check is asserted, so a missed window
+    is tolerated rather than failed.
     """
     name = "chaos-c9"
     try:

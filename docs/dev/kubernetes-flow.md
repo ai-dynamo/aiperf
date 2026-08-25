@@ -737,8 +737,12 @@ aiperf kube profile \
   --node-selector '{"nvidia.com/gpu": "A100"}' \
   --tolerations '[{"key":"nvidia.com/gpu","operator":"Exists"}]' \
   --image-pull-secrets registry-creds \
-  --env-from-secrets 'OPENAI_API_KEY=llm-api-key/api-key'
+  --env-from-secrets.OPENAI_API_KEY llm-api-key/api-key
 ```
+
+`--env-from-secrets` is a mapping flag and must use dot-notation
+(`--env-from-secrets.KEY value`). The `KEY=VALUE` spelling aborts with an
+`IndexError` from cyclopts before any AIPerf code runs.
 
 Sensitive endpoint fields never rely on the ConfigMap copy. JSON
 serialization redacts them, and `aiperf service --benchmark-run` restores them

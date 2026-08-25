@@ -260,7 +260,7 @@ class TestPodRestartHandlerAdversarial:
     @pytest.mark.asyncio
     async def test_oscillating_restart_count_dedups_at_higher_value(self) -> None:
         """If restartCount goes 5 → 3 → 5, the second 5 is the SAME
-        ``(name, count)`` dedup key → only one event total."""
+        ``(name, count)`` dedup key → two events total, not three."""
         meta = {
             "name": "p",
             "labels": {"jobset.sigs.k8s.io/jobset-name": "aiperf-x"},
@@ -567,10 +567,10 @@ class TestPodRestartHandlerAdversarial:
 
     @pytest.mark.asyncio
     async def test_aiperfjob_lookup_raises_is_swallowed(self) -> None:
-        """The lookup helper has its own `except Exception` swallow; the
-        outer handler then sees `None` → silent skip. Pin: no exception
-        propagates to kopf, which would mark the watch handler as
-        permanently-erroring."""
+        """The outer handler adds no catch of its own, so a raising lookup
+        helper propagates. Pin: the helper owns the swallow-or-retry
+        decision (absence returns `None`, real failures become
+        ``kopf.TemporaryError``); anything it raises reaches kopf."""
         meta = {
             "name": "p",
             "labels": {"jobset.sigs.k8s.io/jobset-name": "aiperf-x"},

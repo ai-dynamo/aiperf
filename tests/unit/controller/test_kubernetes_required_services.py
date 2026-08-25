@@ -1,9 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""SystemController's required-service set and proxy ownership in Kubernetes mode.
+"""SystemController's Kubernetes-mode contracts: the required-service set,
+proxy ownership, and the results-export readiness handshake.
 
-Both behaviors are cluster-only contracts that unit tests of the
-multiprocessing path cannot observe.
+Each is paired with its multiprocessing counterpart so a change to the
+cluster path cannot silently move the local one.
 """
 
 import asyncio

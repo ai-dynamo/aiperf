@@ -123,7 +123,8 @@ def build_child_name(
     ``trial_index is None``). Variation budget is 200 (00..199, matching
     ``AdaptiveSearchSweep.max_iterations`` le=200), trial budget is 10 (0..9).
     Bounded by the 35-char ``job_id`` cap (KubernetesDeployment validator), so
-    sweep CR name must be <=29 chars.
+    the sweep CR name must be <=27 chars in the worst case (see
+    ``MAX_SWEEP_NAME_LENGTH``).
 
     The sweep-run epoch is **not** in the name; it lives on the
     ``aiperf.nvidia.com/sweep-run-epoch`` label and on ``status.runEpoch``

@@ -237,8 +237,8 @@ class PodTemplateConfig(BaseConfig):
         "and securityContext merging only apply to typed fields. Security-critical "
         "keys are NOT overridable and are rejected at validation time: "
         "securityContext, containers, hostNetwork, hostPID, hostIPC, hostUsers. "
-        "The hardened pod securityContext is re-applied after this merge, so it "
-        "cannot be weakened even if a denied key reaches the renderer.",
+        "The renderer drops those keys again before merging, so the hardened pod "
+        "securityContext cannot be weakened even by an unvalidated spec.",
     )
 
     @field_validator("extra_pod_spec")

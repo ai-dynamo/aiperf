@@ -280,15 +280,23 @@ def validate_endpoint_credential_transport(
 def validate_worker_count(
     spec: dict[str, Any], name: str, result: ValidationResult
 ) -> None:
-    """Validate worker count calculation."""
+    """Validate worker count calculation.
+
+    ``ArithmeticError`` is named explicitly because it is the common ancestor of
+    ``ZeroDivisionError`` and ``OverflowError`` and is *not* a ``ValueError``
+    subclass, so the other entries do not cover it. It is a backstop only:
+    ``workers_for_concurrency`` neutralizes the divisors that used to raise.
+    """
     try:
         converter = AIPerfJobSpecConverter(spec=spec, name=name, namespace="default")
-        workers = converter.calculate_workers()
-        if workers < 1:
-            result.errors.append(
-                f"Worker count calculation returned {workers}, expected >= 1"
-            )
-    except (pydantic.ValidationError, ValueError, TypeError, KeyError) as e:
+        converter.calculate_workers()
+    except (
+        ArithmeticError,
+        pydantic.ValidationError,
+        ValueError,
+        TypeError,
+        KeyError,
+    ) as e:
         result.errors.append(f"Worker calculation failed: {e}")
 
 

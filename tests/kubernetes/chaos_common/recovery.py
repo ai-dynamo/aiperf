@@ -101,14 +101,14 @@ def clear_cache() -> None:
 
 
 async def reverse_cluster_scoped_mutations() -> list[ClusterScopedMutation]:
-    """Best-effort: undo every cached cluster-scoped mutation.
+    """Phase 1 stub: report the cached cluster-scoped mutations, undo nothing.
 
-    Walks the cache in reverse (LIFO), invokes the inverse apiserver call,
-    and clears the cache only on full success. Failures are logged but do
-    not raise; the user can retry by re-running ``pytest --chaos-sweep``.
+    No inverse apiserver calls are wired up yet and the cache is never
+    cleared here; every pending entry is logged and returned for manual
+    review. Nothing raises, so ``pytest --chaos-sweep`` can be re-run safely.
 
-    Returns the list of mutations that could not be reversed (empty on full
-    success).
+    Returns the list of mutations that could not be reversed -- currently all
+    of them, and empty only when the cache is empty.
     """
     # Concrete unwind logic intentionally deferred: Phase 1 only wires the
     # plumbing (cache shape + CLI hook). Phase 2+ injectors that actually

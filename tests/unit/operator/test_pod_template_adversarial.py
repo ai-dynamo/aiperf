@@ -253,6 +253,7 @@ async def _capture_sweep_jobset_body(
     monkeypatch: pytest.MonkeyPatch,
     *,
     template_spec: dict[str, Any],
+    resource_mode: str = "burstable",
 ) -> dict[str, Any]:
     """Run the sweep JobSet builder and capture the body sent to the apiserver."""
     captured: dict[str, Any] = {}
@@ -278,6 +279,7 @@ async def _capture_sweep_jobset_body(
         namespace="production",
         sweep_uid="uid-latency-grid",
         epoch="1714000000",
+        resource_mode=resource_mode,
         template_spec=template_spec,
     )
     return captured["body"]

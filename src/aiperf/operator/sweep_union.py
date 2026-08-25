@@ -4,7 +4,7 @@
 
 Mirrors :mod:`aiperf.operator.job_union` for sweeps. Live state comes
 from the apiserver; archived state comes from
-``<results_dir>/<ns>/sweeps/<name>/aggregate.json`` which is written
+``<results_dir>/<ns>/sweeps/<name>/<epoch>/aggregate.json`` which is written
 by the sweep-controller at terminal phase. Records are joined by
 ``(namespace, name)`` and tagged ``source = "live" | "archived" | "both"``.
 """

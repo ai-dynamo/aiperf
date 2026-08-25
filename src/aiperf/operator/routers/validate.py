@@ -4,12 +4,15 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from fastapi import APIRouter
 from pydantic import BaseModel, ConfigDict, Field
 
 from aiperf.kubernetes.validate import validate_manifest
+
+logger = logging.getLogger("aiperf.operator.ui")
 
 
 class ValidateRequest(BaseModel):
@@ -44,7 +47,18 @@ def create_validate_router() -> APIRouter:
 
     @router.post("/validate", response_model=ValidateResponse)
     async def validate(body: ValidateRequest) -> ValidateResponse:
-        result = validate_manifest(body.manifest, strict=body.strict)
+        # The route is unauthenticated by design and exists purely to turn a bad
+        # manifest into structured errors, so a validator that raises must still
+        # answer within the documented contract instead of surfacing an HTTP 500.
+        try:
+            result = validate_manifest(body.manifest, strict=body.strict)
+        except Exception as e:
+            logger.exception("Manifest validation raised on POST /api/v1/validate")
+            return ValidateResponse(
+                passed=False,
+                errors=[f"Validation aborted: {type(e).__name__}: {e}"],
+                warnings=[],
+            )
         return ValidateResponse(
             passed=result.passed,
             errors=result.errors,

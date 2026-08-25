@@ -6,15 +6,16 @@ Computes per-pod and cluster-wide memory estimates from an AIPerfConfig
 and deployment parameters. Used by ``aiperf kube generate``, ``aiperf kube profile``,
 and the operator preflight to detect OOM risk before deployment.
 
-The model is purely static (formulas derived from code inspection, not runtime
-profiling). Constants can be calibrated against real RSS measurements.
+The model is static: aggregate MiB baselines come from real-cluster
+working-set sweeps, and the per-object byte constants are measured in-process
+against the real model classes (see
+``aiperf.kubernetes._memory_estimator.constants``).
 
 This module is a thin facade. Implementation lives in
 ``aiperf.kubernetes._memory_estimator`` split across several files for
-file-size ergonomics. Re-exported symbols — including underscore-prefixed
-calibration helpers consumed by
-``tools/calibrate_memory_estimates.py`` and the unit tests —
-are considered part of the stable surface.
+file-size ergonomics. Re-exported symbols — including the underscore-prefixed
+calibration helpers consumed by ``tests/unit/kubernetes/test_memory_estimator.py``
+— are considered part of the stable surface.
 """
 
 from __future__ import annotations
@@ -53,7 +54,7 @@ __all__ = [
     "format_estimate",
 ]
 
-# Private helpers re-exported for tests and calibration scripts.
+# Private helpers re-exported for the unit tests.
 _PRIVATE_REEXPORTS = (
     _ceil_pow2,
     _estimate_dataset_manager,

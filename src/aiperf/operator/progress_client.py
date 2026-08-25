@@ -220,9 +220,10 @@ class ProgressClient:
 
         Raises:
             RuntimeError: If called outside ``async with ProgressClient() as c:``.
-            aiohttp.ClientError: Non-transport errors from non-retryable HTTP
-                responses (transport errors are caught and returned as
-                ``connection_error`` on the result).
+            TimeoutError | OSError: Transport failures that are not
+                ``aiohttp.ClientError`` subclasses, propagated from the retry
+                helper. Every ``aiohttp.ClientError`` — retryable or not — is
+                converted to ``connection_error`` instead of raised.
 
         Example:
             >>> async with ProgressClient() as c:
@@ -326,8 +327,10 @@ class ProgressClient:
         Raises:
             RuntimeError: If called outside ``async with ProgressClient() as c:``
                 (propagated from :meth:`_request_with_retry`).
-            aiohttp.ClientError: Non-transport errors from non-retryable HTTP
-                responses (transport errors are logged and ``None`` is returned).
+            TimeoutError | OSError: Transport failures that are not
+                ``aiohttp.ClientError`` subclasses, propagated from the retry
+                helper. Every ``aiohttp.ClientError`` is logged and ``None``
+                is returned instead.
 
         Example:
             >>> async with ProgressClient() as c:
@@ -547,8 +550,9 @@ class ProgressClient:
         Returns:
             List of file-info dicts, each with at minimum ``name`` (str,
             relative path under the controller's results directory) and
-            ``size`` (int, uncompressed byte size). Returns ``None`` on
-            failure or when ``files`` is absent.
+            ``size`` (int, uncompressed byte size). Returns ``None`` when the
+            controller is unreachable or answers with an empty payload, and an
+            empty list when the payload carries no ``files`` key.
 
         Raises:
             RuntimeError: If called outside ``async with ProgressClient() as c:``
@@ -714,8 +718,8 @@ class ProgressClient:
         - gzip/identity responses are decompressed then re-compressed as .zst
         When disabled, behaves as before (decompress to raw files).
 
-        Parquet artifacts already use their own columnar compression and are
-        not wrapped in an outer .zst container.
+        ``.json`` is the only extension exempted, so already-compressed
+        artifacts (parquet, jsonl.zst) still gain an outer .zst container.
         """
         from aiperf.operator.environment import OperatorEnvironment
 
@@ -759,7 +763,8 @@ class ProgressClient:
 
         Raises:
             RuntimeError: If called outside ``async with ProgressClient() as c:``
-                (propagated from :meth:`download_result_file`).
+                (propagated from the :meth:`get_results_list` discovery call;
+                per-file failures are collected by ``gather`` instead).
 
         Example:
             >>> async with ProgressClient() as c:

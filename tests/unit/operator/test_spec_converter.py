@@ -7,7 +7,9 @@ import logging
 from pathlib import Path
 from typing import Any
 
+import pydantic
 import pytest
+from pytest import param
 
 from aiperf.common.enums import CommunicationType
 from aiperf.config import AIPerfConfig
@@ -18,6 +20,7 @@ from aiperf.kubernetes.spec_converter import (
     AIPerfJobSpecConverter,
     apply_worker_config,
     build_benchmark_run,
+    workers_for_concurrency,
 )
 from aiperf.plugin.enums import ServiceRunType, UIType
 
@@ -411,6 +414,132 @@ class TestCalculateWorkers:
         assert workers == 2
 
 
+class TestWorkersForConcurrency:
+    """The divisor neutralizer shared by every worker-count call site.
+
+    ``connectionsPerWorker`` is bounded ``ge=1`` by ``DeploymentConfig`` and
+    ``minimum: 1`` by both CRDs, so the operator reconcile path only ever
+    divides by a validated value. The unvalidated entry points (``aiperf kube
+    validate``, ``POST /api/v1/validate``, ``kube profile --dry-run``,
+    ``kube generate --operator``) divide raw spec dicts and used to crash.
+    """
+
+    @pytest.mark.parametrize(
+        ("concurrency", "divisor", "expected"),
+        [
+            param(16, 1, 16, id="one-connection-per-worker"),
+            param(16, 100, 1, id="divisor-above-concurrency"),
+            param(1000, 100, 10, id="even-split"),
+            param(250, 100, 3, id="ceil-rounds-up"),
+        ],
+    )  # fmt: skip
+    def test_valid_divisor_arithmetic_unchanged(
+        self, concurrency: int, divisor: int, expected: int
+    ) -> None:
+        assert workers_for_concurrency(concurrency, divisor) == expected
+
+    @pytest.mark.parametrize(
+        "divisor",
+        [
+            param(0, id="int-zero"),
+            param(0.0, id="float-zero"),
+            param(-0.0, id="negative-float-zero"),
+            param(False, id="yaml-false"),
+            param(1.0e-320, id="denormal-1e-320"),
+            param(5e-324, id="smallest-subnormal"),
+            param(float("nan"), id="nan"),
+            param(-1, id="negative"),
+            param(0.5, id="fractional-below-one"),
+        ],
+    )  # fmt: skip
+    def test_divisor_below_one_is_neutralized(self, divisor: object) -> None:
+        """Zero-likes and subnormals used to raise ZeroDivisionError/OverflowError."""
+        assert workers_for_concurrency(16, divisor) == 16
+
+    @pytest.mark.parametrize(
+        "divisor",
+        [
+            param("abc", id="unparsable-string"),
+            param(None, id="null"),
+            param([], id="list"),
+        ],
+    )  # fmt: skip
+    def test_non_numeric_divisor_still_raises_type_error(self, divisor: object) -> None:
+        """Callers report these as config errors, so they must pass through."""
+        with pytest.raises(TypeError):
+            workers_for_concurrency(16, divisor)
+
+    def test_infinite_divisor_still_clamps_to_one(self) -> None:
+        assert workers_for_concurrency(16, float("inf")) == 1
+
+    @pytest.mark.parametrize(
+        "divisor",
+        [
+            param(0, id="int-zero"),
+            param(False, id="yaml-false"),
+            param(1.0e-320, id="denormal-1e-320"),
+        ],
+    )  # fmt: skip
+    def test_calculate_workers_survives_hostile_raw_spec(self, divisor: object) -> None:
+        spec = {
+            "connectionsPerWorker": divisor,
+            "benchmark": {
+                "models": ["test-model"],
+                "endpoint": {"urls": ["http://localhost:8000"]},
+                "datasets": [{"name": "main", "type": "synthetic"}],
+                "phases": [
+                    {
+                        "name": "profiling",
+                        "type": "concurrency",
+                        "requests": 10,
+                        "concurrency": 16,
+                    }
+                ],
+            },
+        }
+        converter = AIPerfJobSpecConverter(spec, "test-job", "default")
+
+        assert converter.calculate_workers() == 16
+
+    def test_deployment_config_divisor_wins_over_hostile_raw_spec(self) -> None:
+        """The operator reconcile path passes a ``ge=1``-validated DeploymentConfig."""
+        spec = {
+            "connectionsPerWorker": 0,
+            "benchmark": {
+                "models": ["test-model"],
+                "endpoint": {"urls": ["http://localhost:8000"]},
+                "datasets": [{"name": "main", "type": "synthetic"}],
+                "phases": [
+                    {
+                        "name": "profiling",
+                        "type": "concurrency",
+                        "requests": 10,
+                        "concurrency": 16,
+                    }
+                ],
+            },
+        }
+        converter = AIPerfJobSpecConverter(spec, "test-job", "default")
+
+        assert converter.calculate_workers(DeploymentConfig()) == 1
+
+    @pytest.mark.parametrize(
+        "divisor",
+        [
+            param(0, id="int-zero"),
+            param(0.0, id="float-zero"),
+            param(False, id="yaml-false"),
+            param(1.0e-320, id="denormal-1e-320"),
+        ],
+    )  # fmt: skip
+    def test_deployment_config_rejects_hostile_divisor_before_division(
+        self, divisor: object
+    ) -> None:
+        """kopf calls ``to_deployment_config()`` first, so it never reaches the raw path."""
+        with pytest.raises(pydantic.ValidationError):
+            DeploymentConfig.model_validate({"connectionsPerWorker": divisor})
+
+
 class TestApplyWorkerConfig:
     """Tests for apply_worker_config function."""
 
@@ -451,11 +580,12 @@ class TestApplyWorkerConfig:
     def test_non_divisible_total_warns_about_single_pod_collapse(
         self, minimal_aiperfjob_spec: dict[str, Any], caplog
     ) -> None:
-        """The collapse to one pod contradicts the --total-workers help text.
+        """The collapse to one pod must be warned about, not silent.
 
-        It is deliberate (a JobSet has no partial final replica), but silently
-        putting 25 workers on one pod when the user asked for a spread is the
-        kind of surprise that only shows up as a saturated node.
+        It is deliberate (a JobSet has no partial final replica) and documented
+        in the --total-workers help text, but putting 25 workers on one pod when
+        the user asked for a spread is the kind of surprise that only shows up
+        as a saturated node.
         """
         config = AIPerfJobSpecConverter(
             minimal_aiperfjob_spec, "test-job", "default"

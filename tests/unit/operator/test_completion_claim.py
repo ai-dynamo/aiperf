@@ -2,8 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for the durable completion-claim dedup mechanism.
 
-The operator replaces the in-memory ``_shutdown_sent`` set with a CR-level
-annotation (``Annotations.COMPLETION_CLAIMED``). These tests cover the
+The operator demotes the in-memory ``_shutdown_sent`` set to a fast path and
+makes a CR-level annotation (``Annotations.COMPLETION_CLAIMED``) the
+authoritative dedup record. These tests cover the
 ``try_claim_completion`` / ``is_completion_claimed`` helpers and verify
 that the call-site handlers skip ``handle_completion`` when the claim
 already exists.

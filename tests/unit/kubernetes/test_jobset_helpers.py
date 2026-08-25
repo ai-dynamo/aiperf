@@ -458,7 +458,7 @@ class TestBuildEnvVars:
         assert all(item["name"] != "AIPERF_K8S_ZMQ_CONTROLLER_HOST" for item in env)
 
     def test_pod_template_env_appended_at_end(self) -> None:
-        """Pod-template env wins precedence by being injected last."""
+        """Non-reserved pod-template env entries are appended after the built-ins."""
         template = PodTemplateConfig(env=[{"name": "CUSTOM", "value": "v"}])
         env = build_env_vars(job_id="j", namespace="n", pod_template=template)
         assert env[-1] == {"name": "CUSTOM", "value": "v"}

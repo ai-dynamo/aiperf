@@ -83,7 +83,7 @@ class VLLMDeployer:
         """Generate Kubernetes manifest for vLLM deployment.
 
         Returns:
-            YAML manifest string with Service and Deployment.
+            YAML manifest string with Namespace, Service, and Deployment.
         """
         c = self.config
 

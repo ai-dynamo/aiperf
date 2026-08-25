@@ -31,7 +31,7 @@ def build_worker_group_stats(
     - ``task_stats`` summed (total/failed/completed; ``in_progress`` is derived).
     - ``health.cpu_usage`` averaged across children with a non-None health.
     - ``health.memory_usage`` summed.
-    - Group status = worst child status (ERROR > HIGH_LOAD > STALE > HEALTHY > IDLE).
+    - Group status = worst child status (ERROR > STALE > HIGH_LOAD > HEALTHY > IDLE).
     - ``ready_workers`` = count of children with ``startup_state == READY``.
     """
     statuses = {wid: info.status for wid, info in worker_infos.items()}

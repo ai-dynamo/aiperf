@@ -582,7 +582,7 @@ class TestFinalResultsHandler:
     async def test_on_process_all_results_accepts_optional_summary_payloads(
         self, results_router: ResultsRouter
     ) -> None:
-        """ProcessAllResultsMessage carries telemetry/server/energy/exported_artifacts fields.
+        """ProcessAllResultsMessage carries telemetry/server-metrics/exported_artifacts fields.
 
         The router only stores ``results`` today, but the message contract must
         accept the additional payloads so the unified path stays a single hop.

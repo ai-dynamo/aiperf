@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for aiperf kube profile command with auto-attach behavior."""
+"""Tests for the aiperf kube profile CLI surface and kube generate output."""
 
 from __future__ import annotations
 

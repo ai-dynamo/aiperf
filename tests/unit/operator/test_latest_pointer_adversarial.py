@@ -193,7 +193,7 @@ def test_sweep_pointer_writer_validates_and_refuses_rollback(tmp_path: Path) -> 
 
     It was an independent copy with neither, and it was the one the operator
     actually called: a retry tick for an earlier epoch rolled the pointer
-    backwards, and a "0" from _epoch_from_creation_ts was persisted and then
+    backwards, and an invalid legacy epoch key was persisted and then
     rejected on read, making a harvested sweep permanently invisible.
     """
     base = tmp_path / "results"

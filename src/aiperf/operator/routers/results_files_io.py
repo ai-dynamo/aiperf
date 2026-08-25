@@ -404,9 +404,7 @@ async def _stream_zstd_to_gzip(file_path: Path) -> AsyncIterator[bytes]:
 
     import zstandard
 
-    gzip_obj = zlib.compressobj(
-        level=Environment.COMPRESSION.GZIP_LEVEL, wbits=31
-    )
+    gzip_obj = zlib.compressobj(level=Environment.COMPRESSION.GZIP_LEVEL, wbits=31)
     dctx = zstandard.ZstdDecompressor()
 
     # zstandard's stream_reader needs a synchronous file object, so aiofiles is

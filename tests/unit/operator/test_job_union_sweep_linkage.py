@@ -326,7 +326,7 @@ async def test_find_any_job_archived_reads_sweep_marker(tmp_path: Path) -> None:
 
 
 def test_sweep_linkage_from_marker_unreadable_returns_none(tmp_path: Path) -> None:
-    """Corrupt sweep.json is logged + tolerated as no-linkage."""
+    """Corrupt sweep.json is tolerated as no-linkage."""
     job_dir = tmp_path / "bench" / "ch-bad"
     job_dir.mkdir(parents=True)
     (job_dir / "sweep.json").write_bytes(b"{not valid json")

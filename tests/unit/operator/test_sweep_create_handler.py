@@ -732,7 +732,7 @@ async def test_handle_writes_max_iterations_for_adaptive_search(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_handle_adaptive_search_without_trials_defaults_to_one(monkeypatch):
-    """When `multiRun.adaptiveSearch` is set but `multiRun.trials` is unset,
+    """When `sweep.type=adaptive_search` is set but `multiRun.numRuns` is unset,
     `maxTotalRuns` falls back to `max_iterations * 1` (single trial per
     variation) — mirroring the in-process default."""
     body = _valid_body()
@@ -969,9 +969,18 @@ def _valid_workload_spec(**overrides):
     }
 
 
-async def _capture_jobset_body(monkeypatch, workload_spec) -> dict:
+async def _capture_jobset_body(
+    monkeypatch, workload_spec, resource_mode: str = "burstable"
+) -> dict:
     """Drive `_create_sweep_controller_jobset` and capture the JobSet body
-    passed to `create_namespaced_custom_object` (plural=jobsets)."""
+    passed to `create_namespaced_custom_object` (plural=jobsets).
+
+    ``resource_mode`` is an explicit parameter of the builder rather than a
+    ``template_spec`` key, because the production call site passes an
+    ``exclude_unset=True`` model dump that omits an unset ``resourceMode``.
+    Tests that pin the DEFAULT must go through ``handle`` (see
+    ``_capture_jobset_body_via_handle``), not through this helper.
+    """
     from contextlib import asynccontextmanager
     from unittest.mock import MagicMock
 
@@ -1006,9 +1015,48 @@ async def _capture_jobset_body(monkeypatch, workload_spec) -> dict:
         namespace="ns",
         sweep_uid="uid",
         epoch="1714000000",
+        resource_mode=resource_mode,
         template_spec=workload_spec,
     )
 
+    return captured["body"]
+
+
+async def _capture_jobset_body_via_handle(monkeypatch, body: dict) -> dict:
+    """Run the REAL `handle` + `_create_sweep_controller_jobset` for a CR body.
+
+    Unlike `_capture_jobset_body`, nothing about the rendered pod is supplied by
+    the test: the manifest is derived from `spec` exactly as it is in-cluster, so
+    field defaults (notably `resourceMode`) are exercised rather than restated.
+    """
+    from contextlib import asynccontextmanager
+
+    captured: dict = {}
+
+    async def _capture(**kwargs):
+        if kwargs.get("plural") == "jobsets":
+            captured["body"] = kwargs.get("body")
+
+    api_client = MagicMock()
+
+    @asynccontextmanager
+    async def fake_k8s_client(**_kw):
+        yield api_client
+
+    monkeypatch.setattr(
+        "aiperf.kubernetes.client.k8s_client", fake_k8s_client, raising=True
+    )
+    monkeypatch.setattr(
+        "kubernetes_asyncio.client.CustomObjectsApi",
+        lambda _api: MagicMock(
+            create_namespaced_custom_object=AsyncMock(side_effect=_capture)
+        ),
+    )
+    monkeypatch.setattr(sweep_create, "_provision_rbac", AsyncMock())
+
+    await sweep_create.handle(
+        body=body, spec=body["spec"], name="s", namespace="ns", patch=kopf.Patch()
+    )
     return captured["body"]
 
 
@@ -1193,3 +1241,225 @@ async def test_provision_rbac_role_grants_events_create_patch(monkeypatch):
     assert len(events_rules) == 1, "events PolicyRule missing"
     verbs = set(events_rules[0].verbs)
     assert "create" in verbs and "patch" in verbs
+
+
+# ===========================================================================
+# Regression-locks: the sweep-controller pod's QoS must follow
+# `spec.resourceMode`, including its unset default.
+#
+# The mode used to be re-derived from the `exclude_unset=True` model dump, where
+# an unset `resourceMode` is ABSENT. It collapsed to a `"default"` sentinel that
+# is not even a member of the declared Literal, so `burstable` evaluated False
+# and both containers rendered requests==limits -- Guaranteed QoS, the exact
+# OOM-kill exposure the burstable default exists to prevent on a pod that grows
+# to ~350 MiB after the first BoTorch GP fit.
+# ===========================================================================
+
+
+def _resources_by_container(body: dict) -> dict[str, dict]:
+    pod_spec = _pod_spec_from_jobset(body)
+    return {c["name"]: c.get("resources") for c in pod_spec["containers"]}
+
+
+@pytest.mark.asyncio
+async def test_handle_unset_resource_mode_renders_burstable_sweep_controller(
+    monkeypatch,
+) -> None:
+    """An AIPerfSweep that never mentions `resourceMode` must be Burstable.
+
+    Burstable means requests WITHOUT limits: the pod may exceed its request
+    rather than being OOM-killed at it.
+    """
+    body = _valid_body()
+    assert "resourceMode" not in body["spec"]
+
+    resources = _resources_by_container(
+        await _capture_jobset_body_via_handle(monkeypatch, body)
+    )
+
+    assert set(resources) == {"sweep-controller", "results-sidecar"}
+    for name, block in resources.items():
+        assert block["requests"], f"{name} must carry resource requests"
+        assert "limits" not in block, (
+            f"{name} rendered Guaranteed QoS (requests==limits) but the "
+            "resourceMode default is 'burstable'"
+        )
+
+
+@pytest.mark.asyncio
+async def test_handle_unset_resource_mode_matches_explicit_burstable(
+    monkeypatch,
+) -> None:
+    """Omitting `resourceMode` must render byte-identically to spelling out the
+    default, since `AIPerfSweepSpec.resource_mode` defaults to `burstable`.
+
+    This is the assertion that actually failed before the fix: unset rendered
+    identically to `guaranteed` instead.
+    """
+    unset = _valid_body()
+    explicit = _valid_body()
+    explicit["spec"]["resourceMode"] = "burstable"
+
+    assert _resources_by_container(
+        await _capture_jobset_body_via_handle(monkeypatch, unset)
+    ) == _resources_by_container(
+        await _capture_jobset_body_via_handle(monkeypatch, explicit)
+    )
+
+
+@pytest.mark.parametrize(
+    "resource_mode,expect_limits,expect_block",
+    [
+        param(None, False, True, id="unset-defaults-to-burstable"),
+        param("burstable", False, True, id="burstable-requests-only"),
+        param("guaranteed", True, True, id="guaranteed-requests-equal-limits"),
+        param("none", False, False, id="none-omits-resources-entirely"),
+    ],
+)  # fmt: skip
+@pytest.mark.asyncio
+async def test_handle_resource_mode_drives_sweep_controller_qos(
+    monkeypatch,
+    resource_mode: str | None,
+    expect_limits: bool,
+    expect_block: bool,
+) -> None:
+    """Every declared `resourceMode` reaches the rendered containers, and the
+    unset case behaves as the model default rather than as its own mode."""
+    body = _valid_body()
+    if resource_mode is not None:
+        body["spec"]["resourceMode"] = resource_mode
+
+    resources = _resources_by_container(
+        await _capture_jobset_body_via_handle(monkeypatch, body)
+    )
+
+    for name, block in resources.items():
+        if not expect_block:
+            assert block is None, f"{name} must carry no resources under 'none'"
+            continue
+        assert block is not None, f"{name} must carry a resources block"
+        assert ("limits" in block) is expect_limits, name
+        if expect_limits:
+            assert block["limits"] == block["requests"], name
+
+
+# ===========================================================================
+# Regression-locks: an epoch the results layout cannot store must fail loudly.
+#
+# `status.runEpoch` used to be `int(epoch) if epoch.isdigit() else 0`. The
+# `else 0` is reachable: a pre-1970 `metadata.creationTimestamp` makes
+# epoch-seconds negative and `epoch_key_from_body` keeps the minus sign. The
+# sweep-controller pod then received the real (negative) epoch in
+# `AIPERF_SWEEP_EPOCH` and wrote there, while the operator harvested
+# `<base>/<ns>/sweeps/<name>/0/` -- so `fetched.downloaded == 0` and
+# `latest.txt` would have been pinned at "0".
+# ===========================================================================
+
+
+@pytest.mark.parametrize(
+    "creation_timestamp",
+    [
+        param("1969-04-25T18:22:03Z", id="pre-1970-whole-second"),
+        param("1969-04-25T18:22:03.500000Z", id="pre-1970-fractional"),
+        param("1900-01-01T00:00:00Z", id="pre-1900"),
+    ],
+)  # fmt: skip
+@pytest.mark.asyncio
+async def test_handle_unstorable_epoch_raises_permanent_error_and_records_status(
+    monkeypatch,
+    creation_timestamp: str,
+) -> None:
+    """A `creationTimestamp` yielding an unstorable epoch fails permanently.
+
+    Permanent, not temporary: `creationTimestamp` is immutable, so no retry can
+    ever produce a storable epoch. The rejection must land on `status` so
+    `kubectl get` is not blank, and it must happen before RBAC/JobSet creation
+    so no sweep-controller is started writing to a directory the operator will
+    never harvest.
+    """
+    body = _valid_body()
+    body["metadata"]["creationTimestamp"] = creation_timestamp
+    patch = kopf.Patch()
+    provision_rbac = AsyncMock()
+    create_jobset = AsyncMock()
+    monkeypatch.setattr(sweep_create, "_provision_rbac", provision_rbac)
+    monkeypatch.setattr(sweep_create, "_create_sweep_controller_jobset", create_jobset)
+
+    # Pin the premise: this timestamp really does produce a key the results
+    # layout cannot address, and the OLD `isdigit()` check really did miss it.
+    from aiperf.common.results_markers import EPOCH_RE
+
+    bad_epoch = epoch_key_from_body(body)
+    assert not bad_epoch.isdigit()
+    assert EPOCH_RE.match(bad_epoch) is None
+
+    with pytest.raises(kopf.PermanentError, match="unstorable run epoch"):
+        await sweep_create.handle(
+            body=body, spec=body["spec"], name="s", namespace="ns", patch=patch
+        )
+
+    provision_rbac.assert_not_awaited()
+    create_jobset.assert_not_awaited()
+    assert patch.status["phase"] == "Failed"
+    assert "runEpoch" not in patch.status
+    assert bad_epoch in patch.status["error"]
+    assert creation_timestamp in patch.status["error"]
+    conditions = {item["type"]: item for item in patch.status["conditions"]}
+    # The SPEC is valid here -- the defect is in immutable metadata.
+    assert conditions["ConfigValid"]["status"] == "True"
+    assert conditions["Failed"]["reason"] == "SweepRejected"
+
+
+@pytest.mark.parametrize(
+    "creation_timestamp",
+    [
+        param("2024-04-25T18:22:03Z", id="whole-second-plus-uid-suffix"),
+        param("2024-04-25T18:22:03.123456Z", id="fractional-microseconds"),
+    ],
+)  # fmt: skip
+@pytest.mark.asyncio
+async def test_handle_storable_epoch_reaches_status_and_jobset_unchanged(
+    monkeypatch,
+    creation_timestamp: str,
+) -> None:
+    """Every epoch shape `epoch_key_from_body` legitimately emits still passes.
+
+    And `status.runEpoch` must be the exact integer of the string handed to the
+    sweep-controller -- the two addressing the same directory is the whole point.
+    """
+    body = _valid_body()
+    body["metadata"]["creationTimestamp"] = creation_timestamp
+    patch = kopf.Patch()
+    create_jobset = AsyncMock()
+    monkeypatch.setattr(sweep_create, "_provision_rbac", AsyncMock())
+    monkeypatch.setattr(sweep_create, "_create_sweep_controller_jobset", create_jobset)
+
+    await sweep_create.handle(
+        body=body, spec=body["spec"], name="s", namespace="ns", patch=patch
+    )
+
+    epoch = epoch_key_from_body(body)
+    assert patch.status["runEpoch"] == int(epoch)
+    assert str(patch.status["runEpoch"]) == epoch
+    assert create_jobset.await_args.kwargs["epoch"] == epoch
+
+
+def test_reject_unstorable_epoch_gate_matches_the_layout_regex() -> None:
+    """The create-time gate must be the SAME shape check every consumer applies.
+
+    Downstream directory scans and API routes all filter on `EPOCH_RE`, so an
+    epoch this gate accepts but that regex rejects would produce a run directory
+    nothing ever lists. Using `str.isdigit()` here (the old check) accepted
+    8-digit and 11-digit keys that `EPOCH_RE` drops on the floor.
+    """
+    from aiperf.common.results_markers import EPOCH_RE
+
+    body = {"metadata": {"creationTimestamp": "2024-04-25T18:22:03Z"}}
+    for epoch in ("123456789", "1714069323", "1714069323485696"):
+        assert EPOCH_RE.match(epoch), epoch
+        sweep_create._reject_unstorable_epoch("s", "ns", body, epoch)
+
+    for epoch in ("0", "-21620277", "12345678", "17140693234", "1714069323\n"):
+        assert epoch.isdigit() or epoch.startswith("-") or epoch.endswith("\n")
+        with pytest.raises(kopf.PermanentError, match="unstorable run epoch"):
+            sweep_create._reject_unstorable_epoch("s", "ns", body, epoch)

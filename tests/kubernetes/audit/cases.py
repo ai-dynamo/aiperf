@@ -11,9 +11,9 @@ from dataclasses import dataclass, field
 class AuditCase:
     """One workflow audited by ``test_audit.py``.
 
-    ``profile_args`` is the canonical CLI form. Both deployers translate it:
-    the bare deployer passes the args verbatim to ``aiperf profile``; the
-    operator runner translates them to an ``AIPerfJobConfig`` (see
+    The fields below are the canonical form. Both deployers translate them:
+    the bare deployer builds ``aiperf profile`` argv (see ``bare_pod.py``);
+    the operator runner translates them to an ``AIPerfJobConfig`` (see
     ``operator_runner.py``).
     """
 

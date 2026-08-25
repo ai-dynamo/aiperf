@@ -2,10 +2,11 @@
 # SPDX-License-Identifier: Apache-2.0
 """Analytics facade for stored benchmark results, backed by runs_index.
 
-This module is now a thin compatibility wrapper around runs_index — the
-previous JSON-glob path has been replaced with indexed flat-column SELECTs. The wrapper exists so the FastAPI routers in
-``routers/results_analytics.py`` can keep their existing dependency-injected
-``get_db()`` factory without rewiring.
+This module prefers indexed flat-column SELECTs against runs_index and keeps
+the older JSON-summary disk scan as a fallback, so a missing, incomplete, or
+unopenable index degrades to a slower read instead of an empty answer. The
+wrapper exists so the FastAPI routers in ``routers/results_analytics.py`` can
+keep their existing dependency-injected ``get_db()`` factory without rewiring.
 """
 
 from __future__ import annotations
@@ -564,7 +565,7 @@ class ResultsDB:
         job_id: str,
         epoch: str | None,
     ) -> dict[str, Any] | None:
-        """Fallback when metrics_json is null (mid-completion race)."""
+        """Fallback when the index has no usable ``metrics_json`` for the run."""
         run_dir = resolve_run_dir(self._results_dir, namespace, job_id, epoch)
         if run_dir is None:
             return None

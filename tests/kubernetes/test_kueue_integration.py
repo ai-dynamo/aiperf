@@ -551,7 +551,7 @@ class TestKueueOperatorFlow:
         self,
         current_phase: str,
     ) -> None:
-        """Verify QUEUED phase is only set from PENDING or QUEUED, not other phases."""
+        """Verify QUEUED phase is set when the current phase is PENDING or QUEUED."""
         from aiperf.operator.main import monitor_progress
 
         kopf_patch = MagicMock()

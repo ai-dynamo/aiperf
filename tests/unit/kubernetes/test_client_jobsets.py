@@ -5,11 +5,11 @@
 Focuses on gaps left by test_client.py:
 
 - list_jobsets default-namespace fallback, non-404 re-raise
-- list_jobsets label-selector construction (part-of label only vs. + job_id)
+- list_jobsets label-selector construction (app=aiperf only vs. + job_id)
 - find_jobset 404 suppressed on both passes, non-404 re-raised on each
 - find_jobset field-selector string on the name-fallback pass
 - delete_jobset swallow-and-warn path for non-404/409 aux failures
-- delete_namespace non-404 does not raise (covered indirectly; re-asserted)
+- delete_namespace non-404 re-raises after logging
 - _list_jobsets_raw None items path
 """
 
@@ -240,7 +240,7 @@ class TestFindJobsetErrorPaths:
 
     @pytest.mark.asyncio
     async def test_cluster_wide_when_namespace_none(self) -> None:
-        """namespace=None routes both passes through list_cluster_custom_object."""
+        """namespace=None routes the lookup through list_cluster_custom_object."""
         api = MagicMock(spec=ApiClient)
         mock_custom = MagicMock()
         mock_custom.list_cluster_custom_object = AsyncMock(

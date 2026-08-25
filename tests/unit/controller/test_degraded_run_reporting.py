@@ -216,7 +216,7 @@ class TestEvictedProducersReachTheOutcome:
     async def test_a_reaped_producer_makes_the_run_exit_non_zero(
         self, system_controller: SystemController
     ) -> None:
-        """8 worker pods, one OOMKilled: the table is built from 7 of them.
+        """An OOMKilled result producer is evicted; the run still exports.
 
         Before the fix ``_on_service_reaped`` only logged a warning, so a sweep
         or CI job reading the exit code recorded a successful benchmark with

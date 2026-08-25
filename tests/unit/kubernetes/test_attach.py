@@ -5,7 +5,7 @@
 Focuses on:
 - attach_to_benchmark: early returns for missing/completed/failed jobs and non-running pods
 - auto_attach_workflow: wait vs no-wait paths, ws vs log streaming, result retrieval
-- retrieve_and_display_results: artifact retrieval, custom name handling, success/failure display
+- retrieve_and_display_results: artifact retrieval, output-directory naming, success/failure display
 """
 
 from contextlib import asynccontextmanager
@@ -445,7 +445,7 @@ class TestRetrieveAndDisplayResults:
 
     @pytest.fixture
     def mock_deps(self):
-        """Patch retrieve_all_artifacts and save_pod_logs."""
+        """Patch artifact retrieval, log saving, jobset lookup, console, and mkdir."""
         with (
             patch(
                 f"{_MODULE}.retrieve_all_artifacts", new_callable=AsyncMock

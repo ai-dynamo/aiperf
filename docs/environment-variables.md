@@ -218,6 +218,7 @@ Root Kubernetes environment configuration. Loads configuration from environment 
 | `AIPERF_K8S_SHARE_PROCESS_NAMESPACE` | `False` | — | When true, JobSet pods spawned by the operator set podSpec.shareProcessNamespace=true so all containers share a PID namespace. Enables cross-container `kubectl exec kill -9 <pid>` for chaos-testing workflows. Keep false in production; chaos fixtures flip it on via AIPERF_K8S_SHARE_PROCESS_NAMESPACE=true. |
 | `AIPERF_K8S_CONTROLLER_HTTP_URL_OVERRIDE` | `None` | — | Chaos-test hook: when set, the operator's progress-client uses this base URL (scheme+host+port, e.g. http://toxiproxy.aiperf-chaos-toxiproxy.svc:20002) instead of the per-CR JobSet pod DNS + API_SERVICE port for controller HTTP calls. Production MUST leave unset — it collapses multi-job isolation because every CR funnels through the same URL. Chaos fixtures set it via AIPERF_K8S_CONTROLLER_HTTP_URL_OVERRIDE to steer traffic through toxiproxy for latency/blackhole injection. |
 | `AIPERF_K8S_APISERVER_TLS_SERVER_NAME_OVERRIDE` | `None` | — | Chaos-test hook: when KUBERNETES_SERVICE_HOST points at an L4 proxy rather than kubernetes.default.svc, verify the apiserver certificate against this hostname while still dialing the proxy. Production MUST leave unset; C15 sets it to kubernetes.default.svc. |
+| `AIPERF_K8S_RESULTS_SIDECAR_LOG_LEVEL` | `'info'` | one of: 'critical' / 'error' / 'warning' / 'info' / 'debug' / 'trace' | Uvicorn log level injected into controller results sidecars. |
 
 ## K8SAPI
 
@@ -502,7 +503,7 @@ Network latency calibration configuration. Controls the TCP-handshake RTT probes
 
 ## OPERATOR
 
-Operator-service network identity. The operator Pod has three containers but only ONE FastAPI app: the ``results-server`` sidecar on ``resultsServer.port`` (8081 in the chart) hosts every ``/api/v1/*`` router (jobs, sweeps, results, config, admin, analytics, dashboard_proxy). The ``operator`` container on port 8080 runs kopf only — its sole HTTP surface is ``/healthz`` plus Prometheus ``/metrics``. So there is no separate "sweeps API URL" and "results API URL" — there is one base URL for everything, pointing at the results-server. Used when the operator stamps absolute URLs onto CR status (e.g. ``AIPerfSweep.status.apiUrl``, ``AIPerfSweep.status.runsTruncated.fetchURL``) that external clients dereference to fetch results, and when in-pod consumers (e.g. the sweep-controller's empty-summary fallback) need the operator's API endpoint.
+Operator-service network identity. The operator Pod has three containers but only ONE FastAPI app: the ``results-server`` sidecar on ``resultsServer.port`` (8081 in the chart) hosts every ``/api/v1/*`` router (jobs, sweeps, results, config, admin, analytics, dashboard_proxy). The ``operator`` container on port 8080 runs kopf only — its sole HTTP surface there is ``/healthz``, with Prometheus ``/metrics`` on a separate server bound to ``METRICS_PORT`` (9090 in the chart). So there is no separate "sweeps API URL" and "results API URL" — one base URL, pointing at the results-server. Used when the operator stamps absolute URLs onto CR status (e.g. ``AIPerfSweep.status.apiUrl``, ``AIPerfSweep.status.runsTruncated.fetchURL``) that external clients dereference to fetch results, and when in-pod consumers (e.g. the sweep-controller's empty-summary fallback) need the operator's API endpoint.
 
 | Environment Variable | Default | Constraints | Description |
 |----------------------|---------|-------------|-------------|
@@ -570,6 +571,7 @@ Results fetching and storage settings.
 | Environment Variable | Default | Constraints | Description |
 |----------------------|---------|-------------|-------------|
 | `AIPERF_RESULTS_DIR` | `Path('/data')` | — | Base directory for storing benchmark results (mounted PVC) |
+| `AIPERF_RESULTS_SERVER_PORT` | `8081` | ≥ 1, ≤ 65535 | Port exposed by the operator results-server sidecar. |
 | `AIPERF_RESULTS_K8S_INIT_TIMEOUT_SEC` | `10.0` | > 0, ≤ 120 | Seconds the results-server waits for its Kubernetes client to initialize at startup before giving up and serving PVC-only. The live-job endpoints need a cluster, but every results, sweeps, and artifact route reads the disk, so an unreachable apiserver must degrade the server rather than prevent it from starting. |
 | `AIPERF_RESULTS_MAX_RETRIES` | `5` | ≥ 0, ≤ 50 | Max retries when fetching results from controller |
 | `AIPERF_RESULTS_RETRY_DELAY` | `2.0` | ≥ 0, ≤ 60 | Seconds between result fetch retries |

@@ -1,10 +1,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Three-bucket diff for the K8s-vs-local audit suite.
+"""Four-bucket diff for the K8s-vs-local audit suite.
 
-Each bucket is a pure function over two artifact directory trees plus an
-``AuditCase``. Functions return a list of ``Finding``s; an empty list means
-no divergence.
+Each bucket is a pure function over its inputs -- two artifact directory
+trees plus an ``AuditCase``, or (for ``index_consistency``) the operator tree
+plus a runs-index row. Functions return a list of ``Finding``s; an empty list
+means no divergence.
 """
 
 from __future__ import annotations

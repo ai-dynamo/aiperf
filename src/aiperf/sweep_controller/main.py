@@ -3,8 +3,9 @@
 """Sweep-controller pod entry point.
 
 Reads its target AIPerfSweep CR from the apiserver, builds a BenchmarkPlan,
-runs MultiRunOrchestrator with K8sChildJobExecutor, runs aggregate_and_export
-once all variations are done, publishes terminal status, and exits.
+runs MultiRunOrchestrator with K8sChildJobExecutor, calls
+aggregate_plan_results once all variations are done, publishes terminal status,
+and exits.
 
 Idempotent: a restart re-reads the CR, sees existing terminal children
 (ownerRef + label match), and resumes from the first non-existent variation.
@@ -92,7 +93,7 @@ def resolve_terminal_phase(
 ) -> str:
     """Resolve the AIPerfSweep terminal ``status.phase`` from child outcomes.
 
-    Three-way classification keeps a single bad trial in a 6-trial sweep from
+    Four-way classification keeps a single bad trial in a 6-trial sweep from
     masquerading as a total run-failure:
 
     * ``Cancelled`` — the parent CR requested cancellation, OR no genuine

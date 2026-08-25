@@ -21,10 +21,10 @@ HTTP API (C16).
 * **SystemController HTTP (C16):** landed. The operator honors
   ``AIPERF_K8S_CONTROLLER_HTTP_URL_OVERRIDE`` (chaos-only env var)
   which swaps the per-CR JobSet pod DNS for a fixed URL in controller
-  API-port :class:`ProgressClient` calls. The shared package-scoped fixture
+  API-port :class:`ProgressClient` calls. The shared function-scoped fixture
   ``operator_ready_toxiproxy_routed`` (see
-  ``tests/kubernetes/chaos/conftest.py``) redeploys the operator once
-  with the override pointed at toxiproxy and restores a plain operator
+  ``tests/kubernetes/chaos/conftest.py``) redeploys the operator with the
+  override pointed at toxiproxy and restores a plain operator
   on teardown. New controller-HTTP fault-injection scenarios should
   reuse that fixture rather than rolling their own.
 
@@ -155,9 +155,10 @@ async def test_c16_block_operator_controller_http_falls_back(
 
     The controller pod DNS name is deterministic before the JobSet exists, so
     toxiproxy can route to the future controller Service from the start. Once
-    every ``_fetch_progress`` call hangs on a ``timeout`` toxic, the operator
-    can no longer observe controller-side progress directly; it must recover
-    exported results through the results sidecar and mark the CR Completed.
+    every ``ProgressClient.get_progress`` call hangs on a ``timeout`` toxic,
+    the operator can no longer observe controller-side progress directly; it
+    must recover exported results through the results sidecar and mark the CR
+    Completed.
     """
     name = "chaos-c16"
     longrun_config = AIPerfJobConfig(

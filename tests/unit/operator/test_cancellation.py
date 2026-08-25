@@ -768,7 +768,8 @@ async def test_monitor_progress_short_circuits_on_cancellation() -> None:
 @pytest.mark.asyncio
 async def test_fetch_results_returns_cancellation_error_when_flag_set() -> None:
     """When cancellation is requested, _fetch_once returns a FetchResult
-    with error set; retry_with_backoff stops (returning is not an error)."""
+    with error set; _fetch_with_progress_aware_retry stops (returning is not
+    an error)."""
     from aiperf.operator.handlers.completion import fetch_results_with_retry
 
     request_cancellation("ns/j")

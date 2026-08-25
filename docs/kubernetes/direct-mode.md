@@ -150,6 +150,14 @@ kubectl apply -f bench.yaml   # equivalent to what the CLI would have done
 The memory estimate is written to stderr, so `bench.yaml` contains only the
 multi-document Kubernetes YAML and can be passed directly to `kubectl apply`.
 
+`--no-operator` is required here and not merely a preference: `--dry-run`
+never contacts the cluster, so it cannot detect that the `AIPerfJob` CRD is
+absent and would otherwise print the operator CR as JSON instead of the
+manifests. The upside of that same design is that this command works with no
+cluster reachable at all — no kubeconfig, no network. See
+[workflow.md](./workflow.md#--dry-run-fidelity) for the full decision table
+and the pre-validation caveat.
+
 This is useful when your cluster requires a GitOps commit or a manual review
 before resources can be created.
 

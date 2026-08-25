@@ -78,9 +78,9 @@ class SweepAuditRunner:
 
         Mirrors ``AIPerfJobConfig.to_flat_spec`` for the per-child benchmark
         body, then adds the parent-level ``sweep`` (GridSweep) and
-        ``multi_run`` blocks. Sweep-axis keys live at ``spec`` and are
-        explicitly forbidden from ``spec.benchmark`` by
-        ``AIPerfSweepSpec``'s ``_validate_axis_combination`` validator.
+        ``multi_run`` blocks. Sweep-axis keys live at ``spec`` (the AIPerf
+        envelope level, alongside ``randomSeed``), never under
+        ``spec.benchmark`` -- ``BenchmarkConfig`` does not declare them.
         """
         if case.sweep is None:
             raise ValueError("SweepAuditRunner requires case.sweep to be set")

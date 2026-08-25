@@ -10,8 +10,9 @@ timestamps that are:
 - Monotonic (immune to NTP step corrections during a benchmark)
 - High resolution (nanosecond, from perf_counter)
 
-Used by both the controller (CreditIssuer) and workers (ClockOffsetTracker)
-to ensure consistent, monotonic timestamps for cross-machine offset measurement.
+Used by the worker-side ClockOffsetTracker to ensure consistent, monotonic
+timestamps for cross-machine offset measurement. The controller (CreditIssuer)
+anchors its own perf_counter baseline inline rather than through this class.
 """
 
 import time

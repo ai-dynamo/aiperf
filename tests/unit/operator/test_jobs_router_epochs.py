@@ -39,7 +39,7 @@ def _write_summary(base: Path, ns: str, name: str, epoch: str) -> None:
 
 
 def _patch_no_live_cr(monkeypatch) -> None:
-    """Force the CR half of ``find_any_job`` / ``list_all_jobs`` to be empty."""
+    """Force the CR half of ``find_any_job`` to be empty."""
     from aiperf.operator import job_union as ju
 
     async def _no_cr(*_args, **_kwargs):

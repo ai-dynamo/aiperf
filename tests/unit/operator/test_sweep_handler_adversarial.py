@@ -5,7 +5,7 @@
 Locks in the recently-fixed bugs:
 
 1. ``child_rollup.on_child_phase_transition``: ``PartiallyFailed`` is bucketed
-   as ``failed``, not ``in_flight``; ``_read_parent_phase`` guards against
+   as ``failed``, not ``in_flight``; ``_read_parent_status`` guards against
    clobbering terminal parent phases with ``Aggregating``; the API patch is
    sent with ``_content_type="application/merge-patch+json"``; the handler
    accepts arbitrary kopf-extra kwargs (``**_: Any``).

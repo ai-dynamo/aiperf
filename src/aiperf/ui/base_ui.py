@@ -39,9 +39,9 @@ class BaseAIPerfUI(
             '''Callback for records progress updates.'''
             pass
 
-        @on_phase_progress
-        def _on_phase_progress(self, phase_stats: CombinedPhaseStats):
-            '''Callback for requests phase progress updates.'''
+        @on_profiling_progress
+        def _on_profiling_progress(self, profiling_stats: CombinedPhaseStats):
+            '''Callback for profiling phase progress updates.'''
             pass
 
         @on_worker_update

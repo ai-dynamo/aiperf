@@ -7,7 +7,7 @@ cannot leave an orphan JobSet that the index/history API can't see. Verifies
 that:
   - persistence failure raises kopf.TemporaryError (retryable)
   - JobSet creation is NOT invoked when persistence fails
-  - persistence runs AFTER idempotent RBAC/ConfigMap create
+  - on the happy path both spec save and index upsert precede JobSet create
 """
 
 from __future__ import annotations

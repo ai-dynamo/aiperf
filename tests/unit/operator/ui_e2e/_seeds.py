@@ -82,7 +82,7 @@ def seed_run(
 def seed_results_ready(run: Path) -> None:
     """Drop the ``.aiperf_results_ready.json`` marker so the results router
     will serve top-level files. Without this marker the sidecar refuses
-    artifact GETs (see CLAUDE.md "Results-ready marker")."""
+    artifact GETs (see ``aiperf.common.results_markers``)."""
     (run / ".aiperf_results_ready.json").write_text(
         json.dumps({"ready_at": int(time.time())})
     )

@@ -456,14 +456,19 @@ def _status_from_info(info: Any) -> dict[str, Any]:
     ``phases`` is reconstructed so the stall detector keeps both of its
     signals: without a completed-request count it would flag any job whose
     throughput happens to read 0.0 between liveMetrics windows.
+
+    ``AIPerfJobInfo.total_requests`` is already successes + errors and
+    ``error_rate`` is already a 0..1 fraction, so they are re-expressed as the
+    tags the detectors actually read: ``completed_request_count`` (the
+    denominator) and ``request_error_rate`` (a percent, hence the ``* 100``).
     """
     throughput = getattr(info, "throughput_rps", None) or 0.0
     total_requests = int(getattr(info, "total_requests", None) or 0)
     error_rate = float(getattr(info, "error_rate", None) or 0.0)
     metrics: dict[str, Any] = {"request_throughput": {"avg": throughput}}
     if total_requests > 0:
-        metrics["request_count"] = {"avg": total_requests}
-        metrics["error_count"] = {"avg": total_requests * error_rate}
+        metrics["completed_request_count"] = {"avg": total_requests}
+        metrics["request_error_rate"] = {"avg": error_rate * 100.0, "unit": "%"}
     phase_name = getattr(info, "current_phase", None) or "profiling"
     return {
         "phase": getattr(info, "phase", None),

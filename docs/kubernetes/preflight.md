@@ -94,7 +94,7 @@ aiperf kube preflight [OPTIONS]
 | `--secret`, `--secrets` | string (repeatable) | unset | Referenced Kubernetes secret name to verify. Repeat for multiple names. |
 | `-e`, `--endpoint-url` | string | unset | LLM endpoint URL to probe. Enables the endpoint-connectivity check (cluster-service lookup for `*.svc` URLs; informational for external URLs). |
 | `-w`, `--workers` | int | 1 | Planned worker pod count. Used to project CPU and memory requirements against node capacity and namespace quotas. |
-| `-o`, `--output` | `text`\|`json` | `text` | Output format. `text` prints rich-formatted progress; `json` prints only the machine-parseable `PreflightResults` dict on stdout (all logging is suppressed to `WARNING`). |
+| `-o`, `--output` | `text`\|`json` | `text` | Output format. `text` prints rich-formatted progress; `json` prints only the machine-parseable `PreflightResults` dict on stdout. Log records are retargeted to stderr for the duration and quietened to `WARNING`, so stdout is safe to pipe into `jq` even when checks fail. |
 
 Composite flags inherited from `KubeManageOptions` — `-n`/`--namespace`,
 `--kubeconfig`, `--kube-context` — resolve connection and namespace identically to
@@ -577,6 +577,15 @@ environment — not on the CLI. See `src/aiperf/operator/environment.py:367`.
 Source: `src/aiperf/cli_commands/kube/preflight.py` — `if not results.passed:
 raise SystemExit(1)`. `results.passed` is false iff any check status is `fail`.
 Warnings never block.
+
+With `-o json`, stdout carries only the JSON document on every exit path;
+the human-readable failure summary goes to stderr. A CI job can therefore
+consume both streams independently:
+
+```bash
+aiperf kube preflight -o json > preflight.json || echo "preflight failed"
+jq -e '.passed' preflight.json
+```
 
 ## Further reading
 

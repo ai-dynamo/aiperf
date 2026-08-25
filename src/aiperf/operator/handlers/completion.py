@@ -17,8 +17,12 @@ import kopf
 import orjson
 import zstandard
 
-from aiperf.common.finite import is_finite_value, scrub_non_finite
+from aiperf.common.finite import scrub_non_finite
 from aiperf.common.results_markers import ready_marker_path, write_ready_marker
+from aiperf.kubernetes.benchmark_diagnosis import (
+    error_rate_from_metrics,
+    format_error_counts,
+)
 from aiperf.kubernetes.crd_models import (
     ControllerFetchResult,
     MetricsSummary,
@@ -1316,11 +1320,15 @@ def _compute_result_flags(
     benchmark_failure: str | None = None
     if success:
         rate, errors, requests = _result_error_rate(result)
-        if requests > 0 and rate >= K8sEnvironment.DIAGNOSIS.FAIL_ABOVE_ERROR_RATE:
+        # Gate on ``rate is not None``, not on a positive denominator: an
+        # all-error run publishes ``request_error_rate`` with no counter
+        # alongside it, so ``requests > 0`` would silently pass the very run
+        # this gate exists to fail.
+        if rate is not None and rate >= K8sEnvironment.DIAGNOSIS.FAIL_ABOVE_ERROR_RATE:
             success = False
             benchmark_failure = (
-                f"Benchmark failed: {rate:.1%} of requests errored "
-                f"({errors}/{requests})"
+                f"Benchmark failed: {rate:.1%} of requests errored"
+                f"{format_error_counts(errors, requests)}"
             )
 
     logger.info(
@@ -1336,32 +1344,27 @@ def _compute_result_flags(
     )
 
 
-def _result_error_rate(result: ControllerFetchResult) -> tuple[float, int, int]:
-    """Return (error_rate, errors, requests) from the fetched final metrics.
+def _result_error_rate(
+    result: ControllerFetchResult,
+) -> tuple[float | None, int, int]:
+    """Return ``(rate, errors, requests)`` from the fetched final metrics.
 
-    Mirrors ``aiperf.kubernetes.benchmark_diagnosis.error_rate`` but reads the
-    authoritative post-run metrics rather than the sampled liveMetrics window,
-    so the counts are exact instead of averaged across staggered samples.
+    Delegates the arithmetic to
+    :func:`aiperf.kubernetes.benchmark_diagnosis.error_rate_from_metrics` so the
+    completion verdict and the ``aiperf kube debug`` diagnosis cannot disagree.
+    Keeping two hand-rolled copies is how they came to read different tags in
+    the first place.
 
-    Returns ``(0.0, 0, 0)`` when metrics are absent, which callers must treat as
-    "unknown", never as "no errors" -- a missing payload is not evidence of a
-    healthy run.
+    ``rate`` is a 0..1 fraction, and ``None`` means *unknown*: an absent or
+    unusable payload is not evidence of a healthy run. ``requests`` is completed
+    requests (successes + errors) and may be 0 even when ``rate`` is known,
+    because the fetched payload comes from ``/api/metrics``, which is filtered
+    and therefore carries no error counter.
     """
     metrics = (result.metrics or {}).get("metrics")
     if not isinstance(metrics, dict):
-        return 0.0, 0, 0
-
-    def _avg(key: str) -> float | None:
-        entry = metrics.get(key, {})
-        value = entry.get("avg", 0.0) if isinstance(entry, dict) else entry
-        return float(value) if is_finite_value(value) else None
-
-    requests = _avg("request_count")
-    errors = _avg("error_count")
-    if requests is None or errors is None or requests <= 0:
-        return 0.0, 0, 0
-    rate = min(1.0, max(0.0, errors / requests))
-    return rate, int(errors), int(requests)
+        return None, 0, 0
+    return error_rate_from_metrics(metrics)
 
 
 def _raise_if_phase_refresh_cancelled(cancellation_event: asyncio.Event) -> None:

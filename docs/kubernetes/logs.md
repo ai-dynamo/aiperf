@@ -141,6 +141,10 @@ stdout as they arrive. Key properties:
   or evicted, the stream ends and the command returns. AIPerf does
   not transparently reconnect; re-run the command.
 
+- **Lines are soft-wrapped, never broken mid-token.** A log line wider than
+  the terminal is folded by the terminal itself, so a long URL or stack frame
+  stays copy-pasteable. Piping the output preserves one line per log line.
+
 - **Tail-at-start is supported.** `-f --tail 200` begins the stream at
   the last 200 buffered lines, then follows live.
 

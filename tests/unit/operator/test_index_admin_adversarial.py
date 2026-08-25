@@ -1,12 +1,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Adversarial tests for operator admin index rebuild APIs and CLI.
+"""Adversarial tests for the operator admin index rebuild API.
 
 Focuses on:
 - concurrent ``POST /admin/index/rebuild`` requests against the writer process
 - rebuild failure propagation without success-shaped stale payloads
 - request and response schema boundaries for the manual recovery hatch
-- missing operator API auto-discovery diagnostics when ``--api-url`` is omitted
+- the read-only sidecar refusing the writer path with 503
 
 Out of scope: runs_index filesystem-walk correctness; see sibling
 ``tests/unit/operator/test_runs_index_adversarial.py`` and

@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for aiperf.kubernetes.client (free functions + facade).
+"""Tests for aiperf.kubernetes.client (free functions).
 
 Focuses on:
 - k8s_client context manager (incluster/kubeconfig/close).
@@ -10,7 +10,6 @@ Focuses on:
 - Pod summary + controller/operator/retrievable lookups.
 - wait_for_controller_pod_ready polling + timeout.
 - cluster_version.
-- Facade delegations.
 """
 
 from __future__ import annotations

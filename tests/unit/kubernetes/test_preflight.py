@@ -1236,7 +1236,7 @@ class TestCheckEndpointConnectivity:
 
     @pytest.mark.asyncio
     async def test_unparseable_url(self) -> None:
-        """Malformed URL should not crash, returns WARN."""
+        """Malformed URL should not crash, returns INFO or WARN."""
         checker = _make_checker(endpoint_url="://bad")
         checker._api = _mock_api()
         result = await checker._check_endpoint_connectivity()

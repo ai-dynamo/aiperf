@@ -7,7 +7,7 @@ Focuses on:
 - AIPerfJob CR structure: apiVersion/kind/metadata/spec.benchmark
 - Body indentation under spec.benchmark
 - Stripping of yaml-language-server and `# @template` metadata headers
-- Deployment-options / pod / scheduling commented blocks preserved
+- Pod / scheduling commented blocks preserved
 """
 
 from __future__ import annotations

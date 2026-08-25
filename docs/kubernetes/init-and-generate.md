@@ -53,7 +53,7 @@ and `--template` to pick one.
 ### Examples
 
 ```bash
-# Print template to stdout (pipe it anywhere)
+# Print template to stdout, byte-for-byte (safe to pipe into kubectl or a file)
 aiperf kube init
 
 # Write to a file
@@ -360,8 +360,10 @@ neither submits anything to the cluster. The difference is output:
 | Memory estimate | Yes (stderr) | Yes (stderr) |
 | Intended use | Stable GitOps authoring and review | Exact preview of the corresponding `profile` path |
 
-Both commands keep stdout machine-readable and safe to pipe. Use `generate`
-when the YAML itself is the stable artifact you want to commit or diff. Use
+Both commands keep stdout machine-readable and safe to pipe: the payload is
+written verbatim, so a long image reference or endpoint URL is never wrapped
+into an invalid document when stdout is a pipe or file. Use `generate` when the
+YAML itself is the stable artifact you want to commit or diff. Use
 `profile --dry-run` to preview the exact operator or direct deployment path
 without actually running it.
 

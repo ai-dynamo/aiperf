@@ -230,7 +230,7 @@ def test_variation_curve_tooltip_quantifies_the_band_it_draws() -> None:
 def test_variation_curve_tooltip_refuses_to_render_a_single_trial_as_zero_spread() -> (
     None
 ):
-    """meanStd reports std 0 for n<2; that is unmeasured, not reproducible."""
+    """A caller-supplied std of 0 at n=1 is unmeasured, not reproducible."""
     rendered = _variations_chart_render("valuesLabel: 'concurrency=17',")
     assert rendered["tooltipSingle"] == "  42.25 tok/s — 1 trial, spread unknown"
     assert "±" not in str(rendered["tooltipSingle"])

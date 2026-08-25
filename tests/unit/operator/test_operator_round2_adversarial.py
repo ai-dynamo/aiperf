@@ -18,7 +18,7 @@ Covers:
     * Negative-path ``observedGeneration``: a failure in a preceding
       sub-call leaves observedGeneration unwritten.
     * Metrics endpoint smoke test: prometheus_client exposition really
-      renders our four metric names.
+      renders our three metric names.
 """
 
 from __future__ import annotations
@@ -274,9 +274,10 @@ class TestHypothesisPropertyTests:
         """The full handler must not raise for any (old, new) shapes.
 
         The lookup + setter are mocked to no-op so we isolate the handler
-        body's defensive parsing. If ``new`` does not contain a true
-        Completed/True dict, no apiserver path runs; if it does, the
-        mocked lookup returns None and the early-exit triggers.
+        body's defensive parsing. No apiserver path runs either way: a
+        ``new`` without a true Failed/True dict exits on the condition
+        check, and one with it exits because no ``jobset_body`` is passed,
+        so no controller-owner kind is declared.
         """
         with (
             mock_patch(
@@ -771,7 +772,7 @@ def _free_port() -> int:
 @pytest.mark.timeout(10)
 def test_metrics_endpoint_serves_prometheus_exposition() -> None:
     """End-to-end smoke: actually start the server, scrape /metrics, parse,
-    verify our four metric names appear.
+    verify our three metric names appear.
 
     NOTE: prometheus_client.start_http_server uses the global REGISTRY and
     a process-wide port. Run via ``-n auto`` is fine because each xdist

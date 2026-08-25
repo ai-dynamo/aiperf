@@ -27,14 +27,13 @@ per-epoch ``children.json`` manifest, and the per-cell metrics from
 Out of scope: events / logs / pods diagnostic panel (covered separately);
 artifact download / bundle streaming (covered in sweep-artifacts tests).
 
-Harness gap worked around:
+Harness notes:
 
-  * ``conftest.py`` patches ``find_aiperf_job`` for child-job detail but
-    not ``find_aiperfsweep`` / ``list_aiperfsweeps``. With a MagicMock
-    ApiClient those calls raise ``TypeError`` (non-awaitable return) and
-    ``find_any_sweep`` re-raises into a 500. We install per-test patches
-    via :func:`_patch_sweep_cr_lookups` so each test can declare its own
-    live CR contents (or a flat ``None`` for "archived only" scenarios).
+  * ``conftest.py`` patches ``find_aiperfsweep`` / ``list_aiperfsweeps``
+    against its own live-CR registry, which defaults to "no live sweep".
+    We re-patch per test via :func:`_patch_sweep_cr_lookups` so each test
+    can declare its own live CR contents inline (or a flat ``None`` for
+    "archived only" scenarios).
   * ``seed_sweep_aggregate`` writes ``profile_export_aiperf.json`` /
     ``runs.json``, but ``sweep_union._record_from_archive`` reads
     ``aggregate.json``. We write ``aggregate.json`` directly through
@@ -158,9 +157,9 @@ def _patch_sweep_cr_lookups(
 ) -> Iterator[None]:
     """Patch ``find_aiperfsweep`` / ``list_aiperfsweeps`` for one test.
 
-    The harness's MagicMock ApiClient makes the real calls raise. Without
-    these patches every sweep route 500s instead of returning the archived
-    fallback the test cares about.
+    Overrides the conftest-level registry fakes so a test can hand the
+    route an exact live-CR body, or ``None`` to force the archived
+    fallback it cares about.
     """
     items = list_returns if list_returns is not None else []
     with (
@@ -193,10 +192,10 @@ def _live_cr(
 ) -> dict[str, Any]:
     """Construct a minimal live AIPerfSweep CR dict the operator reads.
 
-    Note: ``spec`` defaults to ``{}`` so ``_spec_summary_from_record`` skips
-    the strict ``AIPerfSweepSpec.model_validate`` branch — the same branch
-    that 500s every sweep-detail call when the live CR carries an
-    incompatible spec (covered as a regression in ``TestStaleSpecRegression``).
+    Note: ``spec`` defaults to ``{}`` so ``spec_summary_from_record`` skips
+    the strict ``AIPerfSweepSpec.model_validate`` branch — the branch whose
+    fallback for an incompatible live spec is covered in
+    ``TestStaleSpecRegression``.
     """
     status: dict[str, Any] = {
         "phase": phase,
@@ -407,7 +406,7 @@ class TestChildrenManifest:
         harness.assert_no_unreachable_banner()
 
     def test_sweep_with_many_children_renders_table(self, harness):
-        """50 variations: page must render without 5xx and Children card visible."""
+        """50 variations: page must render without 5xx and variations panel visible."""
         epoch = "1714069323"
         n = 50
         agg = _good_aggregate(
@@ -503,7 +502,7 @@ class TestChildrenManifest:
     def test_duplicate_variation_index_across_children(self, harness):
         """Two children both at variation_index=0 — multi-trial layout.
 
-        Per ``buildSweepVariations`` (sweep-detail-helpers.js:71-86), duplicate
+        Per ``buildSweepVariations`` (sweep-detail-helpers.js), duplicate
         indices group into the same variation; the row's n_trials should reflect
         both. Renderer must not duplicate the row.
         """
@@ -1019,10 +1018,12 @@ class TestSlimRunSummaries:
         harness.assert_no_unreachable_banner()
 
     def test_metric_values_as_strings_are_filtered_out(self, harness):
-        """Numeric values arriving as strings: ``Number.isFinite`` rejects them.
+        """Numeric values arriving as strings must not 500 the cells route.
 
-        ``metricValue`` (sweep-detail-helpers.js:33-36) requires a finite
-        number; strings drop to null. Renderer must show ``---`` and not crash.
+        ``metricValue`` in ``sweep-detail-helpers.js`` requires a finite
+        number, so strings drop to null in the renderer. This test exercises
+        only the API half: ``GET .../cells`` may coerce the strings or reject
+        them at the model, but must not return 500.
         """
         epoch = "1714069323"
         agg = _good_aggregate(total=1)
@@ -1057,7 +1058,7 @@ class TestSlimRunSummaries:
 def test_deep_link_to_nonexistent_sweep_renders_error_not_loading_forever(harness):
     """``/#/sweeps/<ns>/does-not-exist``: must render an error card.
 
-    The first-load failure path in ``SweepDetail`` (sweep-detail.js:170-189)
+    The first-load failure path in ``SweepDetail`` (``sweep-detail.js``)
     sets ``error`` which produces the ``[data-testid=page-sweep-detail]``
     error card. We assert the card is present and the loading label is gone.
     """
@@ -1121,18 +1122,14 @@ class TestApiSurface:
 
 class TestStaleSpecRegression:
     """A live CR carrying a spec that fails ``AIPerfSweepSpec.model_validate``
-    should NOT take down the whole sweep-detail route.
+    must NOT take down the whole sweep-detail route.
 
-    BUG SURFACED at ``src/aiperf/operator/routers/sweeps.py:85``:
-    ``_spec_summary_from_record`` calls ``AIPerfSweepSpec.model_validate``
-    on ``rec.raw_spec`` with no try/except. If a legacy CR is left in the
-    cluster after a spec-schema change (e.g. a ``template`` key from an
-    earlier release), every ``GET /api/v1/sweeps/<ns>/<name>`` returns 422
-    and the page errors out with "Operator API unreachable".
-
-    Expected behavior: fall through to the aggregate-doc path (or the
-    empty ``SpecSummary`` default) and surface the parse failure as a
-    condition / status warning, not a 500/422.
+    Regression lock for a legacy CR left in the cluster after a
+    spec-schema change (e.g. a ``template`` key from an earlier release):
+    ``spec_summary_from_record`` in ``routers/_sweeps_spec.py`` catches the
+    validation failure and falls through to the aggregate-doc path (or the
+    empty ``SpecSummary`` default) instead of 422'ing every
+    ``GET /api/v1/sweeps/<ns>/<name>``.
     """
 
     def test_legacy_template_key_in_live_spec_does_not_500_the_detail_route(

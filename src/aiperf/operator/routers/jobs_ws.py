@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """WebSocket proxy from the operator UI to per-job controller pods.
 
-Browsers viewing ``/v1/job/{ns}/{name}`` cannot reach the controller pod's
+Browsers viewing ``#/jobs/{ns}/{name}`` cannot reach the controller pod's
 ``:API_SERVICE/ws`` endpoint directly — controller services are headless
 and intra-cluster. The operator already serves the UI and already knows
 the routing (it watches the AIPerfJob CR for ``status.jobSetName``), so it
@@ -17,7 +17,7 @@ controller pod's headless-service DNS, opens an upstream WebSocket via
 The proxy is intentionally transparent — it does not subscribe on behalf
 of the client. The browser owns the subscribe protocol the controller
 exposes (``{"type": "subscribe", "message_types": [...]}``); see
-``src/aiperf/api/static-v2/lib/ws.js`` for the canonical client behavior.
+``src/aiperf/operator/ui/lib/job-ws.js`` for the canonical client behavior.
 """
 
 from __future__ import annotations

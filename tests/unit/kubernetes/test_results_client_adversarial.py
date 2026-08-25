@@ -304,7 +304,9 @@ class TestOperatorApiDiscovery:
         assert client.kwargs["timeout"].total == 301.0
         assert client.kwargs["auto_decompress"] is False
         assert client.kwargs.get("trust_env") is not True
-        assert [kwargs["timeout"].total for kwargs in client.session.get_kwargs[:2]] == [
+        assert [
+            kwargs["timeout"].total for kwargs in client.session.get_kwargs[:2]
+        ] == [
             31.0,
             31.0,
         ]

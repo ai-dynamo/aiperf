@@ -76,7 +76,7 @@ class TestLogsOutputDirectory:
     """Tests for the `--output` save-to-directory code path."""
 
     async def test_output_flag_invokes_save_helper(self, tmp_path: Path) -> None:
-        """When --output is set, logs delegates to `save_pod_logs`."""
+        """When --output is set, logs delegates to `_save_logs_to_directory`."""
         out_dir = tmp_path / "saved-logs"
         opts = KubeManageOptions(namespace="ns-1")
 
@@ -197,7 +197,7 @@ class TestLogStreamingThroughKubeConsole:
             )
 
         mock_console.print.assert_called_once_with(
-            "line one\nline two", highlight=False, markup=False
+            "line one\nline two", highlight=False, markup=False, soft_wrap=True
         )
 
     async def test_stream_pod_log_routes_through_kube_console(self) -> None:
@@ -233,5 +233,10 @@ class TestLogStreamingThroughKubeConsole:
         printed = [c.args[0] for c in mock_console.print.call_args_list]
         assert printed == ["hello", "world"]
         # All calls suppress markup/highlighting (raw log lines may contain `[`)
+        # and soft-wrap, so a long URL is never broken mid-token.
         for call in mock_console.print.call_args_list:
-            assert call.kwargs == {"highlight": False, "markup": False}
+            assert call.kwargs == {
+                "highlight": False,
+                "markup": False,
+                "soft_wrap": True,
+            }

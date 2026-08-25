@@ -66,13 +66,19 @@ app.kubernetes.io/component: operator
 {{- end }}
 
 {{/*
-Create the name of the service account to use
+Create the name of the service account to use.
+
+With serviceAccount.create=false the chart binds no RBAC of its own, so an
+empty serviceAccount.name used to fall back to the namespace `default`
+ServiceAccount — an identity holding none of the operator's ClusterRole. That
+installs cleanly and then fails as a runtime 403 storm, so `required` turns it
+into an install-time error instead.
 */}}
 {{- define "aiperf-operator.serviceAccountName" -}}
 {{- if .Values.serviceAccount.create }}
 {{- default (include "aiperf-operator.fullname" .) .Values.serviceAccount.name }}
 {{- else }}
-{{- default "default" .Values.serviceAccount.name }}
+{{- required "serviceAccount.name is required when serviceAccount.create=false. Set it to a pre-provisioned ServiceAccount that is bound to the operator's ClusterRole; the namespace `default` ServiceAccount has no operator permissions and the operator would 403 on every reconcile." .Values.serviceAccount.name }}
 {{- end }}
 {{- end }}
 

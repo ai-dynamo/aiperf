@@ -278,7 +278,7 @@ class FastAPIService(BaseComponentService):
         wire bytes shipped to every worker pod.
 
         After ``from_pretrained`` populates ``HF_HOME``, calls
-        :func:`tokenizer_router.prewarm_bundle` to tar+zstd the snapshot
+        :func:`aiperf.api.routers.tokenizer.prewarm_bundle` to tar+zstd the snapshot
         directory into the router's module-level RAM cache. This guarantees
         the bundle endpoint serves the first request synchronously out of
         memory -- the materialisation cost is paid here once at startup,

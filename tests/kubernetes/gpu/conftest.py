@@ -10,8 +10,9 @@ cluster instead, or ``--gpu-runtime minikube`` to use Minikube.
 All settings can be configured via CLI options (``--gpu-*``) or environment
 variables (``GPU_TEST_*``).  CLI takes precedence over environment.
 
-Server-specific fixtures (vLLM, Dynamo) live in their own subpackage
-conftest files (``gpu/vllm/conftest.py``, ``gpu/dynamo/conftest.py``).
+Server-specific fixtures (vLLM, Dynamo, TRT-LLM, SGLang) live in their own
+subpackage conftest files (``gpu/vllm/conftest.py``, ``gpu/dynamo/conftest.py``,
+``gpu/trtllm/conftest.py``, ``gpu/sglang/conftest.py``).
 
 Usage::
 
@@ -282,10 +283,9 @@ _OPTIONS: list[tuple[str, str, str | None, str, str]] = [
 def pytest_addoption(parser: pytest.Parser) -> None:
     """Register --gpu-* CLI options.
 
-    Idempotent: chaos_dynamo's conftest delegates this hook by importing it,
-    so when both conftests are initial (e.g. ``pytest kubernetes/gpu
-    kubernetes/chaos_dynamo``) each option may be offered twice; duplicates
-    are skipped instead of raising ``ValueError: option already added``.
+    Idempotent: a sibling conftest may delegate this hook by importing it, in
+    which case each option is offered twice; duplicates are skipped instead of
+    raising ``ValueError: option already added``.
     """
     group = parser.getgroup("gpu", "GPU Kubernetes E2E test options")
 
@@ -597,7 +597,7 @@ async def _ensure_user_pull_secrets(
 
 
 def _check_no_subpackage_init_files() -> None:
-    """Fail fast if vllm/, trtllm/, or dynamo/ have __init__.py (breaks package-scoped fixtures)."""
+    """Fail fast if vllm/, trtllm/, sglang/, or dynamo/ have __init__.py (breaks package-scoped fixtures)."""
     gpu_dir = Path(__file__).parent
     for subdir in ("vllm", "trtllm", "sglang", "dynamo"):
         init = gpu_dir / subdir / "__init__.py"
@@ -613,9 +613,9 @@ def _check_no_subpackage_init_files() -> None:
 def pytest_configure(config: pytest.Config) -> None:
     """Configure pytest for GPU tests.
 
-    Idempotent via the settings stash: chaos_dynamo's conftest delegates this
-    hook by importing it, so whole-tree runs register it twice — the second
-    invocation must not re-run preflight or reprint the banner.
+    Idempotent via the settings stash: a sibling conftest may delegate this
+    hook by importing it, registering it twice — the second invocation must
+    not re-run preflight or reprint the banner.
     """
     if _SETTINGS_KEY in config.stash:
         return
@@ -810,7 +810,7 @@ def _run_gpu_preflight_checks(s: GPUTestSettings) -> None:
 def pytest_collection_modifyitems(
     config: pytest.Config, items: list[pytest.Item]
 ) -> None:
-    """Auto-add gpu/vllm/trtllm/dynamo markers to tests under kubernetes/gpu/."""
+    """Auto-add gpu/vllm/trtllm/sglang/dynamo markers to tests under kubernetes/gpu/."""
     for item in items:
         fspath = str(item.fspath)
         if "kubernetes/gpu" in fspath:
@@ -1172,8 +1172,8 @@ async def gpu_cluster_base(
 ) -> None:
     """Ensure cluster has aiperf image, JobSet CRD, AIPerfJob CRD, and operator.
 
-    Lightweight prerequisite that does NOT deploy vLLM or Dynamo servers.
-    Package-scoped so the cluster is shared across vLLM and Dynamo test suites.
+    Lightweight prerequisite that does NOT deploy any inference server.
+    Package-scoped so the cluster is shared across all engine test suites.
     """
     if gpu_settings.context:
         result = await kubectl.run(
