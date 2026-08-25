@@ -16,6 +16,8 @@ See also: ``aiperf.operator.environment.OperatorEnvironment`` (operator-process
 tunables) and ``aiperf.common.environment.Environment`` (shared AIPerf runtime).
 """
 
+from typing import Literal
+
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -590,9 +592,8 @@ class _K8sEnvironment(BaseSettings):
     #
     # These are the container-level requests/limits applied to K8s manifests.
     # Guaranteed QoS: requests == limits (no throttling, dedicated resources).
-    # Calibrated via ``tools/measure_cpu_usage.py`` and
-    # ``tools/calibrate_memory_estimates.py``; cross-checked
-    # against real-cluster RSS measurements (2026-04-30 ISL/OSL memory sweep).
+    # Calibrated against real-cluster CPU and RSS measurements
+    # (2026-04-30 ISL/OSL memory sweep).
     #
     # Controller pod: one container per control-plane service.
     #   Defaults are low requests for burstable QoS. They reserve enough for
@@ -666,6 +667,12 @@ class _K8sEnvironment(BaseSettings):
         "L4 proxy rather than kubernetes.default.svc, verify the apiserver "
         "certificate against this hostname while still dialing the proxy. "
         "Production MUST leave unset; C15 sets it to kubernetes.default.svc.",
+    )
+    RESULTS_SIDECAR_LOG_LEVEL: Literal[
+        "critical", "error", "warning", "info", "debug", "trace"
+    ] = Field(
+        default="info",
+        description="Uvicorn log level injected into controller results sidecars.",
     )
 
     # Non-resource settings

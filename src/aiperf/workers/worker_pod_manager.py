@@ -92,7 +92,7 @@ class WorkerGroupManagerBase(BaseComponentService):
     The main process in a worker pod container; downloads the dataset once,
     runs the group-local raw-inference proxy, owns the pod's controller-facing
     lifecycle connection, configures/shuts down group-local workers and record
-    processors, republishes dataset notifications for late workers, and uploads
+    processors, answers dataset-state queries from late workers, and uploads
     raw record files after record-processor containers flush them.
     """
 
@@ -105,9 +105,12 @@ class WorkerGroupManagerBase(BaseComponentService):
         self,
         run: BenchmarkRun,
         service_id: str | None = None,
+        *,
+        fake_in_process_mode: bool = False,
         **kwargs,
     ) -> None:
         self._pod_index = os.environ.get("AIPERF_POD_INDEX")
+        self._fake_in_process_mode = fake_in_process_mode
         super().__init__(run=run, service_id=service_id, **kwargs)
         self._resolve_pod_capacity()
         self._init_pod_state()
@@ -211,8 +214,7 @@ class WorkerGroupManagerBase(BaseComponentService):
             return
 
         # Fake in-process mode has files already on the local filesystem.
-        fake_mode = os.environ.get("AIPERF_FAKE_IN_PROCESS_MODE") == "1"
-        if fake_mode:
+        if self._fake_in_process_mode:
             self.info("Received dataset configuration, attaching local dataset state")
             self._dataset_client_metadata = message.client_metadata
             self._dataset_downloaded = True
@@ -266,7 +268,8 @@ class WorkerGroupManagerBase(BaseComponentService):
         Mirrors the dataset-download path: each unique tokenizer (resolved from
         ``cfg.tokenizer.name`` or, when absent, the model list) is pulled as a
         tar+zstd bundle into ``MMAP_BASE_PATH/aiperf_tokenizers/{benchmark_id}``,
-        then a ``GroupTokenizerReady`` is fanned out to registered worker peers.
+        then a ``GroupTokenizerReady`` is fanned out to the registered
+        record-processor peers -- the only consumers of the bundle paths.
         On failure the same struct is published with ``success=False`` and the
         exception is re-raised so the WGM lifecycle fails the pod.
         """
@@ -530,7 +533,7 @@ class WorkerGroupManagerBase(BaseComponentService):
             return
         self._configure_started = True
         # In-process fake mode has no group-local peers to coordinate.
-        if os.environ.get("AIPERF_FAKE_IN_PROCESS_MODE") == "1":
+        if self._fake_in_process_mode:
             await self._publish_worker_summary()
             return
         await wait_for_expected_peers(
@@ -705,7 +708,7 @@ class WorkerGroupManagerBase(BaseComponentService):
         """Stop group-local infrastructure without publishing partial artifacts."""
         self._stopping = True
         # Fake in-process mode never owns group-local peers; skip coordination.
-        if os.environ.get("AIPERF_FAKE_IN_PROCESS_MODE") == "1":
+        if self._fake_in_process_mode:
             await self._proxy_manager.stop()
             return
 

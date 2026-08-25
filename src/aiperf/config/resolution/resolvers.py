@@ -18,6 +18,7 @@ from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.results_markers import EPOCH_RE
 from aiperf.config.artifacts import OutputDefaults
 from aiperf.config.dataset.resolver import DatasetResolver
+from aiperf.kubernetes.environment import K8sEnvironment
 
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
@@ -322,7 +323,7 @@ class CommConfigResolver:
         elif comm.type == CommunicationType.DUAL:
             controller_host = comm.controller_host
             if controller_host is None:
-                controller_host = os.environ.get("AIPERF_K8S_ZMQ_CONTROLLER_HOST")
+                controller_host = K8sEnvironment.ZMQ.CONTROLLER_HOST
             run.resolved.comm_config = ZMQDualBindConfig(
                 ipc_path=comm.ipc_path,
                 tcp_host=comm.tcp_host,

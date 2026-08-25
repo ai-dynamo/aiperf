@@ -52,7 +52,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import sqlite3
 from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
@@ -82,9 +81,8 @@ __all__ = [
 
 logger = logging.getLogger(__name__)
 
-# Configured via environment variable, matching the operator's AIPERF_RESULTS_DIR
-RESULTS_DIR = Path(os.environ.get("AIPERF_RESULTS_DIR", "/data"))
-SERVER_PORT = int(os.environ.get("AIPERF_RESULTS_SERVER_PORT", "8081"))
+RESULTS_DIR = OperatorEnvironment.RESULTS.DIR
+SERVER_PORT = OperatorEnvironment.RESULTS.SERVER_PORT
 
 
 def _build_lifespan(base_dir: Path, api_holder: list, db_holder: list):

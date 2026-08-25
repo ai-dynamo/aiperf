@@ -23,6 +23,7 @@ from aiperf.config.comm.inputs import (
 )
 from aiperf.config.comm.ipc import ZMQIPCConfig
 from aiperf.config.comm.tcp import ZMQTCPConfig, ZMQTCPProxyConfig
+from aiperf.kubernetes.environment import K8sEnvironment
 
 if TYPE_CHECKING:
     from aiperf.config.comm.base import BaseZMQCommunicationConfig
@@ -53,9 +54,7 @@ def _build_tcp(comm: TcpCommunicationConfig) -> ZMQTCPConfig:
 def _build_dual(comm: DualBindCommunicationConfig) -> ZMQDualBindConfig:
     controller_host = comm.controller_host
     if controller_host is None:
-        import os
-
-        controller_host = os.environ.get("AIPERF_K8S_ZMQ_CONTROLLER_HOST")
+        controller_host = K8sEnvironment.ZMQ.CONTROLLER_HOST
 
     return ZMQDualBindConfig(
         ipc_path=Path(comm.ipc_path),

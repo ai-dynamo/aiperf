@@ -6,8 +6,8 @@ Lives as a third container alongside the kopf operator and the
 ``results-server`` sidecar. Exposes:
 
     GET  /healthz          - liveness + readiness target
-    GET  /dashboard/*      - WSGI-mounted Dash app (mounted in Task 3)
-    POST /admin/refresh    - hot-swap rebuild trigger (mounted in Task 4)
+    GET  /dashboard/*      - WSGI-mounted Dash app
+    POST /admin/refresh    - hot-swap rebuild trigger
 
 results-server reverse-proxies /dashboard/* to localhost:<PORT> so the
 external request path stays single-origin.
@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 from pathlib import Path
 
 import uvicorn
@@ -28,10 +27,11 @@ from fastapi.middleware.wsgi import WSGIMiddleware
 from fastapi.responses import JSONResponse
 
 from aiperf.operator.dashboard_mount import DashboardProxy, build_dashboard
+from aiperf.operator.environment import OperatorEnvironment
 
 logger = logging.getLogger(__name__)
 
-RESULTS_DIR = Path(os.environ.get("AIPERF_RESULTS_DIR", "/data"))
+RESULTS_DIR = OperatorEnvironment.RESULTS.DIR
 
 
 def _pending_dashboard_app(message: bytes):

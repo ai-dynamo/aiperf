@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import os
 import secrets
 from collections.abc import Sequence
 
@@ -16,21 +15,14 @@ from aiperf.operator.environment import OperatorEnvironment
 
 _bearer_scheme = HTTPBearer(auto_error=False)
 _bearer_dependency = Depends(_bearer_scheme)
-_TRUE_VALUES = {"1", "true", "yes", "on"}
 
 
 def _mutating_routes_enabled() -> bool:
-    raw = os.environ.get("AIPERF_OPERATOR_MUTATING_ROUTES_ENABLED")
-    if raw is None:
-        return OperatorEnvironment.MUTATING_ROUTES_ENABLED
-    return raw.strip().lower() in _TRUE_VALUES
+    return OperatorEnvironment.MUTATING_ROUTES_ENABLED
 
 
 def _mutating_routes_token() -> str:
-    return os.environ.get(
-        "AIPERF_OPERATOR_MUTATING_ROUTES_TOKEN",
-        OperatorEnvironment.MUTATING_ROUTES_TOKEN,
-    )
+    return OperatorEnvironment.MUTATING_ROUTES_TOKEN
 
 
 async def require_mutating_route_token(

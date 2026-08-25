@@ -17,7 +17,7 @@ baked into pod manifests) and ``aiperf.common.environment.Environment``
 
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 __all__ = [
@@ -52,6 +52,12 @@ class _ResultsSettings(BaseSettings):
     DIR: Path = Field(
         default=Path("/data"),
         description="Base directory for storing benchmark results (mounted PVC)",
+    )
+    SERVER_PORT: int = Field(
+        default=8081,
+        ge=1,
+        le=65535,
+        description="Port exposed by the operator results-server sidecar.",
     )
     K8S_INIT_TIMEOUT_SEC: float = Field(
         default=10.0,
@@ -266,9 +272,10 @@ class _OperatorServiceSettings(BaseSettings):
     ``results-server`` sidecar on ``resultsServer.port`` (8081 in the
     chart) hosts every ``/api/v1/*`` router (jobs, sweeps, results,
     config, admin, analytics, dashboard_proxy). The ``operator`` container
-    on port 8080 runs kopf only — its sole HTTP surface is ``/healthz``
-    plus Prometheus ``/metrics``. So there is no separate "sweeps API URL"
-    and "results API URL" — there is one base URL for everything, pointing
+    on port 8080 runs kopf only — its sole HTTP surface there is
+    ``/healthz``, with Prometheus ``/metrics`` on a separate server bound
+    to ``METRICS_PORT`` (9090 in the chart). So there is no separate
+    "sweeps API URL" and "results API URL" — one base URL, pointing
     at the results-server.
 
     Used when the operator stamps absolute URLs onto CR status (e.g.
@@ -410,12 +417,20 @@ class _OperatorEnvironment(BaseSettings):
     )
     MUTATING_ROUTES_ENABLED: bool = Field(
         default=False,
+        validation_alias=AliasChoices(
+            "AIPERF_OPERATOR_MUTATING_ROUTES_ENABLED",
+            "AIPERF_MUTATING_ROUTES_ENABLED",
+        ),
         description="Enable results-server HTTP routes that mutate Kubernetes state. "
         "Defaults false so read-only results APIs remain exposed while POST routes "
         "fail closed unless an operator explicitly opts in.",
     )
     MUTATING_ROUTES_TOKEN: str = Field(
         default="",
+        validation_alias=AliasChoices(
+            "AIPERF_OPERATOR_MUTATING_ROUTES_TOKEN",
+            "AIPERF_MUTATING_ROUTES_TOKEN",
+        ),
         description="Bearer token required by enabled results-server mutating routes. "
         "Leave empty to fail closed even when MUTATING_ROUTES_ENABLED is true.",
     )
