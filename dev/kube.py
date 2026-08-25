@@ -52,6 +52,8 @@ from dev.versions import DEVICE_PLUGIN_VERSION as _DPV_DEFAULT
 from dev.versions import DYNAMO_VERSION as _DYNAMO_VERSION_DEFAULT
 from dev.versions import JOBSET_CRD_URL_TEMPLATE as _JOBSET_CRD_URL_TEMPLATE
 from dev.versions import JOBSET_VERSION as _JSV_DEFAULT
+from dev.versions import KUEUE_MANIFEST_URL_TEMPLATE as _KUEUE_MANIFEST_URL_TEMPLATE
+from dev.versions import KUEUE_VERSION as _KUEUE_VERSION_DEFAULT
 
 _ANSI_ESCAPE = re.compile(r"\033\[[0-9;]*m")
 
@@ -271,11 +273,7 @@ DYNAMO_VERSION = os.environ.get("DYNAMO_VERSION") or _DYNAMO_VERSION_DEFAULT
 DYNAMO_1GPU_MEM_UTIL = os.environ.get("DYNAMO_1GPU_MEM_UTIL") or "0.3"
 
 # Kueue release: manifests.yaml ships all CRDs + the controller deployment.
-KUEUE_VERSION = os.environ.get("KUEUE_VERSION") or "v0.9.1"
-_KUEUE_MANIFEST_URL_TEMPLATE = (
-    "https://github.com/kubernetes-sigs/kueue/releases/download/"
-    "{version}/manifests.yaml"
-)
+KUEUE_VERSION = os.environ.get("KUEUE_VERSION") or _KUEUE_VERSION_DEFAULT
 KUEUE_NAMESPACE = "kueue-system"
 # Default queue pair seeded into the aiperf-benchmarks namespace so test
 # workloads can reference them without extra setup.
@@ -429,9 +427,9 @@ Environment variables:
   MAX_MODEL_LEN      Max context length (default: 4096)
   GPU_MEM_UTIL       GPU memory utilization (default: 0.5)
   HF_TOKEN           Hugging Face token (for gated models)
-  DYNAMO_IMAGE       Dynamo image (default: nvcr.io/.../vllm-runtime:1.1.0)
+  DYNAMO_IMAGE       Dynamo image (default: nvcr.io/.../vllm-runtime:<pinned>)
   DYNAMO_MODE        agg|disagg|disagg-1gpu (default: agg)
-  DYNAMO_VERSION     Dynamo operator version (default: 1.1.0)
+  DYNAMO_VERSION     Dynamo operator version (pinned in dev/versions.py)
   PLATFORM           Override platform detection (arch|debian|fedora|linux|mac)
   ARCH               Override Linux binary arch (amd64|arm64)
 
