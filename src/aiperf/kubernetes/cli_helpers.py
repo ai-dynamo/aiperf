@@ -17,7 +17,6 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from aiperf.kubernetes.console import (
-    format_age,
     get_last_benchmark,
     print_action,
     print_error,

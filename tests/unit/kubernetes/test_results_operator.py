@@ -599,19 +599,25 @@ class TestModuleConstants:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """The CLI port-forward target uses the operator's typed server port."""
-        import importlib
+        import importlib.util
 
+        from aiperf.kubernetes import results_operator
         from aiperf.operator.environment import OperatorEnvironment
 
         monkeypatch.setattr(OperatorEnvironment.RESULTS, "SERVER_PORT", 9001)
-        from aiperf.kubernetes import results_operator
 
-        importlib.reload(results_operator)
-        try:
-            assert results_operator.RESULTS_SERVER_PORT == 9001
-        finally:
-            monkeypatch.undo()
-            importlib.reload(results_operator)
+        # Execute a throwaway copy instead of reloading the cached module:
+        # a reload rebinds module-level classes, so anything that already
+        # imported them (``_JobDownloadOutcome``) would fail identity checks.
+        spec = importlib.util.spec_from_file_location(
+            "aiperf.kubernetes._results_operator_reimport",
+            results_operator.__file__,
+        )
+        assert spec is not None and spec.loader is not None
+        fresh = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(fresh)
+
+        assert fresh.RESULTS_SERVER_PORT == 9001
 
 
 class TestPartialJobDownloadIsReported:
