@@ -210,3 +210,16 @@ impl EndpointDescriptor {
         self.output_modalities.contains(&modality)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::EndpointType;
+
+    #[test]
+    fn audio_transcription_is_a_registered_legacy_type() {
+        assert_eq!(
+            EndpointType::from_canonical_id("audio_transcription"),
+            Some(EndpointType::AudioTranscription)
+        );
+    }
+}
