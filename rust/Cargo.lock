@@ -48,7 +48,7 @@ dependencies = [
 
 [[package]]
 name = "aiperf-bench-tools"
-version = "0.0.0"
+version = "0.12.0"
 dependencies = [
  "bytes",
  "crc32fast",
@@ -63,7 +63,7 @@ dependencies = [
 
 [[package]]
 name = "aiperf-cli"
-version = "0.0.0"
+version = "0.12.0"
 dependencies = [
  "aiperf-runtime",
  "anyhow",
@@ -111,7 +111,7 @@ dependencies = [
 
 [[package]]
 name = "aiperf-dry-run-tests"
-version = "0.0.0"
+version = "0.12.0"
 dependencies = [
  "serde_json",
  "tempfile",
@@ -119,7 +119,7 @@ dependencies = [
 
 [[package]]
 name = "aiperf-e2e-tests"
-version = "0.0.0"
+version = "0.12.0"
 dependencies = [
  "aiperf-cli",
  "aiperf-mock-server",
@@ -145,7 +145,7 @@ dependencies = [
 
 [[package]]
 name = "aiperf-mock-server"
-version = "0.0.0"
+version = "0.12.0"
 dependencies = [
  "aiperf-runtime",
  "anyhow",
@@ -191,7 +191,7 @@ dependencies = [
 
 [[package]]
 name = "aiperf-runtime"
-version = "0.0.0"
+version = "0.12.0"
 dependencies = [
  "aiconfigurator-core",
  "anyhow",
