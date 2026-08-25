@@ -261,8 +261,6 @@ fn allowlisted_child_environment(
 
 #[cfg(unix)]
 fn configure_evaluator_process_group(command: &mut Command) {
-    use std::os::unix::process::CommandExt;
-
     // SAFETY: `setsid` is async-signal-safe in the forked child before exec.
     unsafe {
         command.pre_exec(|| {
@@ -696,6 +694,29 @@ impl PythonEvaluator {
             let _ = self.force_reap_session().await;
         }
         result
+    }
+
+    /// Test-only external hook for issuing one grade request with an explicit id.
+    ///
+    /// The public evaluator trait is sequential (`&mut self`), so integration
+    /// coverage for the internal request demultiplexer needs a narrow direct
+    /// entry that can submit multiple in-flight grade requests against the same
+    /// session. Production code should continue using [`AccuracyEvaluator`].
+    #[doc(hidden)]
+    pub async fn grade_batch_with_request_id_for_testing(
+        &self,
+        id: u64,
+        items: &[EvaluatorGradeItem],
+    ) -> Result<EvaluatorGradeBatch, EvaluatorWorkerError> {
+        let session = self.session.as_ref().ok_or_else(|| {
+            EvaluatorWorkerError::Protocol("evaluator request attempted after shutdown".to_string())
+        })?;
+        Self::dispatch_request(
+            Arc::clone(&session.stdin),
+            Arc::clone(&session.pending),
+            WorkerRequest::GradeBatch { id, items },
+        )
+        .await
     }
 }
 

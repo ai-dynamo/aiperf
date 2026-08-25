@@ -35,6 +35,7 @@ pub use config::{
     EffectiveEndpointConfig, EndpointConfig, RawEndpointConfig, RequestContentType,
     ResetKvCacheConfig, ServerProfilerConfig,
 };
+pub(crate) use implementation::capture_endpoint_policy;
 pub use dynosim::DynosimEndpointFactory;
 pub use extraction::extract_payload;
 pub use implementation::{
