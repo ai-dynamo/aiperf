@@ -35,8 +35,16 @@ curl -s localhost:8000/v1/chat/completions \
 
 AIPerf automatically downloads and caches the ShareGPT dataset from HuggingFace.
 
+On a cold cache, AIPerf downloads the full corpus and tokenizes every turn of all
+73,499 conversations before profiling starts. This can take several minutes and
+exceed the default 300s dataset-configuration timeout, so raise both timeouts for
+the first run (`AIPERF_SERVICE_PROFILE_CONFIGURE_TIMEOUT` must be greater than or
+equal to `AIPERF_DATASET_CONFIGURATION_TIMEOUT`).
+
 <!-- aiperf-run-vllm-default-openai-endpoint-server weight=200 -->
 ```bash
+AIPERF_DATASET_CONFIGURATION_TIMEOUT=1200 \
+AIPERF_SERVICE_PROFILE_CONFIGURE_TIMEOUT=1200 \
 aiperf profile \
     --model Qwen/Qwen3-0.6B \
     --endpoint-type chat \
@@ -51,8 +59,10 @@ aiperf profile \
 **Sample Output (Successful Run):**
 ```
 INFO     Starting AIPerf System
-INFO     Downloading ShareGPT dataset from HuggingFace
-INFO     Cached ShareGPT dataset loaded
+INFO     No local dataset cache found, downloading from https://huggingface.co/datasets/anon8231489123/ShareGPT_Vicuna_unfiltered/...
+INFO     Saving ShareGPT dataset to local cache .cache/aiperf/datasets/ShareGPT_V3_unfiltered_cleaned_split.json
+INFO     Validating ShareGPT dataset and constructing conversation dataset
+INFO     Data file finalized: 73499 conversations, 219.34 MB
 INFO     AIPerf System is PROFILING
 
 Profiling: 20/20 |████████████████████████| 100% [00:45<00:00]
