@@ -30,8 +30,8 @@ three optional values:
 The Baseten loader parses the two missing values into `BasetenRow`, serializes
 all three into its private `RawRow` value, reconstructs them in the composer,
 and attaches `Some(RecordedOutcome)` only when at least one recorded value is
-present. Historical fixtures with no outcome columns therefore remain compact
-and deserialize compatibly.
+present. Missing outcome columns therefore remain absent and deserialize
+compatibly.
 
 Recorded outcomes do not enter `extra_body`, endpoint parameters, request
 metadata, scheduling metadata, or token accounting. `duration_e2e_ms` keeps its
@@ -54,7 +54,8 @@ Unit coverage uses the real Parquet reader and the full registry/composer path:
 2. exact values survive `omit_kv_hints` and never leak into the request body;
 3. exact values survive closed-loop replay while E2E duration still derives the
    expected continuation delay;
-4. a historical fixture without the optional columns produces no outcome.
+4. null TTFT and cached-token values remain absent while recorded E2E remains
+   intact.
 
 A Rust integration test outside the module loads a real Parquet fixture through
 the public built-in loader registry and inspects the frozen public `Dataset`.

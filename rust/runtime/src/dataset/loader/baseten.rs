@@ -911,7 +911,6 @@ mod tests {
     use crate::dataset::tokenizer::TiktokenTokenizer;
     use crate::rng::RngRoot;
 
-    #[derive(Default)]
     struct FixtureRow {
         timestamp_start_unix_ms: i64,
         prompt: &'static str,
@@ -1099,7 +1098,8 @@ mod tests {
                 output_tokens: 1,
                 provided_session_id: "s",
                 duration_e2e_ms: 0,
-                ..FixtureRow::default()
+                duration_ttft_ms: None,
+                cached_tokens_reference: None,
             }],
         );
         assert!(BasetenTraceDatasetLoader.can_load(&DatasetProbe {
@@ -1128,7 +1128,8 @@ mod tests {
                     output_tokens: 5,
                     provided_session_id: "s1",
                     duration_e2e_ms: 200,
-                    ..FixtureRow::default()
+                    duration_ttft_ms: None,
+                    cached_tokens_reference: None,
                 },
                 FixtureRow {
                     timestamp_start_unix_ms: 3_000,
@@ -1137,7 +1138,8 @@ mod tests {
                     output_tokens: 0, // canceled request: output_tokens=0 floors to 1.
                     provided_session_id: "s2",
                     duration_e2e_ms: 100,
-                    ..FixtureRow::default()
+                    duration_ttft_ms: None,
+                    cached_tokens_reference: None,
                 },
             ],
         );
@@ -1177,7 +1179,8 @@ mod tests {
                 output_tokens: 100,
                 provided_session_id: "s1",
                 duration_e2e_ms: 0,
-                ..FixtureRow::default()
+                duration_ttft_ms: None,
+                cached_tokens_reference: None,
             }],
         );
         let mut registry = LoaderRegistry::new();
@@ -1221,7 +1224,8 @@ mod tests {
                 output_tokens: 4,
                 provided_session_id: "s1",
                 duration_e2e_ms: 0,
-                ..FixtureRow::default()
+                duration_ttft_ms: None,
+                cached_tokens_reference: None,
             }],
         );
         let mut options = Map::new();
@@ -1313,7 +1317,9 @@ mod tests {
                 input_tokens: 1,
                 output_tokens: 1,
                 provided_session_id: "s",
-                ..FixtureRow::default()
+                duration_e2e_ms: 0,
+                duration_ttft_ms: None,
+                cached_tokens_reference: None,
             }],
         );
 
@@ -1340,7 +1346,8 @@ mod tests {
                     output_tokens: 5,
                     provided_session_id: "shared",
                     duration_e2e_ms: 50,
-                    ..FixtureRow::default()
+                    duration_ttft_ms: None,
+                    cached_tokens_reference: None,
                 },
                 FixtureRow {
                     timestamp_start_unix_ms: 500,
@@ -1349,7 +1356,8 @@ mod tests {
                     output_tokens: 5,
                     provided_session_id: "shared",
                     duration_e2e_ms: 50,
-                    ..FixtureRow::default()
+                    duration_ttft_ms: None,
+                    cached_tokens_reference: None,
                 },
             ],
         );
@@ -1375,7 +1383,8 @@ mod tests {
                     output_tokens: 5,
                     provided_session_id: "shared",
                     duration_e2e_ms: 200,
-                    ..FixtureRow::default()
+                    duration_ttft_ms: None,
+                    cached_tokens_reference: None,
                 },
                 FixtureRow {
                     timestamp_start_unix_ms: 1_000,
@@ -1384,7 +1393,8 @@ mod tests {
                     output_tokens: 5,
                     provided_session_id: "shared",
                     duration_e2e_ms: 100,
-                    ..FixtureRow::default()
+                    duration_ttft_ms: None,
+                    cached_tokens_reference: None,
                 },
             ],
         );
@@ -1412,7 +1422,8 @@ mod tests {
                     output_tokens: 5,
                     provided_session_id: "shared",
                     duration_e2e_ms: 50,
-                    ..FixtureRow::default()
+                    duration_ttft_ms: None,
+                    cached_tokens_reference: None,
                 },
                 FixtureRow {
                     timestamp_start_unix_ms: 500,
@@ -1421,7 +1432,8 @@ mod tests {
                     output_tokens: 5,
                     provided_session_id: "shared",
                     duration_e2e_ms: 50,
-                    ..FixtureRow::default()
+                    duration_ttft_ms: None,
+                    cached_tokens_reference: None,
                 },
             ],
         );

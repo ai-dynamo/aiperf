@@ -32,7 +32,7 @@ the request body or affect scheduling. A missing source column remains absent.
 | Default projection retains all recorded outcomes | Baseten loader unit coverage builds a real Parquet fixture and asserts exact E2E, TTFT, and cached-token values on the composed turn. |
 | `omit_kv_hints` does not discard outcomes | The same unit path disables KV hints and asserts the request body has no hashes while recorded outcomes remain unchanged. |
 | Closed-loop replay does not discard outcomes | The unit path disables open-loop replay, asserts continuation delay derivation, and asserts both turns retain their own outcomes. |
-| Missing optional outcome columns stay absent | A unit fixture using the historical minimal schema composes with no recorded-outcome metadata. |
+| Missing optional TTFT and cached-token values stay absent | A unit fixture with null optional values retains E2E while keeping TTFT and cached-token outcomes absent. |
 | Values survive the public registry path | `rust/runtime/tests/baseten_outcome_fidelity.rs` loads a real Parquet file through `LoaderRegistry::with_builtin_formats`, freezes a `Dataset`, and inspects the public turn metadata. |
 
 ## Ancestry constraint
