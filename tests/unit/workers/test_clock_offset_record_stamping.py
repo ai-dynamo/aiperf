@@ -168,6 +168,7 @@ async def test_probe_budget_bounds_a_router_that_never_echoes(
     from aiperf.workers.worker import Worker
 
     monkeypatch.setattr(Environment.WORKER, "CLOCK_PROBE_BUDGET", 0.01)
+    monkeypatch.setattr(Environment.WORKER, "CLOCK_PROBE_COUNT", 7)
 
     worker = MagicMock(spec=Worker)
     worker.clock_offset_tracker = MagicMock()
@@ -186,6 +187,12 @@ async def test_probe_budget_bounds_a_router_that_never_echoes(
     # Unbounded, this never returns; the budget is what makes it complete.
     await Worker._measure_baseline_rtt(worker)
 
+    worker.clock_offset_tracker.measure_baseline_rtt.assert_awaited_once_with(
+        send_ping=worker.credit_dealer_client.send,
+        probe_count=7,
+        timeout=Environment.WORKER.CLOCK_PROBE_TIMEOUT,
+        max_attempts=1,
+    )
     worker.warning.assert_called_once()
     assert "budget" in worker.warning.call_args[0][0]
 

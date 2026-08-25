@@ -285,22 +285,18 @@ def test_materialize_bundle_includes_custom_python(tmp_path: Path) -> None:
     assert "tokenizer_config.json" in members
 
 
-def test_materialize_bundle_size_cap_raises(tmp_path: Path) -> None:
-    """An allowlisted file that exceeds the size cap must raise.
-
-    Safety net: if a future HF release introduces an allowlisted filename
-    that legitimately holds large bytes, we want a loud failure naming the
-    cap rather than a silent OOM at startup. Test forges an oversized
-    ``tokenizer.json`` (allowlisted) past the 50 MiB cap.
-    """
-    # Override the cap to keep the test fast; we just need to exceed whatever
-    # value the module exposes.
+def test_materialize_bundle_uses_configured_size_cap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An allowlisted file that exceeds the configured size cap must raise."""
+    cap = 1024
+    monkeypatch.setattr(
+        tokenizer_router_mod.Environment.TOKENIZER, "BUNDLE_MAX_BYTES", cap
+    )
     snap = tmp_path / "snap"
     snap.mkdir()
-    cap = tokenizer_router_mod._TOKENIZER_BUNDLE_MAX_BYTES
-    # tokenizer.json is on the allowlist, so the allowlist gate would let it
-    # through; only the size cap should reject it.
-    (snap / "tokenizer.json").write_bytes(b"\x00" * (cap + 1024))
+    # tokenizer.json is on the allowlist, so only the size cap should reject it.
+    (snap / "tokenizer.json").write_bytes(b"\x00" * (cap + 1))
 
-    with pytest.raises(ValueError, match="exceeds cap"):
+    with pytest.raises(ValueError, match=f"exceeds cap of {cap} bytes"):
         tokenizer_router_mod._materialize_bundle(snap)
