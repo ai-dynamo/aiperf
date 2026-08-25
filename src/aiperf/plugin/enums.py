@@ -111,7 +111,7 @@ DataExporterType = plugins.create_enum(PluginType.DATA_EXPORTER, "DataExporterTy
 
 ConsoleExporterTypeStr: TypeAlias = str
 ConsoleExporterType = plugins.create_enum(PluginType.CONSOLE_EXPORTER, "ConsoleExporterType", module=__name__)
-"""Dynamic enum for console exporter. Example: ConsoleExporterType.ACCURACY, ConsoleExporterType.INTERNAL_METRICS, ConsoleExporterType.USAGE_DISCREPANCY_WARNING"""
+"""Dynamic enum for console exporter. Example: ConsoleExporterType.ACCURACY, ConsoleExporterType.METRICS, ConsoleExporterType.USAGE_DISCREPANCY_WARNING"""
 
 UITypeStr: TypeAlias = str
 UIType = plugins.create_enum(PluginType.UI, "UIType", module=__name__)
