@@ -96,7 +96,6 @@ def test_mark_stale_workers_uses_shared_activity_window() -> None:
     assert worker.status == WorkerStatus.STALE
 
 
-
 # =============================================================================
 # Group-local lifecycle fanout (worker_pod_helpers)
 # =============================================================================
@@ -112,9 +111,7 @@ async def test_group_hello_retry_uses_configured_backoff(
     dealer.request = AsyncMock(side_effect=[TimeoutError, None])
     sleep = AsyncMock()
     monkeypatch.setattr(pod_lifecycle_structs.asyncio, "sleep", sleep)
-    monkeypatch.setattr(
-        Environment.SERVICE, "GROUP_HELLO_RETRY_BACKOFF_SECONDS", 0.137
-    )
+    monkeypatch.setattr(Environment.SERVICE, "GROUP_HELLO_RETRY_BACKOFF_SECONDS", 0.137)
 
     await _send_group_peer_hello_with_retry(
         dealer,
@@ -147,9 +144,7 @@ async def test_group_peer_wait_uses_configured_poll_interval(
         )
 
     monkeypatch.setattr(worker_pod_helpers.asyncio, "sleep", register_peers)
-    monkeypatch.setattr(
-        Environment.SERVICE, "GROUP_PEER_POLL_INTERVAL_SECONDS", 0.731
-    )
+    monkeypatch.setattr(Environment.SERVICE, "GROUP_PEER_POLL_INTERVAL_SECONDS", 0.731)
 
     await wait_for_expected_peers(
         workers_per_pod=1,
