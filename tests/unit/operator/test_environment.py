@@ -211,7 +211,7 @@ class TestResultsSettingsValidation:
     def test_server_port_accepts_bounds(self, value: int) -> None:
         from aiperf.operator.environment import _ResultsSettings
 
-        assert _ResultsSettings(SERVER_PORT=value).SERVER_PORT == value
+        assert value == _ResultsSettings(SERVER_PORT=value).SERVER_PORT
 
     @pytest.mark.parametrize(
         "value",
