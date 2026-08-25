@@ -50,4 +50,8 @@ cap branch, then verified the one-line cap-by-key fix.
   construction. The existing catalog projection supplies all six record
   metrics; absent stats add neither the object nor speculative metric keys.
 
-Independent Task 3 review is the gate before Task 4.
+Independent Task 3 review APPROVED exact commit
+`89dbbb91acc76fa786f342e662af779b40a2add5`; see
+`task-3-independent-review.md`. The fresh authoritative, exporter, and records
+suites passed 30/30, 121/121, and 10/10 respectively, and no findings remain.
+Task 4 may begin.
