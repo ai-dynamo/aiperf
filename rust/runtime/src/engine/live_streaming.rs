@@ -34,6 +34,16 @@ const LIVE_STREAMING_PROTOCOL_VERSION: u32 = 1;
 const LIVE_STREAMING_SHIM_MODULE: &str = "aiperf.rust_shims";
 const LIVE_STREAMING_SHIM_NAME: &str = "live-streaming";
 
+fn live_streaming_command(python_executable: &Path) -> Command {
+    let mut command = Command::new(python_executable);
+    command
+        .arg("-u")
+        .arg("-m")
+        .arg(LIVE_STREAMING_SHIM_MODULE)
+        .arg(LIVE_STREAMING_SHIM_NAME);
+    command
+}
+
 /// Terminal/progress consumer seam for optional live result extensions.
 pub(crate) trait LiveResultsSink {
     /// Publish one Rust-computed terminal request record without blocking.
@@ -149,11 +159,7 @@ impl PythonLiveStreamingRun {
         );
         let endpoint = live_endpoint_config(&run.endpoint)?;
 
-        let mut child = Command::new(&spec.python_executable)
-            .arg("-u")
-            .arg("-m")
-            .arg(LIVE_STREAMING_SHIM_MODULE)
-            .arg(LIVE_STREAMING_SHIM_NAME)
+        let mut child = live_streaming_command(&spec.python_executable)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
@@ -573,14 +579,26 @@ struct WorkerTerminal {
 
 #[cfg(test)]
 mod tests {
+    use std::ffi::OsStr;
     use std::sync::Arc;
 
     use super::*;
 
     #[test]
     fn live_streaming_uses_the_fixed_external_shim() {
-        assert_eq!(LIVE_STREAMING_SHIM_MODULE, "aiperf.rust_shims");
-        assert_eq!(LIVE_STREAMING_SHIM_NAME, "live-streaming");
+        let command = live_streaming_command(Path::new("/usr/bin/python3"));
+        let command = command.as_std();
+
+        assert_eq!(command.get_program(), OsStr::new("/usr/bin/python3"));
+        assert_eq!(
+            command.get_args().collect::<Vec<_>>(),
+            [
+                OsStr::new("-u"),
+                OsStr::new("-m"),
+                OsStr::new("aiperf.rust_shims"),
+                OsStr::new("live-streaming"),
+            ]
+        );
     }
 
     #[test]
