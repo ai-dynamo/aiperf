@@ -198,13 +198,25 @@ class _APIServerSettings(BaseSettings):
         default=5.0,
         description="Timeout in seconds for graceful API server shutdown before force-cancelling",
     )
+    GET_POD_STATES_TIMEOUT: float = Field(
+        ge=0.1,
+        le=60.0,
+        default=2.0,
+        description="Timeout in seconds for API worker-state queries to the "
+        "SystemController. A short timeout lets progress and debug endpoints "
+        "fall back to their bus-fed cache while the controller is unavailable.",
+    )
     POST_COMPLETE_GRACE: float = Field(
         ge=0.0,
         le=300.0,
         default=5.0,
         description="Seconds the API listener stays open after a benchmark terminates "
         "so polling clients can observe the final status before the server shuts down. "
-        "Set to 0 to skip the grace window and shut down immediately.",
+        "Set to 0 to skip the grace window and shut down immediately. Not used under "
+        "ServiceRunType.KUBERNETES, where the controller pod outlives its benchmark and "
+        "is retired explicitly via POST /api/shutdown instead -- see "
+        "FastAPIService._on_shutdown_command. A fixed window there is shorter than the "
+        "operator's monitor interval and strands the AIPerfJob in a pre-terminal phase.",
     )
 
 
@@ -304,6 +316,22 @@ class _DatasetSettings(BaseSettings):
         default=300.0,
         description="Timeout in seconds for dataset configuration operations",
     )
+    REBROADCAST_INTERVAL: float = Field(
+        gt=0.0,
+        le=60.0,
+        default=2.0,
+        description="Seconds between re-announcements of the dataset-configured "
+        "notification in Kubernetes. The notification is a one-shot broadcast and "
+        "sibling worker pods start seconds apart, so a pod that subscribes late "
+        "would otherwise never learn a dataset exists.",
+    )
+    REBROADCAST_WINDOW: float = Field(
+        ge=0.0,
+        le=3600.0,
+        default=120.0,
+        description="Total seconds to keep re-announcing the dataset-configured "
+        "notification for late-joining worker pods. Set 0 to disable.",
+    )
     BASETEN_SESSION_COLUMN: Literal["provided_session_id", "poor_man_session_id"] = (
         Field(
             default="provided_session_id",
@@ -311,6 +339,15 @@ class _DatasetSettings(BaseSettings):
             "supported columns exist. Set to poor_man_session_id for legacy traces. "
             "If the selected column is absent, the loader uses the available column.",
         )
+    )
+    STATE_POLL_INTERVAL: float = Field(
+        gt=0.0,
+        le=60.0,
+        default=1.0,
+        description="Seconds between polls of pod-local dataset state while a worker "
+        "waits to become dispatchable. The dataset arrives via one-shot broadcasts; "
+        "a worker container that subscribes after they fire recovers by polling its "
+        "WorkerGroupManager at this interval instead of waiting forever.",
     )
     MMAP_BASE_PATH: Path | None = Field(
         default=None,
@@ -355,6 +392,18 @@ class _DatasetSettings(BaseSettings):
         "(raw_payload / inputs_json / mooncake-with-payload) always use "
         "PAYLOAD_BYTES regardless of this flag; cache-bust runs always use "
         "CONVERSATION regardless.",
+    )
+    DOWNLOAD_MAX_RETRIES: int = Field(
+        ge=0,
+        le=20,
+        default=3,
+        description="Maximum number of retries for dataset download in Kubernetes worker pods",
+    )
+    DOWNLOAD_RETRY_DELAY: float = Field(
+        ge=0.1,
+        le=60.0,
+        default=2.0,
+        description="Initial delay in seconds between dataset download retries (doubles each retry)",
     )
     PUBLIC_DATASET_TIMEOUT: float = Field(
         ge=1.0,
@@ -1015,6 +1064,16 @@ class _RecordSettings(BaseSettings):
         env_prefix="AIPERF_RECORD_",
     )
 
+    CHECKPOINT_INTERVAL: float = Field(
+        ge=0.0,
+        le=3600.0,
+        default=30.0,
+        description="Seconds between partial-checkpoint writes during a "
+        "Kubernetes run. The results sidecar serves these before the "
+        "results-ready marker exists, and the operator treats a growing "
+        "checkpoint as evidence the controller is alive. Set to 0 to disable.",
+    )
+
     EXPORT_BATCH_SIZE: int = Field(
         ge=1,
         le=1000000,
@@ -1223,6 +1282,41 @@ class _ServerMetricsSettings(BaseSettings):
         default=5.0,
         description="Delay in seconds before shutting down server metrics service to allow command response transmission",
     )
+    CR_PROJECTION_MAX_SERIES: int = Field(
+        ge=1,
+        le=10000,
+        default=256,
+        description="Maximum series a single metric may carry into the Kubernetes "
+        "AIPerfJob status.serverMetrics projection. A metric with more series than "
+        "this is dropped whole rather than truncated, because a partial series list "
+        "would decode as a valid-but-wrong aggregate. This is a cardinality sanity "
+        "bound only -- CR_PROJECTION_MAX_BYTES is the real size backstop -- and is "
+        "counted per metric across all endpoints, so it must clear the worker or GPU "
+        "count of the largest deployment. The WebSocket feed and "
+        "server_metrics_export.json are unaffected.",
+    )
+    CR_PROJECTION_MAX_BYTES: int = Field(
+        ge=1024,
+        le=1048576,
+        default=262144,
+        description="Maximum serialized size in bytes of the Kubernetes AIPerfJob "
+        "status.serverMetrics projection. The cardinality caps bound how many labels "
+        "a series may carry but not how long each label string is, so this is the "
+        "authoritative guard against the 1.5 MB apiserver object ceiling. An "
+        "over-budget projection is dropped whole: exceeding the ceiling would have "
+        "the apiserver reject the entire status patch, silently stopping every other "
+        "status update (phases, liveMetrics, resultsExported, controllerFailure) "
+        "along with it.",
+    )
+    CR_PROJECTION_MAX_LABELS: int = Field(
+        ge=1,
+        le=1000,
+        default=16,
+        description="Maximum Prometheus labels a single series may carry into the "
+        "Kubernetes AIPerfJob status.serverMetrics projection. Labels form the series "
+        "identity in the dashboard, so a metric with an over-labeled series is dropped "
+        "whole rather than having its labels trimmed.",
+    )
 
 
 class _NetworkLatencySettings(BaseSettings):
@@ -1315,6 +1409,35 @@ class _TimingSettings(BaseSettings):
     )
 
 
+class _PodSettings(BaseSettings):
+    """Kubernetes worker-pod monitoring configuration.
+
+    Consumed by the Kubernetes service manager, which polls the Kubernetes API
+    for worker-pod phases and container-level failures.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="AIPERF_POD_",
+    )
+
+    MONITOR_INTERVAL: float = Field(
+        ge=0.1,
+        le=100000.0,
+        default=5.0,
+        description="Interval in seconds between worker-pod monitoring sweeps. "
+        "Bounds how quickly a Failed/Unknown worker pod is detected via the "
+        "Kubernetes API",
+    )
+    FAILURE_ABORT_THRESHOLD_PERCENT: float = Field(
+        ge=0.0,
+        le=100.0,
+        default=50.0,
+        description="Percentage of failed worker pods at which the Kubernetes "
+        "service manager signals the controller to abort the benchmark. Set to "
+        "0 to never abort on pod failures",
+    )
+
+
 class _ServiceCommunicationFields:
     """Service command and connection-probing configuration."""
 
@@ -1394,9 +1517,11 @@ class _ServiceSettings(_ServiceCommunicationFields, BaseSettings):
         description="Wall-clock cap on the shutdown path inside "
         "AIPerfLifecycleMixin._fail. If cleanup (on_stop hooks, task "
         "cancellation) does not complete within this window after a failed "
-        "on_init/on_start transition, the wedged shutdown is logged and the "
-        "failure is reported normally, so the traceback and artifact export "
-        "are not discarded.",
+        "on_init/on_start transition, a containerized (operator-managed) "
+        "service hard-exits via os._exit(1), preventing silent zombie "
+        "containers when cleanup blocks on a cancelled C-extension call. A "
+        "local run logs the wedged shutdown and reports the failure normally "
+        "instead, so the traceback and artifact export are not discarded.",
     )
     PROFILE_CONFIGURE_TIMEOUT: float = Field(
         ge=1.0,
@@ -1441,6 +1566,20 @@ class _ServiceSettings(_ServiceCommunicationFields, BaseSettings):
         description="Interval in seconds between 'still waiting for services to "
         "register' progress logs emitted by the service registry while blocked",
     )
+    GROUP_HELLO_ATTEMPT_TIMEOUT: float = Field(
+        ge=0.1,
+        le=1000.0,
+        default=2.0,
+        description="Timeout in seconds for a single group-local GroupPeerHello "
+        "attempt before it is retried against the worker group manager",
+    )
+    GROUP_HELLO_TOTAL_TIMEOUT: float = Field(
+        ge=1.0,
+        le=100000.0,
+        default=120.0,
+        description="Total deadline in seconds for a group-local peer to get its "
+        "GroupPeerHello acknowledged before startup is failed",
+    )
     START_TIMEOUT: float = Field(
         ge=1.0,
         le=100000.0,
@@ -1452,6 +1591,14 @@ class _ServiceSettings(_ServiceCommunicationFields, BaseSettings):
         le=100000.0,
         default=2.0,
         description="Maximum time in seconds to wait for simple tasks to complete when cancelling",
+    )
+    SPAWN_TIMEOUT: float = Field(
+        ge=1.0,
+        le=100000.0,
+        default=60.0,
+        description="Safety-net timeout in seconds for multiprocessing Process.start(). "
+        "Normal spawns complete in milliseconds; this guards against extreme system "
+        "conditions (memory pressure, fork failures) blocking the event loop indefinitely.",
     )
     # Event loop health monitoring settings
     EVENT_LOOP_HEALTH_ENABLED: bool = Field(
@@ -1709,6 +1856,27 @@ class _WorkerSettings(BaseSettings):
         default=1.0,
         description="Interval in seconds between worker status checks by WorkerManager",
     )
+    CLOCK_PROBE_TIMEOUT: float = Field(
+        ge=0.1,
+        le=100000.0,
+        default=1.0,
+        description="Per-probe timeout in seconds for a single startup TimePing/"
+        "TimePong round trip. Kept short so an unreachable credit ROUTER costs a "
+        "fast retry instead of consuming AIPERF_WORKER_CLOCK_PROBE_BUDGET on one "
+        "probe. Kubernetes mode only.",
+    )
+    CLOCK_PROBE_BUDGET: float = Field(
+        ge=0.1,
+        le=100000.0,
+        default=30.0,
+        description="Total seconds a worker may spend on startup TimePing/TimePong "
+        "clock-offset RTT probes before giving up and announcing readiness "
+        "uncalibrated. Hard ceiling on the whole probe sequence, not per probe, so "
+        "a router that never echoes cannot stall worker registration past "
+        "AIPERF_SERVICE_REGISTRATION_TIMEOUT. Sized for real cluster startup, "
+        "where the credit ROUTER is commonly not echoing for the first several "
+        "seconds after a worker container starts. Kubernetes mode only.",
+    )
     CPU_UTILIZATION_FACTOR: float = Field(
         ge=0.1,
         le=1.0,
@@ -1774,6 +1942,15 @@ class _WorkerSettings(BaseSettings):
         default=60.0,
         description="Timeout in seconds to wait for worker pods to upload raw record files "
         "to the controller API after benchmark completion.",
+    )
+    DEFAULT_WORKERS_PER_POD: int = Field(
+        ge=1,
+        le=100,
+        default=10,
+        description="Default number of worker subprocesses per Kubernetes worker pod. "
+        "Each pod downloads the dataset once and shares it across workers via mmap. "
+        "Packing exists because a node holds only ~65k ephemeral ports, which caps "
+        "concurrent connections per node; see RuntimeConfig.workers_per_pod",
     )
 
 
@@ -1984,6 +2161,10 @@ class _Environment(BaseSettings):
     OTEL: _OTelSettings = Field(
         default_factory=_OTelSettings,
         description="OpenTelemetry metrics streaming settings",
+    )
+    POD: _PodSettings = Field(
+        default_factory=_PodSettings,
+        description="Kubernetes worker-pod monitoring settings",
     )
     RECORD: _RecordSettings = Field(
         default_factory=_RecordSettings,

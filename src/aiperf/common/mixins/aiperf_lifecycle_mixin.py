@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
+import os
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -284,6 +285,32 @@ class AIPerfLifecycleMixin(TaskManagerMixin, HooksMixin):
         """
         await self.cancel_all_tasks()
 
+    @property
+    def _hard_exit_on_wedged_shutdown(self) -> bool:
+        """Whether a wedged failure-shutdown should force-exit the process.
+
+        Only containerized (operator-managed) services get the hard kill. A
+        service whose ``on_stop`` never returns keeps its Pod alive as a silent
+        zombie, so losing cleanup state beats never exiting. A local
+        ``aiperf profile`` run is the opposite trade: ``_fail`` is reached by
+        every ``AIPerfLifecycleMixin`` in the CLI's own process, so
+        ``os._exit`` there would discard the traceback, the artifact export,
+        and every buffered writer in the process. Locally the failure is left
+        to surface through the normal ``CancelledError`` path below.
+
+        ``self.run`` only exists on ``BaseService`` subclasses, so the run-type
+        lookup is defensive and falls back to the ``AIPERF_OPERATOR_MANAGED``
+        marker the operator sets on every JobSet container.
+        """
+        runtime = getattr(getattr(self, "run", None), "cfg", None)
+        run_type = getattr(getattr(runtime, "runtime", None), "service_run_type", None)
+        if run_type is not None:
+            # Compared as a string rather than importing ServiceRunType: the
+            # plugin enums are generated at registry-load time and importing
+            # them from this core mixin would invert the dependency order.
+            return str(run_type).lower() == "kubernetes"
+        return os.environ.get("AIPERF_OPERATOR_MANAGED") == "1"
+
     async def _fail(self, e: Exception) -> None:
         """Set the state to FAILED and raise an asyncio.CancelledError.
         This is used when the transition from one state to another fails.
@@ -310,10 +337,17 @@ class AIPerfLifecycleMixin(TaskManagerMixin, HooksMixin):
             try:
                 await asyncio.wait_for(self.stop(), timeout=timeout)
             except TimeoutError:
-                self.error(
-                    f"Shutdown after failure did not complete in {timeout}s; "
-                    f"continuing teardown and reporting the failure"
-                )
+                if self._hard_exit_on_wedged_shutdown:
+                    self.error(
+                        f"Shutdown after failure did not complete in {timeout}s; "
+                        f"force-exiting"
+                    )
+                    os._exit(1)
+                else:
+                    self.error(
+                        f"Shutdown after failure did not complete in {timeout}s; "
+                        f"continuing teardown and reporting the failure"
+                    )
         await self._set_state(LifecycleState.FAILED)
         raise asyncio.CancelledError(f"Failed for {self}: {e}") from e
 

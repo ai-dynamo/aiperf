@@ -483,3 +483,51 @@ class TestZMQStreamingDealerClientEdgeCases:
         assert not mock_zmq_socket.connect.called
 
         await client.stop()
+
+
+class TestPendingRequestsOnStop:
+    """Stopping the client must not strand in-flight request futures."""
+
+    @pytest.mark.asyncio
+    async def test_stop_cancels_pending_request_futures(
+        self, mock_zmq_socket, mock_zmq_context
+    ):
+        """A request awaiting a reply is cancelled on stop, never left hanging.
+
+        Without this the awaiter blocks forever on a socket that is going away,
+        which is the class of hang that forces a hard process kill.
+        """
+        client = ZMQStreamingDealerClient(
+            address="tcp://127.0.0.1:5555", identity="worker-1", bind=False
+        )
+        await client.initialize()
+
+        loop = asyncio.get_running_loop()
+        pending = loop.create_future()
+        client._pending_requests["rid-1"] = pending
+
+        await client.stop()
+
+        assert pending.cancelled()
+        assert not client._pending_requests
+
+    @pytest.mark.asyncio
+    async def test_stop_leaves_already_resolved_futures_alone(
+        self, mock_zmq_socket, mock_zmq_context
+    ):
+        """A reply that landed before stop keeps its result."""
+        client = ZMQStreamingDealerClient(
+            address="tcp://127.0.0.1:5555", identity="worker-1", bind=False
+        )
+        await client.initialize()
+
+        loop = asyncio.get_running_loop()
+        done = loop.create_future()
+        done.set_result("reply")
+        client._pending_requests["rid-1"] = done
+
+        await client.stop()
+
+        assert not done.cancelled()
+        assert done.result() == "reply"
+        assert not client._pending_requests

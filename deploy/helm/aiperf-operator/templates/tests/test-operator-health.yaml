@@ -1,0 +1,81 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ include "aiperf-operator.fullname" . }}-test-health
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "aiperf-operator.labels" . | nindent 4 }}
+    app.kubernetes.io/component: test
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  restartPolicy: Never
+  serviceAccountName: {{ include "aiperf-operator.testServiceAccountName" . }}
+  {{- with .Values.imagePullSecrets }}
+  imagePullSecrets:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+  - name: health-check
+    image: "{{ .Values.tests.image.repository }}:{{ .Values.tests.image.tag }}"
+    imagePullPolicy: {{ .Values.tests.image.pullPolicy }}
+    securityContext:
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: true
+      capabilities:
+        drop:
+          - ALL
+    {{- with .Values.tests.resources }}
+    resources:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+    command: ["sh", "-c"]
+    args:
+    - |
+      echo "Finding operator pod..."
+      POD_IP=$(kubectl get pods -n {{ .Release.Namespace }} \
+        -l "app.kubernetes.io/name={{ include "aiperf-operator.name" . }},app.kubernetes.io/instance={{ .Release.Name }},app.kubernetes.io/component=operator" \
+        -o jsonpath='{.items[0].status.podIP}')
+
+      if [ -z "$POD_IP" ]; then
+        echo "Could not find operator pod"
+        exit 1
+      fi
+      echo "Operator pod IP: $POD_IP"
+
+      echo "Checking kopf health endpoint at :8080/healthz..."
+      for i in $(seq 1 10); do
+        if curl -fsS --max-time 5 "http://${POD_IP}:8080/healthz" >/dev/null 2>&1; then
+          echo "Operator (kopf) health check passed"
+          break
+        fi
+        if [ "$i" = "10" ]; then
+          echo "Operator (kopf) health check failed after 10 attempts"
+          exit 1
+        fi
+        echo "Attempt $i/10 failed, retrying in 3s..."
+        sleep 3
+      done
+
+      echo "Checking results-server FastAPI at :{{ .Values.resultsServer.port }}/api/v1/jobs..."
+      for i in $(seq 1 10); do
+        if curl -fsS --max-time 5 "http://${POD_IP}:{{ .Values.resultsServer.port }}/api/v1/jobs" >/dev/null 2>&1; then
+          echo "results-server FastAPI check passed"
+          exit 0
+        fi
+        if [ "$i" = "10" ]; then
+          echo "results-server FastAPI check failed after 10 attempts (port {{ .Values.resultsServer.port }} not responding)"
+          exit 1
+        fi
+        echo "Attempt $i/10 failed, retrying in 3s..."
+        sleep 3
+      done

@@ -294,6 +294,28 @@ class ProfileCancelCommand(CommandMessage):
     command: CommandTypeT = CommandType.PROFILE_CANCEL
 
 
+class FinalizeArtifactsCommand(CommandMessage):
+    """Command sent while communications are live to finalize local artifacts."""
+
+    command: CommandTypeT = CommandType.FINALIZE_ARTIFACTS
+    request_ns: int | None = Field(
+        default=None,
+        ge=0,
+        description="Non-negative timestamp of the finalization request",
+    )
+
+
+class GetPodStatesCommand(CommandMessage):
+    """Request the controller-owned worker-pod state snapshot."""
+
+    command: CommandTypeT = CommandType.GET_POD_STATES
+    request_ns: int | None = Field(
+        default=None,
+        ge=0,
+        description="Non-negative timestamp of the worker-state request.",
+    )
+
+
 class ShutdownCommand(CommandMessage):
     """Command message sent to request a service to shutdown."""
 

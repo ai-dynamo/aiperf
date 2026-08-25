@@ -1577,6 +1577,108 @@ class TestWarmupPhaseCompleteScrape:
         assert manager._active_phase.phase == CreditPhase.PROFILING
 
 
+class TestKubernetesDiscoveryIntegration:
+    """Manager discovery honors mode, timeout, merge, and dedup semantics."""
+
+    @pytest.mark.asyncio
+    async def test_forced_discovery_preserves_custom_path_and_deduplicates(
+        self, cfg_with_endpoint: CLIConfig
+    ) -> None:
+        manager = ServerMetricsManager(run=make_run_from_cli(cfg_with_endpoint))
+        manager.run.cfg.server_metrics.discovery.mode = "kubernetes"
+        with (
+            patch(
+                "aiperf.server_metrics.manager.is_running_in_kubernetes",
+                return_value=True,
+            ),
+            patch(
+                "aiperf.server_metrics.discovery.kubernetes.discover_kubernetes_endpoints",
+                new=AsyncMock(return_value=["http://discovered:9090/vllm/stats"]),
+            ) as discover,
+        ):
+            await manager._merge_discovered_endpoints()
+            await manager._merge_discovered_endpoints()
+
+        assert (
+            manager._server_metrics_endpoints.count("http://discovered:9090/vllm/stats")
+            == 1
+        )
+        assert "http://discovered:9090/vllm/stats/metrics" not in (
+            manager._server_metrics_endpoints
+        )
+        discover.assert_awaited()
+
+    @pytest.mark.asyncio
+    async def test_auto_discovery_skips_outside_cluster(
+        self, cfg_with_endpoint: CLIConfig
+    ) -> None:
+        manager = ServerMetricsManager(run=make_run_from_cli(cfg_with_endpoint))
+        with (
+            patch(
+                "aiperf.server_metrics.manager.is_running_in_kubernetes",
+                return_value=False,
+            ),
+            patch(
+                "aiperf.server_metrics.discovery.kubernetes.discover_kubernetes_endpoints",
+                new_callable=AsyncMock,
+            ) as discover,
+        ):
+            assert await manager._run_metrics_discovery() == []
+        discover.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_discovery_timeout_degrades_to_explicit_endpoints(
+        self, cfg_with_endpoint: CLIConfig
+    ) -> None:
+        manager = ServerMetricsManager(run=make_run_from_cli(cfg_with_endpoint))
+        manager.run.cfg.server_metrics.discovery.mode = "kubernetes"
+        manager.run.cfg.server_metrics.discovery.timeout_seconds = 0.001
+
+        async def never_returns(**_: object) -> list[str]:
+            await asyncio.Future()
+            return []
+
+        manager.warning = MagicMock()
+        with (
+            patch(
+                "aiperf.server_metrics.manager.is_running_in_kubernetes",
+                return_value=True,
+            ),
+            patch(
+                "aiperf.server_metrics.discovery.kubernetes.discover_kubernetes_endpoints",
+                new=never_returns,
+            ),
+        ):
+            assert await manager._run_metrics_discovery() == []
+        assert "timed out" in manager.warning.call_args.args[0]
+
+    @pytest.mark.asyncio
+    async def test_phase_start_tracks_active_phase(
+        self,
+        cli_config: CLIConfig,
+        cfg_with_endpoint: CLIConfig,
+    ):
+        """CREDIT_PHASE_START updates the phase used to tag scrapes."""
+        manager = ServerMetricsManager(run=make_run_from_cli(cfg_with_endpoint))
+        assert manager._active_phase is None
+
+        await manager._on_credit_phase_start(
+            CreditPhaseStartMessage(
+                service_id="timing-manager",
+                stats=CreditPhaseStats(
+                    phase=CreditPhase.PROFILING, start_ns=1_000_000_000
+                ),
+                config=CreditPhaseConfig(
+                    phase=CreditPhase.PROFILING,
+                    timing_mode=TimingMode.REQUEST_RATE,
+                ),
+            )
+        )
+
+        assert manager._active_phase is not None
+        assert manager._active_phase.phase == CreditPhase.PROFILING
+
+
 class TestScrapeHangContainment:
     """Manager-initiated scrapes must never block the terminal result."""
 
@@ -1808,3 +1910,4 @@ class TestScrapeHangContainment:
             assert collector._session.timeout.sock_read is not None
         finally:
             await collector._session.close()
+

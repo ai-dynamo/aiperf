@@ -50,13 +50,16 @@ Shutdown begins only after profiling has started and every registered domain has
 either completed or been evicted after a confirmed service failure. This lifecycle
 gate prevents an empty startup barrier from being mistaken for completed results.
 
-Result publication is a fail-closed filesystem transaction. Before a controller
-starts benchmark work, and again immediately before export, it durably removes
-any stale ready marker and atomically installs a processing marker. After every
-required artifact is flushed and exported, it atomically installs and fsyncs the
-ready marker before clearing the processing marker. Only then does it publish
-`ResultsExportedMessage`. A crash or restarted export before that commit leaves
-top-level artifacts hidden from readers of the ready marker.
+Kubernetes result publication is a fail-closed filesystem transaction. Before
+a controller starts benchmark work, and again immediately before export, it
+durably removes any stale ready marker and atomically installs a processing
+marker. After every required artifact is flushed and exported, it atomically
+installs and fsyncs the ready marker before clearing the processing marker. Only
+then does it publish `ResultsExportedMessage` and notify the operator. A crash
+or restarted export before that commit leaves top-level artifacts hidden from
+the results sidecar. Kubernetes sweep aggregation uses
+the same durable ready-marker commit after plotting and scratch-artifact pruning
+finish, so the operator never harvests a partially published aggregate tree.
 
 ### Dataset Manager
 
@@ -198,6 +201,7 @@ The Server Metrics Manager collects metrics from Prometheus-compatible endpoints
 **Key Responsibilities:**
 - Collecting metrics from Prometheus-compatible endpoints (inference server application metrics, system metrics, custom metrics)
 - Auto-discovering metrics endpoints from configured inference server URLs (`--url`)
+- Discovering eligible inference-server pods through the Kubernetes API, scoped to the benchmark namespace unless another namespace is explicitly configured
 - Supporting custom Prometheus endpoints via `--server-metrics` flag
 - Parsing any metrics exposed in Prometheus format (gauges, counters, histograms)
 - Owning raw server-metric accumulation and JSONL writes locally; only bounded realtime summaries and the final aggregate cross the message bus
@@ -267,7 +271,7 @@ AIPerf uses ZMQ to maintain **measurement accuracy** by decoupling orchestration
 - **Low-overhead messaging**: Credits are routed directly to workers
 - **Asynchronous by design**: No blocking calls between services, ensuring workers spend maximum time on I/O and timing
 - **Efficient transport**: ZMQ is designed for low-overhead inter-process communication
-- **Scalability**: Supports many local worker processes
+- **Scalability**: Supports many local worker processes and distributed Kubernetes execution through the registered `kubernetes` service-manager plugin
 
 ### Communication Patterns
 
@@ -298,9 +302,10 @@ AIPerf is built on three core principles:
 
 ## Deployment Modes
 
-AIPerf currently supports one local deployment model:
+AIPerf supports two deployment models:
 
 - **Multiprocess Mode**: Each service runs as a separate process on a single node (default for single-node deployments)
+- **Kubernetes Mode**: Control-plane services run as sibling containers in the controller pod, while workers and record processors run in external pods managed by JobSet.
 
 ## Configuration Envelope
 

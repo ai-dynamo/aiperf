@@ -56,6 +56,19 @@ async def test_finalize_local_artifacts_local_failure_logs_and_continues() -> No
 
 
 @pytest.mark.asyncio
+async def test_finalize_local_artifacts_kubernetes_failure_fails_closed() -> None:
+    """A partial artifact set under the operator must surface as a failure."""
+    bad = _child("raw_record_writer", RuntimeError("orjson: unserializable value"))
+    good = _child("accuracy_writer", None)
+    processor = _make_processor(kubernetes=True, children=[bad, good])
+
+    with pytest.raises(ExceptionGroup) as excinfo:
+        await RecordProcessor._finalize_local_artifacts(processor)
+
+    assert "Failed to finalize 1 record artifact writer(s)" in str(excinfo.value)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "kubernetes",
     [

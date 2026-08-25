@@ -109,6 +109,8 @@ def _iter_aiperf_modules() -> list[str]:
     skip_prefixes = (
         # Heavy optional deps that fail to import on some envs.
         "aiperf.dataset.agentic_code_gen.reporting",
+        # K8s controller code: imports kopf at import time.
+        "aiperf.kubernetes",
         # Generated / autoflakey
         "aiperf.cli_commands._generated",
     )
@@ -361,6 +363,10 @@ NUMERIC_BOUNDS_WHITELIST: set[str] = {
     # RateSeriesConfig.points: list[RateSeriesPoint], not a numeric field. The
     # substring-based heuristic sees "int" inside "Point".
     "RateSeriesConfig.points",
+    # RequestRecord.clock_offset_ns: signed controller/worker clock difference
+    # (received - issued). Either sign is legitimate -- a worker clock behind
+    # the controller's is negative -- so no field-level bound applies.
+    "RequestRecord.clock_offset_ns",
     # OutputFragment.metrics: dict[str, MetricValueTypeT], not a numeric leaf.
     # Per-metric values are constrained by the metrics system; no field-level
     # bound is meaningful on the container.

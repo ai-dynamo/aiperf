@@ -1,0 +1,194 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+name: "Run Kubernetes Chaos Tests"
+
+# The normal Kubernetes gate covers deterministic E2E behavior and the
+# hermetic chaos_common contracts. These long-running jobs exercise real pod,
+# operator, network, and control-plane faults against isolated Kind clusters.
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+      - 'llms.txt'
+      - 'LICENSE'
+      - '.gitignore'
+  schedule:
+    - cron: '0 7 * * *'
+  workflow_dispatch:
+    inputs:
+      pytest_args:
+        description: "Extra pytest arguments, such as -k test_c1"
+        type: string
+        default: ""
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  kubernetes-chaos-tests:
+    name: ${{ matrix.label }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 210
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: legacy
+            label: Legacy AIPerf chaos
+            make_target: kubernetes-chaos-tests-ci
+          - id: unified
+            label: Unified-API AIPerf chaos
+            make_target: kubernetes-chaos-aiperf-tests-ci
+    env:
+      AIPERF_K8S_SHARE_PROCESS_NAMESPACE: "true"
+      K8S_TEST_CLUSTER: aiperf-chaos-${{ matrix.id }}-${{ github.run_id }}-${{ github.run_attempt }}
+      KUBECONFIG: ${{ runner.temp }}/aiperf-chaos-kubeconfig-${{ matrix.id }}-${{ github.run_id }}-${{ github.run_attempt }}
+
+    steps:
+      - name: Free disk space
+        shell: bash
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL 2>/dev/null || true
+          sudo apt-get -y clean
+          docker system prune -af || true
+          df -h
+
+      - uses: actions/checkout@v6
+
+      - name: Create isolated kubeconfig
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$(dirname "${KUBECONFIG}")"
+          touch "${KUBECONFIG}"
+          chmod 600 "${KUBECONFIG}"
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv with cache
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+
+      - name: Install Kind
+        uses: helm/kind-action@v1
+        with:
+          install_only: true
+
+      - name: Install dependencies
+        run: make ci-install PYTHON_VERSION=3.12
+
+      - name: Report pre-test disk and tool versions
+        shell: bash
+        run: |
+          df -h
+          docker version
+          kind version
+          kubectl version --client
+          helm version
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build AIPerf image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          target: runtime
+          build-args: ENABLE_FFMPEG=0
+          platforms: linux/amd64
+          load: true
+          tags: aiperf:local
+          cache-from: type=gha,scope=aiperf-kubernetes-chaos
+          cache-to: type=gha,scope=aiperf-kubernetes-chaos,mode=max
+        timeout-minutes: 20
+
+      - name: Build mock server image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: dev/deploy/Dockerfile.mock-server
+          platforms: linux/amd64
+          load: true
+          tags: aiperf-mock-server:latest
+          cache-from: type=gha,scope=aiperf-mock-server-kubernetes-chaos
+          cache-to: type=gha,scope=aiperf-mock-server-kubernetes-chaos,mode=max
+        timeout-minutes: 10
+
+      - name: Run ${{ matrix.label }} tests
+        id: pytest
+        shell: bash
+        run: make ${{ matrix.make_target }} args='--k8s-skip-build ${{ inputs.pytest_args }}'
+        timeout-minutes: 165
+
+      - name: Collect cluster diagnostics on failure
+        if: failure()
+        shell: bash
+        run: |
+          mkdir -p k8s-chaos-logs
+          kind export logs k8s-chaos-logs/kind --name "${K8S_TEST_CLUSTER}" || true
+          kubectl get all -A > k8s-chaos-logs/all-resources.txt 2>&1 || true
+          kubectl get events -A --sort-by=.lastTimestamp > k8s-chaos-logs/events.txt 2>&1 || true
+          kubectl describe nodes > k8s-chaos-logs/describe-nodes.txt 2>&1 || true
+          kubectl describe pods -A > k8s-chaos-logs/describe-pods.txt 2>&1 || true
+          kubectl get aiperfjobs -A -o yaml > k8s-chaos-logs/aiperfjobs.yaml 2>&1 || true
+          kubectl get aiperfsweeps -A -o yaml > k8s-chaos-logs/aiperfsweeps.yaml 2>&1 || true
+          kubectl get jobsets -A -o yaml > k8s-chaos-logs/jobsets.yaml 2>&1 || true
+          kubectl get pods -A -o yaml > k8s-chaos-logs/pods.yaml 2>&1 || true
+          while read -r namespace pod; do
+            kubectl logs -n "${namespace}" "${pod}" --all-containers --prefix --tail=-1 > "k8s-chaos-logs/logs-${namespace}-${pod}.txt" 2>&1 || true
+          done < <(kubectl get pods -A -o jsonpath='{range .items[*]}{.metadata.namespace}{" "}{.metadata.name}{"\n"}{end}' 2>/dev/null)
+          docker ps -a > k8s-chaos-logs/docker-ps.txt 2>&1 || true
+          docker images > k8s-chaos-logs/docker-images.txt 2>&1 || true
+          df -h > k8s-chaos-logs/disk-usage.txt 2>&1 || true
+          free -h > k8s-chaos-logs/memory.txt 2>&1 || true
+          dmesg | tail -500 > k8s-chaos-logs/dmesg.txt 2>&1 || true
+
+      - name: Upload cluster diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: k8s-chaos-${{ matrix.id }}-logs-${{ github.run_id }}-${{ github.run_attempt }}
+          path: k8s-chaos-logs/
+          retention-days: 7
+
+      - name: Write job summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## ${{ matrix.label }}"
+            echo ""
+            echo "Result: **${{ steps.pytest.outcome }}**"
+            if [[ "${{ steps.pytest.outcome }}" != "success" ]]; then
+              echo ""
+              echo "Diagnostics artifact: \`k8s-chaos-${{ matrix.id }}-logs-${{ github.run_id }}-${{ github.run_attempt }}\`"
+            fi
+            echo ""
+            echo "- Cluster: \`${K8S_TEST_CLUSTER}\`"
+            echo "- Target: \`${{ matrix.make_target }}\`"
+            echo "- AIPERF_K8S_SHARE_PROCESS_NAMESPACE: \`true\`"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Teardown Kind cluster
+        if: always()
+        shell: bash
+        run: kind delete cluster --name "${K8S_TEST_CLUSTER}" || true

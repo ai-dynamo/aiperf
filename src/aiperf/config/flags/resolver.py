@@ -83,6 +83,35 @@ def resolve_config(
     return _resolve_config_envelopes(cli_config, yaml_dict, raw_yaml_dict)
 
 
+def apply_cli_overrides(
+    config: AIPerfConfig,
+    cli_config: CLIConfig,
+) -> AIPerfConfig:
+    """Overlay explicitly-authored CLI values on an already-loaded config.
+
+    Kubernetes workload YAML is first separated from its CR deployment fields,
+    so it cannot use :func:`resolve_config`'s file-loading entry point directly.
+    This adapter feeds the validated config and its retained pre-Jinja envelope
+    through the exact same override pipeline used by ordinary Config-v2 files.
+
+    Args:
+        config: Loaded Config-v2 envelope that supplies the YAML baseline.
+        cli_config: Parsed CLI values; only ``model_fields_set`` entries apply.
+
+    Returns:
+        A new config with CLI precedence and a matching raw sweep envelope.
+    """
+    rendered = config.model_dump(
+        mode="python",
+        by_alias=True,
+        exclude_unset=True,
+        exclude_none=True,
+        context={"include_secrets": True},
+    )
+    raw = copy.deepcopy(config._raw_envelope or rendered)
+    return _resolve_config_envelopes(cli_config, rendered, raw)
+
+
 def _resolve_config_envelopes(
     cli_config: CLIConfig,
     yaml_dict: dict[str, Any],

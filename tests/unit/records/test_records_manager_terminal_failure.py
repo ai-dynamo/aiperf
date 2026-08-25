@@ -29,6 +29,7 @@ from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import CreditPhase
 from aiperf.common.environment import Environment
 from aiperf.common.messages import ProcessRecordsResultMessage
+from aiperf.common.mixins.task_manager_mixin import TaskManagerMixin
 from aiperf.common.models import PhaseRecordsStats
 from aiperf.records.records_manager import (
     ERROR_FATAL_DETAIL_KEY,
@@ -37,7 +38,7 @@ from aiperf.records.records_manager import (
 
 
 def _finalize_manager(finalize_error: Exception) -> MagicMock:
-    """A manager whose result finalization fails, with the real path bound."""
+    """A manager whose artifact barrier fails, with the real path bound."""
     mgr = MagicMock()
     mgr.service_id = "records-manager-test"
     mgr.debug = MagicMock()
@@ -60,7 +61,7 @@ def _finalize_manager(finalize_error: Exception) -> MagicMock:
     mgr._records_tracker.create_stats_for_phase.return_value = stats
 
     # Everything from the fire-and-forget entry point down to the raising
-    # stage is the real implementation.
+    # barrier is the real implementation.
     mgr._finalize_and_process_results = (
         RecordsManager._finalize_and_process_results.__get__(mgr)
     )
@@ -72,7 +73,7 @@ def _finalize_manager(finalize_error: Exception) -> MagicMock:
     )
     mgr._process_results = RecordsManager._process_results.__get__(mgr)
     mgr._process_results_impl = RecordsManager._process_results_impl.__get__(mgr)
-    mgr._await_telemetry_ingest_complete = AsyncMock(side_effect=finalize_error)
+    mgr._finalize_record_processor_artifacts = AsyncMock(side_effect=finalize_error)
     return mgr
 
 
@@ -84,34 +85,59 @@ def _published_results(mgr: MagicMock) -> list[ProcessRecordsResultMessage]:
     ]
 
 
-class TestFinalizationFailureIsPublished:
+class TestFinalizationFailureTerminatesTheRun:
     @pytest.mark.asyncio
-    async def test_failed_finalization_publishes_fatal_empty_result(self) -> None:
-        """A raising finalize must still close the controller's join barrier."""
-        mgr = _finalize_manager(RuntimeError("finalization blew up"))
+    async def test_barrier_failure_still_publishes_a_result(self) -> None:
+        """The join barrier must close even when finalization blows up."""
+        mgr = _finalize_manager(RuntimeError("artifact barrier failed"))
 
+        # Must not escape: an escaping exception is exactly the hang.
         await mgr._finalize_and_process_results(
             phase=CreditPhase.PROFILING, cancelled=False
         )
 
         published = _published_results(mgr)
-        assert len(published) == 1
-        result = published[0].results
-        assert result.results.records is None
-        assert result.results.is_complete is False
-        assert "finalization blew up" in result.results.incomplete_reason
-        assert result.errors[0].details[ERROR_FATAL_DETAIL_KEY] is True
-        assert result.errors[0].details["stage"] == "result_finalization"
+        assert len(published) == 1, "the run must terminate, not hang"
 
     @pytest.mark.asyncio
-    async def test_failure_after_a_real_result_does_not_overwrite_it(self) -> None:
-        """A late failure must not clobber an already-published real result."""
-        mgr = _finalize_manager(RuntimeError("too late"))
-        sentinel = object()
+    async def test_published_failure_is_not_mistakable_for_success(self) -> None:
+        """Fail-closed: no records, marked incomplete, error marked fatal."""
+        mgr = _finalize_manager(RuntimeError("artifact barrier failed"))
+
+        await mgr._finalize_and_process_results(
+            phase=CreditPhase.PROFILING, cancelled=False
+        )
+
+        result = _published_results(mgr)[0].results
+        assert result.results.records is None
+        assert result.results.completed == 0
+        assert result.results.is_complete is False
+        assert "artifact barrier failed" in result.results.incomplete_reason
+        assert len(result.errors) == 1
+        assert result.errors[0].details[ERROR_FATAL_DETAIL_KEY] is True
+        assert "artifact barrier failed" in result.errors[0].message
+
+    @pytest.mark.asyncio
+    async def test_failure_is_logged_with_context(self) -> None:
+        mgr = _finalize_manager(RuntimeError("artifact barrier failed"))
+
+        await mgr._finalize_and_process_results(
+            phase=CreditPhase.PROFILING, cancelled=False
+        )
+
+        assert mgr.exception.called
+        logged = str(mgr.exception.call_args.args[0])
+        assert "artifact barrier failed" in logged
+
+    @pytest.mark.asyncio
+    async def test_a_real_result_is_never_overwritten(self) -> None:
+        """A late failure must not clobber results that already went out."""
+        mgr = _finalize_manager(RuntimeError("artifact barrier failed"))
+        sentinel = MagicMock()
         mgr._processed_results[CreditPhase.PROFILING] = sentinel
 
         returned = await mgr._publish_terminal_failure_result(
-            CreditPhase.PROFILING, cancelled=False, error=RuntimeError("too late")
+            CreditPhase.PROFILING, False, RuntimeError("late")
         )
 
         assert returned is sentinel
@@ -156,6 +182,40 @@ class TestTelemetryDrainIsNonFatal:
         assert len(errors) == 1
         assert errors[0].details[ERROR_FATAL_DETAIL_KEY] is False
         assert errors[0].details["stage"] == "gpu_telemetry_drain"
+
+
+class TestCheckpointIntervalZeroDisablesTheTask:
+    @pytest.mark.asyncio
+    async def test_zero_interval_ends_the_background_loop(self, monkeypatch) -> None:
+        """``interval=0`` means disabled, not "spin on asyncio.sleep(0)"."""
+        monkeypatch.setattr(Environment.RECORD, "CHECKPOINT_INTERVAL", 0.0)
+        mgr = MagicMock()
+        mgr.debug = MagicMock()
+        mgr.exception = MagicMock()
+        mgr._is_kubernetes_run = MagicMock(return_value=False)
+
+        calls = 0
+
+        async def body() -> None:
+            nonlocal calls
+            calls += 1
+            await RecordsManager._write_partial_checkpoint_task(mgr)
+
+        task = asyncio.create_task(
+            TaskManagerMixin._background_task_loop(
+                mgr,
+                body,
+                interval=lambda self: Environment.RECORD.CHECKPOINT_INTERVAL,
+                immediate=False,
+            )
+        )
+        try:
+            for _ in range(50):
+                await asyncio.sleep(0)
+            assert task.done(), f"loop still spinning after {calls} iterations"
+            assert calls == 1
+        finally:
+            task.cancel()
 
 
 class TestStallDegradationReachesTheArtifact:

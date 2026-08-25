@@ -16,6 +16,7 @@ from aiperf.common.redact import (
     REDACTED_VALUE,
     extract_sensitive_headers,
     redact_cli_command,
+    redact_endpoint_spec,
     redact_headers,
     redact_string,
     redact_url,
@@ -1852,3 +1853,40 @@ class TestRedactUrl:
 
 class TestRedactEndpointSpec:
     """Tests for credential-safe CR and Python benchmark configuration copies."""
+
+    def test_redacts_public_and_python_endpoint_shapes_without_mutation(self) -> None:
+        spec = {
+            "benchmark": {
+                "endpoint": {
+                    "apiKey": "public-secret",
+                    "api_key": "python-secret",
+                    "urls": ["https://user:pass@host/v1?api_key=query-secret&model=m"],
+                    "headers": {
+                        "Authorization": "Bearer header-secret",
+                        "X-Trace-ID": "trace-1",
+                    },
+                }
+            }
+        }
+
+        safe = redact_endpoint_spec(spec)
+        endpoint = safe["benchmark"]["endpoint"]
+
+        assert endpoint["apiKey"] == REDACTED_VALUE
+        assert endpoint["api_key"] == REDACTED_VALUE
+        assert endpoint["headers"] == {
+            "Authorization": REDACTED_VALUE,
+            "X-Trace-ID": "trace-1",
+        }
+        assert endpoint["urls"] == [
+            f"https://{REDACTED_VALUE}@host/v1?api_key={REDACTED_VALUE}&model=m"
+        ]
+        assert spec["benchmark"]["endpoint"]["apiKey"] == "public-secret"
+        assert spec["benchmark"]["endpoint"]["headers"]["Authorization"] == (
+            "Bearer header-secret"
+        )
+
+
+# =============================================================================
+# Log filter redaction
+# =============================================================================

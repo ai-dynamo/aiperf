@@ -16,6 +16,7 @@ from aiperf.common.enums import (
     CommandType,
     CreditPhase,
     MessageType,
+    ServerMetricsDiscoveryMode,
     make_result_producer_capability,
 )
 from aiperf.common.environment import Environment
@@ -48,6 +49,7 @@ from aiperf.credit.messages import (
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import AccumulatorType, PluginType
 from aiperf.server_metrics.data_collector import ServerMetricsDataCollector
+from aiperf.server_metrics.discovery import is_running_in_kubernetes
 from aiperf.server_metrics.protocols import ServerMetricsAccumulatorProtocol
 
 if TYPE_CHECKING:
@@ -267,6 +269,7 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
             )
             return
 
+        await self._merge_discovered_endpoints()
         self._collectors.clear()
 
         for endpoint_url in self._server_metrics_endpoints:
@@ -340,6 +343,62 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
             ],
             endpoints_reachable=reachable_endpoints,
         )
+
+    async def _merge_discovered_endpoints(self) -> None:
+        """Merge fully resolved Kubernetes-discovered URLs without duplicates."""
+        discovered_urls = await self._run_metrics_discovery()
+        added = 0
+        for url in discovered_urls:
+            if url not in self._server_metrics_endpoints:
+                self._server_metrics_endpoints.append(url)
+                added += 1
+        if added:
+            self.info(f"Server Metrics: Auto-discovery added {added} endpoint(s)")
+
+    async def _run_metrics_discovery(self) -> list[str]:
+        """Run bounded, best-effort discovery according to YAML configuration."""
+        discovery = self.run.cfg.server_metrics.discovery
+        if discovery.mode == ServerMetricsDiscoveryMode.DISABLED:
+            return []
+
+        in_kubernetes = is_running_in_kubernetes()
+        if discovery.mode == ServerMetricsDiscoveryMode.KUBERNETES:
+            if not in_kubernetes:
+                self.warning(
+                    "Server Metrics: Kubernetes discovery requested but not running in a cluster"
+                )
+                return []
+        elif not in_kubernetes:
+            return []
+
+        self.info("Server Metrics: Running Kubernetes endpoint discovery...")
+        # Imported here, past the in-cluster gate: this module pulls in
+        # kubernetes_asyncio (~130 ms, 700+ modules), and every non-Kubernetes
+        # run would otherwise pay that in the ServerMetricsManager process for
+        # code it can never reach.
+        from aiperf.server_metrics.discovery.kubernetes import (
+            discover_kubernetes_endpoints,
+        )
+
+        try:
+            return await asyncio.wait_for(
+                discover_kubernetes_endpoints(
+                    namespace=discovery.namespace,
+                    label_selector=discovery.label_selector,
+                    request_timeout=discovery.timeout_seconds,
+                ),
+                timeout=discovery.timeout_seconds,
+            )
+        except TimeoutError:
+            self.warning(
+                "Server Metrics: Kubernetes discovery timed out after "
+                f"{discovery.timeout_seconds}s; continuing with configured "
+                "endpoints only (tune server_metrics.discovery.timeout_seconds)"
+            )
+            return []
+        except Exception as exc:  # noqa: BLE001 - discovery is best-effort
+            self.warning(f"Server Metrics: Kubernetes discovery failed: {exc}")
+            return []
 
     async def collect_baseline(self, message: PhaseBaselineRequestMessage) -> None:
         """Capture a one-shot server-metrics scrape for a phase boundary."""

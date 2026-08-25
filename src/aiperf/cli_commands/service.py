@@ -2,12 +2,12 @@
 # SPDX-License-Identifier: Apache-2.0
 """CLI command for running individual AIPerf services."""
 
+from pathlib import Path
 from typing import Annotated
 
 from cyclopts import App
 
 from aiperf.config.cli_parameter import CLIParameter
-from aiperf.config.flags import CLIConfig
 from aiperf.plugin.enums import ServiceType
 
 app = App(name="service")
@@ -18,8 +18,23 @@ def service(
     service_type: Annotated[
         ServiceType, CLIParameter(name="--type", help="Service type to run.")
     ],
+    benchmark_run_file: Annotated[
+        Path,
+        CLIParameter(
+            name="--benchmark-run",
+            help="Path to the pre-built BenchmarkRun JSON file. The service "
+            "bootstraps exclusively from this serialized run. Kubernetes "
+            "controllers materialize it before starting service containers.",
+        ),
+    ],
     *,
-    cli_config: CLIConfig,
+    api_port: Annotated[
+        int | None,
+        CLIParameter(
+            help="HTTP port for API endpoints (e.g. /api/dataset, /api/progress). "
+            "Only used by services that expose HTTP APIs."
+        ),
+    ] = None,
     service_id: Annotated[
         str | None,
         CLIParameter(
@@ -51,32 +66,37 @@ def service(
     For standard single-node benchmarking, use the `aiperf profile` command instead.
 
     Args:
-        cli_config: Cyclopts-populated CLIConfig DTO carrying every CLI flag
-            (benchmark inputs and service-runtime knobs). Pass ``--config foo.yaml``
-            to load defaults from a v2 YAML file; explicit CLI flags overlay on top.
+        benchmark_run_file: Controller-rendered BenchmarkRun JSON shared by all
+            service containers in the deployment.
     """
     from aiperf.cli_utils import exit_on_error
 
     with exit_on_error(title=f"Error Running AIPerf Service {service_type}"):
-        from aiperf.cli_runner import _make_benchmark_run
+        import orjson
+
         from aiperf.common.bootstrap import bootstrap_and_run_service
-        from aiperf.common.environment import Environment
-        from aiperf.config.flags.resolver import resolve_config
-        from aiperf.config.loader import build_benchmark_plan
-
-        # Validate via the AIPerfConfig gate and build a single-variation
-        # plan so bootstrap and tokenizer validation can read ``run.cfg``.
-        # The service receives the resolved ``run`` (carrying the validated
-        # ``BenchmarkConfig``) — service constructors consume that, not the
-        # raw ``cli_config`` DTO.
-        config = resolve_config(cli_config, cli_config.config_file)
-        plan = build_benchmark_plan(config)
-        from aiperf.orchestrator.orchestrator import resolve_run_seed
-
-        run = _make_benchmark_run(
-            plan.configs[0],
-            random_seed=resolve_run_seed(plan, plan.variations[0]),
+        from aiperf.common.endpoint_credentials import (
+            apply_endpoint_credentials,
+            consume_endpoint_credentials,
         )
+        from aiperf.common.environment import Environment
+        from aiperf.config.resolution.plan import BenchmarkRun
+        from aiperf.kubernetes.serialized_run import read_serialized_run_json
+
+        # The launcher resolves and freezes one BenchmarkRun for the whole
+        # deployment. Re-resolving flags independently in every service can
+        # diverge in seeds, synthesized defaults, and artifact identity.
+        run_json = read_serialized_run_json(benchmark_run_file)
+        if run_json is None:
+            raise ValueError(
+                f"Cannot read serialized BenchmarkRun from {benchmark_run_file!s}: "
+                "the path is missing, unsafe, not a regular UTF-8 file, or unreadable. "
+                "Mount the controller-generated run_config.json and pass its path "
+                "with --benchmark-run."
+            )
+        run = BenchmarkRun.model_validate(orjson.loads(run_json))
+        credentials = consume_endpoint_credentials(allow_openai_api_key=True)
+        apply_endpoint_credentials(run, credentials, require_resolved=True)
 
         if health_host is not None:
             # CLI argument takes precedence over environment variable
@@ -88,8 +108,13 @@ def service(
             Environment.SERVICE.HEALTH_ENABLED = True
             Environment.SERVICE.HEALTH_PORT = health_port
 
+        extra: dict[str, int] = {}
+        if api_port is not None:
+            extra["api_port"] = api_port
+
         bootstrap_and_run_service(
             service_type=service_type,
             run=run,
             service_id=service_id,
+            **extra,
         )

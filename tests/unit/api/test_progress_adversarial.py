@@ -97,10 +97,12 @@ class TestProgressSnapshotSchema:
 
         assert response.status_code == 200
         data = orjson.loads(response.content)
-        assert set(data) == {"phases", "results_exported", "system_state"}
+        assert set(data) == {"phases", "workers", "results_exported", "system_state"}
         assert data["phases"] == {}
         assert data["results_exported"] is False
         assert data["system_state"] == "initializing"
+        assert data["workers"]["ready"] == 0
+        assert data["workers"]["total_pods"] == 0
 
     def test_get_progress_phase_snapshot_preserves_false_zero_and_null_fields(
         self, progress_client: TestClient, progress_router: ProgressRouter

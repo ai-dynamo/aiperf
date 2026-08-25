@@ -19,6 +19,7 @@ from aiperf.common.base_service import BaseService
 from aiperf.common.enums import (
     CommandResponseStatus,
     CommandType,
+    ExportLevel,
     LifecycleState,
     MessageType,
     ServiceRegistrationStatus,
@@ -32,9 +33,13 @@ from aiperf.common.logging import cleanup_global_log_queue, get_global_log_queue
 from aiperf.common.messages import (
     BaseServiceErrorMessage,
     BenchmarkCompleteMessage,
+    CommandAcknowledgedResponse,
     CommandErrorResponse,
     CommandResponse,
     CommandSuccessResponse,
+    CommandUnhandledResponse,
+    FinalizeArtifactsCommand,
+    GetPodStatesCommand,
     HeartbeatMessage,
     ProcessAccuracyResultMessage,
     ProcessAllResultsMessage,
@@ -55,28 +60,39 @@ from aiperf.common.messages import (
     SystemStateChangedMessage,
     TelemetryStatusMessage,
 )
+from aiperf.common.mixins import PodStateTrackerMixin
 from aiperf.common.models import (
     ErrorDetails,
     ProcessRecordsResult,
+    ServiceRunInfo,
 )
 from aiperf.common.models.error_models import ExitErrorInfo
 from aiperf.common.models.export_models import TelemetryExportData
 from aiperf.common.models.server_metrics_models import ServerMetricsResults
+from aiperf.common.results_markers import (
+    write_processing_marker,
+    write_ready_marker,
+)
 from aiperf.common.service_registry import ServiceRegistry
 from aiperf.common.types import ServiceTypeT
 from aiperf.config.artifacts import OutputDefaults
 from aiperf.controller.controller_utils import print_exit_errors
 from aiperf.controller.protocols import (
+    KubernetesServiceManagerProtocol,
     LocalProcessServiceManagerProtocol,
     ServiceManagerProtocol,
 )
 from aiperf.controller.proxy_manager import ProxyManager
 from aiperf.controller.result_join_coordinator import ResultJoinCoordinator
+from aiperf.controller.system_controller_models import (
+    K8sServiceTopology,
+    PodStateSnapshot,
+)
 from aiperf.controller.system_mixins import SignalHandlerMixin
 from aiperf.credit.messages import CreditsCompleteMessage
 from aiperf.exporters.exporter_manager import ExporterFailure, ExporterManager
 from aiperf.plugin import plugins
-from aiperf.plugin.enums import PluginType, ServiceType, UIType
+from aiperf.plugin.enums import PluginType, ServiceRunType, ServiceType, UIType
 from aiperf.records.records_manager import ERROR_FATAL_DETAIL_KEY
 from aiperf.ui.protocols import AIPerfUIProtocol
 
@@ -90,7 +106,7 @@ _PRE_BENCHMARK_STATES = frozenset(
 """States in which no benchmark result can legitimately have been produced yet."""
 
 
-class SystemController(SignalHandlerMixin, BaseService):
+class SystemController(PodStateTrackerMixin, SignalHandlerMixin, BaseService):
     """System Controller service.
 
     This service is responsible for managing the lifecycle of all other services.
@@ -137,7 +153,27 @@ class SystemController(SignalHandlerMixin, BaseService):
         else:
             self.scale_record_processors_with_workers = True
 
-        self.proxy_manager: ProxyManager = ProxyManager(run=self.run)
+        # In Kubernetes mode, workers are external pods that connect via TCP.
+        # We must wait for at least one worker to register before starting profiling.
+        # In Multi-Process mode, workers are spawned locally and register automatically.
+        if self._is_kubernetes():
+            self.required_services[ServiceType.WORKER] = 1
+            # Nothing runs a WorkerManager container in Kubernetes: worker pods
+            # run one WorkerGroupManager each as their pod-infrastructure
+            # process, so requiring WORKER_MANAGER here guarantees a
+            # registration timeout and a dead control plane.
+            del self.required_services[ServiceType.WORKER_MANAGER]
+            # One WorkerGroupManager per worker pod. Requiring fewer than the
+            # full expanded topology lets profiling start against whichever pod
+            # registers first, silently running a fraction of the load.
+            self._k8s_topology = self._build_k8s_service_topology()
+            self.required_services[ServiceType.WORKER_GROUP_MANAGER] = (
+                self._k8s_topology.num_worker_pods
+            )
+
+        self.proxy_manager: ProxyManager = ProxyManager(
+            run=self.run, enable_event_bus=not self._event_bus_proxy_is_external()
+        )
         service_run_type = self.run.cfg.runtime.service_run_type
         ServiceManagerClass = plugins.get_class(
             PluginType.SERVICE_MANAGER, service_run_type
@@ -188,7 +224,10 @@ class SystemController(SignalHandlerMixin, BaseService):
         self._server_metrics_result_arrived = asyncio.Event()
 
         self._shutdown_triggered = False
+        self._pod_failure_watcher_task: asyncio.Task | None = None
+        self._pod_failure_watch_disarmed = False
         self._system_state: SystemState = SystemState.INITIALIZING
+        self._replacement_configuring_ids: set[str] = set()
         self._shutdown_lock = asyncio.Lock()
         self._api_enabled = False
         self._telemetry_endpoints_configured: list[str] = []
@@ -196,6 +235,101 @@ class SystemController(SignalHandlerMixin, BaseService):
         self._server_metrics_endpoints_configured: list[str] = []
         self._server_metrics_endpoints_reachable: list[str] = []
         self.debug("System Controller created")
+
+    def get_pod_state_snapshot(self) -> PodStateSnapshot:
+        """Return one authoritative copy of controller-owned worker state."""
+        return PodStateSnapshot(
+            pod_states=dict(self._pod_state_tracker.pod_states),
+            worker_startup_states=dict(self._pod_state_tracker.worker_startup_states),
+        )
+
+    def _ready_worker_pod_count(self) -> int:
+        """Count worker pods that can actually be routed a credit.
+
+        Keyed on ``dispatchable_workers`` alone. ``ready_record_processors``
+        is deliberately NOT required here, unlike
+        ``system_controller_models.build_aggregate_worker_status``:
+        record-processor peer registration is asynchronous and may lag worker
+        readiness, and a pod whose workers can be routed a credit is enough to
+        start profiling. Requiring it would stall the start gate behind
+        bookkeeping that has no bearing on dispatchability.
+        """
+        return sum(
+            1
+            for pod in self._pod_state_tracker.pod_states.values()
+            if pod.dispatchable_workers >= 1
+        )
+
+    def _is_kubernetes(self) -> bool:
+        """Whether this controller runs under the Kubernetes operator."""
+        return self.run.cfg.runtime.service_run_type == ServiceRunType.KUBERNETES
+
+    def _event_bus_proxy_is_external(self) -> bool:
+        """Report whether something outside this process already binds the event bus.
+
+        In Kubernetes mode the JobSet may run the XPUB/XSUB proxy as a dedicated
+        ``aiperf proxy --kind event_bus`` sidecar container in the controller pod.
+        Both processes bind the same two addresses, so the controller must not
+        start its own copy or the second bind fails with ``Address already in
+        use`` and the whole control plane dies on init.
+
+        The operator stamps ``AIPERF_K8S_EVENT_BUS_SIDECAR_ENABLED`` into the
+        control-plane container (see
+        ``aiperf.kubernetes.jobset_builder.AIPerfJobSetBuilder._create_control_plane_containers``).
+        Any non-Kubernetes run returns False, so the multiprocessing path keeps
+        hosting all three proxies exactly as before.
+        """
+        if not self._is_kubernetes():
+            return False
+        from aiperf.kubernetes.environment import K8sEnvironment
+
+        return K8sEnvironment.EVENT_BUS_SIDECAR_ENABLED
+
+    def _build_k8s_service_topology(self) -> K8sServiceTopology:
+        """Derive the worker-pod topology from runtime config.
+
+        Kubernetes deployments are pod-based: each worker pod runs a fixed
+        number of worker and record-processor containers, and the last pod is
+        not partially filled. Startup must therefore wait for the full expanded
+        topology rather than the requested logical worker count -- expecting a
+        single WorkerGroupManager lets profiling begin as soon as the first pod
+        reports in, running against a fraction of the requested load with no
+        error raised anywhere.
+
+        The fan-out itself exists because a node holds only ~65k ephemeral
+        ports, capping concurrent connections per node; see
+        ``RuntimeConfig.workers_per_pod`` for the sizing ratios that shaped the
+        defaults consumed here.
+        """
+        import math
+
+        runtime = self.run.cfg.runtime
+
+        workers_per_pod = (
+            runtime.workers_per_pod or Environment.WORKER.DEFAULT_WORKERS_PER_POD
+        )
+        requested_workers = runtime.workers or workers_per_pod
+        num_worker_pods = max(1, math.ceil(requested_workers / workers_per_pod))
+        total_workers = num_worker_pods * workers_per_pod
+
+        if runtime.record_processors_per_pod is not None:
+            record_processors_per_pod = runtime.record_processors_per_pod
+        elif runtime.record_processors is not None:
+            record_processors_per_pod = max(
+                1, math.ceil(runtime.record_processors / num_worker_pods)
+            )
+        else:
+            record_processors_per_pod = max(
+                1, workers_per_pod // Environment.RECORD.PROCESSOR_SCALE_FACTOR
+            )
+
+        return K8sServiceTopology(
+            num_worker_pods=num_worker_pods,
+            workers_per_pod=workers_per_pod,
+            record_processors_per_pod=record_processors_per_pod,
+            total_workers=total_workers,
+            total_record_processors=num_worker_pods * record_processors_per_pod,
+        )
 
     def _should_warn_osl_without_ignore_eos(self) -> bool:
         """Check if --osl is used without ignore_eos or min_tokens in extra inputs."""
@@ -248,6 +382,8 @@ class SystemController(SignalHandlerMixin, BaseService):
     @on_init
     async def _initialize_system_controller(self) -> None:
         self.debug("Initializing System Controller")
+
+        await self._begin_results_export_transaction()
 
         self.setup_signal_handlers(self._handle_signal)
         self.debug("Setup signal handlers")
@@ -310,6 +446,12 @@ class SystemController(SignalHandlerMixin, BaseService):
         await self._profile_configure_all_services()
         await self._set_system_state(SystemState.READY)
         self.info("AIPerf System is CONFIGURED")
+        await self._verify_pods_healthy()
+        await self._wait_for_dispatchable_worker_pods()
+        if isinstance(self.service_manager, KubernetesServiceManagerProtocol):
+            self._pod_failure_watcher_task = self.execute_async(
+                self._watch_pod_failure_abort()
+            )
         await self._start_profiling_all_services()
         await self._set_system_state(SystemState.PROFILING)
         self.info("AIPerf System is PROFILING")
@@ -318,6 +460,120 @@ class SystemController(SignalHandlerMixin, BaseService):
         # the startup states so an earlier, deliberately ignored readiness
         # notification cannot strand the controller.
         await self._check_and_trigger_shutdown()
+
+    async def _verify_pods_healthy(self) -> None:
+        """Gate PROFILE_START on worker-pod health.
+
+        A pod can register all its services and then die (OOMKilled, evicted)
+        before profiling begins. Without this gate the run proceeds with fewer
+        workers than it believes it has and reports results that silently omit
+        that pod's share of the load. Managers without the Kubernetes
+        capability are skipped.
+        """
+        if not isinstance(self.service_manager, KubernetesServiceManagerProtocol):
+            return
+        async with self.try_operation_or_stop("Pod Health Check"):
+            await self.service_manager.check_pods_healthy()
+
+    async def _wait_for_dispatchable_worker_pods(self) -> None:
+        """Gate PROFILE_START on worker pods being able to *serve* credits.
+
+        Distinct from ``_verify_pods_healthy``, which only asks whether a pod is
+        alive. A pod can be perfectly healthy and still have no dataset: the
+        dataset arrives over one-shot broadcasts, and a pod whose containers
+        subscribe late receives neither. Its workers hold themselves out of the
+        routing pool (see ``Worker._send_worker_ready_message``), so starting
+        here would run the benchmark at a fraction of the requested load.
+
+        Waits for every registered worker pod to become dispatchable, then falls
+        back to "at least one" after a short grace period. Proceeding with a
+        subset is safe because an undispatchable worker is not in the routing
+        pool at all, and it rejoins mid-run once its dataset poll succeeds --
+        but it changes the effective load, so say so loudly.
+
+        A no-op outside Kubernetes mode.
+        """
+        if not self._is_kubernetes():
+            return
+        timeout = Environment.DATASET.CONFIGURATION_TIMEOUT
+        grace_period = min(5.0, timeout)
+        poll_interval = Environment.WORKER.STATUS_SUMMARY_INTERVAL
+        begin = time.perf_counter()
+        while True:
+            expected_pods = len(
+                self.service_manager.service_map.get(
+                    ServiceType.WORKER_GROUP_MANAGER, []
+                )
+            )
+            ready_pods = self._ready_worker_pod_count()
+            if expected_pods and ready_pods >= expected_pods:
+                self.info(f"All {ready_pods} worker pod(s) are dispatchable")
+                return
+
+            elapsed = time.perf_counter() - begin
+            if elapsed >= grace_period and ready_pods >= 1:
+                self.warning(
+                    f"Starting profiling with {ready_pods} of {expected_pods} worker "
+                    f"pod(s) dispatchable after {elapsed:.1f}s. The remaining pod(s) "
+                    "have no dataset yet; they receive no credits until they do, so "
+                    "the load starts below the requested level."
+                )
+                return
+            if elapsed >= timeout:
+                raise LifecycleOperationError(
+                    f"No worker pod became dispatchable within {timeout:.0f}s "
+                    f"({ready_pods} of {expected_pods} ready). Worker pods are "
+                    "running but have no dataset, so every credit would fail."
+                )
+            await asyncio.sleep(poll_interval)
+
+    async def _watch_pod_failure_abort(self) -> None:
+        """Cancel the benchmark when failed worker pods breach the threshold.
+
+        The Kubernetes service manager's monitoring loop sets the event; the
+        controller reacts through the same ``_cancel_profiling`` path a Ctrl+C
+        takes, so partial results are still exported.
+
+        Only armed for the load phase. Worker pods exit legitimately once
+        credits are complete, so a breach observed after that is normal
+        teardown, not a failure -- see ``_disarm_pod_failure_watcher``.
+        """
+        if not isinstance(self.service_manager, KubernetesServiceManagerProtocol):
+            return
+        await self.service_manager.pod_failure_abort_event.wait()
+        if (
+            self._pod_failure_watch_disarmed
+            or self._was_cancelled
+            or self._shutdown_triggered
+        ):
+            return
+        self.error(
+            f"Aborting benchmark: {self.service_manager.pod_failure_abort_reason}"
+        )
+        await self._cancel_profiling()
+
+    def _disarm_pod_failure_watcher(self) -> None:
+        """Stop treating worker-pod exits as benchmark failures.
+
+        Called on entry to every teardown path (credits complete, the shutdown
+        readiness check, and cancellation). The flag is set in addition to
+        cancelling the task because ``pod_failure_abort_event`` may already be
+        set with the waiter scheduled to resume: cancellation alone loses that
+        race, and the run reports as cancelled even though it succeeded.
+        """
+        self._pod_failure_watch_disarmed = True
+        task = self._pod_failure_watcher_task
+        if task is None or task.done():
+            return
+        # The abort path runs *inside* this task: _watch_pod_failure_abort ->
+        # _cancel_profiling -> here. Cancelling ourselves would deliver
+        # CancelledError at the next await and silently skip the rest of the
+        # teardown, so the benchmark would keep running after logging that it
+        # was aborting. The disarm flag above is what stops the waiter in that
+        # case; only a caller on another task needs the cancel.
+        if task is asyncio.current_task():
+            return
+        task.cancel()
 
     async def _set_system_state(self, state: SystemState) -> None:
         """Advance the controller's outer-lifecycle ``SystemState`` and notify
@@ -438,6 +694,11 @@ class SystemController(SignalHandlerMixin, BaseService):
             )
         )
 
+        prior_info = ServiceRegistry.get_service(message.service_id)
+        was_registered = ServiceRegistry.is_registered(message.service_id)
+        is_replacement = self._is_replacement_worker_group_registration(
+            message, prior_info, was_registered
+        )
         now_ns = time.time_ns()
         ServiceRegistry.register(
             service_id=message.service_id,
@@ -453,8 +714,8 @@ class SystemController(SignalHandlerMixin, BaseService):
                 f"Service registry lost registration for '{message.service_id}'"
             )
 
-        # A service re-registering under a reused ID is alive again, so it must
-        # stop being excluded from command fan-out.
+        # A replacement pod reusing a deterministic service ID is alive again,
+        # so it must stop being excluded from command fan-out.
         self._reaped_service_ids.discard(message.service_id)
 
         previous = self.service_manager.service_id_map.get(message.service_id)
@@ -488,6 +749,69 @@ class SystemController(SignalHandlerMixin, BaseService):
         except (TypeError, ValueError):
             type_name = message.service_type
         self.info(lambda: f"Registered {type_name} (id: '{message.service_id}')")
+
+        if (
+            is_replacement
+            and self._system_state != SystemState.INITIALIZING
+            and message.service_id not in self._replacement_configuring_ids
+        ):
+            self._replacement_configuring_ids.add(message.service_id)
+            self.execute_async(
+                self._configure_replacement_worker_group(message.service_id)
+            )
+
+    def _is_replacement_worker_group_registration(
+        self,
+        message: RegisterServiceCommand,
+        prior_info: ServiceRunInfo | None,
+        was_registered: bool,
+    ) -> bool:
+        """Return whether a JobSet replacement reused a worker-group ID."""
+        if (
+            message.service_type != ServiceType.WORKER_GROUP_MANAGER
+            or prior_info is None
+        ):
+            return False
+        if prior_info.state == LifecycleState.FAILED:
+            return True
+        return (
+            was_registered
+            and prior_info.pod_name is not None
+            and message.pod_name is not None
+            and prior_info.pod_name != message.pod_name
+        )
+
+    async def _configure_replacement_worker_group(self, service_id: str) -> None:
+        """Configure a replacement pod after its registration ACK can be sent."""
+        try:
+            response = await self.send_command_and_wait_for_response(
+                ProfileConfigureCommand(
+                    service_id=self.service_id,
+                    target_service_id=service_id,
+                ),
+                timeout=Environment.SERVICE.PROFILE_CONFIGURE_TIMEOUT,
+            )
+            if isinstance(response, ErrorDetails):
+                self.error(
+                    f"Replacement worker pod '{service_id}' did not configure: "
+                    f"{response.message}"
+                )
+                ServiceRegistry.fail_service(
+                    service_id, ServiceType.WORKER_GROUP_MANAGER, fatal=False
+                )
+                return
+            if isinstance(response, CommandErrorResponse):
+                self.error(
+                    f"Replacement worker pod '{service_id}' rejected configure: "
+                    f"{response.error.message}"
+                )
+                ServiceRegistry.fail_service(
+                    service_id, ServiceType.WORKER_GROUP_MANAGER, fatal=False
+                )
+                return
+            self.info(f"Configured replacement worker pod '{service_id}'")
+        finally:
+            self._replacement_configuring_ids.discard(service_id)
 
     @on_message(MessageType.HEARTBEAT)
     async def _process_heartbeat_message(self, message: HeartbeatMessage) -> None:
@@ -538,6 +862,7 @@ class SystemController(SignalHandlerMixin, BaseService):
         # Credits exhausted means request dispatch is done and the remaining
         # work is record aggregation, which is what PROCESSING denotes.
         await self._set_system_state(SystemState.PROCESSING)
+        self._disarm_pod_failure_watcher()
 
     @on_message(MessageType.SERVICE_ERROR)
     async def _process_service_error_message(
@@ -805,6 +1130,13 @@ class SystemController(SignalHandlerMixin, BaseService):
                 ),
             )
 
+    @on_command(CommandType.GET_POD_STATES)
+    async def _handle_get_pod_states_command(
+        self, _message: GetPodStatesCommand
+    ) -> dict[str, object]:
+        """Serve the controller's authoritative worker-state cache."""
+        return self.get_pod_state_snapshot().model_dump(mode="json")
+
     @on_command(CommandType.SHUTDOWN_WORKERS)
     async def _handle_shutdown_workers_command(
         self, message: ShutdownWorkersCommand
@@ -852,10 +1184,10 @@ class SystemController(SignalHandlerMixin, BaseService):
             # advisory and leave the exit code at zero.
             #
             # Errors the producer marked fatal are different -- they mean the
-            # artifact set itself is incomplete (e.g. a stream exporter failed to
-            # finalize). Announcing those as exported would publish a partial
+            # artifact set itself is incomplete (e.g. a stream exporter failed
+            # to finalize). Announcing those as exported would publish a partial
             # result set as if it were whole, so they set ``_export_failed``,
-            # which withholds ResultsExportedMessage.
+            # which withholds ResultsExportedMessage on every run type.
             fatal_errors = [
                 error
                 for error in message.results.errors
@@ -864,14 +1196,24 @@ class SystemController(SignalHandlerMixin, BaseService):
             ]
             if fatal_errors:
                 self._export_failed = True
-                self._exit_errors.extend(
-                    ExitErrorInfo(
-                        error_details=error,
-                        operation="process_records",
-                        service_id=message.service_id,
-                    )
-                    for error in fatal_errors
+
+            # Under Kubernetes every entry also reaches ``print_exit_errors``
+            # and ``os._exit(1 if self._exit_errors ...)``: the operator reads
+            # the exit code to mark the CR, so a silently-degraded run there
+            # must surface. Locally only the fatal ones do -- otherwise a
+            # no-GPU run whose telemetry drain times out exits 1 with an error
+            # panel despite complete, correct results.
+            reportable_errors = (
+                message.results.errors if self._is_kubernetes() else fatal_errors
+            )
+            self._exit_errors.extend(
+                ExitErrorInfo(
+                    error_details=error,
+                    operation="process_records",
+                    service_id=message.service_id,
                 )
+                for error in reportable_errors
+            )
 
         self.debug(
             lambda: (
@@ -1090,6 +1432,9 @@ class SystemController(SignalHandlerMixin, BaseService):
             if self._result_join_coordinator.ready:
                 self._shutdown_triggered = True
                 should_shutdown = True
+                # Teardown starts here: worker pods exiting from now on are
+                # expected, not a failure the benchmark should be cancelled for.
+                self._disarm_pod_failure_watcher()
                 await self._set_system_state(SystemState.STOPPING)
                 self.info("All results received, initiating shutdown")
             elif (
@@ -1100,6 +1445,7 @@ class SystemController(SignalHandlerMixin, BaseService):
 
         # Call stop() OUTSIDE the lock to prevent deadlock
         if should_shutdown:
+            await self._finalize_kubernetes_raw_artifacts()
             self.debug("Calling self.stop()...")
             await asyncio.shield(self.stop())
             self.debug("self.stop() completed")
@@ -1180,6 +1526,7 @@ class SystemController(SignalHandlerMixin, BaseService):
     async def _cancel_profiling(self) -> None:
         self.debug("Cancelling profiling of all services")
         self._was_cancelled = True
+        self._disarm_pod_failure_watcher()
         await self._set_system_state(SystemState.STOPPING)
 
         # Mark shutdown as triggered FIRST to prevent _check_and_trigger_shutdown()
@@ -1229,6 +1576,7 @@ class SystemController(SignalHandlerMixin, BaseService):
 
         # Only call stop() if we were the first to trigger shutdown
         if should_call_stop:
+            await self._finalize_kubernetes_raw_artifacts()
             self.debug("Stopping system controller after profiling cancelled")
             await asyncio.shield(self.stop())
 
@@ -1301,6 +1649,264 @@ class SystemController(SignalHandlerMixin, BaseService):
                 "Server metrics results did not arrive within "
                 f"{timeout}s of cancellation; export may omit server metrics"
             )
+
+    @on_command(CommandType.FINALIZE_ARTIFACTS)
+    async def _handle_finalize_artifacts_command(
+        self,
+        message: FinalizeArtifactsCommand,  # noqa: ARG002
+    ) -> None:
+        """Coordinate an exact durability barrier for every record processor.
+
+        Reaped services are excluded from the target list -- commanding a
+        process the watchdog already confirmed dead only buys a full command
+        timeout before failing on a peer that is known to be gone.
+
+        Severity differs by run mode, because the barrier means different
+        things in each. Under Kubernetes it fails closed: raw records still
+        live on worker pods, so an unacknowledged finalize means data that was
+        never uploaded. Locally it degrades instead. ``ProfileCompleteCommand``
+        broadcasts moments earlier and every ``RecordProcessor`` answers it
+        with the same ``_finalize_local_artifacts``, so the writers are already
+        flushed by the time this runs; the barrier contributes the
+        acknowledgement, not the flush. Raising here would discard a complete,
+        exportable result set over a missing ack -- and with local record
+        processors auto-scaled to one below eight workers, a single reap is
+        enough to trigger it. Failures are still recorded in ``_exit_errors``,
+        so they stay visible and still force a non-zero exit.
+        """
+        if self._is_kubernetes():
+            await self._finalize_kubernetes_raw_artifacts()
+            if self._export_failed:
+                raise RuntimeError("Kubernetes RAW artifact finalization failed")
+            return
+
+        service_ids = sorted(
+            service_id
+            for service_id, info in self.service_manager.service_id_map.items()
+            if info.service_type == ServiceType.RECORD_PROCESSOR
+            and service_id not in self._reaped_service_ids
+        )
+        if not service_ids:
+            self._record_finalize_failure(
+                service_id=self.service_id,
+                message=(
+                    "Cannot finalize record artifacts: no live record "
+                    "processors are registered"
+                ),
+            )
+            return
+
+        command = FinalizeArtifactsCommand(
+            service_id=self.service_id,
+            target_service_type=ServiceType.RECORD_PROCESSOR,
+            request_ns=time.time_ns(),
+        )
+        responses = await self.send_command_and_wait_for_all_responses(
+            command,
+            service_ids,
+            timeout=Environment.SERVICE.COMMAND_RESPONSE_TIMEOUT,
+        )
+        failure_count = 0
+        for service_id, response in zip(service_ids, responses, strict=True):
+            if (
+                isinstance(response, CommandAcknowledgedResponse)
+                and response.command == CommandType.FINALIZE_ARTIFACTS
+                and response.service_id == service_id
+            ):
+                continue
+            if isinstance(response, ErrorDetails):
+                detail = response
+            elif isinstance(response, CommandErrorResponse):
+                detail = response.error
+            elif isinstance(response, CommandUnhandledResponse):
+                detail = ErrorDetails(
+                    message=(
+                        f"Record processor '{service_id}' does not handle "
+                        f"{CommandType.FINALIZE_ARTIFACTS}"
+                    )
+                )
+            else:
+                detail = ErrorDetails(
+                    message=(
+                        "Unexpected artifact finalization response from "
+                        f"'{service_id}': {response!r}"
+                    )
+                )
+            self._record_finalize_failure(service_id=service_id, message=detail.message)
+            failure_count += 1
+        if failure_count:
+            self.warning(
+                f"Continuing export after {failure_count} record processor(s) "
+                "failed to acknowledge artifact finalization; their writers were "
+                "already flushed by ProfileCompleteCommand"
+            )
+
+    def _record_finalize_failure(self, *, service_id: str, message: str) -> None:
+        """Record an artifact-finalization failure so it survives to the exit code.
+
+        Recording is what makes the failure reportable: the caller may drop the
+        command response, but ``_exit_errors`` still forces a non-zero exit and
+        a printed error panel instead of a silent success.
+        """
+        self._exit_errors.append(
+            ExitErrorInfo(
+                error_details=ErrorDetails(message=message, type="FinalizeArtifacts"),
+                operation="finalize_artifacts",
+                service_id=service_id,
+            )
+        )
+        self.error(message)
+
+    def _record_raw_artifact_finalize_failure(
+        self, *, service_id: str, error: ErrorDetails
+    ) -> None:
+        """Make an incomplete Kubernetes RAW artifact set fail closed."""
+        self._export_failed = True
+        self._exit_errors.append(
+            ExitErrorInfo(
+                error_details=error,
+                operation="finalize_raw_artifacts",
+                service_id=service_id,
+            )
+        )
+
+    @staticmethod
+    def _raw_artifact_finalize_response_error(
+        service_id: str, response: CommandResponse | ErrorDetails
+    ) -> ErrorDetails | None:
+        """Return an error unless ``response`` is the expected peer ACK."""
+        if (
+            isinstance(response, CommandAcknowledgedResponse)
+            and response.command == CommandType.FINALIZE_ARTIFACTS
+            and response.service_id == service_id
+        ):
+            return None
+        if isinstance(response, ErrorDetails):
+            return response
+        if isinstance(response, CommandErrorResponse):
+            return response.error
+        if isinstance(response, CommandUnhandledResponse):
+            return ErrorDetails(
+                message=(
+                    f"Worker-group manager '{service_id}' does not handle "
+                    f"{CommandType.FINALIZE_ARTIFACTS}"
+                )
+            )
+        return ErrorDetails(
+            message=(
+                f"Unexpected RAW artifact finalization response from "
+                f"'{service_id}': {response!r}"
+            )
+        )
+
+    def _raw_finalize_membership_is_acceptable(
+        self, expected: int, service_ids: list[str]
+    ) -> bool:
+        """Decide whether the surviving worker groups can finalize RAW artifacts.
+
+        The finalize barrier must agree with the pod-loss tolerance policy it
+        runs under. ``POD.FAILURE_ABORT_THRESHOLD_PERCENT`` deliberately lets a
+        4-pod run continue on 3, so demanding exact equality here failed a run
+        the rest of the system had already chosen to keep -- and did so without
+        contacting the three healthy pods at all.
+
+        Within tolerance the barrier proceeds against the pods that are
+        genuinely expected to be alive and marks the run degraded (non-zero
+        exit, named producers) rather than discarding it. Outside tolerance, or
+        with nothing left to ask, it still fails closed and withholds
+        readiness: an incomplete RAW set must never be published as complete.
+        """
+        missing = expected - len(service_ids)
+        if missing <= 0:
+            return True
+
+        threshold = Environment.POD.FAILURE_ABORT_THRESHOLD_PERCENT
+        missing_percent = (missing / expected) * 100 if expected else 100.0
+        # threshold == 0 disables pod-failure aborts entirely, so any loss is
+        # tolerated -- but a barrier with no members left proves nothing.
+        tolerated = service_ids and (threshold == 0 or missing_percent < threshold)
+        if not tolerated:
+            error = RuntimeError(
+                "Cannot finalize Kubernetes RAW artifacts: expected "
+                f"{expected} registered worker-group manager(s), found "
+                f"{len(service_ids)} ({', '.join(service_ids) or 'none'})"
+            )
+            self._record_raw_artifact_finalize_failure(
+                service_id=self.service_id,
+                error=ErrorDetails.from_exception(error),
+            )
+            return False
+
+        message = (
+            f"Finalizing Kubernetes RAW artifacts on {len(service_ids)} of "
+            f"{expected} worker-group manager(s): {missing} pod(s) were lost "
+            f"within the {threshold:.0f}% abort threshold, so their RAW shards "
+            "are absent from this run"
+        )
+        self.warning(message)
+        self._exit_errors.append(
+            ExitErrorInfo(
+                error_details=ErrorDetails(
+                    message=message, type="DegradedRawArtifactSet"
+                ),
+                operation="finalize_raw_artifacts_degraded",
+                service_id=self.service_id,
+            )
+        )
+        return True
+
+    async def _finalize_kubernetes_raw_artifacts(self) -> None:
+        """Wait for every exact worker group to flush and upload RAW artifacts.
+
+        This command runs before the shutdown broadcast, while the controller,
+        worker-group managers, and record processors can still acknowledge
+        failures. Registered service identities are authoritative; filename
+        counts cannot distinguish an idle processor from a missing upload.
+        """
+        if (
+            not self._is_kubernetes()
+            or self.run.cfg.artifacts.export_level != ExportLevel.RAW
+        ):
+            return
+
+        expected = self._k8s_topology.num_worker_pods
+        service_ids = sorted(
+            info.service_id
+            for info in ServiceRegistry.get_services(ServiceType.WORKER_GROUP_MANAGER)
+            if info.service_id not in self._reaped_service_ids
+        )
+        if not self._raw_finalize_membership_is_acceptable(expected, service_ids):
+            return
+
+        self.info(f"Finalizing RAW artifacts on {len(service_ids)} worker group(s)...")
+        try:
+            responses = await self.send_command_and_wait_for_all_responses(
+                FinalizeArtifactsCommand(
+                    service_id=self.service_id,
+                    target_service_type=ServiceType.WORKER_GROUP_MANAGER,
+                ),
+                service_ids,
+                timeout=Environment.WORKER.RAW_RECORD_UPLOAD_TIMEOUT,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            self._record_raw_artifact_finalize_failure(
+                service_id=self.service_id,
+                error=ErrorDetails.from_exception(e),
+            )
+            return
+
+        for service_id, response in zip(service_ids, responses, strict=True):
+            error = self._raw_artifact_finalize_response_error(service_id, response)
+            if error is None:
+                continue
+            self._record_raw_artifact_finalize_failure(
+                service_id=service_id, error=error
+            )
+
+        if not self._export_failed:
+            self.info("All Kubernetes RAW artifacts finalized and uploaded")
 
     def _surface_export_failures(self, failures: list[ExporterFailure]) -> bool:
         """Record local export failures and report whether readiness is blocked.
@@ -1476,6 +2082,9 @@ class SystemController(SignalHandlerMixin, BaseService):
 
     async def _print_post_benchmark_info_and_metrics(self) -> None:
         """Print post benchmark info and metrics to the console."""
+        if not await self._begin_results_export_transaction():
+            return
+
         if not self._profile_results or not self._profile_results.results.records:
             self.error("No profile results to export")
             # Record the failure in _exit_errors so the caller's
@@ -1553,18 +2162,101 @@ class SystemController(SignalHandlerMixin, BaseService):
         console.print()
         console.file.flush()
 
+        await self._run_kubernetes_auto_plot()
         await self._announce_results_exported()
 
-    async def _announce_results_exported(self) -> None:
-        """Announce that every benchmark artifact has been written.
+    async def _begin_results_export_transaction(self) -> bool:
+        """Hide stale exports before a Kubernetes result export begins."""
+        if not self._is_kubernetes():
+            return True
 
-        ProgressRouter only reports ``results_exported`` after this message,
-        so it must not be published when the export itself failed.
-        """
-        if getattr(self, "_export_failed", False):
-            self.error("Local result export failed; withholding ResultsExportedMessage")
+        artifact_dir = self.run.cfg.artifacts.dir
+        try:
+            await asyncio.to_thread(write_processing_marker, artifact_dir)
+        except OSError as error:
+            self._export_failed = True
+            self._exit_errors.append(
+                ExitErrorInfo(
+                    error_details=ErrorDetails.from_exception(error),
+                    operation="export:ResultsProcessingMarker",
+                    service_id=self.service_id,
+                )
+            )
+            self.error(
+                f"Failed to begin the results export transaction in {artifact_dir}: "
+                f"{error!r}; withholding results readiness"
+            )
+            return False
+        return True
+
+    async def _run_kubernetes_auto_plot(self) -> None:
+        """Render configured plots before publishing Kubernetes readiness."""
+        artifacts = self.run.cfg.artifacts
+        if not self._is_kubernetes() or not artifacts.auto_plot or self._export_failed:
             return
 
+        from aiperf.plot.auto_plot import run_auto_plot_async
+
+        try:
+            await run_auto_plot_async(
+                artifact_dir=artifacts.dir,
+                plot_required=artifacts.plot_required,
+                plot_envelope=self.run.plot,
+            )
+        except Exception as e:  # noqa: BLE001 - strict plotting is an export failure
+            self._export_failed = True
+            self._exit_errors.append(
+                ExitErrorInfo(
+                    error_details=ErrorDetails.from_exception(e),
+                    operation="auto_plot",
+                    service_id=self.service_id,
+                )
+            )
+            self.error(
+                f"Required auto-plot failed in {artifacts.dir}: {e!r}; "
+                "withholding results readiness"
+            )
+
+    async def _announce_results_exported(self) -> None:
+        """Commit readiness, publish locally, then notify the Kubernetes operator.
+
+        These are the handshakes the result consumers wait on. The results sidecar
+        refuses to serve top-level artifacts until
+        ``.aiperf_results_ready.json`` exists, and ProgressRouter only reports
+        ``is_complete`` after ResultsExportedMessage. The controller then patches
+        the parent AIPerfJob's benchmark-complete annotation so kopf can harvest
+        immediately; its timer remains the recovery path for a failed patch.
+        """
+        if getattr(self, "_export_failed", False):
+            self.error(
+                "Local result export failed; withholding results-ready and "
+                "ResultsExportedMessage"
+            )
+            return
+
+        artifact_dir = self.run.cfg.artifacts.dir
+        # Written on every run, not only under Kubernetes: the local --api-port
+        # results router fails closed on this marker, so gating it leaves
+        # /api/results/list and /api/results/files/* permanently empty locally.
+        try:
+            await asyncio.to_thread(
+                write_ready_marker,
+                artifact_dir,
+                was_cancelled=self._was_cancelled,
+            )
+        except OSError as e:
+            self._exit_errors.append(
+                ExitErrorInfo(
+                    error_details=ErrorDetails.from_exception(e),
+                    operation="export:ResultsReadyMarker",
+                    service_id=self.service_id,
+                )
+            )
+            self.error(
+                f"Failed to write the results-ready marker in {artifact_dir}: "
+                f"{e!r}; withholding ResultsExportedMessage"
+            )
+            return
         try:
             await self.publish(
                 ResultsExportedMessage(
@@ -1581,6 +2273,22 @@ class SystemController(SignalHandlerMixin, BaseService):
             )
         except Exception as e:  # noqa: BLE001 - a late bus failure must not mask exported results
             self.warning(f"Failed to publish ResultsExportedMessage: {e!r}")
+
+        if self._is_kubernetes():
+            from aiperf.kubernetes.completion_signal import signal_benchmark_complete
+
+            try:
+                await signal_benchmark_complete()
+            except asyncio.CancelledError:
+                self.warning(
+                    "Benchmark-complete notification was cancelled; the durable "
+                    "results marker and operator timer remain authoritative"
+                )
+            except Exception as e:  # noqa: BLE001 - notification is a latency optimization
+                self.warning(
+                    f"Failed to notify the operator of benchmark completion: {e!r}; "
+                    "the operator timer will recover"
+                )
 
     def _print_log_file_info(self, console: Console) -> None:
         """Print the log file info."""

@@ -339,6 +339,43 @@ def _disable_weka_parallel_reconstruction(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def restore_kube_logger_level():
+    """Restore the ``aiperf.kube`` logger level after every test.
+
+    The kube CLI's ``--output json`` paths temporarily drop this logger to
+    WARNING so only JSON reaches stdout, and several tests set it explicitly to
+    assert that the ``finally`` restores it. Those tests mutate the real global
+    logger, so one that leaves it at ERROR silences every later test on the same
+    ``pytest -n auto`` worker that asserts on kube CLI output -- which showed up
+    as worker- and order-dependent "assert 'x' in ''" failures.
+    """
+    import logging
+
+    kube_logger = logging.getLogger("aiperf.kube")
+    original_level = kube_logger.level
+    yield
+    kube_logger.setLevel(original_level)
+
+
+@pytest.fixture(autouse=True)
+def isolate_last_kube_benchmark_file(tmp_path, monkeypatch):
+    """Redirect the kube CLI's last-benchmark cache into a per-test temp dir.
+
+    ``aiperf.kubernetes.console`` persists the most recent ``aiperf kube``
+    target to ``~/.aiperf/last_kube_benchmark.json`` so ``attach``/``logs``/
+    ``results`` can default to it. Left alone, the unit suite writes to the
+    developer's real home directory, and -- worse -- every ``pytest -n auto``
+    worker shares that one path, so a test that saves a benchmark can be read
+    back by an unrelated test on another worker. That surfaced as order- and
+    worker-dependent failures in the kube CLI tests.
+    """
+    monkeypatch.setattr(
+        "aiperf.kubernetes.console._LAST_BENCHMARK_FILE",
+        tmp_path / "last_kube_benchmark.json",
+    )
+
+
+@pytest.fixture(autouse=True)
 def reset_singleton_factories():
     """Reset singleton factory instances between tests to prevent state leakage.
 

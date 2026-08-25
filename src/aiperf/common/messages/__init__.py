@@ -18,6 +18,8 @@ from aiperf.common.messages.command_messages import (
     CommandSuccessResponse,
     CommandUnhandledResponse,
     ConnectionProbeMessage,
+    FinalizeArtifactsCommand,
+    GetPodStatesCommand,
     ProcessRecordsCommand,
     ProcessRecordsResponse,
     ProfileCancelCommand,
@@ -39,6 +41,7 @@ from aiperf.common.messages.dataset_messages import (
     ConversationTurnResponseMessage,
     DatasetConfigurationFailedNotification,
     DatasetConfiguredNotification,
+    DatasetDownloadedNotification,
 )
 from aiperf.common.messages.inference_messages import (
     InferenceResultsMessage,
@@ -79,7 +82,10 @@ from aiperf.common.messages.telemetry_messages import (
     TelemetryStatusMessage,
 )
 from aiperf.common.messages.worker_messages import (
+    WorkerGroupStatsMessage,
     WorkerHealthMessage,
+    WorkerPodStateMessage,
+    WorkerStartupStateMessage,
     WorkerStatusSummaryMessage,
 )
 
@@ -102,7 +108,10 @@ __all__ = [
     "ConversationTurnResponseMessage",
     "DatasetConfigurationFailedNotification",
     "DatasetConfiguredNotification",
+    "DatasetDownloadedNotification",
     "ErrorMessage",
+    "FinalizeArtifactsCommand",
+    "GetPodStatesCommand",
     "HeartbeatMessage",
     "InferenceResultsMessage",
     "Message",
@@ -141,6 +150,9 @@ __all__ = [
     "TargetedServiceMessage",
     "TelemetryRecordsMessage",
     "TelemetryStatusMessage",
+    "WorkerGroupStatsMessage",
     "WorkerHealthMessage",
+    "WorkerPodStateMessage",
+    "WorkerStartupStateMessage",
     "WorkerStatusSummaryMessage",
 ]

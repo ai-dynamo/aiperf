@@ -2,9 +2,12 @@
 # SPDX-License-Identifier: Apache-2.0
 """Models for tracking the progress of the benchmark suite."""
 
-from pydantic import Field
+from dataclasses import dataclass, field
+from typing import ClassVar
 
-from aiperf.common.enums import WorkerStatus
+from pydantic import ConfigDict, Field
+
+from aiperf.common.enums import WorkerStartupState, WorkerStatus
 from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.models.credit_models import ProcessingStats
 from aiperf.common.models.health_models import ProcessHealth
@@ -50,7 +53,56 @@ class WorkerStats(AIPerfBaseModel):
         default=WorkerStatus.IDLE,
         description="The status of the worker",
     )
+    startup_state: WorkerStartupState | None = Field(
+        default=None,
+        description="The startup lifecycle state of the worker, or None if it has not reported one",
+    )
+    startup_state_updated_ns: int | None = Field(
+        default=None,
+        ge=0,
+        description="The last time the worker's startup state changed in nanoseconds",
+    )
     last_update_ns: int | None = Field(
         default=None,
         description="The last time the worker was updated in nanoseconds",
     )
+
+
+@dataclass(slots=True, kw_only=True)
+class WorkerGroupStats:
+    """Aggregate stats for one worker-group (one WorkerGroupManager).
+
+    Mutable slotted dataclass, shared between msgspec (the ``/api/workers``
+    HTTP payload) and Pydantic (``WorkersResponse``); the worker tracker
+    rewrites its fields in place as group snapshots arrive, so it is not
+    frozen. ``__pydantic_config__`` is required because it participates in
+    Pydantic union discrimination.
+
+    ``workers`` is the per-child :class:`WorkerStats` map, used by the local
+    web UI when there is exactly one group.
+
+    Example:
+        >>> group = WorkerGroupStats(group_id="worker_group_manager_0")
+        >>> group.ready_workers = 8
+    """
+
+    __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
+
+    group_id: str
+    """Stable identifier for this worker group (the WorkerGroupManager service id)."""
+    status: WorkerStatus = WorkerStatus.IDLE
+    """Coarse health status rolled up across the group's workers."""
+    startup_state: WorkerStartupState | None = None
+    """Startup lifecycle state, or None before the first report."""
+    declared_workers: int = 0
+    """Worker count the group intends to run."""
+    ready_workers: int = 0
+    """Workers that have completed startup and are dispatch-ready."""
+    health: ProcessHealth | None = None
+    """Latest aggregate process-health sample, if collected."""
+    task_stats: WorkerTaskStats = field(default_factory=WorkerTaskStats)
+    """Aggregate task counters summed across the group's workers."""
+    workers: dict[str, WorkerStats] = field(default_factory=dict)
+    """Per-child worker stats, keyed by worker id."""
+    last_update_ns: int | None = None
+    """Monotonic timestamp of the last update, or None before the first report."""
