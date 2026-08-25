@@ -34,6 +34,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, TextIO
 
+from aiperf.accuracy.graders._codegen_worker_client import CodegenGradingWorker
+
 PROTOCOL_VERSION = 1
 WORKER_VERSION = "1.7.0"
 _LOG = logging.getLogger("aiperf.accuracy.worker")
@@ -193,6 +195,7 @@ class AccuracyWorker:
         self._uses_lcb_batch_grader = False
         self._lighteval_task: Any | None = None
         self._dataset_identity: dict[str, Any] = {}
+        self._codegen_worker: CodegenGradingWorker | None = None
 
     def hello(self, protocol: int) -> dict[str, Any]:
         if protocol != PROTOCOL_VERSION:
@@ -330,21 +333,22 @@ class AccuracyWorker:
     async def _grade_lcb_batch(
         self, submitted: list[tuple[_Problem, str]]
     ) -> list[dict[str, Any]]:
-        """Execute one Lighteval pool for the complete submitted LCB batch."""
+        """Delegate one complete LCB evaluation batch to the grading child."""
         if self._grader is None:
             raise RuntimeError("worker has no LiveCodeBench grader state")
         import orjson
 
         from aiperf.accuracy.graders.code_execution import (
             _build_evaluation_sample,
+            _derive_grade_timeout,
             _payload_to_test_cases,
-            _run_codegen_metrics,
         )
 
         grades: list[dict[str, Any] | None] = [None] * len(submitted)
         evaluation_samples = []
         generated_code = []
         evaluated_positions = []
+        test_case_count = 0
         for position, (problem, response) in enumerate(submitted):
             if problem.ground_truth is None:
                 raise RuntimeError(
@@ -353,6 +357,7 @@ class AccuracyWorker:
             try:
                 payload = orjson.loads(problem.ground_truth)
                 inputs, outputs, fn_name = _payload_to_test_cases(payload)
+                test_case_count += len(inputs)
             except Exception as error:
                 raise RuntimeError(
                     f"failed to decode canonical tests for {problem.problem_id!r}: {error}"
@@ -375,8 +380,12 @@ class AccuracyWorker:
             evaluated_positions.append((position, snippet))
 
         if evaluation_samples:
-            metrics, _ = await asyncio.to_thread(
-                _run_codegen_metrics, evaluation_samples, generated_code
+            if self._codegen_worker is None:
+                self._codegen_worker = CodegenGradingWorker()
+            metrics = await self._codegen_worker.grade_codegen(
+                evaluation_samples,
+                generated_code,
+                timeout=_derive_grade_timeout(test_case_count),
             )
             detail = metrics.get("detail", {}).get("pass@1")
             if not isinstance(detail, dict):

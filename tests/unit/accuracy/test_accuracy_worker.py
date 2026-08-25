@@ -8,8 +8,9 @@ import json
 import subprocess
 import sys
 from pathlib import Path
-from types import ModuleType, SimpleNamespace
+from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock, MagicMock, call
 
 import pytest
 
@@ -303,34 +304,48 @@ def test_dynamic_subset_identity_is_explicit() -> None:
 
 
 @pytest.mark.asyncio
-async def test_livecodebench_reuses_one_lighteval_pool_per_batch(
+async def test_livecodebench_delegates_one_request_per_batch_and_reuses_child(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from aiperf.accuracy.graders import code_execution
 
-    calls: list[tuple[list[Any], list[list[str]]]] = []
+    def payload_to_cases(payload: dict[str, Any]) -> tuple[list[str], list[str], None]:
+        count = int(payload["case_count"])
+        return (
+            [f"input-{index}" for index in range(count)],
+            [f"output-{index}" for index in range(count)],
+            None,
+        )
 
-    monkeypatch.setattr(
-        code_execution,
-        "_payload_to_test_cases",
-        lambda _payload: (["input"], ["output"], None),
-    )
+    monkeypatch.setattr(code_execution, "_payload_to_test_cases", payload_to_cases)
     monkeypatch.setattr(
         code_execution,
         "_build_evaluation_sample",
-        lambda _inputs, _outputs, _fn_name: [{"input_output": "fixture"}],
+        lambda inputs, _outputs, _fn_name: [{"input_output": f"{len(inputs)} cases"}],
     )
 
-    def run_pool(
-        samples: list[Any], generations: list[list[str]]
-    ) -> tuple[dict[str, Any], Any]:
-        calls.append((samples, generations))
-        return {
-            "pass@1": 0.5,
-            "detail": {"pass@1": {0: 1.0, 1: 0.0}},
-        }, None
+    def direct_pool_must_not_run(*_args: Any) -> tuple[dict[str, Any], Any]:
+        raise AssertionError("native LCB called _run_codegen_metrics directly")
 
-    monkeypatch.setattr(code_execution, "_run_codegen_metrics", run_pool)
+    monkeypatch.setattr(
+        code_execution,
+        "_run_codegen_metrics",
+        direct_pool_must_not_run,
+        raising=False,
+    )
+    child = SimpleNamespace(
+        grade_codegen=AsyncMock(
+            side_effect=[
+                {"pass@1": 0.5, "detail": {"pass@1": {0: 0.0, 1: 1.0}}},
+                {"pass@1": 1.0, "detail": {"pass@1": {0: 1.0}}},
+            ]
+        ),
+        aclose=AsyncMock(),
+    )
+    child_factory = MagicMock(return_value=child)
+    monkeypatch.setattr(
+        worker_module, "CodegenGradingWorker", child_factory, raising=False
+    )
     problems = [
         _Problem(
             problem_id=f"opaque-{index}",
@@ -338,23 +353,47 @@ async def test_livecodebench_reuses_one_lighteval_pool_per_batch(
             prompt="prompt",
             messages=[{"role": "user", "content": "prompt"}],
             generation={"max_tokens": 1},
-            ground_truth="{}",
+            ground_truth=json.dumps({"case_count": case_count}),
         )
-        for index in range(2)
+        for index, case_count in enumerate((2, 3, 4))
     ]
-    worker = AccuracyWorker()
-    worker._benchmark = "lcb-codegeneration"
-    worker._problems = problems
-    worker._by_id = {problem.problem_id: problem for problem in problems}
-    worker._grader = SimpleNamespace(extract_answer=lambda response: response)
-    worker._uses_lcb_batch_grader = True
-    result = await worker.grade_batch(
+    accuracy_worker = AccuracyWorker()
+    accuracy_worker._benchmark = "lcb-codegeneration"
+    accuracy_worker._problems = problems
+    accuracy_worker._by_id = {problem.problem_id: problem for problem in problems}
+    accuracy_worker._grader = SimpleNamespace(extract_answer=lambda response: response)
+    accuracy_worker._uses_lcb_batch_grader = True
+
+    result = await accuracy_worker.grade_batch(
         [
-            {"problem_id": problem.problem_id, "response": f"code-{index}"}
-            for index, problem in enumerate(problems)
+            {"problem_id": "opaque-2", "response": "code-2"},
+            {"problem_id": "opaque-1", "response": ""},
+            {"problem_id": "opaque-0", "response": "code-0"},
         ]
     )
-    assert len(calls) == 1
-    assert calls[0][1] == [["code-0"], ["code-1"]]
-    assert [item["correct"] for item in result["items"]] == [True, False]
+    second_result = await accuracy_worker.grade_batch(
+        [{"problem_id": "opaque-0", "response": "code-0-again"}]
+    )
+
+    child_factory.assert_called_once_with()
+    assert child.grade_codegen.await_args_list == [
+        call(
+            [{"input_output": "4 cases"}, {"input_output": "2 cases"}],
+            [["code-2"], ["code-0"]],
+            timeout=code_execution._derive_grade_timeout(9),
+        ),
+        call(
+            [{"input_output": "2 cases"}],
+            [["code-0-again"]],
+            timeout=code_execution._derive_grade_timeout(2),
+        ),
+    ]
+    assert [item["problem_id"] for item in result["items"]] == [
+        "opaque-2",
+        "opaque-1",
+        "opaque-0",
+    ]
+    assert [item["correct"] for item in result["items"]] == [False, False, True]
+    assert [item["unparsed"] for item in result["items"]] == [False, True, False]
+    assert second_result["items"][0]["correct"] is True
     assert all("ground_truth" not in item for item in result["items"])
