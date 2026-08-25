@@ -209,8 +209,9 @@ async def operator_ready_apiserver_toxiproxy_routed(
     immediately at startup. Tests add toxics after the yielded deployer creates
     a CR and call ``await toxiproxy_injector.reset()`` in ``finally``.
 
-    Scope: ``package`` (matches every other chaos fixture that requires
-    a living operator Deployment). Do NOT compose this fixture with the
+    Scope: ``function`` (matches its sibling
+    ``operator_ready_toxiproxy_routed``, which also redeploys the operator
+    per test). Do NOT compose this fixture with the
     default ``operator_ready`` in the same test — they both install the
     operator, and the second install fights the first's labels.
     """

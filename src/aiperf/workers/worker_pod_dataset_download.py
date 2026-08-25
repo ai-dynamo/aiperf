@@ -131,8 +131,9 @@ async def _download_file(
 ) -> None:
     """Download a file from HTTP to local path with compression support.
 
-    Requests compressed transfer via Accept-Encoding. aiohttp auto-decompresses
-    gzip; zstd is handled manually.
+    Requests compressed transfer via Accept-Encoding. aiohttp's own
+    auto-decompression is disabled, so both gzip and zstd are decompressed
+    manually while the body streams to disk.
     """
     logger.debug(f"Downloading {url} -> {dest_path}")
     headers = {"Accept-Encoding": "zstd, gzip"}

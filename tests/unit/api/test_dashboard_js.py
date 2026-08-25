@@ -1,7 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""End-to-end tests for the AIPerf API dashboard (``dashboard.html``).
+"""End-to-end tests for the AIPerf API dashboards: the legacy
+``static/dashboard.html`` and the modular ``static-v2/`` dashboard.
 
 Tests are layered from cheapest to heaviest:
 
@@ -1426,7 +1427,7 @@ def _metric_result(
     max: float | None = None,
     p50: float | None = None,
 ) -> dict[str, Any]:
-    """Build a JSON-serializable ``MetricResult`` shaped like msgspec emits."""
+    """Build a JSON-serializable ``MetricResult`` dict for the JS under test."""
     return {
         "tag": tag,
         "header": header,
@@ -2544,8 +2545,8 @@ class TestDashboardV2Sparklines:
 
     @pytest.mark.skipif(not _PLAYWRIGHT_AVAILABLE, reason=_PLAYWRIGHT_REASON)
     def test_sparklines_render_after_repeated_samples(self, _page: Page) -> None:
-        """Two distinct realtime_metrics batches → each tile's sparkline
-        must contain a polyline with at least two points."""
+        """Three distinct realtime_metrics batches → each tile's sparkline
+        must contain a line ``path`` with at least two points."""
 
         def sample(ttft_p99):
             return {

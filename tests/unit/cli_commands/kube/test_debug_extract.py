@@ -295,7 +295,7 @@ class TestUnschedulableProblem:
         assert _unschedulable_problem([]) is None
 
     def test_condition_with_different_reason_returns_none(self) -> None:
-        """PodScheduled=False but reason is not Unschedulable (e.g. SchedulingDisabled)."""
+        """PodScheduled=False but reason is not Unschedulable (e.g. SchedulingGated)."""
         conds = [
             {
                 "type": "PodScheduled",

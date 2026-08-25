@@ -2,15 +2,12 @@
 # SPDX-License-Identifier: Apache-2.0
 """Component-integration tests for the JobSet → AIPerfJob terminal-condition chain.
 
-These tests exercise:
-    handle_jobset_conditions()
-        → _lookup_aiperfjob_body() → fake apiserver get
-        → _set_benchmark_complete_annotation() → fake apiserver patch
-
-against an in-memory fake apiserver. Unit tests at tests/unit/operator/
-already cover the decision logic with mocked helpers; here we verify the
-helper code paths actually issue the apiserver round-trips with the
-correct group/version/plural/name and patch shape.
+``handle_jobset_conditions`` deliberately ignores a JobSet ``Completed``
+condition: Jobs exiting is not the controller's durable results-ready
+handshake. These tests run that path against an in-memory fake apiserver and
+assert it issues no get and no patch at all, so completion stays
+controller-owned. The last test then drives ``on_benchmark_complete`` with the
+controller-written annotation to confirm the claim patch does land once.
 """
 
 from __future__ import annotations

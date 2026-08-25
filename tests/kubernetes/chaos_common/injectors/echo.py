@@ -22,7 +22,7 @@ from tests.kubernetes.chaos_common.base import (
 
 
 class _EchoAppliedFault(AppliedFault):
-    """Restore-handle that records its restore in ``metadata['restored_at']``."""
+    """Restore-handle that records its restore in ``metadata['restored']``."""
 
     def __init__(
         self,

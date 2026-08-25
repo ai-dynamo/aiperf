@@ -202,7 +202,7 @@ def _derive_load_profile(config: BenchmarkConfig) -> tuple[int, int, float]:
 
 
 def _derive_gpu_telemetry(config: BenchmarkConfig) -> tuple[int, int]:
-    """Return (num_gpu_urls, estimated_total_gpus). Rough: 1-8 GPUs per endpoint."""
+    """Return (num_gpu_urls, estimated_total_gpus). Rough: assumes 4 GPUs per endpoint."""
     num_gpu_urls = len(config.gpu_telemetry.urls) if config.gpu_telemetry.enabled else 0
     return num_gpu_urls, num_gpu_urls * 4 if num_gpu_urls else 0
 

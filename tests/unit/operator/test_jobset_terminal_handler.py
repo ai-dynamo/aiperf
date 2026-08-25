@@ -440,7 +440,7 @@ async def test_already_failed_in_old_conditions_skips_parent_lookup() -> None:
 
 @pytest.mark.asyncio
 async def test_already_completed_in_old_conditions_skips() -> None:
-    """Re-firing on the same Completed condition list is a no-op (saves a CR get)."""
+    """Re-firing on the same Completed condition list is a no-op (no CR get)."""
     completed = [{"type": "Completed", "status": "True"}]
     with (
         patch(
@@ -533,8 +533,7 @@ async def test_jobset_name_without_aiperf_prefix_skips() -> None:
 
 
 class TestJobsetTerminalAdversarial:
-    """Adversarial coverage for ``handle_jobset_conditions`` and
-    ``_has_completed_condition``.
+    """Adversarial coverage for ``handle_jobset_conditions``.
 
     These probe the production-hostile shapes kopf can deliver as the
     JobSet conditions list mutates: None / non-dict entries, missing or
@@ -828,8 +827,8 @@ class TestJobsetTerminalAdversarial:
 
     @pytest.mark.asyncio
     async def test_jobset_name_aiperf_no_dash_skips_at_lookup(self) -> None:
-        """``jobset_name == "aiperf"`` (no dash) → ``startswith("aiperf-")``
-        is False → ``_lookup_aiperfjob_body`` returns None → handler skips."""
+        """``jobset_name == "aiperf"`` (no dash) is not a name this handler
+        owns, and a Completed condition leaves it inert either way."""
         new = [{"type": "Completed", "status": "True"}]
         # Use the real lookup helper here (no mock) to verify the prefix check.
         with patch(

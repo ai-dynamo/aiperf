@@ -137,10 +137,10 @@ class KubeManageOptions(BaseModel):
     """Common options for Kubernetes job management commands.
 
     This config contains the kubeconfig and namespace options shared by
-    management commands (status, logs, delete, attach, results, cancel, preflight).
+    management commands (list, logs, delete, attach, results, cancel, preflight).
 
     Example CLI usage:
-        aiperf kube status --kubeconfig ~/.kube/prod-config --namespace benchmarks
+        aiperf kube list --kubeconfig ~/.kube/prod-config --namespace benchmarks
         aiperf kube logs abc123 --namespace aiperf-bench
     """
 
@@ -225,9 +225,9 @@ class KubeOptions(KubeManageOptions):
         Field(
             gt=0,
             description="Total number of workers, distributed across pods based on "
-            "--workers-per-pod (default 10). E.g., --total-workers 50 = 5 pods × 10 "
+            "runtime.workersPerPod (default 10). E.g., --total-workers 50 = 5 pods × 10 "
             "workers. A JobSet cannot express a partial final pod, so a total that "
-            "is not a multiple of --workers-per-pod runs on a single pod instead: "
+            "is not a multiple of runtime.workersPerPod runs on a single pod instead: "
             "--total-workers 25 = 1 pod × 25 workers.",
         ),
         CLIParameter(name="--total-workers", group=_KubeGroups.KUBERNETES),

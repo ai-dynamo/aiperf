@@ -78,19 +78,19 @@ def sample_body() -> dict[str, Any]:
 
 @pytest.fixture
 def minimal_aiperfjob_spec() -> dict[str, Any]:
-    """Create a minimal flat AIPerfJob spec for testing."""
+    """Create a minimal AIPerfJob spec for testing (nested benchmark format)."""
     return build_minimal_aiperfjob_spec()
 
 
 @pytest.fixture
 def full_aiperfjob_spec() -> dict[str, Any]:
-    """Create a complete flat AIPerfJob spec with all options."""
+    """Create a complete AIPerfJob spec with all options (nested benchmark format)."""
     return build_full_aiperfjob_spec()
 
 
 @pytest.fixture
 def aiperfjob_spec_high_concurrency() -> dict[str, Any]:
-    """Create a flat AIPerfJob spec with high concurrency for worker scaling tests."""
+    """Create an AIPerfJob spec with high concurrency for worker scaling tests."""
     return build_high_concurrency_spec()
 
 

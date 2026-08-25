@@ -40,8 +40,12 @@ from aiperf.operator.routers.jobs_models import JobEventsResponse, JobPodSummary
 
 logger = logging.getLogger("aiperf.operator.ui")
 
+# Public surface consumed by ``sweeps.py``; everything else in this module is
+# private to the diagnostics endpoints.
+__all__ = ["fetch_sweep_pod_summaries", "register_diagnostics_routes"]
 
-async def list_sweep_controller_pods(
+
+async def _list_sweep_controller_pods(
     api: ApiClient,
     namespace: str,
     name: str,
@@ -74,7 +78,7 @@ async def fetch_sweep_pod_summaries(
     if source == "archived":
         return []
     try:
-        pod_objs = await list_sweep_controller_pods(api, namespace, name)
+        pod_objs = await _list_sweep_controller_pods(api, namespace, name)
     except Exception as e:  # noqa: BLE001 - degrade to empty pod list
         logger.warning(
             "failed to list sweep-controller pods for %s/%s: %s",
@@ -86,7 +90,7 @@ async def fetch_sweep_pod_summaries(
     return [_pod_summary(p) for p in pod_objs]
 
 
-async def list_sweep_events_impl(
+async def _list_sweep_events_impl(
     api: ApiClient,
     namespace: str,
     name: str,
@@ -117,7 +121,7 @@ async def list_sweep_events_impl(
 
     cr_events = await list_events_for_object(api, namespace, name)
 
-    pods = await list_sweep_controller_pods(api, namespace, name)
+    pods = await _list_sweep_controller_pods(api, namespace, name)
     pod_names = [p.metadata.name for p in pods if p.metadata and p.metadata.name]
 
     pod_event_lists: list[list[Any]] = []
@@ -150,7 +154,7 @@ async def list_sweep_events_impl(
     return JobEventsResponse(events=entries[:MAX_EVENTS_RETURNED])
 
 
-async def get_sweep_logs_impl(
+async def _get_sweep_logs_impl(
     api: ApiClient,
     namespace: str,
     name: str,
@@ -167,8 +171,8 @@ async def get_sweep_logs_impl(
     and reads logs through the same Core V1 ``read_namespaced_pod_log``
     helpers used by the job-side endpoint. Container defaults to the
     pod's ``kubectl.kubernetes.io/default-container`` annotation if set,
-    else the first non-sidecar container — matching
-    ``jobs_logs._default_container``.
+    else the control-plane container, else the first non-sidecar container
+    — matching ``jobs_logs._default_container``.
 
     Raises:
         HTTPException: 404 if no sweep-controller pod can be found, or
@@ -179,11 +183,11 @@ async def get_sweep_logs_impl(
     from kubernetes_asyncio import client as k8s
 
     # Validate before ``name`` reaches the JobSet label selector built by
-    # ``list_sweep_controller_pods`` — an unvalidated name can inject selector
+    # ``_list_sweep_controller_pods`` — an unvalidated name can inject selector
     # syntax and match pods outside this sweep.
     validate_results_path_params(namespace, name)
 
-    pods = await list_sweep_controller_pods(api, namespace, name)
+    pods = await _list_sweep_controller_pods(api, namespace, name)
     if not pods:
         raise HTTPException(
             404,
@@ -236,8 +240,8 @@ def register_diagnostics_routes(
     """Attach the events and logs endpoints to the sweeps router.
 
     Wires:
-      - ``GET /sweeps/{namespace}/{name}/events`` -> :func:`list_sweep_events_impl`
-      - ``GET /sweeps/{namespace}/{name}/logs``   -> :func:`get_sweep_logs_impl`
+      - ``GET /sweeps/{namespace}/{name}/events`` -> :func:`_list_sweep_events_impl`
+      - ``GET /sweeps/{namespace}/{name}/logs``   -> :func:`_get_sweep_logs_impl`
 
     ``require_api`` is the same ``_require_api`` factory used by the
     other sweep routes — it lazily resolves a live ``ApiClient`` once the
@@ -249,7 +253,7 @@ def register_diagnostics_routes(
         response_model=JobEventsResponse,
     )
     async def list_sweep_events(namespace: str, name: str) -> JobEventsResponse:
-        return await list_sweep_events_impl(require_api(), namespace, name)
+        return await _list_sweep_events_impl(require_api(), namespace, name)
 
     @router.get("/sweeps/{namespace}/{name}/logs")
     async def get_sweep_logs(
@@ -261,7 +265,7 @@ def register_diagnostics_routes(
         tail_lines: int = 200,
         container: str | None = None,
     ) -> Any:
-        return await get_sweep_logs_impl(
+        return await _get_sweep_logs_impl(
             require_api(),
             namespace,
             name,

@@ -158,7 +158,46 @@ Both modes accept the same flags. To preview the manifests without
 submitting them, use `aiperf kube generate --operator` or `aiperf kube
 generate --no-operator` instead — or pass `--dry-run` to `profile`, which
 prints the would-be CR as JSON in operator mode, or the raw manifests as
-multi-document YAML in direct mode.
+multi-document YAML in direct mode. Both forms write the payload to stdout
+verbatim, so `--dry-run > job.json` and `--dry-run | jq` stay valid however
+long the image reference or endpoint URL is.
+
+#### `--dry-run` fidelity
+
+`--dry-run` is intentionally usable with no cluster reachable at all, which
+is what makes `--no-operator --dry-run > bench.yaml` (see
+[direct-mode.md](./direct-mode.md)) work from a laptop with no kubeconfig.
+Two consequences follow, and both mean dry-run output can differ from what a
+real run would submit:
+
+1. **The mode shown is assumed, not detected.** `--dry-run` skips the
+   `operator_available` CRD probe entirely, so with neither `--operator` nor
+   `--no-operator` it always renders the `AIPerfJob` CR — even on a cluster
+   where the CRD is absent and a real run would have fallen back to direct
+   mode. `profile` prints a note to stderr saying so; pass `--no-operator`
+   to preview direct-mode manifests. Only the *unset*-flag row diverges:
+
+   | `--dry-run` | operator flag | AIPerfJob CRD | Path previewed / taken | Cluster probed |
+   |---|---|---|---|---|
+   | yes | unset | present | operator | no |
+   | yes | unset | **absent** | **operator** | no |
+   | yes | `--operator` | either | operator | no |
+   | yes | `--no-operator` | either | direct | no |
+   | no | unset | present | operator | yes |
+   | no | unset | **absent** | **direct** | yes |
+   | no | `--operator` | either | operator | no |
+   | no | `--no-operator` | either | direct | no |
+
+2. **The CR is printed before validation.** In operator mode a real run pipes
+   the spec through `validate_job_spec` and submits the canonicalized Pydantic
+   dump, whereas `--dry-run` prints the literal pre-validation spec so you can
+   see exactly what you authored. For CLI-flag input the two are byte-identical,
+   but a hand-authored `AIPerfJob` CR passed with `-f` can differ: snake_case
+   envelope keys such as `ttl_seconds_after_finished` are printed as-is by
+   dry-run and submitted as `ttlSecondsAfterFinished`, and a spec carrying an
+   unknown key is printed happily by dry-run while a real submission exits 1
+   with `Unknown top-level envelope key(s)`. Use `aiperf kube validate` (or a
+   real submission) to check a CR's validity; `--dry-run` does not.
 
 ### Foreground vs. `--detach`
 
@@ -342,12 +381,14 @@ aiperf kube results --summary-only
    copied everything into its persistent volume. See
    [results-api.md](./results-api.md) for the HTTP surface and PVC layout.
 
-2. **`--from-pods`.** Goes directly to the benchmark controller pod. Tries
-   the controller HTTP API first, then falls back to `kubectl cp`. Required
-   for direct-mode deployments; useful in operator mode if the operator
-   hasn't synced yet or if you want the raw on-pod artifact tree. Combined
-   with `--shutdown`, the controller pod exits cleanly after the copy so the
-   JobSet can complete.
+2. **`--from-pods`.** Goes directly to the benchmark controller pod's HTTP
+   API. On the default `--all` path that API is the only tier — if it fails,
+   the download fails. The `kubectl cp` fallback exists only on the
+   `--summary-only` path, which tries the API first and copies from the
+   `control-plane` container if it fails. Required for direct-mode
+   deployments; useful in operator mode if the operator hasn't synced yet or
+   if you want the raw on-pod artifact tree. Combined with `--shutdown`, the
+   controller pod exits cleanly after the copy so the JobSet can complete.
 
 The command exits with status 1 when the target cannot be resolved or any
 requested result download fails. This makes a successful exit safe to use as

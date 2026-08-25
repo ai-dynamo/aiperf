@@ -127,8 +127,8 @@ def test_aggregate_sparkline_snapshot_e2e_latency_only() -> None:
 
 def test_aggregate_sparkline_snapshot_emits_zero_waiting() -> None:
     """Zero queue depth still produces a `requests-waiting: 0` entry so the
-    rolling buffer stays continuous; the curator hides the tile by snapshot
-    gate, but Task 2 will extend the curator to use the buffer instead."""
+    rolling buffer stays continuous; the curator hides the tile on a
+    zero-only snapshot and keeps it once the buffer holds a non-zero sample."""
     script = f"""
         import {{
           normalizeServerMetrics, aggregateSparklineSnapshot,
@@ -275,8 +275,9 @@ KPI_CARD = (
 
 def test_kpi_card_spark_colors_by_tone() -> None:
     """sparkColors(tone) returns stroke/fill matching the existing tile
-    color signal: accent for ok/default, red for warn/bad, dim for
-    neutral/ok/null. Helper lives in kpi-card-tone.js (no preact import)
+    color signal: accent for accent, amber for warn, red for bad, green for
+    ok, and dim grey for neutral, null, and any unrecognised tone. Helper
+    lives in kpi-card-tone.js (no preact import)
     so node can resolve it without the operator UI's importmap; kpi-card.js
     re-exports it for component callers."""
     script = f"""

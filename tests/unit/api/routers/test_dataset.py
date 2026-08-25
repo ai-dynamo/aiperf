@@ -332,7 +332,7 @@ class TestDatasetEndpointSuccessfulStreaming:
 
 
 class TestDatasetMixin:
-    """Test DatasetMixin message handling and properties."""
+    """Test DatasetRouter message handling and properties."""
 
     @pytest.mark.asyncio
     async def test_on_dataset_configured_stores_metadata(

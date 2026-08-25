@@ -20,7 +20,6 @@ _UNCOVERED_MODULES_WITH_REASON = {
     "components/spinner.js": "loading indicator helpers lack direct static fixture coverage",
     "components/sweep-live-trial-board.js": "live trial board presentation is exercised through composed sweep-detail page tests; lacks a direct static fixture test",
     "components/sweep-winner-summary.js": "winner summary presentation is exercised through composed sweep-detail page tests; lacks a direct static fixture test",
-    "lib/theme-switch.js": "theme switch DOM wiring lacks direct static-unit coverage",
     "lib/theme.js": "theme persistence helpers lack direct static-unit coverage",
     "pages/compare-epochs.js": "compare epoch page orchestration lacks direct static-unit coverage",
 }

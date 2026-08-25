@@ -61,7 +61,7 @@ async def list_jobsets(
 ) -> list[JobSetInfo]:
     """List AIPerf-owned JobSets, sorted newest-first.
 
-    Always filters by ``AIPerfLabels.SELECTOR`` (``app.kubernetes.io/part-of=aiperf``)
+    Always filters by ``AIPerfLabels.SELECTOR`` (``app=aiperf``)
     so third-party JobSets never appear. ``job_id`` narrows further to a single
     job's JobSet.
 

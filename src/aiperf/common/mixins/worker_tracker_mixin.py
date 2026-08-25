@@ -48,7 +48,7 @@ def worst_status(statuses: Iterable[WorkerStatus]) -> WorkerStatus:
 
     Example:
         >>> worst_status([WorkerStatus.HEALTHY, WorkerStatus.ERROR])
-        <WorkerStatus.ERROR: 'error'>
+        WorkerStatus.ERROR
     """
     materialized = list(statuses)
     if not materialized:

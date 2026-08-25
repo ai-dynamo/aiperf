@@ -5,7 +5,7 @@
 asyncio keeps only a weak reference to a running task. A bare
 ``asyncio.create_task(...)`` whose result nobody holds is collectable the
 moment it yields -- and a collected task never runs its ``finally`` block.
-Both sites here have a user-visible consequence when that happens: the API's
+Each site here has a user-visible consequence when that happens: the API's
 delayed stop silently never stops the pod, and the dashboard's refresh leaves
 ``dashboard_refresh_inflight`` stuck True so every later refresh answers
 ``already_rebuilding`` forever.

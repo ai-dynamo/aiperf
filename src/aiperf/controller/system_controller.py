@@ -1907,7 +1907,7 @@ class SystemController(PodStateTrackerMixin, SignalHandlerMixin, BaseService):
         return True
 
     async def _finalize_kubernetes_raw_artifacts(self) -> None:
-        """Wait for every exact worker group to flush and upload RAW artifacts.
+        """Wait for the surviving worker groups to flush and upload RAW artifacts.
 
         This command runs before the shutdown broadcast, while the controller,
         worker-group managers, and record processors can still acknowledge

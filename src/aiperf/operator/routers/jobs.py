@@ -375,9 +375,9 @@ async def _get_job_impl(
     (phase, conditions, liveMetrics), and (3) the current pod list filtered by
     the ``aiperf.nvidia.com/job-id=<name>`` label selector.
 
-    Archived (PVC-only) jobs have no cluster CR, so the response returns an
-    empty ``status`` dict and empty ``pods`` list alongside the archived job
-    summary.
+    Archived (PVC-only) jobs have no cluster CR, so ``status`` is synthesized
+    from the persisted summary plus any ``conditions.json`` on the run
+    directory, and ``pods`` comes back empty.
 
     When ``epoch`` is supplied, the archived half is pinned to that historical
     run directory rather than ``latest.txt``; ``find_any_job`` likewise refuses
@@ -1001,8 +1001,9 @@ def create_jobs_router(
 ) -> APIRouter:
     """Create the jobs/cluster API router.
 
-    All endpoints return 503 if the Kubernetes ApiClient has not been
-    initialised (set during FastAPI lifespan startup). See the ``_*_impl``
+    Endpoints that require the cluster return 503 if the Kubernetes ApiClient
+    has not been initialised (set during FastAPI lifespan startup); the epoch
+    listing degrades to the runs index plus disk instead. See the ``_*_impl``
     helpers above for per-endpoint behaviour and error semantics.
 
     Args:

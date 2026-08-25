@@ -10,7 +10,7 @@ from aiperf.kubernetes.constants import AIPerfLabels, JobSetLabels
 def job_selector(job_id: str) -> str:
     """Build the label selector for all AIPerf resources belonging to a job.
 
-    Combines the repo-wide ``AIPerfLabels.SELECTOR`` (``app.kubernetes.io/part-of=aiperf``)
+    Combines the repo-wide ``AIPerfLabels.SELECTOR`` (``app=aiperf``)
     with the per-job ``AIPerfLabels.JOB_ID`` into a single comma-separated selector
     string consumable by any ``list_*`` / ``delete_*`` k8s API.
 
@@ -18,7 +18,7 @@ def job_selector(job_id: str) -> str:
         job_id: AIPerf job ID (the value stored on ``metadata.labels[aiperf.nvidia.com/job-id]``).
 
     Returns:
-        A selector string like ``"app.kubernetes.io/part-of=aiperf,aiperf.nvidia.com/job-id=<job_id>"``.
+        A selector string like ``"app=aiperf,aiperf.nvidia.com/job-id=<job_id>"``.
 
     Raises:
         Never raises — pure string construction.

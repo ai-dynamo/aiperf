@@ -528,6 +528,34 @@ class TestValidateFiles:
         assert passed == 0
         assert failed == 1
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "divisor",
+        [
+            param(0, id="int-zero"),
+            param(0.0, id="float-zero"),
+            param(-0.0, id="negative-float-zero"),
+            param(False, id="yaml-false"),
+            param(1.0e-320, id="denormal-1e-320"),
+            param(5e-324, id="smallest-subnormal"),
+        ],
+    )  # fmt: skip
+    async def test_bad_connections_per_worker_does_not_abort_the_run(
+        self, tmp_path: Path, divisor: object
+    ) -> None:
+        """A divisor that used to raise must fail one file, not the whole batch."""
+        bad_doc = _minimal_doc()
+        bad_doc["spec"]["connectionsPerWorker"] = divisor
+        bad = _write_yaml(tmp_path / "bad.yaml", bad_doc)
+        good_doc = _minimal_doc()
+        good_doc["metadata"]["name"] = "good-job"
+        good = _write_yaml(tmp_path / "good.yaml", good_doc)
+
+        with patch("aiperf.kubernetes.validate.kube_console"):
+            passed, failed = await validate_files([bad, good])
+
+        assert (passed, failed) == (1, 1)
+
 
 # ---------------------------------------------------------------------------
 # CLI entrypoint
@@ -627,3 +655,31 @@ class TestValidateCLI:
         parsed = orjson.loads(capsys.readouterr().out)
         assert parsed[0]["passed"] is False
         assert any("spec.sweep" in error for error in parsed[0]["errors"])
+
+    @pytest.mark.asyncio
+    async def test_json_output_survives_a_malformed_first_file(
+        self, tmp_path: Path, capsys
+    ) -> None:
+        """A leading crash-inducing file used to leave stdout at zero bytes.
+
+        The `jq -e` CI recipe in docs/kubernetes/validate.md then got empty
+        input. Every file must still appear in the array, in argument order.
+        """
+        bad_doc = _minimal_doc()
+        bad_doc["spec"]["connectionsPerWorker"] = 0
+        bad = _write_yaml(tmp_path / "bad.yaml", bad_doc)
+        good_doc = _minimal_doc()
+        good_doc["metadata"]["name"] = "good-job"
+        good = _write_yaml(tmp_path / "good.yaml", good_doc)
+
+        from aiperf.cli_commands.kube.validate import validate
+
+        with pytest.raises(SystemExit) as exc_info:
+            await validate(files=[bad, good], output="json")
+
+        assert exc_info.value.code == 1
+        stdout = capsys.readouterr().out
+        assert stdout, "stdout must not be empty in JSON mode"
+        parsed = orjson.loads(stdout)
+        assert [entry["passed"] for entry in parsed] == [False, True]
+        assert any("greater_than_equal" in e for e in parsed[0]["errors"])

@@ -13,8 +13,8 @@ leaves cold:
   403 SKIP / non-403 WARN
 - check_network_policies: empty PASS / present WARN / 403 SKIP / non-403 WARN
 - check_dns: ready / found-not-ready / missing / API error
-- check_endpoint_connectivity: HTTPS default port + http default port + .svc
-  cluster.local short form
+- check_endpoint_connectivity: HTTPS default port + http default port +
+  explicit port
 """
 
 from __future__ import annotations
@@ -480,7 +480,7 @@ class TestCheckDns:
 
 
 class TestCheckEndpointConnectivityPorts:
-    """Default-port logic for http/https + svc.cluster.local long form."""
+    """Default-port logic for http/https external URLs, plus an explicit port."""
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(

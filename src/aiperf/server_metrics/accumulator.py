@@ -646,7 +646,12 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         include_final_collection: bool,
         phase_index: int | None = None,
     ) -> dict[str, ServerMetricsEndpointSummary]:
-        """Compute per-endpoint summaries from samples whose record phase matches ``phase``."""
+        """Compute per-endpoint summaries from samples matching one phase.
+
+        ``phase_index`` selects a single concrete named phase instance and
+        supersedes ``phase`` for sample filtering; without it, every sample
+        carrying ``phase`` is included regardless of which instance produced it.
+        """
         summaries: dict[str, ServerMetricsEndpointSummary] = {}
 
         for (

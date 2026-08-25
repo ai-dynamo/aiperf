@@ -15,8 +15,6 @@ Covers:
   branch).
 * ``aiperf kube generate`` -- ``KubeOptions.to_crd_spec`` (single
   benchmark) and ``_build_sweep_spec`` (sweep CR).
-* ``aiperf kube profile`` -- ``deploy_via_operator``'s round-trip path
-  (validates the spec it would submit).
 * ``aiperf kube sweep`` -- ``_build_sweep_cr_dict``'s
   ``AIPerfSweepSpec.model_validate`` round-trip.
 """

@@ -2031,7 +2031,7 @@ Skip endpoint health validation before deploying.
 
 #### `--dry-run`
 
-Print the AIPerfJob CR as JSON without submitting it.
+Print what would be submitted to stdout, then exit without contacting the cluster. Operator mode prints the AIPerfJob CR as JSON; --no-operator prints the Namespace, Role, RoleBinding, ConfigMap and JobSet as a multi-document YAML stream. Because no cluster is contacted, the mode shown is assumed, not detected: pass --no-operator to preview direct mode. The CR is also printed before AIPerfJobSpec validation, so a real submission may canonicalize snake_case keys to camelCase or reject keys a dry run prints.
 <br/>_Flag (no value required)_
 
 #### `--operator`
@@ -2041,7 +2041,7 @@ Force operator deployment without probing the cluster-scoped AIPerfJob CRD. Use 
 
 #### `--no-operator`
 
-Force direct deployment without the operator. Automatically enabled if the AIPerfJob CRD is not installed on the cluster.
+Force direct deployment without the operator. On a real (non-dry-run) deploy this is enabled automatically if the AIPerfJob CRD is not installed on the cluster; --dry-run never probes, so it always previews operator mode unless you pass this flag.
 
 <hr/>
 
@@ -5516,11 +5516,11 @@ Output directory for results (default: ./artifacts/{name}).
 
 #### `--from-pods`, `--no-from-pods`
 
-Retrieve results from benchmark pods instead of the operator. Tries the controller API first, falls back to kubectl cp.
+Retrieve results from benchmark pods instead of the operator, via the controller API. Only --summary-only adds a kubectl cp fallback.
 
 #### `-a`, `--all`, `--summary-only`
 
-Download all artifacts. Use --summary-only to download only summary results.
+Download all artifacts (with --from-pods: controller API only, no fallback). Use --summary-only to download only summary results, which with --from-pods tries the controller API first and falls back to kubectl cp.
 <br/>_Flag (no value required)_
 <br/>_Default: `True`_
 

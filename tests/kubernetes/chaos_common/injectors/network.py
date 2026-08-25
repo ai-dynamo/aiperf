@@ -12,14 +12,14 @@ toxiproxy.py``) to the unified chaos interface defined in
 * ``network.bandwidth``   -> ``bandwidth`` toxic
 * ``network.reset_peer``  -> ``reset_peer`` toxic
 * ``network.slow_close``  -> ``slow_close`` toxic
-* ``network.partition``   -> full proxy disable (``PATCH /proxies/<name>``
+* ``network.partition``   -> full proxy disable (``POST /proxies/<name>``
   with ``enabled: false``), restored by re-enabling.
 
 Phase 2 scope: toxic add/remove + proxy disable. The Toxiproxy proxy
 itself is set up at fixture time (see ``tests/kubernetes/chaos/conftest.py``
 ``toxiproxy_injector``); this injector only mutates toxics on existing
-proxies. Phase 3 will add ``cluster.network_policy.deny_egress`` for the
-egress-blackhole case under a separate ``ClusterNetworkInjector``.
+proxies. The egress-blackhole case lives outside this injector as
+``cluster.network_policy.deny_egress`` on :py:class:`ClusterInjector`.
 """
 
 from __future__ import annotations
@@ -133,7 +133,7 @@ async def _patch_proxy_enabled(
     *,
     enabled: bool,
 ) -> None:
-    """PATCH ``/proxies/<name>`` with ``enabled`` flag.
+    """POST ``/proxies/<name>`` with ``enabled`` flag.
 
     Implemented locally (instead of extending :py:class:`ToxiproxyInjector`)
     because the legacy class is owned by ``chaos/`` and the unified-chaos
@@ -181,7 +181,7 @@ class NetworkInjector(FaultInjector):
     into a single ``add_toxic`` call and tracks the auto-generated toxic
     name for restore.
 
-    ``fault_id="network.partition"`` disables the proxy via PATCH
+    ``fault_id="network.partition"`` disables the proxy via POST
     ``/proxies/<name>`` with ``enabled: false``; restore re-enables it.
     """
 

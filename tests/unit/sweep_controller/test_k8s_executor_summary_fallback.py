@@ -252,8 +252,8 @@ async def test_pull_summary_skips_refresh_when_run_epoch_already_set() -> None:
     loop and goes straight to the operator-API fallback.
 
     This is the legacy fallback path — preserves pre-fix behavior so existing
-    callers that rely on the immediate operator-API hit don't pay the 12s
-    grace tax.
+    callers that rely on the immediate operator-API hit don't pay the settle
+    loop's grace tax.
     """
     child = _child(summary={}, run_epoch=1700000000)
     expected = {"request_throughput": MagicMock()}

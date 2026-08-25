@@ -212,10 +212,11 @@ def test_band_stays_absent_when_a_caller_supplies_spread_it_did_not_measure(
 ) -> None:
     """The chart gates on `n`, not only on `std` being finite.
 
-    `pages/sweep-detail.js` currently maps `std: r?.std ?? 0` on the way into
-    this component, which would turn the honest null straight back into a
-    zero-width band. Gating on the trial count means the shading cannot
-    contradict the tooltip regardless of what a caller sends.
+    `pages/sweep-detail.js` maps `std: r?.std ?? null` on the way into this
+    component, but a caller that coerced `std ?? 0` instead would turn the
+    honest null straight back into a zero-width band. Gating on the trial count
+    means the shading cannot contradict the tooltip regardless of what a caller
+    sends.
     """
     chart = _render_chart(variations_js)
 

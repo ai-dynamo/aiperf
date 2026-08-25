@@ -339,7 +339,11 @@ def test_boundary_summary_carries_both_edges_and_first_breach(tmp_path: Path) ->
 
 
 def test_smooth_isotonic_boundary_extras_are_carried(tmp_path: Path) -> None:
-    """``boundary_type``/``binding_constraint`` are absent, not null, for BO."""
+    """``boundary_type``/``binding_constraint`` survive the projection.
+
+    Only the smooth-isotonic planner writes these two; the BO planner omits
+    them entirely, so they default to null rather than being carried.
+    """
     doc = _search_history_doc()
     doc["boundary_summary"]["boundary_type"] = "cliff"
     doc["boundary_summary"]["binding_constraint"] = "time_to_first_token:p99"
@@ -415,9 +419,9 @@ def test_null_inside_objective_values_keeps_its_slot(tmp_path: Path) -> None:
     """An unscored objective must NOT be compacted out of the vector.
 
     ``objective_values`` is positional against ``config.objectives`` and the
-    exporter writes explicit nulls on purpose: ``scrub_non_finite`` maps a NaN
-    score to null so the artifact keeps "the scorer returned NaN for this
-    objective" distinct from "this iteration was never scored"
+    exporter writes explicit nulls on purpose: ``scrub_non_finite`` replaces a
+    non-finite score with null before ``orjson.dumps``, so a null slot means
+    "no usable score for this objective"
     (exporters/search_history.py:135-138). Dropping the null shortens the vector
     and shifts every later objective onto the wrong label -- on this two-
     objective run, objective #2's slot would render objective #1's 42.5.

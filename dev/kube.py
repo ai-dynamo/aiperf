@@ -2307,7 +2307,7 @@ def cmd_install_dynamo() -> str:
 
 
 def _kueue_default_queues_manifest() -> str:
-    """Render ResourceFlavor + ClusterQueue + LocalQueue for the default namespace.
+    """Render Namespace + ResourceFlavor + ClusterQueue + LocalQueue for aiperf-benchmarks.
 
     Seeds a best-effort queue pair so benchmark jobs referencing
     `queue-name=aiperf-local-queue` Just Work without extra setup. The

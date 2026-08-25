@@ -292,6 +292,19 @@ The helper
 when `serviceAccount.create` is false, so the operator Deployment will
 reference the pre-provisioned SA as expected.
 
+`serviceAccount.name` is **required** in that mode. Leaving it empty used to
+resolve to the namespace `default` ServiceAccount — an identity holding none of
+the operator's `ClusterRole` — so the install succeeded and the operator then
+403'd on every reconcile. The helper now fails the render instead:
+
+```
+Error: execution error at (aiperf-operator/templates/deployment.yaml:33:29):
+serviceAccount.name is required when serviceAccount.create=false. ...
+```
+
+Set `serviceAccount.name` to the pre-provisioned account named in your
+`ClusterRoleBinding` subject.
+
 ## Pod `securityContext`
 
 Every container in both the controller and worker pods receives a
@@ -525,7 +538,9 @@ A hardened rollout checklist:
 
 1. **Pre-provision operator RBAC** — apply the `ServiceAccount`,
    `ClusterRole`, and `ClusterRoleBinding` under admin review. Install the
-   chart with `rbac.create=false` and `serviceAccount.create=false`.
+   chart with `rbac.create=false` and `serviceAccount.create=false`, and pass
+   `serviceAccount.name` naming the account you created — the chart rejects
+   `serviceAccount.create=false` without it.
 2. **Dedicated benchmark namespace per team** — never share the benchmark
    namespace between teams. Benchmark pods have read access to every pod
    in the namespace (`benchmark-rbac.yaml:19-21`), so coexisting unrelated

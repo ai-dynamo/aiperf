@@ -7,13 +7,13 @@ from __future__ import annotations
 import re
 
 import aiohttp
+from kubernetes_asyncio import client
 from kubernetes_asyncio.client.exceptions import ApiException
 
 from aiperf.kubernetes.constants import JOBSET_INSTALL_HINT
 from aiperf.kubernetes.cr_refs import JOBSET_GROUP, JOBSET_PLURAL, JOBSET_VERSION
 from aiperf.kubernetes.preflight import CheckResult, CheckStatus
 from aiperf.kubernetes.preflight_utils import check_rbac_access
-from aiperf.operator import preflight as _pf
 from aiperf.operator.preflight._common import (
     MIN_K8S_MAJOR,
     MIN_K8S_MINOR,
@@ -26,7 +26,7 @@ class _Tier1ChecksMixin:
 
     async def _check_kubernetes_version(self) -> CheckResult:
         """Verify Kubernetes version >= 1.24."""
-        vinfo = await _pf.client.VersionApi(self.api).get_code()
+        vinfo = await client.VersionApi(self.api).get_code()
         major_str = re.sub(r"[^0-9]", "", vinfo.major or "0")
         minor_str = re.sub(r"[^0-9]", "", vinfo.minor or "0")
         major = int(major_str) if major_str else 0
@@ -52,7 +52,7 @@ class _Tier1ChecksMixin:
     async def _check_jobset_crd(self) -> CheckResult:
         """Verify JobSet CRD is installed."""
         try:
-            await _pf.client.CustomObjectsApi(self.api).list_cluster_custom_object(
+            await client.CustomObjectsApi(self.api).list_cluster_custom_object(
                 group=JOBSET_GROUP,
                 version=JOBSET_VERSION,
                 plural=JOBSET_PLURAL,

@@ -55,6 +55,7 @@ async def _stream_pod_log(
                 line.decode("utf-8", errors="replace").rstrip("\n"),
                 highlight=False,
                 markup=False,
+                soft_wrap=True,
             )
     finally:
         await raw.release()
@@ -84,6 +85,7 @@ async def _print_pod_log(
         log_text.rstrip("\n") if log_text else "",
         highlight=False,
         markup=False,
+        soft_wrap=True,
     )
 
 
@@ -250,7 +252,7 @@ async def logs(
     If no job_id is specified, uses the last deployed benchmark.
 
     Use --output to save logs to a directory instead of printing to stdout.
-    Each pod's logs are saved as {pod-name}.log.
+    Each pod's logs are saved as <output>/logs/{pod-name}.log.
 
     Examples:
         # Get logs from last deployed job

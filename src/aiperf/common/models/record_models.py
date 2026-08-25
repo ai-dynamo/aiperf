@@ -1156,8 +1156,8 @@ class RequestRecord(AIPerfBaseModel):
         The one conversion from worker time to controller time:
         ``controller_time = worker_time - clock_offset_ns``. Returns
         ``timestamp_ns`` unchanged when no offset was measured (every
-        non-Kubernetes run, and a Kubernetes worker before its first credit),
-        so callers need no mode check.
+        non-Kubernetes run, and a Kubernetes worker before its clock-offset
+        tracker calibrates), so callers need no mode check.
 
         Use this wherever a wall-clock timestamp is compared or exported
         against anything produced outside this worker's pod - credit issue

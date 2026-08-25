@@ -3,9 +3,11 @@
 
 """Post-run callback that invokes ``aiperf plot`` against an artifact dir.
 
-CLI-time helper, not part of the service lifecycle, so it uses stdlib
-:mod:`logging` rather than :class:`AIPerfLogger`. Imported lazily by
-``run_benchmark`` only when ``--auto-plot`` resolves to True.
+Uses stdlib :mod:`logging` rather than :class:`AIPerfLogger` because it runs
+outside the service message bus. Imported lazily only when ``--auto-plot``
+resolves to True: ``run_benchmark`` takes the sync callback, while the
+SystemController and sweep-controller Kubernetes completion paths await
+``run_auto_plot_async``.
 
 When the envelope ships a ``plot:`` section, the callback materializes the
 resolved ``PlotEnvelopeConfig`` to ``<artifact_dir>/.aiperf-plot-config.yaml``

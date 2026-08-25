@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import aiohttp
+from kubernetes_asyncio import client
 from kubernetes_asyncio.client.exceptions import ApiException
 
 from aiperf.kubernetes.preflight import CheckResult, CheckStatus
@@ -14,7 +15,6 @@ from aiperf.kubernetes.utils import (
     parse_cpu,
     parse_memory_gib,
 )
-from aiperf.operator import preflight as _pf
 from aiperf.operator.preflight._common import (
     _is_node_ready_typed,
     controller_resource_requirements,
@@ -87,7 +87,7 @@ class _ResourceChecksMixin:
             return skip
 
         try:
-            node_list = await _pf.client.CoreV1Api(self.api).list_node()
+            node_list = await client.CoreV1Api(self.api).list_node()
             nodes = node_list.items
         except (TimeoutError, ApiException, aiohttp.ClientError, OSError) as e:
             return CheckResult(
@@ -175,7 +175,7 @@ class _ResourceChecksMixin:
             )
 
         try:
-            node_list = await _pf.client.CoreV1Api(self.api).list_node()
+            node_list = await client.CoreV1Api(self.api).list_node()
             nodes = node_list.items
         except (TimeoutError, ApiException, aiohttp.ClientError, OSError) as e:
             return CheckResult(
@@ -217,7 +217,7 @@ class _ResourceChecksMixin:
             return skip
 
         try:
-            node_list = await _pf.client.CoreV1Api(self.api).list_node()
+            node_list = await client.CoreV1Api(self.api).list_node()
             nodes = node_list.items
         except (TimeoutError, ApiException, aiohttp.ClientError, OSError) as e:
             return CheckResult(
@@ -272,7 +272,7 @@ class _ResourceChecksMixin:
             return skip
 
         try:
-            quota_list = await _pf.client.CoreV1Api(
+            quota_list = await client.CoreV1Api(
                 self.api
             ).list_namespaced_resource_quota(
                 namespace=self.namespace,
@@ -382,7 +382,7 @@ class _ResourceChecksMixin:
             )
 
         try:
-            node_list = await _pf.client.CoreV1Api(self.api).list_node()
+            node_list = await client.CoreV1Api(self.api).list_node()
             nodes = node_list.items
         except (TimeoutError, ApiException, aiohttp.ClientError, OSError) as e:
             return CheckResult(

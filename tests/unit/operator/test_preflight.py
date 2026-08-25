@@ -372,9 +372,10 @@ class TestCheckRBACPermissions:
     async def test_rbac_check_exception_treated_as_transient_warn(self) -> None:
         """A RuntimeError from the apiserver is transient — WARN, not FAIL.
 
-        ``RuntimeError`` is in ``_CLUSTER_API_ERRORS`` (network/aiohttp glue
-        sometimes wraps connection issues as RuntimeError). We can't say the
-        permission is missing because we never got an answer.
+        ``_check_rbac_permissions`` degrades any per-permission probe error
+        to the transient list (network/aiohttp glue sometimes wraps
+        connection issues as RuntimeError). We can't say the permission is
+        missing because we never got an answer.
         """
         checker = _make_checker()
         mock_auth = MagicMock(
@@ -1248,7 +1249,7 @@ class TestRunCheckExceptionHandling:
 
     @pytest.mark.asyncio
     async def test_4xx_api_exception_classified_as_permanent_fail(self) -> None:
-        """ApiException with HTTP 4xx -> FAIL (permanent — bad request, forbidden)."""
+        """ApiException with HTTP 403 -> FAIL (permanent — forbidden)."""
         checker = _make_checker()
 
         async def _forbidden():

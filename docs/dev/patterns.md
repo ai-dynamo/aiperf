@@ -329,6 +329,40 @@ self.debug(lambda: f"Processing {len(self._items())} items")
 self.info("Starting service")
 ```
 
+## Machine-Readable Kube CLI Output Pattern
+
+Any `aiperf kube` command with a JSON or YAML output mode writes the payload
+through `kube_console.emit_raw`, never `kube_console.console.print`. Rich
+hard-wraps lines wider than the resolved console width — 80 whenever stdout is
+not a tty — and the wrap lands inside the token, so a long image reference or
+endpoint URL turns a valid document into an unparseable one under redirection
+or in CI. `soft_wrap=True` also avoids the wrap, but it is per-call discipline
+that is easy to forget; `emit_raw` makes the correct path the only path.
+
+```python
+from aiperf.kubernetes import console as kube_console
+
+kube_console.emit_raw(orjson.dumps(payload, option=orjson.OPT_INDENT_2).decode())
+kube_console.emit_raw(yaml.safe_dump(doc, width=float("inf")), end="")  # already \n-terminated
+```
+
+Wrap the work that produces the payload in `machine_readable_stdout()` when it
+can log. The context manager retargets the `aiperf.kube` handlers to stderr for
+the duration instead of filtering by level, so a record emitted at *any* level
+— including one added by a later change — cannot prepend text to the document
+on stdout. Diagnostics stay visible, just on the other stream.
+
+```python
+with kube_console.machine_readable_stdout():
+    results = await checker.run_all_checks()
+kube_console.emit_raw(orjson.dumps(results.to_dict()).decode())
+```
+
+Human-facing log text (`aiperf kube logs`, controller log streaming) keeps
+going through `console.print`, but with `soft_wrap=True`: those lines may want
+styling later, and letting the terminal fold a long URL beats breaking it
+mid-token.
+
 ## NaN/Inf Discipline Pattern
 
 NaN/+inf/-inf in metric data corrupts downstream artifacts in three ways:

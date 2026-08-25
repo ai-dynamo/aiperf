@@ -6,7 +6,7 @@ Focuses on:
 - Health check endpoint
 - Job listing (empty, populated, nested structures)
 - File listing with .zst display name stripping
-- File download with content negotiation (zstd, gzip, identity)
+- File download rejecting requests without an explicit run epoch
 - Path traversal protection via _safe_resolve
 - Analytics endpoints (leaderboard, history, compare, summary)
 - Edge cases: empty dirs, missing files, corrupted data

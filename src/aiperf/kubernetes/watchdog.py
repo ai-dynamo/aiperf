@@ -6,7 +6,9 @@ Autonomous monitoring agent that runs as a background task alongside
 benchmark deployments. Continuously watches the cluster, reasons about
 pod state, detects problems early, and returns structured findings.
 
-This module is the production in-cluster monitor invoked by the operator.
+This module is the CLI-side monitor that ``aiperf.kubernetes.watch.watch_job``
+runs alongside AIPerfJob CR polling; the operator reuses only the shared
+``K8sEnvironment.WATCHDOG`` thresholds, not this class.
 
 Data models, event/pod-check helpers, rendering, and the kubernetes_asyncio
 data source live in sibling modules (``watchdog_models``, ``watchdog_events``,
@@ -459,7 +461,7 @@ class BenchmarkWatchdog:
             self._log.debug("[WATCHDOG] _check_stale_namespaces failed", exc_info=True)
 
     async def _check_pod_resources(self) -> None:
-        """Check pod resource usage and warn on high memory."""
+        """Check pod resource usage and warn when memory grows past its peak."""
         try:
             metrics = await self._source.get_pod_metrics(self.namespace)
             for pm in metrics:

@@ -62,7 +62,7 @@ class TestInitCallableSignature:
         assert param_name in sig.parameters
 
     def test_signature_defaults(self) -> None:
-        """Defaults match the docstring contract: bool flags off, paths/strings None."""
+        """Defaults match the docstring contract: bool flags off, paths/strings None except job_name."""
         from aiperf.cli_commands.kube.init import init_config
 
         sig = inspect.signature(init_config)

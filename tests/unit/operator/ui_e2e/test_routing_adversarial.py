@@ -17,7 +17,7 @@ Focuses on:
 - ``setQuery`` round-trip via direct ``window.location.hash`` mutation.
 - ``safeDecodeURIComponent`` truncated-UTF-8 fallback path.
 - Command palette (Ctrl+K) on dashboard with zero-result query.
-- Top-nav cross-links + external Plots ↗ link non-navigation.
+- Top-nav cross-links between Dashboard / Jobs / Sweeps.
 - ``hashchange`` listener pick-up on direct ``window.location.hash`` writes.
 - Concurrent route changes — final route is the last one requested.
 
@@ -229,8 +229,8 @@ def test_traversal_shaped_path_does_not_500_backend(
 
 
 def test_excess_dotdot_in_path_does_not_match_run_route(harness):
-    """``/jobs/foo/job/../runs/1714069323`` is 5 segments — must NOT match
-    ``/jobs/:ns/:name/runs/:epoch`` (4 visible segments after Boolean filter).
+    """``/jobs/foo/job/../runs/1714069323`` is 6 segments — must NOT match
+    ``/jobs/:ns/:name/runs/:epoch`` (5 segments after Boolean filter).
 
     The literal ``..`` segment is NOT collapsed by the router (it splits on
     ``/`` and filters empties only). It must land in the Not Found stub.
@@ -275,10 +275,8 @@ def test_empty_epoch_segment_does_not_match_run_route(harness):
     """``/jobs/<ns>/<name>/runs/`` with trailing slash — empty epoch.
 
     After ``split('/').filter(Boolean)``, the path has 4 segments (no empty
-    epoch tail), which matches ``/jobs/:ns/:name/runs/:epoch`` length only if
-    we consider ``runs`` as the ``epoch`` slot. Either it land on Not Found,
-    or it renders the run page with epoch=``runs``. Both are acceptable; the
-    invariant is "no crash".
+    epoch tail), and no route pattern is 4 segments long, so it lands on the
+    Not Found stub. This test only pins the weaker invariant "no crash".
     """
     harness.goto(f"/jobs/{harness.ns}/somename/runs/")
     harness.assert_no_console_errors(allow_substrings=("Failed to load resource",))
@@ -325,7 +323,7 @@ def test_compare_route_degenerate_epoch_pair_renders(
 def test_compare_route_missing_epoch_does_not_match(harness):
     """``/compare/<ns>/<name>/<epoch>`` (one epoch missing) -> 4 segments, not 5.
 
-    Pattern has 5 placeholders; mismatched length -> matchRoute returns null
+    Pattern is 5 segments; mismatched length -> matchRoute returns null
     -> Not Found stub.
     """
     harness.goto(f"/compare/{harness.ns}/somename/1714069323")
@@ -364,7 +362,7 @@ def test_back_button_round_trip_jobs_to_run_and_back(harness):
 
 def test_set_hash_via_evaluate_round_trips_query(harness):
     """Programmatically mutating ``window.location.hash`` to a path+query
-    must update the route signal (verified by breadcrumb refresh).
+    must update the route signal (verified by the jobs page rendering).
     """
     harness.goto_dashboard()
     harness.page.evaluate(
@@ -414,14 +412,11 @@ def test_truncated_utf8_in_route_param_does_not_crash(harness):
 def test_ctrl_k_opens_palette_on_dashboard(harness):
     """Ctrl+K opens the command palette overlay.
 
-    BUG (reproduces here): the handler in ``src/aiperf/operator/ui/app.js:30``
-    matches ``e.key === 'k'`` (lowercase), but Chromium emits ``e.key === 'K'``
-    (uppercase) for Ctrl+K when the Shift key is conceptually engaged for the
-    keysym lookup. The keystroke fires, ``ctrlKey`` is True, but the lowercase
-    comparison fails and the palette never opens. The Search button (clicked
-    in :func:`test_search_button_opens_palette`) is the working fallback.
-
-    Fix sketch: ``e.key.toLowerCase() === 'k'``.
+    Regression lock: the handler in ``src/aiperf/operator/ui/app.js`` used to
+    match ``e.key === 'k'`` (lowercase only), but Chromium emits
+    ``e.key === 'K'`` for Ctrl+K, so the keystroke fired with ``ctrlKey`` True
+    and the palette never opened. It now compares
+    ``e.key.toLowerCase() === 'k'``, so the palette must open here.
     """
     harness.goto_dashboard()
     harness.page.keyboard.press("Control+K")
@@ -433,7 +428,7 @@ def test_ctrl_k_opens_palette_on_dashboard(harness):
 def test_search_button_opens_palette(harness):
     """Clicking the Search button in the top-nav opens the command palette.
 
-    This is the fallback path that works today even with the Ctrl+K bug above.
+    Mouse-driven counterpart to the Ctrl+K path above.
     """
     harness.goto_dashboard()
     harness.page.locator("[data-testid=nav-search]").click()

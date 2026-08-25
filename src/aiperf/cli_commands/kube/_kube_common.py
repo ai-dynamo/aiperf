@@ -1,9 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Shared helpers used by `aiperf kube profile` and `aiperf kube sweep`.
+"""Shared helpers used across the `aiperf kube` subcommands.
 
-These helpers do not depend on AIPerfJob CR shape; they generate a DNS-safe
-benchmark name and print the memory estimate panel.
+These helpers do not depend on AIPerfJob CR shape; they resolve sweep child
+names and worker counts, generate a DNS-safe benchmark name, and print the
+memory estimate panel.
 """
 
 from __future__ import annotations
@@ -106,15 +107,19 @@ def resolve_total_workers(
     An explicit ``--total-workers`` owns the direct deployment fan-out. When
     omitted, ``benchmark.runtime.workers`` from YAML is the canonical total;
     only an absent total falls back to the concurrency-per-connection ratio.
+
+    ``connections_per_worker`` arrives straight off an unvalidated CR spec dict
+    here, so the ratio goes through ``workers_for_concurrency`` rather than
+    dividing inline.
     """
     if "total_workers" in kube_options.model_fields_set:
         return kube_options.total_workers
     if isinstance(configured_workers, int) and not isinstance(configured_workers, bool):
         return configured_workers
 
-    import math
+    from aiperf.kubernetes.spec_converter import workers_for_concurrency
 
-    return max(1, math.ceil(concurrency / connections_per_worker))
+    return workers_for_concurrency(concurrency, connections_per_worker)
 
 
 def print_memory_estimate(

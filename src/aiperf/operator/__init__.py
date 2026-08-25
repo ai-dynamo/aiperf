@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """AIPerf Kubernetes Operator module.
 
-This module provides a kopf-based Kubernetes operator that watches for Benchmark
-custom resources and orchestrates AIPerf benchmarks using JobSet.
+This module provides a kopf-based Kubernetes operator that watches for AIPerfJob
+and AIPerfSweep custom resources and orchestrates AIPerf benchmarks using JobSet.
 
 Configuration via environment variables:
     AIPERF_OPERATOR_MONITOR_INTERVAL: Progress monitoring interval in seconds (default: 10.0)

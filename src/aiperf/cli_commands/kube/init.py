@@ -85,7 +85,7 @@ def _write_wrapped_template(
     from aiperf.kubernetes import console as kube_console
 
     if output is None:
-        kube_console.console.print(content, end="", markup=False, highlight=False)
+        kube_console.emit_raw(content, end="")
         return
 
     if output.exists():

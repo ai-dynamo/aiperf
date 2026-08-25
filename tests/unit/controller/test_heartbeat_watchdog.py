@@ -4,7 +4,7 @@
 
 Heartbeats reach the registry, but nothing acted on staleness: a service that
 stopped heartbeating was never failed, so waiters blocked until an outer
-timeout fired. Restores the watchdog with the two protections its predecessor
+timeout fired. Restores the watchdog with the three protections its predecessor
 earned in production, where a controller stall flagged 141 of 285 worker-group
 managers dead in the same millisecond.
 """

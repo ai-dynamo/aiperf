@@ -754,7 +754,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
 
     @on_start
     async def _send_worker_ready_message(self) -> None:
-        """Announce connectivity, then immediately announce dispatchability.
+        """Announce connectivity, then dispatchability -- deferred under Kubernetes.
 
         The startup-state transitions are what a Kubernetes controller watches
         to distinguish "worker pod still coming up" from "worker pod wedged";
@@ -959,10 +959,11 @@ class Worker(BaseComponentService, ProcessHealthMixin):
     async def _measure_baseline_rtt(self) -> None:
         """Probe credit-channel RTT under a hard total time budget.
 
-        Runs before the worker is dispatchable so the pings are not queued
-        behind real credits, which would inflate the baseline; the ROUTER
-        learns this DEALER's identity from the ping itself, so no prior
-        registration is needed.
+        Launched fire-and-forget from the startup path, so it runs concurrently
+        with the dispatchability handshake and its pings can end up queued
+        behind real credits, slightly inflating the baseline. The ROUTER learns
+        this DEALER's identity from the ping itself, so no prior registration
+        is needed.
 
         The budget bounds the whole sequence, so a router that never echoes
         cannot outlive the service registration window. Within the budget the

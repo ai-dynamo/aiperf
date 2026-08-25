@@ -270,8 +270,8 @@ class TestDiagnostics:
     ) -> None:
         """Verify logs can be retrieved from the control-plane container.
 
-        New architecture: single control-plane container spawns all services
-        as subprocesses.
+        The controller pod runs one container per control-plane service; the
+        control-plane container is the one hosting the SystemController.
         """
         controller = deployed_small_benchmark_module.controller_pod
         if controller is None:

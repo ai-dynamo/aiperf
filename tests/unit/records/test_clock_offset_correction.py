@@ -44,7 +44,7 @@ def test_parsed_record_timestamp_is_corrected() -> None:
 
 
 def test_metric_metadata_anchor_is_corrected() -> None:
-    """request_start/ack/end all derive from one corrected anchor."""
+    """request_start and request_end both derive from one corrected anchor."""
     from aiperf.records.record_processor_service import RecordProcessor
 
     record = RequestRecord(

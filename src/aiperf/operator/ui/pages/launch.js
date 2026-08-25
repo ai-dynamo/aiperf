@@ -4,10 +4,13 @@
 /**
  * Launch — create a new AIPerfJob from the UI.
  *
- * Pick a starting template (or paste your own YAML), edit in the textarea,
- * and copy it for `aiperf kube apply` or `kubectl apply`. Browser-side job
- * creation stays disabled because the static SPA has no safe bearer-token
- * delivery path for protected mutating routes.
+ * Pick a starting template (or paste your own YAML), edit in the textarea, and
+ * either copy it for `aiperf kube apply` / `kubectl apply` or submit it from the
+ * browser. Submitting POSTs through ``api.createJob`` / ``api.createSweep``,
+ * which go via ``mutatingFetch``: on a 401 the page opens ``TokenModal``, the
+ * token is held in ``sessionStorage`` for the tab only, and the request is
+ * retried. Set ``DASHBOARD_MUTATIONS_ENABLED`` false in lib/api.js to hide the
+ * submit path and leave copy-out as the only route.
  *
  * YAML is parsed by the locally-vendored, standards-compliant parser, then
  * checked before the manifest can reach a protected mutating API route.

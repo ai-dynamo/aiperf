@@ -128,7 +128,7 @@ async def _invoke(method_name: str, writer: SweepStatusWriter) -> None:
 async def test_patch_uses_merge_patch_content_type_for_every_writer(
     method_name: str, monkeypatch
 ):
-    """Every status writer call MUST set _content_type=application/merge-patch+json.
+    """Every UID-less status writer call MUST set _content_type=application/merge-patch+json.
 
     Regression-lock: missing this kwarg silently 422s on the apiserver and
     the sweep CR never reflects the controller's progress. Also locks the
@@ -171,8 +171,9 @@ async def test_patch_uses_sweep_controller_field_manager_for_every_writer(
 ):
     """Every status writer call MUST set field_manager=aiperf-sweep-controller.
 
-    Required for SSA co-ownership with the operator (which writes phase /
-    completedRuns / etc.). Without it, conflict resolution fails on shared paths.
+    Metadata only under merge-patch (the SSA experiment was reverted), but it
+    is how an operator tells which writer last touched a field shared with the
+    operator's own writes (phase / completedRuns / etc.).
     """
     api = MagicMock()
     custom = MagicMock()

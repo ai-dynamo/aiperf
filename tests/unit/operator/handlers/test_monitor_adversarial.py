@@ -6,7 +6,6 @@ Focuses on production-hostile monitor-tick contracts:
 - Missing JobSet reconciliation must not clobber terminal or claimed CRs.
 - Transient API failures in best-effort pod scans degrade to no-op evidence.
 - Phase transitions must clear stale stage labels and gate Complete on results.
-- Controller SystemState must propagate even before a CreditPhase exists.
 - Pod-restart shortcuts must emit only observable warning events.
 - Cancellation checks must stop late salvage side effects after awaited fetches.
 - Retryable cleanup failures must preserve the retry delay contract.

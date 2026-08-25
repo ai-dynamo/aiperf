@@ -27,8 +27,8 @@ adds the toxic on entry and removes it on exit, replacing the manual
 
 The heavyweight operator-redeploy fixtures
 (``operator_ready_apiserver_toxiproxy_routed``,
-``operator_ready_toxiproxy_routed``) are reused unchanged via the
-``pytest_plugins`` declaration in this package's ``conftest.py``.
+``operator_ready_toxiproxy_routed``) are reused unchanged: this package's
+``conftest.py`` re-exports them by importing the legacy fixture functions.
 """
 
 from __future__ import annotations

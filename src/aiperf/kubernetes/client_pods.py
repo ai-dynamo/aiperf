@@ -71,12 +71,13 @@ async def find_operator_namespace(
     """Cluster-wide search for an aiperf-operator pod; returns its namespace.
 
     Returns:
-        Namespace of the first matching operator pod, or ``None`` if no pods
-        match. Also returns ``None`` (without raising) when the caller lacks
-        cluster-wide ``list pods`` RBAC — caller should fall back to a default.
+        Lexicographically first namespace containing a matching operator pod,
+        or ``None`` if no pods match. Also returns ``None`` (without raising)
+        when the caller lacks cluster-wide ``list pods`` RBAC — caller should
+        fall back to a default.
 
-    The caller is expected to log a warning if more than one operator install
-    is detected; that's surfaced via the ``logger`` here.
+    Logs a warning here when more than one operator install is detected, so
+    the ambiguity is visible even to callers that only consume the return value.
     """
     core = client.CoreV1Api(api)
     try:

@@ -193,6 +193,12 @@ def _per_request_bytes(avg_isl: int, avg_osl: int, *, streaming: bool) -> int:
     """Bytes held in memory for a single in-flight RequestRecord.
 
     Shared by worker and record-processor estimators so the two stay in sync.
+
+    Streaming retains one ``SSEMessage`` per wire chunk (the transport appends
+    to ``RequestRecord.responses`` as chunks arrive), so the OSL term is a
+    per-message cost, not a per-field cost. Validated against a
+    ``tracemalloc`` measurement of the real objects by
+    ``TestPerRequestBytesAgainstMeasuredHeap``.
     """
     turn_bytes = _TURN_BASE_BYTES + avg_isl * _TURN_BYTES_PER_TOKEN
     if streaming:
@@ -216,9 +222,10 @@ def _estimate_worker(
     """Single worker process: connection pool + in-flight requests + session cache.
 
     Each in-flight request holds a RequestRecord with:
-    - Base record overhead (Pydantic model shell + metadata)
-    - Turn(s) with prompt text (ISL × 4 chars per turn)
-    - Response: SSEMessage with SSEField per token (streaming) or TextResponse (non-streaming)
+    - Base record overhead (Pydantic model shell + RecordContext)
+    - Turn(s) with prompt text (ISL x ~4 chars per turn)
+    - Response: one SSEMessage per streamed chunk, or a single TextResponse
+      holding the whole buffered body
     """
     base = _SERVICE_BASE_MIB["worker"] + _PYTHON_CHILD_SUBPROCESS_BASE_MIB
 
@@ -239,15 +246,19 @@ def _estimate_worker(
     peak = base + variable * 1.1
 
     mode = "SSE" if streaming else "text"
+    per_response_bytes_per_token = (
+        _SSE_BYTES_PER_CHUNK if streaming else _TEXT_RESPONSE_BYTES_PER_TOKEN
+    )
     return ComponentEstimate(
         name="Worker",
         base_mib=base,
         variable_mib=variable,
         peak_mib=peak,
         formula=f"base({base}) + {concurrency_per_worker} inflight x "
-        f"(record:{_REQUEST_RECORD_BASE_BYTES}B + turn:ISL={avg_isl}x4B + "
-        f"resp:{mode}:OSL={avg_osl}x{'200' if streaming else '4'}B) + "
-        f"pool({connections_per_worker}x1KB)",
+        f"(record:{_REQUEST_RECORD_BASE_BYTES}B + "
+        f"turn:ISL={avg_isl}x{_TURN_BYTES_PER_TOKEN}B + "
+        f"resp:{mode}:OSL={avg_osl}x{per_response_bytes_per_token}B) + "
+        f"pool({connections_per_worker}x{_BYTES_PER_CONNECTION // 1024}KB)",
         dominant_factor=f"{concurrency_per_worker} inflight x {mode} ISL={avg_isl} OSL={avg_osl}",
     )
 
@@ -390,7 +401,8 @@ def _estimate_gpu_telemetry(
         base_mib=base,
         variable_mib=variable,
         peak_mib=peak,
-        formula=f"{num_gpus} GPUs x ({num_metrics} metrics x ceil_pow2({n_samples}) x 8B + timestamps) x 1.5",
+        formula=f"{num_gpus} GPUs x ({num_metrics} metrics x ceil_pow2({n_samples}) "
+        f"x 8B + timestamps) x {_GROWABLE_ARRAY_OVERHEAD}",
         dominant_factor=f"{num_gpus} GPUs x {duration_s:.0f}s duration",
     )
 
@@ -456,7 +468,7 @@ def _estimate_server_metrics(
 def _estimate_fixed_service(
     name: str, display_name: str | None = None
 ) -> ComponentEstimate:
-    """Fixed-overhead services (SystemController, WorkerManager, TimingManager, API, WPM)."""
+    """Fixed-overhead services (SystemController, TimingManager, API Service, Results Sidecar, WorkerGroupManager)."""
     base = _SERVICE_BASE_MIB.get(name, 20) + _PYTHON_SUBPROCESS_BASE_MIB
     return ComponentEstimate(
         name=display_name or name.replace("_", " ").title(),

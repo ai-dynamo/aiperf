@@ -305,8 +305,10 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         """Run a group-local lifecycle command and acknowledge it.
 
         The WGM fans these out and blocks on an ack from every registered peer,
-        bounded by PROFILE_CONFIGURE_TIMEOUT. An unanswered command stalls the
-        whole pod for that timeout, twice per run.
+        bounded per command: PROFILE_CONFIGURE_TIMEOUT for configure and for the
+        teardown fan-out, RAW_RECORD_UPLOAD_TIMEOUT for the FINALIZE_ARTIFACTS
+        and SHUTDOWN pair in the artifact-finalization path. An unanswered
+        command stalls the whole pod for that timeout.
         """
         if self.pod_lifecycle_dealer_client is None:
             return

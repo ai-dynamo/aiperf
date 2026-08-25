@@ -429,7 +429,8 @@ class ErrorTrackingState:
     """State container for tracking errors with counts and thread-safe access.
 
     Provides common error tracking functionality for all metrics subsystems
-    (telemetry, server metrics, regular metrics).
+    still owned by this manager (GPU telemetry, network latency); server
+    metrics moved to the dedicated ServerMetricsManager.
     """
 
     error_counts: dict[ErrorDetails, int] = field(

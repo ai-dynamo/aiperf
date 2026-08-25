@@ -1164,8 +1164,8 @@ class TestStatusBuilderObservedGenerationAdversarial:
     """Adversarial tests for ``StatusBuilder.set_observed_generation`` and the
     call-site contract every caller of it shares.
 
-    Every call site in ``handlers/{create,lifecycle,monitor}.py`` and
-    ``handlers/sweep/create.py`` follows the SAME shape:
+    Every call site in ``handlers/{create,lifecycle,monitor}.py`` follows the
+    SAME shape:
 
         generation = body.get("metadata", {}).get("generation")
         if generation is not None:

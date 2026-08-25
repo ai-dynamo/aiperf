@@ -557,7 +557,8 @@ class TestWatchdogThresholdEnvBinding:
 
     They were plain keyword defaults with no environment binding, so a cluster
     with slow image pulls or a restart-tolerant workload had no way to raise
-    them. The old AIPERF_K8S_WATCH_* names went away with `aiperf kube watch`.
+    them. AIPERF_K8S_WATCHDOG_* is a separate prefix from the CLI's
+    AIPERF_K8S_WATCH_* CR-poll settings.
     """
 
     def test_defaults_come_from_environment(self):

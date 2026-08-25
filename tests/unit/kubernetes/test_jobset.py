@@ -543,7 +543,7 @@ class TestJobSetSpecContainerDetails:
     def test_containers_have_health_probes(
         self, jobset_manifest: dict[str, Any]
     ) -> None:
-        """Controller-side containers keep health probes; worker-side containers skip readiness/liveness."""
+        """Controller-side containers keep health probes, minus the records-manager and control-plane exemptions; worker-side containers skip readiness/liveness."""
         for job in jobset_manifest["spec"]["replicatedJobs"]:
             containers = job["template"]["spec"]["template"]["spec"]["containers"]
             for container in containers:
@@ -767,7 +767,7 @@ class TestJobSetSpecContainerDetails:
     def test_api_container_probes_use_api_port(
         self, jobset_manifest: dict[str, Any]
     ) -> None:
-        """Test API container probes hit the FastAPI port, not the disabled health port."""
+        """Test API container probes hit the FastAPI port, not its own health port."""
         controller_job = next(
             j
             for j in jobset_manifest["spec"]["replicatedJobs"]
@@ -2047,7 +2047,7 @@ class TestJobSetSpecCreateContainer:
 
 
 class TestJobSetSpecResourceParsing:
-    """Extended tests for AIPerfJobSetSpec resource parsing methods."""
+    """Extended tests for the kubernetes.utils resource-quantity parsers."""
 
     @pytest.mark.parametrize(
         "cpu_value,expected",

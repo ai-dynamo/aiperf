@@ -78,8 +78,8 @@ phase == "Running", but status.phases.*.requestsCompleted is not advancing
   -> Go to [Stalled Benchmark](#stalled-benchmark).
 
 phase == "Running", and request_error_rate.avg > 5 (percent) in
-status.liveMetrics.metrics -- or error_request_count.avg / request_count.avg
-> 0.05 when the derived rate is absent
+status.liveMetrics.metrics -- this is the only error signal published while a
+job runs, because error_request_count is ERROR_ONLY and is filtered out
   -> Go to [High Error Rate](#high-error-rate).
 
 phase == "Running" and none of the above

@@ -2,9 +2,19 @@
 # SPDX-License-Identifier: Apache-2.0
 """Calibration constants for the memory-estimation model.
 
-All values are static (formulas derived from code inspection, not runtime
-profiling). Constants can be recalibrated against real RSS measurements via
-``tools/calibrate_memory_estimates.py``.
+Two distinct classes of constant live here, with different provenance and
+different rules for changing them:
+
+- **Aggregate MiB baselines** (``_PYTHON_SUBPROCESS_BASE_MIB``,
+  ``_SERVICE_BASE_MIB``, ``_TOKENIZER_CACHE_MIB``, the margin multipliers)
+  are calibrated against real-cluster ``container_memory_working_set_bytes``
+  sweeps. Re-derive them only from a new cluster sweep.
+- **Per-object BYTE constants** (``_REQUEST_RECORD_BASE_BYTES``,
+  ``_TURN_BASE_BYTES``, the SSE / TextResponse terms) are measured in-process
+  against the real model classes. ``tests/unit/kubernetes/test_memory_estimator.py``
+  (``TestPerRequestBytesAgainstMeasuredHeap``) re-measures them with
+  ``tracemalloc`` and fails if the model drifts from the objects it claims to
+  describe, so no external script is required.
 """
 
 from __future__ import annotations
@@ -50,10 +60,9 @@ _BYTES_PER_WORKER_TRACKING = 256
 
 # Wrapper-class overhead atop a numpy-backed time-series array
 # (``ColumnStore`` columns, ``GpuMetricTimeSeries``, ``ScalarTimeSeries``,
-# ``HistogramTimeSeries``). Calibrated via
-# ``tools/rebaseline_memory_constants.py`` — at fully-filled
-# capacity the wrapper class adds ~0-2% above the raw numpy bytes (dict
-# of metric names, bucket-le tuple, sum tracker, etc.).
+# ``HistogramTimeSeries``). At fully-filled capacity the wrapper class adds
+# ~0-2% above the raw numpy bytes (dict of metric names, bucket-le tuple,
+# sum tracker, etc.).
 #
 # Historical note: this constant used to be 1.3 to model "doubling
 # strategy waste". That waste is now captured by ``_ceil_pow2(N)`` in
@@ -73,33 +82,67 @@ _TOKENIZER_CACHE_MIB = 150
 # aiohttp connection pool: per-connection kernel + userspace buffers
 _BYTES_PER_CONNECTION = 1024
 
-# Per-request base overhead: msgspec.Struct RequestRecord shell + metadata
-# fields, with empty turns/responses lists.
-# Calibrated via ``tools/rebaseline_memory_constants.py``;
-# pympler-measured deep size of an empty RequestRecord is 504 B.
-_REQUEST_RECORD_BASE_BYTES = 504
+# ---------------------------------------------------------------------------
+# Per-in-flight-request byte constants.
+#
+# Measurement method for every constant in this block: amortized marginal heap
+# bytes per instance, captured with ``tracemalloc`` snapshot diffs over 1000-3000
+# live instances after a warmup pass, minus the holder list's own pointer
+# storage. Amortizing over many instances is required — the one-off cost of
+# shared field-name strings, Pydantic validator/schema objects and interned
+# literals is paid on the first instance and must not be attributed to the
+# marginal one. ``sys.getsizeof`` is not usable here: it reports only the
+# top-level object and misses ``__dict__`` / ``__pydantic_extra__`` and every
+# referenced string.
+#
+# Re-measure by running ``TestPerRequestBytesAgainstMeasuredHeap`` in
+# ``tests/unit/kubernetes/test_memory_estimator.py``, which drives the real
+# model classes and asserts ``_per_request_bytes`` stays on the conservative
+# side of the measurement.
+#
+# Type note (the source of the pre-2026-08 error): ``RequestRecord`` and
+# ``Turn`` are Pydantic ``AIPerfBaseModel`` subclasses with ``extra="allow"``,
+# so every instance carries ``__dict__`` + ``__pydantic_extra__`` +
+# ``__pydantic_fields_set__`` on top of its slots. The values below were
+# originally derived assuming ``msgspec.Struct`` layout and were 2.2-5.4x low.
+# ``TextResponse`` / ``SSEMessage`` / ``SSEField`` are genuinely
+# ``@dataclass(slots=True)`` and are much cheaper.
+# ---------------------------------------------------------------------------
 
-# SSE streaming: per output token, each creates an SSEField dataclass plus
-# a JSON chunk string.
-# Calibrated via the rebaseline script with **unique** chunk values (so
-# Python string interning doesn't deduplicate chunks). Linear fit on
-# SSEMessage(OSL=0..4096) yields per-chunk = 152 B (SSEField + small JSON
-# value string), base = 136 B (SSEMessage + empty packets list).
-_SSE_MESSAGE_BASE_BYTES = 136  # SSEMessage + list overhead
-_SSE_BYTES_PER_CHUNK = 152  # SSEField object + short unique JSON string
+# Per-request base overhead: the Pydantic ``RequestRecord`` shell plus the
+# ``RecordContext`` it carries, with empty turns/responses lists. Both are
+# counted here because ``_per_request_bytes`` has no separate context term.
+# Measured 2026-08-24: 1125 B bare record + 1896 B RecordContext, 3596 B for
+# the populated pair (model_name, status, timestamps set).
+_REQUEST_RECORD_BASE_BYTES = 3600
 
-# Non-streaming: single TextResponse with full JSON body.
-# Calibrated by the rebaseline script: empty TextResponse = 152 B,
-# plus ~4 B/token for the response body (chars-per-token in synthetic
-# OpenAI-shaped JSON).
-_TEXT_RESPONSE_BASE_BYTES = 152  # TextResponse msgspec overhead
+# SSE streaming. The transport appends one ``SSEMessage`` per wire chunk to
+# ``RequestRecord.responses`` (``aiohttp_client``), each holding a single
+# ``SSEField`` — so an OSL-token response retains OSL separate messages, not
+# one message with OSL packets. The old 152 B/chunk was fitted against that
+# wrong shape (one message, many packets), which measures ~112 B/chunk and is
+# why the streaming path under-predicted by ~2x.
+#
+# Measured 2026-08-24 with **unique** chunk values (so string interning cannot
+# deduplicate) over the OpenAI-compatible chunk envelope this repo's own mock
+# server emits: 418.7 B/chunk slope with a ~0 B intercept. A minimal
+# ``{"c":"<n>"}`` envelope measures 286 B/chunk, so the per-chunk cost is
+# dominated by the provider's chunk envelope rather than by the token.
+_SSE_MESSAGE_BASE_BYTES = 136  # SSEMessage + list overhead; measured intercept ~0
+_SSE_BYTES_PER_CHUNK = 420  # SSEMessage + packets list + SSEField + JSON string
+
+# Non-streaming: a single ``TextResponse`` dataclass holding the full JSON body.
+# Measured 2026-08-24: 86 B empty, 4.00 B/token of body. The base is left at
+# 152 B — it errs high by ~66 B, which is a negligible and safe margin, and
+# lowering it would only shave accuracy off the conservative side.
+_TEXT_RESPONSE_BASE_BYTES = 152  # dataclass(slots=True) shell; measured 86 B
 _TEXT_RESPONSE_BYTES_PER_TOKEN = 4  # ~4 chars per token in response body
 
-# Turn (prompt) storage per in-flight request: Turn msgspec.Struct +
-# Text(contents=[...]) + the prompt string itself.
-# Calibrated by the rebaseline script: Turn(role="user", texts=[]) = 408 B,
-# plus ~4 B/token for the text content.
-_TURN_BASE_BYTES = 408  # Turn + Text msgspec overhead
+# Turn (prompt) storage per in-flight request: Pydantic ``Turn`` +
+# ``Text(contents=[...])`` + the prompt string itself.
+# Measured 2026-08-24: Turn+Text with an empty content string = 2235 B
+# (Turn alone 1576 B, Text alone 592 B), plus 4.01 B/token of prompt text.
+_TURN_BASE_BYTES = 2240  # Turn + Text Pydantic overhead
 _TURN_BYTES_PER_TOKEN = 4  # ~4 chars per input token
 
 # Multi-turn session state: per-token in conversation history
@@ -140,6 +183,18 @@ _DEFAULT_NUM_STANDARD_METRICS = 25
 # ``MetricsAccumulator.process_record`` and ``ColumnStore``. The standard
 # metric count includes the sole list-valued metric, inter_chunk_latency; the
 # remaining metrics use one float64 column each.
+#
+# ``_COLUMN_STORE_METADATA_NUMERIC_COLUMNS`` is an ALLOCATED-column count, not
+# a field count. ``process_record`` offers five numeric metadata fields
+# (session_num, credit_issued_ns, request_ack_ns, cancellation_time_ns,
+# turn_index) but ``ColumnStore.ingest_metadata`` allocates lazily, skipping
+# any field whose value is None — so the resident column count is
+# workload-dependent: 4 for the default streaming single-turn shape, 3 when
+# responses are buffered (no request_ack_ns), 5 once any request is cancelled.
+# 4 models the default. ``TestColumnStoreMetadataColumnDrift`` drives records
+# through the real accumulator and counts allocated columns, so adding a
+# metadata field that is populated by default fails there rather than silently
+# under-estimating here.
 _COLUMN_STORE_LIST_METRIC_COLUMNS = 1
 _COLUMN_STORE_TIMESTAMP_COLUMNS = 3
 _COLUMN_STORE_METADATA_NUMERIC_COLUMNS = 4

@@ -197,7 +197,7 @@ sweep:
 
 
 class TestBuildSweepCrDictConvergenceCompatibility:
-    """Convergence and iteration-order combinations accepted by the CR builder."""
+    """Convergence and iteration-order combinations the CR builder accepts or rejects."""
 
     def test_build_sweep_cr_dict_repeated_iteration_with_convergence_rejects(
         self, tmp_path: Path

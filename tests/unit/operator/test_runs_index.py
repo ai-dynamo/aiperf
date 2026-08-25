@@ -1285,7 +1285,8 @@ async def test_disk_rebuild_preserves_failed_terminal_marker(
 async def test_failed_run_end_time_is_offset_aware_iso(index_path) -> None:
     """SQLite's datetime('now') is offset-less and space-separated.
 
-    _iso_to_unix reads that as local time, and `ORDER BY end_time DESC`
+    The jobs-router ISO parser (``n`` in ``operator/routers/jobs.py``) reads
+    that as local time, and `ORDER BY end_time DESC`
     compares ' ' against the completed rows' 'T' by ASCII, interleaving
     failed and succeeded runs regardless of when they happened.
     """

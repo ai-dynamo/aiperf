@@ -241,12 +241,12 @@ async def test_c12_invalid_spec_surfaces_conditions(
     operator_job_namespace: str,
     kubectl: KubectlClient,
 ) -> None:
-    """Invalid spec must surface phase=Failed + ConfigValid=False condition.
+    """Invalid spec must surface phase=Failed or any False status condition.
 
     Exercises ``src/aiperf/operator/handlers/create.py::_validate_spec``
     which raises ``kopf.PermanentError`` and sets
     ``status.conditions[ConfigValid]=False`` + ``phase=Failed`` when
-    ``AIPerfJobSpec.from_crd_spec`` rejects the payload.
+    ``validate_job_spec`` rejects the payload.
 
     We patch the ``benchmark.endpoint`` block with a bogus URL scheme.
     If the spec converter accepts it (schemes are not strictly

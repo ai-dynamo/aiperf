@@ -96,7 +96,7 @@ class TestDashboardCommand:
     async def test_dashboard_no_browser_flag(
         self, patched_k8s: AsyncMock, manage_options: KubeManageOptions
     ) -> None:
-        """Test --no-browser prints URL instead of opening browser."""
+        """Test --no-browser skips opening the browser."""
         mock_start = AsyncMock(return_value=(_make_proc(), 54321))
         mock_cleanup = AsyncMock()
         with (

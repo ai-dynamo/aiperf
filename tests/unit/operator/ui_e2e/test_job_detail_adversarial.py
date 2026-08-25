@@ -12,11 +12,11 @@ Focuses on:
   * Sweep linkage marker: non-int variation_index, malformed JSON, claimed
     sweep with no parent dir.
   * Live CR vs archived merge: pinned historical epoch must NOT pick up
-    live CR fields (job_union.py:531-533).
+    live CR fields (``job_union.find_any_job``).
   * URL-path encoding: hyphen / dot / percent / `+` / UTF-8 in namespace
     and name segments.
-  * /events router behavior while the page is open (verifies that the
-    diagnostics-panel render survives an event response).
+  * /epochs router behavior while the page is open (verifies the run-selector
+    listing and its latest pointer).
   * Results-ready marker gating: artifacts list with vs without the
     `.aiperf_results_ready.json` sentinel.
   * Phase-stage decoding: legacy int request_count, missing request_count,
@@ -64,7 +64,7 @@ def _safe_seed_name(prefix: str, token: object) -> str:
 def test_pinned_historical_epoch_with_summary_renders_archived_phase(harness):
     """When `?epoch=<historical>` is supplied and the dir has a summary, the
     page must paint that run's `status` (Succeeded) as the displayed phase,
-    NOT fall through to a live CR. job_union.py:531-533 is the contract."""
+    NOT fall through to a live CR. ``job_union.find_any_job`` is the contract."""
     harness.seed_run(
         name="hist-job",
         epoch=_EPOCH_A,
@@ -223,7 +223,7 @@ def test_latest_pointer_with_leading_zeros_is_treated_as_string(harness):
 def test_latest_pointer_at_only_run_renders_once(harness):
     """latest.txt pointing at the same epoch as the only seeded run — the
     page should render Succeeded without choking on "self-redirects". The
-    useEffect at job-detail.js:1801-1804 must not loop."""
+    epoch-sync effect in job-detail.js must not loop."""
     harness.seed_run(
         name="single-run", epoch=_EPOCH_A, summary=good_summary(), is_latest=True
     )
@@ -241,7 +241,7 @@ def test_latest_pointer_at_only_run_renders_once(harness):
 
 def test_conditions_as_top_level_list_renders_badges(harness):
     """conditions.json as a top-level JSON list — the router accepts this
-    shape (jobs.py:379-380). The Conditions component renders a badge for
+    shape. The Conditions component renders a badge for
     every status!=True entry; True-statused green conditions are hidden by
     conditions-helpers.js:shouldHideCondition. Use a Warning to force a badge."""
     harness.seed_run(
@@ -262,9 +262,8 @@ def test_conditions_as_top_level_list_renders_badges(harness):
 
 
 def test_conditions_as_wrapping_dict_renders_badges(harness):
-    """conditions.json as `{"conditions": [...]}` — the router unwraps
-    (jobs.py:381-382). UI must end up with the same visible badge as the
-    bare list case."""
+    """conditions.json as `{"conditions": [...]}` — the router unwraps it.
+    UI must end up with the same visible badge as the bare list case."""
     harness.seed_run(
         name="conds-dict",
         epoch=_EPOCH_A,
@@ -298,7 +297,7 @@ def test_conditions_as_wrapping_dict_renders_badges(harness):
 )  # fmt: skip
 def test_conditions_malformed_shape_renders_without_crashing(harness, raw_bytes):
     """conditions.json with a non-list/non-dict-with-conditions shape — the
-    router silently leaves conditions=None (jobs.py:379-382). Page must still
+    router silently leaves conditions=None. Page must still
     render without console errors."""
     name = _safe_seed_name("conds-bad", raw_bytes[:6].decode(errors="replace"))
     harness.seed_run(
@@ -363,9 +362,9 @@ def test_conditions_mixed_case_status_strings_render(harness):
     ],
 )  # fmt: skip
 def test_sweep_marker_non_int_variation_index_does_not_crash(harness, variation_value):
-    """job_union._sweep_linkage_from_marker (lines 64-67) coerces variation_index
-    through int(), trapping TypeError/ValueError. Non-int values must NOT
-    propagate to the UI — the page should still render."""
+    """job_union._sweep_linkage coerces variation_index through
+    ``_coerce_index``'s int(), trapping TypeError/ValueError. Non-int values
+    must NOT propagate to the UI — the page should still render."""
     name = _safe_seed_name("sweep-child", variation_value)
     harness.seed_run(
         name=name,
@@ -429,7 +428,7 @@ def test_sweep_marker_orphan_link_no_parent_sweep_dir(harness):
 
 
 def test_pinned_historical_epoch_ignores_live_cr_phase(harness):
-    """find_any_job (job_union.py:531-533) hard-drops the live CR when an
+    """``job_union.find_any_job`` hard-drops the live CR when an
     explicit historical epoch is passed. A registered Running CR must NOT
     leak its phase onto a pinned past run. The visible phase is the
     archived summary's `status`."""
@@ -608,12 +607,11 @@ def test_request_count_missing_entirely_renders(harness):
 
 def test_deep_link_to_nonexistent_job_does_not_stall_forever(harness):
     """Page navigated directly to a job that has neither a CR nor a PVC
-    dir. The page currently has dead-code error handling — its local
-    setError is only ever called with null (job-detail.js:1567). So this
-    test surfaces the bug: after the poll-fail threshold (~6s+), the
-    global 'Operator API unreachable' banner must appear; before then the
-    page renders the LoadingPanel. The test confirms either the unreachable
-    banner OR a clean error stub appears within 15s, NOT permanent loading."""
+    dir. The poll closure sets the page-level error on a first-load
+    failure, and after the poll-fail threshold the global 'Operator API
+    unreachable' banner also appears. The test confirms either the
+    unreachable banner OR a clean error stub appears within 15s, NOT
+    permanent loading."""
     page = harness.goto_job_detail(harness.ns, "phantom-job", epoch=_EPOCH_A)
 
     # Either the unreachable banner is rendered, or we transition out of the

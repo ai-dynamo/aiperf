@@ -6,12 +6,19 @@
  *
  * Route: ``/compare/<ns>/<name>/<epoch-a>/<epoch-b>`` (parameterized).
  *
- * Fetches ``profile_export_aiperf.json`` from the two epoch-pinned run
- * directories in parallel, then renders a nine-row table. The Delta column
- * carries a sign-aware colour cue - green when the change direction matches
- * the "better" direction for that metric, red when worse, gray when the
- * absolute delta is under 1 percent. When one run lacks a summary (legacy flat
- * layout), that column surfaces ``n/a`` rather than failing the whole view.
+ * Fetches both sides in parallel through ``api.fetchRunSummary``, which hits the
+ * run-specific ``/runs/<epoch>/profile_export`` alias rather than a literal
+ * filename: the alias resolves whatever summary name that run's persisted config
+ * selected (so custom export prefixes work) and falls back to the ``.zst``
+ * companion, decompressing it server-side. A non-2xx arrives as an ``Error``
+ * with ``.status`` attached, so a 404 (no summary on disk for that epoch) is
+ * distinguishable from a transport failure.
+ *
+ * Renders a nine-row table. The Delta column carries a sign-aware colour cue -
+ * green when the change direction matches the "better" direction for that
+ * metric, red when worse, gray when the absolute delta is under 1 percent. When
+ * one run lacks a summary (legacy flat layout), that column surfaces ``n/a``
+ * rather than failing the whole view.
  *
  * Same job name does not mean same experiment: re-running an edited spec
  * produces a new epoch under the same name. The better/worse colouring is a

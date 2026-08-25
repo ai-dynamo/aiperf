@@ -817,9 +817,9 @@ async def get_run_narrow_metrics(
     ``profile_export_aiperf.json``. If ``epoch`` is None the latest run for
     the job is selected. Returns None when no row exists.
 
-    The keys mirror the narrow column names: ``epoch`` plus 18 metric/stat
-    pairs of the form ``<metric>_<stat>`` for stats avg/p50/p99 across the
-    six ``DEFAULT_COMPARE_METRICS``.
+    The keys mirror the narrow column names: ``epoch`` and ``phase`` plus 18
+    metric/stat pairs of the form ``<metric>_<stat>`` for stats avg/p50/p99
+    across the six ``DEFAULT_COMPARE_METRICS``.
     """
     metric_cols = ", ".join(
         f"{name}_{stat}" for name in _NARROW_METRICS for stat in ("avg", "p50", "p99")
@@ -850,7 +850,7 @@ async def get_run_narrow_metrics(
 
 
 async def scatter_data() -> list[dict[str, Any]]:
-    """Return flat scatter metrics for all runs with at least one metric populated.
+    """Return flat scatter metrics for up to 500 latest runs with a metric populated.
 
     Used by ``GET /api/v1/analytics/scatter`` to power the dashboard scatter chart
     in a single query instead of N+1 leaderboard+summary round-trips.
@@ -892,7 +892,7 @@ async def scatter_data() -> list[dict[str, Any]]:
 
 
 async def list_runs_for_job(namespace: str, job_id: str) -> list[RunIndexRow]:
-    """List indexed runs for a job, newest epoch first."""
+    """List indexed runs for a job, newest first by run-dir mtime then epoch."""
     cur = await _conn().execute(
         f"SELECT {_RUN_ROW_COLS} FROM runs WHERE namespace = ? AND job_id = ? "
         "ORDER BY mtime_epoch DESC NULLS LAST, epoch DESC",
@@ -1123,7 +1123,8 @@ async def bootstrap(base: Path, *, force: bool = False) -> BootstrapStats:
     - ``<base>/<ns>/<job>/<epoch>/`` for runs (excludes name == 'sweeps')
     - ``<base>/<ns>/sweeps/<name>/<epoch>/`` for sweep variations
     - is_latest is set per ``latest.txt``, not "newest mtime in the table"
-    - When ``force=True``, drops + recreates the tables before walking
+    - When ``force=True``, deletes every indexed row before walking (the
+      tables themselves are left in place)
     - Before the forward ingest walk, reverse pruning drops indexed run and
       sweep epochs whose durable directories vanished from disk (a retention
       ``rmtree`` whose scheduled index drop was lost to an operator crash)
@@ -1329,9 +1330,11 @@ async def _index_run_from_disk(
 ) -> bool:
     """Read the run-specific summary JSON and upsert a runs row.
 
-    Returns True on success, False on read error / missing summary.
-    Skips when the row already exists with metrics_json populated (post-restart
-    no-op). Bootstrap can be re-run safely.
+    Returns True on success, False when the readiness marker or summary is
+    absent or unreadable. Re-ingest is unconditional, so bootstrap can be
+    re-run safely: the upserts are idempotent, and an existing terminal phase
+    (or one recorded in the readiness marker) wins over the disk-derived
+    "Succeeded".
     """
     run_path = base / namespace / job_id / epoch
     if not is_run_ready(run_path):
@@ -1503,12 +1506,12 @@ def _child_variation_values(child: dict[str, Any]) -> dict[str, Any]:
     therefore treats identical configurations as distinct.
 
     The manifest value is a JSON string bounded by
-    ``_bounded_variation_values_json`` (``k8s_executor.py:188``), which
+    ``_bounded_variation_values_json`` (``k8s_executor.py:258``), which
     substitutes a ``__aiperf_truncated__`` marker when the real payload exceeds
     the annotation budget. That marker is dropped rather than stored: it is a
     statement that the values are UNKNOWN, and indexing it would mint a bogus
     group shared by every oversized variation. Same rule the read side applies
-    at ``kubernetes/results.py:704``.
+    at ``kubernetes/results.py:706``.
 
     ``variation_label`` is still recorded so a row remains identifiable when no
     values were captured.

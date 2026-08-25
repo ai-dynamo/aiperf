@@ -136,12 +136,17 @@ skipped for that file only).
    secrets and plain-value environment variables fail before deployment. This
    check is skipped when steps 6–8 already produced an error, since it needs a
    well-formed config and deployment to inspect.
-10. **Worker-count calculation** — `calculate_workers()` must return a value
-   `>= 1`. It honours an explicit `benchmark.runtime.workers` override, otherwise
-   computes `ceil(max phase concurrency / connectionsPerWorker)`. Unparsable
-   concurrency and worker values fall back to `1` rather than raising, so in
-   practice this step only reports a malformed `connectionsPerWorker`
-   (`Worker calculation failed: ...`).
+10. **Worker-count calculation** — `calculate_workers()` must complete. It
+   honours an explicit `benchmark.runtime.workers` override, otherwise computes
+   `ceil(max phase concurrency / connectionsPerWorker)`, always clamped to at
+   least `1`. Unparsable concurrency and worker values fall back to `1` rather
+   than raising, and a `connectionsPerWorker` that is numeric but below `1`
+   (including `0`, `false`, and subnormal floats such as `1e-320`) is
+   neutralized to `1` for this step — step 8 has already reported it against
+   the field's `>= 1` bound, so re-reporting it here would only duplicate that
+   error. This step therefore reports only a **non-numeric**
+   `connectionsPerWorker` (`Worker calculation failed: ...`), where the
+   arithmetic genuinely cannot proceed.
 11. **Kind/sweep cardinality and kind-specific spec validation** —
     `spec.sweep` must be absent on an `AIPerfJob` and a non-empty mapping on an
     `AIPerfSweep`, mirroring each CRD's CEL rule. Then the Config-v2 envelope is
@@ -160,6 +165,15 @@ skipped for that file only).
 
 With `-o json`, a single JSON array is printed to stdout. Each element
 corresponds to one input file, in the order given on the command line.
+stdout carries nothing but that array — long paths and error strings are
+never line-wrapped, and any diagnostics the validator logs are retargeted
+to stderr — so the document is parseable when redirected or run in CI.
+
+Every input file always appears in the array. No individual file can abort the
+batch: a malformed value is reported against the file that carries it, and the
+remaining files are still validated. `jq -e` recipes therefore always receive a
+complete document, even when the first file on the command line is the broken
+one.
 
 ```jsonc
 [

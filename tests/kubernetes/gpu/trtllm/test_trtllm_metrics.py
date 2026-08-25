@@ -43,7 +43,7 @@ class TestTRTLLMMetricsCollection:
         self,
         deployed_gpu_benchmark_module: BenchmarkResult,
     ) -> None:
-        """Verify request count matches configuration."""
+        """Verify at least one request was counted."""
         result = deployed_gpu_benchmark_module
 
         assert result.metrics is not None

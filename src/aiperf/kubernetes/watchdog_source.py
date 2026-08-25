@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 class K8sWatchdogSource:
     """WatchdogDataSource backed by kubernetes_asyncio.
 
-    Implements the seven ``get_*`` methods required by the
+    Implements the six ``get_*`` methods required by the
     ``WatchdogDataSource`` protocol:
 
     - ``get_pods`` -- list pods in a namespace
@@ -48,8 +48,8 @@ class K8sWatchdogSource:
     error surfaces should wrap the ``kubernetes_asyncio`` client
     directly.
 
-    See the ``aiperf.kubernetes.watchdog`` module docstring for an
-    end-to-end usage example.
+    See the ``aiperf.kubernetes.watchdog.BenchmarkWatchdog`` class docstring
+    for an end-to-end usage example.
     """
 
     def __init__(self, api: ApiClient) -> None:

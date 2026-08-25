@@ -11,9 +11,9 @@ the sweep-controller overwrites these with authoritative terminal values
 in ``aggregation_complete`` (see below).
 
 The sweep-controller owns: currentCell, aggregation, aggregateRef,
-aggregate, and the **terminal** ``phase`` transitions (``Succeeded`` /
-``Failed`` written from ``aggregation_complete`` after the final
-exporters run). At terminal time it also overwrites ``completedRuns``,
+aggregate, and the **terminal** ``phase`` transitions (any member of
+``PARENT_TERMINAL_PHASES`` written from ``aggregation_complete`` after the
+final exporters run). At terminal time it also overwrites ``completedRuns``,
 ``failedRuns``, and ``runStates`` with the authoritative values from the
 on-disk parent aggregate, so these fields are correct even when the
 kopf rollup handler did not fire for every child (e.g. fast clusters
@@ -112,8 +112,10 @@ class SweepStatusWriter:
 
         Each entry mirrors the ``ChildrenManifestEntry`` schema (snake_case
         keys, matching the disk envelope ``children.json`` writes):
-        ``{namespace, name, variation_index, variation_label, trial_index,
-        child_run_epoch}``. The terminal writer overwrites this same path
+        ``{namespace, name, variation_index, variation_label, variation_values,
+        trial_index, child_run_epoch}``, alongside the ``label``, ``status``,
+        and ``error`` that ``ChildRunRef.to_dict`` also emits.
+        The terminal writer overwrites this same path
         with the full doc, so a partial snapshot is never load-bearing
         for the post-aggregation read path.
         """
@@ -191,8 +193,9 @@ class SweepStatusWriter:
         it, no operator handler observes the disk file and the parent CR
         never advances past ``Aggregating``.
 
-        ``terminal_phase`` should be ``"Succeeded"`` or ``"Failed"`` (members
-        of ``PARENT_TERMINAL_PHASES`` in ``child_rollup``) so the rollup
+        ``terminal_phase`` should be one of ``"Succeeded"``, ``"Failed"``,
+        ``"Cancelled"``, or ``"PartiallyFailed"`` (the members of
+        ``PARENT_TERMINAL_PHASES`` in ``child_rollup``) so the rollup
         handler does not clobber the transition on a subsequent child phase
         event. Pass ``None`` to leave ``status.phase`` untouched (e.g. tests).
 

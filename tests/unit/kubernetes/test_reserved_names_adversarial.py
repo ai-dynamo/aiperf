@@ -208,6 +208,7 @@ async def _capture_sweep_controller_jobset(
     monkeypatch: pytest.MonkeyPatch,
     *,
     template_spec: dict[str, Any],
+    resource_mode: str = "burstable",
 ) -> dict[str, Any]:
     """Create the sweep-controller JobSet and capture the submitted manifest body."""
     captured: dict[str, Any] = {}
@@ -232,6 +233,7 @@ async def _capture_sweep_controller_jobset(
         namespace="production-benchmarks",
         sweep_uid="uid-reserved-sweep-7f2a",
         epoch="1778027130",
+        resource_mode=resource_mode,
         template_spec=template_spec,
     )
     return captured["body"]

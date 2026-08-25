@@ -62,7 +62,7 @@ class ZMQStreamingRouterClient(BaseZMQClient):
     Usage Pattern:
     - ROUTER sends messages to specific DEALER clients by identity
     - ROUTER receives messages from DEALER clients (identity included in envelope)
-    - No request-response pairing - pure streaming
+    - Streaming by default; `request_to()` opts into `cid`-correlated request-reply
     - Supports concurrent message processing
     - Automatic peer tracking via worker ready and shutdown messages
 
@@ -391,8 +391,10 @@ class ZMQStreamingRouterClient(BaseZMQClient):
         """
         Background task for receiving messages from DEALER clients.
 
-        Runs continuously until stop is requested. Decodes messages as
-        WorkerToRouterMessage (WorkerDispatchable | WorkerShutdown | CreditReturn) using msgpack.
+        Runs once: it starts the edge-triggered FD reader and returns. The reader
+        then drains and dispatches until stop is requested, decoding messages with
+        the configured `decode_type` (WorkerToRouterMessage by default, i.e.
+        WorkerDispatchable | WorkerShutdown | CreditReturn) using msgpack.
         """
         self.debug("Streaming ROUTER receiver task started")
 

@@ -1065,9 +1065,14 @@ class StickyCreditRouter(CommunicationMixin):
         """Remove a worker from routing and report a real loss exactly once.
 
         ``reason`` names why the worker went away; it is reported through the
-        worker-lost callback only when a registered worker is removed while the
-        run is still live. Teardown removals (cancellation in flight, or all
-        credits already returned) are expected and stay silent.
+        worker-lost callback (unless ``notify_loss`` is False, leaving the
+        caller to batch the report) only when a registered worker that still
+        owned active work is removed while the run is still live. Losing an
+        idle worker costs nothing, and teardown removals (cancellation in
+        flight, or all credits already returned) are expected, so both stay
+        silent. ``in_flight_credits_are_lost=False`` narrows "active work" to
+        sticky sessions, for a graceful shutdown whose already-sent returns are
+        still draining. Returns whether a real loss occurred.
         """
         worker_load = self._workers.pop(worker_id, None)
         if worker_load:

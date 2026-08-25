@@ -4,7 +4,7 @@
 """CI guard for the dashboard-v2 GPU telemetry hero tiles.
 
 The tile contract is JS-to-wire: ``components/gpu-telemetry.js`` matches on the
-telemetry field names that ``GPUTelemetryAccumulator.generate_metric_results``
+telemetry field names that ``GPUTelemetryAccumulator.summarize``
 embeds in ``MetricResult.tag``, which come verbatim from
 ``GPU_TELEMETRY_METRICS_CONFIG``. A backend rename silently blanks all four
 tiles, which is exactly what happened when the fields gained vendor prefixes.
@@ -132,7 +132,7 @@ class TestPrimaryTagsAliases:
 def _emitted_metrics() -> list[dict[str, str]]:
     """The MetricResult shape the accumulator pushes over the WebSocket.
 
-    Mirrors ``GPUTelemetryAccumulator.generate_metric_results``:
+    Mirrors ``GPUTelemetryAccumulator.summarize``:
     ``tag = f"{field}_dcgm_{source}_gpu{index}_{uuid[:12]}"``.
     """
     return [

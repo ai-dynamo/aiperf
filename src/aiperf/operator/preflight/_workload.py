@@ -6,15 +6,14 @@ from __future__ import annotations
 
 import aiohttp
 import orjson
+from kubernetes_asyncio import client
 from kubernetes_asyncio.client.exceptions import ApiException
 
 from aiperf.kubernetes.cr_refs import JOBSET_GROUP, JOBSET_PLURAL, JOBSET_VERSION
 from aiperf.kubernetes.preflight import CheckResult, CheckStatus
 from aiperf.kubernetes.preflight_utils import parse_image_ref
 from aiperf.kubernetes.resources import CONFIGMAP_MAX_SIZE_BYTES
-from aiperf.operator import preflight as _pf
-from aiperf.operator.preflight._checker import _is_transient_error
-from aiperf.operator.preflight._common import PUBLIC_REGISTRIES
+from aiperf.operator.preflight._common import PUBLIC_REGISTRIES, _is_transient_error
 
 
 def _collect_referenced_secrets(
@@ -89,7 +88,7 @@ class _WorkloadChecksMixin:
                 message="No secrets referenced",
             )
 
-        core = _pf.client.CoreV1Api(self.api)
+        core = client.CoreV1Api(self.api)
         missing, permission_denied, missing_keys = await _probe_secrets(
             core, self.namespace, needed
         )
@@ -190,7 +189,7 @@ class _WorkloadChecksMixin:
         """POST JobSet manifest with dryRun=All to catch API server rejections."""
         try:
             jobset_manifest = self.deployment.get_jobset_spec().to_k8s_manifest()
-            await _pf.client.CustomObjectsApi(self.api).create_namespaced_custom_object(
+            await client.CustomObjectsApi(self.api).create_namespaced_custom_object(
                 group=JOBSET_GROUP,
                 version=JOBSET_VERSION,
                 plural=JOBSET_PLURAL,

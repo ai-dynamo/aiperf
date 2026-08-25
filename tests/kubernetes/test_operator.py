@@ -2,11 +2,12 @@
 # SPDX-License-Identifier: Apache-2.0
 """Integration tests for the AIPerf Kubernetes operator.
 
-These tests deploy the operator on a minikube cluster, create AIPerfJob CRs,
-and verify the full benchmark lifecycle through the operator.
+These tests deploy the operator on the local test cluster (Kind by default),
+create AIPerfJob CRs, and verify the full benchmark lifecycle through the
+operator.
 
 Fixture scoping strategy:
-- Session-scoped: local_cluster, kubectl, operator_ready (shared across all tests)
+- Package-scoped: local_cluster, kubectl, operator_ready (shared across all tests)
 - Module-scoped: operator_deployed_job_module (shared for read-only tests)
 - Function-scoped: Used only when test modifies state or needs fresh resources
 """
@@ -372,9 +373,10 @@ class TestOperatorResults:
         operator_ready: OperatorDeployer,
         small_operator_config: AIPerfJobConfig,
     ) -> None:
-        """Verify live metrics are tracked during execution.
+        """Poll for live metrics during execution and report what was seen.
 
-        Creates its own job to observe live metrics during execution.
+        Creates its own job. Live-metrics capture is timing-dependent, so the
+        only assertion is that the job reaches Completed.
         """
         result = await operator_ready.create_job(small_operator_config)
         live_metrics_seen = False

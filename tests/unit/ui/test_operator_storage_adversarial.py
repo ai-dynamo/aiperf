@@ -27,6 +27,13 @@ def _source(path: Path) -> str:
     return path.read_text()
 
 
+def _without_comments(source: str) -> str:
+    """Strip /* */, // and <!-- --> comments so assertions test code, not prose."""
+    source = re.sub(r"/\*.*?\*/", "", source, flags=re.DOTALL)
+    source = re.sub(r"<!--.*?-->", "", source, flags=re.DOTALL)
+    return re.sub(r"^\s*//.*$", "", source, flags=re.MULTILINE)
+
+
 def _function_body(source: str, function_name: str) -> str:
     signature = re.search(
         rf"(?:export\s+)?function {re.escape(function_name)}\([^)]*\) \{{", source
@@ -120,9 +127,10 @@ def test_storage_keys_do_not_collide_between_session_and_local_preferences() -> 
     assert literal_keys["launch.js"] == [_PREFILL_KEY, _PREFILL_KEY]
     assert literal_keys["relaunch-button.js"] == [_PREFILL_KEY]
     assert _HIDDEN_COLS_KEY in _source(_JOB_TABLE_JS)
-    assert _THEME_KEY in all_literal_keys
-    assert len({_PREFILL_KEY, _HIDDEN_COLS_KEY, _THEME_KEY}) == 3
-    assert _PREFILL_KEY not in {_HIDDEN_COLS_KEY, _THEME_KEY}
+    assert _PREFILL_KEY != _HIDDEN_COLS_KEY
+    # The theme preference key is intentionally gone (see the dark-only guard
+    # below), so it can no longer collide with anything.
+    assert _THEME_KEY not in all_literal_keys
 
 
 def test_relaunch_storage_payload_redacts_sensitive_data_before_serializing() -> None:
@@ -158,13 +166,10 @@ def test_relaunch_storage_payload_redacts_sensitive_data_before_serializing() ->
 
 
 def test_local_storage_unavailable_or_malformed_preferences_fall_back_safely() -> None:
-    """localStorage access should be guarded and default to visible columns/theme auto."""
+    """localStorage access should be guarded and default to visible columns."""
     job_table = _source(_JOB_TABLE_JS)
-    theme_switch = _source(_THEME_SWITCH_JS)
     load_body = _function_body(job_table, "loadHiddenCols")
     save_body = _function_body(job_table, "saveHiddenCols")
-    get_theme_body = _function_body(theme_switch, "getTheme")
-    set_theme_body = _function_body(theme_switch, "setTheme")
 
     assert "typeof localStorage === 'undefined'" in load_body
     assert "JSON.parse(raw)" in load_body
@@ -172,17 +177,43 @@ def test_local_storage_unavailable_or_malformed_preferences_fall_back_safely() -
     assert "typeof localStorage === 'undefined'" in save_body
     assert "localStorage.setItem(HIDDEN_COLS_STORAGE_KEY" in save_body
     assert "catch { /* quota / private mode — silent */ }" in save_body
-    assert "window.localStorage.getItem(STORAGE_KEY)" in get_theme_body
-    assert "catch (_) {\n    return 'auto';\n  }" in get_theme_body
-    assert "window.localStorage.setItem(STORAGE_KEY, pref)" in set_theme_body
-    assert "localStorage unavailable (private mode, quota)" in set_theme_body
 
 
-def test_index_theme_bootstrap_falls_back_when_local_storage_is_blocked() -> None:
-    """The synchronous pre-React bootstrap must survive SecurityError from localStorage."""
-    source = _source(_INDEX_HTML)
+def test_theme_is_a_constant_and_reads_no_persisted_preference() -> None:
+    """The dashboard is dark-only; nothing may resolve a theme at runtime.
 
-    assert "try {" in source
-    assert "localStorage.getItem('aiperfTheme') || 'auto'" in source
-    assert "catch (e)" in source
-    assert "document.documentElement.dataset.theme = 'dark';" in source
+    This replaces a pair of tests that asserted ``getTheme``/``setTheme``
+    degraded gracefully when localStorage threw. Those guarded the read path of
+    a preference that must no longer exist: resolving ``'auto'`` against
+    ``prefers-color-scheme`` put ``data-theme="light"`` on ``<html>`` for every
+    light-OS visitor, and style.css only ever partially neutralized the light
+    palette, so 13 of its 73 custom properties leaked into the dark UI. There is
+    also no coherent light rendering available -- ``lib/theme.js`` is a
+    hardcoded dark palette imported by every Chart.js consumer. Keeping the
+    theme a constant is the invariant; storage robustness was only ever a proxy
+    for it.
+    """
+    theme_switch = _source(_THEME_SWITCH_JS)
+    index_html = _source(_INDEX_HTML)
+
+    # Comments are stripped: both files keep a note explaining what the removed
+    # preference resolution used to do, and that prose must stay greppable.
+    for name, source in (("theme-switch.js", theme_switch), ("index.html", index_html)):
+        code = _without_comments(source)
+        assert "localStorage" not in code, name
+        assert "matchMedia" not in code, name
+        assert "prefers-color-scheme" not in code, name
+        assert _THEME_KEY not in code, name
+        assert "'light'" not in code, name
+
+    assert "const THEME = 'dark';" in theme_switch
+    assert "document.documentElement.dataset.theme = THEME;" in theme_switch
+    assert "document.documentElement.dataset.theme = 'dark';" in index_html
+    # The removed switching API must not come back without the CSS to support it.
+    for dead in (
+        "export function setTheme",
+        "export function cycleTheme",
+        "export function getResolvedTheme",
+        "themechange",
+    ):
+        assert dead not in _without_comments(theme_switch), dead

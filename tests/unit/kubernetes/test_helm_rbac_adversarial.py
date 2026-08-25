@@ -41,12 +41,12 @@ def _helm_available() -> bool:
     return shutil.which("helm") is not None and CHART_PATH.exists()
 
 
-def _helm_template(
+def _run_helm_template(
     *extra: str,
     namespace: str = DEFAULT_OPERATOR_NAMESPACE,
     release: str = "aiperf-operator",
-) -> list[K8sDoc]:
-    """Render the chart with optional CRD APIs present and return YAML documents."""
+) -> subprocess.CompletedProcess[str]:
+    """Attempt a chart render and return the raw result, failure included."""
     cmd = [
         "helm",
         "template",
@@ -58,13 +58,22 @@ def _helm_template(
         "monitoring.coreos.com/v1",
         *extra,
     ]
-    result = subprocess.run(
+    return subprocess.run(
         cmd,
         capture_output=True,
         text=True,
         check=False,
         env=os.environ.copy(),
     )
+
+
+def _helm_template(
+    *extra: str,
+    namespace: str = DEFAULT_OPERATOR_NAMESPACE,
+    release: str = "aiperf-operator",
+) -> list[K8sDoc]:
+    """Render the chart with optional CRD APIs present and return YAML documents."""
+    result = _run_helm_template(*extra, namespace=namespace, release=release)
     if result.returncode != 0:
         raise AssertionError(
             f"helm template failed for release {release!r} in namespace {namespace!r}: "
@@ -348,6 +357,47 @@ class TestServiceAccountBindingContract:
             "name": "aiperf-operator-runner",
             "namespace": "observability-aiperf",
         }
+
+    def test_serviceaccount_create_false_without_a_name_fails_the_render(self) -> None:
+        """An unnamed pre-provisioned SA used to silently become ``default``.
+
+        The namespace ``default`` ServiceAccount holds none of the operator's
+        ClusterRole, so the install succeeded and then 403'd on every reconcile.
+        The chart must reject it at render time instead.
+        """
+        result = _run_helm_template("--set", "serviceAccount.create=false")
+
+        assert result.returncode != 0, (
+            "serviceAccount.create=false with an empty name must not render"
+        )
+        assert "serviceAccount.name is required" in result.stderr, result.stderr
+        assert "serviceAccountName: default" not in result.stdout
+
+    @pytest.mark.parametrize(
+        ("overrides", "expected_name"),
+        [
+            param((), "aiperf-operator", id="create-true-default-name"),
+            param(
+                ("--set", "serviceAccount.create=false",
+                 "--set", "serviceAccount.name=aiperf-operator-sa"),
+                "aiperf-operator-sa",
+                id="create-false-explicit-name",
+            ),
+        ],
+    )  # fmt: skip
+    def test_legitimate_serviceaccount_configurations_still_render(
+        self, overrides: tuple[str, ...], expected_name: str
+    ) -> None:
+        docs = _helm_template(*overrides)
+
+        deployment = _find(docs, "Deployment", "aiperf-operator")
+        pod_spec = _as_mapping(
+            _as_mapping(deployment["spec"], "Deployment spec")
+            .get("template", {})
+            .get("spec", {}),
+            "Deployment pod spec",
+        )
+        assert pod_spec["serviceAccountName"] == expected_name
 
     def test_helm_test_crd_clusterrole_is_resource_name_scoped_to_aiperf_crds(
         self,

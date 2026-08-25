@@ -46,6 +46,9 @@ def build_plan_from_sweep(sweep_cr: dict[str, Any]) -> BenchmarkPlan:
 
     Raises:
         ValidationError: If the CR spec fails Pydantic validation.
+        ValueError: If an unseeded stochastic sweep has no ``metadata.uid`` to
+            derive a restart-stable seed from.
+        RuntimeError: If a validated QMC sweep is missing its raw envelope.
     """
     spec = validate_sweep_spec(sweep_cr["spec"])
     validate_kubernetes_sweep_credential_axes(spec.sweep)

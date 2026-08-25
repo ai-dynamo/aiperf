@@ -51,8 +51,9 @@ def _discover_recipes() -> list[Path]:
 def _adapt_recipe_for_mock(doc: dict[str, Any], image: str) -> dict[str, Any]:
     """Adapt a recipe for the mock-server test environment.
 
-    Rewrites endpoint, models, tokenizer, datasets, load, and strips PVC/secret
-    references so the recipe can run against the in-cluster mock server.
+    Rewrites endpoint, models, tokenizer, datasets, phases, runtime, and strips
+    podTemplate/artifacts/SLO sections so the recipe can run against the
+    in-cluster mock server.
 
     Expects the flat CRD spec format (no userConfig wrapper).
     """

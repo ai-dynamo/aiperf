@@ -11,7 +11,7 @@ Focuses on cache-never-source-of-truth failure modes:
 
 Out of scope (covered elsewhere):
 - Happy-path row upserts: tests/unit/operator/test_runs_index.py
-- HTTP router response models: tests/unit/operator/test_results_api.py
+- HTTP router response models: tests/unit/operator/test_results_analytics.py
 """
 
 from __future__ import annotations

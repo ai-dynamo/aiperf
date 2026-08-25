@@ -8,13 +8,12 @@ unified ``faults.inject(...)`` interface rather than the legacy
 ``chaos_injector`` direct calls.
 
 The function-scope :py:data:`faults` registry inherited from
-:py:mod:`tests.kubernetes.chaos_aiperf.conftest` ships only a
-:py:class:`PodInjector` by default, so each C-series module that needs
-CR-level faults (``crd.delete``, ``crd.delete_twice``, ``operator.kill``)
-must register its own :py:class:`CRDInjector` parameterized for
-AIPerfJob. This module does so via the :py:data:`faults_with_crd`
-function-scope fixture; tests use that name instead of ``faults`` to make
-the registration explicit at the call site.
+:py:mod:`tests.kubernetes.chaos_aiperf.conftest` already pre-registers an
+AIPerfJob-shape :py:class:`CRDInjector` for the ``crd.*`` / ``operator.*``
+namespaces (``crd.delete``, ``crd.delete_twice``, ``operator.kill``).
+This module still requests it through the :py:data:`faults_with_crd`
+function-scope fixture so the CR-level dependency is explicit at the call
+site; tests use that name instead of ``faults``.
 """
 
 from __future__ import annotations
@@ -62,13 +61,14 @@ async def faults_with_crd(
     faults: InjectorRegistry,
     kubectl: KubectlClient,
 ) -> AsyncIterator[InjectorRegistry]:
-    """Augment the inherited :py:data:`faults` registry with an AIPerf-shape CRDInjector.
+    """Yield the inherited :py:data:`faults` registry with an AIPerf-shape CRDInjector.
 
-    The conftest in :py:mod:`tests.kubernetes.chaos_aiperf.conftest`
-    only pre-registers :py:class:`PodInjector`. C1/C3 dispatch on the
-    ``crd.*`` namespace, so we register a :py:class:`CRDInjector`
-    parameterized for ``AIPerfJob`` / ``aiperf.nvidia.com`` and the
-    chart-default operator namespace + selector.
+    C1/C3 dispatch on the ``crd.*`` namespace. The conftest in
+    :py:mod:`tests.kubernetes.chaos_aiperf.conftest` already registers a
+    :py:class:`CRDInjector` parameterized for ``aiperfjob`` /
+    ``aiperf.nvidia.com``, so this fixture appends an equivalent one only
+    to make the requirement explicit -- registry dispatch keeps using the
+    first-registered (conftest) instance.
     """
     faults.register(
         CRDInjector(

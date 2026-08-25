@@ -16,9 +16,11 @@ Metrics:
         - fatal:   raised kopf.PermanentError (kopf stops retrying)
         - error:   any other exception, incl. CancelledError/KeyboardInterrupt/SystemExit
     aiperf_operator_completion_claim_races_total           Counter
-        Incremented each time try_claim_completion loses the race for a CR
-        (annotation already present, or apiserver returns 409/422 on the
-        atomic test-and-add patch).
+        Incremented each time try_claim_completion decisively loses the race
+        for a CR: the annotation is confirmed present on a live re-read,
+        either because the body snapshot already showed it or because the
+        atomic test-and-add patch conflicted with 409. A 422 rejection is
+        retried rather than counted, so it does not increment this.
 
 Usage:
     @track_handler("monitor_progress")

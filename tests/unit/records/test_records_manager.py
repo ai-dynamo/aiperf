@@ -1503,7 +1503,7 @@ class TestRecordsManagerTimingDispatch:
     async def test_trailing_named_warmup_defers_profiling_finalization(
         self,
     ) -> None:
-        """A ``profiling -> cooldown(warmup)`` run finalizes only after cooldown."""
+        """A ``profiling -> cooldown(warmup)`` run finalizes only after credits complete."""
         manager = _create_manager_for_timing_dispatch()
         manager._records_tracker = RecordsTracker()
         profiling_complete = CreditPhaseCompleteMessage(

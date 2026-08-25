@@ -742,7 +742,9 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
         """Stop all server metrics collectors when profiling is cancelled.
 
         Called when user cancels profiling or an error occurs during profiling.
-        Waits for flush period to allow metrics to finalize, then stops collectors.
+        Stops collectors immediately: unlike the PROFILE_COMPLETE path there is
+        no flush-period wait, because a cancelled run has no settled end state
+        worth waiting for.
 
         The cancel command carries no result window, so the window recorded from
         the credit-phase messages is used instead. Publishing a null window would

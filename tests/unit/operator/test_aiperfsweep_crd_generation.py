@@ -419,12 +419,12 @@ def test_crd_runtime_scalars_keep_int_or_string_helm_compatibility():
 
 
 def test_convergence_min_max_runs_bound():
-    """Convergence config lives in multiRun; the structural
-    convergence_metric/threshold fields are now flat on multiRun. The
-    legacy ConvergenceConfig with min_runs/max_runs is no longer wired
-    into the AIPerfSweepSpec, so the dedicated CEL bound is gone — the
-    enforcement is at the model_validator level on the underlying
-    convergence config when used.
+    """Convergence is nested under multiRun, not a top-level spec field.
+
+    ``ConvergenceConfig`` (metric/stat/mode/threshold/minRuns) hangs off
+    ``multiRun.convergence``, so no dedicated top-level ``convergence`` CEL
+    bound exists; the ``minRuns <= numRuns`` rule rides the ``multiRun`` node
+    and ``MultiRunConfig`` enforces it in a model_validator.
     """
     spec = _aiperfsweep_spec_node()
     assert "convergence" not in spec.get("properties", {}), (

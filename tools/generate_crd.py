@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Generate Kubernetes CRD schema from AIPerfConfig Pydantic model.
+"""Generate the AIPerfJob and AIPerfSweep CRD schemas from Pydantic models.
 
-Introspects the AIPerfConfig model to produce a complete CRD YAML that
-stays in sync with the Python configuration schema. Operator-specific
-fields (image, podTemplate, scheduling, etc.) and the status sub-schema
-are defined statically.
+Introspects ``AIPerfJobSpec`` and ``AIPerfSweepSpec`` (which embed
+AIPerfConfig) to produce both CRD YAMLs plus a Chart.yaml whose appVersion
+tracks pyproject.toml, so the published schemas stay in sync with the Python
+configuration models. Only the ``status`` sub-schemas and printer columns are
+defined statically.
 
 Usage:
     ./tools/generate_crd.py
@@ -1174,8 +1175,9 @@ def _aiperf_job_spec_properties() -> dict[str, Any]:
     The two models share most fields but differ on a handful of descriptions
     and constraints (e.g. ``ttl_seconds_after_finished`` carries ``ge=0`` only
     on AIPerfJobSpec), and AIPerfJobSpec adds ``skip_endpoint_check`` and
-    ``benchmark``. This mirrors what the AIPerfSweep CRD already does via
-    ``AIPerfSweepSpec.template.spec`` (which embeds AIPerfJobSpec).
+    ``benchmark``. This mirrors what the AIPerfSweep CRD already does by
+    walking ``AIPerfSweepSpec`` (the sibling flat envelope over AIPerfConfig +
+    DeploymentConfig).
     """
     return _aiperf_job_spec_properties_from_schema(
         CRDSchemaSource().job_schema(),
@@ -1704,8 +1706,8 @@ def build_aiperfsweep_crd() -> dict[str, Any]:
 
     Derives ``spec`` from ``AIPerfSweepSpec.model_json_schema(by_alias=True)``
     so the CRD field names follow K8s camelCase conventions, then attaches CEL
-    immutability rules to the orchestration-critical top-level spec fields
-    (``sweep``, ``multiRun``).
+    immutability rules to every top-level spec field except ``cancel`` and
+    ``ttlSecondsAfterFinished`` (see ``_AIPERFSWEEP_MUTABLE_SPEC_FIELDS``).
     """
     return _build_aiperfsweep_crd_from_schema(
         CRDSchemaSource().sweep_schema(),
@@ -1947,7 +1949,7 @@ def _sync_chart_app_version(version: str) -> str:
 
 
 class CRDGenerator(Generator):
-    """Generate Kubernetes CRD from AIPerfConfig schema."""
+    """Generate the AIPerfJob and AIPerfSweep CRDs plus the synced Chart.yaml."""
 
     name = "CRD Schema"
     description = "Generate Kubernetes CRD YAML from AIPerfConfig Pydantic model"

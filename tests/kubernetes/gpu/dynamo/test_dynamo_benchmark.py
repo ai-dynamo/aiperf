@@ -159,10 +159,10 @@ class TestDynamoBenchmarkCompletion:
         self,
         deployed_dynamo_benchmark: BenchmarkResult,
     ) -> None:
-        """Verify request count is close to configuration.
+        """Verify at least one request was counted.
 
         Dynamo disaggregated mode on a shared GPU may not complete all
-        requests within the timeout; verify at least 80% completed.
+        requests within the timeout, so the assertion only requires >= 1.
         """
         result = deployed_dynamo_benchmark
         assert result.metrics is not None
@@ -172,7 +172,7 @@ class TestDynamoBenchmarkCompletion:
 
 
 class TestDynamoBenchmarkWorkerScaling:
-    """Tests for Dynamo benchmark with different worker pod counts and longer runs."""
+    """Tests for Dynamo benchmark at different concurrency levels with one worker pod."""
 
     @pytest.mark.parametrize(
         "request_count, concurrency",
@@ -193,7 +193,7 @@ class TestDynamoBenchmarkWorkerScaling:
         request_count: int,
         concurrency: int,
     ) -> None:
-        """Verify benchmark completes with varying worker pod counts."""
+        """Verify benchmark completes at each concurrency level with one worker pod."""
         workers = 1
         logger.info(
             f"[TEST] Worker scaling test: workers={workers}, requests={request_count}, concurrency={concurrency}"

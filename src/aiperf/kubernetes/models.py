@@ -513,9 +513,10 @@ class AIPerfJobInfo(K8sCamelModel):
         default=None,
         ge=0,
         description=(
-            "Total successful + failed requests issued so far. Derived as "
-            "request_count.avg + error_request_count.avg (successes + errors) "
-            "by ``MetricsSummary.from_metrics``, falling back to "
+            "Total successful + failed requests issued so far. Derived by "
+            "``MetricsSummary.from_metrics`` from completed_request_count.avg "
+            "when present (the only total published on the live path), else "
+            "request_count.avg + error_request_count.avg, falling back to "
             "request_count.avg on older statuses."
         ),
     )
@@ -527,7 +528,7 @@ class AIPerfJobInfo(K8sCamelModel):
             "Fraction of requests that errored (0..1). Derived by "
             "``MetricsSummary.from_metrics`` from the authoritative "
             "request_error_rate metric (rate/100) when present, else as "
-            "error_count / (successes + errors)."
+            "error_request_count / (successes + errors)."
         ),
     )
     model: str | None = Field(default=None, description="Target model name from spec.")

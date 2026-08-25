@@ -7,7 +7,7 @@ Provides reusable test utilities for testing the AIPerf API module including:
 - Mock WebSocket creation
 - Mock service factories
 - MetricResult builders
-- UserConfig builders with common variations
+- AIPerfConfig / BenchmarkRun builders with common variations
 """
 
 import importlib

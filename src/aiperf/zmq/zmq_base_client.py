@@ -88,8 +88,8 @@ class BaseZMQClient(AIPerfLifecycleMixin):
 
         This method will:
         - Create the zmq socket
+        - Set the socket options (before bind/connect, so connect-time options land)
         - Bind or connect the socket to the address
-        - Set the socket options
         - Run the AIPerfHook.ON_INIT hooks
         """
         try:

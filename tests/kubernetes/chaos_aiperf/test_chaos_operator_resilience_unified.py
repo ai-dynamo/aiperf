@@ -1,10 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Chaos: operator-pod resilience -- unified-API port of C4, C5, C5b.
+"""Chaos: operator-pod resilience -- unified-API port of C4 and C5.
 
 Covers scenarios C4 (kill operator mid-benchmark; CR still completes) and
-C5 / C5b (orphaned ``aiperf.nvidia.com/completion-claimed`` annotation
-present at operator restart; CR converges to Completed via the monitor
+C5 (orphaned ``aiperf.nvidia.com/completion-claimed`` annotation present
+at operator restart; CR converges to Completed via the monitor
 orphan-recovery branch).
 
 Port of :py:mod:`tests.kubernetes.chaos.test_chaos_operator_resilience`

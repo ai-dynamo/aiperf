@@ -132,9 +132,9 @@ class ProcessHealthAggregates:
     involuntary_ctx_switches: NumericAggregate = field(default_factory=NumericAggregate)
     """Involuntary context switches."""
     io_read_bytes: NumericAggregate = field(default_factory=NumericAggregate)
-    """Bytes read from disk."""
+    """Bytes read through read() syscalls (``IOCounters.read_chars``)."""
     io_write_bytes: NumericAggregate = field(default_factory=NumericAggregate)
-    """Bytes written to disk."""
+    """Bytes written through write() syscalls (``IOCounters.write_chars``)."""
     cpu_time_user: NumericAggregate = field(default_factory=NumericAggregate)
     """Seconds of user-mode CPU time."""
     cpu_time_system: NumericAggregate = field(default_factory=NumericAggregate)

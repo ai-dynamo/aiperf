@@ -213,14 +213,11 @@ def test_jobs_detail_serves_live_only_cr_with_source_live(harness) -> None:
     """A registered FakeLiveCR with no on-disk dir surfaces via per-job
     detail with ``source="live"``.
 
-    Harness gap (documented): the shared conftest patches only
-    ``find_aiperf_job`` (per-name lookup) and lets ``list_aiperf_jobs``
-    crash against a MagicMock api client, so live CRs do NOT appear in
-    ``GET /api/v1/jobs``. The detail endpoint ``GET /api/v1/jobs/{ns}/{name}``
-    uses ``find_aiperf_job`` and works correctly — assert there instead.
-    Surfaced bug-or-gap: the list endpoint should not be brittle against a
-    failing list-aiperf-jobs call, but the warning is logged + PVC fallback
-    kicks in, so this is graceful-degradation rather than a list-time crash.
+    Harness note: the shared conftest patches both ``find_aiperf_job`` and
+    ``list_aiperf_jobs`` off the in-process CR registry. This test asserts
+    against the detail endpoint ``GET /api/v1/jobs/{ns}/{name}``, which
+    resolves through ``find_aiperf_job``, because that is where ``source``
+    is derived for a single job.
     """
     harness.register_cr(
         FakeLiveCR(
@@ -286,10 +283,9 @@ def test_jobs_detail_overlap_marks_source_both_with_cr_phase_winning(harness) ->
     job-detail endpoint returns ``source="both"`` with the CR's phase
     overriding the archived summary's status.
 
-    Harness-scope note: the *list* endpoint can't dedupe in this harness
-    because ``list_aiperf_jobs`` is unpatched (see live-only test above).
-    The detail endpoint uses ``find_any_job`` which calls ``find_aiperf_job``
-    + reads the PVC, both of which work — that's where we assert.
+    Scope note: the detail endpoint uses ``find_any_job``, which calls
+    ``find_aiperf_job`` and reads the PVC, so it is where the CR/PVC merge
+    is observable — that's where we assert rather than on the list.
     """
     name = "overlap-bench"
     harness.register_cr(
@@ -333,10 +329,10 @@ def test_dashboard_mixed_phases_classifies_into_running_and_completed(harness) -
     Completed predicate: phase in {completed, succeeded}.
     Failed/Cancelled phases are neither and must not be double-counted.
 
-    Harness-scope note: live CRs are not visible to the list endpoint in
-    this harness, so we use archived runs (status=<phase>) for everything.
-    The archived rows still flow through the same Dashboard ``running``
-    filter — that filter keys on ``phase``, not on ``source``.
+    Scope note: archived runs (status=<phase>) are used for every phase
+    instead of live CRs. The archived rows still flow through the same
+    Dashboard ``running`` filter — that filter keys on ``phase``, not on
+    ``source``.
     """
     # ``results_dir`` is session-scoped, so earlier tests can leak rows into
     # the Dashboard's recent-list/KPI tiles. Wipe before seeding so the
@@ -438,8 +434,8 @@ def test_dashboard_handles_nan_throughput_without_breaking_layout(harness) -> No
 
     ``json.dumps(float("nan"))`` would raise; we go through a string-replace
     on the dump to emit raw ``NaN`` (technically invalid JSON, which orjson
-    rejects on parse). The API should tolerate parse failure (returns the
-    job as archived with KPIs=None) rather than 500.
+    rejects on parse). The API must tolerate the parse failure — whether it
+    drops the row or serves it without KPIs — rather than 500.
     """
     # Write a literal "NaN" — invalid JSON — so the operator's defensive
     # try/except wraps it (see CLAUDE.md "Completion-parse resilience").
@@ -670,8 +666,8 @@ def test_compare_epochs_page_renders_for_two_archived_epochs(harness) -> None:
     """Seed two epochs for one job, navigate to /compare/<ns>/<name>/A/B.
 
     The compare-epochs page is a thin wrapper over the per-epoch summary
-    fetch. We only assert: page renders, no Unreachable banner, and the URL
-    hash matches the expected pattern.
+    fetch. We only assert: the deep link loads and no Unreachable banner
+    appears.
     """
     harness.seed_run(
         name="two-epoch-bench",
@@ -761,7 +757,7 @@ def test_jobs_list_filter_by_namespace_query_param(harness) -> None:
 
 def test_jobs_list_unknown_phase_filter_shows_unfiltered_results(harness) -> None:
     """``?phase=DoesNotExist`` falls through to ``activeFilter=null`` so the
-    list shows ALL jobs in that namespace, not just an unfiltered set."""
+    list shows ALL jobs in that namespace, not an empty result set."""
     _seed_phase_run(harness, name="phase-test-bench", phase="Running")
     harness.goto(f"/jobs?ns={harness.ns}&phase=DoesNotExist")
     _wait_for_jobs_list_settled(harness)
@@ -775,9 +771,9 @@ def test_jobs_list_phase_filter_with_xss_payload_does_not_execute_script(
 ) -> None:
     """A ``?phase=<script>alert(1)</script>`` payload must NOT inject a
     runnable <script> tag into the DOM. The framework escapes URL-decoded
-    query values when rendering them, and we assert: (a) no console error
-    fires, (b) the literal ``<script>`` tag count in HTML is zero (any
-    appearance would be as text content, not as a script element).
+    query values when rendering them, and we assert: (a) no pageerror
+    fires, (b) no ``<script>`` element in the DOM contains ``alert(1)`` (any
+    appearance of the payload would be as text content, not as a script).
     """
     _seed_phase_run(harness, name="xss-test-bench", phase="Running")
     payload = "<script>alert(1)</script>"

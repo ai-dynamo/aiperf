@@ -101,9 +101,9 @@ class PodStateTrackerMixin(MessageBusClientMixin):
     ) -> None:
         """Cache the most recent startup-state transition from each worker.
 
-        Fires only in non-group-managed modes (component-integration tests).
-        In K8s the per-worker message goes to the WGM over DEALER instead;
-        :meth:`_on_worker_status_summary` handles that path.
+        Workers publish this on the cluster-wide pub/sub topic in every mode,
+        so transitions land here directly. In K8s the same information also
+        arrives already pod-scoped via :meth:`_on_worker_status_summary`.
         """
         self._pod_state_tracker.update_worker_startup_state(message)
 

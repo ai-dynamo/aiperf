@@ -4,7 +4,11 @@
 
 Covers the full public API: write_latest/resolve_latest (atomic pointer file),
 resolve_run_dir (latest + explicit epoch + missing-epoch None), enforce_retention
-(mtime ordering, keep count, protect_epoch guarantee), epoch_key_from_body.
+(mtime ordering, keep count, protect_epoch guarantee, retain_days intersection,
+dry_run), epoch_key_from_body and its epoch_key_seconds/_epoch_wall_seconds
+decoders, EPOCH_RE/_validate_epoch shape rejection, the sweep-layout helpers
+(write_sweep_latest/resolve_sweep_dir/resolve_sweep_latest/list_sweep_epochs),
+and the async list_runs_async/list_sweep_epochs_async index-plus-disk merge.
 """
 
 from __future__ import annotations

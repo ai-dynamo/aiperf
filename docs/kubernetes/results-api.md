@@ -145,6 +145,14 @@ curl -X POST http://localhost:8081/api/v1/validate \
 }
 ```
 
+Because the route is unauthenticated and exists purely to convert a bad manifest
+into a structured verdict, a well-formed request body always answers `200 OK`
+with this shape — never `500`. A validator that raises unexpectedly is caught,
+logged server-side, and reported as `passed: false` with a single
+`Validation aborted: <ExceptionType>: <message>` entry in `errors`. Only a
+malformed *request body* (bad JSON, missing `manifest`, unknown top-level field)
+produces a non-`200`, as `422`.
+
 ---
 
 ## Jobs

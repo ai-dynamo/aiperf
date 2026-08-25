@@ -407,6 +407,23 @@ the namespace already exists and `create` is `false`. Use
 `benchmarkRbacNamespaces` to provision the same namespace + RBAC pair in
 additional namespaces.
 
+### Operator ServiceAccount
+
+```yaml
+serviceAccount:
+  create: true
+  name: "" # auto-generated from the release name when create=true
+  annotations: {}
+```
+
+With `create: false` the chart provisions no ServiceAccount and no RBAC of its
+own, so `serviceAccount.name` is **required** and must name a pre-provisioned
+account already bound to the operator's `ClusterRole`. Omitting it fails the
+render; it does not fall back to the namespace `default` account, which carries
+none of the operator's permissions. See
+[`rbac-security.md`](rbac-security.md#rbaccreatefalse-workflow) for the
+out-of-band RBAC tree.
+
 ### Default Image
 
 The default image used for benchmark jobs if not specified in the CR:

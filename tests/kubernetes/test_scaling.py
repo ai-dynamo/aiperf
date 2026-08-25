@@ -84,7 +84,7 @@ class TestWorkerPodScaling:
         """Verify correct number of worker pods are created.
 
         --total-workers sets total workers distributed across pods based on
-        --workers-per-pod (default 10).
+        runtime.workersPerPod (default 10).
         """
         config = BenchmarkConfig(
             concurrency=concurrency,
@@ -205,7 +205,7 @@ class TestHighConcurrencyScaling:
 
 
 class TestPodResourceConfiguration:
-    """Tests for pod resource configuration (module-scoped for speed)."""
+    """Tests for pod resource configuration."""
 
     @pytest.mark.asyncio
     async def test_controller_pod_has_expected_resources(
@@ -265,7 +265,7 @@ class TestPodResourceConfiguration:
 
 
 class TestPodSecurityConfiguration:
-    """Tests for pod security configuration (module-scoped for speed)."""
+    """Tests for pod security configuration."""
 
     @pytest.mark.asyncio
     async def test_pods_run_as_non_root(
@@ -304,7 +304,7 @@ class TestPodSecurityConfiguration:
         benchmark_deployer: BenchmarkDeployer,
         kubectl: KubectlClient,
     ) -> None:
-        """Verify pods have startup, liveness, and readiness probes."""
+        """Verify containers exposing a health port declare a health probe."""
         result = await _deploy_live_benchmark(benchmark_deployer, kubectl)
         try:
             assert result.pods, "No benchmark pods were observed"

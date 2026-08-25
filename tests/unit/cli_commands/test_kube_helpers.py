@@ -187,7 +187,7 @@ class TestWaitForApiReady:
 
     @pytest.mark.asyncio
     async def test_raises_when_process_exits_with_empty_stderr(self) -> None:
-        """Test raises RuntimeError with 'no output' when stderr is empty string."""
+        """Test raises RuntimeError with 'no output' when stderr is whitespace-only."""
         from aiperf.kubernetes.port_forward import _wait_for_api_ready
 
         proc = MagicMock()

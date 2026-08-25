@@ -222,7 +222,7 @@ class TestJobSetTerminalConditionParsing:
 
 
 class TestJobSetTerminalParentLookupAndPatch:
-    """Completed JobSets route to exactly one parent annotation patch."""
+    """Completed JobSets route to no parent annotation patch; helpers stay unit-covered."""
 
     @pytest.mark.asyncio
     async def test_lookup_aiperfjob_body_prefixed_jobset_uses_derived_parent_name(

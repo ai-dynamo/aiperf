@@ -265,7 +265,7 @@ def extract_commands(app: Any, *, prefix: str = "") -> list[tuple[str, str]]:
     with no ``@app.default``, only registered subcommands) so that every leaf
     command is documented as its own section. Two-token commands such as
     ``aiperf config init`` and three-token commands such as
-    ``aiperf kube results list`` are both reached this way; an intermediate group
+    ``aiperf kube results list-runs`` are both reached this way; an intermediate group
     is never emitted on its own, because it has no argument collection to
     document.
     """

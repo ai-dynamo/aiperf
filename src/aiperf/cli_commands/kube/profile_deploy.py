@@ -332,8 +332,7 @@ async def deploy_via_operator(
     if dry_run:
         import orjson
 
-        output = orjson.dumps(cr, option=orjson.OPT_INDENT_2).decode()
-        kube_console.console.print(output, highlight=False)
+        kube_console.emit_raw(orjson.dumps(cr, option=orjson.OPT_INDENT_2).decode())
         return
 
     async with k8s_client(

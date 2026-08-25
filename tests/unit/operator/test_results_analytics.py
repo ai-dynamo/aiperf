@@ -1,10 +1,13 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Tests for the operator web UI results_analytics router.
+"""Tests for the operator web UI results_analytics router and its ResultsDB.
 
-Covers the ``/api/v1/config/{namespace}/{job_id}`` fallback chain — specifically
-the live-CR spec fallback that keeps the dashboard hero's SLO chips working
-for running jobs with no on-disk artifacts.
+Covers two things: the ``ResultsDB`` leaderboard/history/compare/index_entries/
+summary paths that fall back to (or merge with) on-disk runs when the runs_index
+is closed, stale, or points at a deleted run directory; and the
+``/api/v1/config/{namespace}/{job_id}`` fallback chain, including the live-CR
+spec fallback that keeps the dashboard hero's SLO chips working for running jobs
+with no on-disk artifacts.
 """
 
 from __future__ import annotations

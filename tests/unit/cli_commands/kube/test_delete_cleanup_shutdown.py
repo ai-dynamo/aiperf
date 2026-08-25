@@ -409,4 +409,4 @@ class TestShutdown:
             await shutdown("job-1")
 
         assert session.post_timeout is not None
-        assert getattr(session.post_timeout, "total") == 35.0
+        assert session.post_timeout.total == 35.0

@@ -1223,7 +1223,7 @@ def temp_results_dir():
 
 
 class TestCreateOwnerReference:
-    """Tests for _create_owner_reference function."""
+    """Tests for OwnerReference.for_aiperf_job."""
 
     @pytest.mark.parametrize(
         "name,uid",

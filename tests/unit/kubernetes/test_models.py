@@ -407,7 +407,7 @@ def _make_raw_aiperfjob(
 
 
 class TestAIPerfJobInfoFromRaw:
-    """Verify from_raw extracts metadata fields from raw K8s dicts."""
+    """Verify AIPerfJobCR.to_info extracts metadata fields from raw K8s dicts."""
 
     def test_from_raw_extracts_name_and_namespace(self) -> None:
         raw = _make_raw_aiperfjob(name="my-job", namespace="perf")
@@ -709,7 +709,7 @@ class TestAIPerfJobInfoWorkersStr:
 
 
 class TestAIPerfJobInfoProgress:
-    """Verify _extract_progress from status.phases."""
+    """Verify _requests_progress_percent from status.phases."""
 
     def test_progress_from_single_phase(self) -> None:
         raw = _make_raw_aiperfjob(
@@ -981,7 +981,7 @@ class TestAIPerfJobInfoGracefulDefaults:
 
 
 class TestAIPerfJobInfoFullSnapshot:
-    """Verify from_raw with a fully populated raw dict."""
+    """Verify AIPerfJobCR.to_info with a fully populated raw dict."""
 
     def test_full_aiperfjob_cr(self) -> None:
         raw = _make_raw_aiperfjob(

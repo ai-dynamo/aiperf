@@ -621,7 +621,8 @@ aiperf kube generate --no-operator \
 | Validate a config file | `aiperf kube validate benchmark.yaml` |
 | Run a benchmark | `aiperf kube profile --config benchmark.yaml --image <img>` |
 | Run without waiting | `aiperf kube profile ... --detach` |
-| Preview without deploying | `aiperf kube profile ... --dry-run` |
+| Preview the operator CR without deploying | `aiperf kube profile ... --dry-run` |
+| Preview direct-mode manifests without deploying | `aiperf kube profile ... --no-operator --dry-run` |
 | Attach to a running job | `aiperf kube attach` |
 | Diagnose a stuck or failed job | `aiperf kube debug` |
 | List all jobs | `aiperf kube list` |

@@ -1403,7 +1403,7 @@ class TestBenchmarkWatchdogReport:
 
 
 class TestBenchmarkWatchdogMonitorLoop:
-    """Verify the monitor loop orchestrates checks correctly."""
+    """Verify the checks the monitor loop drives: pod fetch and phase analysis."""
 
     @pytest.mark.asyncio
     async def test_fetch_failure_returns_none(self, source: FakeDataSource) -> None:

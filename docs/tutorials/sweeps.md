@@ -927,10 +927,11 @@ Submit:
 aiperf kube sweep --config sweep.yaml --image aiperf:latest --total-workers 64
 ```
 
-Preview the submitted resource with `--dry-run`. The JSON includes the resolved
-`metadata.namespace` (from `--namespace`, or `aiperf-benchmarks` by default), so
-redirecting it to a file and applying it targets the same namespace as a live
-submission.
+Preview the submitted resource with `--dry-run`. The JSON is written to stdout
+verbatim — never line-wrapped, whatever the terminal width — and includes the
+resolved `metadata.namespace` (from `--namespace`, or `aiperf-benchmarks` by
+default), so redirecting it to a file and applying it targets the same namespace
+as a live submission.
 
 Benchmark CLI flags override the matching Config-v2 YAML fields before the
 `AIPerfSweep` is submitted. When the input is an `AIPerfJob` manifest, kube

@@ -28,12 +28,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from aiperf.common.finite import is_finite_value
 from aiperf.kubernetes.environment import K8sEnvironment
 
 __all__ = [
     "BenchmarkFinding",
     "diagnose_benchmark",
     "error_rate",
+    "error_rate_from_metrics",
+    "format_error_counts",
 ]
 
 
@@ -78,34 +81,95 @@ def _live_metrics(status: dict[str, Any]) -> dict[str, Any]:
     return metrics if isinstance(metrics, dict) else {}
 
 
-def error_rate(status: dict[str, Any]) -> float:
-    """Return the observed request error rate, or 0.0 when unavailable.
+def _metric_avg_opt(metrics: dict[str, Any], key: str) -> float | None:
+    """Read ``metrics[key]["avg"]`` as a finite float, or None when unusable.
 
-    ``request_count`` and ``error_count`` are averaged independently from
-    staggered liveMetrics windows, so ``error_count > request_count`` is
-    observable; the result is clamped to ``[0.0, 1.0]`` rather than reported
-    as a nonsense rate above 100%.
+    Distinct from :func:`_metric_avg`, which collapses absent to ``0.0``. The
+    error-rate math needs "absent" and "genuinely zero" to stay
+    distinguishable, because reading unknown as zero is exactly how a broken
+    detector reports a healthy run.
     """
-    metrics = _live_metrics(status)
-    requests = _metric_avg(metrics, "request_count")
-    if requests <= 0:
-        return 0.0
-    return min(1.0, max(0.0, _metric_avg(metrics, "error_count") / requests))
+    entry = metrics.get(key)
+    value = entry.get("avg") if isinstance(entry, dict) else entry
+    return float(value) if is_finite_value(value) else None
+
+
+def _completed_requests(metrics: dict[str, Any]) -> int:
+    """Successes + errors, i.e. the true error-rate denominator.
+
+    Prefers ``completed_request_count``, which is defined as exactly that sum
+    and exists so consumers do not have to re-derive it. It is also the only
+    total available on the live path: ``error_request_count`` carries
+    ``MetricFlags.ERROR_ONLY`` and is stripped by
+    ``records_manager_processing.filter_display_metrics`` before anything is
+    published to ``status.liveMetrics`` or ``/api/metrics``. ``request_count``
+    alone counts *valid* requests only and is never the denominator.
+    """
+    completed = _metric_avg_opt(metrics, "completed_request_count")
+    if completed is not None and completed > 0:
+        return int(completed)
+    successes = _metric_avg_opt(metrics, "request_count") or 0.0
+    errors = _metric_avg_opt(metrics, "error_request_count") or 0.0
+    total = successes + errors
+    return int(total) if total > 0 else 0
+
+
+def error_rate_from_metrics(
+    metrics: dict[str, Any],
+) -> tuple[float | None, int, int]:
+    """Return ``(rate, errors, completed)`` from a tag-keyed metrics mapping.
+
+    ``rate`` is a **0..1 fraction** so it can be compared directly against the
+    fraction-valued ``AIPERF_K8S_DIAGNOSIS_*`` thresholds. It is ``None`` when
+    the payload carries no usable error signal — callers must treat that as
+    *unknown*, never as "no errors".
+
+    ``request_error_rate`` is the authoritative source because it is the only
+    error signal present on every payload path. Its unit is
+    :attr:`GenericMetricUnit.PERCENT` and it is derived as
+    ``100 * errors / completed``, so it is divided by 100 here; skipping that
+    conversion would trip the 0.05 high-error-rate threshold on a run with a
+    single failure in a thousand. ``error_request_count / completed`` is the
+    fallback for the unfiltered on-disk export, where the raw counters survive.
+    """
+    completed = _completed_requests(metrics)
+    percent = _metric_avg_opt(metrics, "request_error_rate")
+    if percent is not None:
+        rate = min(1.0, max(0.0, percent / 100.0))
+        return rate, round(rate * completed), completed
+    errors = _metric_avg_opt(metrics, "error_request_count")
+    if errors is None or completed <= 0:
+        return None, 0, completed
+    return min(1.0, max(0.0, errors / completed)), int(errors), completed
+
+
+def error_rate(status: dict[str, Any]) -> float:
+    """Return the observed request error rate (0..1), or 0.0 when unavailable."""
+    rate, _, _ = error_rate_from_metrics(_live_metrics(status))
+    return rate if rate is not None else 0.0
+
+
+def format_error_counts(errors: int, completed: int) -> str:
+    """``" (errors/completed)"``, or empty when no count was published.
+
+    An all-error live run publishes ``request_error_rate`` but no counter at
+    all (``request_count`` has no valid rows, and both error counters are
+    ``ERROR_ONLY``), so a bare ``(0/0)`` would read as a contradiction of the
+    rate it annotates.
+    """
+    return f" ({errors}/{completed})" if completed > 0 else ""
 
 
 def _check_error_rate(status: dict[str, Any], findings: list[BenchmarkFinding]) -> None:
-    rate = error_rate(status)
-    if rate <= K8sEnvironment.DIAGNOSIS.HIGH_ERROR_RATE_THRESHOLD:
+    rate, errors, completed = error_rate_from_metrics(_live_metrics(status))
+    if rate is None or rate <= K8sEnvironment.DIAGNOSIS.HIGH_ERROR_RATE_THRESHOLD:
         return
-    metrics = _live_metrics(status)
-    errors = int(_metric_avg(metrics, "error_count"))
-    requests = int(_metric_avg(metrics, "request_count"))
     findings.append(
         BenchmarkFinding(
             id="high_error_rate",
             severity="warning",
             title="High request error rate",
-            detail=f"Error rate: {rate:.1%} ({errors}/{requests})",
+            detail=f"Error rate: {rate:.1%}{format_error_counts(errors, completed)}",
             impact="Benchmark results may be unreliable due to errors",
             suggested_fix="Check endpoint capacity and error responses in logs",
         )

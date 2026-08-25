@@ -5,8 +5,9 @@
 Goals:
   * One Chromium browser per test, so sync Playwright's private event loop
     closes before the worker picks up unrelated pytest-asyncio tests.
-  * One uvicorn process serving the operator results-server against a
-    per-session tmpdir, with kubernetes_asyncio bypassed.
+  * One in-process uvicorn server (a session-scoped daemon thread) serving the
+    operator results-server against a per-session tmpdir, with
+    kubernetes_asyncio bypassed.
   * Per-test isolation through unique namespaces — tests seed their data at
     ``<results_dir>/<unique_ns>/...`` and never collide.
   * A registry that lets a test install a fake live AIPerfJob CR for a given
@@ -437,7 +438,7 @@ class Harness:
     def register_sweep_cr(self, ns: str, name: str, raw: Any) -> None:
         """Install a fake live AIPerfSweep CR for ``find_aiperfsweep``.
 
-        ``raw`` should match the shape ``sweep_union._record_from_cr`` expects
+        ``raw`` should match the shape ``sweep_union._record_from_live`` expects
         (a parsed CR dict, or an ``AIPerfSweepCR`` model). Pass whatever the
         operator's sweep_union codepath consumes — the harness does not coerce.
         """

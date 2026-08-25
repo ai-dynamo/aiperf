@@ -151,7 +151,7 @@ def _mock_listing_response(raws: list[dict[str, Any]]) -> MagicMock:
     """Build a CoreV1Api list response where each item.sanitize yields the raw dict.
 
     Since ``_get_namespace_events`` / ``_get_node_resources`` call
-    ``ApiClient().sanitize_for_serialization(item)`` on each item, we patch
+    ``api.sanitize_for_serialization(item)`` on each item, we patch
     ``sanitize_for_serialization`` at the test level to pass-through raws.
     """
     response = MagicMock()

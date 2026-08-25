@@ -34,8 +34,8 @@ Port mappings vs. the legacy module:
 * ``chaos_injector.wait_for_cr_gone(...)``,
   ``chaos_injector.wait_for_pods_gone(...)``,
   ``chaos_injector.read_claim_annotation(...)`` -- direct calls on the
-  ``chaos_injector`` fixture re-exported via the package conftest's
-  ``pytest_plugins``; not yet covered by unified injectors.
+  ``chaos_injector`` fixture the package conftest re-exports by importing
+  the legacy fixture function; not yet covered by unified injectors.
 """
 
 from __future__ import annotations

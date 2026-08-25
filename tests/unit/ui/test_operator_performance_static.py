@@ -49,7 +49,9 @@ _ALLOWED_APP_LIFETIME_LISTENERS = {
     # Shifted from 69/70 when router-helpers.js was folded into router.js.
     ("lib/router.js", 79),
     ("lib/router.js", 80),
-    ("lib/theme-switch.js", 78),
+    # lib/theme-switch.js:78 was here for its (prefers-color-scheme: light)
+    # listener. The theme is now a constant and the module registers no
+    # listener, so there is nothing left to allow.
 }
 
 

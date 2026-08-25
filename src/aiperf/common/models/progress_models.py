@@ -72,14 +72,14 @@ class WorkerStats(AIPerfBaseModel):
 class WorkerGroupStats:
     """Aggregate stats for one worker-group (one WorkerGroupManager).
 
-    Mutable slotted dataclass, shared between msgspec (the ``/api/workers``
-    HTTP payload) and Pydantic (``WorkersResponse``); the worker tracker
-    rewrites its fields in place as group snapshots arrive, so it is not
-    frozen. ``__pydantic_config__`` is required because it participates in
-    Pydantic union discrimination.
+    Mutable slotted dataclass nested inside the Pydantic ``WorkersResponse``
+    that ``/api/workers`` returns; the worker tracker rewrites its fields in
+    place when folding in-process worker updates into the synthetic ``local``
+    group, so it is not frozen. ``__pydantic_config__`` is what applies
+    ``extra="forbid"`` to that nested validation.
 
-    ``workers`` is the per-child :class:`WorkerStats` map, used by the local
-    web UI when there is exactly one group.
+    ``workers`` is the per-child :class:`WorkerStats` map; consumers flatten
+    it across groups when they want a per-worker view.
 
     Example:
         >>> group = WorkerGroupStats(group_id="worker_group_manager_0")
@@ -105,4 +105,4 @@ class WorkerGroupStats:
     workers: dict[str, WorkerStats] = field(default_factory=dict)
     """Per-child worker stats, keyed by worker id."""
     last_update_ns: int | None = None
-    """Monotonic timestamp of the last update, or None before the first report."""
+    """Wall-clock ``time.time_ns`` of the last update, or None before the first report."""

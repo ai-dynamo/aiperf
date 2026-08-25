@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import logging
+import sys
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -66,6 +67,52 @@ if not _stderr_logger.handlers:
 
 # Path to store the last benchmark info
 _LAST_BENCHMARK_FILE = Path.home() / ".aiperf" / "last_kube_benchmark.json"
+
+
+def emit_raw(content: str, *, end: str = "\n") -> None:
+    """Write machine-readable output (JSON/YAML) verbatim to stdout.
+
+    Rich hard-wraps any line wider than the resolved console width, which is 80
+    whenever stdout is not a tty. A wrapped line inserts a newline mid-token, so
+    a JSON string containing a long image reference or URL stops being parseable
+    the moment the command is redirected or run in CI. Bypassing Rich entirely
+    is the only way to guarantee byte-for-byte output; none of these payloads is
+    ever styled, so nothing is lost.
+
+    Args:
+        content: The payload to write.
+        end: Terminator appended after ``content``; pass ``""`` when the payload
+            already ends in a newline.
+    """
+    sys.stdout.write(content + end if end else content)
+    sys.stdout.flush()
+
+
+@contextmanager
+def machine_readable_stdout() -> Generator[None, None, None]:
+    """Keep every log record off stdout while a machine-readable payload runs.
+
+    Retargets the ``aiperf.kube`` handlers to stderr rather than filtering by
+    level, so a record emitted at *any* level -- including one added by a future
+    change -- cannot prepend text to the JSON on stdout. The level is also
+    lowered to WARNING so routine progress chatter stays out of the way, but
+    correctness no longer depends on that threshold.
+    """
+    original_level = logger._logger.level
+    saved_consoles = [
+        (handler, handler.console)
+        for handler in logger.handlers
+        if isinstance(handler, RichHandler)
+    ]
+    logger.set_level(logging.WARNING)
+    for handler, _ in saved_consoles:
+        handler.console = stderr_console
+    try:
+        yield
+    finally:
+        logger.set_level(original_level)
+        for handler, saved in saved_consoles:
+            handler.console = saved
 
 
 def format_age(created: str) -> str:
@@ -303,9 +350,6 @@ def print_results_summary(output_dir: str) -> None:
     Args:
         output_dir: Path to the output directory.
     """
-    import sys
-    from pathlib import Path
-
     print_header("Results", style="bold green")
     logger.info(f"  [dim]Saved to:[/dim]  {output_dir}/")
 

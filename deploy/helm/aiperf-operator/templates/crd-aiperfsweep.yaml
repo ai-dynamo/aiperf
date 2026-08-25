@@ -253,8 +253,9 @@ spec:
                       typed fields above). Use for K8s PodSpec fields not yet modeled here (e.g. schedulingGates, resourceClaims,
                       overhead). Typed fields are preferred when available because preflight checks, env merging, and securityContext
                       merging only apply to typed fields. Security-critical keys are NOT overridable and are rejected at validation
-                      time: securityContext, containers, hostNetwork, hostPID, hostIPC, hostUsers. The hardened pod securityContext
-                      is re-applied after this merge, so it cannot be weakened even if a denied key reaches the renderer.'
+                      time: securityContext, containers, hostNetwork, hostPID, hostIPC, hostUsers. The renderer drops those
+                      keys again before merging, so the hardened pod securityContext cannot be weakened even by an unvalidated
+                      spec.'
                     x-kubernetes-preserve-unknown-fields: true
               scheduling:
                 type: object

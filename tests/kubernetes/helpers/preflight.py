@@ -62,7 +62,7 @@ class PreflightChecker:
         # ... run check ...
         c.pass_("cluster reachable")
 
-        checker.finish()  # raises if any check failed
+        checker.finish(error_cls=pytest.UsageError)  # raises if any check failed
     """
 
     title: str

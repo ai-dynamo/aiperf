@@ -435,8 +435,8 @@ async def test_c7_kill_worker_pod_mid_benchmark(
 
     Exercises JobSet's own pod-level restart policy and the operator's
     tolerance for transient worker disappearance — no explicit operator
-    code handles this; the signal is that ``_fetch_progress`` and the
-    monitor timer keep the CR reconciled while JobSet spawns a
+    code handles this; the signal is that ``ProgressClient.get_progress``
+    and the monitor timer keep the CR reconciled while JobSet spawns a
     replacement worker. The replacement has the same generate-name
     prefix but a fresh UID.
     """
@@ -515,7 +515,7 @@ async def test_c8_kill_event_bus_sidecar(
     Exercises the same ``_maybe_recover_terminated_controller`` salvage
     path as C6, triggered indirectly: when the event-bus-proxy dies the
     controller loses its XPUB/XSUB transport, which either trips
-    ``_check_sibling_containers_alive`` (if still in configure loop) or
+    ``_check_dead_sibling_containers`` (if still in configure loop) or
     causes SystemController to fail fast with a ZMQ error. Either way
     the control-plane container terminates non-zero and the operator
     salvages.
@@ -587,9 +587,10 @@ async def test_c9_kill_results_sidecar_mid_fetch(
 
     This is a RACE test — if the fetch finishes before we land the kill,
     the test passes trivially on the first path (already-complete).
-    To defend against silent triviality we verify the sidecar actually
-    restarted (``restartCount > 0``) whenever the kill landed; a missed
-    window is acceptable but documented as such.
+    When the kill lands we additionally wait (best-effort, tolerating a
+    TimeoutError because JobSet may already have reaped the pod) for
+    ``restartCount > 0``; the only asserted outcome is the terminal
+    ``Completed`` phase.
     """
     name = "chaos-c9"
     try:

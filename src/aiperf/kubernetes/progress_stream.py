@@ -85,13 +85,18 @@ async def stream_progress_from_api(
     value is load-bearing: returning ``True`` stops streaming (graceful
     completion); returning ``False`` continues receiving.
 
-    Message dicts carry a ``"type"`` field drawn from the controller's
-    progress protocol. Common values include:
-      - ``"subscribed"`` - initial subscription ack.
-      - ``"realtime_metrics"`` - periodic metric snapshots.
-      - ``"progress"`` - credit/phase progress updates.
-      - ``"benchmark_complete"`` - terminal marker; callers typically stop here.
-      - ``"error"`` - controller-reported error payload.
+    Forwarded benchmark frames are serialized AIPerf messages, so they carry a
+    ``"message_type"`` field. Values the CLI consumes include:
+      - ``MessageType.CREDIT_PHASE_START`` / ``_PROGRESS`` / ``_COMPLETE`` -
+        credit/phase progress updates.
+      - ``MessageType.REALTIME_METRICS`` - periodic metric snapshots.
+      - ``MessageType.WORKER_STATUS_SUMMARY`` - per-worker health rollup.
+      - ``MessageType.ALL_RECORDS_RECEIVED`` - terminal marker; callers
+        typically stop here.
+
+    The controller's own control frames instead carry a ``"type"`` field:
+    ``"subscribed"`` (the ack consumed by ``_stream_once``), ``"pong"``, and
+    ``"error"``.
 
     Args:
         ws_url: WebSocket URL, e.g. ``"ws://localhost:9090/ws"``.

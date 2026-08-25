@@ -765,7 +765,7 @@ class TestResultsCommandAdditional:
     async def test_results_from_pods_flag(
         self, mock_kube_client, running_jobset_info, tmp_path
     ) -> None:
-        """Test results with --from-pods flag uses API then kubectl cp."""
+        """Test results with --from-pods flag uses the controller API."""
         manage_options = KubeManageOptions()
         output_dir = tmp_path / "results"
 

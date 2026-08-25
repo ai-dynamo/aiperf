@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Event classification helpers for the benchmark watchdog.
 
-Each ``_handle_*`` function converts a single K8s ``EventInfo`` into either
+Each ``handle_*`` function converts a single K8s ``EventInfo`` into either
 a ``WatchdogProblem`` (recorded via ``recorder``) or a log entry. Kept
 separate from the monitoring loop so ``BenchmarkWatchdog`` stays focused
 on control flow.

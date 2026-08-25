@@ -3,8 +3,8 @@
 """Phase classification + child listing helpers for the sweep rollup handler.
 
 Carved out of ``child_rollup.py`` to keep that module under the 500-line
-ergonomics ceiling. ``child_rollup`` retains the kopf-decorated entry
-point and the apiserver-write helpers; this module owns the read-side
+ergonomics ceiling. ``child_rollup`` retains the kopf entry point and
+the apiserver-write helpers; this module owns the read-side
 phase-bucketing and "currently running child" selection logic, plus the
 ``_api_or_new`` ApiClient context-reuse wrapper shared across helpers.
 """
@@ -67,7 +67,7 @@ async def _count_owned_children(
     this tick. Standalone test callers can pass ``api=None`` and a fresh
     client is opened transparently.
 
-    ``run_epoch`` (when provided) is added to the label selector so we
+    ``run_epoch`` is added to the label selector so we
     count only children from a single epoch — without this filter, stale
     children from prior re-applies of the sweep get counted and the UI
     reports e.g. ``completedRuns=5`` against ``totalVariations=3``.

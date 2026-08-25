@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from pytest import param
 
 from aiperf.kubernetes.cr_refs import AIPERF_API_VERSION
 from aiperf.kubernetes.validate import (
@@ -23,6 +24,7 @@ from aiperf.kubernetes.validate import (
     ValidationResult,
     validate_file,
     validate_k8s_name,
+    validate_manifest,
     validate_unknown_spec_fields,
     validate_yaml_structure,
 )
@@ -257,7 +259,7 @@ class TestValidateUnknownSpecFields:
         assert any("spec.benchmark" in e and "bogus_field" in e for e in r.errors)
 
     def test_benchmark_field_is_in_known_spec_fields(self) -> None:
-        """Regression — `benchmark` is the only known non-deployment key."""
+        """Regression — `benchmark` stays in the known top-level spec fields."""
         assert "benchmark" in KNOWN_SPEC_FIELDS
 
 
@@ -491,3 +493,129 @@ class TestValidateFileKindDispatch:
 
         result = validate_file(path, strict=True)
         assert result.passed, f"unexpected errors: {result.errors}"
+
+
+# Divisors that used to make ``ceil(concurrency / connectionsPerWorker)`` raise
+# out of the whole validation run. Two exception families: 0, 0.0, -0.0 and YAML
+# ``false`` (a Python ``int``) divide as zero -> ZeroDivisionError; denormals
+# overflow the quotient to ``inf``, which ``math.ceil`` cannot convert ->
+# OverflowError. Neither is a ValueError subclass, so widening the caught tuple
+# alone would not have closed the hole. The paired pydantic error tag is the one
+# an already-completed earlier step (``validate_deployment_config``) appends, so
+# each case has to keep reporting it.
+_CRASHING_DIVISORS = [
+    param(0, "greater_than_equal", id="int-zero"),
+    param(0.0, "greater_than_equal", id="float-zero"),
+    param(-0.0, "greater_than_equal", id="negative-float-zero"),
+    param(False, "greater_than_equal", id="yaml-false"),
+    param(1.0e-320, "int_from_float", id="denormal-1e-320"),
+    param(5e-324, "int_from_float", id="smallest-subnormal"),
+]
+
+
+class TestConnectionsPerWorkerArithmetic:
+    """A hostile ``connectionsPerWorker`` must be reported, never raised.
+
+    ``DeploymentConfig`` bounds the field ``ge=1`` and the CRDs bound it
+    ``minimum: 1``, but the validators divide the *raw* spec dict, so these
+    values reach the arithmetic on every unvalidated entry point: ``aiperf kube
+    validate``, ``POST /api/v1/validate``, ``kube profile --dry-run``, and
+    ``kube generate --operator``.
+    """
+
+    @pytest.mark.parametrize(("divisor", "error_tag"), _CRASHING_DIVISORS)  # fmt: skip
+    def test_manifest_reports_bad_divisor_instead_of_raising(
+        self, divisor: object, error_tag: str
+    ) -> None:
+        doc = _valid_doc()
+        doc["spec"]["connectionsPerWorker"] = divisor
+
+        result = validate_manifest(doc)
+
+        assert not result.passed
+        assert any(error_tag in e for e in result.errors), f"errors: {result.errors}"
+
+    @pytest.mark.parametrize(("divisor", "error_tag"), _CRASHING_DIVISORS)  # fmt: skip
+    def test_file_reports_bad_divisor_instead_of_raising(
+        self, tmp_path: Path, divisor: object, error_tag: str
+    ) -> None:
+        """The CLI path must not abort the run — a later file still gets validated."""
+        doc = _valid_doc()
+        doc["spec"]["connectionsPerWorker"] = divisor
+        path = _write(tmp_path, doc)
+
+        result = validate_file(path)
+
+        assert not result.passed
+        assert not any("Worker calculation failed" in e for e in result.errors), (
+            f"the divisor must be neutralized, not caught: {result.errors}"
+        )
+
+    @pytest.mark.parametrize(
+        "divisor",
+        [
+            param("abc", id="unparsable-string"),
+            param(None, id="null"),
+            param([], id="list"),
+        ],
+    )  # fmt: skip
+    def test_non_numeric_divisor_still_reports_type_error(
+        self, divisor: object
+    ) -> None:
+        """Non-numeric values pass through the neutralizer so the TypeError surfaces."""
+        doc = _valid_doc()
+        doc["spec"]["connectionsPerWorker"] = divisor
+
+        result = validate_manifest(doc)
+
+        assert not result.passed
+        assert any("Worker calculation failed" in e for e in result.errors), (
+            f"errors: {result.errors}"
+        )
+
+    @pytest.mark.parametrize(
+        "divisor",
+        [
+            param(1, id="one"),
+            param(100, id="default"),
+            param(1000, id="above-concurrency"),
+        ],
+    )  # fmt: skip
+    def test_valid_divisor_still_passes(self, divisor: int) -> None:
+        doc = _valid_doc()
+        doc["spec"]["connectionsPerWorker"] = divisor
+
+        result = validate_manifest(doc)
+
+        assert result.passed, f"unexpected errors: {result.errors}"
+
+    def test_negative_divisor_verdict_unchanged(self) -> None:
+        """``-1`` never crashed; it must keep the exact errors it produced before."""
+        doc = _valid_doc()
+        doc["spec"]["connectionsPerWorker"] = -1
+
+        result = validate_manifest(doc)
+
+        assert not result.passed
+        assert not any("Worker calculation failed" in e for e in result.errors)
+        assert sum("greater_than_equal" in e for e in result.errors) == 2, (
+            f"errors: {result.errors}"
+        )
+
+    def test_credential_transport_gate_still_runs_on_a_clean_file(self) -> None:
+        """Step order is load-bearing: the gate keys off steps 6-8 only.
+
+        ``validate_endpoint_credential_transport`` is skipped when an earlier
+        step already errored, so moving the kind-specific schema check ahead of
+        it would silently drop this security check on files that reach it today.
+        """
+        doc = _valid_doc()
+        doc["spec"]["benchmark"]["endpoint"]["api_key"] = "sk-literal-secret"
+
+        result = validate_manifest(doc)
+
+        assert not result.passed
+        assert any(
+            "Endpoint credential transport validation failed" in e
+            for e in result.errors
+        ), f"errors: {result.errors}"

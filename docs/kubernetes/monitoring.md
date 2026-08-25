@@ -263,11 +263,16 @@ aiperf kube results --summary-only
 
 ### Direct From Pods
 
-If you want to fetch results directly from the running benchmark pods (tries the controller API first, falls back to `kubectl cp`):
+If you want to fetch results directly from the running benchmark pods (via the controller API):
 
 ```bash
 aiperf kube results --from-pods
 ```
+
+The default `--all` path uses the controller API and nothing else — if that
+call fails, the download fails. The `kubectl cp` fallback applies only to
+`--summary-only`, which tries the API first and then copies from the
+`control-plane` container.
 
 ### Shut Down After Download
 

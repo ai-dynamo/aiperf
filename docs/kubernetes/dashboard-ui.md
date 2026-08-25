@@ -399,19 +399,27 @@ sub-label; matching is in-order-character, not substring. Navigation:
 
 ## Theme and Layout
 
-The dashboard supports three theme preferences — auto / light / dark — resolved
-by `lib/theme-switch.js` and persisted in `localStorage['aiperfTheme']`; `auto`
-follows the OS `prefers-color-scheme` and updates live. `index.html` resolves
-the stored preference in a synchronous inline script before the stylesheet loads
-so a reload does not flash the wrong theme. The resolved value is applied via
-`document.documentElement.dataset.theme`, and the color tokens live in
-`src/aiperf/operator/ui/lib/theme.js` / `style.css`.
+The dashboard is **dark-only**, and the theme is not configurable — not by an
+in-app control, not by the OS `prefers-color-scheme` setting, and not from the
+browser console. `index.html` sets `data-theme="dark"` in a synchronous inline
+script before the stylesheet loads (so a reload cannot flash unstyled content),
+and `initTheme()` in `lib/theme-switch.js` pins the same constant after hydration.
+The color tokens live in `src/aiperf/operator/ui/lib/theme.js` (the JS palette
+that every Chart.js consumer imports) and in `style.css`.
 
-There is currently **no in-app control** to change the preference: `app.js`
-calls only `initTheme()`, and the `cycleTheme()` / `setTheme()` exports have no
-caller. Until a toggle is wired up, the effective theme is whatever the OS
-reports (dark unless the OS prefers light), overridable by setting
-`localStorage.aiperfTheme` from the browser console.
+Earlier builds did resolve an auto / light / dark preference from
+`localStorage['aiperfTheme']` and from `prefers-color-scheme`. That was removed
+because it could not work: `lib/theme.js` is a hardcoded dark palette that reads
+no CSS custom properties, so a light chrome would have rendered around dark
+charts. Worse, it was not inert — every visitor whose OS preferred light got
+`data-theme="light"` on `<html>` with no control involved, and `style.css`
+neutralized only part of the light palette, so 13 of its 73 custom properties
+leaked into the dark UI (including a low-contrast muted accent and an inverted
+table-row hover). `style.css` now contains no `[data-theme]` selector at all,
+which `tests/unit/ui/test_operator_css_static_edges.py` enforces.
+
+Reviving light mode would mean making `lib/theme.js` read CSS custom properties
+and re-theming every chart, not re-adding a toggle.
 
 Model colors in charts are assigned deterministically from a hash of the model
 name, so the same model keeps the same color across pages and reloads.

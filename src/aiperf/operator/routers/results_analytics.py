@@ -215,8 +215,8 @@ def _register_scatter_route(router: APIRouter) -> None:
     """Register the ``/analytics/scatter`` endpoint.
 
     Single SQLite query replacing N+1 leaderboard+summary calls from the
-    dashboard. Returns all four scatter-chart metrics for every indexed run
-    in one response.
+    dashboard. Returns all four scatter-chart metrics in one response, for up
+    to 500 latest-epoch runs that have at least one of those metrics.
     """
 
     @router.get("/analytics/scatter", response_model=ScatterResponse)

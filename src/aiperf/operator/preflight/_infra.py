@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import aiohttp
+from kubernetes_asyncio import client
 from kubernetes_asyncio.client.exceptions import ApiException
 
 from aiperf.kubernetes.cr_refs import (
@@ -13,7 +14,6 @@ from aiperf.kubernetes.cr_refs import (
     KUEUE_VERSION,
 )
 from aiperf.kubernetes.preflight import CheckResult, CheckStatus
-from aiperf.operator import preflight as _pf
 
 
 class _InfraChecksMixin:
@@ -22,9 +22,7 @@ class _InfraChecksMixin:
     async def _check_jobset_controller(self) -> CheckResult:
         """Check if JobSet controller is running in jobset-system."""
         try:
-            deploy_list = await _pf.client.AppsV1Api(
-                self.api
-            ).list_namespaced_deployment(
+            deploy_list = await client.AppsV1Api(self.api).list_namespaced_deployment(
                 namespace="jobset-system",
             )
             for deploy in deploy_list.items:
@@ -75,7 +73,7 @@ class _InfraChecksMixin:
                 message="No custom service account specified",
             )
         try:
-            await _pf.client.CoreV1Api(self.api).read_namespaced_service_account(
+            await client.CoreV1Api(self.api).read_namespaced_service_account(
                 name=sa_name, namespace=self.namespace
             )
             return CheckResult(
@@ -107,9 +105,7 @@ class _InfraChecksMixin:
         try:
             # Filter by canonical CoreDNS / kube-dns label so sibling deployments
             # like "coredns-monitoring" don't collide on a name substring.
-            deploy_list = await _pf.client.AppsV1Api(
-                self.api
-            ).list_namespaced_deployment(
+            deploy_list = await client.AppsV1Api(self.api).list_namespaced_deployment(
                 namespace="kube-system",
                 label_selector="k8s-app=kube-dns",
             )
@@ -154,7 +150,7 @@ class _InfraChecksMixin:
     async def _check_network_policies(self) -> CheckResult:
         """Warn if restrictive network policies exist in namespace."""
         try:
-            policy_list = await _pf.client.NetworkingV1Api(
+            policy_list = await client.NetworkingV1Api(
                 self.api
             ).list_namespaced_network_policy(namespace=self.namespace)
             policies = policy_list.items
@@ -239,7 +235,7 @@ class _InfraChecksMixin:
     async def _verify_kueue_local_queue(self, queue_name: str) -> CheckResult:
         """Verify a specific Kueue LocalQueue exists."""
         try:
-            await _pf.client.CustomObjectsApi(self.api).get_namespaced_custom_object(
+            await client.CustomObjectsApi(self.api).get_namespaced_custom_object(
                 group=KUEUE_GROUP,
                 version=KUEUE_VERSION,
                 plural=KUEUE_LOCALQUEUE_PLURAL,
@@ -286,7 +282,7 @@ class _InfraChecksMixin:
     async def _is_kueue_installed(self) -> bool:
         """Check if the Kueue CRD is available on the cluster."""
         try:
-            await _pf.client.CustomObjectsApi(self.api).list_namespaced_custom_object(
+            await client.CustomObjectsApi(self.api).list_namespaced_custom_object(
                 group=KUEUE_GROUP,
                 version=KUEUE_VERSION,
                 plural=KUEUE_LOCALQUEUE_PLURAL,
@@ -300,9 +296,7 @@ class _InfraChecksMixin:
     async def _namespace_has_default_queue(self) -> bool:
         """Check if the namespace has a Kueue default queue annotation."""
         try:
-            ns = await _pf.client.CoreV1Api(self.api).read_namespace(
-                name=self.namespace
-            )
+            ns = await client.CoreV1Api(self.api).read_namespace(name=self.namespace)
             annotations = (ns.metadata.annotations or {}) if ns.metadata else {}
             return bool(annotations.get("kueue.x-k8s.io/default-queue-name"))
         except (TimeoutError, ApiException, aiohttp.ClientError, OSError):
@@ -311,9 +305,7 @@ class _InfraChecksMixin:
     async def _check_pod_security_admission(self) -> CheckResult:
         """Check namespace PSA labels for compatibility."""
         try:
-            ns = await _pf.client.CoreV1Api(self.api).read_namespace(
-                name=self.namespace
-            )
+            ns = await client.CoreV1Api(self.api).read_namespace(name=self.namespace)
             labels = (ns.metadata.labels or {}) if ns.metadata else {}
 
             psa_enforce = labels.get("pod-security.kubernetes.io/enforce")

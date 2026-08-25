@@ -334,7 +334,7 @@ class TestFindAIPerfSweep:
 
     @pytest.mark.asyncio
     async def test_find_aiperf_sweep_404_returns_none(self) -> None:
-        """A 404 in both namespaced get and cluster-wide list returns None."""
+        """A 404 on the namespaced get returns None."""
         api = MagicMock(spec=ApiClient)
         mock_custom = MagicMock()
         mock_custom.get_namespaced_custom_object = AsyncMock(

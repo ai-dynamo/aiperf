@@ -21,7 +21,7 @@ from aiperf.kubernetes.environment import (
 
 
 class TestResourceSettingsToK8sResources:
-    """Tests for _ResourceSettings.to_k8s_resources method."""
+    """Tests for ResourceSettings.to_k8s_resources method."""
 
     @pytest.mark.parametrize(
         "setting_attr,cpu,memory",

@@ -139,7 +139,7 @@ class TestPodTemplateEnvValue:
 
 
 class TestCreateEventBusProxyContainer:
-    """Event-bus proxy sidecar exposes the three expected pub/sub ports."""
+    """Event-bus proxy sidecar exposes the three expected ports."""
 
     def test_container_name_and_image(self) -> None:
         builder = _JobSetManifestBuilder(_make_spec())
@@ -262,13 +262,13 @@ class TestCreateControlPlaneContainers:
         }
 
     def test_control_plane_realtime_metrics_env(self) -> None:
-        """Every controller-pod container must enable realtime metrics.
+        """Every control-plane container must enable realtime metrics.
 
         Regression: pre-fix, only CONTROL_PLANE had the env var, so
         records_manager (a sibling container that owns the realtime publish
         loop) skipped publishing — every WS client got `subscribed` then
-        silence. Asserting the var on every container of the pod prevents
-        that gap from reopening when new sidecars are added.
+        silence. Asserting the var on every control-plane container prevents
+        that gap from reopening when new services are added.
         """
         builder = _JobSetManifestBuilder(_make_spec())
         for c in builder._create_control_plane_containers():
