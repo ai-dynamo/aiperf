@@ -123,3 +123,31 @@ RED failed to compile on the intentionally required consuming parser and
 borrowed observer signatures. The identical engine-enabled focused suite then
 passed 31/31 after the minimal fix; the rebuilt native binary passed the
 present/absent E2E 14/14. Independent and Graham fix re-reviews remain required.
+
+Ownership-fix re-reviews: APPROVED at `16a74f8920`. The independent reviewer
+confirmed that the terminal `Value` is consumed by serde, the borrowed observer
+callback fans one address through `ObserverTee`, and only the retaining native
+metrics observer clones the DTO. The Graham reviewer accepted both Important
+fixes and the timeless catalog comment, with one Minor request to rename a test
+whose old name overstated move semantics.
+
+Final Graham review: APPROVED at code tip `8425963ac3` for the complete code
+range `8b5194bcfc26475c5e06030d8701c82b66eb7b6a..8425963ac3`; see
+`graham-rereview.md`. The final commit before this receipt only renames the
+test to `spec_decode_acceptance_is_retained_in_record`. The focused renamed
+test passed 1/1, and the Graham reviewer confirmed no Critical, Important, or
+Minor findings remain.
+
+Final verification receipt: the engine-enabled spec-decode suite passed 31/31;
+the mock fixture suite passed 3/3; the rebuilt real-profile present/absent E2E
+passed 14/14; `cargo fmt --all -- --check`, the exact-range `git diff --check`,
+and `jq empty runtime/resources/metric_metadata.json` passed. Broader evidence
+is recorded without changing unrelated baselines: default runtime passed 1762
+tests with seven ignored and only the existing `0.12.0` versus `0.0.0` report
+golden failing; engine-enabled runtime passed 2318 with seven ignored and six
+out-of-range failures (two absent recorded-agent fixture files, two registry /
+transport bootstrap assumptions, one worker-characterization multiset
+mismatch, and the same report golden); mock-server unit tests passed 164/164,
+while its broad integration target passed 48/49 with only
+`empty_prompt_yields_zero_completion` failing (`1` actual versus `0` expected).
+The final worktree contains only the intentionally preserved untracked `.venv`.
