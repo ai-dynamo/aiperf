@@ -62,7 +62,7 @@ implementation, test run, or review.
 | 34 | `00ba1c5db3` | audio transcription | pending | applicable | New multipart endpoint, parser, and mock route. |
 | 35 | `03c9c6ddc5` | LCB grading concurrency | pending | applicable | Delegation/detail are present; upstream multiplexing and unconditional group reaping remain open. |
 | 36 | `6480e5467f` | synthesis YAML overrides | complete | applicable | Merged in `445e2ec4d7`; native CLI-over-YAML overlay, resolver and CLI-path integration tests, exact upstream merge ancestry, and Graham approval recorded. |
-| 37 | `23ed221c3d` | CI speed | pending | not-applicable | CI-only work. |
+| 37 | `23ed221c3d` | CI speed | complete | not-applicable | Exact upstream merge completed on `ajc/port-origin-037`; Python harness regression passed and no Rust test candidate exists. Closure: `docs/origin-main-findings/commit-037-23ed221c3d.md`. |
 | 38 | `c26fe88bd8` | AgentX FAQ | pending | not-applicable | Documentation only. |
 | 39 | `1e32a51318` | Baseten load performance | analysing | unassessed | Requires benchmark before claiming a port gap. |
 | 40 | `215be05b6a` | Baseten outcome fidelity | pending | applicable | Only `duration_ttft_ms` and `cached_tokens_reference` remain missing. |
