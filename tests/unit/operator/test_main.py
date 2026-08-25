@@ -1555,6 +1555,7 @@ class TestConfigure:
         """Kopf has no TLS server-name field, so C15 must use insecure kopf transport."""
         from kopf._cogs.structs.credentials import ConnectionInfo
 
+        from aiperf.kubernetes.environment import K8sEnvironment
         from aiperf.operator.main import login_for_apiserver_proxy
 
         base_connection = ConnectionInfo(
@@ -1564,8 +1565,10 @@ class TestConfigure:
             priority=30,
         )
         login = AsyncMock(return_value=base_connection)
-        monkeypatch.setenv(
-            "AIPERF_K8S_APISERVER_TLS_SERVER_NAME_OVERRIDE", "kubernetes.default.svc"
+        monkeypatch.setattr(
+            K8sEnvironment,
+            "APISERVER_TLS_SERVER_NAME_OVERRIDE",
+            "kubernetes.default.svc",
         )
 
         settings = kopf.OperatorSettings()

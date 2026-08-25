@@ -117,7 +117,7 @@ function pickMetric(summary, spec) {
  * or a `{avg, p50, ...}` stat struct. `status.summary` carries both shapes:
  * metric tags are structs, while `total_requests` and `error_rate` are
  * top-level scalars bolted on by `_derived_scalars`
- * (src/aiperf/kubernetes/crd_models.py:358-408). Returns null, never 0, when
+ * (src/aiperf/kubernetes/crd_models.py). Returns null, never 0, when
  * the value is missing or non-finite -- absent is not zero.
  */
 function scalarOrAvg(entry) {
