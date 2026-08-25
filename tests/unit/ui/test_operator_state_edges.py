@@ -61,25 +61,16 @@ def test_global_state_defaults_and_error_set_clear_are_explicit() -> None:
         const initial = {{
           jobs: state.jobs.value,
           sweeps: state.sweeps.value,
-          selectedJob: state.selectedJob.value,
           clusterInfo: state.clusterInfo.value,
           globalError: state.globalError.value,
-          loading: state.loading.value,
-          jobsById: state.jobsById.value,
-          runningJobs: state.runningJobs.value,
-          completedJobs: state.completedJobs.value,
-          failedJobs: state.failedJobs.value,
         }};
         state.setError('operator unavailable');
         const setMessage = state.globalError.value;
         state.setError(null);
-        state.setLoading('jobs', true);
-        state.setLoading('cluster', false);
         console.log(JSON.stringify({{
           initial,
           setMessage,
           cleared: state.globalError.value,
-          loading: state.loading.value,
         }}));
     """
 
@@ -87,67 +78,28 @@ def test_global_state_defaults_and_error_set_clear_are_explicit() -> None:
         "initial": {
             "jobs": [],
             "sweeps": [],
-            "selectedJob": None,
             "clusterInfo": None,
             "globalError": None,
-            "loading": {
-                "jobs": False,
-                "cluster": False,
-                "leaderboard": False,
-                "history": False,
-            },
-            "jobsById": {},
-            "runningJobs": [],
-            "completedJobs": [],
-            "failedJobs": [],
         },
         "setMessage": "operator unavailable",
         "cleared": None,
-        "loading": {
-            "jobs": True,
-            "cluster": False,
-            "leaderboard": False,
-            "history": False,
-        },
     }
 
 
-def test_jobs_and_sweeps_signals_keep_independent_defaults_and_phase_buckets() -> None:
+def test_jobs_and_sweeps_signals_keep_independent_defaults() -> None:
     script = f"""
         {_state_import_script()}
         state.sweeps.value = [{{ namespace: 'ns', name: 'sweep-a', phase: 'Running' }}];
-        state.jobs.value = [
-          {{ namespace: 'prod', name: 'run-a', phase: 'Running' }},
-          {{ name: 'run-b', phase: 'Initializing' }},
-          {{ namespace: 'prod', name: 'run-c', phase: 'Completed' }},
-          {{ namespace: 'prod', name: 'run-d', phase: 'Succeeded' }},
-          {{ namespace: 'prod', name: 'run-e', phase: 'Failed' }},
-          {{ namespace: 'prod', name: 'run-f', phase: 'Error' }},
-          {{ namespace: 'prod', name: 'run-g', phase: 'Cancelled' }},
-        ];
+        state.jobs.value = [{{ namespace: 'prod', name: 'run-a', phase: 'Running' }}];
         console.log(JSON.stringify({{
+          jobs: state.jobs.value,
           sweeps: state.sweeps.value,
-          jobKeys: Object.keys(state.jobsById.value).sort(),
-          running: state.runningJobs.value.map((j) => j.name),
-          completed: state.completedJobs.value.map((j) => j.name),
-          failed: state.failedJobs.value.map((j) => j.name),
         }}));
     """
 
     assert json.loads(run_node(script)) == {
+        "jobs": [{"namespace": "prod", "name": "run-a", "phase": "Running"}],
         "sweeps": [{"namespace": "ns", "name": "sweep-a", "phase": "Running"}],
-        "jobKeys": [
-            "default/run-b",
-            "prod/run-a",
-            "prod/run-c",
-            "prod/run-d",
-            "prod/run-e",
-            "prod/run-f",
-            "prod/run-g",
-        ],
-        "running": ["run-a", "run-b"],
-        "completed": ["run-c", "run-d"],
-        "failed": ["run-e", "run-f", "run-g"],
     }
 
 

@@ -42,14 +42,3 @@ export function pluck(series, statKey) {
   }
   return out.sort((a, b) => a.t - b.t);
 }
-
-/** Min / max over the pluck()ed series, ignoring empty. */
-export function extent(points) {
-  if (points.length === 0) return { min: 0, max: 0 };
-  let mn = Infinity, mx = -Infinity;
-  for (const p of points) {
-    if (p.v < mn) mn = p.v;
-    if (p.v > mx) mx = p.v;
-  }
-  return { min: mn, max: mx };
-}
