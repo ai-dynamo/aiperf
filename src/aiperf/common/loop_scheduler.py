@@ -80,6 +80,7 @@ class LoopScheduler:
 
     def _done_callback(self, task: asyncio.Task) -> None:
         """Remove completed task from tracking; invoke exception handler if failed."""
+        was_tracked = task in self._tasks
         self._tasks.discard(task)  # discard() is safe if already removed by cancel_all
         # Must check cancelled() first - calling exception() on a cancelled task raises CancelledError
         if (
@@ -88,7 +89,7 @@ class LoopScheduler:
             and self._exception_handler is not None
         ):
             self._exception_handler(task)
-        if not self._tasks and self._drain_observer is not None:
+        if was_tracked and not self._tasks and self._drain_observer is not None:
             try:
                 self._drain_observer()
             except Exception as exc:  # noqa: BLE001
