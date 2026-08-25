@@ -106,6 +106,7 @@ class SynthesisConfig(BaseConfig):
             description="Allow the finite weka/agentic trace pool to wrap (reuse "
             "distinct roots across concurrency lanes) when concurrency exceeds "
             "the number of eligible traces. Defaults to False: over-subscription "
-            "fails unless this is explicitly enabled.",
+            "fails unless this is explicitly enabled or an active cache-bust "
+            "target already keeps repeated-trace traffic distinct.",
         ),
     ]
