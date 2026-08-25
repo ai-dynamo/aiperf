@@ -85,6 +85,14 @@ This runs 30 search iterations × 3 trials each = 90 benchmarks. `--search-plann
 | `--optuna-acquisition ACQ` | no | BoTorch acquisition override. Only consulted with `--search-planner=optuna --optuna-sampler=botorch`. Single-objective: `qnei` (Letham 2019) or `qlognei` (Ament 2023) for noisy-EI; `logei`/`qlogei` are the explicit defaults. Multi-objective: `qehvi`, `qnehvi`, or `qlognehvi` (Daulton 2021). The cross-field validator on `AdaptiveSearchSweep` requires the choice to match `len(objectives)`: single-objective acquisitions reject `len(objectives) > 1`, multi-objective acquisitions reject `len(objectives) == 1`. The `bayesian` preset auto-selects `qlognei` (single-obj) or `qlognehvi` (multi-obj) based on `len(objectives)`. See [Multi-objective Pareto BO](#multi-objective-pareto-bo). |
 | `--optuna-terminator MODE` | no | Posterior-regret stopping: `regret` (Makarova 2022 `RegretBoundEvaluator`) or `emmr` (Ishibashi 2023). Only consulted with `--search-planner=optuna`. Layered on top of three-signal convergence; `convergence_reason` becomes `posterior_regret_bound` or `emmr` when it fires. |
 
+The shape-inference, seeding, and rejection rules below are enforced when
+`--search-space` is parsed on the CLI conversion path (`convert_cli_to_aiperf`).
+A `search_space:` entry under a YAML `sweep:` block goes through a
+different code path that doesn't apply the same validation, so a
+config-file sweep can still hit the underlying crashes these rules
+prevent -- prefer `--search-space` on the CLI until config-file sweeps get
+equivalent validation.
+
 A benchmark has one "shape" before it starts: `concurrency` ("send as many
 requests as possible"), `rate` ("send N requests per second"), `user`
 ("simulate N users"), or `gamma` ("send requests with a particular
@@ -100,8 +108,8 @@ fields from two mutually-exclusive shapes (e.g. `users` and `smoothness`
 together — no shape has both) is rejected with a clear error.
 
 `rate_series` is a piecewise-linear rate schedule, not a single number, so
-it can never be a `--search-space` dimension at all -- `--search-space
-"rate_series:..."` is rejected outright, with or without a companion
+it's not a valid dimension to sweep -- `--search-space "rate_series:..."`
+is rejected at config time, with or without a companion
 `--request-rate-series`. Pass `--request-rate-series` as a fixed schedule
 instead, or search `rate`/`rate_ramp` for a scalar rate to sweep.
 

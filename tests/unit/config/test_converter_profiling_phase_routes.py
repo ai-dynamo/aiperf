@@ -1073,6 +1073,65 @@ class TestSearchSpacePhaseShapeInference:
         assert prof["type"] == PhaseType.USER_CENTRIC
         assert prof["users"] == 5
 
+    def test_rate_negative_bound_with_explicit_request_rate_still_raises(
+        self,
+    ) -> None:
+        """An explicit --request-rate must not bypass bound validation for a
+        'rate' search-space dimension -- mirrors the analogous --num-users
+        fix. Before this was fixed, `--request-rate 10 --search-space
+        "rate:-5,100"` skipped the rate_lo <= 0 check entirely (since
+        prof["rate"] was already set from --request-rate), letting a
+        negative rate reach the planner and crash mid-search once sampled,
+        instead of failing clearly at config-build time."""
+        loadgen = CLIConfig(
+            search_space=["rate:-5,100:real"],
+            request_rate=10.0,
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        with pytest.raises(ValueError, match="must be > 0"):
+            build_profiling(user)
+
+    def test_rate_explicit_request_rate_wins_over_search_space_lower_bound(
+        self,
+    ) -> None:
+        """When --request-rate is explicit AND 'rate' is validly searched
+        (positive bound), the explicit --request-rate value is kept rather
+        than overwritten by the search-space lower bound -- the dimension
+        is still validated, just not used as the seed when an explicit
+        value already exists."""
+        loadgen = CLIConfig(
+            search_space=["rate:1,100:real"],
+            request_rate=10.0,
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        prof = build_profiling(user)
+        assert prof["type"] == PhaseType.POISSON
+        assert prof["rate"] == 10.0
+
+    def test_search_space_extra_kind_segment_is_skipped_not_misreported(
+        self,
+    ) -> None:
+        """'users:1,50:int:log' has an extra ':'-separated segment (a
+        malformed grammar the real parser will reject with its own error).
+        This lightweight helper must skip it rather than misparse
+        'int:log' as the kind and report the wrong complaint (e.g. telling
+        a user who wrote ':int' that they wrote ':real')."""
+        loadgen = CLIConfig(
+            search_space=["users:1,50:int:log"],
+            user_centric_rate=10.0,
+            conversation_turn_mean=4,
+        )
+        user = _make_user(loadgen=loadgen)
+        # The malformed dimension is invisible to shape inference (skipped),
+        # so with no other search-space field this falls through to
+        # whatever --user-centric-rate alone would produce: USER_CENTRIC
+        # type, but no 'users' seed and no ':int'-kind complaint about a
+        # dimension this helper never parsed.
+        prof = build_profiling(user)
+        assert prof["type"] == PhaseType.USER_CENTRIC
+
     def test_warmup_path_search_space_dimension_ignored_for_shape_inference(
         self,
     ) -> None:

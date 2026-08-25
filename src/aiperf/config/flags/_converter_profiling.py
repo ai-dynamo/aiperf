@@ -143,6 +143,13 @@ def _search_space_dimensions(cli: CLIConfig) -> dict[str, tuple[float, str]]:
                 "'rate'/'rate_ramp' for a scalar rate to sweep."
             )
         bounds_part, _, kind_part = rest.partition(":")
+        if ":" in kind_part:
+            # More than three ':'-separated segments (e.g.
+            # "users:1,50:int:log") -- malformed grammar. Skip rather than
+            # guess a kind from it; the real parser's grammar error is what
+            # the user should see, not a wrong "expected :int" message from
+            # this lightweight helper misreading the extra segment as kind.
+            continue
         lo_str = bounds_part.split(",", 1)[0].strip()
         kind = kind_part.strip() or "real"
         try:
@@ -222,18 +229,17 @@ def _apply_search_space_shape_seeds(
     "rate-controlled phases require rate or rate_series" surface as an
     unexplained crash on the very first config build.
 
-    By construction the rate-seeding block below is a no-op whenever the
-    phase type came from an explicit CLI flag rather than search-space
-    inference: --request-rate, --request-rate-series, and
-    --user-centric-rate all populate prof["rate"]/prof["rate_series"] via
-    _PROF_FIELD_ROUTES / _apply_profiling_rate_series before this runs. The
-    'users' kind/bound validation below intentionally does NOT have that
-    same short-circuit: --num-users populates prof["users"] via the same
-    routes, but a 'users' search-space dimension is validated regardless
-    of whether an explicit --num-users also set prof["users"] first --
-    otherwise `--num-users 10 --search-space "users:1.5,50:real"` would
-    silently skip validation on a real-valued dimension that still reaches
-    the planner and can crash later on a non-integral sampled value.
+    Both the 'users' and 'rate' validation below run whenever the
+    respective field is in search_dims, regardless of whether an explicit
+    CLI flag (--num-users, --request-rate, --request-rate-series, or
+    --user-centric-rate) already populated prof["users"]/prof["rate"]/
+    prof["rate_series"] via _PROF_FIELD_ROUTES / _apply_profiling_rate_series
+    before this runs -- only the *assignment* is gated on absence.
+    Otherwise `--request-rate 10 --search-space "rate:-5,100"` would
+    silently skip bound validation on a dimension the planner still samples
+    from every trial (crashing mid-search once a negative value is drawn,
+    not at config-build time), the same class of bug as skipping 'users'
+    validation whenever --num-users was also explicit.
     """
     from aiperf.config.phases import PhaseType
 
@@ -256,17 +262,13 @@ def _apply_search_space_shape_seeds(
         if "users" not in prof:
             prof["users"] = int(users_lo)
 
-    if (
-        phase_type
-        in (
-            PhaseType.POISSON,
-            PhaseType.GAMMA,
-            PhaseType.CONSTANT,
-            PhaseType.USER_CENTRIC,
-        )
-        and "rate" not in prof
-        and "rate_series" not in prof
+    if phase_type in (
+        PhaseType.POISSON,
+        PhaseType.GAMMA,
+        PhaseType.CONSTANT,
+        PhaseType.USER_CENTRIC,
     ):
+        has_base_rate = "rate" in prof or "rate_series" in prof
         if "rate" in search_dims:
             rate_lo, _rate_kind = search_dims["rate"]
             if rate_lo <= 0:
@@ -274,8 +276,9 @@ def _apply_search_space_shape_seeds(
                     f"--search-space 'rate' lower bound must be > 0 (got "
                     f"{rate_lo!r}); rate must be positive."
                 )
-            prof["rate"] = rate_lo
-        else:
+            if not has_base_rate:
+                prof["rate"] = rate_lo
+        elif not has_base_rate:
             raise ValueError(
                 f"--search-space selects a rate-shaped benchmark (phase type "
                 f"{phase_type}), which also requires a base rate. Pass "
