@@ -15,6 +15,7 @@ from unittest.mock import AsyncMock, MagicMock, call
 import pytest
 
 from aiperf.accuracy import worker as worker_module
+from aiperf.accuracy.graders._codegen_worker_client import CodegenWorkerError
 from aiperf.accuracy.worker import AccuracyWorker, _Problem, _Registration
 
 
@@ -397,3 +398,107 @@ async def test_livecodebench_delegates_one_request_per_batch_and_reuses_child(
     assert [item["unparsed"] for item in result["items"]] == [False, True, False]
     assert second_result["items"][0]["correct"] is True
     assert all("ground_truth" not in item for item in result["items"])
+
+
+@pytest.mark.asyncio
+async def test_livecodebench_codegen_worker_error_is_evaluator_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from aiperf.accuracy.graders import code_execution
+
+    monkeypatch.setattr(
+        code_execution,
+        "_payload_to_test_cases",
+        lambda _payload: (["input"], ["output"], None),
+    )
+    monkeypatch.setattr(
+        code_execution,
+        "_build_evaluation_sample",
+        lambda _inputs, _outputs, _fn_name: [{"input_output": "fixture"}],
+    )
+    child = SimpleNamespace(
+        grade_codegen=AsyncMock(side_effect=CodegenWorkerError("sandbox died")),
+        aclose=AsyncMock(),
+    )
+    monkeypatch.setattr(
+        worker_module, "CodegenGradingWorker", MagicMock(return_value=child)
+    )
+    problem = _Problem(
+        problem_id="opaque",
+        task="lcb",
+        prompt="prompt",
+        messages=[{"role": "user", "content": "prompt"}],
+        generation={"max_tokens": 1},
+        ground_truth="{}",
+    )
+    accuracy_worker = AccuracyWorker()
+    accuracy_worker._benchmark = "lcb-codegeneration"
+    accuracy_worker._problems = [problem]
+    accuracy_worker._by_id = {problem.problem_id: problem}
+    accuracy_worker._grader = SimpleNamespace(extract_answer=lambda response: response)
+    accuracy_worker._uses_lcb_batch_grader = True
+
+    with pytest.raises(
+        RuntimeError,
+        match="canonical LiveCodeBench grading worker failed: sandbox died",
+    ) as caught:
+        await accuracy_worker.grade_batch(
+            [{"problem_id": "opaque", "response": "code"}]
+        )
+
+    assert isinstance(caught.value.__cause__, CodegenWorkerError)
+
+
+@pytest.mark.asyncio
+async def test_codegen_worker_close_is_idempotent() -> None:
+    accuracy_worker = AccuracyWorker()
+    close_child = SimpleNamespace(aclose=AsyncMock())
+    accuracy_worker._codegen_worker = close_child
+
+    await accuracy_worker.close()
+    await accuracy_worker.close()
+
+    close_child.aclose.assert_awaited_once_with()
+    assert accuracy_worker._codegen_worker is None
+
+
+@pytest.mark.asyncio
+async def test_codegen_worker_is_closed_before_replacement_non_lcb_load(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    accuracy_worker = AccuracyWorker()
+    accuracy_worker._benchmark = "lcb-codegeneration"
+    reload_child = SimpleNamespace(aclose=AsyncMock())
+    accuracy_worker._codegen_worker = reload_child
+    child_factory = MagicMock()
+    monkeypatch.setattr(worker_module, "CodegenGradingWorker", child_factory)
+    monkeypatch.setattr(worker_module, "_verify_locked_environment", lambda: None)
+
+    async def load_inherited(
+        _benchmark: str, _config: dict[str, Any], _grader: str | None
+    ) -> None:
+        accuracy_worker._grader = SimpleNamespace()
+        accuracy_worker._problems = [
+            _Problem(
+                problem_id="opaque",
+                task="fixture",
+                prompt="prompt",
+                messages=[{"role": "user", "content": "prompt"}],
+                generation={"max_tokens": 1},
+                ground_truth="answer",
+            )
+        ]
+        accuracy_worker._dataset_identity = {
+            "provider": "fixture",
+            "revision": "fixture-revision",
+            "evaluation_splits": ["test"],
+        }
+
+    monkeypatch.setattr(accuracy_worker, "_load_inherited", load_inherited)
+
+    result = await accuracy_worker.load({"benchmark": "mmlu", "config": {}})
+
+    assert result["benchmark"] == "mmlu"
+    reload_child.aclose.assert_awaited_once_with()
+    assert accuracy_worker._codegen_worker is None
+    child_factory.assert_not_called()

@@ -34,7 +34,10 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, TextIO
 
-from aiperf.accuracy.graders._codegen_worker_client import CodegenGradingWorker
+from aiperf.accuracy.graders._codegen_worker_client import (
+    CodegenGradingWorker,
+    CodegenWorkerError,
+)
 
 PROTOCOL_VERSION = 1
 WORKER_VERSION = "1.7.0"
@@ -234,6 +237,7 @@ class AccuracyWorker:
         }
 
     async def load(self, request: dict[str, Any]) -> dict[str, Any]:
+        await self.close()
         self._benchmark = None
         self._problems = []
         self._by_id = {}
@@ -328,7 +332,10 @@ class AccuracyWorker:
 
     async def close(self) -> None:
         """Release worker resources before process shutdown."""
-        return None
+        if self._codegen_worker is None:
+            return
+        await self._codegen_worker.aclose()
+        self._codegen_worker = None
 
     async def _grade_lcb_batch(
         self, submitted: list[tuple[_Problem, str]]
@@ -382,11 +389,16 @@ class AccuracyWorker:
         if evaluation_samples:
             if self._codegen_worker is None:
                 self._codegen_worker = CodegenGradingWorker()
-            metrics = await self._codegen_worker.grade_codegen(
-                evaluation_samples,
-                generated_code,
-                timeout=_derive_grade_timeout(test_case_count),
-            )
+            try:
+                metrics = await self._codegen_worker.grade_codegen(
+                    evaluation_samples,
+                    generated_code,
+                    timeout=_derive_grade_timeout(test_case_count),
+                )
+            except CodegenWorkerError as error:
+                raise RuntimeError(
+                    f"canonical LiveCodeBench grading worker failed: {error}"
+                ) from error
             detail = metrics.get("detail", {}).get("pass@1")
             if not isinstance(detail, dict):
                 raise RuntimeError(
