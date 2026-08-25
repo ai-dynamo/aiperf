@@ -1939,4 +1939,3 @@ class TestScrapeHangContainment:
             assert collector._session.timeout.sock_read is not None
         finally:
             await collector._session.close()
-
