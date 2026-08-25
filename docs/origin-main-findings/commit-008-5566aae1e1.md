@@ -76,3 +76,60 @@ instead of indexing or silently misaligning rows.
   release CLI build must use `sccache` with `CARGO_TARGET_DIR` under `/mnt/4tb`.
 - The final implementation must pass a full Graham code review before the
   campaign tracker can mark commit 008 complete.
+
+## Port outcome
+
+**Complete.** The isolated port branch merged upstream commit
+`5566aae1e129f63c2d761d4c3fa5ee18de0ba9be` exactly through merge commit
+`6521729344cad4b8791fe94c85a876a2ee52b8e0`, whose first parent is the commit
+008 design record on top of integrated commit 007 and whose second parent is
+the upstream commit itself.
+
+The native implementation is split across two independently reviewed commits:
+
+- `4e39be3aeec509bc43853aeeb75f29452d1d2c33` adds the ordered tokenizer batch
+  seam and Hugging Face native override.
+- `67e6f3988d7664900d4410910748cf5ff6352e20` adds bounded ShareGPT batch
+  preparation, checked reconstruction, and behavior regressions.
+
+Task 1's RED compile failed because `encode_batch` did not exist. Its GREEN
+tokenizer module run passed 13 tests with one ignored. Task 2's RED run failed
+both batch-only regressions with `scalar encoding is forbidden`. Its GREEN
+public-loader module run passed all 24 tests, including the exact `[4096, 4]`
+batch shape over 4,100 texts, alignment after an invalid two-pair row, semantic
+and segment equality, and cardinality refusal before interning.
+
+The plan's proposed `Some(9)` output-distribution assertion was corrected to
+`Some(1)` against the binding design: ShareGPT retains its authored completion
+length, while the configured distribution bypasses only minimum completion
+admission. This preserves the pre-port native finalizer contract.
+
+## Closure evidence
+
+- `cargo fmt --all --check`: passed.
+- `cargo clippy -p aiperf-runtime --all-targets --features engine`: passed with
+  pre-existing warnings outside the port files.
+- `cargo build -p aiperf-cli --release`: passed in the isolated target.
+- Focused merged Python tokenizer and ShareGPT tests: 70 passed; warnings were
+  limited to stale Docker-owned pytest temporary-directory cleanup.
+- `git diff --check 6521729344..67e6f3988d`: passed, and the implementation
+  range changes only `rust/runtime/src/dataset/tokenizer.rs` and
+  `rust/runtime/src/dataset/loader/public.rs`.
+- All Rust commands used `/usr/bin/sccache` and
+  `/mnt/4tb/aiperf-origin-port-008-target`. Final cache evidence reported the
+  local cache at `/mnt/4tb/.cache/sccache` with 17,454 Rust cache hits.
+
+The full engine-enabled runtime suite compiled and ran 2,296 tests: 2,284
+passed, 7 were ignored, and 5 unrelated baseline/churn failures remained. Two
+failures reference missing recorded-agent fixture files; two are existing
+engine transport/registry expectation mismatches; one expects report version
+`0.0.0` while the package now reports `0.12.0`. None involves the two port
+files, and focused port coverage remained green.
+
+Both task reviews approved their ranges with no Critical or Important finding.
+The final Graham review explicitly reports `Graham approval: APPROVED` with no
+Critical or Important finding. Its two non-blocking Minors are a possible peak
+configuration-memory reduction by consuming source rows during extraction and
+the absence of a direct empty/all-malformed ShareGPT zero-batch regression;
+the implementation's empty chunk iterator makes no backend call, and both
+tokenizer batch seams already cover empty input.
