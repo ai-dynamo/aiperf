@@ -62,6 +62,7 @@ class Field:
     default: str
     description: str
     constraints: list[str]
+    env_aliases: list[str]
 
 
 @dataclass
@@ -88,6 +89,7 @@ def _parse_field(node: ast.AnnAssign) -> Field | None:
     default = "—"
     constraints = []
     description = "—"
+    env_aliases = []
 
     if (
         isinstance(node.annotation, ast.Subscript)
@@ -124,6 +126,19 @@ def _parse_field(node: ast.AnnAssign) -> Field | None:
                     default = ast.unparse(kw.value)
                 elif kw.arg == "description" and isinstance(kw.value, ast.Constant):
                     description = normalize_text(kw.value.value)
+                elif kw.arg == "validation_alias":
+                    if isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
+                        env_aliases.append(kw.value.value)
+                    elif (
+                        isinstance(kw.value, ast.Call)
+                        and isinstance(kw.value.func, ast.Name)
+                        and kw.value.func.id == "AliasChoices"
+                    ):
+                        env_aliases.extend(
+                            arg.value
+                            for arg in kw.value.args
+                            if isinstance(arg, ast.Constant) and isinstance(arg.value, str)
+                        )
                 elif kw.arg in constraint_map:
                     constraints.append(
                         f"{constraint_map[kw.arg]} {ast.unparse(kw.value)}"
@@ -131,7 +146,7 @@ def _parse_field(node: ast.AnnAssign) -> Field | None:
     elif node.value:
         default = ast.unparse(node.value)
 
-    return Field(name, default, description, constraints)
+    return Field(name, default, description, constraints, env_aliases)
 
 
 def _declared_fields(node: ast.ClassDef) -> list[Field]:
@@ -226,11 +241,18 @@ def _parse_resource_settings_calls(tree: ast.AST) -> list[Settings]:
                 docstring=f"{name} container CPU and memory (Guaranteed QoS).",
                 env_prefix=f"AIPERF_K8S_{prefix}",
                 fields=[
-                    Field("CPU", cpu, "CPU request and limit (Guaranteed QoS)", []),
+                    Field(
+                        "CPU",
+                        cpu,
+                        "CPU request and limit (Guaranteed QoS)",
+                        [],
+                        [],
+                    ),
                     Field(
                         "MEMORY",
                         memory,
                         "Memory request and limit (Guaranteed QoS)",
+                        [],
                         [],
                     ),
                 ],
@@ -334,11 +356,16 @@ def generate_markdown(settings_list: list[Settings]) -> str:
         lines.append("|----------------------|---------|-------------|-------------|")
 
         for field in settings.fields:
-            env_var = f"{settings.env_prefix}{field.name}"
+            env_vars = field.env_aliases or [f"{settings.env_prefix}{field.name}"]
             default = _format_default(field.default)
             constraints = ", ".join(field.constraints) or "—"
             desc = field.description.replace("|", "\\|")
-            lines.append(f"| `{env_var}` | {default} | {constraints} | {desc} |")
+            lines.append(f"| `{env_vars[0]}` | {default} | {constraints} | {desc} |")
+            for env_var in env_vars[1:]:
+                lines.append(
+                    f"| `{env_var}` | {default} | {constraints} | "
+                    f"Compatibility alias for `{env_vars[0]}`; lower precedence when both are set. |"
+                )
 
         lines.append("")
 
