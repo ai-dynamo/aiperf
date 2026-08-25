@@ -23,7 +23,6 @@ async fn test_audio_transcription_passes_generated_audio_and_extra_inputs() {
     let h = AIPerfHarness::new().await;
     let r = h.run(&format!(
         "--model openai/whisper-1 \
-         --tokenizer gpt2 \
          --url {} \
          --endpoint-type audio_transcription \
          --audio-length-mean 0.1 \

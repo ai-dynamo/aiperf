@@ -213,7 +213,7 @@ const AUDIO_TRANSCRIPTION_DESCRIPTOR: EndpointDescriptor = EndpointDescriptor {
     streaming_path: None,
     supports_streaming: false,
     produces_tokens: false,
-    tokenizes_input: true,
+    tokenizes_input: false,
     requires_raw_token_ids: false,
     requires_form_data: true,
     requires_polling: false,
@@ -666,16 +666,14 @@ impl Endpoint for AudioTranscriptionEndpoint {
         format_legacy_payload(self, request_info)
     }
     fn parse_response(&self, response: &ServerResponse) -> EndpointResult<Option<ParsedResponse>> {
-        let text = response
-            .json
-            .as_ref()
-            .and_then(|v| v.get("text"))
-            .and_then(Value::as_str)
-            .map(str::to_owned)
-            .or_else(|| response.raw.clone().filter(|value| !value.is_empty()))
-            .ok_or_else(|| {
-                EndpointError::InvalidResponse("audio transcription response has no text".into())
-            })?;
+        let text = match response.json.as_ref() {
+            Some(value) => value.get("text").and_then(Value::as_str),
+            None => response.raw.as_deref().filter(|value| !value.is_empty()),
+        }
+        .map(str::to_owned)
+        .ok_or_else(|| {
+            EndpointError::InvalidResponse("audio transcription response has no text".into())
+        })?;
         let usage = response.json.as_ref().and_then(|v| v.get("usage")).cloned();
         Ok(Some(ParsedResponse {
             perf_ns: response.perf_ns,
@@ -696,20 +694,18 @@ impl PreparedEndpointBehavior for AudioTranscriptionEndpoint {
             EndpointError::InvalidRequest("audio transcription requires an audio turn".into())
         })?;
         let audio = turn
-            .images
+            .audios
             .first()
-            .and_then(|_| None)
-            .or_else(|| turn.audios.first().and_then(|m| m.contents.first()))
+            .and_then(|media| media.contents.first())
             .ok_or_else(|| {
                 EndpointError::InvalidRequest("audio transcription requires audio content".into())
             })?;
-        let mut payload = json!({
-            "file": build_audio_file_field(audio)?,
-            "model": request.primary_model_name(),
-        })
-        .as_object()
-        .expect("audio transcription payload is an object")
-        .clone();
+        let mut payload = Map::new();
+        payload.insert("file".into(), build_audio_file_field(audio)?);
+        payload.insert(
+            "model".into(),
+            Value::String(prepared_effective_model(request, turn)),
+        );
         merge_audio_transcription_extra(&mut payload, config.extra.as_ref());
         merge_audio_transcription_extra(&mut payload, turn.extra_body.as_ref());
         Ok(BodyPlan::from_object(&payload)?)
@@ -830,7 +826,7 @@ fn parse_image_response(
 }
 
 const RESERVED_IMAGE_EDIT_KEYS: [&str; 4] = ["prompt", "image", "url", "mask"];
-const RESERVED_AUDIO_TRANSCRIPTION_KEYS: [&str; 2] = ["file", "model"];
+const RESERVED_AUDIO_TRANSCRIPTION_KEYS: [&str; 1] = ["file"];
 
 fn merge_image_edit_extra(payload: &mut Map<String, Value>, extra: Option<&Map<String, Value>>) {
     let Some(extra) = extra else {
@@ -902,55 +898,26 @@ fn build_image_file_field(content: &str) -> EndpointResult<Value> {
 }
 
 fn build_audio_file_field(content: &str) -> EndpointResult<Value> {
-    let (content_type, filename, b64) = if let Some(rest) = content.strip_prefix("data:") {
-        let (header, b64) = rest.split_once(',').ok_or_else(|| {
-            EndpointError::InvalidRequest(
-                "malformed data URL for audio content (missing comma)".into(),
-            )
-        })?;
-        let mime = header
-            .split_once(';')
-            .map(|(mime, _)| mime)
-            .filter(|mime| mime.starts_with("audio/") && !mime.is_empty())
-            .ok_or_else(|| {
-                EndpointError::InvalidRequest(
-                    "audio data URL must declare an audio/* media type".into(),
-                )
-            })?;
-        let extension = mime
-            .split_once('/')
-            .map_or("bin", |(_, subtype)| subtype)
-            .split_once('+')
-            .map_or_else(
-                || mime.split_once('/').map_or("bin", |(_, value)| value),
-                |(base, _)| base,
-            );
-        (
-            mime.to_string(),
-            format!("audio.{extension}"),
-            b64.to_string(),
+    let (format, b64) = content.split_once(',').ok_or_else(|| {
+        EndpointError::InvalidRequest(
+            "audio content must use non-empty <fmt>,<b64> encoding".into(),
         )
-    } else if let Some((format, b64)) = content.split_once(',') {
-        let (content_type, filename) = match format.to_ascii_lowercase().as_str() {
-            "wav" => ("audio/wav", "audio.wav"),
-            "mp3" => ("audio/mpeg", "audio.mp3"),
-            _ => ("application/octet-stream", "audio.bin"),
-        };
-        (
-            content_type.to_string(),
-            filename.to_string(),
-            b64.to_string(),
-        )
-    } else {
-        (
-            "application/octet-stream".to_string(),
-            "audio.bin".to_string(),
-            content.to_string(),
-        )
+    })?;
+    if format.is_empty() || b64.is_empty() {
+        return Err(EndpointError::InvalidRequest(
+            "audio content must use non-empty <fmt>,<b64> encoding".into(),
+        ));
+    }
+
+    let format = format.to_ascii_lowercase();
+    let content_type = match format.as_str() {
+        "mp3" | "mpga" | "mpeg" => "audio/mpeg".to_string(),
+        "m4a" | "mp4" => "audio/mp4".to_string(),
+        _ => format!("audio/{format}"),
     };
     Ok(json!({
         "b64_data": b64,
-        "filename": filename,
+        "filename": format!("audio.{format}"),
         "content_type": content_type
     }))
 }

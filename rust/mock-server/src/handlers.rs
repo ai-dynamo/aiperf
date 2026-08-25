@@ -4062,36 +4062,31 @@ pub async fn audio_transcription(
     let mut has_file = false;
     let mut language: Option<String> = None;
     let mut temperature: Option<f64> = None;
-    while let Ok(Some(field)) = multipart.next_field().await {
+    loop {
+        let Some(field) = multipart
+            .next_field()
+            .await
+            .map_err(invalid_audio_multipart)?
+        else {
+            break;
+        };
         match field.name() {
             Some("file") => {
                 has_file = !field
                     .bytes()
                     .await
-                    .map_err(|_| AppError {
-                        status: StatusCode::BAD_REQUEST,
-                        message: "invalid audio multipart field".into(),
-                        retry_after: None,
-                    })?
+                    .map_err(invalid_audio_multipart)?
                     .is_empty();
             }
             Some("language") => {
-                language = Some(field.text().await.map_err(|_| AppError {
-                    status: StatusCode::BAD_REQUEST,
-                    message: "invalid audio language field".into(),
-                    retry_after: None,
-                })?);
+                language = Some(field.text().await.map_err(invalid_audio_multipart)?);
             }
             Some("temperature") => {
-                let value = field.text().await.map_err(|_| AppError {
-                    status: StatusCode::BAD_REQUEST,
-                    message: "invalid audio temperature field".into(),
-                    retry_after: None,
-                })?;
+                let value = field.text().await.map_err(invalid_audio_multipart)?;
                 temperature = value.parse::<f64>().ok();
             }
             _ => {
-                let _ = field.bytes().await;
+                field.bytes().await.map_err(invalid_audio_multipart)?;
             }
         }
     }
@@ -4115,12 +4110,11 @@ pub async fn audio_transcription(
     Ok(Json(body).into_response())
 }
 
-#[cfg(test)]
-mod audio_transcription_tests {
-    #[test]
-    fn transcript_fixture_is_deterministic() {
-        assert_eq!("mock transcription", "mock transcription");
-        assert_eq!(1_u32, 1);
+fn invalid_audio_multipart(error: impl std::fmt::Display) -> AppError {
+    AppError {
+        status: StatusCode::BAD_REQUEST,
+        message: format!("invalid audio multipart: {error}"),
+        retry_after: None,
     }
 }
 

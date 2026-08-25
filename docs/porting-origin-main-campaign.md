@@ -59,7 +59,7 @@ implementation, test run, or review.
 | 31 | `59cd43e43a` | Responses mock model | pending | applicable | Route/model exist but omit `min_tokens`, `ignore_eos`, and typed-request recording. |
 | 32 | `1b34de0637` | warmup-isolation cache-bust | pending | applicable | Native cannot represent phase-gated targets. |
 | 33 | `37467dc38c` | force content parts | pending | applicable | Add bootstrap-captured endpoint policy. |
-| 34 | `00ba1c5db3` | audio transcription | pending | applicable | New multipart endpoint, parser, and mock route. |
+| 34 | `00ba1c5db3` | audio transcription | complete | applicable | Native multipart endpoint, strict parser/format validation, mock route, and real-binary E2E; final Graham review recorded in the finding. |
 | 35 | `03c9c6ddc5` | LCB grading concurrency | pending | applicable | Delegation/detail are present; upstream multiplexing and unconditional group reaping remain open. |
 | 36 | `6480e5467f` | synthesis YAML overrides | pending | applicable | Flag-only support exists; CLI-over-YAML overlay is absent. |
 | 37 | `23ed221c3d` | CI speed | pending | not-applicable | CI-only work. |
