@@ -89,23 +89,29 @@ A benchmark has one "shape" before it starts: `concurrency` ("send as many
 requests as possible"), `rate` ("send N requests per second"), `user`
 ("simulate N users"), or `gamma` ("send requests with a particular
 bumpy/smooth pattern"). Searching a shape-specific field --
-`rate`/`rate_ramp`/`rate_series` (rate shape), `smoothness` (gamma shape), or
-`users` (user shape) -- automatically switches the base benchmark to a
-compatible shape, the same as passing the matching CLI flag
-(`--request-rate`, `--arrival-pattern gamma`, `--user-centric-rate`) would.
-Fields from the same shape combine freely — e.g. searching `users` and
-`rate` together fully auto-seeds a user shape, since a user-shaped benchmark
-has both fields (it shares the rate machinery with the rate shape).
-Searching fields from two mutually-exclusive shapes (e.g. `users` and
-`smoothness` together — no shape has both) is rejected with a clear error.
+`rate`/`rate_ramp` (rate shape), `smoothness` (gamma shape), or `users`
+(user shape) -- automatically switches the base benchmark to a compatible
+shape, the same as passing the matching CLI flag (`--request-rate`,
+`--arrival-pattern gamma`, `--user-centric-rate`) would. Fields from the
+same shape combine freely — e.g. searching `users` and `rate` together
+fully auto-seeds a user shape, since a user-shaped benchmark has both
+fields (it shares the rate machinery with the rate shape). Searching
+fields from two mutually-exclusive shapes (e.g. `users` and `smoothness`
+together — no shape has both) is rejected with a clear error.
 
-`rate_ramp`, `rate_series`, and `smoothness` modulate an existing rate
-rather than supplying one, so searching any of them alone still requires a
-base rate from somewhere -- pass `--request-rate` (or `--user-centric-rate`
-for a user shape), or add a `rate` dimension to the same `--search-space`.
-Without one, AIPerf errors at config time with a message explaining what's
-missing, rather than searching `rate_ramp`/`rate_series`/`smoothness` in a
-vacuum. `users` is a partial exception: it self-seeds the user count from
+`rate_series` is a piecewise-linear rate schedule, not a single number, so
+it can never be a `--search-space` dimension at all -- `--search-space
+"rate_series:..."` is rejected outright, with or without a companion
+`--request-rate-series`. Pass `--request-rate-series` as a fixed schedule
+instead, or search `rate`/`rate_ramp` for a scalar rate to sweep.
+
+`rate_ramp` and `smoothness` modulate an existing rate rather than
+supplying one, so searching either alone still requires a base rate from
+somewhere -- pass `--request-rate` (or `--user-centric-rate` for a user
+shape), or add a `rate` dimension to the same `--search-space`. Without
+one, AIPerf errors at config time with a message explaining what's
+missing, rather than searching `rate_ramp`/`smoothness` in a vacuum.
+`users` is a partial exception: it self-seeds the user count from
 its own search range, but a user-shaped benchmark still needs the same base
 rate as the rate shapes (users share a global request rate), so searching
 `users` alone also requires `--request-rate`, `--user-centric-rate`, or a

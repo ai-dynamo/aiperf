@@ -765,24 +765,55 @@ class TestSearchSpacePhaseShapeInference:
         with pytest.raises(ValueError, match="base rate"):
             build_profiling(user)
 
-    def test_rate_series_keyword_with_request_rate_stays_poisson(self) -> None:
+    def test_rate_series_keyword_alone_raises_clear_error(self) -> None:
+        """'rate_series' is a piecewise-linear schedule, not a scalar the
+        planner can sample between two bounds -- it must never be treated
+        as a searchable numeric dimension, regardless of companion flags."""
+        loadgen = CLIConfig(
+            search_space=["rate_series:1,100:real"],
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        with pytest.raises(ValueError, match="not a valid adaptive-search"):
+            build_profiling(user)
+
+    def test_rate_series_keyword_with_request_rate_still_raises(self) -> None:
+        """A --request-rate companion doesn't change anything -- 'rate_series'
+        itself still can't be a scalar search dimension (it was previously
+        treated as equivalent to 'rate', which silently masked the fact
+        that a sampled float would later crash writing into a
+        RateSeriesConfig-typed field)."""
         loadgen = CLIConfig(
             search_space=["rate_series:1,100:real"],
             request_rate=10.0,
             request_count=10,
         )
         user = _make_user(loadgen=loadgen)
-        prof = build_profiling(user)
-        assert prof["type"] == PhaseType.POISSON
-        assert prof["rate"] == 10.0
+        with pytest.raises(ValueError, match="not a valid adaptive-search"):
+            build_profiling(user)
 
-    def test_rate_series_keyword_alone_raises_clear_error(self) -> None:
+    def test_rate_series_keyword_with_request_rate_series_still_raises(
+        self, tmp_path: Path
+    ) -> None:
+        """Even the documented --request-rate-series companion doesn't make
+        the schedule itself searchable as a number -- this combo was
+        already reachable before this PR (via the pre-existing
+        request_rate_series-sets-a-rate-controlled-type logic) and already
+        crashed once a sampled float reached the planner; now it's rejected
+        immediately and clearly instead."""
+        json_path = tmp_path / "rate.json"
+        json_path.write_text(
+            '{"points":[{"time_s":0,"qps":1},{"time_s":60,"qps":7}]}',
+            encoding="utf-8",
+        )
         loadgen = CLIConfig(
             search_space=["rate_series:1,100:real"],
+            request_rate_series=json_path,
+            arrival_pattern=ArrivalPattern.CONSTANT,
             request_count=10,
         )
         user = _make_user(loadgen=loadgen)
-        with pytest.raises(ValueError, match="base rate"):
+        with pytest.raises(ValueError, match="not a valid adaptive-search"):
             build_profiling(user)
 
     def test_smoothness_keyword_with_request_rate_infers_gamma_phase(self) -> None:

@@ -87,7 +87,7 @@ def _apply_agentic_replay_fields(phase: dict[str, Any], cli: CLIConfig) -> None:
 
 
 _RATE_SHAPE_SEARCH_FIELDS: frozenset[str] = frozenset(
-    {"rate", "rate_ramp", "rate_series", "smoothness"}
+    {"rate", "rate_ramp", "smoothness"}
 )
 
 
@@ -109,6 +109,13 @@ def _search_space_dimensions(cli: CLIConfig) -> dict[str, tuple[float, str]]:
     (e.g. ``phases.warmup.*``) is ignored by this shape-inference helper --
     the real search-space parser still processes it normally later, just
     not for the purpose of phase-shape inference.
+
+    ``rate_series`` is rejected outright, regardless of any companion CLI
+    flag: it's a piecewise-linear schedule (``RateSeriesConfig``), not a
+    scalar the planner can sample between two bounds. Letting it through
+    would set a phase's ``rate_series`` field to a bare Optuna-sampled
+    float on the first trial and crash there -- reject it immediately and
+    clearly instead.
     """
     if not cli.search_space:
         return {}
@@ -126,6 +133,15 @@ def _search_space_dimensions(cli: CLIConfig) -> dict[str, tuple[float, str]]:
         if not path.startswith("phases.profiling."):
             continue
         field = path.rsplit(".", 1)[-1]
+        if field == "rate_series":
+            raise ValueError(
+                "--search-space 'rate_series' is not a valid adaptive-search "
+                "dimension: it's a piecewise-linear rate schedule (a list of "
+                "time/rate points), not a single number the planner can "
+                "sample between two bounds. Pass --request-rate-series as a "
+                "fixed companion instead of searching over it, or search "
+                "'rate'/'rate_ramp' for a scalar rate to sweep."
+            )
         bounds_part, _, kind_part = rest.partition(":")
         lo_str = bounds_part.split(",", 1)[0].strip()
         kind = kind_part.strip() or "real"
