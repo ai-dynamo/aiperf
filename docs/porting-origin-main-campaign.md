@@ -28,7 +28,7 @@ Sol plan, TDD evidence, verification, and the required Graham review.
 | --- | --- | --- | --- | --- |
 | 1 | `817a8d84ddb9` | fix(accuracy): grade LCB codegen in an out-of-process worker (#1145) (#1175) | complete | Merge `1c03271dac3e`; port commits `63eb01a355`, `e62454bfcd`, and `9e859f6110`; Graham approved. Focused Python verification: 53 passed, 2 skipped, 2 deselected. Rust evaluator-worker verification: 7 passed. |
 | 2 | `0883bd1aee` | chore: bump aiperf version to 0.12.0 (#1194) | not-applicable | Merge `9596121af1` has upstream as second parent. The upstream change is Python package/mock-server/docs version metadata only; native crates own independent versions and no runtime behavior changed. |
-| 3 | `34b2be2ee1` | feat: support Speculative Decoding metrics in AIPerf (#1153) | pending | — |
+| 3 | `34b2be2ee1` | feat: support Speculative Decoding metrics in AIPerf (#1153) | complete | Merge `4d076c660f`; native SGLang/TRT-LLM speculative acceptance metrics already feed the speed-bench report, so no Rust delta is required. |
 | 4 | `6db948524e` | fix: uncaught valueerror in sagemaker loader (#1199) | pending | — |
 | 5 | `ce715ae849` | fix(agentic): preserve trace think time with global idle guard (#1201) | pending | — |
 | 6 | `93b6223373` | refactor(telemetry): rename TelemetryRecord.dcgm_url → telemetry_source_url (#1200) | pending | — |
@@ -168,3 +168,23 @@ merge with `0883bd1aee552472124aa710e4cf067b7b77cddb` as its second parent.
 The already-recorded individual finding is
 `docs/origin-main-findings/early-002-030.md` section 002. No Rust feature,
 spec, Sol plan, or test change is applicable to this metadata-only merge.
+
+## Per-commit record: 34b2be2ee115
+
+### Upstream intent and Rust comparison
+
+Upstream adds an SGLang speculative-decoding console exporter. Native Rust
+already retains the corresponding server metrics and its speed-bench report
+explicitly recognizes both `sglang:spec_accept_rate` and
+`sglang:spec_accept_length` (alongside TRT-LLM equivalents) in
+`rust/cli/src/speed_bench.rs`. This independently provides the intended
+speculative-acceptance visibility for the native product path.
+
+### Merge evidence and decision
+
+`4d076c660f31d9a9bf66f839867c3b9737e1a0ba` is a two-parent non-fast-forward
+merge with `34b2be2ee1159cc7e6985e027027791d18dad693` as its second parent.
+The individual scope evidence is
+`docs/origin-main-findings/early-002-030.md` section 003. No new Rust feature
+or behavior change is required; the native counterpart existed before this
+merge, so no port-specific spec, Sol plan, or test change is necessary.
