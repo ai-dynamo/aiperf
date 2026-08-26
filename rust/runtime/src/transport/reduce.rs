@@ -32,6 +32,8 @@ pub(crate) struct EndpointReduceAccumulators<'a> {
     pub endpoint_metrics: &'a mut ObservedEndpointMetrics,
     /// Reconciled terminal usage counts.
     pub observed_usage: &'a mut ObservedUsage,
+    /// Whether to retain cumulative usage from the first content-bearing chunk.
+    pub capture_first_content_chunk_usage: bool,
 }
 
 /// Token-emission context supplied by a transport.
@@ -60,6 +62,11 @@ pub(crate) fn reduce_parsed_response(
     emit: &TokenEmitter<'_>,
     acc: EndpointReduceAccumulators<'_>,
 ) -> bool {
+    capture_first_content_chunk_usage(
+        parsed,
+        acc.capture_first_content_chunk_usage,
+        acc.observed_usage,
+    );
     absorb_usage(parsed, acc.observed_usage);
     let Some(data) = parsed.data.as_ref() else {
         return false;
@@ -90,6 +97,28 @@ pub(crate) fn reduce_parsed_response(
         }
     }
     true
+}
+
+fn capture_first_content_chunk_usage(
+    parsed: &ParsedResponse,
+    is_enabled: bool,
+    observed_usage: &mut ObservedUsage,
+) {
+    if !is_enabled
+        || observed_usage.first_content_chunk_tokens.is_some()
+        || !parsed
+            .data
+            .as_ref()
+            .is_some_and(ResponseData::has_token_output)
+    {
+        return;
+    }
+    observed_usage.first_content_chunk_tokens = parsed
+        .usage
+        .as_ref()
+        .and_then(UsageView::from_value)
+        .and_then(UsageView::completion_tokens)
+        .and_then(|value| usize::try_from(value).ok());
 }
 
 /// Admit the textual decision facts from one decoded response without creating
