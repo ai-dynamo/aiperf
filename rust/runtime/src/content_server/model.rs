@@ -10,12 +10,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde::{Deserialize, Serialize};
 
-/// Sink for streaming each completed request record out of the tracker to a
-/// live consumer (the media-fetch aggregator), independent of the bounded
-/// retention buffer. Unbounded because the producer ([`RequestTracker::record`])
-/// runs synchronously inside the HTTP response path and must not block on a full
-/// queue; the consumer only parses and folds, so it keeps pace, and the run's own
-/// request rate bounds the in-flight volume.
+/// Bounded, nonblocking sink for streaming completed request records from the
+/// tracker to the media-fetch aggregator, independent of the retention buffer.
+///
+/// Accepted records retain the channel's FIFO order. A full queue rejects the
+/// record without blocking the HTTP response path and latches overflow. The run
+/// finalization path observes that latch and fails rather than publishing an
+/// incomplete media result.
 ///
 /// [`RequestTracker::record`]: crate::content_server::RequestTracker::record
 #[derive(Clone, Debug)]
@@ -25,12 +26,19 @@ pub struct ContentRecordSender {
 }
 
 impl ContentRecordSender {
+    /// Wrap a bounded channel whose configured capacity limits queued records.
     pub fn new(sender: tokio::sync::mpsc::Sender<ContentRequestRecord>) -> Self {
         Self {
             sender,
             overflowed: Arc::new(AtomicBool::new(false)),
         }
     }
+
+    /// Attempt to enqueue `record` without blocking.
+    ///
+    /// A successful send preserves FIFO order with other accepted records. A
+    /// full queue rejects this record, latches overflow, and returns `Err(())`;
+    /// a closed queue also returns `Err(())` without enqueueing the record.
     pub fn try_send(&self, record: ContentRequestRecord) -> Result<(), ()> {
         match self.sender.try_send(record) {
             Ok(()) => Ok(()),
@@ -41,6 +49,11 @@ impl ContentRecordSender {
             Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => Err(()),
         }
     }
+
+    /// Report whether a full queue rejected a record.
+    ///
+    /// A true result is terminal for media aggregation: finalization fails so
+    /// callers cannot publish a result with a silently missing record.
     pub fn overflowed(&self) -> bool {
         self.overflowed.load(Ordering::Acquire)
     }
