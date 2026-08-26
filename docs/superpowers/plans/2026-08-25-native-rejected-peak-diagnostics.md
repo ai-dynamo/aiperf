@@ -6,12 +6,13 @@
 > superpowers:subagent-driven-development and
 > superpowers:test-driven-development for every behavior slice.
 
-**Goal:** Report the smallest actionable context cap after a native WEKA or
-Dynamo recorded selection rejects every candidate.
+**Goal:** Report the smallest actionable context cap after a native WEKA
+(including TraceLab) or Dynamo recorded selection rejects every candidate.
 
 **Architecture:** Keep selection ordering and decoding boundaries unchanged.
 The AgentX filter stores its minimum in `SelectionStats`; Graph-IR WEKA and
 Dynamo compute their corresponding minimum locally and share only error text.
+TraceLab delegates to WEKA with its own source label.
 
 **Tech Stack:** Rust 2024, serde JSON recorded graph compilers, Config v2,
 native binary integration tests, sccache.
@@ -38,20 +39,21 @@ native binary integration tests, sccache.
   selection error containing source/caps/minimum.
 - Consumes: existing `filter_then_cap` scan order and `trace_peak_context_length`.
 
-- [ ] Write a failing selection test that scans peaks `0, 12, 8` and expects
+- [x] Write a failing selection test that scans peaks `0, 12, 8` and expects
   `Some(0)`, then a failing loader test with rejected peaks `950, 104` that
   expects a `104` admission hint.
-- [ ] Run `cargo test -p aiperf-runtime agentx:: --lib` and record RED.
-- [ ] Add minimum accounting and cause-specific empty-selection formatting;
+- [x] Run `cargo test -p aiperf-runtime agentx:: --lib` and record RED.
+- [x] Add minimum accounting and cause-specific empty-selection formatting;
   do not change successful selection results.
-- [ ] Rerun the focused test command and record GREEN.
-- [ ] Commit the slice.
+- [x] Rerun the focused test command and record GREEN (106 passed, 1 ignored).
+- [x] Commit the slice in `4022b433c9`.
 
 ### Task 2: Graph-IR WEKA and Dynamo selection diagnostics
 
 **Files:**
 - Modify: `rust/runtime/src/graph/recorded/weka/mod.rs`
 - Modify: `rust/runtime/src/graph/recorded/dynamo/mod.rs`
+- Modify: `rust/runtime/src/graph/recorded/tracelab.rs`
 - Modify: `rust/runtime/src/graph/recorded/mod.rs` if a shared formatter is
   the smallest coherent boundary.
 
@@ -60,13 +62,14 @@ native binary integration tests, sccache.
 - Consumes: the exact existing `peak_context` and `request_peak_context`
   semantics.
 
-- [ ] Write failing compiler/selector tests with two rejected candidates of
+- [x] Write failing compiler/selector tests with two rejected candidates of
   unequal peak and assert the smaller suggested cap for each format.
-- [ ] Run the two focused runtime test filters and record RED.
-- [ ] Add local minimum tracking only along the active context-filter branch;
-  preserve WEKA no-decode-after-root-cap and Dynamo whole-tree grouping.
-- [ ] Rerun both focused suites and record GREEN.
-- [ ] Commit the slice.
+- [x] Run the focused runtime test filters and record RED.
+- [x] Add local minimum tracking only along the active context-filter branch;
+  preserve WEKA no-decode-after-root-cap, TraceLab source identity, and Dynamo
+  whole-tree grouping.
+- [x] Rerun both focused suites and record GREEN (78 passed, 1 ignored).
+- [x] Commit the slice in `4022b433c9`.
 
 ### Task 3: Public product regression, review, and ancestry receipt
 
@@ -79,13 +82,14 @@ native binary integration tests, sccache.
 **Interfaces:**
 - Produces: a process-boundary assertion and reviewable closure receipt.
 
-- [ ] Write a failing public Config-v2/native-binary test that rejects every
+- [x] Write a failing public Config-v2/native-binary test that rejects every
   temporary WEKA trace under `max_context_length` and expects the exact
   smallest-cap tail.
-- [ ] Run the focused test with the built native binary and record RED.
-- [ ] Add only missing projection or error propagation discovered by the test.
-- [ ] Rerun the public test plus all Task 1/2 suites, `cargo fmt --check`, and
+- [x] Run the focused test with the built native binary and record RED.
+- [x] Add only missing projection or error propagation discovered by the test.
+- [x] Rerun the public test plus all Task 1/2 suites, `cargo fmt --check`, and
   changed-scope Clippy with sccache; record GREEN.
-- [ ] Commit implementation, perform a full Graham review, record any repair,
-  update the campaign tracker only after approval, and create/verify the
-  two-parent target-only upstream merge.
+- [x] Commit implementation, perform a full Graham review, record the
+  inherited broad-suite version-snapshot failure, update the campaign tracker
+  after independent approval, and create/verify the two-parent target-only
+  upstream merge.

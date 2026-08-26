@@ -79,7 +79,7 @@ implementation, test run, or review.
 | 51 | `324bb05773` | per-chunk usage | pending | applicable | No first-chunk token multiplicity or option. |
 | 52 | `810fd8bdd4` | vLLM spec-decode wire | pending | applicable | Root metrics/histogram/trailing usage absent. |
 | 53 | `e5ebe915df` | enum inequality | pending | not-applicable | Python enum behavior only. |
-| 54 | `bfe33151de` | rejected peak diagnostics | pending | applicable | Actual target is WEKA/Dynamo selection, not Baseten. |
+| 54 | `bfe33151de` | rejected peak diagnostics | complete | applicable | AgentX/HF, WEKA (including TraceLab), and Dynamo selection; target-only merge `352ca1b032`, implementation `4022b433c9`, independent Graham approved. |
 | 55 | `dd3f09b0c3` | session-affinity header | pending | applicable | Add default-on `X-Session-Affinity`, not opt-in `X-Session-ID`. |
 | 56 | `94fee7338b` | random range ratio | pending | applicable | Random corpus exists; ratio surface/sampling is absent. |
 | 57 | `e10d53b1d3` | version 0.13.0 | pending | shared-product-action | Coordinated release decision, not standalone Rust port. |

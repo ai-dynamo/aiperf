@@ -9,50 +9,40 @@ or alter selection order.
 
 ## Native analysis
 
-The target is not Baseten. Native has three equivalent recorded-trace selection
-seams:
-
-- `agentx::selection` drives the legacy/HuggingFace WEKA filter-then-cap path;
-- Graph-IR WEKA scans records sequentially when a root or context cap is set;
-- Graph-IR Dynamo selects complete session trees by their largest request peak.
-
-All three could reject every candidate while returning only a generic empty
-selection error. The shared AgentX stats already carry scanned, rejected,
-largest, eligible, and loaded counts, so the smallest observed peak belongs
-there. Graph-IR owns independent selection loops because it must retain its
-no-decode-after-cap and whole-tree invariants; it consumes the same diagnostic
-contract without sharing parsing ownership.
-
-TraceLab has no equivalent maximum-context filter in the native compiler. The
-upstream Python TraceLab call site therefore has no native behavioral target.
+The target is not Baseten. Native selection seams are AgentX/HuggingFace WEKA,
+Graph-IR WEKA (including TraceLab, which converts then delegates to WEKA), and
+Graph-IR Dynamo. Their selection order, parse boundary, and peak calculations
+remain unchanged.
 
 ## Required native behavior
 
-1. Track the minimum peak in every scanned `agentx::selection` pass, including
-   zero-valued peaks.
-2. If the AgentX/HF pass is empty after a configured context cap, return an
-   error containing source, scanned count, authored cap, optional root cap, and
-   the exact smallest peak / actionable replacement cap.
-3. If Graph-IR WEKA or Dynamo rejects every root because of a configured
-   context cap, return the same actionable smallest-peak diagnosis while
-   preserving each compiler's existing source terminology and selection order.
-4. Empty sources and an empty selection for reasons other than an active
-   context cap retain their existing errors; a root cap never appears as the
-   alleged cause.
-5. Cover helper behavior, AgentX/HF selection, WEKA compilation, Dynamo tree
-   selection, and a native CLI/binary route which proves the error reaches the
-   product boundary.
+The all-rejected context-cap result carries the source, scanned count, authored
+limits, and the smallest observed peak with a concrete replacement cap. Empty,
+malformed, and non-context-caused failures preserve their established errors.
 
-## Upstream-to-native test map
+## Closure evidence
 
-| Upstream behavior | Native evidence |
-| --- | --- |
-| minimum peak is recorded | `agentx::selection` unit test |
-| all H/F WEKA rows rejected gives admission hint | `agentx::loader` test |
-| all Graph-IR WEKA roots rejected | recorded-WEKA compiler test |
-| all Graph-IR Dynamo trees rejected | recorded-Dynamo selector/compiler test |
-| diagnostic reaches the public native command | Config-v2/native binary test with an inline or temporary WEKA input |
-| no cap / empty source remains distinct | focused regression tests |
+- Target-only merge: `352ca1b032e44059f7923ac73eba364ea571863d` has first
+  parent `2753be631fc41f3af743bdafe615ba3407ce83c3`, exact second parent
+  `bfe33151de75426710e51ca054823aa91342cebc`, and an unchanged first-parent
+  tree.
+- Native implementation and tests: `4022b433c9`.
+- Focused runtime verification (sccache, `/mnt/4tb/aiperf-target-port054`,
+  clang/lld, preserved `--cfg tokio_unstable`): AgentX 106 passed / 1 ignored;
+  recorded graph 78 passed / 1 ignored, plus its 1-test acquisition harness;
+  TraceLab rejection control 1 passed.
+- Native `--execute` E2E: 1 passed. It uses `http://127.0.0.1:1`, preserves
+  the domain-specific terminal diagnostic and 44-token observed minimum, and
+  proves selection fails before connection I/O.
+- `cargo fmt --all -- --check`, runtime-lib Clippy, and the changed CLI E2E
+  target's Clippy exit cleanly.
+- Broad runtime library suite: 1,812 passed, 7 ignored, 1 inherited failure:
+  `metrics_core::report::tests::v2_uses_type_specific_series_and_null_for_non_finite_tail`
+  in `runtime/src/metrics_core/report.rs:1486` expects version `0.0.0` but the
+  workspace reports `0.12.0`. This port does not change metrics, reporting, or
+  version code.
+- Independent Graham review of `4022b433c9`: approved, no blocking,
+  important, or style findings.
 
 ## Ancestry constraint
 

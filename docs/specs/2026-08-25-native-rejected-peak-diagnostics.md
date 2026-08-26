@@ -2,7 +2,7 @@
 
 ## Goal
 
-Make every native WEKA and Dynamo recorded-trace selection report the smallest
+Make every native WEKA (including its TraceLab adapter) and Dynamo recorded-trace selection report the smallest
 observed peak context when a configured maximum rejects every eligible root.
 
 ## Contract
@@ -34,7 +34,8 @@ the stats and is used by `load_hf_traces_from_rows` after filter-then-cap.
 The helper accepts a format-specific source label and uses the authored caps
 only as metadata; it does not decide whether a selection was causally empty.
 
-Graph-IR WEKA and Dynamo retain their local parsers/selectors. Their loops add
+Graph-IR WEKA and Dynamo retain their local parsers/selectors. The TraceLab
+adapter supplies a TraceLab source label when it delegates to WEKA. The loops add
 a local smallest-peak accumulator only in the context-filter branch and use a
 small shared `RecordedTraceError` constructor after exhaustion. This keeps
 parsing, ordering, tree grouping, and no-decode-after-cap boundaries local.
@@ -42,9 +43,20 @@ parsing, ordering, tree grouping, and no-decode-after-cap boundaries local.
 ## Verification
 
 Unit tests exercise a zero peak and ordinary minimum selection. Legacy/HF
-WEKA, Graph-IR WEKA, and Dynamo tests use unequal rejected peaks and assert the
+WEKA, TraceLab, Graph-IR WEKA, and Dynamo tests use unequal rejected peaks and assert the
 minimum plus the exact suggested flag value. A real native command test drives
 the Graph-IR WEKA source through the public Config-v2 execution surface and
 asserts the process error contains the same actionable tail. Tests also retain
 the existing empty-source error and prove a successful filtered selection is
 unchanged.
+
+## Closure verification
+
+`4022b433c9` passed the AgentX focused suite (106 passed, 1 ignored), the
+recorded-graph suite (78 passed, 1 ignored, with the separate one-test source
+acquisition harness also passing), and the native CLI E2E (1 passed). The E2E
+asserts that an unreachable endpoint has no connection attempt because the
+terminal diagnostic is produced during selection. Formatting and both changed-
+scope Clippy targets pass. The broad runtime library suite has one unrelated
+version-snapshot failure in `metrics_core::report`; it is not in this port's
+diff. Independent Graham review approved the implementation without findings.
