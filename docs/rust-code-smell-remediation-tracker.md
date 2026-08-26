@@ -75,7 +75,7 @@ Graham review and a commit.
 | C05 | Partial final HTTP frame lacks terminal decode error | Complete — `d2c92bae08` | Independent Graham approved; RED→GREEN EOF coverage recorded |
 | C06 | Authored HTTP body cap is not propagated to client config | Complete — `0a9ba67232` | Independent Graham approved; clean-head behavioral RED→GREEN coverage recorded |
 | C07 | H2 prior knowledge is not usable over UDS | Complete — `0ed7e8980d` | Independent Graham approved; UDS H1/H2 RED→GREEN coverage recorded |
-| C08 | Graph successor waits for parent completion instead of first token | Confirmed; spec needed | Sol implementation plan |
+| C08 | Graph successor waits for parent completion instead of first token | Complete — `f363004e9d`, `df6e18adb7` | Independent Graham approved; focused RED→GREEN and 320 graph tests green |
 | C09 | Graph firing delay ignores cancellation | Confirmed; spec needed | Sol implementation plan |
 | C10 | Graph cancellation still permits tool successor | Confirmed; spec needed | Sol implementation plan |
 | C11 | Graph-runtime panic leaks idle accounting | Confirmed; spec needed | Sol implementation plan |
@@ -83,13 +83,21 @@ Graham review and a commit.
 | C14b | YAML accepts unsupported schema versions | Confirmed; spec needed | Sol implementation plan |
 | C18 | MLflow/W&B mishandle mixed labeled and unlabeled report series | Confirmed; spec needed | Sol implementation plan |
 | C19 | Parquet histogram schema drifts across samples | Confirmed; spec needed | Sol implementation plan |
-| C20 | Dataset-analysis writer loses flush failures | Fix exists on divergent branch | Rebase/cherry-pick with TDD receipt |
+| C20 | Dataset-analysis writer loses flush failures | Complete — `ed39aac8a4` | Independent Graham approved; dataset-analysis JSON tests green |
 | C24 | Slot release during a decrease can over-admit | Confirmed; spec needed | Sol implementation plan |
 | C25 | Global request-rate prefill release does not wake issuer | Confirmed; spec needed | Sol implementation plan |
 | R01 | YAML/CLI config loses `--image-batch-size` | Already fixed | Preserve existing regression test |
 | B01 | AgentX integration fixtures omit required cache-bust option | Complete — `91b65b2044` | Independent Graham approved; compile regression green |
 
 ## Progress log
+
+- 2026-08-26: Completed C08. First-token successor readiness now includes
+  static timing gates and resilient terminal paths retain completion fallback;
+  the independent Graham rerun passed four focused tests and the 320-test graph
+  library suite.
+- 2026-08-26: Completed C20. Dataset-analysis JSON persistence now propagates
+  buffered-writer flush failures instead of reporting an artifact that may not
+  have reached its sink; independent review passed its focused tests.
 
 - 2026-08-25: Created the inventory and lifecycle criteria. Existing unrelated
   working-tree changes in `.dockerignore` and `artifacts/code-review.md` were
