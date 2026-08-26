@@ -34,11 +34,37 @@ rust/runtime/src/streaming/sources/hf_hub.rs        pinned HF inventory and shar
 rust/runtime/src/streaming/sources/hf_catalog.rs    disk-backed sorted HF catalog
 rust/runtime/src/streaming/sources/s3.rs            source policy/reconciliation
 rust/runtime/src/streaming/sources/s3_client.rs     narrow provider-neutral client trait
-rust/runtime/src/streaming/sources/aws_s3_client.rs AWS SDK implementation
+rust/runtime/src/streaming/aws.rs               shared AWS SDK client construction
 rust/runtime/src/streaming/formats.rs               format built-in registration only
 rust/runtime/src/streaming/formats/jsonl.rs         bounded reference JSONL decoder
 rust/runtime/src/streaming/formats/baseten.rs       Baseten Parquet decoder
 rust/runtime/src/streaming/formats/streaming_dynamo.rs strict Dynamo decoder
+```
+
+---
+
+### Task A0: Neutral AWS Client Construction
+
+**Depends on:** Foundation Task 0 (`streaming-s3` dependencies).
+
+**Files:**
+- Create: `rust/runtime/src/streaming/aws.rs`
+- Modify: `rust/runtime/src/streaming.rs`
+- Test: `rust/runtime/tests/streaming_aws_client.rs`
+
+**Produces:** one feature-gated `AwsS3ClientFactory` that resolves region, endpoint, proxy, TLS, and credential-provider inputs into a worker-local `aws_sdk_s3::Client`. The factory exposes client construction only—no list/get/put/CAS policy—and its `Debug`/errors contain opaque credential-source IDs but never credentials.
+
+- [ ] **Step 1: Write and observe RED**
+
+Add `client_factory_honors_endpoint_and_redacts_credentials` and `feature_off_inventory_has_no_aws_constructor`; run `CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime --features streaming-s3 --test streaming_aws_client`.
+
+- [ ] **Step 2: Implement and verify GREEN**
+
+Construct the SDK config once per prepared worker without global mutable state. Run the Step-1 command and commit:
+
+```bash
+git add rust/runtime/src/streaming.rs rust/runtime/src/streaming/aws.rs rust/runtime/tests/streaming_aws_client.rs
+git commit -m "feat(runtime): share bounded AWS client construction"
 ```
 
 ---
@@ -85,19 +111,21 @@ Expected: FAIL because `LocalSourceFactory` and fixture do not exist.
 ```rust
 #[async_trait(?Send)]
 impl StreamingDatasetSource for LocalSource {
-    fn snapshot(&self) -> &SourceSnapshotReceipt;
-    async fn next_event(&mut self) -> Result<SourceEvent, StreamSourceError>;
+    fn snapshot(&self) -> &SourceSnapshotReceipt { &self.snapshot }
+    async fn next_event(&mut self) -> Result<SourceEvent, StreamSourceError> {
+        self.poll_next_event().await
+    }
 }
 
 #[async_trait(?Send)]
 impl StreamingCheckpointParticipant for LocalSource {
-    fn participant_id(&self) -> CheckpointParticipantId;
+    fn participant_id(&self) -> CheckpointParticipantId { self.participant_id.clone() }
     async fn checkpoint_view(&mut self, barrier: &CheckpointBarrier)
-        -> Result<PreparedParticipantState, CheckpointError>;
+        -> Result<PreparedParticipantState, CheckpointError> { self.prepare_view(barrier).await }
     async fn initialize(&mut self, state: Option<CommittedParticipantState>)
-        -> Result<(), CheckpointError>;
+        -> Result<(), CheckpointError> { self.restore_state(state).await }
     async fn checkpoint_committed(&mut self, receipt: &CommittedParticipantReceipt)
-        -> Result<(), CheckpointError>;
+        -> Result<(), CheckpointError> { self.advance_committed(receipt) }
 }
 ```
 
@@ -159,8 +187,10 @@ Expected: FAIL because the format is unregistered.
 #[async_trait(?Send)]
 impl StreamingPartitionDecoder for JsonlPartitionDecoder {
     async fn next_batch(&mut self, budget: DecodeBatchBudget)
-        -> Result<DecodeStep, StreamFormatError>;
-    fn resume_state(&self) -> Result<DecoderResumeState, StreamFormatError>;
+        -> Result<DecodeStep, StreamFormatError> { self.decode_bounded_batch(budget).await }
+    fn resume_state(&self) -> Result<DecoderResumeState, StreamFormatError> {
+        Ok(self.cursor.resume_state())
+    }
 }
 ```
 
@@ -243,6 +273,9 @@ async fn streaming_baseten_matches_finite_requests_and_spans_shards() {
     let streamed = collect_bounded_fragments(streaming_baseten(&fixture, budget(2, 1 << 20))).await.unwrap();
     assert_eq!(streamed.request_multiset(), finite.request_multiset());
     assert_eq!(streamed.recorded_timing(), finite.recorded_timing());
+    assert_eq!(streamed.kv_hints(), finite.kv_hints());
+    assert_eq!(streamed.filtered_record_ids(), finite.filtered_record_ids());
+    assert_eq!(streamed.recorded_outcomes(), finite.recorded_outcomes());
     assert_eq!(streamed.session_count(), 1);
 }
 ```
@@ -312,9 +345,10 @@ git commit -m "feat(dataset): decode strict streaming Dynamo traces"
 
 ### Task A6: Native S3 Finite/Follow Source
 
+**Depends on:** Task A0.
+
 **Files:**
 - Create: `rust/runtime/src/streaming/sources/s3_client.rs`
-- Create: `rust/runtime/src/streaming/sources/aws_s3_client.rs`
 - Create: `rust/runtime/src/streaming/sources/s3.rs`
 - Modify: `rust/runtime/src/streaming/sources.rs`
 - Test: `rust/runtime/tests/streaming_s3_source.rs`
@@ -335,6 +369,26 @@ async fn notification_loss_and_late_key_are_recovered_before_interval_seal() {
     s3.seal_manifest(["0001", "0002"]);
     assert_eq!(drain_partition_keys(&mut source).await.unwrap(), ["0001"]);
 }
+
+#[tokio::test(flavor = "current_thread")]
+async fn pagination_and_identity_rules_are_explicit() {
+    let s3 = FakeS3Client::with_page_size(2);
+    s3.put_versioned("bucket", "v", b"one", "version-1");
+    s3.put_unversioned("bucket", "u", b"two", multipart_etag());
+    let observed = collect_s3(s3, reconciliation_budget(2, 4096)).await.unwrap();
+    assert_eq!(observed[0].identity().provider_version(), Some("version-1"));
+    assert!(observed[1].identity().content_digest().is_some());
+    assert_ne!(observed[1].identity().content_digest_text(), multipart_etag());
+    assert!(observed.high_water().list_page_items <= 2);
+}
+
+#[test]
+fn lossless_and_lossy_policies_fail_or_label_honestly() {
+    assert!(matches!(validate_s3_policy(mutable_listing_without_hard_no_backfill()),
+        Err(StreamSourceError::LosslessFrontierUnprovable { .. })));
+    let lossy = validate_s3_policy(authored_lossy_window(128)).unwrap();
+    assert_eq!(lossy.fidelity(), SourceFidelity::LossyWindow { max_keys: 128 });
+}
 ```
 
 - [ ] **Step 2: Verify red**
@@ -351,16 +405,16 @@ trait S3Client: Debug + Send + Sync {
 }
 ```
 
-Notifications are hints; reconciliation is authority. Pagination never advances a frontier. Lossless requires sealed manifest/time bucket or immutable monotonic keys plus hard no-backfill; otherwise retain one authored bounded window and label output lossy. Multipart ETag is never a digest. Backoff uses injected `Clock`; credentials/signed URLs are non-serializable and redacted. Run source conformance.
+Notifications are hints; reconciliation is authority. Add named mutation cases `listing_changes_between_pages_reconcile_without_false_frontier`, `versioned_identity_survives_overwrite`, `unversioned_overwrite_is_refused`, and `hard_no_backfill_violation_fails_before_seal`. Pagination never advances a frontier. Lossless requires sealed manifest/time bucket or immutable monotonic keys plus hard no-backfill; otherwise retain one authored bounded window and label output lossy. Multipart ETag is never a digest. Backoff uses injected `Clock`; credentials/signed URLs are non-serializable and redacted. Run source conformance.
 
 - [ ] **Step 4: Verify green and feature-off absence**
 
-Run Step 2, then `CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime --no-default-features --features streaming --test streaming_feature_inventory streaming_without_s3_omits_s3_capabilities -- --exact`. Expected: lightweight streaming retains its local factories while the S3 source and object-store checkpoint factories are absent.
+Run Step 2. Expected: pagination, versioned/unversioned identity, multipart ETag, listing mutation, notification loss, hard-no-backfill, lossy labeling, and bounded reconciliation cases pass. The adapter completion gate separately runs `streaming_without_s3_omits_s3_capabilities` under `--no-default-features --features streaming` to prove feature-off absence.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add rust/runtime/src/streaming/sources.rs rust/runtime/src/streaming/sources/s3_client.rs rust/runtime/src/streaming/sources/aws_s3_client.rs rust/runtime/src/streaming/sources/s3.rs rust/runtime/tests/streaming_s3_source.rs
+git add rust/runtime/src/streaming/sources.rs rust/runtime/src/streaming/sources/s3_client.rs rust/runtime/src/streaming/sources/s3.rs rust/runtime/tests/streaming_s3_source.rs
 git commit -m "feat(dataset): follow immutable S3 partitions"
 ```
 
@@ -368,6 +422,7 @@ git commit -m "feat(dataset): follow immutable S3 partitions"
 
 ```bash
 CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime --features streaming-s3,parquet --test streaming_contract_conformance --test streaming_local_source --test streaming_jsonl_format --test streaming_hf_source --test streaming_baseten_format --test streaming_dynamo_format --test streaming_s3_source
+CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime --no-default-features --features streaming --test streaming_feature_inventory streaming_without_s3_omits_s3_capabilities -- --exact
 ```
 
 Every adapter must pass Graham and independent review with no source×format branching, unbounded inventory, blocking hot-path work, leaked secret, or cursor ambiguity.

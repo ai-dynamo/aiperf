@@ -105,7 +105,7 @@ git commit -m "feat(cli): expose native streaming replay"
 
 **Files:**
 - Create: `rust/runtime/tests/streaming_delivery_modes.rs`
-- No production files. This task consumes the private test support already landed by Tasks 6C and P4.
+- No production files. This task consumes the private test support already landed by Tasks 6C1, 6C2, and P4.
 
 **Interfaces:**
 - Consumes: checkpoint/pipeline/action contracts.
@@ -191,67 +191,90 @@ git add rust/runtime/tests/streaming_checkpoint_conformance.rs rust/runtime/src/
 git commit -m "test(runtime): inject streaming checkpoint failures"
 ```
 
-### Task V4: Real Binary Dry-Run and Mock-Server E2E
+### Task V4A: Real-Binary Socket-Free Replay and Restart
 
 **Files:**
 - Create: `rust/dry-run-tests/tests/streaming_shadow_replay.rs`
-- Create: `rust/e2e-tests/tests/test_streaming_shadow_replay.rs`
-- Create: `rust/e2e-tests/tests/test_streaming_cellular.rs`
-- Create: `rust/e2e-tests/tests/test_streaming_checkpoint_results.rs`
-- Create fixtures: `rust/e2e-tests/fixtures/streaming/`
+- Create: `rust/dry-run-tests/tests/support/streaming_product.rs`
+- Create fixtures: `rust/dry-run-tests/fixtures/streaming/`
 
-- [ ] **Step 1: Write the RED process-level scenario**
+- [ ] **Step 1: Write and observe the RED process scenario**
 
 ```rust
+#[path = "support/streaming_product.rs"]
+mod support;
+
 #[test]
 fn restart_from_checkpoint_matches_sealed_reference() {
-    let fixture = StreamingProductFixture::local_follow_cross_chunk_graph();
-    let first = fixture.run_until_checkpoint_then_kill();
-    let resumed = fixture.resume(first.generation());
-    let sealed = fixture.run_sealed_reference();
+    let fixture = support::StreamingProductFixture::local_follow_cross_chunk_graph();
+    let first = fixture.run_until_checkpoint_then_kill().unwrap();
+    let resumed = fixture.resume(first.generation()).unwrap();
+    let sealed = fixture.run_sealed_reference().unwrap();
     assert_eq!(resumed.logical_record_multiset(), sealed.logical_record_multiset());
     assert_eq!(resumed.compacted_metric_store(), sealed.compacted_metric_store());
 }
 ```
 
-- [ ] **Step 2: Build one feature-matched product binary**
+Build the feature-matched binary, then run the Step-3 command and record the intended RED result before adding fixtures/helpers.
 
-Run: `CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo build -p aiperf-cli --release --features streaming-s3,cellular,parquet,grpc`
+- [ ] **Step 2: Implement the bounded product fixture**
 
-- [ ] **Step 3: Run socket-free product E2E**
+`StreamingProductFixture` writes partition A, launches the exact `AIPERF_DRY_RUN_BIN` with Config-v2, waits for a committed generation by bounded manifest polling, terminates the process, writes partition B by rename, and resumes with the same checkpoint root. Helpers retain only artifact paths and bounded parsed result pages. Add local finite/follow, JSONL, Baseten/HF-compatible local shards, strict Dynamo, five-minute offset, all delivery restart cuts, cross-chunk conversation/graph, target divergence, partial/final results, and secret/raw-default assertions as table rows.
+
+- [ ] **Step 3: Verify GREEN**
 
 Run: `AIPERF_DRY_RUN_BIN=/mnt/4tb/aiperf-streaming-target/release/aiperf CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-dry-run-tests --test streaming_shadow_replay -- --test-threads=1`
 
-- [ ] **Step 4: Run HTTP/gRPC/cellular/checkpoint E2E**
+- [ ] **Step 4: Review and commit**
+
+```bash
+git add rust/dry-run-tests/tests/streaming_shadow_replay.rs rust/dry-run-tests/tests/support/streaming_product.rs rust/dry-run-tests/fixtures/streaming
+git commit -m "test(dry-run): cover streaming replay restart"
+```
+
+### Task V4B: HTTP, gRPC, S3-Compatible, and Cellular Product E2E
+
+**Depends on:** Task V4A.
+
+**Files:**
+- Create: `rust/e2e-tests/tests/support/streaming_product.rs`
+- Create: `rust/e2e-tests/tests/test_streaming_shadow_replay.rs`
+- Create: `rust/e2e-tests/tests/test_streaming_cellular.rs`
+- Create: `rust/e2e-tests/tests/test_streaming_checkpoint_results.rs`
+- Create fixtures: `rust/e2e-tests/fixtures/streaming/`
+
+- [ ] **Step 1: Write and observe the RED endpoint/cellular matrix**
+
+Create one parameterized `StreamingServerCase` matrix for HTTP, gRPC, local/S3-compatible source, prepare/release skew, controller/cell restart, and checkpoint-result convergence. Each case launches the exact `AIPERF_E2E_BIN`, the in-repo mock server or bounded fake S3 service, and asserts stable logical membership plus final report order. Run Step 3 before implementing the support module and record the intended unresolved-helper failure.
+
+- [ ] **Step 2: Implement fixed-lifetime test owners**
+
+The support module owns child processes, ports, scratch directories, kill/restart barriers, and bounded artifact readers through RAII. It never searches `target/`, never sleeps for correctness, and always joins children. Reuse the V4A normative configs; add only transport/cellular overlays.
+
+- [ ] **Step 3: Verify GREEN**
 
 Run: `AIPERF_E2E_BIN=/mnt/4tb/aiperf-streaming-target/release/aiperf CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-e2e-tests --test test_streaming_shadow_replay --test test_streaming_cellular --test test_streaming_checkpoint_results -- --test-threads=2`
 
-Coverage includes local finite/follow, HF/Baseten, strict Dynamo over local/S3-compatible fake service, accelerated five-minute offset, restart after acquisition/decode/admission/terminal, cross-chunk conversation/graph, target divergence, partial/final results, HTTP/gRPC, prepare/release skew, and default raw/credential absence.
-
-- [ ] **Step 5: Review and commit**
+- [ ] **Step 4: Review and commit**
 
 ```bash
-git add rust/dry-run-tests/tests/streaming_shadow_replay.rs rust/e2e-tests/tests/test_streaming_shadow_replay.rs rust/e2e-tests/tests/test_streaming_cellular.rs rust/e2e-tests/tests/test_streaming_checkpoint_results.rs rust/e2e-tests/fixtures/streaming
-git commit -m "test: add streaming shadow replay product coverage"
+git add rust/e2e-tests/tests/support/streaming_product.rs rust/e2e-tests/tests/test_streaming_shadow_replay.rs rust/e2e-tests/tests/test_streaming_cellular.rs rust/e2e-tests/tests/test_streaming_checkpoint_results.rs rust/e2e-tests/fixtures/streaming
+git commit -m "test(e2e): cover streaming transports and cellular"
 ```
 
-### Task V5: Multi-GB and Perpetual Resource Soak
+### Task V5A: Multi-GiB Runtime Resource Soak
 
 **Files:**
 - Create: `rust/runtime/tests/streaming_resource_soak.rs`
-- Create: `rust/e2e-tests/tests/test_streaming_soak.rs`
-- Create: `scripts/streaming-soak.sh`
+- Create: `rust/runtime/tests/support/streaming_soak.rs`
 
-**Interfaces:**
-- Produces: ignored release gates and machine-readable `StreamingSoakObservation` samples for RSS, tasks, FDs, stage items/bytes, sessions, provisional results, indexes, disk, watermark age, schedule slip, and endpoint latency.
-
-- [ ] **Step 1: Write the ignored RED slope assertion**
+- [ ] **Step 1: Write and observe the ignored RED slope gate**
 
 ```rust
 #[test]
-#[ignore = "release-mode multi-GB resource gate"]
+#[ignore = "release-mode multi-GiB resource gate"]
 fn baseten_hf_and_follow_resources_are_bounded() {
-    let report = run_soak(SoakConfig::from_env()).unwrap();
+    let report = support::run_soak(support::SoakConfig::from_env()).unwrap();
     assert!(report.rss_peak_bytes <= report.baseline_rss_bytes + report.authored_memory_bytes + 256 * MIB);
     assert!(report.rss_slope_bytes_per_input_gib <= 1 * MIB);
     assert!(report.fd_peak <= report.baseline_fds + 2 * report.object_concurrency + 32);
@@ -264,23 +287,48 @@ fn baseten_hf_and_follow_resources_are_bounded() {
 }
 ```
 
-- [ ] **Step 2: Implement deterministic fixture generation and sampling**
+Run Step 3 before implementing support and record the unresolved-helper RED result.
 
-Generate 8 GiB of Parquet/HF-compatible shards under the configured scratch directory using bounded writes; do not keep a second in-memory copy. Accelerate a 24-hour logical follow run with `SimClock`; sample after a 10% warmup and at every checkpoint. Fail if least-squares RSS slope exceeds 1 MiB/GiB, any state counter exceeds its authored item/byte cap, or task/FD bounds above are crossed. At expected and 2× ingest rate, measure process CPU time per terminal action and separately report publication lag, acquisition/decode time, watermark age, schedule slip, admission delay, endpoint latency, queue occupancy, authored drops by reason, duplicate/gap counters, checkpoint horizons, and cellular unacknowledged items/bytes. Enforce the frozen p99 slip and CPU/action thresholds in Step 1.
+- [ ] **Step 2: Implement deterministic generation and sampling**
 
-- [ ] **Step 3: Run the runtime soak**
+Generate 8 GiB of Parquet/HF-compatible shards with bounded writes and no second resident copy. Accelerate 24 logical hours with `SimClock`; sample after 10% warmup and at every checkpoint. Emit machine-readable RSS/tasks/FDs/stage items+bytes/session/provisional/index/disk/watermark/schedule/admission/endpoint/drop/duplicate/gap/horizon/cellular-window observations. Enforce the frozen slope, p99, and CPU/action thresholds above.
+
+- [ ] **Step 3: Verify GREEN**
 
 Run: `AIPERF_STREAM_SOAK_DIR=/mnt/4tb/aiperf-streaming-soak AIPERF_STREAM_SOAK_GIB=8 AIPERF_STREAM_SOAK_LOGICAL_HOURS=24 CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test --release -p aiperf-runtime --features streaming-s3,parquet,cellular --test streaming_resource_soak -- --ignored --nocapture --test-threads=1`
 
-- [ ] **Step 4: Run the process-level soak**
+- [ ] **Step 4: Review and commit**
+
+```bash
+git add rust/runtime/tests/streaming_resource_soak.rs rust/runtime/tests/support/streaming_soak.rs
+git commit -m "test(runtime): add streaming resource soak"
+```
+
+### Task V5B: Real-Process Perpetual Soak
+
+**Depends on:** Tasks V4B and V5A.
+
+**Files:**
+- Create: `rust/e2e-tests/tests/test_streaming_soak.rs`
+- Create: `scripts/streaming-soak.sh`
+
+- [ ] **Step 1: Write and observe RED**
+
+Add an ignored process test that invokes the exact release binary, continuously publishes bounded partitions, resumes across scheduled kills, and validates the V5A thresholds from machine-readable observations. Run Step 3 before the driver script exists and record the intended missing-driver failure.
+
+- [ ] **Step 2: Implement the process driver**
+
+The script validates all required environment values, creates only the explicit scratch subtree, traps child cleanup, streams fixture creation, samples `/proc`, and writes an atomic observation JSON. It never deletes outside its validated scratch path.
+
+- [ ] **Step 3: Verify GREEN**
 
 Run: `AIPERF_E2E_BIN=/mnt/4tb/aiperf-streaming-target/release/aiperf AIPERF_STREAM_SOAK_DIR=/mnt/4tb/aiperf-streaming-soak AIPERF_STREAM_SOAK_GIB=8 AIPERF_STREAM_SOAK_LOGICAL_HOURS=24 CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test --release -p aiperf-e2e-tests --test test_streaming_soak -- --ignored --nocapture --test-threads=1`
 
-- [ ] **Step 5: Review and commit**
+- [ ] **Step 4: Review and commit**
 
 ```bash
-git add rust/runtime/tests/streaming_resource_soak.rs rust/e2e-tests/tests/test_streaming_soak.rs scripts/streaming-soak.sh
-git commit -m "test: add streaming resource soak gates"
+git add rust/e2e-tests/tests/test_streaming_soak.rs scripts/streaming-soak.sh
+git commit -m "test(e2e): add perpetual streaming soak"
 ```
 
 ### Task V6: Completion Ledger and Full Branch Gate

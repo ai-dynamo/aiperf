@@ -35,7 +35,7 @@ SPDX-License-Identifier: Apache-2.0
 
 **Interfaces:**
 - Consumes: `StreamingSessionProgramFactory`, `StreamingSessionCoordinator`, `StreamingCheckpointParticipant`, `StreamingSessionFragment`.
-- Produces and registers session-program ID `conversation`; `StreamingConversationCoordinator`; `SessionCausalFrontier`; explicit inactivity/watermark/sealed-source closure and bounded-state refusal/drop/fail policy.
+- Produces and registers session-program ID `conversation`; `StreamingConversationCoordinator`; `SessionCausalFrontier`; cross-partition continuity, duplicate/conflict handling, and producer-authored explicit close. Task P1B exclusively owns inferred closure, missing-predecessor, completeness, spill, and bounded-state policies.
 
 ```rust
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
@@ -80,11 +80,11 @@ impl StreamingSessionCoordinator for StreamingConversationCoordinator {
 }
 ```
 
-Key state by `(stream_identity, StableSessionKey)`. Partition EOF never closes a session. Identical producer mutations are idempotent; conflicting content fails. Explicit close becomes terminal only after declared actions. Add named cases `bounded_inactivity_closes_only_below_soft_watermark`, `hard_session_watermark_closes_exactly_once`, `sealed_source_rejects_incomplete_session`, `external_sort_proves_finite_completeness`, `indefinite_follow_waits_for_missing_predecessor`, and `unbounded_session_without_spill_or_drop_fail_is_refused`. Checkpoint complete state/spill or roll decoded horizon back before the first unrepresented mutation.
+Key state by `(stream_identity, StableSessionKey)`. Partition EOF never closes a session. Identical producer mutations are idempotent; conflicting content fails. Producer-authored explicit close becomes terminal only after declared actions. Checkpoint complete in-memory state or roll the decoded horizon back before the first unrepresented mutation; P1B adds spill and all inferred closure policies.
 
 - [ ] **Step 4: Verify green**
 
-Run Step 2. Expected: PASS for four-partition continuity, checkpoint restore, duplicate/conflict, closure, and bounded spill.
+Run Step 2. Expected: PASS for four-partition continuity, checkpoint restore, duplicate/conflict, and explicit close.
 
 - [ ] **Step 5: Commit**
 
@@ -99,6 +99,8 @@ git commit -m "feat(runtime): preserve conversations across stream chunks"
 
 **Files:**
 - Modify: `rust/runtime/src/streaming/session/conversation.rs`
+- Create: `rust/runtime/src/streaming/session/spill.rs`
+- Modify: `rust/runtime/src/streaming/session.rs`
 - Test: `rust/runtime/tests/streaming_session_closure.rs`
 
 **Produces:** `SessionClosurePolicy`, `MissingPredecessorPolicy`, externally sorted finite completeness receipts, and explicit refusal when neither a finite bound nor spill/drop/fail policy exists.
@@ -125,6 +127,17 @@ fn unbounded_session_without_spill_drop_or_fail_is_refused() {
     assert_eq!(validate_session_limits(unbounded_without_policy()).unwrap_err().code(),
         SessionFailureCode::UnboundedCausalityState);
 }
+
+#[test]
+fn spill_tree_is_private_no_follow_and_cleanup_is_raii() {
+    let fixture = private_spill_fixture();
+    let spill = fixture.open().unwrap();
+    assert_eq!(fixture.root_mode(), 0o700);
+    assert!(fixture.all_file_modes_are(0o600));
+    assert!(fixture.replace_run_with_symlink().is_err());
+    drop(spill);
+    assert!(!fixture.run_path().exists());
+}
 ```
 
 - [ ] **Step 2: Verify RED**
@@ -133,14 +146,14 @@ Run: `CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-run
 
 - [ ] **Step 3: Implement explicit closure proofs**
 
-Partition EOF is never closure evidence. Inactivity closes only below the soft event-time watermark; hard session watermarks close exactly once; a finite seal fails incomplete sessions; external sort closes only from a verified complete run; indefinite follow waits for a missing predecessor. Charge active frontier, pending predecessor, and spill descriptors to configured item/byte budgets.
+Partition EOF is never closure evidence. Inactivity closes only below the soft event-time watermark; hard session watermarks close exactly once; a finite seal fails incomplete sessions; external sort closes only from a verified complete run; indefinite follow waits for a missing predecessor. Charge active frontier, pending predecessor, and spill descriptors to configured item/byte budgets. `PrivateSessionSpill` owns a no-follow `0700` run directory, creates `0600` files, rejects link/type/mode drift, and removes only its validated run subtree through RAII on success, error, and cancellation.
 
 - [ ] **Step 4: Verify GREEN and commit**
 
 Run Step 2, then commit:
 
 ```bash
-git add rust/runtime/src/streaming/session/conversation.rs rust/runtime/tests/streaming_session_closure.rs
+git add rust/runtime/src/streaming/session.rs rust/runtime/src/streaming/session/conversation.rs rust/runtime/src/streaming/session/spill.rs rust/runtime/tests/streaming_session_closure.rs
 git commit -m "feat(runtime): bound streaming session closure"
 ```
 
@@ -239,7 +252,6 @@ pub enum StreamingTerminalReason { Sealed, Cancelled, Failed }
 
 pub struct StreamingRunOutcome {
     pub terminal_reason: StreamingTerminalReason,
-    pub prepared_report: Option<PreparedStreamingReport>,
     pub last_committed_generation: Option<CommittedCheckpointGeneration>,
 }
 ```
@@ -358,13 +370,15 @@ impl StreamingPipeline {
     pub async fn run(
         self,
         phase: StreamingPhaseContext,
-    ) -> Result<StreamingRunOutcome, StreamingPipelineError>;
+    ) -> Result<StreamingRunOutcome, StreamingPipelineError> {
+        self.run_fused(phase).await
+    }
 }
 ```
 
 Pull a new unit only when the next stage owns permits. Prefer inline/fused calls on the worker `LocalSet`; bounded leased channels are allowed only at measured concurrency boundaries. `Pending`, `Seal`, and `Cancelled` remain distinct. Shutdown fences admission, wakes pending source/decode/order, drains or cancels accepted actions through phase policy, checkpoints only a valid cut, and joins all owners.
 
-`LocalStreamingPlacement` implements the same policy/submitter/driver/control split as cellular without a transport hop. Placement policy, placement driver, and `ActiveExecutionSet` are stable checkpoint participants; dynamic handles are aggregated beneath them. `PlacementEvent::Action` is the only route back into session state.
+`LocalStreamingPlacement` implements the same policy/submitter/driver/control split as cellular without a transport hop. Placement policy, placement driver, `ActiveExecutionSet`, `StreamingBlockingExecutor`, and `EpochResultCoordinator` are stable checkpoint participants; dynamic handles, blocking jobs, and result segments aggregate beneath them. Pipeline preparation freezes the exact required participant set before source polling. `PlacementEvent::Action` is the only route back into session state.
 
 - [ ] **Step 4: Verify green**
 
@@ -387,6 +401,7 @@ git commit -m "feat(runtime): compose bounded streaming pipeline"
 - Create: `rust/runtime/src/engine/streaming_execution.rs`
 - Modify: `rust/runtime/src/engine/online_execution.rs`
 - Modify: `rust/runtime/src/engine/mod.rs`
+- Create: `rust/runtime/tests/support/streaming_pipeline.rs`
 - Test: `rust/runtime/tests/streaming_shadow_operation.rs`
 
 **Interfaces:**
@@ -398,9 +413,8 @@ git commit -m "feat(runtime): compose bounded streaming pipeline"
 ```rust
 #[tokio::test(flavor = "current_thread")]
 async fn local_shadow_run_replays_cross_chunk_session_at_delayed_targets() {
-    let app = streaming_test_application();
     let request = local_shadow_request_with_sim_anchor(utc_ns(1_000), delay_ns(300));
-    let outcome = app.prepare(request).await.unwrap().run().await.unwrap();
+    let outcome = support::execute_shadow_operation(request).await.unwrap();
     assert_eq!(outcome.records().stable_action_ids(), ["turn-0", "turn-1"]);
     assert_eq!(outcome.records().target_times_ns(), [1_300, 1_500]);
     assert_eq!(outcome.report().checkpoint_generation(), Some(2));
@@ -415,7 +429,9 @@ Run: `CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-run
 
 ```rust
 impl PreparedRunnerOperation for ShadowReplayPreparedOperation {
-    fn execute(self: Box<Self>) -> anyhow::Result<PreparedRunOutcome>;
+    fn execute(self: Box<Self>) -> anyhow::Result<PreparedRunOutcome> {
+        self.execute_streaming_pipeline()
+    }
 }
 ```
 
@@ -428,7 +444,7 @@ Run Step 2. Expected: PASS for dry-run/socket-free execution, timing, stable ord
 - [ ] **Step 5: Commit**
 
 ```bash
-git add rust/runtime/src/streaming/action.rs rust/runtime/src/streaming/action/scheduled_request.rs rust/runtime/src/engine/streaming_execution.rs rust/runtime/src/engine/online_execution.rs rust/runtime/src/engine/mod.rs rust/runtime/tests/streaming_shadow_operation.rs
+git add rust/runtime/src/streaming/action.rs rust/runtime/src/streaming/action/scheduled_request.rs rust/runtime/src/engine/streaming_execution.rs rust/runtime/src/engine/online_execution.rs rust/runtime/src/engine/mod.rs rust/runtime/tests/support/streaming_pipeline.rs rust/runtime/tests/streaming_shadow_operation.rs
 git commit -m "feat(engine): execute native streaming shadow replay"
 ```
 
@@ -565,15 +581,21 @@ pub struct QueueHighWater { pub items: usize, pub bytes: usize, pub item_limit: 
 pub enum StreamingStage { Source, Acquire, Decode, Order, Session, Placement, Action, Terminal, Result }
 pub enum StreamingDropReason { Late, Overload, AuthoredPolicy, Duplicate }
 pub struct CheckpointHorizonSnapshot {
+    pub discovered: SourcePosition,
     pub acquired: GlobalSequence,
     pub decoded: GlobalSequence,
+    pub ordered: GlobalSequence,
+    pub scheduled: GlobalSequence,
     pub admitted: GlobalSequence,
     pub terminal: GlobalSequence,
+    pub event_watermark: Option<EventTimeUtc>,
+    pub causal_frontier: SessionCausalFrontier,
 }
 
 pub struct StreamingPlaneMetrics {
-    pub acquisition_lag_ns: StreamingDistributionSnapshot,
-    pub publication_to_decode_ns: StreamingDistributionSnapshot,
+    pub publication_lag_ns: StreamingDistributionSnapshot,
+    pub acquisition_duration_ns: StreamingDistributionSnapshot,
+    pub decode_duration_ns: StreamingDistributionSnapshot,
     pub watermark_lag_ns: StreamingDistributionSnapshot,
     pub causal_wait_ns: StreamingDistributionSnapshot,
     pub schedule_slip_ns: StreamingDistributionSnapshot,

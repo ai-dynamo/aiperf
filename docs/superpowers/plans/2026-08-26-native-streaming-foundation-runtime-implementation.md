@@ -55,7 +55,7 @@ rust/runtime/src/config/model/dataset_stream.rs strict public Config-v2 types
 rust/runtime/src/engine/execute/capture_service.rs reusable finite/streaming construction
 ```
 
-The cross-plan foundation order is `0 → 1A → 1B → 1C → checkpoint 5A → checkpoint 5B → 1D → 1E`. The checkpoint slices land the participant/backend vocabulary that source, format, session, and action traits extend. After Task 1E merges, Tasks 2 and 4A may run in parallel. Task 3 depends on Task 2. Task 4B depends on Task 4A. Task 7A depends on Tasks 1D and 5A.
+The cross-plan foundation order is `0 → 1A → 1B → checkpoint 5A → 1C → checkpoint 5B → 1D → 1E`. Task 5A lands the participant vocabulary used by the blocking owner; Task 5B then lands backend vocabulary consumed by the remaining contracts. After Task 1E merges, Tasks 2 and 4A may run in parallel. Task 3 depends on Task 2. Task 4B depends on Task 4A. Task 7A depends on Tasks 1D and 5A.
 
 ### Task 0: Freeze Native Streaming Features and Dependencies
 
@@ -355,7 +355,7 @@ pub struct SessionCloseFragment { pub reason: String }
 
 pub struct SessionFragmentLease { _private: () }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct StreamingSessionFragment {
     pub record_id: StableRecordId,
     pub session_key: StableSessionKey,
@@ -479,7 +479,7 @@ git commit -m "feat(runtime): add streaming resource budgets"
 - Test: `rust/runtime/tests/streaming_blocking.rs`
 
 **Interfaces:**
-- Consumes: `StreamingResourceBudget` and Tokio `spawn_blocking`.
+- Consumes: `StreamingResourceBudget`, checkpoint Task 5A's `StreamingCheckpointParticipant`, and Tokio `spawn_blocking`.
 - Produces the approved API:
 
 ```rust
@@ -495,6 +495,19 @@ impl StreamingBlockingExecutor {
         T: Send + 'static;
 
     pub async fn cancel_and_join(&self) -> Result<(), BlockingWorkError>;
+}
+
+#[async_trait::async_trait(?Send)]
+impl StreamingCheckpointParticipant for StreamingBlockingExecutor {
+    fn participant_id(&self) -> CheckpointParticipantId { self.participant_id.clone() }
+    async fn checkpoint_view(&mut self, barrier: &CheckpointBarrier)
+        -> Result<PreparedParticipantState, CheckpointError> {
+        self.prepare_inflight_view(barrier).await
+    }
+    async fn initialize(&mut self, state: Option<CommittedParticipantState>)
+        -> Result<(), CheckpointError> { self.restore_inflight(state).await }
+    async fn checkpoint_committed(&mut self, receipt: &CommittedParticipantReceipt)
+        -> Result<(), CheckpointError> { self.advance_committed(receipt) }
 }
 ```
 
@@ -564,7 +577,7 @@ git commit -m "feat(runtime): add bounded streaming blocking owner"
 - Create: `rust/runtime/src/streaming/format.rs`
 - Create: `rust/runtime/src/streaming/session.rs`
 - Create: `rust/runtime/src/streaming/action.rs`
-- Modify: `rust/runtime/src/streaming/checkpoint.rs`
+- Create: `rust/runtime/src/streaming/failure.rs`
 - Modify: `rust/runtime/src/streaming.rs`
 - Test: `rust/runtime/tests/streaming_contracts.rs`
 
@@ -573,6 +586,21 @@ git commit -m "feat(runtime): add bounded streaming blocking owner"
 - Produces: source, format, session-program, action-sink, and checkpoint-backend factory contracts plus runtime source/decoder/session/action contracts. Exact new method signatures follow.
 
 ```rust
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StreamingFailureStage { Source, Acquisition, Decode, Ordering, Session, Dispatch, Checkpoint, Result }
+pub enum SourceFailureCode { Discovery, Snapshot, MutatedObject, SourceUnavailable }
+pub enum AcquisitionFailureCode { Open, Read, IdentityMismatch, ObjectLimitExceeded }
+pub enum DecodeFailureCode { Syntax, Schema, OversizedRecord, InvalidCursor }
+pub enum OrderingFailureCode { LateData, WatermarkViolation, CoordinateOverflow }
+pub enum SessionFailureCode { MissingPredecessor, ConflictingMutation, UnboundedCausalityState }
+pub enum ActionFailureCode { MissingBinding, Dispatch, Endpoint, Cancelled }
+
+pub trait StableStreamingFailure: std::error::Error {
+    fn stage(&self) -> StreamingFailureStage;
+    fn code(&self) -> &'static str;
+}
+
 pub trait StreamingDatasetSourceFactory: std::fmt::Debug + Send + Sync {
     fn descriptor(&self) -> &'static StreamingSourceDescriptor;
     fn validate(&self, authored: &serde_json::value::RawValue)
@@ -763,6 +791,16 @@ fn action_binding_is_split(binding: PreparedStreamingActionBinding) {
     let _: Box<dyn StreamingActionDriver> = binding.driver;
     let _: Box<dyn StreamingActionDriverControl> = binding.control;
 }
+
+#[test]
+fn failure_stages_and_codes_do_not_collapse() {
+    let acquisition = test_acquisition_failure(AcquisitionFailureCode::Read);
+    let decode = test_decode_failure(DecodeFailureCode::Syntax);
+    let late = test_ordering_failure(OrderingFailureCode::LateData);
+    assert_eq!((acquisition.stage(), acquisition.code()), (StreamingFailureStage::Acquisition, "read"));
+    assert_eq!((decode.stage(), decode.code()), (StreamingFailureStage::Decode, "syntax"));
+    assert_eq!((late.stage(), late.code()), (StreamingFailureStage::Ordering, "late_data"));
+}
 ```
 
 - [ ] **Step 2: Run the task suite and verify RED**
@@ -777,6 +815,8 @@ CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime -
 
 Add module declarations to `streaming.rs`. Every factory-owned validated configuration exposes only `as_any`/`into_any`, mirroring engine validated configs. Every runtime trait is `?Send`; prepared factories remain `Send + Sync`. `StreamingStopReceiver` and each driver control are separately cloneable/borrowable so a pending `&mut self` future can be woken without aliasing the stage owner.
 
+Each seam gets a distinct explicit error enum implementing `StableStreamingFailure`, `Display`, and `Error`. Its stable lowercase code maps one-to-one to the exact code enum above. Conversions may attach context but cannot change stages: acquisition never becomes decode, late-data/order never becomes endpoint latency, and checkpoint/result failures retain their own categories.
+
 - [ ] **Step 4: Run the suite and verify GREEN**
 
 Run the Step 2 command.
@@ -784,7 +824,7 @@ Run the Step 2 command.
 - [ ] **Step 5: Review and commit**
 
 ```bash
-git add rust/runtime/src/streaming.rs rust/runtime/src/streaming/source.rs rust/runtime/src/streaming/format.rs rust/runtime/src/streaming/session.rs rust/runtime/src/streaming/action.rs rust/runtime/src/streaming/checkpoint.rs rust/runtime/tests/streaming_contracts.rs
+git add rust/runtime/src/streaming.rs rust/runtime/src/streaming/source.rs rust/runtime/src/streaming/format.rs rust/runtime/src/streaming/session.rs rust/runtime/src/streaming/action.rs rust/runtime/src/streaming/failure.rs rust/runtime/tests/streaming_contracts.rs
 git commit -m "feat(runtime): define streaming extension contracts"
 ```
 
@@ -1094,11 +1134,12 @@ git commit -m "feat(engine): add dataset stream resources"
 
 ```rust
 pub struct ScheduledSessionIdentity { pub stable_ordinal: u64 }
+pub struct TerminalRecordSizeBound(NonZeroUsize);
 
 impl ScheduledRuntime {
     pub async fn reserve_terminal_processing(
         &self,
-        estimated_bytes: usize,
+        bound: TerminalRecordSizeBound,
     ) -> Result<TerminalLanePermit>;
 
     #[allow(clippy::too_many_arguments)]
@@ -1379,9 +1420,31 @@ fn virtual_clock_requires_authored_utc_epoch() {
     let error = clock.capture_utc_anchor(None, 10).expect_err("missing epoch");
     assert!(matches!(error, ClockAnchorError::AuthoredEpochRequired));
 }
+
+#[test]
+fn quiet_follow_cannot_advance_hard_watermark() {
+    let mut policy = event_policy_with_hard_frontier(event_ns(100));
+    policy.observe_quiet_poll();
+    policy.observe_quiet_poll();
+    assert_eq!(policy.hard_watermark(), event_ns(100));
+}
+
+#[test]
+fn estimated_frontier_requires_authored_late_policy() {
+    assert!(matches!(EventTimePolicyConfig::estimated_without_late_policy().validate(),
+        Err(EventTimeError::EstimatedFrontierRequiresLatePolicy)));
+}
+
+#[test]
+fn shuffled_and_equal_time_inputs_have_one_stable_order() {
+    let expected = stable_order_fixture().ordered_ids();
+    for permutation in shuffled_listing_completion_and_worker_orders() {
+        assert_eq!(stable_order_fixture().with_permutation(permutation).ordered_ids(), expected);
+    }
+}
 ```
 
-Add uncertainty rejection, overflow, negative checked arithmetic, immutability after a fake system-clock adjustment, and late-target classification tests.
+Add uncertainty rejection, overflow, negative checked arithmetic, immutability after a fake system-clock adjustment, late-target classification, equal-time tie-break, hash-map insertion, worker-count, and completion-order independence cases.
 
 - [ ] **Step 2: Run the task suite and verify RED**
 
@@ -1420,7 +1483,7 @@ Use a budgeted min-order heap keyed by `(EventTimeUtc, StableOrderKey)`. Hard fr
 
 - [ ] **Step 5: Implement bounded near-horizon admission**
 
-`NearHorizonBuffer::pop_admissible(now_ns)` releases only actions whose target is at most `now_ns + schedule_horizon_ns`; later actions remain in the single budgeted heap. The caller waits with `ScheduledRuntime::wait_until_or_stop`; this task creates no task per buffered action. Record publication lag, decode lag, watermark wait, causal wait, scheduling lateness, and endpoint latency as distinct typed fields.
+`NearHorizonBuffer::pop_admissible(now_ns)` releases only actions whose target is at most `now_ns + schedule_horizon_ns`; later actions remain in the single budgeted heap. The caller waits with `ScheduledRuntime::wait_until_or_stop`; this task creates no task per buffered action. Record publication lag, acquisition duration, decode duration, watermark wait, causal wait, scheduling lateness, and endpoint latency as distinct typed fields.
 
 - [ ] **Step 6: Run the suite and verify GREEN**
 

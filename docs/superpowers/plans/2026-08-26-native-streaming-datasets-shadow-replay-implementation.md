@@ -53,13 +53,13 @@ This file is the dependency and worktree index for the implementation plan set. 
 ## Dependency DAG
 
 ```text
-foundation 0 -> 1A -> 1B -> 1C -> checkpoint 5A -> 5B -> 1D -> 1E
+foundation 0 -> 1A -> 1B -> checkpoint 5A -> 1C -> checkpoint 5B -> 1D -> 1E
                                                                |       |
                                                                |       +-> registry 2 -> protocol/config 3
                                                                +----------> terminal 4A -> capture 4B
 
 checkpoint 5B -> local 5C -> leases 5D ------------------.
-             |-> coordinator 5E --------------------------+-> result 6B -> compaction 6C -> report order 6D
+             |-> coordinator 5E --------------------------+-> result 6B -> compaction 6C1 -> delivery 6C2 -> report order 6D
              `-> result index 6A -------------------------'
 result index 6A -> leases 5D
 
@@ -67,6 +67,7 @@ foundation 1D/1E + checkpoint 5A/5B
     |-> local A1     |-> JSONL A2
     |-> HF A3        |-> Baseten A4
     |-> Dynamo A5    `-> S3 A6
+foundation 0 -> AWS construction A0 -> S3 A6
 
 checkpoint 5A + foundation clock -> event time 7A
 session P1 -> closure P1B -> action P2 -> pipeline P3
@@ -76,7 +77,7 @@ P1/P4 + crypto foundation -> sensitive state P6
 P3/P4 + results 6B + event time 7A -> observability P7
 
 registry 2 + local 5C -> built-in backends 5F1
-S3 A6 + coordinator 5E + 5F1 -> object CAS 5F2
+AWS construction A0 + coordinator 5E + 5F1 -> object CAS 5F2
 leases 5D + sensitive P6 + 5F2 -> object retention 5F3
 workload P4 + checkpoint/results 6D -> cellular C1 -> C2 -> C3 -> C4 -> C5 -> C6
 all implementation plans -> product V1 -> V2 -> V3 -> V4 -> V5 -> V6
@@ -93,22 +94,22 @@ The individual plans contain the exact dependency clauses. If this overview and 
 - Every task branch owns the minimal nearest-parent module declaration needed for its GREEN build. The integration owner resolves declaration conflicts plus Cargo.lock, registry/protocol hotspots, cellular controller/cell hotspots, and `artifacts/streaming-design/implementation-progress.md` during `--no-ff` merges.
 - A downstream worktree is created only after every declared prerequisite merge is present in the integration `HEAD`.
 
-Initial worktree waves after the serialized 0/1A-1C → 5A-5B → 1D-1E contract foundation:
+Initial worktree waves after the serialized 0/1A-1B → 5A → 1C → 5B → 1D-1E contract foundation:
 
 | Wave | Worktree A | Worktree B | Worktree C |
 |---|---|---|---|
 | 1 | Registry 2 → Config 3 | Terminal 4A → Capture 4B | Local store 5C |
 | 2 | Coordinator 5E | Result index 6A | Event time 7A |
-| 3 | Leases/GC 5D | Local A1 | JSONL A2 |
-| 4 | Result epochs 6B → compaction 6C → report order 6D | Conversation P1 → closure P1B → Action P2 | HF A3 |
-| 5 | Pipeline P3 | Baseten A4 | Dynamo A5 |
-| 6 | Workload P4 | Graph P5 | S3 A6 |
-| 7 | Sensitive state P6 | Observability P7 | review/fix |
+| 3 | Leases/GC 5D | Local A1 | AWS construction A0 |
+| 4 | Result epochs 6B → compaction 6C1 → delivery 6C2 → report order 6D | Conversation P1 → closure P1B → Action P2 | HF A3 |
+| 5 | Pipeline P3 | Baseten A4 | JSONL A2 |
+| 6 | Workload P4 | Graph P5 | Dynamo A5 |
+| 7 | Sensitive state P6 | Observability P7 | S3 A6 |
 | 8 | Local/none backends 5F1 | Cellular C1 | review/fix |
 | 9 | Object CAS 5F2 | Cellular C2 | review/fix |
 | 10 | Object retention 5F3 | Cellular C3 | review/fix |
 
-Cellular C2-C6 are serialized according to the cellular plan because they share controller/cell/protocol hotspots. Product V1-V6 follow after Task 5F3 and all other implementation plans, with review work occupying spare slots.
+Cellular C2-C6 are serialized according to the cellular plan because they share controller/cell/protocol hotspots. Product V1, V2, V3, V4A, V4B, V5A, V5B, and V6 follow after Task 5F3 and all other implementation plans, with review work occupying spare slots.
 
 ## Merge and Review Gate
 

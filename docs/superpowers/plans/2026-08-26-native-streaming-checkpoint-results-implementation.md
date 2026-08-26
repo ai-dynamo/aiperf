@@ -17,7 +17,7 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Global Constraints
 
-- Task 5A prerequisites are foundation Tasks 0 and 1A-1C. Task 5B follows 5A; foundation Task 1D then consumes these exact checkpoint contracts. Later checkpoint/result tasks declare their additional terminal/capture/registry dependencies explicitly.
+- Task 5A prerequisites are foundation Tasks 0 and 1A-1B. Foundation Task 1C then implements its blocking owner against the participant contract; Task 5B follows 1C, and foundation Task 1D consumes the complete checkpoint contracts. Later tasks declare additional dependencies explicitly.
 - Cargo commands run from the nested `rust/` workspace; git commands run from the repository root. Every targeted test-suite invocation uses `CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target`.
 - Each task includes the nearest parent module declaration required for its own GREEN build. The integration owner resolves overlapping declaration edits during the required `--no-ff` merge.
 - Checkpoint and result library APIs use explicit `CheckpointError`/`ResultPlaneError`, never `anyhow`.
@@ -80,20 +80,20 @@ mod support;
       |-> 5C local durability -----> 5D leases/GC --.
       |-> 6A result index --------------------------+-> 6B epochs/holes/partial
       `-> 5E coordinator/post-CAS ------------------'          |
-                                                               `-> 6C final/aborted/delivery matrix -> 6D report order
+                                                               `-> 6C1 final/aborted -> 6C2 delivery matrix -> 6D report order
 
 2 + 5C -> 5F1 local/none factories
-5B + 5E + 5F1 + A6 -> 5F2 object CAS
+5B + 5E + 5F1 + A0 -> 5F2 object CAS
 5D + 5F2 + P6 -> 5F3 object leases/GC/encryption
 ```
 
-After 5B merges, two worktrees may run concurrently: one owns 5C; the other owns 6A. A third worktree may run 5E because it owns only `checkpoint_coordinator.rs` and its dedicated support/test files. Merge 5C and 6A before starting 5D. Merge 5D, 5E, and 6A before cutting 6B. Tasks 6C and 6D serialize after 6B. Each worktree lands the minimal parent module declaration needed to compile; the integration owner resolves declaration conflicts. Tasks 5F1-5F3 follow their explicit cross-plan prerequisites.
+After 5B merges, two worktrees may run concurrently: one owns 5C; the other owns 6A. A third worktree may run 5E because it owns only `checkpoint_coordinator.rs` and its dedicated support/test files. Merge 5C and 6A before starting 5D. Merge 5D, 5E, and 6A before cutting 6B. Tasks 6C1, 6C2, and 6D serialize after 6B. Each worktree lands the minimal parent module declaration needed to compile; the integration owner resolves declaration conflicts. Tasks 5F1-5F3 follow their explicit cross-plan prerequisites.
 
 ---
 
 ### Task 5A: Typed Cuts and Stable Checkpoint Participants
 
-**Depends on:** foundation Tasks 0 and 1A-1C.
+**Depends on:** foundation Tasks 0 and 1A-1B.
 
 **Files:**
 - Create: `rust/runtime/src/streaming/checkpoint.rs`; Task 5A owns the participant declaration consumed by foundation Task 1D.
@@ -142,7 +142,9 @@ pub trait StreamingCheckpointParticipant {
 }
 ```
 
-`PreparedParticipantState` contains participant ID, schema ID/version, represented cut, immutable bytes, BLAKE3 digest, item count, and byte length. `CommittedParticipantState` contains the verified descriptor plus owned bytes. `CommittedParticipantReceipt` binds generation, participant ID, committed descriptor digest, and represented cut. `CheckpointParticipantPlan::new` sorts by stable ID and rejects duplicates.
+`PreparedParticipantState` contains participant ID, schema ID/version, represented cut, non-cloneable budget-owned immutable bytes, BLAKE3 digest, item count, and byte length. `CommittedParticipantState` contains the verified descriptor plus newly budget-owned restored bytes. `CommittedParticipantReceipt` binds generation, participant ID, committed descriptor digest, and represented cut. `CheckpointParticipantPlan::new` sorts by stable ID and rejects duplicates.
+
+The frozen plan must contain stable IDs for source, format, event-time/order policy, session coordinator, every prepared action driver binding, placement policy, placement driver, active-execution set, blocking owner, and result/terminal epoch coordinator. Dynamic jobs/actions/segments aggregate under those owners and never become participant IDs. Add `required_stateful_owner_omission_is_rejected`, including independent omission cases for `blocking_owner` and `result_epoch`.
 
 The generation identity used by every later task is defined here:
 
@@ -203,13 +205,15 @@ pub struct ParticipantStateDescriptor {
 
 pub struct PreparedParticipantState {
     pub descriptor: ParticipantStateDescriptor,
-    pub bytes: Bytes,
+    pub payload: BudgetedCheckpointBytes,
 }
 
 pub struct CommittedParticipantState {
     pub descriptor: ParticipantStateDescriptor,
-    pub bytes: Bytes,
+    pub payload: BudgetedCheckpointBytes,
 }
+
+pub struct BudgetedCheckpointBytes { pub bytes: Bytes, pub lease: BudgetLease }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CommittedParticipantReceipt {
@@ -309,7 +313,7 @@ git commit -m "feat(runtime): define streaming checkpoint cuts"
 
 ### Task 5B: Atomic Backend Contract and In-Memory Reference
 
-**Depends on:** Task 5A.
+**Depends on:** Task 5A and foundation Task 1C.
 
 **Files:**
 - Create: `rust/runtime/src/streaming/checkpoint_backend.rs`
@@ -390,14 +394,19 @@ pub struct ResultSchemaVersion(u32);
 
 pub struct ResultPartition {
     pub descriptor: ResultSegmentDescriptor,
-    pub bytes: Bytes,
+    pub payload: BudgetedCheckpointBytes,
 }
 
 pub struct PreparedResultEpoch {
     pub index_root: ContentDigest,
-    pub descriptors: Vec<ResultSegmentDescriptor>,
+    pub descriptors: BudgetedResultDescriptors,
     pub item_count: u64,
     pub byte_length: u64,
+}
+
+pub struct BudgetedResultDescriptors {
+    pub descriptors: Box<[ResultSegmentDescriptor]>,
+    pub lease: BudgetLease,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -419,7 +428,7 @@ pub struct ResultSegmentDescriptor {
 
 pub struct ResultSegmentReader {
     pub descriptor: ResultSegmentDescriptor,
-    pub bytes: Bytes,
+    pub payload: BudgetedCheckpointBytes,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -437,7 +446,7 @@ pub struct ResultIndexReadBudget {
 }
 
 pub struct ResultIndexPage {
-    pub descriptors: Vec<ResultSegmentDescriptor>,
+    pub descriptors: BudgetedResultDescriptors,
     pub next: Option<ResultIndexCursor>,
     pub charged_bytes: u64,
 }
@@ -532,6 +541,7 @@ git commit -m "feat(runtime): add atomic checkpoint backend contract"
 
 ```rust
 trait LocalCheckpointFilesystem {
+    fn create_private_dir(&self, path: &Path) -> Result<(), CheckpointError>;
     fn write_new(&self, path: &Path, bytes: &[u8]) -> Result<(), CheckpointError>;
     fn sync_file(&self, path: &Path) -> Result<(), CheckpointError>;
     fn sync_directory(&self, path: &Path) -> Result<(), CheckpointError>;
@@ -571,6 +581,18 @@ async fn every_pre_current_fault_preserves_previous_generation() {
     assert_eq!(latest.generation().generation(), first.generation());
     }
 }
+
+#[tokio::test(flavor = "current_thread")]
+async fn checkpoint_tree_is_private_no_follow_and_tmp_is_raii_cleaned() {
+    let fixture = support::local_filesystem_fixture();
+    let transaction = fixture.backend.begin_generation(None).await.unwrap();
+    assert_eq!(fixture.mode(fixture.run_root()), 0o700);
+    assert!(fixture.all_regular_file_modes_are(0o600));
+    assert!(fixture.symlink_swap_current().is_err());
+    let tmp = transaction.tmp_path().to_path_buf();
+    drop(transaction);
+    assert!(!tmp.exists());
+}
 ```
 
 `before_current_publication()` enumerates faults after object write, object fsync, object-parent fsync, generation write, generation fsync, generation-parent fsync, temporary CURRENT write, and temporary CURRENT fsync. Separate tests fault after rename and before CURRENT-parent fsync; reopen must yield either the complete old or complete new head, never mixed metadata.
@@ -597,7 +619,7 @@ fn publish_current(
 }
 ```
 
-The blocking job performs: validate writer lease and expected CURRENT; write immutable participant/result/index objects with create-new; fsync each new object and parent; write and fsync `generation-N`; fsync its parent; write/fsync temporary CURRENT; rename over CURRENT; fsync root. Decode and validate the current generation after reopen before returning it.
+Create every run/tmp/lease directory as exact `0700` through no-follow directory descriptors and every regular file as create-new `0600`; reject symlinks and ownership/type/mode drift. A transaction-owned guard removes only its validated private tmp subtree on drop, including cancellation/fault paths; committed immutable objects remain durable. The blocking job performs: validate writer lease and expected CURRENT; write immutable participant/result/index objects with create-new; fsync each new object and parent; write and fsync `generation-N`; fsync its parent; write/fsync temporary CURRENT; rename over CURRENT; fsync root. Decode and validate the current generation after reopen before returning it.
 
 - [ ] **Step 4: Verify GREEN**
 
@@ -820,14 +842,15 @@ git commit -m "feat(runtime): register local checkpoint backends"
 
 ### Task 5F2: Conditional Object-Store CAS Backend
 
-**Depends on:** Tasks 5B, 5E, 5F1, and adapter Task A6.
+**Depends on:** Tasks 5B, 5E, 5F1, and adapter Task A0 (neutral AWS client construction).
 
 **Files:**
 - Create: `rust/runtime/src/streaming/checkpoints/object_store.rs`
+- Create: `rust/runtime/src/streaming/checkpoints/aws_object_store.rs`
 - Modify: `rust/runtime/src/streaming/checkpoints.rs`
 - Modify: `rust/runtime/src/streaming/checkpoint_factories.rs`
 - Modify: `rust/runtime/src/extensions/mod.rs`
-- Modify: `rust/runtime/src/streaming/sources/aws_s3_client.rs` only to expose shared AWS client construction, never source listing authority.
+- Consume: `rust/runtime/src/streaming/aws.rs` from Task A0; checkpoint code never imports a source module.
 - Test: `rust/runtime/tests/streaming_object_checkpoint.rs`
 
 **Produces the conditional capability and a bounded object I/O contract:**
@@ -839,11 +862,19 @@ pub const OBJECT_STORE_CHECKPOINT_BACKEND_ID: &str = "object_store";
 pub struct ObjectKey(String);
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ObjectVersion(String);
-pub struct PointerObject { pub bytes: Bytes, pub digest: ContentDigest }
+pub struct PointerObject { pub bytes: Bytes, pub digest: ContentDigest, pub lease: BudgetLease }
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ObjectReadRange { pub offset: u64, pub length: u64 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ObjectReadBudget { pub max_chunk_bytes: usize }
+pub struct ObjectListBudget { pub max_items: NonZeroUsize, pub max_metadata_bytes: NonZeroUsize }
+pub struct ObjectListCursor(String);
+pub struct ObjectMetadata { pub key: ObjectKey, pub version: ObjectVersion, pub byte_length: u64 }
+pub struct BudgetOwnedObjectPage {
+    pub objects: Box<[ObjectMetadata]>,
+    pub next: Option<ObjectListCursor>,
+    pub lease: BudgetLease,
+}
 pub struct BudgetOwnedObjectChunk { pub bytes: Bytes, pub lease: BudgetLease }
 
 #[async_trait(?Send)]
@@ -881,10 +912,21 @@ pub trait ConditionalObjectStore: Debug + Send + Sync {
         range: ObjectReadRange,
         budget: ObjectReadBudget,
     ) -> Result<BudgetOwnedObjectChunk, CheckpointError>;
+    async fn list_versions(
+        &self,
+        prefix: &ObjectKey,
+        cursor: Option<&ObjectListCursor>,
+        budget: ObjectListBudget,
+    ) -> Result<BudgetOwnedObjectPage, CheckpointError>;
+    async fn delete_version(
+        &self,
+        key: &ObjectKey,
+        version: &ObjectVersion,
+    ) -> Result<(), CheckpointError>;
 }
 ```
 
-`BudgetOwnedObjectReader` yields bounded chunks while retaining byte permits. `BudgetOwnedObjectChunk` owns its permit until drop. `ObjectReadRange` is checked before provider I/O, and provider metadata whose declared object/page/chunk length exceeds the configured limit is rejected before allocation. This trait has no list/reconcile operation and is not implemented in terms of the S3 source trait.
+`BudgetOwnedObjectReader` yields bounded chunks while retaining byte permits. Chunks and list pages own permits until drop. Read ranges and list budgets are checked before provider I/O, and declared object/page/chunk lengths exceeding limits are rejected before allocation. `list_versions`/`delete_version` are checkpoint-prefix retention authority only; the trait has no source discovery/reconciliation operation and is not implemented in terms of the S3 source trait.
 
 - [ ] **Step 1: Write RED bounded-I/O and CAS tests**
 
@@ -925,7 +967,7 @@ Run Step 2. Expected: stale-writer, every-upload-fault, CAS, crash-after-CAS, fe
 - [ ] **Step 5: Commit**
 
 ```bash
-git add rust/runtime/src/streaming/checkpoints.rs rust/runtime/src/streaming/checkpoints/object_store.rs rust/runtime/src/streaming/checkpoint_factories.rs rust/runtime/src/extensions/mod.rs rust/runtime/src/streaming/sources/aws_s3_client.rs rust/runtime/tests/streaming_object_checkpoint.rs
+git add rust/runtime/src/streaming/checkpoints.rs rust/runtime/src/streaming/checkpoints/object_store.rs rust/runtime/src/streaming/checkpoints/aws_object_store.rs rust/runtime/src/streaming/checkpoint_factories.rs rust/runtime/src/extensions/mod.rs rust/runtime/tests/streaming_object_checkpoint.rs
 git commit -m "feat(runtime): add bounded object checkpoint CAS"
 ```
 
@@ -1114,10 +1156,15 @@ git commit -m "feat(runtime): index streaming result segments"
 **Produces:** `EpochResultCoordinator`, bounded `ProvisionalResultStore`, terminal-contiguous cut selection, worker accumulator rotation, and `CommittedPartialResult`.
 
 ```rust
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TerminalActionHorizon(GlobalSequence);
+
 pub struct CommittedPartialResult {
     pub generation: CheckpointGeneration,
     pub cut: CheckpointCut,
+    pub terminal_horizon: TerminalActionHorizon,
     pub authoritative_request_count: u64,
+    pub provisional_request_count: u64,
     pub active_session_count: u64,
     pub incomplete_session_count: u64,
     pub metrics: BTreeMap<String, MetricEntry>,
@@ -1145,6 +1192,19 @@ impl EpochResultCoordinator {
         &self,
         generation: &CommittedCheckpointGeneration,
     ) -> Result<CommittedPartialResult, ResultPlaneError>;
+}
+
+#[async_trait(?Send)]
+impl StreamingCheckpointParticipant for EpochResultCoordinator {
+    fn participant_id(&self) -> CheckpointParticipantId { self.participant_id.clone() }
+    async fn checkpoint_view(&mut self, barrier: &CheckpointBarrier)
+        -> Result<PreparedParticipantState, CheckpointError> {
+        self.prepare_result_state_view(barrier).await
+    }
+    async fn initialize(&mut self, state: Option<CommittedParticipantState>)
+        -> Result<(), CheckpointError> { self.restore_result_state(state).await }
+    async fn checkpoint_committed(&mut self, receipt: &CommittedParticipantReceipt)
+        -> Result<(), CheckpointError> { self.advance_committed_result_cut(receipt) }
 }
 ```
 
@@ -1185,7 +1245,7 @@ CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime -
 
 - [ ] **Step 3: Implement bounded epoch ownership**
 
-Rotate each worker `MetricsAccumulator` and configured exact/raw/session/provenance projections at the barrier. Hold completions above `H` in immutable provisional partitions charged to prepare/provisional budgets; never link them from a committed root until the hole closes. On exhaustion, fence new admission and return the authored overload decision. Partial views page and merge only committed segments through `H`; provisional dashboard data is separately labeled and excluded from totals.
+Rotate each worker `MetricsAccumulator` and configured exact/raw/session/provenance projections at the barrier. The stable result participant checkpoints accumulator epochs, index root, terminal horizon, and all bounded provisional descriptors/leases. Hold completions above `H` in immutable provisional partitions charged to prepare/provisional budgets; never link them from a committed root until the hole closes. On exhaustion, fence new admission and return the authored overload decision. Partial views page and merge only committed segments through `H`; provisional dashboard data is separately labeled and excluded from totals.
 
 - [ ] **Step 4: Verify GREEN**
 
@@ -1198,7 +1258,7 @@ git add rust/runtime/src/streaming/results.rs rust/runtime/src/streaming/results
 git commit -m "feat(runtime): rotate checkpoint result epochs"
 ```
 
-### Task 6C: Final/Aborted Results, Compaction Ordering, and Delivery Crash Matrix
+### Task 6C1: Deterministic Final/Aborted Generation and Compaction
 
 **Depends on:** Task 6B and the existing `PreparedRunOutcome`/`PreparedReportCommit` interfaces. This task must merge before source or cellular E2E claims restart correctness.
 
@@ -1207,6 +1267,55 @@ git commit -m "feat(runtime): rotate checkpoint result epochs"
 - Modify: `rust/runtime/src/streaming/results.rs`
 - Extend: `rust/runtime/tests/support/streaming_checkpoint.rs`
 - Create: `rust/runtime/tests/streaming_result_finalization.rs`
+
+- [ ] **Step 1: Write RED finalization tests**
+
+Add `report_lease_releases_only_after_authoritative_report_commit`, `unsafe_abort_preserves_last_partial_without_fabricating_terminal_root`, `safe_abort_commits_complete_aborted_generation`, `compaction_order_is_stable_across_page_sizes`, and `compaction_failure_retains_reconstructable_generation`.
+
+- [ ] **Step 2: Verify RED**
+
+```bash
+CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime --features streaming,parquet --test streaming_result_finalization
+```
+
+- [ ] **Step 3: Implement bounded deterministic finalization**
+
+```rust
+pub struct PreparedStreamingReport {
+    pub native_report: NativeReport,
+    pub report_digest: ContentDigest,
+    pub report_commit: Box<dyn PreparedReportCommit>,
+}
+
+#[async_trait(?Send)]
+pub trait StreamingResultCompactor {
+    async fn compact(
+        &self,
+        reader: Box<dyn LeasedGenerationReader>,
+    ) -> Result<PreparedStreamingReport, ResultPlaneError>;
+}
+```
+
+Seal and commit final/aborted generation first. Traverse bounded index pages in fixed `(epoch, cell_id, worker_id, projection_id, first_global_sequence, digest)` order, stream output through the blocking owner, and retain the report lease through durable persistence. Unsafe abort retains the last partial root without fabricating a terminal generation. This task does not implement delivery restart or endpoint idempotency policy.
+
+- [ ] **Step 4: Verify GREEN and commit**
+
+Run Step 2, then commit:
+
+```bash
+git add rust/runtime/src/streaming/results.rs rust/runtime/src/streaming/results/compactor.rs rust/runtime/tests/support/streaming_checkpoint.rs rust/runtime/tests/streaming_result_finalization.rs
+git commit -m "feat(runtime): finalize checkpointed streaming results"
+```
+
+### Task 6C2: Delivery Restart and Target-Idempotency Policy
+
+**Depends on:** Task 6C1.
+
+**Files:**
+- Create: `rust/runtime/src/streaming/results/delivery.rs`
+- Modify: `rust/runtime/src/streaming/results.rs`
+- Extend: `rust/runtime/tests/support/streaming_checkpoint.rs`
+- Create: `rust/runtime/tests/streaming_delivery_restart.rs`
 
 **Delivery-mode contract:**
 
@@ -1260,76 +1369,52 @@ pub struct DuplicateWindow {
 }
 ```
 
-- [ ] **Step 1: Write representative RED finalization and crash tests**
+- [ ] **Step 1: Write the RED delivery crash matrix**
 
 ```rust
-#[tokio::test(flavor = "current_thread")]
-async fn report_lease_releases_only_after_authoritative_report_commit() {
-    let fixture = support::sealed_generation_fixture().await;
-    let prepared = fixture.compactor.compact(fixture.reader).await.unwrap();
-    fixture.backend.collect_garbage().await.unwrap();
-    assert!(fixture.backend.contains(prepared.report_digest()));
-    prepared.report_commit.commit().unwrap();
-    fixture.backend.collect_garbage().await.unwrap();
-    assert!(!fixture.backend.has_report_lease());
-}
-
-#[tokio::test(flavor = "current_thread")]
-async fn unsafe_abort_preserves_last_partial_without_fabricating_terminal_root() {
-    let mut fixture = support::run_with_partial_generation().await;
-    fixture.fail_participant_view("session");
-    let failure = fixture.abort().await.unwrap_err();
-    assert_eq!(failure.diagnostic_generation(), fixture.last_partial_digest());
-    assert_eq!(fixture.latest_generation().terminal_reason(), None);
+#[test]
+fn delivery_mode_crash_matrix_has_stable_logical_membership() {
+    for mode in CheckpointDeliveryMode::ALL {
+        for crash in DeliveryCrashPoint::ALL {
+            for capability in TargetIdempotencyCapability::ALL {
+                let restored = support::delivery_fixture(mode, capability).crash_and_restore(crash);
+                assert!(restored.logical_membership_is_unique());
+                assert_eq!(restored.claim(), expected_claim(mode, capability));
+                assert_eq!(restored.duplicate_window(), expected_window(mode, crash, capability));
+            }
+        }
+    }
 }
 ```
 
-Add a table-driven `delivery_mode_crash_matrix` that injects crashes: before dispatch; after decode; after acquisition; after admission; after target acceptance; after terminal fact; after segment write; after index write; before CAS; after CAS; during post-CAS notification; during compaction; after report write but before `PreparedReportCommit`. Run each case for all five modes and both endpoint-idempotency capabilities. Assert next action set, logical metric membership, attempt IDs, duplicate/loss window, and reported delivery claim.
+`DeliveryCrashPoint::ALL` covers before dispatch; after decode; acquisition; admission; target acceptance; terminal fact; segment/index write; before/after CAS; post-CAS notification; compaction; and after report write before `PreparedReportCommit`. Assert next action set, logical metric membership, attempt IDs, duplicate/loss window, and delivery claim.
 
 Add `restart_rejects_changed_topology_projection_or_membership_scheme`; change worker count, cell topology, placement digest, projection plan, and membership scheme independently and assert restore fails before participant initialization or source polling.
 
 - [ ] **Step 2: Verify RED**
 
 ```bash
-CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime --features streaming,parquet --test streaming_result_finalization
+CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime --features streaming,parquet --test streaming_delivery_restart
 ```
 
-- [ ] **Step 3: Implement deterministic finalization**
+- [ ] **Step 3: Implement restart decisions only**
 
-```rust
-pub struct PreparedStreamingReport {
-    pub native_report: NativeReport,
-    pub report_digest: ContentDigest,
-    pub report_commit: Box<dyn PreparedReportCommit>,
-}
-
-#[async_trait(?Send)]
-pub trait StreamingResultCompactor {
-    async fn compact(
-        &self,
-        reader: Box<dyn LeasedGenerationReader>,
-    ) -> Result<PreparedStreamingReport, ResultPlaneError>;
-}
-```
-
-Seal and commit the final result generation first. Traverse its index in fixed `(epoch, cell_id, worker_id, projection_id, first_global_sequence, digest)` order using bounded pages. Merge metrics in that order and stream exact JSONL/CSV/Parquet/outputs/provenance through blocking jobs with byte permits. Return the ordinary `NativeReport` and a synchronous commit object that owns the final-generation/report-retention lease. It releases that lease only after the process coordinator has atomically persisted the report and calls `commit`.
-
-If compaction or report persistence fails, retain the sealed generation and return `PreparedRunFailure` with a content-addressed diagnostic root. On execution failure, commit `aborted` only when every required participant supplies a consistent cut; otherwise retain the latest partial generation and name it without fabricating a terminal generation. User cancellation uses the same safe-cut rule.
+Derive decisions solely from the selected cut, committed participant/result state, and endpoint capability. Idempotency keys derive from `(LogicalReplayRunId, StableActionId)`; attempt IDs remain telemetry. Reject topology/projection/membership changes before participant initialization or source polling. This task does not modify compaction or final/aborted generation code.
 
 - [ ] **Step 4: Verify GREEN**
 
-Run Step 2. Expected: every table-driven crash/mode/capability case, deterministic merge, compaction restart, safe/unsafe abort, cancellation, report-write failure, and lease-ordering test passes.
+Run Step 2. Expected: every crash/mode/capability row and compatibility refusal passes.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add rust/runtime/src/streaming/results.rs rust/runtime/src/streaming/results/compactor.rs rust/runtime/tests/support/streaming_checkpoint.rs rust/runtime/tests/streaming_result_finalization.rs
-git commit -m "feat(runtime): finalize checkpointed streaming results"
+git add rust/runtime/src/streaming/results.rs rust/runtime/src/streaming/results/delivery.rs rust/runtime/tests/support/streaming_checkpoint.rs rust/runtime/tests/streaming_delivery_restart.rs
+git commit -m "feat(runtime): enforce streaming delivery restart policy"
 ```
 
 ### Task 6D: Coordinator Report-Persistence and Lease Ordering
 
-**Depends on:** Task 6C.
+**Depends on:** Tasks 6C1 and 6C2.
 
 **Files:**
 - Modify: `rust/runtime/src/engine/coordinator.rs:483-538`

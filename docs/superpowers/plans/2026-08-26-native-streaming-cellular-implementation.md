@@ -78,7 +78,7 @@ pub struct ContentLeaseDescriptor {
     pub digest: [u8; 32],
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Eq, PartialEq, serde::Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct PreparedActionContent {
     pub schema: DatasetActionSchema,
@@ -89,7 +89,7 @@ pub struct PreparedActionContent {
     pub digest: [u8; 32],
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Eq, PartialEq, serde::Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct PrepareAction {
     pub version: u16,
@@ -130,7 +130,7 @@ pub enum ControllerStreamingPurpose {
     ReleaseAction,
 }
 
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, serde::Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ControllerAuthenticatedFrame {
     version: u16,
@@ -141,6 +141,10 @@ pub(crate) struct ControllerAuthenticatedFrame {
     payload: Vec<u8>,
     signature: Vec<u8>,
 }
+
+pub(crate) struct BudgetOwnedFrame { bytes: Bytes, lease: BudgetLease }
+pub(crate) struct AuthenticatedStreamingPayload { bytes: Bytes, lease: BudgetLease }
+pub(crate) struct BudgetOwnedPrepareAction { action: PrepareAction, lease: BudgetLease }
 
 ```
 
@@ -156,17 +160,24 @@ impl CellSecurityContext {
         payload: &T,
     ) -> anyhow::Result<ControllerAuthenticatedFrame>;
 
-    pub(crate) fn open_streaming_from_controller<T: serde::de::DeserializeOwned>(
+    pub(crate) fn authenticate_streaming_from_controller(
         &self,
         purpose: ControllerStreamingPurpose,
         expected_destination: CellularRole,
         peer: &velo::PeerInfo,
-        frame: ControllerAuthenticatedFrame,
-    ) -> Result<T, AdmissionRejection>;
+        frame: BudgetOwnedFrame,
+        limits: StreamingCellularLimits,
+    ) -> Result<AuthenticatedStreamingPayload, AdmissionRejection>;
+
+    pub(crate) fn decode_prepare_action(
+        &self,
+        payload: AuthenticatedStreamingPayload,
+        limits: StreamingCellularLimits,
+    ) -> Result<BudgetOwnedPrepareAction, AdmissionRejection>;
 }
 ```
 
-The transport checks `max_frame_bytes` on the raw MessagePack bytes before deserialization. After authentication and before queue admission, it checks payload length, `content_leases.len()`, checked sums of every declared `byte_length`, exact `item_count`/`byte_length`, and the payload digest against `StreamingCellularLimits`; violations return a fixed `AdmissionRejection` before allocating action bodies or acquiring queue permits.
+`BudgetOwnedFrame`, `AuthenticatedStreamingPayload`, and `BudgetOwnedPrepareAction` are non-cloneable and carry the same byte permit through authentication, typed decode, and queue admission. The transport checks `max_frame_bytes` before outer-frame decoding. `decode_prepare_action` uses a custom Serde visitor with a bounded sequence seed: it refuses payload length and content-item counts before reserving their buffers, charges canonical request bytes while reading, checks every declared length with checked arithmetic, and verifies exact item/byte counts and digest. It never uses `DeserializeOwned` for an action payload.
 
 Add `AdmissionPurpose::StreamingPlacementEvent` and
 `AdmissionPurpose::StreamingResultPartition` for worker-signed inbound frames.
@@ -229,13 +240,16 @@ fn streaming_frame_binds_destination_purpose_and_payload_before_decode() {
         &fixture.prepare,
     ).expect("controller seals test frame");
 
-    let opened: PrepareAction = fixture.cell.open_streaming_from_controller(
+    let authenticated = fixture.cell.authenticate_streaming_from_controller(
         ControllerStreamingPurpose::PrepareAction,
         CellularRole::Cell(2),
         &fixture.cell_peer,
         frame,
-    ).expect("bound frame opens once");
-    assert_eq!(opened, fixture.prepare);
+        fixture.limits,
+    ).expect("bound frame authenticates once");
+    let opened = fixture.cell.decode_prepare_action(authenticated, fixture.limits)
+        .expect("bounded typed payload decodes");
+    assert_eq!(opened.action(), &fixture.prepare);
 }
 
 #[test]
@@ -255,7 +269,7 @@ fn oversized_frame_and_nested_content_are_rejected_before_body_allocation() {
 
 - [ ] **Step 4: Implement the minimal authenticated DTO boundary**
 
-Use canonical MessagePack bytes and a domain-separated transcript containing protocol version, run nonce, signer class, destination role, purpose, session nonce, sequence, peer bytes, payload length, and BLAKE3 payload digest. Keep replay windows fixed-size per route/purpose. Decode `T` only after signature, destination, peer, session, and replay checks succeed. Do not log payloads or introduce a generic `Any` envelope.
+Use canonical MessagePack bytes and a domain-separated transcript containing protocol version, run nonce, signer class, destination role, purpose, session nonce, sequence, peer bytes, payload length, and BLAKE3 payload digest. Keep replay windows fixed-size per route/purpose. Authenticate the bounded raw payload before the purpose-specific bounded visitor decodes it. Do not log payloads or introduce a generic `Any`/`DeserializeOwned` envelope.
 
 - [ ] **Step 5: Verify GREEN and commit**
 
@@ -297,13 +311,17 @@ pub(crate) fn prepare_cellular_placement_binding(
 
 impl StreamingPlacementSubmitter for CellularPlacementSubmitter {
     async fn prepare(&mut self, decision: PlacementDecision, action: OrderedDatasetAction)
-        -> Result<PlacementHandle, PlacementError>;
-    async fn release(&mut self, handle: PlacementHandleId) -> Result<(), PlacementError>;
+        -> Result<PlacementHandle, PlacementError> { self.prepare_bounded(decision, action).await }
+    async fn release(&mut self, handle: PlacementHandleId) -> Result<(), PlacementError> {
+        self.release_authenticated(handle).await
+    }
 }
 
 impl StreamingPlacementDriver for CellularPlacementDriver {
-    async fn next_event(&mut self) -> Result<PlacementEvent, PlacementError>;
-    async fn drain(&mut self) -> Result<(), PlacementError>;
+    async fn next_event(&mut self) -> Result<PlacementEvent, PlacementError> {
+        self.receive_ordered_event().await
+    }
+    async fn drain(&mut self) -> Result<(), PlacementError> { self.join_binding_owners().await }
 }
 ```
 
@@ -565,8 +583,10 @@ Also add `receipt_binds_cell_range_count_length_and_digest`, `conflicting_retry_
 #[tokio::test(flavor = "current_thread")]
 async fn restart_retransmits_same_content_addressed_partition() {
     let epoch = WorkerResultEpoch::fixture(7, 100..=199);
-    let first = ResultFixture::prepare(epoch.clone()).await.unwrap();
-    let retry = ResultFixture::restart().prepare(epoch).await.unwrap();
+    let checkpoint = epoch.checkpoint_view_for_test().await.unwrap();
+    let first = ResultFixture::prepare(epoch).await.unwrap();
+    let restored_epoch = WorkerResultEpoch::restore_for_test(checkpoint).await.unwrap();
+    let retry = ResultFixture::restart().prepare(restored_epoch).await.unwrap();
     assert_eq!(first.receipts(), retry.receipts());
     assert_eq!(first.object_digests(), retry.object_digests());
 }
