@@ -558,6 +558,10 @@ Whole system:
   — Origin #62 closure: Python generic Optuna search-space shape inference is not
   applicable until native has a parsed arbitrary-dimension ask/tell planner;
   named recipe axes remain unchanged.
+- [`docs/specs/2026-08-26-native-rust-runtime-plugins-design.md`](docs/specs/2026-08-26-native-rust-runtime-plugins-design.md)
+  — Design record for native Rust runtime plugins: crate architecture, library
+  and manifest contracts, discovery and priority, composition and lifecycle,
+  compatibility contract, and the public feasibility lab's gate disposition.
 
 Execution and scheduling:
 
