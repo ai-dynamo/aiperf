@@ -70,3 +70,43 @@ its Python files.
 
 The source-grounded native contract is in
 [`../specs/2026-08-25-native-session-affinity-header.md`](../specs/2026-08-25-native-session-affinity-header.md).
+
+## Closure evidence
+
+The target-only provenance merge is
+`1a11e00297e105eb4ad64d0bf46606d6c0eebd0d`: its first parent is the reviewed
+native tree and its second parent is exact upstream
+`dd3f09b0c34710470444bad17c9e7050c1cd694a`. Its tree equals its first-parent
+tree; no upstream Python files were imported or cherry-picked.
+
+Native implementation landed in `e6d03a92f170914872301863b914f2f8299745cd`.
+The independent review found and the follow-up
+`821412a095c91773b428e81b1e90ea19a01d8ff5` fixed a no-correlation corner:
+the normalizer now strips every case-insensitive authored
+`X-Session-Affinity` variant when no correlation identity exists. Direct,
+prepared/profile, TransportSink, and raw native-request coverage prove both
+lower-case and canonical stale forms are absent; with a correlation ID the
+same coverage proves a single canonical derived header replaces them.
+
+Source-fresh verification used sccache, an isolated target directory, and the
+native binary. The 21-case raw suite passed, including an exact-dd3 Python
+oracle with distinct artifact roots, recorded-request-count assertions, and
+cleanup verification. It covers default affinity, a conflicting authored
+header, no correlation, custom `--session-header`, and independent explicit
+`X-Session-ID` opt-in (#26 control). The focused runtime composer/prepared
+tests and raw no-correlation regression passed; formatting, documentation, and
+diff checks passed.
+
+`cargo clippy -p aiperf-runtime --lib -- -D warnings` remains blocked only by
+pre-existing unused imports outside this port (`metrics.rs`, `endpoints/mod.rs`,
+and `eval/native_graph*`); no diagnostic names a #55 path. This is inherited
+workspace debt, not a port failure.
+
+Root's independent Graham review of
+`1a11e00297e105eb4ad64d0bf46606d6c0eebd0d..821412a095c91773b428e81b1e90ea19a01d8ff5`
+approved the final normalizer placement and found no blocking, important, or
+style findings.
+
+Disposition: **complete**.
+
+GRAHAM APPROVED

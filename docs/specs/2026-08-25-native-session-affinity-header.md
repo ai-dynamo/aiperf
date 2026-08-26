@@ -17,8 +17,9 @@ endpoint/URL/body behavior.
 Derived affinity headers are applied after endpoint and authored request
 headers. Before insertion the shared policy removes every existing
 `X-Session-Affinity` spelling case-insensitively, preventing a stale or
-conflicting value from reaching the wire.  A request without a correlation ID
-does not invent an affinity identity.
+conflicting value from reaching the wire. A request without a correlation ID
+does not invent an affinity identity and removes every authored affinity-header
+case variant, so no stale routing identity reaches the wire.
 
 `--session-header` continues to rename only the correlation header.  It does
 not suppress the additive affinity header.  The legacy
