@@ -72,9 +72,8 @@ fn test_sweep_expansion_is_identical_between_local_and_controller_paths() {
     // Path 1: via convert_axes — the path the sweep-controller takes.
     let converted = convert_axes(&contract_axes);
     let sweep_via_controller = Sweep::grid(converted);
-    let runs_via_controller =
-        build_benchmark_plan(&base, &sweep_via_controller, None)
-            .expect("expand via controller conversion path");
+    let runs_via_controller = build_benchmark_plan(&base, &sweep_via_controller, None)
+        .expect("expand via controller conversion path");
 
     // Path 2: direct SweepAxis construction — what local sweep code does.
     let direct_axes = vec![
@@ -90,9 +89,8 @@ fn test_sweep_expansion_is_identical_between_local_and_controller_paths() {
         },
     ];
     let sweep_direct = Sweep::grid(direct_axes);
-    let runs_direct =
-        build_benchmark_plan(&base, &sweep_direct, None)
-            .expect("expand via direct construction path");
+    let runs_direct = build_benchmark_plan(&base, &sweep_direct, None)
+        .expect("expand via direct construction path");
 
     // A 2×2 grid yields 4 combinations.
     assert_eq!(
@@ -118,8 +116,7 @@ fn test_sweep_expansion_is_identical_between_local_and_controller_paths() {
         .collect();
 
     assert_eq!(
-        controller_cfgs,
-        direct_cfgs,
+        controller_cfgs, direct_cfgs,
         "controller conversion path must produce byte-identical configs \
          to direct SweepAxis construction"
     );

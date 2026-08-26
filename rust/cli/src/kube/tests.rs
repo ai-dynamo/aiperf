@@ -1122,7 +1122,10 @@ fn child_watch_poll_errors_reconnect_and_forward_progress_refunds_the_budget() {
 
     let exit = super::sweep_controller::run_sweep(&client, &envelope, "sweep-uid-recycle")
         .expect("watch poll errors must not abort the sweep");
-    assert_eq!(exit, 0, "a child that completes after reconnects must succeed");
+    assert_eq!(
+        exit, 0,
+        "a child that completes after reconnects must succeed"
+    );
 
     let requests = transport.requests.lock().expect("requests");
     let patch = requests
