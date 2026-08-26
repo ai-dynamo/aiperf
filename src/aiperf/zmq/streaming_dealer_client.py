@@ -184,13 +184,17 @@ class ZMQStreamingDealerClient(BaseZMQClient):
         # Request-reply: a reply carrying the rid/cid of a pending request
         # resolves that future instead of going to the streaming handler. The
         # match is a synchronous dict lookup so it stays inside the FD drain.
+        # Both candidate keys are checked independently (not `rid or cid`) so
+        # a reply with a non-matching rid but a matching cid still resolves.
         if self._pending_requests:
-            key = getattr(message, "rid", None) or getattr(message, "cid", None)
-            if key and key in self._pending_requests:
-                future = self._pending_requests.pop(key)
-                if not future.done():
-                    future.set_result(message)
-                return
+            rid = getattr(message, "rid", None)
+            cid = getattr(message, "cid", None)
+            for key in (rid, cid):
+                if key and key in self._pending_requests:
+                    future = self._pending_requests.pop(key)
+                    if not future.done():
+                        future.set_result(message)
+                    return
         if self._receiver_handler is not None:
             self.execute_async(self._receiver_handler(message))
         else:
@@ -258,12 +262,18 @@ class ZMQStreamingDealerClient(BaseZMQClient):
             The decoded response struct.
 
         Raises:
-            ValueError: If the struct carries neither ``rid`` nor ``cid``.
+            ValueError: If the struct carries neither a truthy ``rid`` nor ``cid``.
             TimeoutError: If no response is received within ``timeout``.
         """
         key = getattr(struct, "rid", None) or getattr(struct, "cid", None)
-        if key is None:
-            raise ValueError("request() requires a struct with 'rid' or 'cid'")
+        # ``not key`` (not ``is None``) so this agrees with the resolution guard
+        # in _dispatch_dealer: an empty-string rid/cid would otherwise register
+        # a future that side can never match, hanging until timeout.
+        if not key:
+            raise ValueError(
+                "request() requires a struct with a 'rid' or 'cid' to "
+                f"correlate the reply on; {type(struct).__name__} has neither."
+            )
 
         future: asyncio.Future[Any] = asyncio.Future()
         self._pending_requests[key] = future
