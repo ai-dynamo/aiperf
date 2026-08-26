@@ -3,12 +3,18 @@
 //! Native `aiperf kube` command surface.
 
 use std::io::Write;
-use std::time::Duration;
+use std::path::PathBuf;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use clap::Parser;
 
 use super::auth::KubeAuthOptions;
 use super::client::{KubeClient, KubeWatch, KubeWatchPoll};
+use super::contract::{
+    BootstrapReference, CellBootstrapReference, CONTRACT_VERSION, ControllerEnvelope, NamedReference,
+    NativeK8sRole, RoleEnvelope, validate_envelope,
+};
 use super::error::KubeError;
-use super::projection::{BootstrapDigests, build_controller_envelope};
 use super::render::{OutputFormat, render};
 use super::results::{ArtifactFetcher, MAX_ARTIFACT_BYTES, download, parse_manifest};
 use super::submission::{
@@ -459,34 +465,178 @@ fn flag_value(args: &[String], flag: &str) -> Option<String> {
     None
 }
 
-/// Render the `native-k8s/v1` controller envelope to stdout or `--output` without cluster contact.
+/// Arguments for `aiperf kube generate`.
+#[derive(Debug, Parser)]
+#[command(
+    name = "kube-generate",
+    about = "Render a native-k8s/v1 controller envelope from a Config-v2 file and flags"
+)]
+struct GenerateArgs {
+    /// Config-v2 YAML file whose filename stem names the ConfigMap reference.
+    #[arg(long)]
+    config: PathBuf,
+    /// Digest-qualified image reference, e.g. `registry/img@sha256:<64-hex>`.
+    #[arg(long)]
+    image: String,
+    /// Number of cellular workers.
+    #[arg(long)]
+    cells: u32,
+    /// Target Kubernetes namespace (default: `aiperf`).
+    #[arg(long, default_value = "aiperf")]
+    namespace: String,
+    /// AIPerfJob name; defaults to the sanitized config filename stem.
+    #[arg(long)]
+    job_id: Option<String>,
+    /// Write the envelope to this file instead of stdout.
+    #[arg(long)]
+    output: Option<PathBuf>,
+}
+
+/// Render a `native-k8s/v1` controller envelope from a Config-v2 file and flags.
 ///
-/// The projected envelope is byte-identical to what `profile` would submit for the same
-/// `--envelope` input, except that bootstrap digests remain as authored placeholders rather than
-/// minted bundle digests. Both `generate` and `profile` call `build_controller_envelope`; the
-/// difference is only the digest map passed in.
+/// Bootstrap digest fields carry `"0"×64` placeholders that `submit_profile_transactionally`
+/// replaces with minted values at submission time; all other envelope fields are preserved
+/// verbatim by `build_controller_envelope`.
 fn run_generate(args: &[String]) -> anyhow::Result<i32> {
-    let paths = envelope_paths(args)?;
-    let envelopes = paths
-        .into_iter()
-        .map(load_envelope)
-        .collect::<anyhow::Result<Vec<_>>>()?;
-    if envelopes.len() != 1 {
-        anyhow::bail!("native Kubernetes generate accepts exactly one --envelope");
-    }
-    // Empty map is a no-op on bootstrap digests: the authored sha256 values are preserved.
-    let projected = build_controller_envelope(&envelopes[0], &BootstrapDigests::new())
-        .map_err(anyhow::Error::from)?;
-    let body = serde_json::to_string_pretty(&projected).map_err(|error| {
-        anyhow::anyhow!("failed to serialize native Kubernetes generate output: {error}")
-    })?;
-    match flag_value(args, "--output") {
+    let full: Vec<String> = std::iter::once("kube-generate".to_string())
+        .chain(args.iter().cloned())
+        .collect();
+    let parsed = match GenerateArgs::try_parse_from(&full) {
+        Ok(parsed) => parsed,
+        Err(err) => {
+            err.print().ok();
+            return Ok(err.exit_code());
+        }
+    };
+
+    let image_digest = parsed
+        .image
+        .rsplit_once('@')
+        .map(|(_, digest)| digest.to_string())
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "--image must be a digest-qualified reference (registry/img@sha256:<64-hex>)"
+            )
+        })?;
+
+    let config_stem = parsed
+        .config
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("config");
+    let config_name = to_dns_label(config_stem);
+    let job_id = parsed
+        .job_id
+        .as_deref()
+        .map(to_dns_label)
+        .unwrap_or_else(|| config_name.clone());
+    let namespace = to_dns_label(&parsed.namespace);
+
+    let run_id = {
+        let secs = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        format!("run-{secs}")
+    };
+
+    let cells = parsed.cells;
+
+    let envelope = ControllerEnvelope {
+        contract_version: CONTRACT_VERSION.to_string(),
+        run_id,
+        namespace,
+        job_id,
+        image_digest,
+        image_reference: parsed.image,
+        cells,
+        artifact_root: "/results".to_string(),
+        config_ref: NamedReference {
+            name: config_name,
+            sha256: "0".repeat(64),
+        },
+        controller_address: "tcp://aiperf-controller-svc:9500".to_string(),
+        roles: vec![
+            RoleEnvelope {
+                name: NativeK8sRole::Controller,
+                command: vec!["aiperf".to_string()],
+                argv: vec!["controller".to_string()],
+                environment: std::collections::BTreeMap::new(),
+                bootstrap: Some(BootstrapReference {
+                    secret_name: "bootstrap-controller".to_string(),
+                    role: NativeK8sRole::Controller,
+                    mount_path: "/bootstrap".to_string(),
+                    sha256: "0".repeat(64),
+                }),
+            },
+            RoleEnvelope {
+                name: NativeK8sRole::Cell,
+                command: vec!["aiperf".to_string()],
+                argv: vec!["cell".to_string()],
+                environment: std::collections::BTreeMap::new(),
+                bootstrap: None,
+            },
+            RoleEnvelope {
+                name: NativeK8sRole::ResultsSidecar,
+                command: vec!["aiperf".to_string()],
+                argv: vec!["results-sidecar".to_string()],
+                environment: std::collections::BTreeMap::new(),
+                bootstrap: None,
+            },
+        ],
+        cell_bootstraps: (0..cells)
+            .map(|cell_id| CellBootstrapReference {
+                cell_id,
+                secret_name: format!("bootstrap-cell-{cell_id}"),
+                role: NativeK8sRole::Cell,
+                mount_path: "/bootstrap".to_string(),
+                sha256: "0".repeat(64),
+            })
+            .collect(),
+    };
+
+    // Validate before emitting so any construction bug surfaces as a clear error.
+    let as_value = serde_json::to_value(&envelope)
+        .map_err(|error| anyhow::anyhow!("failed to serialize envelope: {error}"))?;
+    validate_envelope(as_value)
+        .map_err(|error| anyhow::anyhow!("generated envelope is invalid: {error}"))?;
+
+    let body = serde_json::to_string_pretty(&envelope)
+        .map_err(|error| anyhow::anyhow!("failed to serialize native Kubernetes generate output: {error}"))?;
+
+    match parsed.output {
         Some(path) => std::fs::write(&path, body.as_bytes()).map_err(|error| {
-            anyhow::anyhow!("failed to write generate output to {path}: {error}")
+            anyhow::anyhow!(
+                "failed to write generate output to {}: {error}",
+                path.display()
+            )
         })?,
-        None => println!("{body}"),
+        None => {
+            let mut stdout = std::io::stdout().lock();
+            stdout.write_all(body.as_bytes())?;
+            stdout.write_all(b"\n")?;
+        }
     }
     Ok(0)
+}
+
+/// Sanitize an arbitrary string into a DNS label: lowercase alphanumeric with hyphens,
+/// no leading or trailing hyphens, max 63 characters.
+fn to_dns_label(input: &str) -> String {
+    let normalized: String = input
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    let trimmed = normalized.trim_matches('-');
+    let label = if trimmed.is_empty() { "config" } else { trimmed };
+    let truncated: String = label.chars().take(63).collect();
+    truncated.trim_end_matches('-').to_string()
 }
 
 fn envelope_command(command: &str, args: &[String]) -> anyhow::Result<i32> {

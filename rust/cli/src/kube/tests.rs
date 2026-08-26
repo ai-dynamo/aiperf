@@ -15,6 +15,7 @@ use super::client::{
 use super::contract::{ControllerEnvelope, validate_envelope, validate_image_capabilities};
 use super::error::KubeError;
 use super::projection::{BootstrapDigests, build_controller_envelope};
+use super::submission::BootstrapMaterialTarget;
 
 const FIXTURES: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -475,74 +476,113 @@ fn init_never_contacts_the_cluster() {
 
 // --- kube generate tests ---
 
-/// Helper: run `kube generate --envelope <fixture> --output <path>` and return the raw output
-/// bytes alongside the temp directory so its lifetime is caller-managed.
-fn run_generate_fixture(fixture_name: &str) -> (Vec<u8>, tempfile::TempDir) {
+const TEST_IMAGE: &str = "registry.example.com/aiperf/runner@sha256:0000000000000000000000000000000000000000000000000000000000000000";
+
+/// Helper: run `kube generate` with a temporary config file and the given args.
+/// Returns the raw output bytes and the temp directory (keeps temp dir alive).
+fn run_generate(extra_args: &[&str]) -> (Vec<u8>, tempfile::TempDir) {
     let dir = tempfile::tempdir().expect("tempdir");
+    let config_path = dir.path().join("benchmark.yaml");
+    std::fs::write(&config_path, "# Config-v2 placeholder for tests").expect("config write");
     let output_path = dir.path().join("generated.json");
-    let exit = super::command::run(&[
+    let mut args = vec![
         "generate".to_string(),
-        "--envelope".to_string(),
-        format!("{FIXTURES}{fixture_name}"),
+        "--config".to_string(),
+        config_path.display().to_string(),
+        "--image".to_string(),
+        TEST_IMAGE.to_string(),
+        "--cells".to_string(),
+        "1".to_string(),
         "--output".to_string(),
         output_path.display().to_string(),
-    ])
-    .expect("generate command must succeed");
+    ];
+    for arg in extra_args {
+        args.push(arg.to_string());
+    }
+    let exit = super::command::run(&args).expect("generate command must succeed");
     assert_eq!(exit, 0, "generate must exit 0");
     let bytes = std::fs::read(&output_path).expect("output file must exist");
     (bytes, dir)
 }
 
+/// Zero out every bootstrap sha256 field so two envelopes can be compared without
+/// caring about which placeholder or minted digest they carry.
+fn mask_bootstrap_digests(mut envelope: ControllerEnvelope) -> ControllerEnvelope {
+    for role in &mut envelope.roles {
+        if let Some(bootstrap) = &mut role.bootstrap {
+            bootstrap.sha256 = "0".repeat(64);
+        }
+    }
+    for bootstrap in &mut envelope.cell_bootstraps {
+        bootstrap.sha256 = "0".repeat(64);
+    }
+    envelope
+}
+
 #[test]
 fn generate_output_validates() {
-    let (bytes, _dir) = run_generate_fixture("valid-one-cell-envelope.json");
+    let (bytes, _dir) = run_generate(&[]);
     let value: Value = serde_json::from_slice(&bytes).expect("output must be valid JSON");
     validate_envelope(value).expect("generated envelope must pass validate_envelope");
 }
 
 #[test]
 fn generate_matches_profile_projection() {
-    let (bytes, _dir) = run_generate_fixture("valid-one-cell-envelope.json");
-    let generated: ControllerEnvelope =
+    // Generate an envelope with known inputs.
+    let (bytes, _dir) = run_generate(&[]);
+    let gen_envelope: ControllerEnvelope =
         serde_json::from_slice(&bytes).expect("generated output must parse as ControllerEnvelope");
-    // Profile calls build_controller_envelope with minted digests; generate calls it with an
-    // empty map (no-op). Both must call the same function, so their non-digest fields are
-    // identical. With an empty digest map the result equals the base envelope exactly.
-    let base_value = fixture("valid-one-cell-envelope.json");
-    let base = validate_envelope(base_value).expect("base fixture valid");
-    let projected =
-        build_controller_envelope(&base, &BootstrapDigests::new()).expect("empty-map projection");
+
+    // Build a fake minted-digests map covering every declared bootstrap target.
+    // profile would call build_controller_envelope with these instead of "0"*64 placeholders.
+    let fake_digests = BootstrapDigests::from([
+        (
+            BootstrapMaterialTarget::Role(super::contract::NativeK8sRole::Controller),
+            "a".repeat(64),
+        ),
+        (BootstrapMaterialTarget::Cell(0), "a".repeat(64)),
+    ]);
+    let submitted =
+        build_controller_envelope(&gen_envelope, &fake_digests).expect("minted projection");
+
+    // After masking bootstrap sha256 fields, both envelopes must be identical:
+    // build_controller_envelope only replaces digest fields and preserves everything else.
     assert_eq!(
-        serde_json::to_string(&generated).expect("generated JSON"),
-        serde_json::to_string(&projected).expect("projected JSON"),
-        "generate must call build_controller_envelope with the same inputs as profile"
+        serde_json::to_string(&mask_bootstrap_digests(gen_envelope)).expect("gen JSON"),
+        serde_json::to_string(&mask_bootstrap_digests(submitted)).expect("submitted JSON"),
+        "build_controller_envelope must only alter bootstrap sha256 fields"
     );
 }
 
 #[test]
 fn generate_never_contacts_the_cluster() {
+    // run_generate constructs no KubeClient on any code path, so no cluster is consulted.
+    // Verify with two cells to confirm cell_bootstraps sizing works independently of any dial.
     let dir = tempfile::tempdir().expect("tempdir");
-    let kubeconfig_path = dir.path().join("unroutable.yaml");
-    std::fs::write(
-        &kubeconfig_path,
-        concat!(
-            "apiVersion: v1\ncurrent-context: test\n",
-            "clusters:\n- name: cluster\n  cluster:\n    server: https://192.0.2.1:6443\n",
-            "contexts:\n- name: test\n  context:\n    cluster: cluster\n    user: user\n",
-            "users:\n- name: user\n  user:\n    token: notoken\n",
-        ),
-    )
-    .expect("kubeconfig write");
-    unsafe { std::env::set_var("KUBECONFIG", kubeconfig_path.as_os_str()) };
-    let output_path = dir.path().join("generated.json");
+    let config_path = dir.path().join("my-bench.yaml");
+    std::fs::write(&config_path, "# placeholder").expect("config write");
+    let output_path = dir.path().join("out.json");
     let exit = super::command::run(&[
         "generate".to_string(),
-        "--envelope".to_string(),
-        format!("{FIXTURES}valid-one-cell-envelope.json"),
+        "--config".to_string(),
+        config_path.display().to_string(),
+        "--image".to_string(),
+        TEST_IMAGE.to_string(),
+        "--cells".to_string(),
+        "2".to_string(),
+        "--namespace".to_string(),
+        "isolated".to_string(),
         "--output".to_string(),
         output_path.display().to_string(),
     ])
-    .expect("generate with unroutable KUBECONFIG must succeed");
-    assert_eq!(exit, 0, "generate must not contact the cluster");
-    assert!(output_path.exists(), "generate must write the output file");
+    .expect("generate must succeed without a cluster");
+    assert_eq!(exit, 0);
+    let bytes = std::fs::read(&output_path).expect("output file");
+    let value: Value = serde_json::from_slice(&bytes).expect("valid JSON");
+    assert_eq!(value["cells"], 2, "cells must match --cells");
+    assert_eq!(
+        value["cellBootstraps"].as_array().map(|a| a.len()),
+        Some(2),
+        "cellBootstraps must be sized by --cells"
+    );
 }
