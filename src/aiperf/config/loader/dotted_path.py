@@ -25,6 +25,7 @@ _NON_SWEEPABLE_FIRST_SEGMENTS = frozenset({"sweep", "multi_run", "random_seed"})
 _SWEEP_PATH_ALIASES = {
     "concurrency": "phases.profiling.concurrency",
     "prefill_concurrency": "phases.profiling.prefill_concurrency",
+    "request_concurrency": "phases.profiling.request_concurrency",
     "rate": "phases.profiling.rate",
     "requests": "phases.profiling.requests",
     "duration": "phases.profiling.duration",

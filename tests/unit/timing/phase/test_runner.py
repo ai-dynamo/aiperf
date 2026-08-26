@@ -78,7 +78,7 @@ def mock_conc_mgr() -> MagicMock:
     m.acquire_prefill_slot = AsyncMock(return_value=True)
     m.release_session_slot = m.release_prefill_slot = MagicMock()
     m.set_session_limit = m.set_prefill_limit = MagicMock()
-    m.release_stuck_slots = MagicMock(return_value=(0, 0))
+    m.release_stuck_slots = MagicMock(return_value=(0, 0, 0))
     return m
 
 
@@ -411,7 +411,7 @@ class TestPhaseRunnerLifecycle:
             r._progress.all_credits_returned_event.set()
             await r.run(is_final_phase=True)
             conc.configure_for_phase.assert_called_once_with(
-                c.phase, c.concurrency, c.prefill_concurrency
+                c.phase, c.concurrency, c.prefill_concurrency, c.request_concurrency
             )
 
     async def test_run_publishes_start_and_complete(
