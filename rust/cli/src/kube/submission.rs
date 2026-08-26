@@ -3,19 +3,26 @@
 //! Native envelope loading and Kubernetes submission projections.
 
 use std::collections::BTreeMap;
+use std::os::unix::fs::DirBuilderExt;
 use std::path::{Path, PathBuf};
 
+use aiperf_runtime::engine::cellular_bootstrap::{CellularRole, mint_deployment_material};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use tracing::warn;
 
+use super::bootstrap::create_bundle;
 use super::client::{AIPERF_GROUP, AIPERF_PLURAL, AIPERF_VERSION, KubeClient};
 use super::contract::{
     ControllerEnvelope, NativeK8sRole, validate_envelope, validate_image_capabilities,
 };
 use super::error::KubeError;
 use super::manifest;
+use super::projection::{
+    BootstrapDigests, bootstrap_targets, build_controller_envelope, declared_reference,
+};
 
 /// Read a strict native Kubernetes envelope from a user-owned file.
 pub fn load_envelope(path: &Path) -> anyhow::Result<ControllerEnvelope> {
@@ -128,26 +135,10 @@ fn prepare_bootstrap_secrets(
     envelope: &ControllerEnvelope,
     material: &BTreeMap<BootstrapMaterialTarget, PathBuf>,
 ) -> anyhow::Result<Vec<PreparedBootstrapSecret>> {
-    let expected = envelope
-        .roles
-        .iter()
-        .filter_map(|role| {
-            role.bootstrap
-                .as_ref()
-                .map(|_| BootstrapMaterialTarget::Role(role.name))
-        })
-        .chain(
-            envelope
-                .cell_bootstraps
-                .iter()
-                .map(|bootstrap| BootstrapMaterialTarget::Cell(bootstrap.cell_id)),
-        )
-        .collect::<std::collections::BTreeSet<_>>();
+    let expected = bootstrap_targets(envelope);
     if material.len() != expected.len() || material.keys().any(|target| !expected.contains(target))
     {
-        anyhow::bail!(
-            "--bootstrap-material must provide exactly one path for every workload identity"
-        );
+        anyhow::bail!("every workload identity must resolve to exactly one bootstrap bundle");
     }
     let mut prepared = Vec::with_capacity(expected.len());
     for role in &envelope.roles {
@@ -317,8 +308,182 @@ fn validate_existing_bootstrap_secret(
     Ok(())
 }
 
-/// Create, submit, and owner-bind one workload as a compensating transaction.
+/// Bootstrap bundles resolved for one submission, minted or operator-supplied.
+struct PreparedMaterial {
+    /// Private per-run directory, present only when this submission minted material.
+    directory: Option<PathBuf>,
+    /// Bundle files this submission minted and therefore owns.
+    minted: Vec<PathBuf>,
+    /// Bundle file selected for every declared workload identity.
+    paths: BTreeMap<BootstrapMaterialTarget, PathBuf>,
+    /// Digest of the bundle selected for every declared workload identity.
+    digests: BootstrapDigests,
+}
+
+impl PreparedMaterial {
+    /// Unlink every minted bundle and remove the private directory, reporting what survived.
+    ///
+    /// The immutable Secrets are the durable copy, so the local files are removed on both
+    /// the success and the rollback path rather than being retained for inspection.
+    fn cleanup(&self) -> Vec<String> {
+        let mut failures = Vec::new();
+        for path in &self.minted {
+            if let Err(error) = std::fs::remove_file(path)
+                && error.kind() != std::io::ErrorKind::NotFound
+            {
+                failures.push(format!(
+                    "minted bootstrap bundle {} cleanup failed: {error}",
+                    path.display()
+                ));
+            }
+        }
+        if let Some(directory) = &self.directory
+            && let Err(error) = std::fs::remove_dir(directory)
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            failures.push(format!(
+                "minted bootstrap directory {} cleanup failed: {error}",
+                directory.display()
+            ));
+        }
+        failures
+    }
+}
+
+/// Private per-run directory holding this submission's minted bundles.
+///
+/// The name is derived from the run identity so a second submission of the same run
+/// fails on the exclusive directory creation instead of overwriting live material.
+fn material_directory(envelope: &ControllerEnvelope) -> PathBuf {
+    std::env::temp_dir().join(format!(
+        "aiperf-bootstrap-{}-{}",
+        envelope.namespace, envelope.run_id
+    ))
+}
+
+/// Mint one bundle per unsupplied workload identity and digest every selected bundle.
+///
+/// Minting happens exactly once per submission and before any cluster effect. Supplied
+/// paths are used unchanged, so an operator that provisions its own material keeps it.
+fn prepare_material(
+    envelope: &ControllerEnvelope,
+    supplied: &BTreeMap<BootstrapMaterialTarget, PathBuf>,
+) -> anyhow::Result<PreparedMaterial> {
+    let expected = bootstrap_targets(envelope);
+    if let Some(unknown) = supplied.keys().find(|target| !expected.contains(target)) {
+        anyhow::bail!("--bootstrap-material names {unknown:?}, which the envelope does not declare");
+    }
+    let mut prepared = PreparedMaterial {
+        directory: None,
+        minted: Vec::new(),
+        paths: BTreeMap::new(),
+        digests: BootstrapDigests::new(),
+    };
+    let missing = expected
+        .iter()
+        .filter(|target| !supplied.contains_key(*target))
+        .cloned()
+        .collect::<Vec<_>>();
+    if !missing.is_empty() {
+        mint_missing_material(envelope, &missing, &mut prepared)?;
+    }
+    for (target, path) in supplied {
+        let bytes = std::fs::read(path).map_err(|error| {
+            anyhow::anyhow!(
+                "failed to read bootstrap material {}: {error}",
+                path.display()
+            )
+        })?;
+        prepared
+            .digests
+            .insert(target.clone(), format!("{:x}", Sha256::digest(&bytes)));
+        prepared.paths.insert(target.clone(), path.clone());
+    }
+    Ok(prepared)
+}
+
+fn mint_missing_material(
+    envelope: &ControllerEnvelope,
+    missing: &[BootstrapMaterialTarget],
+    prepared: &mut PreparedMaterial,
+) -> anyhow::Result<()> {
+    let roles = (0..envelope.cells)
+        .map(CellularRole::Cell)
+        .collect::<Vec<_>>();
+    if roles.is_empty() {
+        anyhow::bail!("cannot mint bootstrap material for an envelope that declares no cells");
+    }
+    let directory = material_directory(envelope);
+    std::fs::DirBuilder::new()
+        .mode(0o700)
+        .create(&directory)
+        .map_err(|error| {
+            anyhow::anyhow!(
+                "failed to create private bootstrap directory {}: {error}",
+                directory.display()
+            )
+        })?;
+    prepared.directory = Some(directory.clone());
+    // The bundles are opaque bytes; only their digests leave this function.
+    let material = mint_deployment_material(&roles)
+        .map_err(|error| anyhow::anyhow!("failed to mint cellular bootstrap material: {error}"))?;
+    for target in missing {
+        let (secret_name, role, mount_path) =
+            declared_reference(envelope, target).ok_or_else(|| {
+                anyhow::anyhow!("envelope declares no bootstrap reference for {target:?}")
+            })?;
+        let bytes = match target {
+            BootstrapMaterialTarget::Role(NativeK8sRole::Controller) => &material.controller,
+            BootstrapMaterialTarget::Role(other) => {
+                anyhow::bail!("workload role {other:?} must not carry a role bootstrap")
+            }
+            BootstrapMaterialTarget::Cell(cell_id) => material
+                .roles
+                .get(&CellularRole::Cell(*cell_id))
+                .ok_or_else(|| anyhow::anyhow!("minted material omits cell {cell_id}"))?,
+        };
+        let (path, reference) = create_bundle(
+            &directory,
+            secret_name,
+            role,
+            mount_path,
+            bytes.as_slice(),
+        )
+        .map_err(|error| anyhow::anyhow!("failed to write bootstrap bundle for {target:?}: {error}"))?;
+        prepared.minted.push(path.clone());
+        prepared.paths.insert(target.clone(), path);
+        prepared.digests.insert(target.clone(), reference.sha256);
+    }
+    Ok(())
+}
+
+/// Mint or accept bootstrap material, then submit one workload as a compensating transaction.
 pub fn submit_profile_transactionally(
+    client: &KubeClient,
+    envelope: &ControllerEnvelope,
+    material: &BTreeMap<BootstrapMaterialTarget, PathBuf>,
+) -> anyhow::Result<u16> {
+    let prepared = prepare_material(envelope, material)?;
+    let outcome = build_controller_envelope(envelope, &prepared.digests)
+        .map_err(anyhow::Error::from)
+        .and_then(|submitted| submit_prepared_profile(client, &submitted, &prepared.paths));
+    let failures = prepared.cleanup();
+    match outcome {
+        Ok(status) => {
+            for failure in failures {
+                warn!(detail = %failure, "minted bootstrap material was left on disk");
+            }
+            Ok(status)
+        }
+        Err(error) if failures.is_empty() => Err(error),
+        Err(error) => Err(anyhow::anyhow!(
+            "{error}; bootstrap material cleanup failed: {}",
+            failures.join("; ")
+        )),
+    }
+}
+
+fn submit_prepared_profile(
     client: &KubeClient,
     envelope: &ControllerEnvelope,
     material: &BTreeMap<BootstrapMaterialTarget, PathBuf>,

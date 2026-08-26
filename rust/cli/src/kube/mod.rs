@@ -10,6 +10,7 @@ pub mod command;
 pub mod contract;
 pub mod error;
 pub mod manifest;
+pub mod projection;
 pub mod render;
 pub mod results;
 pub mod submission;
