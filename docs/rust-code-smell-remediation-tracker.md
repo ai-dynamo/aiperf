@@ -63,7 +63,7 @@ Graham review and a commit.
 | E04 | Abort still starts ready tool nodes | Confirmed; spec ready | Sol implementation plan |
 | E05 | Closed-worker credit return can hang drain | Confirmed; spec ready | Sol implementation plan |
 | E06 | Sidecar setup/finish failures leak siblings | Complete | Integrated `bb5e3fe5ff`, `bb23c66b39`; independent Graham PASS |
-| E07 | Global-push cancellation is misclassified as transport failure | Confirmed; spec ready | Sol implementation plan |
+| E07 | Global-push cancellation is misclassified as transport failure | Complete | Integrated `82bf74990c`; independent Graham PASS |
 | E08 | Declared terminal outputs cannot execute | Confirmed; spec ready | Sol implementation plan |
 | E09 | Multi-dataset requests silently retain only the first | Confirmed; spec ready | Sol implementation plan |
 | E10 | Docker verifier orchestration is duplicated and diverges | Confirmed; spec ready | Sol implementation plan |
@@ -255,3 +255,9 @@ Graham review and a commit.
   protocol when debt clears through release, increase, or drain. Baseline
   over-admission RED evidence, the 16-test slots suite GREEN, and independent
   Graham re-review PASS are recorded.
+- 2026-08-26: E07 completed and integrated as `82bf74990c`: a worker-owned
+  global-push cancellation settles its issued credit as `Canceled` with a
+  typed `dispatch_cancelled` result instead of a transport failure, while a
+  real worker transport error remains failed and latches abort-on-failure. Its
+  behavioral RED, two focused GREEN tests, post-commit hook audit, and
+  independent Graham PASS are recorded.
