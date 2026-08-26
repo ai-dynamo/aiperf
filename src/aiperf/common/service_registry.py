@@ -192,21 +192,20 @@ class _ServiceRegistry(AIPerfLoggerMixin):
         StatusUpdate and Heartbeat messages can arrive before Registration
         due to message ordering across ZMQ sockets.
 
-        A strictly older ``last_seen_ns`` is a genuinely out-of-order update and
-        is dropped whole. An *equal* one is not out-of-order, though: callers
-        stamp on receipt from the controller's own clock, so two messages
-        processed within one clock tick collide here -- and ``time.time_ns()``
-        has ~15.6ms granularity on Windows, easily coarser than a startup state
-        sequence. Treating that collision as stale would silently drop the newer
-        state, so equal timestamps still apply their state.
+        The ordering guard applies to ``last_seen_ns`` only. Callers stamp
+        ``last_seen_ns`` on receipt from the controller's own clock, so arrival
+        order already is the true order and ``state`` always reflects the most
+        recent message. Gating the state write too would drop transitions that
+        share a clock tick -- ``time.time_ns()`` has ~15.6ms granularity on
+        Windows, easily coarser than a startup state sequence.
         """
         if service_id not in self.services:
             return
 
         info = self.services[service_id]
-        if info.last_seen_ns is not None and info.last_seen_ns > last_seen_ns:
-            return
         info.state = state
+        if info.last_seen_ns is not None and info.last_seen_ns >= last_seen_ns:
+            return
         info.last_seen_ns = last_seen_ns
 
     def unregister(self, service_id: str) -> None:
