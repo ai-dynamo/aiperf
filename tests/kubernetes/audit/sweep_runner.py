@@ -144,6 +144,18 @@ class SweepAuditRunner:
             "imagePullPolicy": self.config.image_pull_policy,
             "benchmark": benchmark_spec,
         }
+
+        pod_template: dict[str, Any] = {}
+        if self.config.image_pull_secrets:
+            pod_template["imagePullSecrets"] = [
+                {"name": s} for s in self.config.image_pull_secrets
+            ]
+        if self.config.node_selector:
+            pod_template["nodeSelector"] = self.config.node_selector
+        if self.config.tolerations:
+            pod_template["tolerations"] = self.config.tolerations
+        if pod_template:
+            spec["podTemplate"] = pod_template
         body = {
             "apiVersion": "aiperf.nvidia.com/v1alpha1",
             "kind": "AIPerfSweep",

@@ -15,7 +15,7 @@ from __future__ import annotations
 import asyncio
 import os
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from aiperf.common.aiperf_logger import AIPerfLogger
@@ -33,6 +33,9 @@ logger = AIPerfLogger(__name__)
 class OperatorAuditConfig:
     image: str = "aiperf:local"
     image_pull_policy: str = "Never"
+    image_pull_secrets: list[str] = field(default_factory=list)
+    node_selector: dict[str, str] = field(default_factory=dict)
+    tolerations: list[dict] = field(default_factory=list)
     endpoint_url: str = "http://aiperf-mock-server.default.svc.cluster.local:8000/v1"
     model_name: str = "mock-model"
     tokenizer_name: str = "gpt2"
@@ -67,6 +70,9 @@ class OperatorAuditRunner:
             tokenizer_name=self.config.tokenizer_name,
             image=self.config.image,
             image_pull_policy=self.config.image_pull_policy,
+            image_pull_secrets=list(self.config.image_pull_secrets),
+            node_selector=dict(self.config.node_selector),
+            tolerations=list(self.config.tolerations),
             random_seed=case.seed,
         )
 

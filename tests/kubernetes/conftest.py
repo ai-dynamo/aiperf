@@ -1789,6 +1789,42 @@ def small_operator_config_module(k8s_settings: K8sTestSettings) -> AIPerfJobConf
     )
 
 
+@pytest.fixture
+def operator_audit_config(k8s_settings: K8sTestSettings):  # type: ignore[return]
+    """OperatorAuditConfig built from the active K8sTestSettings.
+
+    Injects the correct image, pull policy, pull secrets, and tolerations so
+    audit tests use the same image as every other operator test.
+    """
+    from tests.kubernetes.audit.operator_runner import OperatorAuditConfig
+
+    return OperatorAuditConfig(
+        image=k8s_settings.aiperf_image,
+        image_pull_policy=k8s_settings.image_pull_policy,
+        image_pull_secrets=[k8s_settings.image_pull_secret]
+        if k8s_settings.image_pull_secret
+        else [],
+        node_selector=_parse_node_selector(k8s_settings.job_node_selector),
+        tolerations=_gpu_node_tolerations() if k8s_settings.tolerate_gpu_nodes else [],
+    )
+
+
+@pytest.fixture
+def bare_pod_config(k8s_settings: K8sTestSettings):  # type: ignore[return]
+    """BarePodConfig built from the active K8sTestSettings."""
+    from tests.kubernetes.audit.bare_pod import BarePodConfig
+
+    return BarePodConfig(
+        image=k8s_settings.aiperf_image,
+        image_pull_policy=k8s_settings.image_pull_policy,
+        image_pull_secrets=[k8s_settings.image_pull_secret]
+        if k8s_settings.image_pull_secret
+        else [],
+        node_selector=_parse_node_selector(k8s_settings.job_node_selector),
+        tolerations=_gpu_node_tolerations() if k8s_settings.tolerate_gpu_nodes else [],
+    )
+
+
 @pytest_asyncio.fixture(scope="module", loop_scope="package")
 async def operator_deployed_job_module(
     operator_ready: OperatorDeployer,

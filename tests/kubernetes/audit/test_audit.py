@@ -53,6 +53,8 @@ async def test_operator_vs_bare_pod(
     operator_ready: OperatorDeployer,
     audit_artifacts_dir: Path,
     audit_strict_tolerance: bool,
+    operator_audit_config: OperatorAuditConfig,
+    bare_pod_config: BarePodConfig,
 ) -> None:
     """One audit case: operator path vs bare-pod path, three-bucket diff."""
     namespace = f"audit-{case.case_id}-{uuid.uuid4().hex[:6]}"
@@ -61,7 +63,7 @@ async def test_operator_vs_bare_pod(
 
     operator_runner = OperatorAuditRunner(
         deployer=operator_ready,
-        config=OperatorAuditConfig(),
+        config=operator_audit_config,
     )
     await operator_runner.run(
         case=case,
@@ -70,7 +72,7 @@ async def test_operator_vs_bare_pod(
         timeout=900,
     )
 
-    bare = BarePodDeployer(kubectl=kubectl, config=BarePodConfig())
+    bare = BarePodDeployer(kubectl=kubectl, config=bare_pod_config)
     await bare.run(
         case=case,
         namespace=namespace,
@@ -141,13 +143,15 @@ async def test_operator_vs_bare_pod_sweep(
     operator_ready: OperatorDeployer,
     audit_artifacts_dir: Path,
     audit_strict_tolerance: bool,
+    operator_audit_config: OperatorAuditConfig,
+    bare_pod_config: BarePodConfig,
 ) -> None:
     """Sweep-with-trials audit: AIPerfSweep vs N sequential bare-pod runs."""
     namespace = f"audit-{case.case_id}-{uuid.uuid4().hex[:6]}"
     op_root = audit_artifacts_dir / "operator"
     bare_root = audit_artifacts_dir / "bare"
 
-    sweep_runner = SweepAuditRunner(kubectl=kubectl, config=OperatorAuditConfig())
+    sweep_runner = SweepAuditRunner(kubectl=kubectl, config=operator_audit_config)
     cells = await sweep_runner.run(
         case=case,
         namespace=namespace,
@@ -155,7 +159,7 @@ async def test_operator_vs_bare_pod_sweep(
         timeout=1800,
     )
 
-    bare = BarePodDeployer(kubectl=kubectl, config=BarePodConfig())
+    bare = BarePodDeployer(kubectl=kubectl, config=bare_pod_config)
 
     all_gating: list = []
     all_findings: list = []
@@ -273,6 +277,7 @@ async def test_operator_index_matches_disk(
     kubectl: KubectlClient,
     operator_ready: OperatorDeployer,
     audit_artifacts_dir: Path,
+    operator_audit_config: OperatorAuditConfig,
 ) -> None:
     """Operator-only: confirm the runs_index row matches disk for narrow metrics.
 
@@ -292,7 +297,7 @@ async def test_operator_index_matches_disk(
 
     operator_runner = OperatorAuditRunner(
         deployer=operator_ready,
-        config=OperatorAuditConfig(),
+        config=operator_audit_config,
     )
     await operator_runner.run(
         case=case,
