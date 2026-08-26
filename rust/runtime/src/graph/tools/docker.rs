@@ -702,7 +702,6 @@ impl ContainerRuntime for DockerCliRuntime {
         id: &ContainerId,
         timeout_ns: u64,
     ) -> Result<(), ToolSandboxError> {
-        let timeout_seconds = timeout_ns.saturating_add(999_999_999) / 1_000_000_000;
         run_docker(
             &self.binary,
             self.clock.clone(),
@@ -710,8 +709,6 @@ impl ContainerRuntime for DockerCliRuntime {
             [
                 OsString::from("rm"),
                 OsString::from("--force"),
-                OsString::from("--time"),
-                OsString::from(timeout_seconds.max(1).to_string()),
                 OsString::from(id.as_str()),
             ],
         )

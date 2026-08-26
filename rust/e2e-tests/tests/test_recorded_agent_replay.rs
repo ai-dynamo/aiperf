@@ -21,7 +21,26 @@ fn swe_fixture_root() -> PathBuf {
 }
 
 fn write_native_config(dir: &Path, url: &str) -> PathBuf {
+    write_native_config_with_pinch_image(dir, url, None)
+}
+
+fn write_native_docker_config(dir: &Path, url: &str) -> PathBuf {
+    write_native_config_with_pinch_image(
+        dir,
+        url,
+        Some("aiperf-recorded-agent-pinchbench:v1"),
+    )
+}
+
+fn write_native_config_with_pinch_image(
+    dir: &Path,
+    url: &str,
+    pinch_image: Option<&str>,
+) -> PathBuf {
     let fixture = fixture_root();
+    let pinch_image = pinch_image
+        .map(|image| format!("      pinch_image: {image}\n"))
+        .unwrap_or_default();
     let yaml = format!(
         "schemaVersion: \"2.0\"\n\
          benchmark:\n\
@@ -39,6 +58,7 @@ fn write_native_config(dir: &Path, url: &str) -> PathBuf {
         \x20     replay_root: {root}\n\
         \x20     execute_tools: true\n\
         \x20     emit_warmup: true\n\
+        {pinch_image}\
         \x20 metadata:\n\
         \x20   hardware: unknown\n\
         \x20   endpoint_placement: remote\n\
@@ -561,6 +581,48 @@ async fn recorded_agent_default_replays_exact_warmup_and_profile_wires() {
     assert_eq!(backend["trace_count"], 1, "backend={backend}");
     assert_eq!(backend["command_count"], 5, "backend={backend}");
     assert_successful_replay_artifacts(&result, 5, "local");
+}
+
+#[tokio::test]
+#[ignore = "requires a running Docker daemon and aiperf-recorded-agent-pinchbench:v1"]
+async fn recorded_agent_mini_swe_replays_through_docker_tools_and_mock_server() {
+    let harness = AIPerfHarness::new().await;
+    let temporary = tempfile::tempdir().expect("temporary Docker replay config directory");
+    let config = write_native_docker_config(temporary.path(), &harness.mock.url);
+    let result = harness.run(&format!(
+        "--config {} --export-level raw --ui none",
+        config.display()
+    ));
+
+    assert!(
+        result.success(),
+        "Docker Mini-SWE replay failed (exit {}):\nstdout:\n{}\nstderr:\n{}",
+        result.exit_code,
+        result.stdout,
+        result.stderr
+    );
+
+    let expected = read_fixture_expected_requests()
+        .into_iter()
+        .map(|value| normalize_expected_request(&value))
+        .collect::<Vec<_>>();
+    let actual = raw_payloads(&result)
+        .into_iter()
+        .map(|value| normalize_native_payload(&value))
+        .collect::<Vec<_>>();
+    assert_eq!(actual, expected, "Docker replay wire body diverged from the recording");
+
+    let backend = result.artifacts.read_json_file("**/backend-metadata.json");
+    assert_eq!(backend["backend"], "docker:aiperf-recorded-agent-pinchbench:v1");
+    assert_eq!(
+        backend["backends"],
+        json!(["docker:aiperf-recorded-agent-pinchbench:v1"])
+    );
+    assert_successful_replay_artifacts(
+        &result,
+        5,
+        "docker:aiperf-recorded-agent-pinchbench:v1",
+    );
 }
 
 #[tokio::test]
