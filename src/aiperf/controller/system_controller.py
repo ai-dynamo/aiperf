@@ -198,6 +198,8 @@ class SystemController(PodStateTrackerMixin, SignalHandlerMixin, BaseService):
         self._profile_results: ProcessRecordsResult | None = None
         self._exit_errors: list[ExitErrorInfo] = []
         self._export_failed = False
+        self._raw_artifacts_finalized = False
+        self._raw_artifacts_finalize_succeeded = False
         self._telemetry_results: TelemetryExportData | None = None
         self._server_metrics_results: ServerMetricsResults | None = None
         self._accuracy_results: AccuracySummary | None = None
@@ -500,15 +502,16 @@ class SystemController(PodStateTrackerMixin, SignalHandlerMixin, BaseService):
             Environment.WORKER.DISPATCHABLE_POD_GRACE_PERIOD_SECONDS, timeout
         )
         poll_interval = Environment.WORKER.STATUS_SUMMARY_INTERVAL
+        expected_pods = self._k8s_topology.num_worker_pods
+        if not expected_pods:
+            raise LifecycleOperationError(
+                "No worker pods are expected for this run; cannot wait for "
+                "dispatchable worker pods."
+            )
         begin = time.perf_counter()
         while True:
-            expected_pods = len(
-                self.service_manager.service_map.get(
-                    ServiceType.WORKER_GROUP_MANAGER, []
-                )
-            )
             ready_pods = self._ready_worker_pod_count()
-            if expected_pods and ready_pods >= expected_pods:
+            if ready_pods >= expected_pods:
                 self.info(f"All {ready_pods} worker pod(s) are dispatchable")
                 return
 
@@ -600,7 +603,9 @@ class SystemController(PodStateTrackerMixin, SignalHandlerMixin, BaseService):
         # assumes the sequence only advances.
         if state.rank < self._system_state.rank:
             self.debug(
-                lambda: f"Ignoring backwards system state {self._system_state} -> {state}"
+                lambda: (
+                    f"Ignoring backwards system state {self._system_state} -> {state}"
+                )
             )
             return
         self.info(f"System state: {self._system_state} -> {state}")
@@ -1677,8 +1682,8 @@ class SystemController(PodStateTrackerMixin, SignalHandlerMixin, BaseService):
         so they stay visible and still force a non-zero exit.
         """
         if self._is_kubernetes():
-            await self._finalize_kubernetes_raw_artifacts()
-            if self._export_failed:
+            finalize_succeeded = await self._finalize_kubernetes_raw_artifacts()
+            if not finalize_succeeded:
                 raise RuntimeError("Kubernetes RAW artifact finalization failed")
             return
 
@@ -1857,19 +1862,36 @@ class SystemController(PodStateTrackerMixin, SignalHandlerMixin, BaseService):
         )
         return True
 
-    async def _finalize_kubernetes_raw_artifacts(self) -> None:
+    async def _finalize_kubernetes_raw_artifacts(self) -> bool:
         """Wait for the surviving worker groups to flush and upload RAW artifacts.
 
         This command runs before the shutdown broadcast, while the controller,
         worker-group managers, and record processors can still acknowledge
         failures. Registered service identities are authoritative; filename
         counts cannot distinguish an idle processor from a missing upload.
+
+        Idempotent: this coroutine is invoked from three call sites, two of
+        which fire on a normal successful RAW run
+        (``_check_and_trigger_shutdown`` and ``_handle_finalize_artifacts_command``),
+        plus ``_cancel_profiling``. Re-running the barrier would re-broadcast
+        against a worker-group roster that may have legitimately shrunk since
+        the first pass, so the outcome is latched and re-entrants just replay
+        the cached result instead of re-running the barrier.
+
+        Returns whether *this specific barrier* succeeded (or was a no-op),
+        independent of ``self._export_failed``, which can also be set by
+        unrelated failures elsewhere (e.g. a fatal record-processor error).
         """
+        if self._raw_artifacts_finalized:
+            return self._raw_artifacts_finalize_succeeded
+
         if (
             not self._is_kubernetes()
             or self.run.cfg.artifacts.export_level != ExportLevel.RAW
         ):
-            return
+            self._raw_artifacts_finalized = True
+            self._raw_artifacts_finalize_succeeded = True
+            return True
 
         expected = self._k8s_topology.num_worker_pods
         service_ids = sorted(
@@ -1878,9 +1900,12 @@ class SystemController(PodStateTrackerMixin, SignalHandlerMixin, BaseService):
             if info.service_id not in self._reaped_service_ids
         )
         if not self._raw_finalize_membership_is_acceptable(expected, service_ids):
-            return
+            self._raw_artifacts_finalized = True
+            self._raw_artifacts_finalize_succeeded = False
+            return False
 
         self.info(f"Finalizing RAW artifacts on {len(service_ids)} worker group(s)...")
+        had_failure = False
         try:
             responses = await self.send_command_and_wait_for_all_responses(
                 FinalizeArtifactsCommand(
@@ -1897,18 +1922,23 @@ class SystemController(PodStateTrackerMixin, SignalHandlerMixin, BaseService):
                 service_id=self.service_id,
                 error=ErrorDetails.from_exception(e),
             )
-            return
+            had_failure = True
+        else:
+            for service_id, response in zip(service_ids, responses, strict=True):
+                error = self._raw_artifact_finalize_response_error(service_id, response)
+                if error is None:
+                    continue
+                self._record_raw_artifact_finalize_failure(
+                    service_id=service_id, error=error
+                )
+                had_failure = True
 
-        for service_id, response in zip(service_ids, responses, strict=True):
-            error = self._raw_artifact_finalize_response_error(service_id, response)
-            if error is None:
-                continue
-            self._record_raw_artifact_finalize_failure(
-                service_id=service_id, error=error
-            )
-
-        if not self._export_failed:
+        if not had_failure:
             self.info("All Kubernetes RAW artifacts finalized and uploaded")
+
+        self._raw_artifacts_finalized = True
+        self._raw_artifacts_finalize_succeeded = not had_failure
+        return self._raw_artifacts_finalize_succeeded
 
     def _surface_export_failures(self, failures: list[ExporterFailure]) -> bool:
         """Record local export failures and report whether readiness is blocked.
@@ -2286,6 +2316,7 @@ class SystemController(PodStateTrackerMixin, SignalHandlerMixin, BaseService):
                     "Benchmark-complete notification was cancelled; the durable "
                     "results marker and operator timer remain authoritative"
                 )
+                raise
             except Exception as e:  # noqa: BLE001 - notification is a latency optimization
                 self.warning(
                     f"Failed to notify the operator of benchmark completion: {e!r}; "
