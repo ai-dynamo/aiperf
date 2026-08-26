@@ -4134,12 +4134,10 @@ fn chat_stream(
             last_emit = Some(emit_at);
             idx += 1;
             state.recorder.record_streamed_token_fast(&labeled);
-            let chunk = ChatStreamChunk {
-                id: &ctx.request_id,
-                object: "chat.completion.chunk",
+            yield Ok::<Bytes, Infallible>(chat_generated_sse(
+                &ctx,
                 created,
-                model: &ctx.model,
-                choices: [ChatChoiceDelta {
+                ChatChoiceDelta {
                     index: 0,
                     finish_reason: None,
                     speculative_decoding_stats: None,
@@ -4149,71 +4147,118 @@ fn chat_stream(
                         reasoning_content: Some(token.as_str()),
                         tool_calls: None,
                     },
-                }],
-            };
-            yield Ok::<Bytes, Infallible>(sse_chunk_ser(&chunk));
+                },
+                idx,
+            ));
         }
 
         // A tool-call turn carries its finish reason on the final call delta.
         let has_tool_call = ctx.tool_call.is_some();
         let num = ctx.tokenized.tokens.len();
-        // Middle-token frames share a byte-identical envelope. Boundary frames
-        // use full serialization because they carry role or finish metadata.
-        let mid_prefix: Vec<u8> = {
-            let mut p = Vec::with_capacity(96);
-            p.extend_from_slice(b"data: {\"id\":");
-            serde_json::to_writer(&mut p, &ctx.request_id).expect("serialize id");
-            p.extend_from_slice(b",\"object\":\"chat.completion.chunk\",\"created\":");
-            p.extend_from_slice(created.to_string().as_bytes());
-            p.extend_from_slice(b",\"model\":");
-            serde_json::to_writer(&mut p, &ctx.model).expect("serialize model");
-            p.extend_from_slice(b",\"choices\":[{\"index\":0,\"delta\":{\"content\":");
-            p
-        };
-        for (i, token) in ctx.tokenized.tokens.iter().enumerate() {
-            let emit_at = ctx.latency_sim.wait_for_index(idx).await;
-            if first_emit.is_none() {
-                first_emit = Some(emit_at);
-                let ttft = emit_at.duration_since(ctx.start);
-                state.recorder.record_ttft_fast(&labeled, ttft.as_secs_f64());
-            } else if let Some(last) = last_emit {
-                let itl = emit_at.duration_since(last);
-                state.recorder.record_itl_fast(&labeled, itl.as_secs_f64());
-            }
-            last_emit = Some(emit_at);
-            idx += 1;
-            state.recorder.record_streamed_token_fast(&labeled);
-            let role = if i == 0 && !has_reasoning { Some("assistant") } else { None };
-            let finish = if i + 1 == num && !has_tool_call && !ctx.spec_decode_acceptance {
-                Some(ctx.tokenized.finish_reason)
-            } else {
-                None
-            };
-            if role.is_none() && finish.is_none() {
-                let mut out = Vec::with_capacity(mid_prefix.len() + token.len() + 8);
-                out.extend_from_slice(&mid_prefix);
-                serde_json::to_writer(&mut out, token.as_str()).expect("serialize token");
-                out.extend_from_slice(b"}}]}\n\n");
-                yield Ok::<Bytes, Infallible>(Bytes::from(out));
-            } else {
-                let chunk = ChatStreamChunk {
-                    id: &ctx.request_id,
-                    object: "chat.completion.chunk",
+        if ctx.continuous_usage_stats || ctx.first_chunk_tokens > 1 {
+            let mut group_start = 0;
+            let first_group_end = ctx.first_chunk_tokens.min(num);
+            while group_start < num {
+                let group_end = if group_start == 0 {
+                    first_group_end
+                } else {
+                    group_start + 1
+                };
+                for _ in group_start..group_end {
+                    let emit_at = ctx.latency_sim.wait_for_index(idx).await;
+                    if first_emit.is_none() {
+                        first_emit = Some(emit_at);
+                        let ttft = emit_at.duration_since(ctx.start);
+                        state.recorder.record_ttft_fast(&labeled, ttft.as_secs_f64());
+                    } else if let Some(last) = last_emit {
+                        let itl = emit_at.duration_since(last);
+                        state.recorder.record_itl_fast(&labeled, itl.as_secs_f64());
+                    }
+                    last_emit = Some(emit_at);
+                    idx += 1;
+                    state.recorder.record_streamed_token_fast(&labeled);
+                }
+                let content = ctx.tokenized.tokens[group_start..group_end].concat();
+                yield Ok::<Bytes, Infallible>(chat_generated_sse(
+                    &ctx,
                     created,
-                    model: &ctx.model,
-                    choices: [ChatChoiceDelta {
+                    ChatChoiceDelta {
                         index: 0,
-                        finish_reason: finish,
+                        finish_reason: (group_end == num
+                            && !has_tool_call
+                            && !ctx.spec_decode_acceptance)
+                            .then_some(ctx.tokenized.finish_reason),
                         speculative_decoding_stats: None,
                         delta: ChatDelta {
-                            role,
-                            content: Some(token.as_str()),
+                            role: (group_start == 0 && !has_reasoning).then_some("assistant"),
+                            content: Some(&content),
                             reasoning_content: None,
                             tool_calls: None,
                         },
-                    }],
+                    },
+                    idx,
+                ));
+                group_start = group_end;
+            }
+        } else {
+            // Middle-token frames share a byte-identical envelope. Boundary frames
+            // use full serialization because they carry role or finish metadata.
+            let mid_prefix: Vec<u8> = {
+                let mut p = Vec::with_capacity(96);
+                p.extend_from_slice(b"data: {\"id\":");
+                serde_json::to_writer(&mut p, &ctx.request_id).expect("serialize id");
+                p.extend_from_slice(b",\"object\":\"chat.completion.chunk\",\"created\":");
+                p.extend_from_slice(created.to_string().as_bytes());
+                p.extend_from_slice(b",\"model\":");
+                serde_json::to_writer(&mut p, &ctx.model).expect("serialize model");
+                p.extend_from_slice(b",\"choices\":[{\"index\":0,\"delta\":{\"content\":");
+                p
+            };
+            for (i, token) in ctx.tokenized.tokens.iter().enumerate() {
+                let emit_at = ctx.latency_sim.wait_for_index(idx).await;
+                if first_emit.is_none() {
+                    first_emit = Some(emit_at);
+                    let ttft = emit_at.duration_since(ctx.start);
+                    state.recorder.record_ttft_fast(&labeled, ttft.as_secs_f64());
+                } else if let Some(last) = last_emit {
+                    let itl = emit_at.duration_since(last);
+                    state.recorder.record_itl_fast(&labeled, itl.as_secs_f64());
+                }
+                last_emit = Some(emit_at);
+                idx += 1;
+                state.recorder.record_streamed_token_fast(&labeled);
+                let role = if i == 0 && !has_reasoning { Some("assistant") } else { None };
+                let finish = if i + 1 == num && !has_tool_call && !ctx.spec_decode_acceptance {
+                    Some(ctx.tokenized.finish_reason)
+                } else {
+                    None
                 };
-                yield Ok::<Bytes, Infallible>(sse_chunk_ser(&chunk));
+                if role.is_none() && finish.is_none() {
+                    let mut out = Vec::with_capacity(mid_prefix.len() + token.len() + 8);
+                    out.extend_from_slice(&mid_prefix);
+                    serde_json::to_writer(&mut out, token.as_str()).expect("serialize token");
+                    out.extend_from_slice(b"}}]}\n\n");
+                    yield Ok::<Bytes, Infallible>(Bytes::from(out));
+                } else {
+                    let chunk = ChatStreamChunk {
+                        id: &ctx.request_id,
+                        object: "chat.completion.chunk",
+                        created,
+                        model: &ctx.model,
+                        choices: [ChatChoiceDelta {
+                            index: 0,
+                            finish_reason: finish,
+                            speculative_decoding_stats: None,
+                            delta: ChatDelta {
+                                role,
+                                content: Some(token.as_str()),
+                                reasoning_content: None,
+                                tool_calls: None,
+                            },
+                        }],
+                    };
+                    yield Ok::<Bytes, Infallible>(sse_chunk_ser(&chunk));
+                }
             }
         }
 
@@ -4428,31 +4473,68 @@ fn text_stream(
         let created = now_secs();
         let mut first_emit: Option<Instant> = None;
         let mut last_emit: Option<Instant> = None;
-        for (i, token) in ctx.tokenized.tokens.iter().enumerate() {
-            let emit_at = ctx.latency_sim.wait_for_index(i).await;
-            if first_emit.is_none() {
-                first_emit = Some(emit_at);
-                let ttft = emit_at.duration_since(ctx.start);
-                state.recorder.record_ttft_fast(&labeled, ttft.as_secs_f64());
-            } else if let Some(last) = last_emit {
-                let itl = emit_at.duration_since(last);
-                state.recorder.record_itl_fast(&labeled, itl.as_secs_f64());
+        if ctx.continuous_usage_stats || ctx.first_chunk_tokens > 1 {
+            let mut group_start = 0;
+            let first_group_end = ctx.first_chunk_tokens.min(num);
+            while group_start < num {
+                let group_end = if group_start == 0 {
+                    first_group_end
+                } else {
+                    group_start + 1
+                };
+                for index in group_start..group_end {
+                    let emit_at = ctx.latency_sim.wait_for_index(index).await;
+                    if first_emit.is_none() {
+                        first_emit = Some(emit_at);
+                        let ttft = emit_at.duration_since(ctx.start);
+                        state.recorder.record_ttft_fast(&labeled, ttft.as_secs_f64());
+                    } else if let Some(last) = last_emit {
+                        let itl = emit_at.duration_since(last);
+                        state.recorder.record_itl_fast(&labeled, itl.as_secs_f64());
+                    }
+                    last_emit = Some(emit_at);
+                    state.recorder.record_streamed_token_fast(&labeled);
+                }
+                let content = ctx.tokenized.tokens[group_start..group_end].concat();
+                yield Ok::<Bytes, Infallible>(text_generated_sse(
+                    &ctx,
+                    created,
+                    TextChoiceDelta {
+                        index: 0,
+                        text: &content,
+                        finish_reason: (group_end == num).then_some(ctx.tokenized.finish_reason),
+                    },
+                    group_end,
+                ));
+                group_start = group_end;
             }
-            last_emit = Some(emit_at);
-            state.recorder.record_streamed_token_fast(&labeled);
-            let finish = if i + 1 == num { Some(ctx.tokenized.finish_reason) } else { None };
-            let chunk = TextStreamChunk {
-                id: &ctx.request_id,
-                object: "text_completion",
-                created,
-                model: &ctx.model,
-                choices: [TextChoiceDelta {
-                    index: 0,
-                    text: token.as_str(),
-                    finish_reason: finish,
-                }],
-            };
-            yield Ok::<Bytes, Infallible>(sse_chunk_ser(&chunk));
+        } else {
+            for (i, token) in ctx.tokenized.tokens.iter().enumerate() {
+                let emit_at = ctx.latency_sim.wait_for_index(i).await;
+                if first_emit.is_none() {
+                    first_emit = Some(emit_at);
+                    let ttft = emit_at.duration_since(ctx.start);
+                    state.recorder.record_ttft_fast(&labeled, ttft.as_secs_f64());
+                } else if let Some(last) = last_emit {
+                    let itl = emit_at.duration_since(last);
+                    state.recorder.record_itl_fast(&labeled, itl.as_secs_f64());
+                }
+                last_emit = Some(emit_at);
+                state.recorder.record_streamed_token_fast(&labeled);
+                let finish = if i + 1 == num { Some(ctx.tokenized.finish_reason) } else { None };
+                let chunk = TextStreamChunk {
+                    id: &ctx.request_id,
+                    object: "text_completion",
+                    created,
+                    model: &ctx.model,
+                    choices: [TextChoiceDelta {
+                        index: 0,
+                        text: token.as_str(),
+                        finish_reason: finish,
+                    }],
+                };
+                yield Ok::<Bytes, Infallible>(sse_chunk_ser(&chunk));
+            }
         }
         if include_usage {
             let usage_chunk = TextStreamUsageChunk {
