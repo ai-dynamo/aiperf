@@ -92,9 +92,7 @@ fn envelope_commands_require_an_envelope() {
 
 #[test]
 fn commands_without_a_shipped_backend_refuse_before_cluster_access() {
-    // `generate` refuses because no native-k8s/v1 envelope generator is shipped;
-    // users must supply an explicit envelope to `kube profile`.
-    for command in ["sweep", "index", "dashboard", "generate"] {
+    for command in ["sweep", "index", "dashboard"] {
         let (code, _, stderr) = kube(&[command]);
         assert_ne!(code, 0, "{command} must refuse without a shipped backend");
         assert!(

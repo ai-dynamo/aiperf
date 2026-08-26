@@ -8,6 +8,7 @@ use std::time::Duration;
 use super::auth::KubeAuthOptions;
 use super::client::{KubeClient, KubeWatch, KubeWatchPoll};
 use super::error::KubeError;
+use super::projection::{BootstrapDigests, build_controller_envelope};
 use super::render::{OutputFormat, render};
 use super::results::{ArtifactFetcher, MAX_ARTIFACT_BYTES, download, parse_manifest};
 use super::submission::{
@@ -57,9 +58,7 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
         );
     }
     if command == "generate" {
-        anyhow::bail!(
-            "native Kubernetes generate is unavailable; use a strict native-k8s/v1 envelope with profile"
-        );
+        return run_generate(&args[1..]);
     }
     if command == "init" {
         return super::scaffold::run(&args[1..]);
@@ -458,6 +457,36 @@ fn flag_value(args: &[String], flag: &str) -> Option<String> {
         }
     }
     None
+}
+
+/// Render the `native-k8s/v1` controller envelope to stdout or `--output` without cluster contact.
+///
+/// The projected envelope is byte-identical to what `profile` would submit for the same
+/// `--envelope` input, except that bootstrap digests remain as authored placeholders rather than
+/// minted bundle digests. Both `generate` and `profile` call `build_controller_envelope`; the
+/// difference is only the digest map passed in.
+fn run_generate(args: &[String]) -> anyhow::Result<i32> {
+    let paths = envelope_paths(args)?;
+    let envelopes = paths
+        .into_iter()
+        .map(load_envelope)
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    if envelopes.len() != 1 {
+        anyhow::bail!("native Kubernetes generate accepts exactly one --envelope");
+    }
+    // Empty map is a no-op on bootstrap digests: the authored sha256 values are preserved.
+    let projected = build_controller_envelope(&envelopes[0], &BootstrapDigests::new())
+        .map_err(anyhow::Error::from)?;
+    let body = serde_json::to_string_pretty(&projected).map_err(|error| {
+        anyhow::anyhow!("failed to serialize native Kubernetes generate output: {error}")
+    })?;
+    match flag_value(args, "--output") {
+        Some(path) => std::fs::write(&path, body.as_bytes()).map_err(|error| {
+            anyhow::anyhow!("failed to write generate output to {path}: {error}")
+        })?,
+        None => println!("{body}"),
+    }
+    Ok(0)
 }
 
 fn envelope_command(command: &str, args: &[String]) -> anyhow::Result<i32> {
