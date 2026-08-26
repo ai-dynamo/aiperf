@@ -367,6 +367,7 @@ mod tests {
             output: Some(osl),
             reasoning: None,
             requested_output: Some(osl),
+            first_content_chunk_tokens: None,
         };
         CapturedRecord {
             uuid: uuid::Uuid::nil(),

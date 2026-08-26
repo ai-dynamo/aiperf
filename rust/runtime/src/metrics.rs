@@ -130,7 +130,7 @@ struct PendingResponseMetadata {
 
 #[derive(Clone, Copy, Debug, Default)]
 struct CompactObservedUsage {
-    values: [usize; 12],
+    values: [usize; 13],
     present: u16,
     prompt_audio_seconds: Option<f64>,
 }
@@ -150,6 +150,7 @@ impl CompactObservedUsage {
             usage.accepted_prediction_tokens,
             usage.rejected_prediction_tokens,
             usage.tool_use_prompt_tokens,
+            usage.first_content_chunk_tokens,
         ]
         .into_iter()
         .enumerate()
@@ -596,6 +597,7 @@ impl PendingRequest {
                     (self.reasoning_tokens > 0).then_some(self.reasoning_tokens)
                 },
                 requested_output: Some(self.requested_output_tokens),
+                first_content_chunk_tokens: self.observed_usage.get(12).map(|value| value as u64),
             },
             usage: UsageMetrics {
                 prompt_tokens,

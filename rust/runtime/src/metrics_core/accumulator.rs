@@ -13,6 +13,7 @@ use crate::metrics_core::catalog::{
 };
 use crate::metrics_core::definition::{Definition, Native, metric_definition};
 use crate::metrics_core::ingest::{InferenceDimensions, RecordIngest};
+use crate::metrics_core::itl::decode_tokens_after_first_chunk;
 use crate::metrics_core::kernel::{DistributionStats, linear_distribution, nearest_distribution};
 use crate::metrics_core::sidecar::SidecarMetric;
 use crate::metrics_core::store::{ColumnStore, ListMetricBackend, MetricsStorageMode};
@@ -563,7 +564,7 @@ impl MetricsAccumulator {
             }
         };
         if !record.errored && !record.canceled {
-            self.compute_record_metrics(row);
+            self.compute_record_metrics(row, record.tokens.first_content_chunk_tokens);
             self.compute_good_request(row);
         }
         if sketch_mode {
@@ -879,19 +880,20 @@ impl MetricsAccumulator {
         results.remove(MetricTag::NetworkRtt.as_str());
     }
 
-    fn compute_record_metrics(&mut self, row: usize) {
+    fn compute_record_metrics(&mut self, row: usize, first_content_chunk_tokens: Option<u64>) {
         let latency = self.store.metric_f64(row, MetricTag::RequestLatency);
         let ttft = self.store.metric_f64(row, MetricTag::TimeToFirstToken);
         let osl = self.store.metric_f64(row, MetricTag::OutputSequenceLength);
         let isl = self.store.metric_f64(row, MetricTag::InputSequenceLength);
 
         if let (Some(latency), Some(ttft), Some(osl)) = (latency, ttft, osl)
-            && osl >= 2.0
+            && let Some(decode_tokens) =
+                decode_tokens_after_first_chunk(osl as u64, first_content_chunk_tokens)
         {
             self.set_finite_record(
                 row,
                 MetricTag::InterTokenLatency,
-                (latency - ttft) / (osl - 1.0),
+                (latency - ttft) / decode_tokens as f64,
             );
         }
         // Client-observed interval from the first to final content response.
@@ -1731,6 +1733,7 @@ mod tests {
             output: Some(9),
             reasoning: Some(1),
             requested_output: Some(10),
+            first_content_chunk_tokens: None,
         };
         record.usage = UsageMetrics {
             prompt_tokens: Some(100),
