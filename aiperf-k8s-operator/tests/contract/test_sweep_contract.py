@@ -108,6 +108,32 @@ def test_crd_copies_are_identical() -> None:
         )
 
 
+def test_sweep_crd_status_cel_rules_are_fully_guarded() -> None:
+    """Pin the exact CEL rule strings so a future edit cannot drop the has() guards."""
+    crd = yaml.safe_load(
+        (DEPLOY_CRDS / "aiperfsweeps.aiperf.nvidia.com.yaml").read_text()
+    )
+    status_schema = crd["spec"]["versions"][0]["schema"]["openAPIV3Schema"][
+        "properties"
+    ]["status"]
+    assert status_schema["x-kubernetes-validations"] == [
+        {
+            "rule": (
+                "!has(oldSelf.sweepId) || "
+                "(has(self.sweepId) && self.sweepId == oldSelf.sweepId)"
+            ),
+            "message": "sweepId is immutable once set",
+        },
+        {
+            "rule": (
+                "!has(oldSelf.completedRuns) || "
+                "(has(self.completedRuns) && self.completedRuns >= oldSelf.completedRuns)"
+            ),
+            "message": "completedRuns cannot decrease",
+        },
+    ]
+
+
 def test_helm_renders_the_sweep_crd() -> None:
     resources = render_chart()
     crd_names = {

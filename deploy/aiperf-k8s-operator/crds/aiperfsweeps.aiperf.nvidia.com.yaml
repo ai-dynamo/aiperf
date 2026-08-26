@@ -71,7 +71,7 @@ spec:
               aggregateReady:
                 type: boolean
             x-kubernetes-validations:
-            - rule: "!has(oldSelf.sweepId) || self.sweepId == oldSelf.sweepId"
-              message: status sweepId is immutable
-            - rule: "!has(oldSelf.completedRuns) || self.completedRuns >= oldSelf.completedRuns"
+            - rule: "!has(oldSelf.sweepId) || (has(self.sweepId) && self.sweepId == oldSelf.sweepId)"
+              message: sweepId is immutable once set
+            - rule: "!has(oldSelf.completedRuns) || (has(self.completedRuns) && self.completedRuns >= oldSelf.completedRuns)"
               message: completedRuns cannot decrease
