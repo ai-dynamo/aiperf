@@ -9,6 +9,8 @@
 
 use std::path::PathBuf;
 
+use clap::Parser;
+
 use crate::config::templates_data::TEMPLATES;
 
 /// The literal placeholder written into the scaffolded `image-capabilities.json`.
@@ -22,23 +24,56 @@ const CONFIG_FILENAME: &str = "benchmark.yaml";
 const CAPABILITIES_FILENAME: &str = "image-capabilities.json";
 const DEFAULT_TEMPLATE: &str = "minimal";
 
+#[derive(Debug, Parser)]
+#[command(
+    name = "kube-init",
+    about = "Scaffold a Config-v2 YAML and image-capabilities pair for a native Kubernetes run"
+)]
+struct ScaffoldArgs {
+    /// Template id (see `--list`).
+    #[arg(long)]
+    template: Option<String>,
+    /// Write files into this directory instead of the current directory.
+    #[arg(long)]
+    output_directory: Option<PathBuf>,
+    /// Overwrite existing files.
+    #[arg(long)]
+    force: bool,
+    /// List available templates and exit.
+    #[arg(long)]
+    list: bool,
+}
+
 /// Run `aiperf kube init [--output-directory <dir>] [--template <name>] [--force] [--list]`.
 ///
 /// Writes `benchmark.yaml` and `image-capabilities.json` into the output directory.
-/// Unknown flags (e.g. `--kubeconfig`) are silently ignored because this command
-/// performs no cluster I/O.
+/// Unknown flags cause a usage error. No cluster contact occurs on any path.
 pub fn run(args: &[String]) -> anyhow::Result<i32> {
-    if args.iter().any(|a| a == "--list") {
+    let full: Vec<String> = std::iter::once("kube-init".to_string())
+        .chain(args.iter().cloned())
+        .collect();
+    let parsed = match ScaffoldArgs::try_parse_from(&full) {
+        Ok(parsed) => parsed,
+        Err(err) => {
+            err.print().ok();
+            return Ok(err.exit_code());
+        }
+    };
+
+    if parsed.list {
         list_templates();
         return Ok(0);
     }
 
-    let template_name =
-        flag_value(args, "--template").unwrap_or_else(|| DEFAULT_TEMPLATE.to_string());
-    let output_dir = flag_value(args, "--output-directory")
-        .map(PathBuf::from)
+    let template_name = parsed
+        .template
+        .as_deref()
+        .unwrap_or(DEFAULT_TEMPLATE)
+        .to_string();
+    let output_dir = parsed
+        .output_directory
         .unwrap_or_else(|| PathBuf::from("."));
-    let is_force = args.iter().any(|a| a == "--force");
+    let is_force = parsed.force;
 
     let template = TEMPLATES
         .iter()
@@ -50,8 +85,8 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
     let config_content = strip_spdx_header(template.content);
     let capabilities_content = format_capabilities();
 
-    std::fs::create_dir_all(&output_dir)?;
-
+    // Check existence before creating directories so a refused overwrite
+    // does not leave empty directories behind.
     let config_path = output_dir.join(CONFIG_FILENAME);
     let capabilities_path = output_dir.join(CAPABILITIES_FILENAME);
 
@@ -70,6 +105,7 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
         }
     }
 
+    std::fs::create_dir_all(&output_dir)?;
     std::fs::write(&config_path, config_content)?;
     std::fs::write(&capabilities_path, capabilities_content)?;
 
@@ -114,21 +150,6 @@ fn list_templates() {
         }
     }
     println!();
-}
-
-/// Scan `args` for `--flag value` or `--flag=value` and return the value if found.
-fn flag_value(args: &[String], flag: &str) -> Option<String> {
-    let mut iter = args.iter();
-    let equals_prefix = format!("{flag}=");
-    while let Some(arg) = iter.next() {
-        if let Some(value) = arg.strip_prefix(&equals_prefix) {
-            return Some(value.to_string());
-        }
-        if arg == flag {
-            return iter.next().cloned();
-        }
-    }
-    None
 }
 
 /// Remove leading SPDX and `yaml-language-server:` comment lines from template content.
