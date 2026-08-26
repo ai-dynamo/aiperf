@@ -324,7 +324,7 @@ The following invariants apply together:
 ```text
 Frozen AIPerfRegistry
   |-- StreamingDatasetSourceFactory["hf_hub", "s3", "local", ...]
-  |-- StreamingDatasetFormatFactory["baseten_trace", "dynamo_trace", ...]
+  |-- StreamingDatasetFormatFactory["baseten_trace", "streaming_dynamo_trace", ...]
   |-- StreamingSessionProgramFactory["conversation", "agent_graph", ...]
   |-- StreamingActionSinkFactory["scheduled_request", "streaming_graph", ...]
   |-- StreamingCheckpointBackendFactory["local", "object_store", "none"]
