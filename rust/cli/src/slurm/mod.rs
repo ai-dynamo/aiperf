@@ -177,4 +177,28 @@ mod tests {
             .expect("permissions");
         assert!(validate_bootstrap_mount(file.path(), "test role").is_ok());
     }
+
+    #[test]
+    fn slurm_run_derives_its_role_file_from_procid() {
+        let directory = std::ffi::OsString::from("/run/aiperf/bootstrap");
+        let topology = SlurmTopology::new(2, 4, "node0").expect("rank-2 topology");
+        let cell_id = topology.cell_id().expect("rank 2 is a cell");
+
+        assert_eq!(
+            resolve_role_bootstrap_path(None, Some(directory.clone()), cell_id)
+                .expect("directory-derived path"),
+            std::path::Path::new("/run/aiperf/bootstrap/cell-1.bin")
+        );
+        assert_eq!(
+            resolve_role_bootstrap_path(
+                Some(std::ffi::OsString::from("/mnt/operator/role.bin")),
+                Some(directory),
+                cell_id,
+            )
+            .expect("operator-mounted path"),
+            std::path::Path::new("/mnt/operator/role.bin"),
+            "an explicit AIPERF_ROLE_BOOTSTRAP_FILE outranks the directory"
+        );
+        assert!(resolve_role_bootstrap_path(None, None, cell_id).is_err());
+    }
 }

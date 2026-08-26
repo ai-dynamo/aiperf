@@ -181,6 +181,7 @@ mod tests {
             ntasks_per_node: 1,
             gpus_per_node: None,
             controller_port: DEFAULT_CONTROLLER_PORT,
+            run_dir: None,
         }
     }
 
@@ -195,11 +196,16 @@ mod tests {
         let directory = tempfile::tempdir().expect("fixture directory");
         let config = config_fixture(&directory);
         let absolute = std::fs::canonicalize(&config).expect("canonical config");
+        let run_dir = absolute
+            .parent()
+            .expect("config parent")
+            .join("aiperf-slurm-run");
 
         let script = build_sbatch_script(&request(&config, 4)).expect("script");
 
+        assert_eq!(script.run_dir, run_dir);
         assert_eq!(
-            script,
+            script.text,
             format!(
                 "#!/bin/bash\n\
                  #SBATCH --job-name=aiperf\n\
@@ -210,9 +216,12 @@ mod tests {
                  \n\
                  export AIPERF_CELL_LAUNCHER=slurm\n\
                  export AIPERF_CONTROLLER_PORT=9500\n\
+                 export AIPERF_CONTROLLER_BOOTSTRAP_FILE={run}/bootstrap/controller.bin\n\
+                 export AIPERF_ROLE_BOOTSTRAP_DIR={run}/bootstrap\n\
                  \n\
-                 srun aiperf slurm run --config {}\n",
-                absolute.display()
+                 srun aiperf slurm run --config {config}\n",
+                run = run_dir.display(),
+                config = absolute.display()
             )
         );
     }
@@ -231,7 +240,8 @@ mod tests {
             controller_port: 9700,
             ..request(&config, 4)
         })
-        .expect("script");
+        .expect("script")
+        .text;
 
         assert!(script.contains("#SBATCH --job-name=myrun\n"));
         assert!(script.contains("#SBATCH --partition=batch\n"));
@@ -243,6 +253,102 @@ mod tests {
         assert!(script.contains("#SBATCH --nodes=2\n"));
         assert!(script.contains("#SBATCH --ntasks=5\n"));
         assert!(script.contains("export AIPERF_CONTROLLER_PORT=9700\n"));
+        // The default run directory is named for the job, beside the config.
+        assert!(script.contains("/myrun-slurm-run/bootstrap\n"), "{script}");
+    }
+
+    #[test]
+    fn generate_mints_per_rank_material() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = tempfile::tempdir().expect("fixture directory");
+        let config = config_fixture(&directory);
+        let run_dir = directory.path().join("run");
+
+        let material = provision_material(&run_dir, 3).expect("minted material");
+
+        let bootstrap = run_dir.join(BOOTSTRAP_DIRECTORY);
+        assert_eq!(
+            std::fs::metadata(&bootstrap)
+                .expect("bootstrap directory")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o700
+        );
+        let controller = bootstrap.join(CONTROLLER_BUNDLE);
+        assert_eq!(
+            std::fs::read(&controller).expect("controller bundle"),
+            material.controller
+        );
+        assert_eq!(
+            std::fs::metadata(&controller)
+                .expect("controller metadata")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+        for cell in 0..3 {
+            let path = bootstrap.join(cell_bundle_name(cell));
+            let bytes = std::fs::read(&path).expect("cell bundle");
+            assert_eq!(
+                &bytes,
+                material
+                    .roles
+                    .get(&CellularRole::Cell(cell))
+                    .expect("minted cell bundle"),
+                "cell {cell} bundle must be the one minted for its role"
+            );
+            // Role tag: kind 1 (cell), tier 0, little-endian cell id.
+            assert_eq!(bytes[9], 1, "cell {cell} bundle is not cell material");
+            assert_eq!(
+                u32::from_le_bytes(bytes[14..18].try_into().expect("role id bytes")),
+                cell
+            );
+            assert_eq!(
+                std::fs::metadata(&path)
+                    .expect("cell metadata")
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o600
+            );
+        }
+        // The generated script names exactly the provisioned paths.
+        let script = build_sbatch_script(&ScriptRequest {
+            run_dir: Some(&run_dir),
+            ..request(&config, 3)
+        })
+        .expect("script");
+        assert!(
+            script
+                .text
+                .contains(&format!("export AIPERF_ROLE_BOOTSTRAP_DIR={}\n", bootstrap.display())),
+            "{}",
+            script.text
+        );
+    }
+
+    #[test]
+    fn generate_refuses_to_overwrite_existing_material() {
+        let directory = tempfile::tempdir().expect("fixture directory");
+        let run_dir = directory.path().join("run");
+
+        provision_material(&run_dir, 2).expect("first mint");
+        let bootstrap = run_dir.join(BOOTSTRAP_DIRECTORY);
+        let before = std::fs::read(bootstrap.join(CONTROLLER_BUNDLE)).expect("first controller");
+
+        let error = provision_material(&run_dir, 2).expect_err("second mint must be refused");
+        assert!(
+            error.to_string().contains("bootstrap material"),
+            "{error}"
+        );
+        assert_eq!(
+            std::fs::read(bootstrap.join(CONTROLLER_BUNDLE)).expect("controller after refusal"),
+            before,
+            "the first run's material must survive byte-identically"
+        );
     }
 
     #[test]
