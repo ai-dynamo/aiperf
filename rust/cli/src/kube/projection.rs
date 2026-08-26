@@ -92,9 +92,7 @@ fn resolve<'a>(
     target: &BootstrapMaterialTarget,
 ) -> Result<&'a String, KubeError> {
     digests.get(target).ok_or_else(|| {
-        KubeError::ContractValidation(format!(
-            "no bootstrap material was resolved for {target:?}"
-        ))
+        KubeError::ContractValidation(format!("no bootstrap material was resolved for {target:?}"))
     })
 }
 

@@ -371,7 +371,9 @@ fn prepare_material(
 ) -> anyhow::Result<PreparedMaterial> {
     let expected = bootstrap_targets(envelope);
     if let Some(unknown) = supplied.keys().find(|target| !expected.contains(target)) {
-        anyhow::bail!("--bootstrap-material names {unknown:?}, which the envelope does not declare");
+        anyhow::bail!(
+            "--bootstrap-material names {unknown:?}, which the envelope does not declare"
+        );
     }
     let mut prepared = PreparedMaterial {
         directory: None,
@@ -442,14 +444,10 @@ fn mint_missing_material(
                 .get(&CellularRole::Cell(*cell_id))
                 .ok_or_else(|| anyhow::anyhow!("minted material omits cell {cell_id}"))?,
         };
-        let (path, reference) = create_bundle(
-            &directory,
-            secret_name,
-            role,
-            mount_path,
-            bytes.as_slice(),
-        )
-        .map_err(|error| anyhow::anyhow!("failed to write bootstrap bundle for {target:?}: {error}"))?;
+        let (path, reference) =
+            create_bundle(&directory, secret_name, role, mount_path, bytes.as_slice()).map_err(
+                |error| anyhow::anyhow!("failed to write bootstrap bundle for {target:?}: {error}"),
+            )?;
         prepared.minted.push(path.clone());
         prepared.paths.insert(target.clone(), path);
         prepared.digests.insert(target.clone(), reference.sha256);
@@ -1277,7 +1275,9 @@ mod tests {
     fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
         !needle.is_empty()
             && haystack.len() >= needle.len()
-            && haystack.windows(needle.len()).any(|window| window == needle)
+            && haystack
+                .windows(needle.len())
+                .any(|window| window == needle)
     }
 
     struct SecretConflictFixture {
