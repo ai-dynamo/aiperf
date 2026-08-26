@@ -35,7 +35,17 @@ pub fn router(state: AppState) -> axum::Router {
 fn snapshot(state: &AppState) -> Vec<RunEntry> {
     let session = state.session.lock().expect("session mutex").clone();
     match state.historical.as_deref() {
-        Some(source) => index::merge_session_and_historical(&session, source.list()),
+        Some(source) => {
+            // `block_in_place`: a historical source is a synchronous seam and may
+            // drive its own runtime (the native Kubernetes client builds a
+            // current-thread runtime per request) or block on filesystem IO.
+            // Calling it directly from this async context panics with "Cannot
+            // start a runtime from within a runtime"; `block_in_place` moves the
+            // worker's other tasks away first, and is legal because
+            // `super::start` builds a multi-thread runtime.
+            let historical = tokio::task::block_in_place(|| source.list());
+            index::merge_session_and_historical(&session, historical)
+        }
         None => index::merged(
             &session,
             state.results_root.as_deref(),
@@ -53,7 +63,10 @@ fn read_report(state: &AppState, run: &RunEntry) -> Option<Value> {
     {
         return Some(report);
     }
-    state.historical.as_deref()?.read_report(run)
+    let source = state.historical.as_deref()?;
+    // `block_in_place` for the same reason as `snapshot`: the source is a
+    // blocking seam reached from an async handler.
+    tokio::task::block_in_place(|| source.read_report(run))
 }
 
 /// `GET /api/meta` — server + session identity for the UI header.
