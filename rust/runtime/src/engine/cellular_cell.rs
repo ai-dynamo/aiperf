@@ -440,7 +440,8 @@ pub fn ship_artifacts_if_enabled(
 /// `None` for synthetic, inline-`records` `file`, or `public` (URL/HF each cell
 /// fetches independently). This is FORMAT-BLIND: it keys only on `type == "file"`
 /// plus a non-empty `path`, so a single-file GRAPH trace (`dag_jsonl`, or a
-/// single-file `weka_trace`/`dynamo_trace`) ALSO returns its path and rides the same
+/// single-file recorded trace such as `weka_trace`/`tracelab`) ALSO returns its path
+/// and rides the same
 /// serve/download/rewrite plane. (A graph trace whose `path` is a
 /// DIRECTORY or segmented-prefix ships every shard the loader reads over the same
 /// plane via the manifest — see [`crate::engine::cellular_controller`]'s
@@ -604,7 +605,7 @@ pub fn download_cell_dataset_if_needed(envelope_bytes: Vec<u8>) -> Result<Downlo
         .context("parsing cell envelope for dataset download")?;
     if cellular_file_dataset_path(&envelope).is_none() {
         // synthetic / inline-records / public — nothing to ship. A `file`/`path` graph
-        // trace (dag_jsonl / weka_trace / dynamo_trace) IS shipped (the predicate is
+        // graph trace path IS shipped (the predicate is
         // format-blind), whether its path is a single file, a directory of shards, or a
         // segmented-prefix — the controller's manifest carries the whole file set.
         return Ok(DownloadedCellEnvelope::unchanged(envelope_bytes));
@@ -1508,7 +1509,7 @@ mod tests {
             Some(std::path::PathBuf::from("/data/prompts.jsonl"))
         );
 
-        for graph_format in ["dag_jsonl", "weka_trace", "dynamo_trace"] {
+        for graph_format in ["dag_jsonl", "weka_trace", "dynamo_trace", "tracelab"] {
             let graph = serde_json::json!({"run": {"cfg": {"datasets": [
                 {"type": "file", "format": graph_format, "path": "/traces/graph.jsonl"}
             ]}}});

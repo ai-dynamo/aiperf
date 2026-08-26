@@ -319,8 +319,8 @@ pub enum RecordedTracePathKind {
 ///   files (see `load_weka_documents` / `load_aiperf_documents`);
 /// - `dynamo_trace`: a single file, a directory of `.jsonl`/`.jsonl.gz`, or a
 ///   segmented-prefix stem (see `discover_dynamo_segments`);
-/// - `dag_jsonl`: a single file ONLY — its loader (`load_raw_rows`) reads one file
-///   via `std::fs::read`, so a directory/prefix is unreadable and rejected here.
+/// - `dag_jsonl` / `tracelab`: a single file ONLY — their readers consume exactly
+///   one path, so a directory/prefix is unreadable and rejected here.
 ///
 /// Fails closed on a missing path, an empty directory, an unmatched prefix, or an
 /// unsupported format — the same errors the loader would raise, surfaced before
@@ -374,7 +374,7 @@ pub fn enumerate_recorded_trace_files(
             // a missing path / empty dir / unmatched prefix.
             Ok((kind, base_name, discover_dynamo_segments(path)?))
         }
-        "dag_jsonl" => {
+        "dag_jsonl" | "tracelab" => {
             if path.is_file() {
                 Ok((
                     RecordedTracePathKind::File,
@@ -383,7 +383,7 @@ pub fn enumerate_recorded_trace_files(
                 ))
             } else {
                 Err(RecordedTraceError(format!(
-                    "{}: dag_jsonl reads a single file; a directory or segmented-prefix path is \
+                    "{}: {format} reads a single file; a directory or segmented-prefix path is \
                      not supported",
                     path.display()
                 )))
@@ -593,7 +593,13 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("trace.jsonl");
         fs::write(&file, b"{}\n").unwrap();
-        for format in ["weka_trace", "aiperf_trace", "dynamo_trace", "dag_jsonl"] {
+        for format in [
+            "weka_trace",
+            "aiperf_trace",
+            "dynamo_trace",
+            "dag_jsonl",
+            "tracelab",
+        ] {
             let (kind, base, files) = enumerate_recorded_trace_files(format, &file).unwrap();
             assert_eq!(kind, RecordedTracePathKind::File, "{format}");
             assert_eq!(base, "trace.jsonl", "{format}");
@@ -657,13 +663,20 @@ mod tests {
     }
 
     #[test]
-    fn enumerate_rejects_dag_jsonl_directory_and_missing_paths() {
+    fn enumerate_rejects_single_file_directories_and_missing_paths() {
         let dir = tempfile::tempdir().unwrap();
-        // dag_jsonl cannot read a directory (single-file loader): must fail closed.
-        assert!(enumerate_recorded_trace_files("dag_jsonl", dir.path()).is_err());
+        for format in ["dag_jsonl", "tracelab"] {
+            assert!(enumerate_recorded_trace_files(format, dir.path()).is_err());
+        }
         // A missing path fails closed for every format.
         let missing = dir.path().join("nope");
-        for format in ["weka_trace", "aiperf_trace", "dynamo_trace", "dag_jsonl"] {
+        for format in [
+            "weka_trace",
+            "aiperf_trace",
+            "dynamo_trace",
+            "dag_jsonl",
+            "tracelab",
+        ] {
             assert!(
                 enumerate_recorded_trace_files(format, &missing).is_err(),
                 "{format} missing path must fail closed"

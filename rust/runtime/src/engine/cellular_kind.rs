@@ -5,10 +5,11 @@
 
 use serde_json::Value;
 
-/// Whether the run targets a graph program (`dag_jsonl` / `weka_trace` /
-/// `dynamo_trace` / `otlp_genai`), as opposed to a scheduled synthetic/linear dataset. Graph
-/// programs partition cleanly by whole trace, so they take the concatenation merge
-/// and bypass the scheduled request-budget guards.
+/// Whether the run targets a graph program (`dag_jsonl`, recorded traces such as
+/// `weka_trace`/`tracelab`, or another registered graph format), as opposed to a
+/// scheduled synthetic/linear dataset. Graph programs partition cleanly by whole
+/// trace, so they take the concatenation merge and bypass scheduled request-budget
+/// guards.
 pub(crate) fn is_graph_dataset(envelope: &Value) -> bool {
     envelope
         .pointer("/run/cfg/datasets")
@@ -25,6 +26,7 @@ pub(crate) fn is_graph_dataset_value(dataset: &Value) -> bool {
                 | "conditional_graph"
                 | "weka_trace"
                 | "dynamo_trace"
+                | "tracelab"
                 | "agent_recording"
                 | "otlp_genai"
         )
@@ -37,8 +39,7 @@ pub enum CellularRunKind {
     /// Synthetic/linear scheduled runs: request-bounded phases, pre-tiled global
     /// dispatch ordinals, byte-exact global-order merge.
     Scheduled,
-    /// Graph programs (dag_jsonl/weka_trace/dynamo_trace): trace-partitioned,
-    /// concatenation-merged.
+    /// Graph programs: trace-partitioned, concatenation-merged.
     Graph,
 }
 
@@ -99,12 +100,16 @@ mod tests {
         let recorded_agent = json!({"run": {"cfg": {"datasets": [
             {"type": "file", "format": "agent_recording", "path": "/manifest.json"}
         ]}}});
+        let tracelab = json!({"run": {"cfg": {"datasets": [
+            {"type": "file", "format": "tracelab", "path": "/trace.jsonl.gz"}
+        ]}}});
         let scheduled = json!({"run": {"cfg": {"datasets": [{"type": "synthetic"}]}}});
         assert_eq!(CellularRunKind::detect(&graph), CellularRunKind::Graph);
         assert_eq!(
             CellularRunKind::detect(&recorded_agent),
             CellularRunKind::Graph
         );
+        assert_eq!(CellularRunKind::detect(&tracelab), CellularRunKind::Graph);
         assert_eq!(
             CellularRunKind::detect(&scheduled),
             CellularRunKind::Scheduled

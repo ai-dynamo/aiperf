@@ -2368,6 +2368,67 @@ mod tests {
     }
 
     #[test]
+    fn tracelab_file_projects_native_graph_workload_and_block_size() {
+        run_on_big_stack(|| {
+            let flags = parse(&[
+                "-m",
+                "mock-model",
+                "--endpoint-type",
+                "chat",
+                "--dry-run",
+                "--input-file",
+                "/tmp/tracelab.jsonl.gz",
+                "--custom-dataset-type",
+                "tracelab",
+                "--isl-block-size",
+                "128",
+            ]);
+            let run = super::resolve(&flags).expect("TraceLab CLI config resolves");
+            assert_eq!(
+                aiperf_runtime::config::model::workload_kind(&run.cfg).workload_id(),
+                "graph"
+            );
+            let dataset = serde_json::to_value(
+                run.cfg
+                    .datasets
+                    .as_ref()
+                    .and_then(|datasets| datasets.first())
+                    .expect("resolved TraceLab dataset"),
+            )
+            .expect("serialize TraceLab dataset");
+            assert_eq!(dataset["format"], "tracelab");
+            assert_eq!(dataset["options"]["block_size"], 128);
+        });
+    }
+
+    #[test]
+    fn tracelab_file_defaults_to_sixty_four_token_blocks() {
+        run_on_big_stack(|| {
+            let flags = parse(&[
+                "-m",
+                "mock-model",
+                "--endpoint-type",
+                "chat",
+                "--dry-run",
+                "--input-file",
+                "/tmp/tracelab.jsonl",
+                "--custom-dataset-type",
+                "tracelab",
+            ]);
+            let run = super::resolve(&flags).expect("TraceLab CLI config resolves");
+            let dataset = serde_json::to_value(
+                run.cfg
+                    .datasets
+                    .as_ref()
+                    .and_then(|datasets| datasets.first())
+                    .expect("resolved TraceLab dataset"),
+            )
+            .expect("serialize TraceLab dataset");
+            assert_eq!(dataset["options"]["block_size"], 64);
+        });
+    }
+
+    #[test]
     fn allow_dataset_wrap_projects_into_synthesis() {
         run_on_big_stack(|| {
             let flags = parse(&[

@@ -2094,8 +2094,8 @@ fn build_cell_envelope(
 /// `sharegpt` (`public.rs` ~:297-318), `hf_conversation` (`public.rs` ~:405 `multi_turn`
 /// option), `mt_bench`. Unverified turn semantics (`mmvu`, `spec_bench`, `speed_bench`,
 /// `hf_asr`, `random_pool`, `exgentic`, `exgentic_v2`, `synthetic_rankings`) are rejected
-/// conservatively. The graph formats (`dag_jsonl`/`weka_trace`/`dynamo_trace`) never reach
-/// this list — they short-circuit to the whole-trace partition above.
+/// conservatively. Graph formats never reach this list — they short-circuit to
+/// the whole-trace partition above.
 const CELLULAR_SINGLE_TURN_FILE_FORMATS: [&str; 4] = [
     "single_turn",
     "raw_payload",
@@ -2273,9 +2273,8 @@ fn validate_cellular_run_shape(envelope: &serde_json::Value) -> Result<()> {
         .and_then(serde_json::Value::as_array)
         .context("run cfg has no datasets array")?;
     for dataset in datasets {
-        // Graph programs (dag_jsonl / weka_trace / dynamo_trace / agent_recording) partition by whole
-        // trace via PartitionedGraphTraceSource, so they bypass the scheduled
-        // synthetic/single-turn requirement.
+        // Graph programs partition by whole trace via PartitionedGraphTraceSource,
+        // so they bypass the scheduled synthetic/single-turn requirement.
         if crate::engine::cellular_kind::is_graph_dataset_value(dataset) {
             continue;
         }
@@ -2365,7 +2364,7 @@ fn validate_cellular_run_shape(envelope: &serde_json::Value) -> Result<()> {
 /// [`DatasetManifest`](crate::engine::artifact_shipping::DatasetManifest)
 /// a cell fetches to reconstruct the tree and rewrite `datasets/0.path`.
 ///
-/// A graph trace (`dag_jsonl` / `weka_trace` / `dynamo_trace` / `aiperf_trace`) is
+/// A graph trace (for example `dag_jsonl`, `weka_trace`, or `tracelab`) is
 /// enumerated by the graph loader's OWN read set
 /// ([`enumerate_recorded_trace_files`](crate::graph::recorded::enumerate_recorded_trace_files)),
 /// so a DIRECTORY or SEGMENTED-PREFIX trace ships every shard the 1-cell run would
@@ -2406,6 +2405,7 @@ fn build_dataset_serve_plan(
                 | "weka_trace"
                 | "dynamo_trace"
                 | "aiperf_trace"
+                | "tracelab"
                 | "agent_recording"
         )
     );
@@ -3655,7 +3655,13 @@ mod tests {
 
     #[test]
     fn admits_graph_and_linear_file_datasets() {
-        for graph_format in ["dag_jsonl", "weka_trace", "dynamo_trace", "agent_recording"] {
+        for graph_format in [
+            "dag_jsonl",
+            "weka_trace",
+            "dynamo_trace",
+            "tracelab",
+            "agent_recording",
+        ] {
             let graph = serde_json::json!({"run": {"cfg": {
                 "transport": {"type": "http"},
                 "datasets": [{"type": "file", "format": graph_format}],

@@ -1082,6 +1082,9 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
                     "bailian_trace" => {
                         o.insert("block_size".to_string(), serde_json::json!(16));
                     }
+                    "tracelab" => {
+                        o.insert("block_size".to_string(), serde_json::json!(64));
+                    }
                     _ => {}
                 }
                 // Shared across DAG JSONL and baseten closed-loop think-times.

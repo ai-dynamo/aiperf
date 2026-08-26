@@ -15,7 +15,7 @@ use super::dataset::Dataset;
 /// Legacy public graph-input format inventory.
 ///
 /// This six-element array remains source-compatible for downstream extensions.
-/// The built-in resolver additionally supports `aiperf_trace`.
+/// The built-in resolver additionally supports `aiperf_trace` and `tracelab`.
 pub const GRAPH_FORMATS: [&str; 6] = [
     "dag_jsonl",
     "conditional_graph",
@@ -25,12 +25,13 @@ pub const GRAPH_FORMATS: [&str; 6] = [
     "otlp_genai",
 ];
 
-const BUILTIN_GRAPH_FORMATS: [&str; 7] = [
+const BUILTIN_GRAPH_FORMATS: [&str; 8] = [
     "dag_jsonl",
     "conditional_graph",
     "weka_trace",
     "dynamo_trace",
     "aiperf_trace",
+    "tracelab",
     "agent_recording",
     "otlp_genai",
 ];
@@ -201,6 +202,14 @@ mod tests {
     fn weka_trace_dataset_is_graph() {
         assert_eq!(
             workload_kind(&cfg_with(file_dataset("weka_trace"))),
+            WorkloadKind::Graph
+        );
+    }
+
+    #[test]
+    fn tracelab_dataset_is_graph() {
+        assert_eq!(
+            workload_kind(&cfg_with(file_dataset("tracelab"))),
             WorkloadKind::Graph
         );
     }
