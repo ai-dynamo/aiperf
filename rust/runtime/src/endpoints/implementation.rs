@@ -423,7 +423,7 @@ impl PreparedEndpointBehavior for ChatEndpoint {
         merge_extra(&mut payload, endpoint.extra.as_ref());
         merge_extra(&mut payload, last.extra_body.as_ref());
         if endpoint.streaming && endpoint.use_server_token_count {
-            ensure_include_usage(&mut payload);
+            ensure_include_usage(&mut payload, endpoint.per_chunk_usage);
         }
         build_reserved_plan(&payload, "messages", message_wires)
     }
@@ -655,7 +655,7 @@ impl PreparedEndpointBehavior for ResponsesEndpoint {
         merge_extra(&mut payload, endpoint.extra.as_ref());
         merge_extra(&mut payload, last.extra_body.as_ref());
         if endpoint.streaming && endpoint.use_server_token_count {
-            ensure_include_usage(&mut payload);
+            ensure_include_usage(&mut payload, false);
         }
         build_reserved_plan(&payload, "input", input_wires)
     }
@@ -1047,7 +1047,7 @@ impl PreparedEndpointBehavior for CompletionsEndpoint {
         merge_extra(&mut payload, endpoint.extra.as_ref());
         merge_extra(&mut payload, turn.extra_body.as_ref());
         if endpoint.streaming && endpoint.use_server_token_count {
-            ensure_include_usage(&mut payload);
+            ensure_include_usage(&mut payload, false);
         }
         Ok(BodyPlan::from_object(&payload)?)
     }
@@ -1575,15 +1575,26 @@ pub(crate) fn merge_extra(payload: &mut Map<String, Value>, extra: Option<&Map<S
         }
     }
 }
-fn ensure_include_usage(payload: &mut Map<String, Value>) {
+fn ensure_include_usage(payload: &mut Map<String, Value>, continuous: bool) {
     match payload.get_mut("stream_options") {
         Some(Value::Object(stream_options)) => {
             stream_options
                 .entry("include_usage")
                 .or_insert(Value::Bool(true));
+            if continuous {
+                stream_options
+                    .entry("continuous_usage_stats")
+                    .or_insert(Value::Bool(true));
+            }
         }
-        Some(_) | None => {
-            payload.insert("stream_options".into(), json!({"include_usage": true}));
+        Some(_) => {}
+        None => {
+            let mut stream_options =
+                Map::from_iter([("include_usage".to_owned(), Value::Bool(true))]);
+            if continuous {
+                stream_options.insert("continuous_usage_stats".to_owned(), Value::Bool(true));
+            }
+            payload.insert("stream_options".into(), Value::Object(stream_options));
         }
     }
 }
