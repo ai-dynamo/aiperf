@@ -37,6 +37,7 @@ use crate::transport::core::{
 };
 use crate::transport::http::config::ClientConfig;
 use crate::transport::http::models::HttpVersion;
+use crate::transport::http::transport::headers::apply_default_session_affinity_header;
 use crate::transport::http::transport::http_transport::HttpTransport;
 use crate::transport::measure::{self, WorkerMeasurement};
 use serde_json::Value;
@@ -558,6 +559,10 @@ impl Dispatcher for TransportSink {
                 .headers
                 .insert("pragma".to_string(), "no-cache".to_string());
         }
+        apply_default_session_affinity_header(
+            &mut request.headers,
+            request.x_correlation_id.as_deref(),
+        );
         match endpoint {
             PreparedEndpointBinding::Prepared(reference) => {
                 let table = self.prepared_endpoints.as_ref().ok_or_else(|| {
@@ -843,6 +848,10 @@ impl TransportSink {
                 .headers
                 .insert("pragma".to_string(), "no-cache".to_string());
         }
+        apply_default_session_affinity_header(
+            &mut request.headers,
+            request.x_correlation_id.as_deref(),
+        );
         // Every product turn carries a prebuilt request body, so `PreparedTurn`
         // always reports endpoint_aware (see PreparedTurn::from_turn). The
         // non-endpoint-aware alternative this used to branch to was reachable

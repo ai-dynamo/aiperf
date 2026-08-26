@@ -23,13 +23,20 @@ has only three opt-in derived headers: `X-Session-ID`, `X-SMG-Routing-Key`, and
 the Dynamo session pair.  Thus a default request has no `X-Session-Affinity`;
 the Rust raw-parity control for #26 proves that absence and must change.
 
+Native profiles do not send through `HttpTransport::build_headers`: their
+worker-local endpoint path materializes caller headers and lowers
+`HttpEndpointRequest` through `prepare_request`. The default policy therefore
+must be shared at that preparation boundary too; changing only the facade would
+leave profile traffic with a caller-provided stale affinity value on the wire.
+
 No mock-server behavior is required: this is an outbound-client header and the
 existing mock's captured raw request records are the product observation seam.
 
 ## Required native port
 
-1. Add a default-on `X-Session-Affinity` argument to the pure header composer
-   and send it after caller headers whenever a correlation ID exists.
+1. Add a default-on `X-Session-Affinity` policy to the pure header composer and
+   native endpoint preparation, sending it after caller headers whenever a
+   correlation ID exists.
 2. Strip caller-provided affinity-header variants case-insensitively before
    inserting the canonical name/value.  Preserve custom `--session-header`
    behavior: it may rename the correlation header, but does not suppress the

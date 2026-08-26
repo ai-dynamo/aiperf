@@ -9,12 +9,13 @@ Define the native HTTP transport contract for the default additive
 
 Every HTTP request with `RequestConfig.correlation_id` emits the existing
 correlation header and a canonical `X-Session-Affinity` header whose value is
-that correlation ID.  The rule is default-on, carries no environment toggle,
-and applies to streaming, ordinary, and bounded streaming transport paths
-because they all call one pure `build_headers` function.
+that correlation ID. The rule is default-on, carries no environment toggle, and
+applies to direct transport plus native endpoint preparation for streaming,
+ordinary, and bounded streaming transport paths without changing their
+endpoint/URL/body behavior.
 
 Derived affinity headers are applied after endpoint and authored request
-headers.  Before insertion the composer removes every existing
+headers. Before insertion the shared policy removes every existing
 `X-Session-Affinity` spelling case-insensitively, preventing a stale or
 conflicting value from reaching the wire.  A request without a correlation ID
 does not invent an affinity identity.
@@ -34,6 +35,7 @@ already records incoming request headers verbatim.
 ## Source anchors
 
 - `rust/runtime/src/transport/http/transport/headers.rs`
+- `rust/runtime/src/transport/http/transport/endpoint_binding.rs`
 - `rust/runtime/src/transport/http/transport/http_transport.rs`
 - `rust/e2e-tests/tests/test_port_raw_parity.rs`
 - `docs/benchmark-modes/trace-replay.md`

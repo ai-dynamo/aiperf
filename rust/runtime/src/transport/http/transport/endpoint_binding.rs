@@ -28,6 +28,9 @@ use crate::transport::http::models::RequestConfig;
 use crate::transport::http::transport::body::{
     JsonBodyEncoder, MultipartBodyEncoder, RequestBodyEncoder,
 };
+use crate::transport::http::transport::headers::apply_default_session_affinity_header;
+#[cfg(test)]
+use crate::transport::http::transport::headers::build_headers;
 use crate::transport::http::transport::http_transport::HttpTransport;
 use crate::transport::http::transport::polling::{
     JsonVideoPollingProtocol, PollingOptions, submit_and_poll,
@@ -347,6 +350,7 @@ where
         url_index,
         reuse,
     } = request;
+    apply_default_session_affinity_header(&mut headers, correlation_id.as_deref());
     let policy = binding.request_policy(endpoint_path.as_deref(), streaming, url_index)?;
     // Media is resolved to its final wire form during dataset generation: local
     // files are encoded to `data:` URLs, and remote HTTP(S) URLs are either sent
@@ -760,6 +764,53 @@ mod tests {
         assert!(
             request.request_config.headers["Content-Type"]
                 .starts_with("multipart/form-data; boundary=")
+        );
+    }
+
+    #[tokio::test]
+    async fn direct_and_prepared_requests_converge_on_authoritative_session_affinity() {
+        let base_urls = vec!["http://host/v1".to_string()];
+        let chat = prepared("chat");
+        let binding =
+            MetadataHttpEndpointBinding::from_prepared(chat.as_ref(), &base_urls, "fixture-model");
+        let direct_config = RequestConfig::new("http://host/v1/chat/completions")
+            .correlation_id("session-1")
+            .header("x-session-affinity", "stale-lowercase")
+            .header("X-Session-Affinity", "stale-canonical");
+        let mut request =
+            endpoint_request(Bytes::from_static(br#"{\"model\":\"m\",\"messages\":[]}"#));
+        request.correlation_id = direct_config.correlation_id.clone();
+        request.headers = direct_config.headers.clone();
+
+        let direct = build_headers(
+            &direct_config,
+            false,
+            None,
+            "aiperf/test",
+            false,
+            false,
+            false,
+        );
+        let prepared = prepare_request(&binding, request).await.unwrap();
+        assert_eq!(
+            direct.get("X-Session-Affinity").map(String::as_str),
+            Some("session-1")
+        );
+        assert_eq!(
+            prepared
+                .request_config()
+                .headers
+                .get("X-Session-Affinity")
+                .map(String::as_str),
+            Some("session-1")
+        );
+        assert!(
+            prepared
+                .request_config()
+                .headers
+                .keys()
+                .all(|name| !name.eq_ignore_ascii_case("x-session-affinity")
+                    || name == "X-Session-Affinity")
         );
     }
 }

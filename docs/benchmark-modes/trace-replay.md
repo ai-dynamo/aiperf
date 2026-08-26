@@ -109,6 +109,9 @@ aiperf profile \
 
 AIPerf refuses parameter sweeps (e.g. `--concurrency 1,2,4`) against an auto-promoted trace; either pin a single value or pass `--no-fixed-schedule` to keep your sweep semantics.
 
+AIPerf sends the stable replay-session ID in both `X-Correlation-ID` and
+`X-Session-Affinity` so session-based traffic can be routed consistently.
+
 ## Using Pre-formatted Messages
 
 Instead of synthetic prompts generated from `input_length` and `hash_ids`, you can provide an OpenAI-compatible `messages` array directly per trace entry. This is useful for replaying captured conversations (e.g., coding agent sessions) with exact prompt content.
