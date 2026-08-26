@@ -61,7 +61,7 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
     };
 
     if parsed.list {
-        list_templates();
+        crate::config::list_templates(None);
         return Ok(0);
     }
 
@@ -82,7 +82,7 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
             anyhow::anyhow!("unknown template {template_name:?}; run 'aiperf kube init --list'")
         })?;
 
-    let config_content = strip_spdx_header(template.content);
+    let config_content = crate::config::strip_spdx_header(template.content);
     let capabilities_content = format_capabilities();
 
     // Check existence before creating directories so a refused overwrite
@@ -132,41 +132,5 @@ fn format_capabilities() -> String {
     // serde_json::to_string_pretty cannot fail on a literal Value constructed above.
     let mut out = serde_json::to_string_pretty(&doc).expect("serialising a static JSON value");
     out.push('\n');
-    out
-}
-
-/// Print available templates grouped by category, matching `aiperf config init --list`.
-fn list_templates() {
-    let mut cats: std::collections::BTreeMap<&str, Vec<&crate::config::templates_data::Template>> =
-        std::collections::BTreeMap::new();
-    for t in TEMPLATES {
-        cats.entry(t.category).or_default().push(t);
-    }
-    for (cat, items) in cats {
-        println!("\n{cat}");
-        for t in items {
-            println!("  {:<28} {}", t.name, t.title);
-            println!("  {:<28} {}", "", t.description);
-        }
-    }
-    println!();
-}
-
-/// Remove leading SPDX and `yaml-language-server:` comment lines from template content.
-fn strip_spdx_header(content: &str) -> String {
-    let mut lines = content.lines().peekable();
-    while let Some(line) = lines.peek() {
-        let trimmed = line.trim_start();
-        if trimmed.starts_with("# SPDX-") || trimmed.starts_with("# yaml-language-server:") {
-            lines.next();
-        } else {
-            break;
-        }
-    }
-    let rest: Vec<&str> = lines.collect();
-    let mut out = rest.join("\n");
-    if content.ends_with('\n') {
-        out.push('\n');
-    }
     out
 }
