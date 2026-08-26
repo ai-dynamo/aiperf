@@ -116,6 +116,17 @@ class AIPerfJobConfig:
     that also has GPU nodes with a ``kubernetes.io/arch=arm64`` taint.
     """
 
+    tolerations: list[dict] = field(default_factory=list)
+    """Kubernetes tolerations for benchmark pods.
+
+    Example for a cluster with GPU/arch taints::
+
+        [
+            {"key": "nvidia.com/gpu", "operator": "Exists", "effect": "NoSchedule"},
+            {"key": "kubernetes.io/arch", "operator": "Exists", "effect": "NoSchedule"},
+        ]
+    """
+
     connections_per_worker: int | None = None
     """Override for connections per worker, or None for default."""
 
@@ -237,6 +248,8 @@ class AIPerfJobConfig:
             ]
         if self.node_selector:
             pod_template["nodeSelector"] = self.node_selector
+        if self.tolerations:
+            pod_template["tolerations"] = self.tolerations
         if pod_template:
             spec["podTemplate"] = pod_template
 

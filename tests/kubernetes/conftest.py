@@ -141,6 +141,12 @@ class K8sTestSettings:
     benchmark pods land on CPU nodes rather than GPU nodes with taints.
     """
 
+    tolerate_gpu_nodes: bool = False
+    """When True, add tolerations for nvidia.com/gpu=present:NoSchedule and
+    kubernetes.io/arch=arm64:NoSchedule so benchmark pods can run on GPU nodes.
+    Auto-enabled when kube_context is set and CPU nodes have insufficient capacity.
+    """
+
     @property
     def cluster_runtime(self) -> ClusterRuntime:
         """Get the cluster runtime enum value."""
@@ -178,6 +184,7 @@ _OPTIONS: list[tuple[str, str, str | None, str, str]] = [
     ("--k8s-image-pull-secret", "K8S_TEST_IMAGE_PULL_SECRET", None, "str", "imagePullSecret name for benchmark and mock-server pods"),
     ("--k8s-image-pull-policy", "K8S_TEST_IMAGE_PULL_POLICY", "Never", "str", "Image pull policy for benchmark pods (Never, IfNotPresent, Always)"),
     ("--k8s-job-node-selector", "K8S_TEST_JOB_NODE_SELECTOR", None, "str", "Comma-separated key=value node selector for benchmark pods (e.g. kubernetes.io/arch=amd64)"),
+    ("--k8s-tolerate-gpu-nodes", "K8S_TEST_TOLERATE_GPU_NODES", None, "bool", "Add tolerations for GPU node taints (nvidia.com/gpu, kubernetes.io/arch=arm64) so pods can run on GPU nodes"),
 ]  # fmt: skip
 
 
@@ -263,10 +270,9 @@ def _resolve_settings(config: pytest.Config) -> K8sTestSettings:
                 resolved[key] = True
         if resolved.get("cluster") is None:
             resolved["cluster"] = resolved["kube_context"]
-        # Default to CPU nodes on remote clusters (GPU nodes have arch=arm64 taints)
-        if resolved.get("job_node_selector") is None:
-            resolved["job_node_selector"] = "kubernetes.io/arch=amd64"
-
+        # Allow pods to run on GPU nodes (which have NoSchedule taints on remote clusters)
+        if not resolved.get("tolerate_gpu_nodes"):
+            resolved["tolerate_gpu_nodes"] = True
     # Use stable name when reusing, random name otherwise
     if resolved.get("cluster") is None:
         if resolved.get("reuse_cluster"):
@@ -286,6 +292,7 @@ def _resolve_settings(config: pytest.Config) -> K8sTestSettings:
         "skip_preflight",
         "stream_logs",
         "skip_operator_deploy",
+        "tolerate_gpu_nodes",
     ):
         if resolved.get(key) is None:
             resolved[key] = False
@@ -1113,6 +1120,14 @@ def _parse_node_selector(raw: str | None) -> dict[str, str]:
     return result
 
 
+def _gpu_node_tolerations() -> list[dict]:
+    """Return tolerations that allow pods to run on GPU nodes with standard cloud taints."""
+    return [
+        {"key": "nvidia.com/gpu", "operator": "Exists", "effect": "NoSchedule"},
+        {"key": "kubernetes.io/arch", "operator": "Exists", "effect": "NoSchedule"},
+    ]
+
+
 async def _copy_pull_secret_to_namespace(
     kubectl: KubectlClient, secret_name: str, target_namespace: str
 ) -> None:
@@ -1169,6 +1184,7 @@ def _render_mock_server_manifest(
     pull_policy: str = "Never",
     pull_secret: str | None = None,
     node_selector: dict[str, str] | None = None,
+    tolerations: list[dict] | None = None,
 ) -> str:
     """Render the configured mock-server image into its static test manifest."""
     if any(character.isspace() for character in image):
@@ -1197,6 +1213,22 @@ def _render_mock_server_manifest(
         manifest = manifest.replace(
             "      containers:\n",
             f"{ns_lines}      containers:\n",
+            1,
+        )
+    if tolerations:
+        tol_lines = "      tolerations:\n"
+        for t in tolerations:
+            tol_lines += "        - "
+            first = True
+            for k, v in t.items():
+                if first:
+                    tol_lines += f"{k}: {v}\n"
+                    first = False
+                else:
+                    tol_lines += f"          {k}: {v}\n"
+        manifest = manifest.replace(
+            "      containers:\n",
+            f"{tol_lines}      containers:\n",
             1,
         )
     return manifest
@@ -1276,6 +1308,11 @@ async def mock_server(
                     pull_policy=k8s_settings.image_pull_policy,
                     pull_secret=k8s_settings.image_pull_secret,
                     node_selector=_parse_node_selector(k8s_settings.job_node_selector),
+                    tolerations=(
+                        _gpu_node_tolerations()
+                        if k8s_settings.tolerate_gpu_nodes
+                        else None
+                    ),
                 )
 
                 await kubectl.apply(manifest)
@@ -1693,6 +1730,7 @@ def small_operator_config(k8s_settings: K8sTestSettings) -> AIPerfJobConfig:
         if k8s_settings.image_pull_secret
         else [],
         node_selector=_parse_node_selector(k8s_settings.job_node_selector),
+        tolerations=_gpu_node_tolerations() if k8s_settings.tolerate_gpu_nodes else [],
     )
 
 
@@ -1709,6 +1747,7 @@ def large_operator_config(k8s_settings: K8sTestSettings) -> AIPerfJobConfig:
         if k8s_settings.image_pull_secret
         else [],
         node_selector=_parse_node_selector(k8s_settings.job_node_selector),
+        tolerations=_gpu_node_tolerations() if k8s_settings.tolerate_gpu_nodes else [],
     )
 
 
@@ -1746,6 +1785,7 @@ def small_operator_config_module(k8s_settings: K8sTestSettings) -> AIPerfJobConf
         if k8s_settings.image_pull_secret
         else [],
         node_selector=_parse_node_selector(k8s_settings.job_node_selector),
+        tolerations=_gpu_node_tolerations() if k8s_settings.tolerate_gpu_nodes else [],
     )
 
 
