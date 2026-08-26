@@ -35,6 +35,18 @@ def make_dsp_kernel(d: int, batch_shape: torch.Size | None = None) -> ScaleKerne
     lengthscale -- the form verified by Hvarfner et al. 2024 section 3.3.
     The output-scale prior is the BoTorch default ``Gamma(2, 0.15)``,
     which is well-behaved for objectives normalized via ``Standardize``.
+
+    ``batch_shape`` must match the batch shape of the model this kernel is
+    handed to. A ``SingleTaskGP`` built over an ``m``-column train_y is a
+    batched multi-output model with ``batch_shape == Size([m])``, and every
+    kernel parameter has to carry that leading dimension. Omitting it
+    produces a kernel whose parameters are size 1, and the fit dies inside
+    BoTorch's scipy path with ``shape '[m, 1]' is invalid for input of size
+    1`` -- which is where constrained qLogNEI lands, because the constrained
+    path cat-stacks the objective with one column per SLA filter and one per
+    outcome constraint. ``None`` (the default) is equivalent to ``Size([])``
+    and leaves the kernel unbatched; gpytorch's ``Kernel.__init__`` does that
+    normalization itself.
     """
     import torch
     from gpytorch.kernels import MaternKernel, ScaleKernel
