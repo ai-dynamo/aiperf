@@ -113,10 +113,16 @@ impl HashIdMinter {
         Self { next: 1 }
     }
 
-    fn take(&mut self, count: usize) -> Vec<i64> {
+    fn take(&mut self, count: usize) -> Result<Vec<i64>, RecordedTraceError> {
+        let count = i64::try_from(count).map_err(|_| {
+            RecordedTraceError("TraceLab hash-id count exceeds the signed identifier space".into())
+        })?;
         let first = self.next;
-        self.next = self.next.saturating_add(count as i64);
-        (0..count).map(|offset| first + offset as i64).collect()
+        let end = first
+            .checked_add(count)
+            .ok_or_else(|| RecordedTraceError("TraceLab hash-id namespace is exhausted".into()))?;
+        self.next = end;
+        Ok((first..end).collect())
     }
 }
 
@@ -223,7 +229,7 @@ fn convert_rows(
         ));
     }
     let links = if options.is_subagent_join_enabled {
-        build_join_index(&sessions, options)
+        build_join_index(&sessions, options)?
     } else {
         HashMap::new()
     };
@@ -269,14 +275,17 @@ fn convert_rows(
                     .map(|rows| (spawn, *rows))
             })
             .collect::<Vec<_>>();
-        if let Some(trace) = build_trace(session, &child_rows, options.block_size, &mut placed)? {
+        if let Some(trace) = build_trace(session, &child_rows, options.block_size, &mut placed)
+            .map_err(|error| session_conversion_error(&session.id, error))?
+        {
             insert_trace(trace, &mut trace_ids, &mut traces)?;
         }
     }
     for session in &sessions {
         if nested.contains(session.id.as_str())
             && !placed.contains(session.id.as_str())
-            && let Some(trace) = build_trace(session, &[], options.block_size, &mut placed)?
+            && let Some(trace) = build_trace(session, &[], options.block_size, &mut placed)
+                .map_err(|error| session_conversion_error(&session.id, error))?
         {
             insert_trace(trace, &mut trace_ids, &mut traces)?;
         }
@@ -287,6 +296,12 @@ fn convert_rows(
         ));
     }
     Ok(traces)
+}
+
+fn session_conversion_error(session_id: &str, error: RecordedTraceError) -> RecordedTraceError {
+    RecordedTraceError(format!(
+        "converting TraceLab session {session_id:?}: {error}"
+    ))
 }
 
 fn insert_trace(
@@ -452,10 +467,18 @@ fn identity(session: &Session) -> (Option<&str>, Option<&str>) {
     )
 }
 
-fn build_join_index(sessions: &[Session], options: TraceLabOptions) -> HashMap<String, Spawn> {
+fn build_join_index(
+    sessions: &[Session],
+    options: TraceLabOptions,
+) -> Result<HashMap<String, Spawn>, RecordedTraceError> {
     let mut spans = HashMap::<&str, (f64, f64)>::new();
     for session in sessions {
-        if let Ok(Some(span)) = session_span(&session.rows) {
+        if let Some(span) = session_span(&session.rows).map_err(|error| {
+            RecordedTraceError(format!(
+                "converting TraceLab session {:?}: {error}",
+                session.id
+            ))
+        })? {
             spans.insert(&session.id, span);
         }
     }
@@ -481,17 +504,21 @@ fn build_join_index(sessions: &[Session], options: TraceLabOptions) -> HashMap<S
             {
                 match tool.get("tool_name").and_then(Value::as_str) {
                     Some("spawn_agent") => {
-                        if let Some(value) = tool.get("emitted_at").and_then(Value::as_str)
-                            && let Ok(timestamp) = parse_timestamp(value)
-                        {
-                            spawns.push(timestamp);
+                        if let Some(value) = tool.get("emitted_at").and_then(Value::as_str) {
+                            spawns.push(
+                                parse_timestamp(value).map_err(|error| {
+                                    session_conversion_error(&session.id, error)
+                                })?,
+                            );
                         }
                     }
                     Some("wait_agent") => {
-                        if let Some(value) = tool.get("result_at").and_then(Value::as_str)
-                            && let Ok(timestamp) = parse_timestamp(value)
-                        {
-                            waits.push(timestamp);
+                        if let Some(value) = tool.get("result_at").and_then(Value::as_str) {
+                            waits.push(
+                                parse_timestamp(value).map_err(|error| {
+                                    session_conversion_error(&session.id, error)
+                                })?,
+                            );
                         }
                     }
                     _ => {}
@@ -525,21 +552,20 @@ fn build_join_index(sessions: &[Session], options: TraceLabOptions) -> HashMap<S
             if duration_ms < options.min_spawn_ms {
                 continue;
             }
-            let Some(start) = tool
-                .get("emitted_at")
-                .and_then(Value::as_str)
-                .and_then(|value| parse_timestamp(value).ok())
-            else {
+            let Some(start) = tool.get("emitted_at").and_then(Value::as_str) else {
                 continue;
             };
-            let Some(end) = tool
-                .get("result_at")
-                .and_then(Value::as_str)
-                .and_then(|value| parse_timestamp(value).ok())
-            else {
+            let Some(end) = tool.get("result_at").and_then(Value::as_str) else {
                 continue;
             };
-            windows.push((start, end, &session.id, duration_ms));
+            windows.push((
+                parse_timestamp(start)
+                    .map_err(|error| session_conversion_error(&session.id, error))?,
+                parse_timestamp(end)
+                    .map_err(|error| session_conversion_error(&session.id, error))?,
+                &session.id,
+                duration_ms,
+            ));
         }
     }
     let sessions_by_id = sessions
@@ -581,14 +607,14 @@ fn build_join_index(sessions: &[Session], options: TraceLabOptions) -> HashMap<S
             );
         }
     }
-    links
+    Ok(links)
 }
 
 fn hash_chains(
     rounds: &[TimedRound],
     block_size: usize,
     minter: &mut HashIdMinter,
-) -> Vec<Vec<i64>> {
+) -> Result<Vec<Vec<i64>>, RecordedTraceError> {
     let mut previous = Vec::new();
     rounds
         .iter()
@@ -597,19 +623,31 @@ fn hash_chains(
                 .row
                 .get("input_tokens_total")
                 .and_then(Value::as_u64)
-                .unwrap_or(0) as usize;
+                .map(usize::try_from)
+                .transpose()
+                .map_err(|_| {
+                    RecordedTraceError(
+                        "TraceLab input_tokens_total exceeds the platform integer range".into(),
+                    )
+                })?
+                .unwrap_or(0);
             let prefix = round
                 .row
                 .get("prefix_tokens")
                 .and_then(Value::as_u64)
                 .unwrap_or(0)
-                .min(total as u64) as usize;
+                .min(total as u64);
+            let prefix = usize::try_from(prefix).map_err(|_| {
+                RecordedTraceError(
+                    "TraceLab prefix_tokens exceeds the platform integer range".into(),
+                )
+            })?;
             let blocks = total / block_size;
             let reused = (prefix / block_size).min(previous.len()).min(blocks);
             let mut current = previous[..reused].to_vec();
-            current.extend(minter.take(blocks - reused));
+            current.extend(minter.take(blocks - reused)?);
             previous = current.clone();
-            current
+            Ok(current)
         })
         .collect()
 }
@@ -692,7 +730,7 @@ fn build_trace(
     };
     let base = first.submitted;
     let mut minter = HashIdMinter::new();
-    let hashes = hash_chains(&rounds, block_size, &mut minter);
+    let hashes = hash_chains(&rounds, block_size, &mut minter)?;
     let (mut requests, mut models) = build_requests(&rounds, hashes, base);
     let mut pending = HashMap::<usize, Vec<Value>>::new();
     let mut subagents = 0_usize;
@@ -701,7 +739,7 @@ fn build_trace(
         let Some(child_first) = child_rounds.first() else {
             continue;
         };
-        let child_hashes = hash_chains(&child_rounds, block_size, &mut minter);
+        let child_hashes = hash_chains(&child_rounds, block_size, &mut minter)?;
         let (mut inner, child_models) = build_requests(&child_rounds, child_hashes, base);
         let marker_time = spawn.start - base;
         for request in &mut inner {

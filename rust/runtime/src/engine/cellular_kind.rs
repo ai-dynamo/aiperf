@@ -25,6 +25,7 @@ pub(crate) fn is_graph_dataset_value(dataset: &Value) -> bool {
                 | "conditional_graph"
                 | "weka_trace"
                 | "dynamo_trace"
+                | "tracelab"
                 | "agent_recording"
                 | "otlp_genai"
         )
@@ -99,12 +100,16 @@ mod tests {
         let recorded_agent = json!({"run": {"cfg": {"datasets": [
             {"type": "file", "format": "agent_recording", "path": "/manifest.json"}
         ]}}});
+        let tracelab = json!({"run": {"cfg": {"datasets": [
+            {"type": "file", "format": "tracelab", "path": "/trace.jsonl.gz"}
+        ]}}});
         let scheduled = json!({"run": {"cfg": {"datasets": [{"type": "synthetic"}]}}});
         assert_eq!(CellularRunKind::detect(&graph), CellularRunKind::Graph);
         assert_eq!(
             CellularRunKind::detect(&recorded_agent),
             CellularRunKind::Graph
         );
+        assert_eq!(CellularRunKind::detect(&tracelab), CellularRunKind::Graph);
         assert_eq!(
             CellularRunKind::detect(&scheduled),
             CellularRunKind::Scheduled

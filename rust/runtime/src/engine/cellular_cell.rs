@@ -1508,7 +1508,7 @@ mod tests {
             Some(std::path::PathBuf::from("/data/prompts.jsonl"))
         );
 
-        for graph_format in ["dag_jsonl", "weka_trace", "dynamo_trace"] {
+        for graph_format in ["dag_jsonl", "weka_trace", "dynamo_trace", "tracelab"] {
             let graph = serde_json::json!({"run": {"cfg": {"datasets": [
                 {"type": "file", "format": graph_format, "path": "/traces/graph.jsonl"}
             ]}}});

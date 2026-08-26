@@ -2406,6 +2406,7 @@ fn build_dataset_serve_plan(
                 | "weka_trace"
                 | "dynamo_trace"
                 | "aiperf_trace"
+                | "tracelab"
                 | "agent_recording"
         )
     );
@@ -3655,7 +3656,13 @@ mod tests {
 
     #[test]
     fn admits_graph_and_linear_file_datasets() {
-        for graph_format in ["dag_jsonl", "weka_trace", "dynamo_trace", "agent_recording"] {
+        for graph_format in [
+            "dag_jsonl",
+            "weka_trace",
+            "dynamo_trace",
+            "tracelab",
+            "agent_recording",
+        ] {
             let graph = serde_json::json!({"run": {"cfg": {
                 "transport": {"type": "http"},
                 "datasets": [{"type": "file", "format": graph_format}],

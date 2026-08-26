@@ -26,7 +26,7 @@ use crate::graph::recorded::agent_recording::{
 };
 use crate::graph::recorded::{
     PromptCorpus, RecordedTraceInputConfig, compile_aiperf_trace_input, compile_dynamo_trace_input,
-    compile_weka_trace_input,
+    compile_tracelab_trace_input, compile_weka_trace_input,
 };
 use crate::graph::segment::SegmentPool;
 use crate::graph::supplement::PlannedReplayTraceInstance;
@@ -281,12 +281,13 @@ impl Default for BuiltinRunnerGraphInputAdapterResolver {
 impl BuiltinRunnerGraphInputAdapterResolver {
     /// Compose the built-in direct Graph-IR formats.
     pub fn new() -> Self {
-        let adapters: [Arc<dyn GraphInputAdapter>; 7] = [
+        let adapters: [Arc<dyn GraphInputAdapter>; 8] = [
             Arc::new(DagJsonlRunnerGraphInputAdapter),
             Arc::new(ConditionalGraphRunnerGraphInputAdapter),
             Arc::new(WekaTraceRunnerGraphInputAdapter),
             Arc::new(DynamoTraceRunnerGraphInputAdapter),
             Arc::new(AIPerfTraceRunnerGraphInputAdapter),
+            Arc::new(TraceLabRunnerGraphInputAdapter),
             Arc::new(RecordedAgentRunnerGraphInputAdapter),
             Arc::new(OtlpGenaiRunnerGraphInputAdapter),
         ];
@@ -675,6 +676,10 @@ pub struct DynamoTraceRunnerGraphInputAdapter;
 /// Built-in native `aiperf.trace.v1` recorded-trace adapter.
 #[derive(Debug)]
 pub struct AIPerfTraceRunnerGraphInputAdapter;
+
+/// Built-in native TraceLab recorded-trace adapter.
+#[derive(Debug)]
+pub struct TraceLabRunnerGraphInputAdapter;
 
 /// Built-in native Mini-SWE-Agent recording adapter.
 #[derive(Debug)]
@@ -1444,6 +1449,48 @@ impl WekaTraceRunnerGraphInputAdapter {
             .await
             .map_err(|error| anyhow!(error.to_string()))
             .context("loading and lowering native WEKA Graph-IR input")?;
+        finish_recorded_input(
+            bundle,
+            random_seed,
+            default_output_tokens,
+            allow_dataset_wrap,
+            t_star_window,
+            cache_bust_target,
+            self.format(),
+        )
+    }
+}
+
+#[async_trait(?Send)]
+impl GraphInputAdapter for TraceLabRunnerGraphInputAdapter {
+    fn format(&self) -> &'static str {
+        "tracelab"
+    }
+
+    async fn load(
+        &self,
+        raw: &RawValue,
+        context: &GraphInputContext<'_>,
+    ) -> Result<PreparedRunnerGraphInput> {
+        let input: RecordedDatasetInput =
+            decode_graph_input(raw).context("decoding direct TraceLab graph input")?;
+        let prepared = match input {
+            RecordedDatasetInput::File(input) => {
+                prepare_recorded_file(input, self.format(), context)?
+            }
+            RecordedDatasetInput::Public(input) => {
+                prepare_recorded_public(input, self.format(), context)?
+            }
+        };
+        let random_seed = prepared.random_seed;
+        let default_output_tokens = prepared.default_output_tokens;
+        let allow_dataset_wrap = prepared.allow_dataset_wrap;
+        let t_star_window = prepared.t_star_window;
+        let cache_bust_target = prepared.cache_bust_target;
+        let bundle = compile_tracelab_trace_input(prepared.input, context.tokenizer)
+            .await
+            .map_err(|error| anyhow!(error.to_string()))
+            .context("loading and lowering native TraceLab Graph-IR input")?;
         finish_recorded_input(
             bundle,
             random_seed,
@@ -2825,6 +2872,61 @@ mod tests {
         );
         assert_eq!(prepared.random_seed, Some(91));
         assert!(prepared.allow_dataset_wrap);
+    }
+
+    #[tokio::test]
+    async fn tracelab_adapter_compiles_native_rows_directly_to_graph_ir() {
+        let resolver = BuiltinRunnerGraphInputAdapterResolver::new();
+        let directory = tempfile::tempdir().expect("TraceLab fixture directory");
+        let path = directory.path().join("trace.jsonl.gz");
+        let row = json!({
+            "session_id": "session",
+            "round_index": 0,
+            "model": "model-a",
+            "input_tokens_total": 64,
+            "prefix_tokens": 0,
+            "newly_append_tokens": 64,
+            "output_tokens": 7,
+            "timing_events": [
+                {"timestamp": "2026-08-25T00:00:00Z", "event_type": "user_message"},
+                {"timestamp": "2026-08-25T00:00:00.025Z", "event_type": "text"}
+            ]
+        });
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        writeln!(encoder, "{row}").expect("encode TraceLab row");
+        fs::write(&path, encoder.finish().expect("finish TraceLab gzip"))
+            .expect("write TraceLab gzip fixture");
+        let input = raw(json!({
+            "type": "file",
+            "format": "tracelab",
+            "sampling": "sequential",
+            "path": path,
+            "options": {"block_size": 64}
+        }));
+
+        let prepared = resolver
+            .load(
+                &input,
+                &GraphInputContext {
+                    tokenizer: &TiktokenTokenizer::builtin(),
+                    run_random_seed: Some(42),
+                },
+            )
+            .await
+            .expect("native TraceLab graph input");
+        assert_eq!(prepared.bundle.metadata.format, "tracelab");
+        assert_eq!(prepared.bundle.metadata.root_count, 1);
+        assert_eq!(prepared.bundle.metadata.node_count, 1);
+        let node = prepared.bundle.programs[0].profiling.graph.nodes["session:0"]
+            .as_llm()
+            .expect("TraceLab row lowers to an LLM node");
+        assert_eq!(
+            node.request
+                .as_ref()
+                .and_then(|request| request.model.as_deref()),
+            Some("model-a")
+        );
+        assert_eq!(node.max_tokens, Some(7));
     }
 
     #[tokio::test]
