@@ -133,6 +133,14 @@ class K8sTestSettings:
     image_pull_policy: str = "Never"
     """Image pull policy for benchmark and mock-server pods."""
 
+    job_node_selector: str | None = None
+    """Comma-separated key=value node selector labels for AIPerfJob and mock-server pods.
+
+    Example: ``kubernetes.io/arch=amd64``.  When ``kube_context`` is set and
+    this is not specified, defaults to ``kubernetes.io/arch=amd64`` so that
+    benchmark pods land on CPU nodes rather than GPU nodes with taints.
+    """
+
     @property
     def cluster_runtime(self) -> ClusterRuntime:
         """Get the cluster runtime enum value."""
@@ -169,6 +177,7 @@ _OPTIONS: list[tuple[str, str, str | None, str, str]] = [
     ("--k8s-skip-operator-deploy", "K8S_TEST_SKIP_OPERATOR_DEPLOY", None, "bool", "Skip deploying the operator (use existing deployment)"),
     ("--k8s-image-pull-secret", "K8S_TEST_IMAGE_PULL_SECRET", None, "str", "imagePullSecret name for benchmark and mock-server pods"),
     ("--k8s-image-pull-policy", "K8S_TEST_IMAGE_PULL_POLICY", "Never", "str", "Image pull policy for benchmark pods (Never, IfNotPresent, Always)"),
+    ("--k8s-job-node-selector", "K8S_TEST_JOB_NODE_SELECTOR", None, "str", "Comma-separated key=value node selector for benchmark pods (e.g. kubernetes.io/arch=amd64)"),
 ]  # fmt: skip
 
 
@@ -254,6 +263,9 @@ def _resolve_settings(config: pytest.Config) -> K8sTestSettings:
                 resolved[key] = True
         if resolved.get("cluster") is None:
             resolved["cluster"] = resolved["kube_context"]
+        # Default to CPU nodes on remote clusters (GPU nodes have arch=arm64 taints)
+        if resolved.get("job_node_selector") is None:
+            resolved["job_node_selector"] = "kubernetes.io/arch=amd64"
 
     # Use stable name when reusing, random name otherwise
     if resolved.get("cluster") is None:
@@ -1088,11 +1100,25 @@ async def _ensure_jobset_controller_ready(kubectl: KubectlClient) -> None:
         raise RuntimeError("JobSet controller did not become available after restart")
 
 
+def _parse_node_selector(raw: str | None) -> dict[str, str]:
+    """Parse ``key=value[,key=value]`` node-selector string into a dict."""
+    if not raw:
+        return {}
+    result: dict[str, str] = {}
+    for pair in raw.split(","):
+        pair = pair.strip()
+        if "=" in pair:
+            k, _, v = pair.partition("=")
+            result[k.strip()] = v.strip()
+    return result
+
+
 def _render_mock_server_manifest(
     template: str,
     image: str,
     pull_policy: str = "Never",
     pull_secret: str | None = None,
+    node_selector: dict[str, str] | None = None,
 ) -> str:
     """Render the configured mock-server image into its static test manifest."""
     if any(character.isspace() for character in image):
@@ -1112,6 +1138,15 @@ def _render_mock_server_manifest(
         manifest = manifest.replace(
             "      containers:\n",
             f"{secret_block}      containers:\n",
+            1,
+        )
+    if node_selector:
+        ns_lines = "      nodeSelector:\n"
+        for k, v in node_selector.items():
+            ns_lines += f"        {k}: {v}\n"
+        manifest = manifest.replace(
+            "      containers:\n",
+            f"{ns_lines}      containers:\n",
             1,
         )
     return manifest
@@ -1185,6 +1220,7 @@ async def mock_server(
                     k8s_settings.mock_server_image,
                     pull_policy=k8s_settings.image_pull_policy,
                     pull_secret=k8s_settings.image_pull_secret,
+                    node_selector=_parse_node_selector(k8s_settings.job_node_selector),
                 )
 
                 await kubectl.apply(manifest)
@@ -1595,6 +1631,7 @@ def small_operator_config(k8s_settings: K8sTestSettings) -> AIPerfJobConfig:
         image_pull_secrets=[k8s_settings.image_pull_secret]
         if k8s_settings.image_pull_secret
         else [],
+        node_selector=_parse_node_selector(k8s_settings.job_node_selector),
     )
 
 
@@ -1610,6 +1647,7 @@ def large_operator_config(k8s_settings: K8sTestSettings) -> AIPerfJobConfig:
         image_pull_secrets=[k8s_settings.image_pull_secret]
         if k8s_settings.image_pull_secret
         else [],
+        node_selector=_parse_node_selector(k8s_settings.job_node_selector),
     )
 
 
@@ -1646,6 +1684,7 @@ def small_operator_config_module(k8s_settings: K8sTestSettings) -> AIPerfJobConf
         image_pull_secrets=[k8s_settings.image_pull_secret]
         if k8s_settings.image_pull_secret
         else [],
+        node_selector=_parse_node_selector(k8s_settings.job_node_selector),
     )
 
 

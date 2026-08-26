@@ -109,6 +109,13 @@ class AIPerfJobConfig:
     image_pull_secrets: list[str] = field(default_factory=list)
     """Image pull secret names (K8s LocalObjectReference) for benchmark pods."""
 
+    node_selector: dict[str, str] = field(default_factory=dict)
+    """Node selector labels to pin benchmark pods to specific node pools.
+
+    Example: ``{"kubernetes.io/arch": "amd64"}`` targets CPU nodes on a cluster
+    that also has GPU nodes with a ``kubernetes.io/arch=arm64`` taint.
+    """
+
     connections_per_worker: int | None = None
     """Override for connections per worker, or None for default."""
 
@@ -223,10 +230,15 @@ class AIPerfJobConfig:
                 scheduling["priorityClass"] = self.priority_class
             spec["scheduling"] = scheduling
 
+        pod_template: dict[str, Any] = {}
         if self.image_pull_secrets:
-            spec["podTemplate"] = {
-                "imagePullSecrets": [{"name": s} for s in self.image_pull_secrets]
-            }
+            pod_template["imagePullSecrets"] = [
+                {"name": s} for s in self.image_pull_secrets
+            ]
+        if self.node_selector:
+            pod_template["nodeSelector"] = self.node_selector
+        if pod_template:
+            spec["podTemplate"] = pod_template
 
         cr = {
             "apiVersion": "aiperf.nvidia.com/v1alpha1",
