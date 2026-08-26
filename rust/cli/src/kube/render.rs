@@ -121,6 +121,19 @@ mod tests {
     }
 
     #[test]
+    fn text_rendering_summarizes_retained_result_index_items() {
+        let body = br#"{"items":[
+            {"metadata":{"name":"run-1","namespace":"bench"},"jobId":"job-1","ready":true,"artifactCount":3,"created":1700000000.0},
+            {"metadata":{"name":"run-2","namespace":"bench"},"jobId":"job-2","ready":false,"artifactCount":0,"created":1700000001.0}
+        ]}"#;
+        let rendered = render(OutputFormat::Text, body).expect("render");
+        assert_eq!(
+            rendered,
+            "bench/run-1\tjob-1\tReady\t3 artifact(s)\nbench/run-2\tjob-2\tPending\t0 artifact(s)"
+        );
+    }
+
+    #[test]
     fn json_rendering_preserves_the_exact_document() {
         let body = br#"{"metadata":{"name":"job-1"}}"#;
         let rendered = render(OutputFormat::Json, body).expect("render");

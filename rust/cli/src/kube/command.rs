@@ -934,17 +934,15 @@ mod tests {
     }
 
     #[test]
-    fn commands_without_shipped_custom_resources_refuse_before_cluster_access() {
-        // `sweep` has been removed from the refusal list in Task 10.
-        for command in ["index"] {
-            let error = run(&[command.to_string()]).expect_err("unsupported command");
-            assert_eq!(
-                error.to_string(),
-                format!(
-                    "native Kubernetes {command} is unavailable: the shipped operator supports only AIPerfJob"
-                )
-            );
-        }
+    fn index_no_longer_refuses_before_cluster_access() {
+        // `sweep` left the refusal list in Task 10 and `index` in Task 12; only
+        // `dashboard` still refuses, and it has its own test below.
+        let error = run(&["index".to_string(), "--kubeconfig=/nonexistent".to_string()])
+            .expect_err("index without a reachable cluster must fail");
+        assert!(
+            !error.to_string().contains("shipped operator supports only"),
+            "index must no longer produce the old refusal: {error:#}"
+        );
     }
 
     #[test]

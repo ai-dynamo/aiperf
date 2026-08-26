@@ -1161,3 +1161,112 @@ fn sweep_command_removed_from_refusal_list() {
         "sweep must no longer produce the old refusal: {msg}"
     );
 }
+
+// --- namespace result index tests ---
+
+const OPERATOR_PROXY: &str =
+    "/api/v1/namespaces/aiperf-system/services/aiperf-k8s-operator:8080/proxy";
+
+const INDEX_BODY: &[u8] = br#"{"items":[{"metadata":{"name":"run-1","namespace":"bench"},"jobId":"job-1","ready":true,"artifactCount":3,"created":1700000000.0}]}"#;
+
+struct IndexTransport {
+    request: Mutex<Option<KubeRequest>>,
+    status: u16,
+    body: Vec<u8>,
+}
+
+impl IndexTransport {
+    fn new(status: u16, body: &[u8]) -> Self {
+        Self {
+            request: Mutex::new(None),
+            status,
+            body: body.to_vec(),
+        }
+    }
+
+    fn recorded(&self) -> KubeRequest {
+        self.request
+            .lock()
+            .expect("index transport lock")
+            .clone()
+            .expect("index transport recorded no request")
+    }
+}
+
+impl KubeTransport for IndexTransport {
+    fn send(
+        &self,
+        _credentials: &KubeCredentials,
+        request: KubeRequest,
+    ) -> Result<KubeResponse, KubeError> {
+        *self
+            .request
+            .lock()
+            .map_err(|_| KubeError::Transport("index transport lock poisoned".to_string()))? =
+            Some(request);
+        Ok(KubeResponse {
+            status: self.status,
+            body: self.body.clone(),
+        })
+    }
+
+    fn watch(
+        &self,
+        _credentials: &KubeCredentials,
+        _request: KubeRequest,
+    ) -> Result<KubeWatch, KubeError> {
+        Err(KubeError::Transport(
+            "watch is not needed by the index transport".to_string(),
+        ))
+    }
+}
+
+#[test]
+fn index_command_fetches_namespace_runs() {
+    let transport = Arc::new(IndexTransport::new(200, INDEX_BODY));
+    let client = KubeClient::with_transport(credentials(None), transport.clone());
+    let rendered = super::command::index_report(
+        &client,
+        OPERATOR_PROXY,
+        "bench",
+        super::render::OutputFormat::Json,
+    )
+    .expect("index report");
+
+    let request = transport.recorded();
+    assert_eq!(request.method, "GET");
+    assert_eq!(request.path, format!("{OPERATOR_PROXY}/api/results/bench"));
+    assert!(rendered.contains("run-1"), "unexpected render: {rendered}");
+}
+
+#[test]
+fn index_command_renders_result_items_in_text_format() {
+    let transport = Arc::new(IndexTransport::new(200, INDEX_BODY));
+    let client = KubeClient::with_transport(credentials(None), transport.clone());
+    let rendered = super::command::index_report(
+        &client,
+        OPERATOR_PROXY,
+        "bench",
+        super::render::OutputFormat::Text,
+    )
+    .expect("index report");
+
+    assert!(rendered.contains("bench/run-1"), "render: {rendered}");
+    assert!(rendered.contains("job-1"), "render: {rendered}");
+    assert!(rendered.contains("Ready"), "render: {rendered}");
+    assert!(rendered.contains("3 artifact(s)"), "render: {rendered}");
+}
+
+#[test]
+fn index_command_fails_closed_on_an_unsuccessful_operator_response() {
+    let transport = Arc::new(IndexTransport::new(503, b"{}"));
+    let client = KubeClient::with_transport(credentials(None), transport.clone());
+    let error = super::command::index_report(
+        &client,
+        OPERATOR_PROXY,
+        "bench",
+        super::render::OutputFormat::Text,
+    )
+    .expect_err("an unsuccessful operator response must fail");
+    assert!(error.to_string().contains("503"), "error: {error:#}");
+}

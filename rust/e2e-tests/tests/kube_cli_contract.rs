@@ -92,8 +92,8 @@ fn envelope_commands_require_an_envelope() {
 
 #[test]
 fn commands_without_a_shipped_backend_refuse_before_cluster_access() {
-    // `sweep` was removed from the refusal list in Task 10.
-    for command in ["index", "dashboard"] {
+    // `sweep` left the refusal list in Task 10 and `index` in Task 12.
+    for command in ["dashboard"] {
         let (code, _, stderr) = kube(&[command]);
         assert_ne!(code, 0, "{command} must refuse without a shipped backend");
         assert!(
@@ -101,6 +101,16 @@ fn commands_without_a_shipped_backend_refuse_before_cluster_access() {
             "{command} produced an ambiguous refusal: {stderr}"
         );
     }
+}
+
+#[test]
+fn index_reaches_the_operator_instead_of_refusing() {
+    let (code, _, stderr) = kube(&["index", "--kubeconfig=/nonexistent"]);
+    assert_ne!(code, 0, "index without a reachable cluster must fail");
+    assert!(
+        !stderr.contains("shipped operator supports only"),
+        "index must no longer refuse before cluster access: {stderr}"
+    );
 }
 
 // requires: the workflow-provisioned kind target and KUBECONFIG
