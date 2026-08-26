@@ -136,7 +136,7 @@ class ExporterManager(AIPerfLoggerMixin):
             )
         )
         try:
-            await self._export_phase_metric_artifacts()
+            failures.extend(await self._export_phase_metric_artifacts())
         except Exception as exc:  # noqa: BLE001 - surfaced as a local export failure
             failures.append(
                 ExporterFailure(
@@ -209,36 +209,37 @@ class ExporterManager(AIPerfLoggerMixin):
                 )
         return failures
 
-    async def _export_phase_metric_artifacts(self) -> None:
+    async def _export_phase_metric_artifacts(self) -> list[ExporterFailure]:
         """Export per-phase artifacts, then always index them in the manifest.
 
         Each phase is isolated: a phase whose exporter raises must not prevent
         the remaining phases from writing, and must not suppress the manifest,
         which is the only index the operator's completion handler can use to
         recover exact per-phase counts from the artifact directory. Failures
-        are accumulated and re-raised after the manifest lands so the caller
-        still records the export as failed.
+        are returned per phase rather than raised, so the caller's summary
+        names the phase that failed instead of one opaque aggregate.
         """
         phase_records = getattr(self._results, "phase_records", None) or []
         if not phase_records:
-            return
+            return []
         manifest_entries: list[dict[str, Any]] = []
-        failures: list[Exception] = []
+        failures: list[ExporterFailure] = []
         for phase_result in phase_records:
             entry = self._phase_manifest_entry(phase_result)
             try:
                 await self._export_one_phase(
                     phase_result=phase_result, manifest_entry=entry
                 )
-            except Exception as exc:  # noqa: BLE001 - re-raised after the manifest
+            except Exception as exc:  # noqa: BLE001 - recorded as a per-phase failure
                 self.error(
                     f"Failed to export artifacts for phase "
                     f"{phase_result.phase_name!r}: {exc!r}"
                 )
                 failures.append(
-                    RuntimeError(
-                        f"Phase {phase_result.phase_name!r} artifact export "
-                        f"failed: {exc!r}"
+                    ExporterFailure(
+                        exporter=f"PhaseMetricArtifacts:{phase_result.phase_name}",
+                        error=exc,
+                        is_deferred=False,
                     )
                 )
             # Even a partially written phase belongs in the manifest: its counts
@@ -246,14 +247,16 @@ class ExporterManager(AIPerfLoggerMixin):
             manifest_entries.append(entry)
         try:
             await asyncio.to_thread(self._write_phase_manifest, manifest_entries)
-        except Exception as exc:  # noqa: BLE001 - re-raised with phase failures
-            failures.append(exc)
-        if len(failures) == 1:
-            raise failures[0]
-        if failures:
-            raise ExceptionGroup(
-                f"{len(failures)} phase artifact export(s) failed", failures
+        except Exception as exc:  # noqa: BLE001 - recorded as a local export failure
+            self.error(f"Failed to write phase artifact manifest: {exc!r}")
+            failures.append(
+                ExporterFailure(
+                    exporter="PhaseMetricArtifacts",
+                    error=exc,
+                    is_deferred=False,
+                )
             )
+        return failures
 
     def _phase_manifest_entry(
         self, phase_result: PhaseProfileResults
