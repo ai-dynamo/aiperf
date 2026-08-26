@@ -45,6 +45,7 @@ def _make_router():
     r._last_patched_jobset_annotations = {}
     r._last_patched_aiperfjob_annotations = {}
     r._stop_requested_event = asyncio.Event()
+    r._status_push_requested = asyncio.Event()
     return r
 
 
@@ -84,40 +85,43 @@ async def test_non_kubernetes_run_schedules_no_status_push_task():
 
 @pytest.mark.asyncio
 async def test_state_change_fires_status_push():
-    """SYSTEM_STATE_CHANGED updates _system_state and fires a status push."""
+    """SYSTEM_STATE_CHANGED updates _system_state and requests a status push.
+
+    The handler only sets the dirty-flag event now -- the single background
+    pusher (started separately by ``_start_k8s_patch_loops``) is what actually
+    calls ``_patch_aiperfjob_status``, so bursts of these requests coalesce
+    into whichever push it was already about to make.
+    """
     r = _make_router()
-    pushed = []
-    r._patch_aiperfjob_status = AsyncMock(side_effect=lambda: pushed.append(True))
+    r._patch_aiperfjob_status = AsyncMock()
 
     msg = SystemStateChangedMessage(service_id="ctrl", state=SystemState.PROFILING)
     await r._on_system_state_changed(msg)
-    await asyncio.sleep(0)
 
     assert r._system_state == SystemState.PROFILING
-    assert len(pushed) == 1
+    assert r._status_push_requested.is_set()
+    r._patch_aiperfjob_status.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_results_exported_fires_status_push():
-    """RESULTS_EXPORTED sets _results_exported and fires a status push."""
+    """RESULTS_EXPORTED sets _results_exported and requests a status push."""
     r = _make_router()
-    pushed = []
-    r._patch_aiperfjob_status = AsyncMock(side_effect=lambda: pushed.append(True))
+    r._patch_aiperfjob_status = AsyncMock()
 
     msg = ResultsExportedMessage(service_id="ctrl")
     await r._on_results_exported(msg)
-    await asyncio.sleep(0)
 
     assert r._results_exported is True
-    assert len(pushed) == 1
+    assert r._status_push_requested.is_set()
+    r._patch_aiperfjob_status.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_service_error_pushes_controller_failure_to_aiperfjob():
-    """A controller service failure is pushed before the controller exits."""
+    """A controller service failure requests a push before the controller exits."""
     r = _make_router()
-    pushed = []
-    r._patch_aiperfjob_status = AsyncMock(side_effect=lambda: pushed.append(True))
+    r._patch_aiperfjob_status = AsyncMock()
 
     await r._on_service_error(
         BaseServiceErrorMessage(
@@ -125,13 +129,13 @@ async def test_service_error_pushes_controller_failure_to_aiperfjob():
             error=ErrorDetails(message="Fatal worker availability threshold breached"),
         )
     )
-    await asyncio.sleep(0)
 
     assert (
         r._controller_failure
         == "timing-manager: Fatal worker availability threshold breached"
     )
-    assert pushed == [True]
+    assert r._status_push_requested.is_set()
+    r._patch_aiperfjob_status.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -350,16 +354,34 @@ async def test_periodic_push_refreshes_heartbeat_when_progress_is_unchanged(
         is not AIPerfHook.BACKGROUND_TASK
     )
     router.start_background_task = MagicMock()
+    executed_coros: list[object] = []
+    captured_intervals: list[float] = []
+
+    def _capture_execute_async(coro):
+        executed_coros.append(coro)
+        captured_intervals.append(coro.cr_frame.f_locals["interval"])
+        coro.close()
+        return MagicMock()
+
+    router.execute_async = MagicMock(side_effect=_capture_execute_async)
     await ProgressRouter._start_k8s_patch_loops(router)
+
+    # Only the JobSet annotation loop still uses start_background_task; the
+    # heartbeat/status push loop is its own coroutine, driven by a dirty-flag
+    # event instead of a fixed-interval task-manager loop.
     intervals = [
         call.kwargs["interval"] for call in router.start_background_task.call_args_list
     ]
-    assert intervals == [17.0, 23.0]
+    assert intervals == [23.0]
     assert all(
         call.kwargs["immediate"] is False
         for call in router.start_background_task.call_args_list
     )
+    assert len(executed_coros) == 1
+    assert executed_coros[0].cr_code.co_name == "_status_push_loop"
+    assert captured_intervals == [17.0]
     del router.start_background_task
+    del router.execute_async
 
     await router._patch_aiperfjob_status()
     await router._patch_aiperfjob_status()

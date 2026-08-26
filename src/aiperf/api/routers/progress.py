@@ -68,13 +68,8 @@ def _build_progress_annotations(
             ProgressAnnotations.SYSTEM_STATE: str(system_state),
         }
 
-    named_phases = {
-        phase_name: stats
-        for phase_name, stats in phases.items()
-        if stats.phase_name is not None
-    }
     phase_name, active = max(
-        (named_phases or phases).items(),
+        _concrete_phases(phases).items(),
         key=lambda item: item[1].start_ns or 0,
     )
 
@@ -110,20 +105,36 @@ def _controller_failure_status_patch(controller_failure: str | None) -> dict[str
     return {"controllerFailure": controller_failure} if controller_failure else {}
 
 
-def _current_phase_name(phases: dict[str, CombinedPhaseStats]) -> str | None:
-    """Name the most recently started phase, mirroring JobProgress.current_phase.
+def _concrete_phases(
+    phases: dict[str, CombinedPhaseStats],
+) -> dict[str, CombinedPhaseStats]:
+    """Filter to phases carrying an explicit identity, mirroring ``JobProgress._concrete_phases``.
 
-    Phases carrying an explicit identity win over legacy aggregate entries, the
-    same preference ``JobProgress._concrete_phases`` applies.
+    Shared by ``_current_phase_name`` and ``_build_progress_annotations`` so
+    the CR's ``status.currentPhase`` and its ``progress-phase`` annotation
+    cannot disagree about which phase is "current" on the same tick -- they
+    previously used two different filters (``phase_name is not None`` alone
+    vs. this one), which could pick different winners for a legacy aggregate
+    entry whose ``phase_name`` is ``None`` but whose dict key differs from
+    ``str(stats.phase)``. Standardized on this, the more inclusive predicate,
+    because it is the one the operator's own ``JobProgress._concrete_phases``
+    implements -- the annotation builder's narrower filter was the drift.
     """
-    if not phases:
-        return None
     concrete = {
         name: stats
         for name, stats in phases.items()
         if stats.phase_name is not None or name != str(stats.phase)
     }
-    return max((concrete or phases).items(), key=lambda item: item[1].start_ns or 0)[0]
+    return concrete or phases
+
+
+def _current_phase_name(phases: dict[str, CombinedPhaseStats]) -> str | None:
+    """Name the most recently started phase, mirroring ``JobProgress.current_phase``."""
+    if not phases:
+        return None
+    return max(
+        _concrete_phases(phases).items(), key=lambda item: item[1].start_ns or 0
+    )[0]
 
 
 def _is_json_patch_test_failure(exc: Any) -> bool:
@@ -223,23 +234,35 @@ class ProgressRouter(
         # status.serverMetrics projection. Held raw and projected at push time
         # so the caps stay reconfigurable without a restart-ordering hazard.
         self._server_metrics: dict[str, Any] | None = None
+        # Set by _schedule_status_push, cleared and awaited by
+        # _status_push_loop. A dirty-flag + wake nudge in place of one
+        # apiserver round trip per bus message: bursts of REALTIME_METRICS /
+        # CREDIT_PHASE_PROGRESS ticks (arriving several times a second)
+        # coalesce into whichever single push the loop was about to make.
+        self._status_push_requested = asyncio.Event()
 
     def get_router(self) -> APIRouter:
         return progress_router
 
     def _schedule_status_push(self) -> None:
-        """Fire a best-effort AIPerfJob status push, but only in Kubernetes mode.
+        """Request an AIPerfJob status push, but only in Kubernetes mode.
 
         Every caller is a bus handler on a message the controller publishes in
         EVERY run mode, several of them at per-tick rates (REALTIME_METRICS,
         CREDIT_PHASE_PROGRESS). Outside Kubernetes there is no CR to patch, so
-        the guard lives here rather than inside the coroutine: checking a bool
-        is free, whereas spawning a task per bus message just to have it return
-        on its first line is not.
+        the guard lives here rather than inside the loop: checking a bool is
+        free, whereas waking the pusher per bus message just to have it
+        return on its first line is not.
+
+        Setting the event only nudges the single background pusher started by
+        ``_start_k8s_patch_loops``; it does not spawn a task of its own. That
+        keeps the write single-flight -- no pile of concurrent
+        get/patch round trips racing the same CR, no discarded task handle
+        that can be garbage-collected mid-flight.
         """
         if not self._k8s_patching_enabled:
             return
-        asyncio.create_task(self._patch_aiperfjob_status())  # noqa: RUF006
+        self._status_push_requested.set()
 
     @on_message(MessageType.RESULTS_EXPORTED)
     async def _on_results_exported(self, _message: ResultsExportedMessage) -> None:
@@ -320,11 +343,8 @@ class ProgressRouter(
         # k8s import below is already function-local for the same reason.
         from aiperf.kubernetes.environment import K8sEnvironment
 
-        self.start_background_task(
-            self._patch_aiperfjob_status,
-            interval=K8sEnvironment.CONTROLLER_HEARTBEAT.INTERVAL_SECONDS,
-            immediate=False,
-            stop_event=self._stop_requested_event,
+        self.execute_async(
+            self._status_push_loop(K8sEnvironment.CONTROLLER_HEARTBEAT.INTERVAL_SECONDS)
         )
         self.start_background_task(
             self._patch_jobset_progress,
@@ -333,12 +353,34 @@ class ProgressRouter(
             stop_event=self._stop_requested_event,
         )
 
+    async def _status_push_loop(self, interval: float) -> None:
+        """Push AIPerfJob status at the heartbeat cadence, waking early on a nudge.
+
+        This is the sole caller of ``_patch_aiperfjob_status``: bus handlers no
+        longer spawn a task per message, they just set
+        ``self._status_push_requested``. Waiting on that event with a
+        ``interval``-second timeout preserves the periodic loop's original
+        cadence guarantee (a push always happens at least every ``interval``
+        seconds) while collapsing any number of nudges that land between
+        wake-ups into the one push already about to run.
+        """
+        while not self._stop_requested_event.is_set():
+            try:
+                await asyncio.wait_for(
+                    self._status_push_requested.wait(), timeout=interval
+                )
+            except TimeoutError:
+                pass
+            self._status_push_requested.clear()
+            await self._patch_aiperfjob_status()
+
     async def _patch_aiperfjob_status(self) -> None:
         """Push current progress state directly onto the AIPerfJob CR status subresource.
 
-        Called immediately on state/phase changes and at the bounded heartbeat
-        cadence. Best-effort: any k8s API failure is logged at debug and dropped;
-        the operator's reconciliation catches gaps.
+        Called by ``_status_push_loop`` at the bounded heartbeat cadence, or
+        sooner when a state/phase change nudges it early. Best-effort: any k8s
+        API failure is logged at debug and dropped; the operator's
+        reconciliation catches gaps.
         """
         if not self._k8s_patching_enabled:
             return
