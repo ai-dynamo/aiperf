@@ -82,7 +82,7 @@ Graham review and a commit.
 | C14a | YAML accepts boolean `artifacts.records` outside the contract | Complete — `1999e28b54`, `55ce407c1d` | Independent Graham approved; isolated behavioral RED→GREEN and 42 YAML tests green |
 | C14b | YAML accepts unsupported schema versions | Confirmed; spec needed | Sol implementation plan |
 | C18 | MLflow/W&B mishandle mixed labeled and unlabeled report series | Complete — `b98d0b4b8f` | Independent Graham approved; four-case RED→GREEN and exporter suites green |
-| C19 | Parquet histogram schema drifts across samples | Confirmed; spec needed | Sol implementation plan |
+| C19 | Parquet histogram schema drifts across samples | Complete — `d4db61806e` | Independent Graham approved; schema-expansion RED→GREEN and 9 Parquet tests green |
 | C20 | Dataset-analysis writer loses flush failures | Complete — `ed39aac8a4` | Independent Graham approved; dataset-analysis JSON tests green |
 | C24 | Slot release during a decrease can over-admit | Confirmed; spec needed | Sol implementation plan |
 | C25 | Global request-rate prefill release does not wake issuer | Confirmed; spec needed | Sol implementation plan |
@@ -90,6 +90,11 @@ Graham review and a commit.
 | B01 | AgentX integration fixtures omit required cache-bust option | Complete — `91b65b2044` | Independent Graham approved; compile regression green |
 
 ## Progress log
+
+- 2026-08-26: Completed C19. Parquet histogram export now retains the
+  deterministic union of observed bounds and remaps prior samples with zeroes
+  for newly introduced buckets. Independent Graham review passed nine Parquet
+  exporter tests.
 
 - 2026-08-26: Completed C09. Cancellation now races both the parent first-token
   wait and the clock-injected firing delay; the regression waits until the child
