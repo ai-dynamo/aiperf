@@ -477,7 +477,8 @@ behavior plus, where present, an explicit `Future requirements` section.
 
 - [`docs/specs/2026-08-25-rust-smell-core-remediation.md`](docs/specs/2026-08-25-rust-smell-core-remediation.md),
   [`docs/specs/2026-08-25-rust-eval-remediation.md`](docs/specs/2026-08-25-rust-eval-remediation.md),
-  and [`docs/specs/2026-08-25-rust-matrix-remediation.md`](docs/specs/2026-08-25-rust-matrix-remediation.md)
+  [`docs/specs/2026-08-25-rust-matrix-remediation.md`](docs/specs/2026-08-25-rust-matrix-remediation.md),
+  and [`docs/specs/2026-08-26-rust-e09-multidataset-remediation.md`](docs/specs/2026-08-26-rust-e09-multidataset-remediation.md)
   define the active code-smell remediation contracts; the corresponding progress
   ledger is [`docs/rust-code-smell-remediation-tracker.md`](docs/rust-code-smell-remediation-tracker.md).
 
