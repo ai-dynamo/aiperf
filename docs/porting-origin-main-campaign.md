@@ -70,7 +70,7 @@ implementation, test run, or review.
 | 42 | `ce453582c7` | CONTRIBUTING spelling | complete | not-applicable | Exact merge completed on `ajc/port-origin-042`; closure note `docs/origin-main-findings/commit-042-ce453582c7.md`. |
 | 43 | `6ed4823d12` | cache-bust help link | complete | not-applicable | Exact merge completed in `e9767333b6`; closure note `docs/origin-main-findings/commit-043-6ed4823d12.md`. |
 | 44 | `082a51827e` | TraceLab dataset | complete | applicable | Native plain/gzip TraceLab-to-Graph-IR conversion, config/CLI/cellular integration, real-binary coverage, exact target-only merge ancestry, and Graham approval recorded. |
-| 45 | `21f8ad7b3e` | high-resolution pacing | analysing | unassessed | timerfd exists; late-slot behavior needs characterization. |
+| 45 | `21f8ad7b3e` | high-resolution pacing | complete | applicable | Exact merge `86a93aaec1`; native bounded local/sharded catch-up, exact 5,000-request real-clock evidence, and Graham approval recorded. |
 | 46 | `e659d2a95a` | FFmpeg codec allowlist | pending | shared-product-action | Audit native codec defaults before porting shared Dockerfile policy. |
 | 47 | `9e96b499d1` | aiohttp minimum | pending | already-covered | Bundled Python bound already satisfies it. |
 | 48 | `260d00f5e9` | adaptive error-rate units | pending | applicable | Adaptive SLA differs from exported percentage/cancellation contract; pair with #25. |

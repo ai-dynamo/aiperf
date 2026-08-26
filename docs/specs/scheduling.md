@@ -32,8 +32,16 @@ request-count, session-count).
 send one turn) per rate interval. `--request-rate` paces **turns**, not
 conversation arrivals — a conversation's turns interleave with every other
 conversation's, and continuation turns have priority over new-session starts. The
-next interval is drawn before issuing; if behind schedule it re-anchors without
-bursting. Two concurrency dimensions gate issuance:
+next interval is drawn before issuing. Local and `sharded` pacing retains an
+absolute target while lag stays within `AIPERF_TIMING_MAX_CATCHUP_SECONDS`
+(default 0.01 seconds, finite `0..=10`) and re-anchors only beyond that bounded
+window. The value is resolved once at workload construction, so the issue loop
+does only integer arithmetic; `0` restores strict no-burst behavior. Linux
+`RealClock` waits use `CLOCK_MONOTONIC` timerfd through Tokio `AsyncFd`, while
+`SimClock` drives the identical policy deterministically. Global dispatch modes
+retain every `GlobalRateGate` slot for aggregate and corpus-position ordering and
+do not apply the local re-anchor policy. Two concurrency dimensions gate
+issuance:
 
 - **Session slot** — one per conversation, acquired on turn 0 only, released on
   the root final turn plus in-flight cleanup at phase end; caps concurrent

@@ -27,6 +27,38 @@ When multiple options are specified, AIPerf uses this priority:
 3. `--request-rate` → Rate-based scheduling with arrival patterns
 4. `--concurrency` only → Burst mode (as fast as possible within limits)
 
+---
+
+## High-Resolution Rate Pacing
+
+The native scheduler routes every request-rate deadline through its injected
+`Clock`. On Linux, `RealClock` uses `timerfd_create(CLOCK_MONOTONIC)` and Tokio
+`AsyncFd`; syscall or reactor failures fall back to a Tokio sleep for only the
+remaining duration. `SimClock` uses the same request-rate loop with exact virtual
+nanosecond deadlines.
+
+Local and `sharded` request-rate scheduling preserves an absolute target while
+wake-up lag remains within a bounded catch-up window. Only a larger lag
+re-anchors to the current clock time, so ordinary sub-millisecond jitter does
+not permanently forfeit offered load and a genuine stall cannot create an
+unbounded burst. `global`, `global-hop`, and `global-push` retain their existing
+dense shared slots and corpus-position ordering instead of applying this local
+re-anchor policy.
+
+### Pacing env vars
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `AIPERF_TIMING_HIGH_RES_TIMER` | `true` | Legacy Python timing-stack selector. The native scheduler does not bypass its injected `Clock`; Linux real-clock runs always use the timerfd path with fallback. |
+| `AIPERF_TIMING_MAX_CATCHUP_SECONDS` | `0.01` | Maximum local/sharded schedule backlog in seconds retained for catch-up before re-anchoring. Must be finite in `0..=10`; `0` restores strict no-burst behavior. Captured once when the workload is constructed. |
+
+### Diagnosing under-delivery at high QPS
+
+If measured QPS is consistently lower than `--request-rate`:
+
+1. **Check endpoint capacity.** An endpoint or authored concurrency limit can be the bottleneck even when the issuer preserves its schedule.
+2. **Inspect issue lateness.** Sustained lateness beyond the catch-up window indicates the local worker cannot service the requested rate.
+3. **Widen the local window cautiously.** At very high rates, increasing `AIPERF_TIMING_MAX_CATCHUP_SECONDS` (for example, to `0.05`) absorbs longer stalls but permits a larger bounded catch-up burst.
 
 ---
 

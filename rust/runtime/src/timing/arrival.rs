@@ -17,10 +17,14 @@
 //!   `run_start`) or one drawn interval in ([`FirstArrival::AfterInterval`], the
 //!   scheduled / dynosim policy: the first request is paced like every other).
 //! - [`WhenBehind`] — when the computed target is already in the past, whether to
-//!   re-anchor to `now` ([`WhenBehind::Reanchor`], the scheduled / dynosim policy:
-//!   a slow tick never fires a catch-up burst) or keep the absolute target
+//!   re-anchor to `now` ([`WhenBehind::Reanchor`], the dynosim policy: a slow tick
+//!   never fires a catch-up burst) or keep the absolute target
 //!   ([`WhenBehind::KeepAbsolute`], the graph policy: the schedule is honored and
 //!   the loop bursts to catch up).
+//!
+//! The scheduled request-rate loop refines the re-anchor axis with
+//! [`bounded_reanchor_target`]: small wake-up lag keeps the absolute schedule,
+//! while lag outside an explicit catch-up window re-anchors to `now`.
 //!
 //! Draw timing is observable when a generator is shared with live ramp actuators;
 //! callers must preserve whether the draw occurs at the start or tail of an
@@ -76,15 +80,66 @@ pub fn next_arrival_target(
     }
 }
 
+/// Apply a bounded catch-up window to an absolute arrival target.
+///
+/// A target exactly at the oldest retained instant remains on the absolute
+/// schedule. Only an older target re-anchors, preventing recurring small
+/// oversleeps from lowering the delivered rate while bounding post-stall bursts.
+pub(crate) fn bounded_reanchor_target(target_ns: i64, now_ns: i64, max_catchup_ns: i64) -> i64 {
+    debug_assert!(max_catchup_ns >= 0);
+    if target_ns < now_ns.saturating_sub(max_catchup_ns) {
+        now_ns
+    } else {
+        target_ns
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    // The scheduled / dynosim policy: first arrival one interval in, and a target
-    // that has fallen behind re-anchors to `now` with no catch-up burst. Uses
-    // the `crate::run` / `crate::request_rate` loops' `next_target_ns` arithmetic.
     #[test]
-    fn after_interval_reanchor_matches_scheduled_loop() {
+    fn bounded_reanchor_preserves_small_lag_and_reanchors_large_lag() {
+        const NOW_NS: i64 = 20_000_000;
+        const WINDOW_NS: i64 = 10_000_000;
+
+        assert_eq!(
+            bounded_reanchor_target(19_999_999, NOW_NS, WINDOW_NS),
+            19_999_999
+        );
+        assert_eq!(
+            bounded_reanchor_target(10_000_000, NOW_NS, WINDOW_NS),
+            10_000_000
+        );
+        assert_eq!(
+            bounded_reanchor_target(9_999_999, NOW_NS, WINDOW_NS),
+            NOW_NS
+        );
+    }
+
+    #[test]
+    fn zero_catchup_window_preserves_the_no_burst_policy() {
+        assert_eq!(bounded_reanchor_target(99, 100, 0), 100);
+        assert_eq!(bounded_reanchor_target(100, 100, 0), 100);
+    }
+
+    #[test]
+    fn bounded_reanchor_uses_saturating_threshold_arithmetic() {
+        assert_eq!(
+            bounded_reanchor_target(i64::MIN, i64::MIN, i64::MAX),
+            i64::MIN
+        );
+        assert_eq!(
+            bounded_reanchor_target(i64::MIN, i64::MAX, i64::MAX),
+            i64::MAX
+        );
+    }
+
+    // The dynosim policy: first arrival one interval in, and a target that has
+    // fallen behind re-anchors to `now` with no catch-up burst. Uses the
+    // `crate::run` loop's `next_target_ns` arithmetic.
+    #[test]
+    fn after_interval_reanchor_matches_dynosim_loop() {
         let start = 1_000;
         // A generator emitting a fixed 100ns interval.
         let draw = || 100i64;

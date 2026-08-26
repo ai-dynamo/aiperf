@@ -35,6 +35,39 @@ use crate::fixed_schedule::milliseconds_to_ns;
 use crate::multiturn::{ConversationSource, TurnToSend};
 use crate::scheduled::{ScheduledRuntime, Workload};
 use crate::scheduler::LocalTaskScheduler;
+use crate::timing::arrival::bounded_reanchor_target;
+
+const MAX_CATCHUP_SECONDS_ENV: &str = "AIPERF_TIMING_MAX_CATCHUP_SECONDS";
+const DEFAULT_MAX_CATCHUP_SECONDS: f64 = 0.01;
+const MAX_CATCHUP_SECONDS: f64 = 10.0;
+const NANOS_PER_SECOND: f64 = 1_000_000_000.0;
+
+fn parse_max_catchup_seconds(raw: Option<&str>) -> Result<i64> {
+    let Some(raw) = raw else {
+        return Ok((DEFAULT_MAX_CATCHUP_SECONDS * NANOS_PER_SECOND).round() as i64);
+    };
+    let seconds = raw.trim().parse::<f64>().map_err(|error| {
+        anyhow!(
+            "{MAX_CATCHUP_SECONDS_ENV} rejected value {raw:?}; expected a finite number in 0..=10 seconds: {error}"
+        )
+    })?;
+    if !seconds.is_finite() || !(0.0..=MAX_CATCHUP_SECONDS).contains(&seconds) {
+        bail!(
+            "{MAX_CATCHUP_SECONDS_ENV} rejected value {raw:?}; expected a finite number in 0..=10 seconds"
+        );
+    }
+    Ok((seconds * NANOS_PER_SECOND).round() as i64)
+}
+
+fn max_catchup_ns_from_environment() -> Result<i64> {
+    match std::env::var(MAX_CATCHUP_SECONDS_ENV) {
+        Ok(raw) => parse_max_catchup_seconds(Some(&raw)),
+        Err(std::env::VarError::NotPresent) => parse_max_catchup_seconds(None),
+        Err(std::env::VarError::NotUnicode(raw)) => bail!(
+            "{MAX_CATCHUP_SECONDS_ENV} rejected non-Unicode value {raw:?}; expected a finite number in 0..=10 seconds"
+        ),
+    }
+}
 
 /// Arrival and admission settings for a request-rate workload.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -138,6 +171,9 @@ impl RequestRateState {
 /// workload samples and caches exactly one first turn before run start; another
 /// sample is drawn only after that cached turn is successfully issued.
 pub struct RequestRateWorkload {
+    /// Maximum local schedule lag retained for catch-up, resolved once at
+    /// construction so pacing ticks perform only integer arithmetic.
+    max_catchup_ns: i64,
     conversations: Rc<RefCell<Box<dyn ConversationSource>>>,
     next_new_turn: RefCell<Option<TurnToSend>>,
     intervals: Rc<RefCell<Box<dyn IntervalGenerator>>>,
@@ -210,6 +246,7 @@ impl RequestRateWorkload {
         session_slots: Option<Rc<SlotPool>>,
         prefill_slots: Option<Rc<SlotPool>>,
     ) -> Result<Self> {
+        let max_catchup_ns = max_catchup_ns_from_environment()?;
         // Both checks read `conversations()` — this shard's residue class — even
         // though a position-addressed shard DRAWS the full corpus through
         // `next_at_position`. That narrower basis is exact, not an oversight, so
@@ -247,6 +284,7 @@ impl RequestRateWorkload {
         }
         let first = conversations.next(None)?.build_first_turn(None)?;
         Ok(Self {
+            max_catchup_ns,
             conversations: Rc::new(RefCell::new(conversations)),
             next_new_turn: RefCell::new(Some(first)),
             intervals,
@@ -539,13 +577,11 @@ impl Workload for RequestRateWorkload {
     }
 
     async fn execute(&self, runtime: Rc<ScheduledRuntime>) -> Result<()> {
-        // Arrival pacing is the (AfterInterval, Reanchor) policy named in
-        // `crate::timing::arrival`: the first arrival is one interval in and a target
-        // that has fallen behind re-anchors to `now` with no catch-up burst. This
-        // loop keeps its own arithmetic rather than calling `next_arrival_target`
-        // because it *eagerly* advances and peeks the next target for closed-loop
-        // backpressure (the `NoSlot` block-vs-yield decision below), which the shared
-        // pure helper does not express.
+        // Local pacing puts the first arrival one interval after phase start and
+        // preserves an absolute schedule while lag remains inside the bounded
+        // catch-up window. This loop keeps its own interval arithmetic because it
+        // eagerly advances and peeks the following target for closed-loop
+        // backpressure (the `NoSlot` block-vs-yield decision below).
         let mut next_target_ns = runtime
             .start_ns()
             .saturating_add(self.intervals.borrow_mut().next_interval_ns());
@@ -601,9 +637,8 @@ impl Workload for RequestRateWorkload {
                     .saturating_add(base_offset_ns)
                     .saturating_add(jitter_ns)
             } else {
-                if next_target_ns < now_ns {
-                    next_target_ns = now_ns;
-                }
+                next_target_ns =
+                    bounded_reanchor_target(next_target_ns, now_ns, self.max_catchup_ns);
                 next_target_ns
             };
             if scheduled_ns > now_ns {
@@ -815,6 +850,9 @@ fn issue_rate_turn(
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
+    use std::future::Future;
+    use std::pin::Pin;
     use std::rc::Rc;
 
     use crate::clock::{Clock, SimClock};
@@ -828,6 +866,162 @@ mod tests {
     use super::*;
     use crate::scheduled::{ModelResponseMetadata, TurnDispatchOutcome, TurnDispatcher};
     use crate::test_util::synthetic_prepared_source;
+
+    #[test]
+    fn max_catchup_seconds_defaults_and_rounds_once_to_nanoseconds() {
+        assert_eq!(parse_max_catchup_seconds(None).unwrap(), 10_000_000);
+        assert_eq!(parse_max_catchup_seconds(Some("0")).unwrap(), 0);
+        assert_eq!(
+            parse_max_catchup_seconds(Some("10")).unwrap(),
+            10_000_000_000
+        );
+        assert_eq!(parse_max_catchup_seconds(Some("0.0000000015")).unwrap(), 2);
+        assert_eq!(
+            parse_max_catchup_seconds(Some(" 0.01 ")).unwrap(),
+            10_000_000
+        );
+    }
+
+    #[test]
+    fn max_catchup_seconds_rejects_invalid_values_informatively() {
+        for raw in ["not-a-number", "NaN", "inf", "-0.1", "10.000001"] {
+            let error = parse_max_catchup_seconds(Some(raw))
+                .unwrap_err()
+                .to_string();
+            assert!(
+                error.contains("AIPERF_TIMING_MAX_CATCHUP_SECONDS"),
+                "missing variable name for {raw:?}: {error}"
+            );
+            assert!(
+                error.contains(raw),
+                "missing rejected value for {raw:?}: {error}"
+            );
+            assert!(
+                error.contains("0..=10"),
+                "missing accepted range for {raw:?}: {error}"
+            );
+        }
+    }
+
+    // Clock that wakes every positive sleep a fixed amount late. This models
+    // the recurring timer lag that made unconditional re-anchoring
+    // under-deliver high request rates without depending on wall-clock load.
+    struct OversleepClock {
+        now_ns: Cell<i64>,
+        oversleep_ns: i64,
+    }
+
+    impl Clock for OversleepClock {
+        fn now_ns(&self) -> i64 {
+            self.now_ns.get()
+        }
+
+        fn sleep(self: Rc<Self>, duration_ns: i64) -> Pin<Box<dyn Future<Output = ()>>> {
+            Box::pin(async move {
+                tokio::task::yield_now().await;
+                let oversleep_ns = if duration_ns > 0 {
+                    self.oversleep_ns
+                } else {
+                    0
+                };
+                self.now_ns.set(
+                    self.now_ns
+                        .get()
+                        .saturating_add(duration_ns.max(0))
+                        .saturating_add(oversleep_ns),
+                );
+            })
+        }
+    }
+
+    struct AdmissionRecordingDispatcher {
+        clock: Rc<dyn Clock>,
+        admissions: Rc<RefCell<Vec<i64>>>,
+    }
+
+    #[async_trait(?Send)]
+    impl TurnDispatcher for AdmissionRecordingDispatcher {
+        async fn dispatch_turn(
+            &self,
+            turn: TurnToSend,
+            observer: &dyn RequestObserver,
+            _on_first_token: &dyn Fn(i64),
+        ) -> Result<TurnDispatchOutcome> {
+            let now_ns = self.clock.now_ns();
+            self.admissions.borrow_mut().push(now_ns);
+            observer.on_terminal(turn.uuid, ReplayTerminalStatus::Completed);
+            Ok(TurnDispatchOutcome {
+                start_ns: now_ns,
+                end_ns: now_ns,
+                terminal: ReplayTerminalStatus::Completed,
+                response_text: String::new(),
+                model_response: ModelResponseMetadata::default(),
+                prompt_tokens: None,
+                completion_tokens: None,
+                http: Default::default(),
+            })
+        }
+    }
+
+    fn admissions_with_catchup_window(max_catchup_ns: i64) -> Vec<i64> {
+        let source = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(synthetic_prepared_source(1, 8, 4, Some(0), "m"));
+        let mut workload = RequestRateWorkload::new(
+            RequestRateConfig {
+                arrival_pattern: ArrivalPattern::Constant,
+                request_rate: Some(10_000_000.0),
+                arrival_smoothness: None,
+                session_concurrency: None,
+                prefill_concurrency: None,
+                seed: 0,
+            },
+            source,
+        )
+        .unwrap();
+        workload.max_catchup_ns = max_catchup_ns;
+        let workload: Rc<dyn Workload> = Rc::new(workload);
+        let clock = Rc::new(OversleepClock {
+            now_ns: Cell::new(0),
+            oversleep_ns: 150,
+        });
+        let runtime_clock: Rc<dyn Clock> = clock.clone();
+        let admissions = Rc::new(RefCell::new(Vec::new()));
+        let recorded = admissions.clone();
+        let settled = admissions.clone();
+        let outcome = clock.drive(Box::pin(async move {
+            let runtime = ScheduledRuntime::new(
+                runtime_clock.clone(),
+                0,
+                Rc::new(AdmissionRecordingDispatcher {
+                    clock: runtime_clock,
+                    admissions: recorded,
+                }),
+                StopConfig {
+                    total_expected_requests: Some(4),
+                    ..StopConfig::default()
+                },
+                true,
+            );
+            workload.execute(runtime).await.unwrap();
+            while settled.borrow().len() < 4 {
+                tokio::task::yield_now().await;
+            }
+        }));
+        assert!(!outcome.deadlocked);
+        Rc::try_unwrap(admissions).unwrap().into_inner()
+    }
+
+    #[test]
+    fn workload_catches_up_small_oversleeps_but_zero_window_reanchors() {
+        assert_eq!(
+            admissions_with_catchup_window(100),
+            vec![250, 250, 450, 450]
+        );
+        assert_eq!(admissions_with_catchup_window(0), vec![250, 250, 500, 500]);
+    }
 
     struct DelayedDispatcher {
         clock: Rc<dyn Clock>,

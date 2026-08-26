@@ -327,6 +327,8 @@ Timing manager configuration. Controls timing-related settings for credit phase 
 |----------------------|---------|-------------|-------------|
 | `AIPERF_TIMING_CANCEL_DRAIN_TIMEOUT` | `10.0` | ≥ 1.0, ≤ 300.0 | Timeout in seconds for waiting for cancelled credits to drain after phase timeout |
 | `AIPERF_TIMING_RATE_RAMP_UPDATE_INTERVAL` | `0.1` | ≥ 0.01, ≤ 10.0 | Update interval in seconds for continuous rate ramping (default 0.1s = 100ms) |
+| `AIPERF_TIMING_HIGH_RES_TIMER` | `True` | — | Selects the legacy Python timing stack's high-resolution pacer. The native scheduler always uses its injected Clock; on Linux, RealClock uses timerfd with a remaining-duration fallback and does not honor this toggle. |
+| `AIPERF_TIMING_MAX_CATCHUP_SECONDS` | `0.01` | ≥ 0.0, ≤ 10.0 | Maximum local/sharded schedule backlog in seconds retained before re-anchoring. The native request-rate workload captures and validates this finite value once at construction; `0` restores strict no-burst behavior. Global dispatch keeps its existing dense shared-slot policy. |
 
 ## TOKENIZER
 
