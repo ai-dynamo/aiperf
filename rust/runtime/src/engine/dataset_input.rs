@@ -294,6 +294,9 @@ pub struct SyntheticPromptsSpec {
     /// the shared prefix.
     #[serde(default = "default_prefix_reuse_ratio")]
     pub prefix_reuse_ratio: f64,
+    /// Per-conversation cache-bust marker policy.
+    #[serde(default)]
+    pub cache_bust: Option<DatasetCacheBustSpec>,
 }
 
 /// One paired input/output sequence-length bucket.
@@ -837,6 +840,64 @@ where
     serde_json::from_value(serde_json::from_str::<Value>(raw.get())?)
 }
 
+fn validate_system_prompt_endpoint(
+    system_prompt: Option<&str>,
+    endpoint: &EndpointDescriptor,
+) -> Result<()> {
+    let Some(system_prompt) = system_prompt else {
+        return Ok(());
+    };
+    ensure!(
+        !system_prompt.trim().is_empty(),
+        "system prompt cannot be empty or whitespace-only"
+    );
+    ensure!(
+        endpoint.consumes_system_message(),
+        "system prompt is not supported by endpoint type {:?} (no system role), so the text \
+         would never reach the wire; supported endpoint types: chat, chat_embeddings, messages, \
+         responses",
+        endpoint.id
+    );
+    Ok(())
+}
+
+fn validate_synthetic_system_prompt(spec: &SyntheticDatasetSpec) -> Result<()> {
+    let Some(_system_prompt) = spec.system_prompt.as_deref() else {
+        if spec
+            .prompts
+            .as_ref()
+            .and_then(|prompts| prompts.cache_bust.as_ref())
+            .and_then(|cache_bust| cache_bust.target.as_deref())
+            == Some("warmup_isolation_system")
+        {
+            let has_generated_system = spec
+                .prefix_prompts
+                .as_ref()
+                .is_some_and(|prefixes| prefixes.shared_system_length.is_some());
+            ensure!(
+                has_generated_system,
+                "cache_bust=warmup_isolation_system requires a shared system prompt, but no \
+                 shared_system_length or verbatim system prompt is configured"
+            );
+        }
+        return Ok(());
+    };
+    if let Some(prefixes) = spec.prefix_prompts.as_ref() {
+        ensure!(
+            prefixes.shared_system_length.is_none(),
+            "system_prompt and prefix_prompts.shared_system_length are mutually exclusive: \
+             both fill the system message"
+        );
+        ensure!(
+            !prefixes.pool_size.is_some_and(|value| value > 0)
+                && !prefixes.length.is_some_and(|value| value > 0),
+            "system_prompt and prefix_prompts.pool_size/length are mutually exclusive: both \
+             fill the system-message prefix slot"
+        );
+    }
+    Ok(())
+}
+
 #[async_trait(?Send)]
 impl DatasetInputAdapter for SyntheticDatasetInputAdapter {
     fn source_type(&self) -> &'static str {
@@ -850,6 +911,11 @@ impl DatasetInputAdapter for SyntheticDatasetInputAdapter {
     ) -> Result<PreparedDatasetInput> {
         let SyntheticDatasetInput::Synthetic(spec) =
             decode_dataset_source(raw).context("decoding synthetic dataset source")?;
+        validate_system_prompt_endpoint(
+            spec.system_prompt.as_deref(),
+            context.endpoint_descriptor,
+        )?;
+        validate_synthetic_system_prompt(&spec)?;
         let rng_root = spec
             .random_seed
             .map_or(context.run_rng_root, |seed| RngRoot::new(Some(seed)));
@@ -891,6 +957,10 @@ impl DatasetInputAdapter for FileDatasetInputAdapter {
     ) -> Result<PreparedDatasetInput> {
         let FileDatasetInput::File(spec) =
             decode_dataset_source(raw).context("decoding file dataset source")?;
+        validate_system_prompt_endpoint(
+            spec.system_prompt.as_deref(),
+            context.endpoint_descriptor,
+        )?;
         ensure!(
             spec.format != "dag_jsonl",
             "scheduled workloads cannot consume a direct dag_jsonl graph program"
@@ -936,6 +1006,10 @@ impl DatasetInputAdapter for PublicDatasetInputAdapter {
     ) -> Result<PreparedDatasetInput> {
         let PublicDatasetInput::Public(spec) =
             decode_dataset_source(raw).context("decoding public dataset source")?;
+        validate_system_prompt_endpoint(
+            spec.system_prompt.as_deref(),
+            context.endpoint_descriptor,
+        )?;
         ensure!(
             spec.format != "dag_jsonl",
             "scheduled workloads cannot consume a direct dag_jsonl graph program"
@@ -950,6 +1024,7 @@ impl DatasetInputAdapter for PublicDatasetInputAdapter {
             rng_root,
             context.tokenizer,
             context.endpoint_descriptor.requires_raw_token_ids,
+            context.endpoint_descriptor.consumes_system_message(),
         )
         .await?;
         dataset.validate_for_endpoint(context.endpoint_descriptor)?;
@@ -998,6 +1073,70 @@ fn checked_default_output_tokens(expected: f64) -> Result<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::endpoints::{ChatEndpoint, CompletionsEndpoint, Endpoint};
+
+    #[test]
+    fn strict_dataset_boundary_validates_system_prompt_capability_and_shape() {
+        validate_system_prompt_endpoint(Some("exact"), ChatEndpoint.descriptor()).unwrap();
+        let error =
+            validate_system_prompt_endpoint(Some("exact"), CompletionsEndpoint.descriptor())
+                .unwrap_err()
+                .to_string();
+        assert!(error.contains("would never reach the wire"), "{error}");
+
+        for prefix_prompts in [
+            serde_json::json!({"shared_system_length": 4}),
+            serde_json::json!({"pool_size": 2, "length": 4}),
+        ] {
+            let SyntheticDatasetInput::Synthetic(spec) =
+                serde_json::from_value(serde_json::json!({
+                    "type": "synthetic",
+                    "system_prompt": "exact",
+                    "entries": 1,
+                    "prefix_prompts": prefix_prompts,
+                    "turns": {"value": 1.0},
+                    "turn_delay_ms": {"value": 0.0}
+                }))
+                .unwrap();
+            let error = validate_synthetic_system_prompt(&spec)
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains("mutually exclusive"), "{error}");
+        }
+    }
+
+    #[test]
+    fn strict_dataset_boundary_accepts_verbatim_warmup_system_and_user_context() {
+        let SyntheticDatasetInput::Synthetic(spec) = serde_json::from_value(serde_json::json!({
+            "type": "synthetic",
+            "system_prompt": "exact",
+            "entries": 1,
+            "prompts": {
+                "cache_bust": {"target": "warmup_isolation_system"}
+            },
+            "prefix_prompts": {"user_context_length": 4},
+            "turns": {"value": 1.0},
+            "turn_delay_ms": {"value": 0.0}
+        }))
+        .unwrap();
+        validate_synthetic_system_prompt(&spec).unwrap();
+
+        let SyntheticDatasetInput::Synthetic(without_system) =
+            serde_json::from_value(serde_json::json!({
+                "type": "synthetic",
+                "entries": 1,
+                "prompts": {
+                    "cache_bust": {"target": "warmup_isolation_system"}
+                },
+                "turns": {"value": 1.0},
+                "turn_delay_ms": {"value": 0.0}
+            }))
+            .unwrap();
+        let error = validate_synthetic_system_prompt(&without_system)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("requires a shared system prompt"), "{error}");
+    }
 
     #[test]
     fn distribution_spec_decodes_under_arbitrary_precision() {

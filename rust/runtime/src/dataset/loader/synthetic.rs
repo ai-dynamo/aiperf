@@ -1070,6 +1070,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn verbatim_system_prompt_is_additive_to_synthetic_user_isl() {
+        let registry = LoaderRegistry::with_builtin_formats().unwrap();
+        let load = LoadConfig::new(DatasetSource::Inline(json!({"__aiperf_synthetic": true})));
+        let mut compose = ComposeConfig::new("model", RngRoot::new(Some(41)));
+        compose.verbatim_system_prompt = Some("exact system text".into());
+        compose.synthetic_config = Some(SyntheticDatasetConfig {
+            entries: 1,
+            turns: SamplingDistribution::fixed(1.0).unwrap(),
+            prompts: Some(SyntheticPromptConfig {
+                input_tokens: SamplingDistribution::fixed(12.0).unwrap(),
+                batch_size: 1,
+                ..SyntheticPromptConfig::default()
+            }),
+            ..SyntheticDatasetConfig::default()
+        });
+        let tokenizer = TiktokenTokenizer::builtin();
+
+        let dataset = registry
+            .build_dataset(Some("synthetic"), &load, &compose, &tokenizer)
+            .await
+            .unwrap();
+
+        let conversation = &dataset.conversations()[0];
+        let system = conversation.system.unwrap();
+        let Payload::Text { bytes, .. } = dataset.segments().get(system).unwrap() else {
+            panic!("system prompt must be text");
+        };
+        assert_eq!(bytes, "exact system text");
+        assert_eq!(conversation.turns[0].input_tokens, Some(12));
+    }
+
+    #[tokio::test]
     async fn prefix_reuse_default_leaves_prompts_unique() {
         let registry = LoaderRegistry::with_builtin_formats().unwrap();
         let load = LoadConfig::new(DatasetSource::Inline(json!({"__aiperf_synthetic": true})));

@@ -26,7 +26,7 @@ use crate::dataset::loader::RawRow;
 use crate::dataset::media::{InlineMediaResolver, MediaResolver};
 use crate::dataset::model::{Conversation, ConversationContextMode, ModelId, SessionId, Turn};
 use crate::dataset::prompt::{CorpusPromptGeneratorFactory, PromptGeneratorFactory};
-use crate::dataset::segment::{Handle, SegmentPool, SegmentStore};
+use crate::dataset::segment::{Handle, Payload, SegmentPool, SegmentStore};
 use crate::dataset::synthesis::TraceSynthesisConfig;
 use crate::dataset::tokenizer::TextTokenizer;
 
@@ -158,6 +158,8 @@ pub struct ComposeConfig {
     pub media_generator_factory: Arc<dyn SyntheticMediaGeneratorFactory>,
     /// Shared system prompt interned once and referenced by every conversation.
     pub shared_system_prompt: Option<String>,
+    /// Exact user-authored system text applied after format-specific composition.
+    pub verbatim_system_prompt: Option<String>,
     /// Per-conversation user context prompts in authored conversation order.
     pub user_context_prompts: Vec<String>,
     /// Context behavior for conversations without an explicit mode.
@@ -202,6 +204,7 @@ impl ComposeConfig {
             trace_synthesis: None,
             media_generator_factory: Arc::new(NativeSyntheticMediaGeneratorFactory::default()),
             shared_system_prompt: None,
+            verbatim_system_prompt: None,
             user_context_prompts: Vec::new(),
             default_context_mode: ConversationContextMode::DeltasWithoutResponses,
             media_resolver: Arc::new(InlineMediaResolver),
@@ -315,17 +318,50 @@ pub(crate) fn apply_common_contexts(
             conversations.len()
         )));
     }
-    let system_tokens = config
+    let shared_system_tokens = config
         .shared_system_prompt
         .as_deref()
         .map(|prompt| tokenizer.encode(prompt))
         .transpose()?;
     for (index, conversation) in conversations.iter_mut().enumerate() {
+        let old_system = conversation.system;
+        let old_user_context = conversation.user_context;
+        let old_root = old_user_context.or(old_system);
         let mut injected = false;
-        if conversation.system.is_none()
+        if let Some(prompt) = config.verbatim_system_prompt.as_deref() {
+            let combined = match old_system {
+                Some(handle) => {
+                    let Payload::Text { bytes, .. } = segments.get(handle)? else {
+                        return Err(DatasetError::Validation(
+                            "conversation system prompt must be text before verbatim composition"
+                                .into(),
+                        ));
+                    };
+                    let authored = std::str::from_utf8(bytes).map_err(|error| {
+                        DatasetError::Validation(format!(
+                            "conversation system prompt is not UTF-8: {error}"
+                        ))
+                    })?;
+                    let mut combined = String::with_capacity(prompt.len() + 2 + authored.len());
+                    combined.push_str(prompt);
+                    combined.push_str("\n\n");
+                    combined.push_str(authored);
+                    combined
+                }
+                None => prompt.to_owned(),
+            };
+            let tokens = tokenizer.encode(&combined)?;
+            conversation.system = Some(segments.intern_text(
+                None,
+                "system",
+                Bytes::from(combined),
+                tokens.into_boxed_slice(),
+            )?);
+            injected = true;
+        } else if conversation.system.is_none()
             && let (Some(prompt), Some(tokens)) = (
                 config.shared_system_prompt.as_deref(),
-                system_tokens.as_ref(),
+                shared_system_tokens.as_ref(),
             )
         {
             conversation.system = Some(segments.intern_text(
@@ -335,6 +371,22 @@ pub(crate) fn apply_common_contexts(
                 tokens.clone().into_boxed_slice(),
             )?);
             injected = true;
+        }
+
+        let mut remapped = HashMap::new();
+        if old_system != conversation.system
+            && let Some(old_user_context) = old_user_context
+        {
+            if let (Some(old_system), Some(new_system)) = (old_system, conversation.system) {
+                remapped.insert(old_system, new_system);
+            }
+            conversation.user_context = Some(rebase_handle(
+                old_user_context,
+                conversation.system,
+                tokenizer,
+                segments,
+                &mut remapped,
+            )?);
         }
         if conversation.user_context.is_none()
             && let Some(prompt) = config.user_context_prompts.get(index)
@@ -349,8 +401,10 @@ pub(crate) fn apply_common_contexts(
         }
         if injected {
             let root = conversation.user_context.or(conversation.system);
-            let mut remapped = HashMap::new();
-            rebase_conversation_handles(conversation, root, segments, &mut remapped)?;
+            if let (Some(old_root), Some(root)) = (old_root, root) {
+                remapped.insert(old_root, root);
+            }
+            rebase_conversation_handles(conversation, root, tokenizer, segments, &mut remapped)?;
         }
     }
     Ok(())
@@ -359,17 +413,18 @@ pub(crate) fn apply_common_contexts(
 fn rebase_conversation_handles(
     conversation: &mut Conversation,
     root: Option<Handle>,
+    tokenizer: &dyn TextTokenizer,
     segments: &mut SegmentPool,
     remapped: &mut HashMap<Handle, Handle>,
 ) -> Result<()> {
     for turn in &mut conversation.turns {
         // Rebase every dispatch representation onto the injected context root.
         for handle in &mut turn.body {
-            *handle = rebase_handle(*handle, root, segments, remapped)?;
+            *handle = rebase_handle(*handle, root, tokenizer, segments, remapped)?;
         }
         for group in &mut turn.content {
             for handle in &mut group.handles {
-                *handle = rebase_handle(*handle, root, segments, remapped)?;
+                *handle = rebase_handle(*handle, root, tokenizer, segments, remapped)?;
             }
         }
         for handle in [
@@ -381,7 +436,7 @@ fn rebase_conversation_handles(
             &mut turn.request_parameters,
         ] {
             if let Some(value) = *handle {
-                *handle = Some(rebase_handle(value, root, segments, remapped)?);
+                *handle = Some(rebase_handle(value, root, tokenizer, segments, remapped)?);
             }
         }
     }
@@ -391,6 +446,7 @@ fn rebase_conversation_handles(
 fn rebase_handle(
     handle: Handle,
     root: Option<Handle>,
+    tokenizer: &dyn TextTokenizer,
     segments: &mut SegmentPool,
     remapped: &mut HashMap<Handle, Handle>,
 ) -> Result<Handle> {
@@ -402,10 +458,22 @@ fn rebase_handle(
         .cloned()
         .ok_or(DatasetError::UnknownHandle(handle))?;
     let parent = match segment.parent {
-        Some(parent) => Some(rebase_handle(parent, root, segments, remapped)?),
+        Some(parent) => Some(rebase_handle(parent, root, tokenizer, segments, remapped)?),
         None => root,
     };
-    let rebased = segments.intern(parent, segment.payload)?;
+    let rebased = match segment.payload {
+        Payload::Text { role, bytes, .. } => segments.intern_text(
+            parent,
+            role,
+            bytes.clone(),
+            tokenizer
+                .encode(std::str::from_utf8(&bytes).map_err(|error| {
+                    DatasetError::Validation(format!("text segment is not UTF-8: {error}"))
+                })?)?
+                .into_boxed_slice(),
+        )?,
+        payload => segments.intern(parent, payload)?,
+    };
     remapped.insert(handle, rebased);
     Ok(rebased)
 }
@@ -534,5 +602,139 @@ mod tests {
             Some(context)
         );
         assert_ne!(prompt, rebased_prompt);
+    }
+
+    #[test]
+    fn verbatim_system_prompt_prepends_authored_system_and_rebases_descendants() {
+        let tokenizer = crate::dataset::tokenizer::TiktokenTokenizer::builtin();
+        let mut segments = SegmentPool::new();
+        let authored_system = segments
+            .intern_text(
+                None,
+                "system",
+                Bytes::from_static(b"authored system"),
+                tokenizer
+                    .encode("authored system")
+                    .unwrap()
+                    .into_boxed_slice(),
+            )
+            .unwrap();
+        let prompt = segments
+            .intern_text(
+                Some(authored_system),
+                "user",
+                Bytes::from_static(b"prompt"),
+                tokenizer.encode("prompt").unwrap().into_boxed_slice(),
+            )
+            .unwrap();
+        let mut conversation = Conversation::new("session");
+        conversation.system = Some(authored_system);
+        conversation.turns.push(Turn {
+            content: smallvec::smallvec![crate::dataset::model::ContentGroup {
+                kind: crate::dataset::model::MediaKind::Text,
+                name: String::new(),
+                handles: smallvec::smallvec![prompt],
+                uuids: smallvec::smallvec![],
+            }],
+            ..Turn::default()
+        });
+        let mut config = ComposeConfig::new("model", RngRoot::new(Some(1)));
+        config.verbatim_system_prompt = Some("verbatim".into());
+
+        apply_common_contexts(
+            std::slice::from_mut(&mut conversation),
+            &config,
+            &tokenizer,
+            &mut segments,
+        )
+        .unwrap();
+
+        let combined_system = conversation.system.unwrap();
+        let rebased_prompt = conversation.turns[0].content[0].handles[0];
+        let crate::dataset::segment::Payload::Text { bytes, .. } =
+            segments.get(combined_system).unwrap()
+        else {
+            panic!("system prompt must be text");
+        };
+        assert_eq!(bytes, "verbatim\n\nauthored system");
+        assert_ne!(combined_system, authored_system);
+        assert_ne!(rebased_prompt, prompt);
+        assert_eq!(
+            segments.segment(rebased_prompt).unwrap().parent,
+            Some(combined_system)
+        );
+    }
+
+    #[test]
+    fn absent_verbatim_system_prompt_is_byte_neutral() {
+        let tokenizer = crate::dataset::tokenizer::TiktokenTokenizer::builtin();
+        let mut segments = SegmentPool::new();
+        let prompt = segments
+            .intern_text(
+                None,
+                "user",
+                Bytes::from_static(b"prompt"),
+                tokenizer.encode("prompt").unwrap().into_boxed_slice(),
+            )
+            .unwrap();
+        let mut conversation = Conversation::new("session");
+        conversation.turns.push(Turn {
+            content: smallvec::smallvec![crate::dataset::model::ContentGroup {
+                kind: crate::dataset::model::MediaKind::Text,
+                name: String::new(),
+                handles: smallvec::smallvec![prompt],
+                uuids: smallvec::smallvec![],
+            }],
+            ..Turn::default()
+        });
+        let original = conversation.clone();
+        let original_segment_count = segments.len();
+
+        apply_common_contexts(
+            std::slice::from_mut(&mut conversation),
+            &ComposeConfig::new("model", RngRoot::new(Some(1))),
+            &tokenizer,
+            &mut segments,
+        )
+        .unwrap();
+
+        assert_eq!(conversation, original);
+        assert_eq!(segments.len(), original_segment_count);
+    }
+
+    #[test]
+    fn verbatim_system_prompt_keeps_distinct_descendant_identities() {
+        let tokenizer = crate::dataset::tokenizer::TiktokenTokenizer::builtin();
+        let mut segments = SegmentPool::new();
+        let mut conversations = Vec::new();
+        for (session, text) in [("one", "first prompt"), ("two", "second prompt")] {
+            let prompt = segments
+                .intern_text(
+                    None,
+                    "user",
+                    Bytes::copy_from_slice(text.as_bytes()),
+                    tokenizer.encode(text).unwrap().into_boxed_slice(),
+                )
+                .unwrap();
+            let mut conversation = Conversation::new(session);
+            conversation.turns.push(Turn {
+                content: smallvec::smallvec![crate::dataset::model::ContentGroup {
+                    kind: crate::dataset::model::MediaKind::Text,
+                    name: String::new(),
+                    handles: smallvec::smallvec![prompt],
+                    uuids: smallvec::smallvec![],
+                }],
+                ..Turn::default()
+            });
+            conversations.push(conversation);
+        }
+        let mut config = ComposeConfig::new("model", RngRoot::new(Some(1)));
+        config.verbatim_system_prompt = Some("verbatim".into());
+
+        apply_common_contexts(&mut conversations, &config, &tokenizer, &mut segments).unwrap();
+
+        let first = conversations[0].turns[0].content[0].handles[0];
+        let second = conversations[1].turns[0].content[0].handles[0];
+        assert_ne!(segments.id(first).unwrap(), segments.id(second).unwrap());
     }
 }
