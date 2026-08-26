@@ -92,6 +92,11 @@ pub struct DatasetIndex<R> {
 }
 
 impl<R: Clone> DatasetIndex<R> {
+    /// Build an index from already-filtered owned entries in a transport adapter.
+    pub(crate) fn from_owned(owned: HashMap<u64, R>) -> Self {
+        Self { owned }
+    }
+
     /// Drain the dataset broadcast subscription to finalize, indexing only the requests
     /// this cell owns (`owns(request_id)` true). Each chunk is filtered as it streams and
     /// non-owned requests are dropped immediately, so the index's peak RAM is O(owned) —

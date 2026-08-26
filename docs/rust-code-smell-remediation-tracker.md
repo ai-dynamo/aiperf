@@ -69,7 +69,7 @@ Graham review and a commit.
 | E10 | Docker verifier orchestration is duplicated and diverges | Confirmed; spec ready | Sol implementation plan |
 | E11 | CLI Dynosim runs skip process defaults | Confirmed; spec ready | Sol implementation plan |
 | C01 | Phaser Velo subscription accepts forged/replayed event | Complete — `cf09af5034` | Independent Graham approved; explicit benchmark trust-boundary contract |
-| C02 | Dataset Velo subscription accepts forged event or oversized payload | Confirmed/narrowed; spec needed | Sol implementation plan |
+| C02 | Dataset Velo subscription accepts forged event or oversized payload | Complete — `c823d9c53e` through `6bb0066d47` | Independent Graham approved; RED→GREEN Velo fan-out bound, replay, and progress coverage recorded |
 | C03 | Duplicate cellular partition can satisfy completion barrier | Complete — `1053327b41` | Independent Graham approved; RED→GREEN identity coverage recorded |
 | C04 | Eventstream prelude validation happens after accumulation | Complete — `4067dfc13b`, `7b0d6fce79` | Independent Graham approved; RED→GREEN parser and mock-caller coverage recorded |
 | C05 | Partial final HTTP frame lacks terminal decode error | Complete — `d2c92bae08` | Independent Graham approved; RED→GREEN EOF coverage recorded |
@@ -185,3 +185,11 @@ Graham review and a commit.
   rejected before transport construction, and the existing shared declared and
   chunked enforcement remains covered. The redo has an unknown-field behavioral
   RED, focused GREEN, and independent Graham approval.
+- 2026-08-26: C02 completed and integrated as `c823d9c53e` through
+  `6bb0066d47`. It applies only to opt-in Velo MessagePack/zstd endpoint-ready
+  request fan-out (the distinct HTTP+zstd file/path dataset-source path remains
+  unchanged): compressed framing reserves Velo overhead, producer admission
+  validates the prospective sealed replay before publication, replay size is
+  tracked incrementally, and live delivery reports controller failures or a
+  progress-resetting inactivity timeout. The final 13-test scoped suite and
+  independent Graham review passed.

@@ -682,6 +682,9 @@ Inputs, endpoints, and graph:
 - [`docs/specs/2026-08-25-native-tracelab-recorded-graph.md`](docs/specs/2026-08-25-native-tracelab-recorded-graph.md) —
   native TraceLab JSONL/gzip conversion into the strict WEKA-shaped intermediate and Graph-IR,
   including reconstructed timing, cache-block identity, and Claude/Codex subagent containment joins.
+- [`docs/specs/2026-08-26-native-dsp-kernel-batching.md`](docs/specs/2026-08-26-native-dsp-kernel-batching.md) —
+  native `search-pyo3` qLogNEI constrained-GP fix: propagate BoTorch's augmented batch
+  shape through both DSP kernel layers before fitting objective-plus-SLA outputs.
 - [`docs/specs/2026-08-25-native-random-range-ratio.md`](docs/specs/2026-08-25-native-random-range-ratio.md) —
   native vLLM/SGLang-compatible random-range ISL/OSL sampling and seeded random-corpus
   draw order over the existing exact-length and raw-token composition paths.
