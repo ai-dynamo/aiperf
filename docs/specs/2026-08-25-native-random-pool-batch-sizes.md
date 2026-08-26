@@ -10,19 +10,13 @@ binary.
 
 ## Built
 
-The native dataset pipeline already parses random-pool JSON/JSONL into named
-pools and modality groups. Unit-sized composition selects one entry from each
-pool while preserving group names. Flattened composition combines a modality's
-entries and samples with replacement. The composer already recognizes
-`text_batch_size`, `image_batch_size`, `audio_batch_size`, and
-`video_batch_size` in file-format options, with a default of one and zero
-meaning no group of that modality.
-
-Config v2 currently projects only `dataset.images.batchSize` and the explicit
-`--image-batch-size` flag into the random-pool image option. Synthetic prompt
-batching has a separate native field and remains independently supported.
-
-## Future requirements
+The native dataset pipeline projects all four authored batch sizes through
+CLI-only and Config-v2 YAML paths into the random-pool loader. The loader parses
+real JSON/JSONL into named pools and modality groups, preserves associated unit
+sampling, and selects independent-with-replacement flattened sampling only when
+a present modality requests a non-unit size. Resolver and loader guards reject
+wrong dataset kinds and formats, lossy identity-bearing batches, directory
+non-unit sizes, and empty output turns. Synthetic batching remains independent.
 
 ### Authoring and precedence
 
@@ -87,6 +81,9 @@ wrong-format rejection, directory validation, and synthetic non-interference.
 A Rust integration test launches the native `aiperf` binary against a real
 file-backed pool and inspects request records to prove the authored size reaches
 the loader and wire construction rather than only a parser DTO.
+
+This contract is implemented and independently Graham-approved in the native
+port recorded by merge `f1d39ad583f2ed6848b135bf3713240a123a472b`.
 
 ## Source anchors
 

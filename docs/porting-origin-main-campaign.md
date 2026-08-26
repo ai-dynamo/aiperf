@@ -85,7 +85,7 @@ implementation, test run, or review.
 | 57 | `e10d53b1d3` | version 0.13.0 | pending | shared-product-action | Coordinated release decision, not standalone Rust port. |
 | 58 | `9b60a3d479` | FakeTokenizer | pending | not-applicable | Python test harness only. |
 | 59 | `c9288da6c1` | mmap conversation cache | pending | not-applicable | No equivalent native mmap backend. |
-| 60 | `c2889280a6` | random_pool batch sizes | pending | applicable | Runtime supports modalities but projection exposes only image. |
+| 60 | `c2889280a6` | random_pool batch sizes | complete | applicable | Native four-modality CLI/YAML/config projection, safe real-loader batching, and binary integration coverage approved at `5dd2939765`; exact target-only merge `f1d39ad583`. |
 
 ## Per-commit record: 817a8d84ddb9
 

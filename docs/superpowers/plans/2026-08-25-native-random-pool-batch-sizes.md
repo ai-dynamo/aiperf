@@ -125,14 +125,15 @@ composer, cargo tests, sccache.
 - Produces: review-approved native implementation, exact two-parent target-only
   merge, and evidence-backed tracker closure.
 
-- [ ] Run formatting, focused runtime/CLI/config/integration tests, appropriate
+- [x] Run formatting, focused runtime/CLI/config/integration tests, appropriate
   feature-bearing tests, and changed-scope Clippy with fresh output.
-- [ ] Request an independent full Graham review over the exact base-to-tip diff;
+- [x] Request an independent full Graham review over the exact base-to-tip diff;
   record every Critical/Important finding and its evidence.
-- [ ] Apply review repairs with a failing regression test first, rerun focused
-  verification, and request independent re-review until approved.
-- [ ] Commit the review receipts and closure evidence; update tracker only after
+- [x] Apply any review repairs with a failing regression test first, rerun
+  focused verification, and request independent re-review until approved; the
+  approved second pass required no repair.
+- [x] Commit the review receipts and closure evidence; update tracker only after
   approval.
-- [ ] Create an actual two-parent `ours`-tree merge with exact upstream as second
+- [x] Create an actual two-parent `ours`-tree merge with exact upstream as second
   parent, then verify parent order, first-parent tree equality, clean status, and
   absence of imported upstream Python changes.
