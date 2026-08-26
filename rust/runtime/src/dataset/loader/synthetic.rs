@@ -267,15 +267,20 @@ impl Composer for SyntheticComposer {
                         Some((input, _)) => usize::try_from(input).map_err(|_| {
                             DatasetError::Validation(format!("sampled ISL {input} exceeds usize"))
                         })?,
-                        None => usize::try_from(
-                            prompt
-                                .input_tokens
-                                .sample_int(&mut length_rng)
-                                .map_err(|error| DatasetError::Validation(error.to_string()))?,
-                        )
-                        .map_err(|_| {
-                            DatasetError::Validation("sampled ISL exceeds usize".into())
-                        })?,
+                        None => {
+                            let sampled = usize::try_from(
+                                prompt
+                                    .input_tokens
+                                    .sample_int(&mut length_rng)
+                                    .map_err(|error| DatasetError::Validation(error.to_string()))?,
+                            )
+                            .map_err(|_| {
+                                DatasetError::Validation("sampled ISL exceeds usize".into())
+                            })?;
+                            sampled
+                                .saturating_sub(prompt.input_token_subtraction)
+                                .max(1)
+                        }
                     };
                     let generator = prompt_generator.as_deref_mut().ok_or_else(|| {
                         DatasetError::Validation("synthetic prompts require a tokenizer".into())
@@ -1064,6 +1069,7 @@ mod tests {
             turns: SamplingDistribution::fixed(1.0).unwrap(),
             prompts: Some(SyntheticPromptConfig {
                 input_tokens: SamplingDistribution::fixed(12.0).unwrap(),
+                input_token_subtraction: 0,
                 batch_size: 1,
                 prefix_reuse_fraction: 0.5,
                 prefix_reuse_ratio: 0.5,
@@ -1325,6 +1331,33 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn independently_sampled_isl_subtracts_server_special_tokens() {
+        let registry = LoaderRegistry::with_builtin_formats().unwrap();
+        let load = LoadConfig::new(DatasetSource::Inline(json!({"__aiperf_synthetic": true})));
+        let mut compose = ComposeConfig::new("model", RngRoot::new(Some(17)));
+        compose.synthetic_config = Some(SyntheticDatasetConfig {
+            entries: 1,
+            prompts: Some(SyntheticPromptConfig {
+                input_tokens: SamplingDistribution::fixed(8.0).unwrap(),
+                input_token_subtraction: 2,
+                batch_size: 1,
+                ..SyntheticPromptConfig::default()
+            }),
+            ..SyntheticDatasetConfig::default()
+        });
+        let dataset = registry
+            .build_dataset(
+                Some("synthetic"),
+                &load,
+                &compose,
+                &TiktokenTokenizer::builtin(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(dataset.conversations()[0].turns[0].input_tokens, Some(6));
+    }
+
+    #[tokio::test]
     async fn raw_token_synthetic_composition_never_decodes_text() {
         use crate::dataset::tokenizer::NoDecodeTokenizer;
 
@@ -1413,6 +1446,7 @@ mod tests {
             turns: SamplingDistribution::fixed(1.0).unwrap(),
             prompts: Some(crate::dataset::generator::SyntheticPromptConfig {
                 input_tokens: SamplingDistribution::fixed(12.0).unwrap(),
+                input_token_subtraction: 0,
                 batch_size: 1,
                 prefix_reuse_fraction: 1.0,
                 prefix_reuse_ratio: 0.5,

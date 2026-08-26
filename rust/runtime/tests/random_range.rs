@@ -92,8 +92,9 @@ fn sglang_folds_wide_seeds_by_xor_words() {
         0,
     )
     .unwrap();
-    assert_eq!(
-        plan.preseed(6, 5, 100).unwrap(),
-        plan.preseed(6, (1_u64 << 32) | 4, 100).unwrap()
-    );
+    let narrow = plan.preseed(6, 5, 100).unwrap();
+    let wide = plan.preseed(6, (1_u64 << 32) | 4, 100).unwrap();
+    assert_eq!(narrow.inputs(), wide.inputs());
+    assert_eq!(narrow.outputs(), wide.outputs());
+    assert_eq!(narrow.offsets(), wide.offsets());
 }

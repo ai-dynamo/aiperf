@@ -1036,10 +1036,15 @@ mod tests {
 
     #[test]
     fn synthetic_random_range_ratio_decodes_scalar_and_split_protocol_v2() {
-        for (ratio, expected) in [
-            ("0.3", crate::dataset::RandomRangeRatioInput::Same(0.3)),
+        for (ratio, style, expected) in [
+            (
+                "0.3",
+                "sglang",
+                crate::dataset::RandomRangeRatioInput::Same(0.3),
+            ),
             (
                 r#"{"input":0.2,"output":0.4}"#,
+                "vllm",
                 crate::dataset::RandomRangeRatioInput::Split {
                     input: 0.2,
                     output: 0.4,
@@ -1047,14 +1052,18 @@ mod tests {
             ),
         ] {
             let json = format!(
-                r#"{{"type":"synthetic","entries":1,"sampling":"sequential","prompts":{{"isl":{{"value":100}},"osl":{{"value":20}},"corpus":"random","random_range_ratio":{ratio},"random_corpus_style":"sglang"}},"turns":{{"value":1}},"turn_delay_ms":{{"value":0}}}}"#
+                r#"{{"type":"synthetic","entries":1,"sampling":"sequential","prompts":{{"isl":{{"value":100}},"osl":{{"value":20}},"corpus":"random","random_range_ratio":{ratio},"random_corpus_style":"{style}"}},"turns":{{"value":1}},"turn_delay_ms":{{"value":0}}}}"#
             );
             let SyntheticDatasetInput::Synthetic(spec) = serde_json::from_str(&json).unwrap();
             let prompts = spec.prompts.unwrap();
             assert_eq!(prompts.random_range_ratio, Some(expected));
             assert_eq!(
                 prompts.random_corpus_style,
-                crate::dataset::RandomCorpusStyle::Sglang
+                if style == "sglang" {
+                    crate::dataset::RandomCorpusStyle::Sglang
+                } else {
+                    crate::dataset::RandomCorpusStyle::Vllm
+                }
             );
         }
     }

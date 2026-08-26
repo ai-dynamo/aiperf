@@ -119,7 +119,7 @@ def bounds(case: dict[str, Any]) -> tuple[tuple[int, int], tuple[int, int]]:
 
 
 def generate_case(authored: dict[str, Any]) -> dict[str, Any]:
-    """Run the actual NumPy reference stream and compose exact request bodies."""
+    """Run the actual NumPy reference stream and compose exact token vectors."""
     case = dict(authored)
     input_bounds, output_bounds = bounds(case)
     if case["style"] == "vllm":
@@ -156,22 +156,14 @@ def generate_case(authored: dict[str, Any]) -> dict[str, Any]:
         inputs = np.maximum(1, inputs - case["special_tokens"])
 
     requests = []
-    for request_index, (input_len, output_len, offset) in enumerate(
-        zip(inputs.tolist(), outputs.tolist(), offsets.tolist(), strict=True)
+    for request_index, (input_len, offset) in enumerate(
+        zip(inputs.tolist(), offsets.tolist(), strict=True)
     ):
         token_ids = [
             pool[(offset + request_index + token_index) % len(pool)]
             for token_index in range(input_len)
         ]
-        payload = {"max_tokens": output_len, "prompt_token_ids": token_ids}
-        requests.append(
-            {
-                "token_ids": token_ids,
-                "request_utf8": json.dumps(
-                    payload, sort_keys=True, separators=(",", ":")
-                ),
-            }
-        )
+        requests.append({"token_ids": token_ids})
 
     case.update(
         {
@@ -196,7 +188,6 @@ def rendered_fixture() -> str:
             "numpy_version": np.__version__,
             "draw_order": "all_inputs_then_all_outputs_then_all_offsets",
             "token_formula": "pool[(offset + request_index + token_index) % len(pool)]",
-            "request_encoding": "json.dumps(sort_keys=True,separators=(',',':')).encode('utf-8')",
             "vocab_size": VOCAB_SIZE,
             "vllm_special_token_ids": sorted(SPECIAL_TOKEN_IDS),
         },

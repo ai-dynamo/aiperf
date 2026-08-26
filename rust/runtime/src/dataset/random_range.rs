@@ -4,6 +4,8 @@
 //! Reference-compatible random ISL/OSL range plans.
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
+use std::sync::{Mutex, OnceLock};
 
 use crate::dataset::error::{DatasetError, Result};
 use crate::rng::compat::numpy_generator::NumpyGenerator;
@@ -21,7 +23,7 @@ pub enum RandomCorpusStyle {
 }
 
 /// Public scalar or independent input/output ratio syntax.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 #[serde(untagged)]
 pub enum RandomRangeRatioInput {
     /// One ratio applied to both windows.
@@ -33,6 +35,35 @@ pub enum RandomRangeRatioInput {
         /// Output window ratio.
         output: f64,
     },
+}
+
+impl<'de> Deserialize<'de> for RandomRangeRatioInput {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum AuthoredRatio {
+            Same(f64),
+            Split(SplitRatio),
+        }
+
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct SplitRatio {
+            input: f64,
+            output: f64,
+        }
+
+        Ok(match AuthoredRatio::deserialize(deserializer)? {
+            AuthoredRatio::Same(value) => Self::Same(value),
+            AuthoredRatio::Split(value) => Self::Split {
+                input: value.input,
+                output: value.output,
+            },
+        })
+    }
 }
 
 impl RandomRangeRatioInput {
@@ -199,6 +230,9 @@ impl RandomRangePlan {
                 "random corpus requires a non-empty tokenizer vocabulary".into(),
             ));
         }
+        if self.style == RandomCorpusStyle::Sglang && seed > u64::from(u32::MAX) {
+            warn_folded_sglang_seed(seed);
+        }
         let mut inputs = Vec::with_capacity(entries);
         let mut outputs = Vec::with_capacity(entries);
         let mut offsets = Vec::with_capacity(entries);
@@ -287,6 +321,23 @@ impl SeededRandomRangePlan {
 
 fn fold_seed(seed: u64) -> u32 {
     seed as u32 ^ (seed >> 32) as u32
+}
+
+fn warn_folded_sglang_seed(seed: u64) {
+    static WARNED: OnceLock<Mutex<HashSet<u64>>> = OnceLock::new();
+    let warned = WARNED.get_or_init(|| Mutex::new(HashSet::new()));
+    let is_first = warned
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .insert(seed);
+    if is_first {
+        tracing::warn!(
+            component = "dataset.random_range",
+            seed,
+            folded_seed = fold_seed(seed),
+            "SGLang MT19937 folds seeds wider than u32; distinct authored seeds may alias"
+        );
+    }
 }
 
 pub(crate) struct ReferenceRandomStream {
@@ -500,5 +551,16 @@ mod tests {
         .unwrap()
         .validate_minimum_input(0)
         .unwrap();
+    }
+
+    #[test]
+    fn ratio_input_rejects_bool_and_unknown_object_fields() {
+        assert!(serde_json::from_str::<RandomRangeRatioInput>("true").is_err());
+        assert!(
+            serde_json::from_str::<RandomRangeRatioInput>(
+                r#"{"input":0.2,"output":0.4,"unexpected":1}"#,
+            )
+            .is_err()
+        );
     }
 }

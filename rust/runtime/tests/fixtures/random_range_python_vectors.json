@@ -48,7 +48,6 @@
       ],
       "requests": [
         {
-          "request_utf8": "{\"max_tokens\":4,\"prompt_token_ids\":[0,1,2,4,5,6,8,9]}",
           "token_ids": [
             0,
             1,
@@ -61,7 +60,6 @@
           ]
         },
         {
-          "request_utf8": "{\"max_tokens\":4,\"prompt_token_ids\":[13,14,0,1,2,4,5,6]}",
           "token_ids": [
             13,
             14,
@@ -74,7 +72,6 @@
           ]
         },
         {
-          "request_utf8": "{\"max_tokens\":4,\"prompt_token_ids\":[12,13,14,0,1,2,4,5]}",
           "token_ids": [
             12,
             13,
@@ -87,7 +84,6 @@
           ]
         },
         {
-          "request_utf8": "{\"max_tokens\":4,\"prompt_token_ids\":[9,10,11,12,13,14,0,1]}",
           "token_ids": [
             9,
             10,
@@ -100,7 +96,6 @@
           ]
         },
         {
-          "request_utf8": "{\"max_tokens\":4,\"prompt_token_ids\":[10,11,12,13,14,0,1,2]}",
           "token_ids": [
             10,
             11,
@@ -113,7 +108,6 @@
           ]
         },
         {
-          "request_utf8": "{\"max_tokens\":4,\"prompt_token_ids\":[6,8,9,10,11,12,13,14]}",
           "token_ids": [
             6,
             8,
@@ -126,7 +120,6 @@
           ]
         },
         {
-          "request_utf8": "{\"max_tokens\":4,\"prompt_token_ids\":[9,10,11,12,13,14,0,1]}",
           "token_ids": [
             9,
             10,
@@ -139,7 +132,6 @@
           ]
         },
         {
-          "request_utf8": "{\"max_tokens\":4,\"prompt_token_ids\":[9,10,11,12,13,14,0,1]}",
           "token_ids": [
             9,
             10,
@@ -219,7 +211,6 @@
       ],
       "requests": [
         {
-          "request_utf8": "{\"max_tokens\":4,\"prompt_token_ids\":[10,11,12,13,14,0,1]}",
           "token_ids": [
             10,
             11,
@@ -231,7 +222,6 @@
           ]
         },
         {
-          "request_utf8": "{\"max_tokens\":3,\"prompt_token_ids\":[4,5,6,8,9,10,11,12,13,14,0,1]}",
           "token_ids": [
             4,
             5,
@@ -248,7 +238,6 @@
           ]
         },
         {
-          "request_utf8": "{\"max_tokens\":6,\"prompt_token_ids\":[2,4,5,6,8,9,10,11,12,13,14]}",
           "token_ids": [
             2,
             4,
@@ -264,7 +253,6 @@
           ]
         },
         {
-          "request_utf8": "{\"max_tokens\":9,\"prompt_token_ids\":[12,13,14,0,1,2,4,5,6,8]}",
           "token_ids": [
             12,
             13,
@@ -279,7 +267,6 @@
           ]
         },
         {
-          "request_utf8": "{\"max_tokens\":8,\"prompt_token_ids\":[14,0,1,2,4,5,6,8,9,10]}",
           "token_ids": [
             14,
             0,
@@ -294,7 +281,6 @@
           ]
         },
         {
-          "request_utf8": "{\"max_tokens\":8,\"prompt_token_ids\":[12,13,14,0,1,2,4,5,6,8,9,10,11]}",
           "token_ids": [
             12,
             13,
@@ -312,7 +298,6 @@
           ]
         },
         {
-          "request_utf8": "{\"max_tokens\":8,\"prompt_token_ids\":[10,11,12,13,14,0,1]}",
           "token_ids": [
             10,
             11,
@@ -324,7 +309,6 @@
           ]
         },
         {
-          "request_utf8": "{\"max_tokens\":8,\"prompt_token_ids\":[10,11,12,13,14,0,1,2,4,5,6]}",
           "token_ids": [
             10,
             11,
@@ -407,7 +391,6 @@
       ],
       "requests": [
         {
-          "request_utf8": "{\"max_tokens\":6,\"prompt_token_ids\":[4,5,6,8,9,10,11,12,13,14,0,1,2,4,5,6]}",
           "token_ids": [
             4,
             5,
@@ -428,7 +411,6 @@
           ]
         },
         {
-          "request_utf8": "{\"max_tokens\":8,\"prompt_token_ids\":[12,13,14,0,1,2,4]}",
           "token_ids": [
             12,
             13,
@@ -440,7 +422,6 @@
           ]
         },
         {
-          "request_utf8": "{\"max_tokens\":6,\"prompt_token_ids\":[4,5,6,8,9,10,11,12]}",
           "token_ids": [
             4,
             5,
@@ -453,7 +434,6 @@
           ]
         },
         {
-          "request_utf8": "{\"max_tokens\":6,\"prompt_token_ids\":[0,1,2,4,5,6,8,9,10,11,12,13,14,0,1,2,4,5,6,8,9]}",
           "token_ids": [
             0,
             1,
@@ -479,7 +459,6 @@
           ]
         },
         {
-          "request_utf8": "{\"max_tokens\":5,\"prompt_token_ids\":[9,10,11,12,13,14,0,1,2,4,5,6,8,9,10,11]}",
           "token_ids": [
             9,
             10,
@@ -500,7 +479,6 @@
           ]
         },
         {
-          "request_utf8": "{\"max_tokens\":6,\"prompt_token_ids\":[12,13,14,0,1,2,4,5,6,8,9,10]}",
           "token_ids": [
             12,
             13,
@@ -517,7 +495,6 @@
           ]
         },
         {
-          "request_utf8": "{\"max_tokens\":9,\"prompt_token_ids\":[6,8,9,10,11,12,13,14,0,1]}",
           "token_ids": [
             6,
             8,
@@ -532,7 +509,6 @@
           ]
         },
         {
-          "request_utf8": "{\"max_tokens\":3,\"prompt_token_ids\":[11,12,13,14,0,1,2,4,5,6,8,9,10,11,12,13,14]}",
           "token_ids": [
             11,
             12,
@@ -621,7 +597,6 @@
       ],
       "requests": [
         {
-          "request_utf8": "{\"max_tokens\":5,\"prompt_token_ids\":[5,6,7,8,9,10]}",
           "token_ids": [
             5,
             6,
@@ -632,13 +607,11 @@
           ]
         },
         {
-          "request_utf8": "{\"max_tokens\":1,\"prompt_token_ids\":[10]}",
           "token_ids": [
             10
           ]
         },
         {
-          "request_utf8": "{\"max_tokens\":1,\"prompt_token_ids\":[15,0,1,2]}",
           "token_ids": [
             15,
             0,
@@ -647,7 +620,6 @@
           ]
         },
         {
-          "request_utf8": "{\"max_tokens\":5,\"prompt_token_ids\":[11,12,13,14]}",
           "token_ids": [
             11,
             12,
@@ -656,7 +628,6 @@
           ]
         },
         {
-          "request_utf8": "{\"max_tokens\":3,\"prompt_token_ids\":[13,14,15,0,1,2,3,4]}",
           "token_ids": [
             13,
             14,
@@ -669,7 +640,6 @@
           ]
         },
         {
-          "request_utf8": "{\"max_tokens\":2,\"prompt_token_ids\":[9,10,11,12]}",
           "token_ids": [
             9,
             10,
@@ -678,7 +648,6 @@
           ]
         },
         {
-          "request_utf8": "{\"max_tokens\":1,\"prompt_token_ids\":[9,10,11,12,13,14]}",
           "token_ids": [
             9,
             10,
@@ -689,7 +658,6 @@
           ]
         },
         {
-          "request_utf8": "{\"max_tokens\":2,\"prompt_token_ids\":[7,8,9]}",
           "token_ids": [
             7,
             8,
@@ -767,7 +735,6 @@
       ],
       "requests": [
         {
-          "request_utf8": "{\"max_tokens\":4,\"prompt_token_ids\":[7,8,9,10,11,12,13,14,15,0]}",
           "token_ids": [
             7,
             8,
@@ -782,7 +749,6 @@
           ]
         },
         {
-          "request_utf8": "{\"max_tokens\":5,\"prompt_token_ids\":[8,9,10,11,12,13,14]}",
           "token_ids": [
             8,
             9,
@@ -794,7 +760,6 @@
           ]
         },
         {
-          "request_utf8": "{\"max_tokens\":5,\"prompt_token_ids\":[4,5,6,7,8,9,10,11]}",
           "token_ids": [
             4,
             5,
@@ -807,7 +772,6 @@
           ]
         },
         {
-          "request_utf8": "{\"max_tokens\":5,\"prompt_token_ids\":[8,9,10,11,12,13,14,15,0,1]}",
           "token_ids": [
             8,
             9,
@@ -822,7 +786,6 @@
           ]
         },
         {
-          "request_utf8": "{\"max_tokens\":5,\"prompt_token_ids\":[8,9,10,11,12,13]}",
           "token_ids": [
             8,
             9,
@@ -833,7 +796,6 @@
           ]
         },
         {
-          "request_utf8": "{\"max_tokens\":6,\"prompt_token_ids\":[6,7,8,9,10,11,12,13]}",
           "token_ids": [
             6,
             7,
@@ -846,7 +808,6 @@
           ]
         },
         {
-          "request_utf8": "{\"max_tokens\":3,\"prompt_token_ids\":[13,14,15,0,1,2,3,4]}",
           "token_ids": [
             13,
             14,
@@ -859,7 +820,6 @@
           ]
         },
         {
-          "request_utf8": "{\"max_tokens\":6,\"prompt_token_ids\":[2,3,4,5,6,7,8,9,10,11]}",
           "token_ids": [
             2,
             3,
@@ -944,7 +904,6 @@
       ],
       "requests": [
         {
-          "request_utf8": "{\"max_tokens\":7,\"prompt_token_ids\":[3,4,5,6,7,8,9,10,11,12]}",
           "token_ids": [
             3,
             4,
@@ -959,7 +918,6 @@
           ]
         },
         {
-          "request_utf8": "{\"max_tokens\":7,\"prompt_token_ids\":[15,0,1,2,3,4,5,6,7,8]}",
           "token_ids": [
             15,
             0,
@@ -974,7 +932,6 @@
           ]
         },
         {
-          "request_utf8": "{\"max_tokens\":7,\"prompt_token_ids\":[1,2,3,4,5,6,7,8,9,10]}",
           "token_ids": [
             1,
             2,
@@ -989,7 +946,6 @@
           ]
         },
         {
-          "request_utf8": "{\"max_tokens\":7,\"prompt_token_ids\":[0,1,2,3,4,5,6,7,8,9]}",
           "token_ids": [
             0,
             1,
@@ -1004,7 +960,6 @@
           ]
         },
         {
-          "request_utf8": "{\"max_tokens\":7,\"prompt_token_ids\":[10,11,12,13,14,15,0,1,2,3]}",
           "token_ids": [
             10,
             11,
@@ -1019,7 +974,6 @@
           ]
         },
         {
-          "request_utf8": "{\"max_tokens\":7,\"prompt_token_ids\":[11,12,13,14,15,0,1,2,3,4]}",
           "token_ids": [
             11,
             12,
@@ -1034,7 +988,6 @@
           ]
         },
         {
-          "request_utf8": "{\"max_tokens\":7,\"prompt_token_ids\":[6,7,8,9,10,11,12,13,14,15]}",
           "token_ids": [
             6,
             7,
@@ -1049,7 +1002,6 @@
           ]
         },
         {
-          "request_utf8": "{\"max_tokens\":7,\"prompt_token_ids\":[0,1,2,3,4,5,6,7,8,9]}",
           "token_ids": [
             0,
             1,
@@ -1091,7 +1043,6 @@
     "draw_order": "all_inputs_then_all_outputs_then_all_offsets",
     "generator": "tools/generate_random_range_python_vectors.py",
     "numpy_version": "2.5.2",
-    "request_encoding": "json.dumps(sort_keys=True,separators=(',',':')).encode('utf-8')",
     "token_formula": "pool[(offset + request_index + token_index) % len(pool)]",
     "vllm_special_token_ids": [
       3,

@@ -1092,6 +1092,7 @@ fn synthetic_config_from_source(
                     .and_then(Value::as_f64)
                     .unwrap_or(12.0),
             )?,
+            input_token_subtraction: 0,
             batch_size: prompts
                 .get("batch_size")
                 .and_then(Value::as_u64)

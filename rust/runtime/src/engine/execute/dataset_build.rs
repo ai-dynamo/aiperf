@@ -525,7 +525,16 @@ pub(crate) async fn build_synthetic_dataset(
             compose.sequence_length_distribution = None;
         }
     }
-    compose.synthetic_config = Some(synthetic_config(spec)?);
+    let mut synthetic = synthetic_config(spec)?;
+    if spec
+        .prompts
+        .as_ref()
+        .is_some_and(|prompts| prompts.random_range_ratio.is_none())
+        && let Some(prompts) = synthetic.prompts.as_mut()
+    {
+        prompts.input_token_subtraction = tokenizer.num_special_tokens_to_add();
+    }
+    compose.synthetic_config = Some(synthetic);
     let mut load = LoadConfig::new(DatasetSource::Inline(if rankings {
         serde_json::json!({"__aiperf_synthetic_rankings": true})
     } else {
@@ -832,6 +841,7 @@ pub(crate) fn synthetic_config(spec: &SyntheticDatasetSpec) -> Result<SyntheticD
             Ok(
                 (input_tokens.expected_value() > 0.0).then_some(SyntheticPromptConfig {
                     input_tokens,
+                    input_token_subtraction: 0,
                     batch_size: prompts.batch_size,
                     prefix_reuse_fraction: prompts.prefix_reuse_fraction,
                     prefix_reuse_ratio: prompts.prefix_reuse_ratio,

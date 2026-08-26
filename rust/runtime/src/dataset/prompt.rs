@@ -527,7 +527,7 @@ impl CorpusPromptGenerator<'_> {
     }
 }
 
-const RANDOM_TEXT_REPAIR_ATTEMPTS: usize = 16;
+const RANDOM_TEXT_REPAIR_ATTEMPTS: usize = 10;
 
 #[derive(Clone, Copy)]
 enum RandomGenerationMode {
