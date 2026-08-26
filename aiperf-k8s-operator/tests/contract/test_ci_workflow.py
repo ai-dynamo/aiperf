@@ -7,6 +7,8 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 WORKFLOW = (REPOSITORY_ROOT / ".github/workflows/aiperf-k8s-operator.yml").read_text()
 NATIVE_CONTRACT = (
     REPOSITORY_ROOT / "rust/e2e-tests/tests/kube_cli_contract.rs"
+).read_text() + (
+    REPOSITORY_ROOT / "rust/e2e-tests/tests/test_kube_sweep_parity.rs"
 ).read_text()
 
 
@@ -68,7 +70,7 @@ def test_native_kind_job_runs_the_serial_durable_results_acceptance() -> None:
         assert "--namespace aiperf-system --create-namespace" in job
 
     ignored_attribute = "\n#[ignore]\n"
-    assert NATIVE_CONTRACT.count(ignored_attribute) == 2
+    assert NATIVE_CONTRACT.count(ignored_attribute) == 3
     assert "-- --ignored --test-threads=1" in native_job
     assert "AIPERF_E2E_OPERATOR_IMAGE: aiperf-k8s-operator:ci" in native_job
     live_contract = NATIVE_CONTRACT.split(ignored_attribute, 1)[1]

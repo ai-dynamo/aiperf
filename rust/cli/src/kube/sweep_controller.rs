@@ -171,21 +171,16 @@ pub(crate) fn run_sweep(
     Ok(if is_all_failed { 1 } else { 0 })
 }
 
-/// Expand the sweep envelope into one `BenchmarkConfig` per child run.
+/// Convert contract-layer sweep axes to the plan layer's typed form.
 ///
-/// Grid combinations are produced first, then each combination is repeated
-/// `trials` times, yielding `combinations × trials` child configs.
-pub(crate) fn build_child_specs(
-    envelope: &SweepEnvelope,
-) -> anyhow::Result<Vec<BenchmarkConfig>> {
-    let base_config: BenchmarkConfig =
-        serde_json::from_value(envelope.base_config.clone())
-            .map_err(|e| anyhow::anyhow!("base_config is not a valid BenchmarkConfig: {e}"))?;
-
-    // Convert contract axes (parameter + values) to plan axes (path + seg + values).
-    let axes: Vec<SweepAxis> = envelope
-        .axes
-        .iter()
+/// The `seg` (directory-name segment) is the last dot-separated component of
+/// the `parameter` path; `build_child_specs` uses this for combination labels.
+/// Exposed so callers can test conversion parity without going through a full
+/// envelope round-trip.
+pub fn convert_axes(
+    axes: &[super::contract::SweepAxis],
+) -> Vec<SweepAxis> {
+    axes.iter()
         .map(|axis| {
             let seg = axis
                 .parameter
@@ -199,7 +194,22 @@ pub(crate) fn build_child_specs(
                 values: axis.values.clone(),
             }
         })
-        .collect();
+        .collect()
+}
+
+/// Expand the sweep envelope into one `BenchmarkConfig` per child run.
+///
+/// Grid combinations are produced first, then each combination is repeated
+/// `trials` times, yielding `combinations × trials` child configs.
+pub(crate) fn build_child_specs(
+    envelope: &SweepEnvelope,
+) -> anyhow::Result<Vec<BenchmarkConfig>> {
+    let base_config: BenchmarkConfig =
+        serde_json::from_value(envelope.base_config.clone())
+            .map_err(|e| anyhow::anyhow!("base_config is not a valid BenchmarkConfig: {e}"))?;
+
+    // Convert contract axes (parameter + values) to plan axes (path + seg + values).
+    let axes = convert_axes(&envelope.axes);
 
     let sweep = Sweep::grid(axes);
     let base_runs = build_benchmark_plan(&base_config, &sweep, None)?;
