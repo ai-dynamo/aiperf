@@ -17,7 +17,9 @@ use crate::rng::{ConfiguredRandomGenerator, RngRoot, RuntimeRandomGenerator};
 
 use crate::dataset::corpus::{SHAKESPEARE_CORPUS, tokenize_corpus_chunked};
 use crate::dataset::error::{DatasetError, Result};
-use crate::dataset::random_range::RandomCorpusStyle;
+use crate::dataset::random_range::{
+    RandomCorpusStyle, ReferenceRandomStream, SeededRandomRangePlan,
+};
 use crate::dataset::tokenizer::TextTokenizer;
 
 /// Generated text paired with the authoritative token sequence used to build it.
@@ -47,6 +49,46 @@ pub trait PromptGenerator {
         hash_ids: &[i64],
         block_size: usize,
     ) -> Result<GeneratedPrompt>;
+
+    /// Generate an additive prefix without consuming a body ordinal.
+    fn generate_prefix(&mut self, num_tokens: usize) -> Result<GeneratedPrompt> {
+        self.generate(num_tokens, &[], 1)
+    }
+
+    /// Generate standalone prefix IDs without requiring text decoding.
+    fn generate_prefix_token_ids(&mut self, num_tokens: usize) -> Result<Vec<u32>> {
+        Ok(self.generate_prefix(num_tokens)?.tokens)
+    }
+
+    /// Generate a body and prepend already-materialized prefix IDs.
+    fn generate_with_prefix(
+        &mut self,
+        _num_tokens: usize,
+        _prefix_tokens: &[u32],
+    ) -> Result<GeneratedPrompt> {
+        Err(DatasetError::Validation(
+            "prompt generator does not support additive prefixes".into(),
+        ))
+    }
+
+    /// Generate raw body IDs and prepend already-materialized prefix IDs.
+    fn generate_token_ids_with_prefix(
+        &mut self,
+        num_tokens: usize,
+        prefix_tokens: &[u32],
+    ) -> Result<Vec<u32>> {
+        let mut tokens = Vec::with_capacity(prefix_tokens.len().saturating_add(num_tokens));
+        tokens.extend_from_slice(prefix_tokens);
+        if num_tokens > 0 {
+            tokens.extend(self.generate_token_ids(num_tokens, &[], 1)?);
+        }
+        if tokens.is_empty() {
+            return Err(DatasetError::Validation(
+                "synthetic prompt and prefix cannot both be empty".into(),
+            ));
+        }
+        Ok(tokens)
+    }
 }
 
 /// Factory seam giving every composition pass independent deterministic state.
@@ -91,6 +133,7 @@ pub struct CorpusPromptGeneratorFactory {
 struct ReferenceRandomPromptConfig {
     style: RandomCorpusStyle,
     offsets: Arc<[usize]>,
+    seeded_plan: Option<SeededRandomRangePlan>,
 }
 
 impl CorpusPromptGeneratorFactory {
@@ -131,7 +174,26 @@ impl CorpusPromptGeneratorFactory {
         Self {
             corpus: CorpusSource::Random,
             random_style: style,
-            reference_random: Some(ReferenceRandomPromptConfig { style, offsets }),
+            reference_random: Some(ReferenceRandomPromptConfig {
+                style,
+                offsets,
+                seeded_plan: None,
+            }),
+        }
+    }
+
+    /// Continue prompt and prefix draws from a complete seeded range plan.
+    pub fn random_reference_plan(plan: SeededRandomRangePlan) -> Self {
+        let style = plan.style();
+        let offsets = Arc::from(plan.offsets());
+        Self {
+            corpus: CorpusSource::Random,
+            random_style: style,
+            reference_random: Some(ReferenceRandomPromptConfig {
+                style,
+                offsets,
+                seeded_plan: Some(plan),
+            }),
         }
     }
 
@@ -362,6 +424,27 @@ impl PromptGenerator for CorpusPromptGenerator<'_> {
             tokens,
         })
     }
+
+    fn generate_with_prefix(
+        &mut self,
+        num_tokens: usize,
+        prefix_tokens: &[u32],
+    ) -> Result<GeneratedPrompt> {
+        let mut tokens = Vec::with_capacity(prefix_tokens.len().saturating_add(num_tokens));
+        tokens.extend_from_slice(prefix_tokens);
+        if num_tokens > 0 {
+            tokens.extend(self.sample_tokens(num_tokens)?);
+        }
+        if tokens.is_empty() {
+            return Err(DatasetError::Validation(
+                "synthetic prompt and prefix cannot both be empty".into(),
+            ));
+        }
+        Ok(GeneratedPrompt {
+            text: self.tokenizer.decode(&tokens)?,
+            tokens,
+        })
+    }
 }
 
 impl CorpusPromptGenerator<'_> {
@@ -466,6 +549,7 @@ struct RandomPromptGenerator<'a> {
     offset_index: usize,
     request_index: usize,
     has_warned_offsets_exhausted: bool,
+    reference_stream: Option<ReferenceRandomStream>,
 }
 
 impl<'a> RandomPromptGenerator<'a> {
@@ -517,6 +601,11 @@ impl<'a> RandomPromptGenerator<'a> {
                     tokenizer.name()
                 ))
             })?;
+        let reference_stream = reference
+            .as_ref()
+            .and_then(|config| config.seeded_plan.as_ref())
+            .map(SeededRandomRangePlan::continuation)
+            .transpose()?;
         Ok(Self {
             tokenizer,
             block_separator: tokenizer.block_separation_token_id(),
@@ -531,6 +620,7 @@ impl<'a> RandomPromptGenerator<'a> {
             offset_index: 0,
             request_index: 0,
             has_warned_offsets_exhausted: false,
+            reference_stream,
         })
     }
 
@@ -710,6 +800,13 @@ impl<'a> RandomPromptGenerator<'a> {
     }
 
     fn sample_independent_tokens(&mut self, count: usize) -> Result<Vec<u32>> {
+        if let Some(stream) = &mut self.reference_stream {
+            return Ok(stream
+                .draw_indices(self.vocab_size.unwrap_or(0) as usize, count)?
+                .into_iter()
+                .map(|index| index as u32)
+                .collect());
+        }
         let mut tokens = Vec::with_capacity(count);
         for _ in 0..count {
             let sampled = if let Some(allowed) = &self.allowed_token_ids {
@@ -728,6 +825,25 @@ impl<'a> RandomPromptGenerator<'a> {
             tokens.push(self.valid_token(sampled));
         }
         Ok(tokens)
+    }
+
+    fn sample_prefix_tokens(&mut self, count: usize) -> Result<Vec<u32>> {
+        let Some(stream) = &mut self.reference_stream else {
+            return self.sample_independent_tokens(count);
+        };
+        let pool_len = self.allowed_token_ids.as_ref().map_or_else(
+            || usize::try_from(self.vocab_size.unwrap_or(0)).unwrap_or(0),
+            |tokens| tokens.len(),
+        );
+        Ok(stream
+            .draw_indices(pool_len, count)?
+            .into_iter()
+            .map(|index| {
+                self.allowed_token_ids
+                    .as_ref()
+                    .map_or(index as u32, |tokens| tokens[index])
+            })
+            .collect())
     }
 
     fn replace_eos_in_place(&self, tokens: &mut [u32]) {
@@ -792,6 +908,50 @@ impl PromptGenerator for RandomPromptGenerator<'_> {
     ) -> Result<GeneratedPrompt> {
         let tokens =
             self.build_token_ids(num_tokens, hash_ids, block_size, RandomGenerationMode::Text)?;
+        Ok(GeneratedPrompt {
+            text: self.tokenizer.decode(&tokens)?,
+            tokens,
+        })
+    }
+
+    fn generate_prefix(&mut self, num_tokens: usize) -> Result<GeneratedPrompt> {
+        if num_tokens == 0 {
+            return Err(DatasetError::Validation(
+                "synthetic prefix length must be greater than zero".into(),
+            ));
+        }
+        let candidate = self.sample_prefix_tokens(num_tokens)?;
+        let tokens = self.repair_exact_text_tokens(candidate, num_tokens)?;
+        Ok(GeneratedPrompt {
+            text: self.tokenizer.decode(&tokens)?,
+            tokens,
+        })
+    }
+
+    fn generate_prefix_token_ids(&mut self, num_tokens: usize) -> Result<Vec<u32>> {
+        if num_tokens == 0 {
+            return Err(DatasetError::Validation(
+                "synthetic prefix length must be greater than zero".into(),
+            ));
+        }
+        self.sample_prefix_tokens(num_tokens)
+    }
+
+    fn generate_with_prefix(
+        &mut self,
+        num_tokens: usize,
+        prefix_tokens: &[u32],
+    ) -> Result<GeneratedPrompt> {
+        if prefix_tokens.is_empty() {
+            return self.generate(num_tokens, &[], 1);
+        }
+        let mut candidate = prefix_tokens.to_vec();
+        candidate.extend(self.sample_raw_tokens(num_tokens)?);
+        let target = prefix_tokens
+            .len()
+            .checked_add(num_tokens)
+            .ok_or_else(|| DatasetError::Validation("synthetic prompt length overflow".into()))?;
+        let tokens = self.repair_exact_text_tokens(candidate, target)?;
         Ok(GeneratedPrompt {
             text: self.tokenizer.decode(&tokens)?,
             tokens,
@@ -901,6 +1061,58 @@ mod tests {
 
         fn name(&self) -> &str {
             "allowed-only"
+        }
+    }
+
+    struct DenseIdentityTokenizer;
+
+    impl TextTokenizer for DenseIdentityTokenizer {
+        fn encode(&self, text: &str) -> Result<Vec<u32>> {
+            text.bytes()
+                .map(|byte| {
+                    byte.checked_sub(b'a')
+                        .filter(|value| *value < 10)
+                        .map(u32::from)
+                        .ok_or_else(|| {
+                            DatasetError::Tokenizer(format!("unexpected fixture byte {byte}"))
+                        })
+                })
+                .collect()
+        }
+
+        fn decode(&self, token_ids: &[u32]) -> Result<String> {
+            token_ids
+                .iter()
+                .map(|token| {
+                    u8::try_from(*token)
+                        .ok()
+                        .filter(|value| *value < 10)
+                        .map(|value| char::from(b'a' + value))
+                        .ok_or_else(|| {
+                            DatasetError::Tokenizer(format!("unexpected fixture token {token}"))
+                        })
+                })
+                .collect()
+        }
+
+        fn bos_token_id(&self) -> Option<u32> {
+            None
+        }
+
+        fn eos_token_id(&self) -> Option<u32> {
+            Some(9)
+        }
+
+        fn vocab_size(&self) -> Option<u32> {
+            Some(10)
+        }
+
+        fn allowed_random_token_ids(&self) -> Option<Arc<[u32]>> {
+            Some(Arc::from((0_u32..9).collect::<Vec<_>>()))
+        }
+
+        fn name(&self) -> &str {
+            "dense-identity"
         }
     }
 
@@ -1147,6 +1359,36 @@ mod tests {
                 .unwrap()
                 .iter()
                 .any(|token| *token != 1)
+        );
+    }
+
+    #[test]
+    fn reference_prefix_continues_shared_stream_without_consuming_body_ordinal() {
+        let plan = crate::dataset::RandomRangePlan::new(
+            RandomCorpusStyle::Sglang,
+            12,
+            4,
+            crate::dataset::RandomRangeRatio::same(1.0).unwrap(),
+            0,
+        )
+        .unwrap()
+        .preseed(2, 0, 10)
+        .unwrap();
+        assert_eq!(plan.offsets(), [5, 0]);
+        let tokenizer = DenseIdentityTokenizer;
+        let mut generator = CorpusPromptGeneratorFactory::random_reference_plan(plan)
+            .create(&tokenizer, RngRoot::new(Some(99)))
+            .unwrap();
+
+        let prefix = generator.generate_prefix(3).unwrap();
+        assert_eq!(prefix.tokens, [3, 3, 7]);
+        assert_eq!(generator.generate_token_ids(3, &[], 1).unwrap(), [5, 6, 7]);
+        assert_eq!(
+            generator
+                .generate_with_prefix(0, &prefix.tokens)
+                .unwrap()
+                .tokens,
+            prefix.tokens
         );
     }
 

@@ -502,6 +502,12 @@ pub(crate) async fn build_synthetic_dataset(
                 authored_ratio.checked(prompts.random_corpus_style)?,
                 special_tokens,
             )?;
+            policy.validate_minimum_input(
+                spec.prefix_prompts
+                    .as_ref()
+                    .and_then(|prefixes| prefixes.length)
+                    .unwrap_or(0),
+            )?;
             let vocab_size = tokenizer
                 .vocab_size()
                 .filter(|size| *size > 0)
@@ -511,11 +517,9 @@ pub(crate) async fn build_synthetic_dataset(
                 .unwrap_or_else(|| rng_root.derive_seed_or_entropy("dataset.random_range"));
             let seeded = policy.preseed(spec.entries, seed, vocab_size)?;
             if prompts.corpus.as_deref() == Some("random") {
-                compose.prompt_generator =
-                    Arc::new(CorpusPromptGeneratorFactory::random_reference(
-                        prompts.random_corpus_style,
-                        Arc::from(seeded.offsets()),
-                    ));
+                compose.prompt_generator = Arc::new(
+                    CorpusPromptGeneratorFactory::random_reference_plan(seeded.clone()),
+                );
             }
             compose.random_range_plan = Some(seeded);
             compose.sequence_length_distribution = None;

@@ -21,7 +21,7 @@ use crate::dataset::generator::{
 };
 use crate::dataset::loader::{DatasetLoader, DatasetProbe, DatasetSource, LoadConfig, RawRow};
 use crate::dataset::model::{ContentGroup, Conversation, ConversationContextMode, MediaKind, Turn};
-use crate::dataset::prompt::PromptGenerator;
+use crate::dataset::prompt::{GeneratedPrompt, PromptGenerator};
 use crate::dataset::segment::{Handle, Role, SegmentPool};
 use crate::dataset::tokenizer::TextTokenizer;
 
@@ -119,7 +119,11 @@ impl Composer for SyntheticComposer {
             let generator = prompt_generator.as_mut().ok_or_else(|| {
                 DatasetError::Validation("synthetic prefixes require a tokenizer".into())
             })?;
-            build_prefix_pool(&shape.prefixes, generator.as_mut())?
+            build_prefix_pool(
+                &shape.prefixes,
+                generator.as_mut(),
+                config.requires_raw_token_ids,
+            )?
         } else {
             Vec::new()
         };
@@ -280,7 +284,15 @@ impl Composer for SyntheticComposer {
                         let token_ids = if let Some(reuse) = prefix_reuse.as_mut() {
                             reuse.prompt_token_ids(generator, input_tokens)?
                         } else {
-                            generator.generate_token_ids(input_tokens, &[], 1)?
+                            let selected_prefix = (turn_index == 0 && !prefix_pool.is_empty())
+                                .then(|| prefix_rng.choice(&prefix_pool).ok())
+                                .flatten();
+                            if let Some(prefix) = selected_prefix {
+                                generator
+                                    .generate_token_ids_with_prefix(input_tokens, &prefix.tokens)?
+                            } else {
+                                generator.generate_token_ids(input_tokens, &[], 1)?
+                            }
                         };
                         turn.input_tokens = Some(token_ids.len() as u64);
                         let handle = segments.intern_token_ids(parent, token_ids)?;
@@ -323,21 +335,18 @@ impl Composer for SyntheticComposer {
                     } else {
                         let mut handles = SmallVec::new();
                         for _ in 0..prompt.batch_size {
-                            let generated = generator.generate(input_tokens, &[], 1)?;
                             let selected_prefix = (turn_index == 0 && !prefix_pool.is_empty())
                                 .then(|| prefix_rng.choice(&prefix_pool).ok().cloned())
                                 .flatten();
-                            let (text, tokens) = if let Some(prefix) = selected_prefix.as_ref() {
-                                let text = format!("{prefix} {}", generated.text);
-                                let tokens = tokenizer.encode(&text)?;
-                                (text, tokens)
+                            let generated = if let Some(prefix) = selected_prefix.as_ref() {
+                                generator.generate_with_prefix(input_tokens, &prefix.tokens)?
                             } else {
-                                (generated.text, generated.tokens)
+                                generator.generate(input_tokens, &[], 1)?
                             };
                             turn.input_tokens = Some(
                                 turn.input_tokens
                                     .unwrap_or(0)
-                                    .checked_add(tokens.len() as u64)
+                                    .checked_add(generated.tokens.len() as u64)
                                     .ok_or_else(|| {
                                         DatasetError::Validation(
                                             "input token count overflow".into(),
@@ -351,8 +360,8 @@ impl Composer for SyntheticComposer {
                                 Some(segments.intern_text(
                                     parent,
                                     "user",
-                                    Bytes::from(prefix.clone()),
-                                    tokenizer.encode(&prefix)?.into_boxed_slice(),
+                                    Bytes::from(prefix.text),
+                                    prefix.tokens.into_boxed_slice(),
                                 )?)
                             } else {
                                 parent
@@ -360,8 +369,8 @@ impl Composer for SyntheticComposer {
                             let handle = segments.intern_text(
                                 content_parent,
                                 "user",
-                                Bytes::from(text),
-                                tokens.into_boxed_slice(),
+                                Bytes::from(generated.text),
+                                generated.tokens.into_boxed_slice(),
                             )?;
                             parent = Some(handle);
                             handles.push(handle);
@@ -596,13 +605,13 @@ fn validate_raw_token_shape(config: &ComposeConfig, shape: &SyntheticDatasetConf
             "raw-token synthetic datasets require prompt batch_size=1".into(),
         ));
     }
-    if has_prefixes(&shape.prefixes)
+    if shape.prefixes.shared_system_tokens.is_some()
+        || shape.prefixes.user_context_tokens.is_some()
         || config.shared_system_prompt.is_some()
         || !config.user_context_prompts.is_empty()
     {
         return Err(DatasetError::Validation(
-            "raw-token synthetic datasets do not support prefix, system, or user-context text"
-                .into(),
+            "raw-token synthetic datasets do not support system or user-context text".into(),
         ));
     }
     if shape
@@ -690,15 +699,21 @@ fn has_prefixes(prefixes: &SyntheticPrefixConfig) -> bool {
 fn build_prefix_pool(
     prefixes: &SyntheticPrefixConfig,
     generator: &mut dyn PromptGenerator,
-) -> Result<Vec<String>> {
+    requires_raw_token_ids: bool,
+) -> Result<Vec<GeneratedPrompt>> {
     let (Some(size), Some(tokens)) = (prefixes.pool_size, prefixes.prefix_tokens) else {
         return Ok(Vec::new());
     };
     (0..size)
-        .map(|index| {
-            let hash = i64::try_from(index)
-                .map_err(|_| DatasetError::Validation("prefix pool exceeds i64".into()))?;
-            Ok(generator.generate(tokens, &[hash], tokens)?.text)
+        .map(|_| {
+            if requires_raw_token_ids {
+                Ok(GeneratedPrompt {
+                    text: String::new(),
+                    tokens: generator.generate_prefix_token_ids(tokens)?,
+                })
+            } else {
+                generator.generate_prefix(tokens)
+            }
         })
         .collect()
 }
@@ -1347,6 +1362,43 @@ mod tests {
         };
         assert_eq!(token_ids.len(), 8);
         assert!(!token_ids.contains(&9));
+    }
+
+    #[tokio::test]
+    async fn raw_token_prefix_pool_is_composed_without_decoding() {
+        use crate::dataset::tokenizer::NoDecodeTokenizer;
+
+        let registry = LoaderRegistry::with_builtin_formats().unwrap();
+        let load = LoadConfig::new(DatasetSource::Inline(json!({"__aiperf_synthetic": true})));
+        let mut compose = ComposeConfig::new("model", RngRoot::new(Some(23)));
+        compose.requires_raw_token_ids = true;
+        compose.prompt_generator = Arc::new(crate::dataset::CorpusPromptGeneratorFactory::random());
+        compose.synthetic_config = Some(SyntheticDatasetConfig {
+            entries: 1,
+            prompts: Some(crate::dataset::generator::SyntheticPromptConfig {
+                input_tokens: SamplingDistribution::fixed(8.0).unwrap(),
+                batch_size: 1,
+                ..crate::dataset::generator::SyntheticPromptConfig::default()
+            }),
+            prefixes: SyntheticPrefixConfig {
+                pool_size: Some(1),
+                prefix_tokens: Some(4),
+                ..SyntheticPrefixConfig::default()
+            },
+            ..SyntheticDatasetConfig::default()
+        });
+
+        let dataset = registry
+            .build_dataset(Some("synthetic"), &load, &compose, &NoDecodeTokenizer)
+            .await
+            .unwrap();
+        let turn = &dataset.conversations()[0].turns[0];
+        assert_eq!(turn.input_tokens, Some(12));
+        let handle = *turn.body.first().expect("raw token handle");
+        let Payload::TokenIds { token_ids } = dataset.segments().get(handle).unwrap() else {
+            panic!("raw-token synthetic prompt must be stored as token IDs");
+        };
+        assert_eq!(token_ids.len(), 12);
     }
 
     #[tokio::test]

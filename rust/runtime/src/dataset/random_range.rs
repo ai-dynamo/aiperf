@@ -160,6 +160,25 @@ impl RandomRangePlan {
         self.output_bounds
     }
 
+    /// Reject a vLLM window whose smallest prefix-plus-body input is empty.
+    pub fn validate_minimum_input(&self, prefix_tokens: usize) -> Result<()> {
+        if self.style == RandomCorpusStyle::Sglang {
+            return Ok(());
+        }
+        let prefix_tokens = i64::try_from(prefix_tokens).map_err(|_| {
+            DatasetError::Validation("synthetic prompt prefix length exceeds i64".into())
+        })?;
+        let minimum = prefix_tokens
+            .checked_add(self.input_bounds.0)
+            .ok_or_else(|| DatasetError::Validation("minimum synthetic input overflow".into()))?;
+        if minimum < 1 {
+            return Err(DatasetError::Validation(format!(
+                "vllm random range produces a minimum input of {minimum} tokens after special-token adjustment; increase --isl or --prompt-prefix-length, or reduce --random-range-ratio"
+            )));
+        }
+        Ok(())
+    }
+
     /// Apply the style-specific post-draw input adjustment.
     pub fn adjust_input(&self, input: i64) -> i64 {
         match self.style {
@@ -183,45 +202,23 @@ impl RandomRangePlan {
         let mut inputs = Vec::with_capacity(entries);
         let mut outputs = Vec::with_capacity(entries);
         let mut offsets = Vec::with_capacity(entries);
-        match self.style {
-            RandomCorpusStyle::Vllm => {
-                let mut rng = NumpyGenerator::from_seed(seed);
-                for _ in 0..entries {
-                    inputs.push(
-                        self.adjust_input(
-                            rng.integers(self.input_bounds.0, self.input_bounds.1 + 1),
-                        ),
-                    );
-                }
-                for _ in 0..entries {
-                    outputs.push(rng.integers(self.output_bounds.0, self.output_bounds.1 + 1));
-                }
-                for _ in 0..entries {
-                    offsets.push(rng.integers(0, i64::from(vocab_size)) as usize);
-                }
-            }
-            RandomCorpusStyle::Sglang => {
-                let mut rng = NumpyRandomState::from_seed(fold_seed(seed));
-                for _ in 0..entries {
-                    inputs.push(self.adjust_input(i64::from(
-                        rng.randint(self.input_bounds.0 as u32, self.input_bounds.1 as u32),
-                    )));
-                }
-                for _ in 0..entries {
-                    outputs.push(i64::from(
-                        rng.randint(self.output_bounds.0 as u32, self.output_bounds.1 as u32),
-                    ));
-                }
-                for _ in 0..entries {
-                    offsets.push(rng.randint(0, vocab_size - 1) as usize);
-                }
-            }
+        let mut stream = ReferenceRandomStream::from_seed(self.style, seed);
+        for _ in 0..entries {
+            inputs.push(self.adjust_input(stream.draw_inclusive(self.input_bounds)?));
+        }
+        for _ in 0..entries {
+            outputs.push(stream.draw_inclusive(self.output_bounds)?);
+        }
+        for _ in 0..entries {
+            offsets.push(stream.draw_indices(vocab_size as usize, 1)?[0]);
         }
         Ok(SeededRandomRangePlan {
             policy: self.clone(),
             inputs,
             outputs,
             offsets,
+            seed,
+            vocab_size,
         })
     }
 }
@@ -233,6 +230,8 @@ pub struct SeededRandomRangePlan {
     inputs: Vec<i64>,
     outputs: Vec<i64>,
     offsets: Vec<usize>,
+    seed: u64,
+    vocab_size: u32,
 }
 
 impl SeededRandomRangePlan {
@@ -247,6 +246,26 @@ impl SeededRandomRangePlan {
     /// Preseeded prompt offsets in conversation order.
     pub fn offsets(&self) -> &[usize] {
         &self.offsets
+    }
+
+    /// Reference corpus style retained by this seeded plan.
+    pub const fn style(&self) -> RandomCorpusStyle {
+        self.policy.style
+    }
+
+    /// Recreate the shared reference stream immediately after the offset draws.
+    pub(crate) fn continuation(&self) -> Result<ReferenceRandomStream> {
+        let mut stream = ReferenceRandomStream::from_seed(self.policy.style, self.seed);
+        for _ in 0..self.inputs.len() {
+            stream.draw_inclusive(self.policy.input_bounds)?;
+        }
+        for _ in 0..self.outputs.len() {
+            stream.draw_inclusive(self.policy.output_bounds)?;
+        }
+        for _ in 0..self.offsets.len() {
+            stream.draw_indices(self.vocab_size as usize, 1)?;
+        }
+        Ok(stream)
     }
 
     /// Cached pair at one turn ordinal; `None` signals reference-cache exhaustion.
@@ -268,6 +287,82 @@ impl SeededRandomRangePlan {
 
 fn fold_seed(seed: u64) -> u32 {
     seed as u32 ^ (seed >> 32) as u32
+}
+
+pub(crate) struct ReferenceRandomStream {
+    inner: ReferenceRandomStreamKind,
+}
+
+enum ReferenceRandomStreamKind {
+    Vllm(NumpyGenerator),
+    Sglang(NumpyRandomState),
+}
+
+impl ReferenceRandomStream {
+    fn from_seed(style: RandomCorpusStyle, seed: u64) -> Self {
+        let inner = match style {
+            RandomCorpusStyle::Vllm => {
+                ReferenceRandomStreamKind::Vllm(NumpyGenerator::from_seed(seed))
+            }
+            RandomCorpusStyle::Sglang => {
+                ReferenceRandomStreamKind::Sglang(NumpyRandomState::from_seed(fold_seed(seed)))
+            }
+        };
+        Self { inner }
+    }
+
+    fn draw_inclusive(&mut self, bounds: (i64, i64)) -> Result<i64> {
+        let (low, high) = bounds;
+        if low < 0 || high < low {
+            return Err(DatasetError::Validation(format!(
+                "random range bounds must satisfy 0 <= low <= high; got {low}..={high}"
+            )));
+        }
+        match &mut self.inner {
+            ReferenceRandomStreamKind::Vllm(rng) => {
+                let high_exclusive = high.checked_add(1).ok_or_else(|| {
+                    DatasetError::Validation("vllm random range upper bound exceeds i64".into())
+                })?;
+                let span = u64::try_from(high - low).map_err(|_| {
+                    DatasetError::Validation("vllm random range span is invalid".into())
+                })?;
+                if span > u64::from(u32::MAX) {
+                    return Err(DatasetError::Validation(format!(
+                        "vllm random range span {span} exceeds the supported u32 interval"
+                    )));
+                }
+                Ok(rng.integers(low, high_exclusive))
+            }
+            ReferenceRandomStreamKind::Sglang(rng) => {
+                let low = u32::try_from(low).map_err(|_| {
+                    DatasetError::Validation("sglang random range lower bound exceeds u32".into())
+                })?;
+                let high = u32::try_from(high).map_err(|_| {
+                    DatasetError::Validation("sglang random range upper bound exceeds u32".into())
+                })?;
+                Ok(i64::from(rng.randint_inclusive(low, high)))
+            }
+        }
+    }
+
+    pub(crate) fn draw_indices(&mut self, upper: usize, count: usize) -> Result<Vec<usize>> {
+        if upper == 0 {
+            return Err(DatasetError::Validation(
+                "reference random token pool cannot be empty".into(),
+            ));
+        }
+        let upper = u32::try_from(upper).map_err(|_| {
+            DatasetError::Validation("reference random token pool exceeds u32".into())
+        })?;
+        match &mut self.inner {
+            ReferenceRandomStreamKind::Vllm(rng) => Ok((0..count)
+                .map(|_| rng.integers(0, i64::from(upper)) as usize)
+                .collect()),
+            ReferenceRandomStreamKind::Sglang(rng) => Ok((0..count)
+                .map(|_| rng.randint_inclusive(0, upper - 1) as usize)
+                .collect()),
+        }
+    }
 }
 
 struct NumpyRandomState {
@@ -307,7 +402,7 @@ impl NumpyRandomState {
         value ^ (value >> 18)
     }
 
-    fn randint(&mut self, low: u32, high: u32) -> u32 {
+    fn randint_inclusive(&mut self, low: u32, high: u32) -> u32 {
         if low == high {
             return low;
         }
@@ -327,5 +422,83 @@ impl NumpyRandomState {
                 return value;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn continuation_starts_after_all_lengths_and_offsets() {
+        for (style, expected) in [
+            (RandomCorpusStyle::Vllm, vec![4, 2, 2, 0, 0]),
+            (RandomCorpusStyle::Sglang, vec![3, 3, 7, 3, 5]),
+        ] {
+            let ratio = RandomRangeRatio::same(match style {
+                RandomCorpusStyle::Vllm => 0.0,
+                RandomCorpusStyle::Sglang => 1.0,
+            })
+            .unwrap();
+            let plan = RandomRangePlan::new(style, 12, 4, ratio, 0)
+                .unwrap()
+                .preseed(2, 0, 10)
+                .unwrap();
+            assert_eq!(
+                plan.continuation().unwrap().draw_indices(9, 5).unwrap(),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn unsupported_reference_bounds_fail_instead_of_panicking() {
+        let plan = RandomRangePlan::new(
+            RandomCorpusStyle::Vllm,
+            i64::MAX,
+            1,
+            RandomRangeRatio::same(0.0).unwrap(),
+            0,
+        )
+        .unwrap();
+        assert!(plan.preseed(1, 0, 10).is_err());
+
+        let plan = RandomRangePlan::new(
+            RandomCorpusStyle::Sglang,
+            i64::from(u32::MAX) + 1,
+            1,
+            RandomRangeRatio::same(1.0).unwrap(),
+            0,
+        )
+        .unwrap();
+        assert!(plan.preseed(1, 0, 10).is_err());
+    }
+
+    #[test]
+    fn vllm_empty_minimum_requires_an_additive_prefix() {
+        let plan = RandomRangePlan::new(
+            RandomCorpusStyle::Vllm,
+            2,
+            16,
+            RandomRangeRatio::same(0.9).unwrap(),
+            0,
+        )
+        .unwrap();
+        let error = plan.validate_minimum_input(0).unwrap_err().to_string();
+        assert!(error.contains("--isl"));
+        assert!(error.contains("--prompt-prefix-length"));
+        assert!(error.contains("--random-range-ratio"));
+        plan.validate_minimum_input(20).unwrap();
+
+        RandomRangePlan::new(
+            RandomCorpusStyle::Sglang,
+            2,
+            16,
+            RandomRangeRatio::same(0.9).unwrap(),
+            0,
+        )
+        .unwrap()
+        .validate_minimum_input(0)
+        .unwrap();
     }
 }
