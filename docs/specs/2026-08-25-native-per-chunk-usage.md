@@ -2,8 +2,9 @@
 
 ## Status
 
-Design for origin/main tracker #51, exact upstream commit
-`324bb05773b3f99743c6516018f3c30cfe33de0b`.
+Implemented design for origin/main tracker #51, exact upstream commit
+`324bb05773b3f99743c6516018f3c30cfe33de0b`; final verification and independent
+review remain the closure gates.
 
 ## Purpose
 
@@ -71,16 +72,37 @@ cannot drift.
 
 ## Mock and E2E contract
 
-The Rust mock chat request accepts the vendor stream option and a test-only
-first-chunk bundle size. When continuous usage is requested it emits cumulative
-completion usage on every reasoning/output content chunk, then the normal final
-usage frame. Bundling joins the first N output tokens into one content chunk and
-retains one-token chunks afterward.
+The public AIPerf option remains chat-only, matching upstream validation. The
+Rust mock itself supports both OpenAI streaming surfaces,
+`/v1/chat/completions` and `/v1/completions`, because it is also a standalone
+wire-compatible test target. Both request models accept the vendor stream option
+and a test-only first-chunk bundle size.
+
+`continuous_usage_stats` and `include_usage` are independent. Continuous true
+adds the cumulative three-field usage object (`prompt_tokens`,
+`completion_tokens`, `total_tokens`) to every generated reasoning or visible
+content frame. Absent or explicit false adds no usage to those frames.
+`include_usage` alone controls the terminal empty-choice full-usage frame.
+Bundling joins the first N visible output tokens into one content frame and
+retains one-token frames afterward. Timed and fast streams share this contract;
+frames emitted before an injected mid-stream error retain cumulative usage, but
+an error never synthesizes a terminal usage frame.
 
 The native-binary E2E test must exercise the real CLI/config resolver, endpoint
 formatter, HTTP/SSE stack, response reducer, metrics observer, accumulator, and
 artifact exporter. It proves both the wire request and the corrected metric from
 the captured raw record/artifact, not only a helper result.
+
+Because the target-only merge intentionally excludes upstream Python source,
+the A/B leg materializes exact commit `324bb05773b3f99743c6516018f3c30cfe33de0b`
+as a temporary detached worktree. It hard-fails on a wrong Git identity or an
+import outside that worktree, invokes that revision through `python -m aiperf`,
+uses disjoint native/Python artifact roots, requires positive mock workload
+captures, and removes the worktree after the run. Both products consume one
+fixed authored dataset. The mock compares the complete unmodified outbound body
+multiset byte-for-byte; issuance order is excluded because dataset scheduler
+ordering is not part of #51. Raw SSE projections and corrected ITL remain exact
+per-run assertions.
 
 ## Sol implementation plan
 
