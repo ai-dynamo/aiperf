@@ -95,6 +95,41 @@ async def test_out_of_order_heartbeat_does_not_move_state_backwards(
 
 
 @pytest.mark.asyncio
+async def test_same_tick_update_still_applies_the_newer_state(
+    system_controller: SystemController,
+) -> None:
+    """A same-tick update is a clock collision, not an out-of-order delivery.
+
+    Both callers stamp ``last_seen_ns`` on receipt from the controller's own
+    clock, so equal timestamps mean two messages landed within one tick --
+    ``time.time_ns()`` is ~15.6ms granular on Windows, coarser than a startup
+    state sequence. Rejecting those would silently drop the newer state.
+    """
+    await _register(system_controller)
+
+    await system_controller._process_heartbeat_message(
+        HeartbeatMessage(
+            service_id="worker_group_manager_0",
+            service_type=ServiceType.WORKER_MANAGER,
+            state=LifecycleState.INITIALIZED,
+            request_ns=time.time_ns(),
+        )
+    )
+    tick_ns = ServiceRegistry.get_service("worker_group_manager_0").last_seen_ns
+
+    ServiceRegistry.update_service(
+        "worker_group_manager_0",
+        ServiceType.WORKER_MANAGER,
+        tick_ns,
+        LifecycleState.RUNNING,
+    )
+
+    info = ServiceRegistry.get_service("worker_group_manager_0")
+    assert info.state == LifecycleState.RUNNING
+    assert info.last_seen_ns == tick_ns
+
+
+@pytest.mark.asyncio
 async def test_status_from_skewed_sender_clock_does_not_backdate_last_seen(
     system_controller: SystemController,
 ) -> None:

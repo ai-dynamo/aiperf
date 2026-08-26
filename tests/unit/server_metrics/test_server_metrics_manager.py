@@ -1747,6 +1747,50 @@ class TestScrapeHangContainment:
             )
 
     @pytest.mark.asyncio
+    async def test_init_time_baseline_scrape_is_bounded(
+        self,
+        cfg_with_server_metrics_urls: CLIConfig,
+    ) -> None:
+        """The configure-time baseline capture must not hang service startup.
+
+        This is a separate call site from ``collect_baseline``: it runs inside
+        ``_profile_configure_command`` before any phase exists. ``sock_read``
+        bounds the gap between response chunks but not the whole scrape, so an
+        endpoint dribbling bytes under that gap would stall startup forever.
+        """
+        manager = ServerMetricsManager(
+            run=make_run_from_cli(cfg_with_server_metrics_urls)
+        )
+        manager._scrape_timeout = 0.05
+        manager._send_server_metrics_status = AsyncMock()
+
+        never = asyncio.Event()
+
+        async def _hang() -> None:
+            await never.wait()
+
+        hanging = MagicMock()
+        hanging.is_url_reachable = AsyncMock(return_value=True)
+        hanging.initialize = AsyncMock()
+        hanging.collect_and_process_metrics = AsyncMock(side_effect=_hang)
+
+        with patch(
+            "aiperf.server_metrics.manager.ServerMetricsDataCollector",
+            return_value=hanging,
+        ):
+            await asyncio.wait_for(
+                manager._profile_configure_command(
+                    ProfileConfigureCommand(service_id="system_controller")
+                ),
+                timeout=2.0,
+            )
+
+        # The stall is swallowed as a per-endpoint warning, so configuration
+        # still completes and reports the endpoint as reachable.
+        manager._send_server_metrics_status.assert_awaited_once()
+        assert manager._send_server_metrics_status.await_args.kwargs["enabled"] is True
+
+    @pytest.mark.asyncio
     async def test_scrape_session_has_socket_read_timeout(self) -> None:
         """The scrape session must bound stalled reads, not just connects."""
         from aiperf.server_metrics.data_collector import ServerMetricsDataCollector

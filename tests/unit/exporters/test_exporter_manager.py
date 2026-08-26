@@ -348,13 +348,12 @@ class TestExporterManager:
         ).exists()
 
         assert len(failures) == 1
-        assert failures[0].exporter == "PhaseMetricArtifacts"
+        assert failures[0].exporter == "PhaseMetricArtifacts:beta"
         assert failures[0].is_deferred is False
         assert "csv boom" in repr(failures[0].error)
-        assert "beta" in repr(failures[0].error)
 
     @pytest.mark.asyncio
-    async def test_multiple_phase_export_failures_are_aggregated(
+    async def test_multiple_phase_export_failures_are_reported_per_phase(
         self, output_config, mock_cfg
     ) -> None:
         manager = ExporterManager(
@@ -397,12 +396,14 @@ class TestExporterManager:
             "beta",
             "gamma",
         ]
-        assert len(failures) == 1
-        error = failures[0].error
-        assert isinstance(error, ExceptionGroup)
-        assert len(error.exceptions) == 2
-        assert "disk full on alpha" in repr(error)
-        assert "disk full on gamma" in repr(error)
+        assert len(failures) == 2
+        assert [failure.exporter for failure in failures] == [
+            "PhaseMetricArtifacts:alpha",
+            "PhaseMetricArtifacts:gamma",
+        ]
+        assert all(failure.is_deferred is False for failure in failures)
+        assert "disk full on alpha" in repr(failures[0].error)
+        assert "disk full on gamma" in repr(failures[1].error)
 
     @pytest.mark.asyncio
     async def test_write_phase_export_handles_disabled_and_failed_exporters(
