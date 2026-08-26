@@ -647,6 +647,10 @@ Inputs, endpoints, and graph:
 - [`docs/specs/2026-08-25-native-baseten-outcome-fidelity.md`](docs/specs/2026-08-25-native-baseten-outcome-fidelity.md) —
   native Baseten E2E, TTFT, and cached-token reference retention through the
   loader/composer pipeline as dispatch-neutral per-turn metadata.
+- [`docs/specs/2026-08-25-native-baseten-columnar-load.md`](docs/specs/2026-08-25-native-baseten-columnar-load.md) —
+  approved native Baseten performance port: measured wide-Parquet gap, bounded
+  projected Parquet decode and projected Arrow IPC scans, metadata-first session
+  sampling, configured schema fallback, and single intermediate construction.
 - [`docs/specs/2026-08-25-native-sharegpt-batch-encoding.md`](docs/specs/2026-08-25-native-sharegpt-batch-encoding.md) —
   approved native ShareGPT configuration performance port: an ordered tokenizer
   batch seam, bounded 4096-text composition batches, and exact preservation of

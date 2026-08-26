@@ -28,6 +28,11 @@ use dataset_load_bench::{
 use serde_json::{Value, json};
 use tempfile::TempDir;
 
+#[cfg(feature = "parquet")]
+use arrow::array::{Int64Array, RecordBatch, StringArray};
+#[cfg(feature = "parquet")]
+use arrow::datatypes::{DataType, Field, Schema};
+
 fn write_jsonl(dir: &TempDir, name: &str, rows: &[Value]) -> PathBuf {
     let path = dir.path().join(name);
     let mut body = String::new();
@@ -47,6 +52,44 @@ fn write_json(dir: &TempDir, name: &str, value: &Value) -> PathBuf {
     )
     .expect("write json fixture");
     path
+}
+
+#[cfg(feature = "parquet")]
+fn write_baseten_columnar_fixtures(dir: &TempDir) -> (PathBuf, PathBuf) {
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("timestamp_start_unix_ms", DataType::Int64, false),
+        Field::new("prompt", DataType::Utf8, false),
+        Field::new("input_tokens", DataType::Int64, false),
+        Field::new("output_tokens", DataType::Int64, false),
+        Field::new("provided_session_id", DataType::Utf8, false),
+    ]));
+    let batch = RecordBatch::try_new(
+        Arc::clone(&schema),
+        vec![
+            Arc::new(Int64Array::from(vec![0, 10])),
+            Arc::new(StringArray::from(vec!["first", "second"])),
+            Arc::new(Int64Array::from(vec![4, 5])),
+            Arc::new(Int64Array::from(vec![2, 3])),
+            Arc::new(StringArray::from(vec!["shared", "shared"])),
+        ],
+    )
+    .expect("Baseten record batch");
+
+    let parquet_path = dir.path().join("baseten.parquet");
+    let parquet_file = fs::File::create(&parquet_path).expect("create Baseten Parquet");
+    let mut parquet_writer =
+        parquet::arrow::ArrowWriter::try_new(parquet_file, Arc::clone(&schema), None)
+            .expect("Parquet writer");
+    parquet_writer.write(&batch).expect("write Parquet batch");
+    parquet_writer.close().expect("close Parquet writer");
+
+    let arrow_path = dir.path().join("baseten.arrow");
+    let arrow_file = fs::File::create(&arrow_path).expect("create Baseten Arrow IPC");
+    let mut arrow_writer =
+        arrow::ipc::writer::FileWriter::try_new(arrow_file, &schema).expect("Arrow IPC writer");
+    arrow_writer.write(&batch).expect("write Arrow IPC batch");
+    arrow_writer.finish().expect("finish Arrow IPC writer");
+    (parquet_path, arrow_path)
 }
 
 fn local_source_json(path: &PathBuf) -> String {
@@ -179,6 +222,21 @@ async fn multi_turn_fixture_reports_positive_counts() {
     assert_eq!(sample.conversation_count, 2);
     assert_eq!(sample.turn_count, 3);
     assert!(sample.total_input_tokens.unwrap_or(0) > 0);
+}
+
+#[cfg(feature = "parquet")]
+#[tokio::test(flavor = "current_thread")]
+async fn baseten_parquet_and_arrow_adapter_samples_match() {
+    let dir = TempDir::new().expect("tempdir");
+    let (parquet_path, arrow_path) = write_baseten_columnar_fixtures(&dir);
+    let parquet = measure(&args_for("baseten_trace", parquet_path, "baseten-parquet")).await;
+    let arrow = measure(&args_for("baseten_trace", arrow_path, "baseten-arrow")).await;
+    assert_successful_sample(&parquet, "baseten_trace", "baseten-parquet");
+    assert_successful_sample(&arrow, "baseten_trace", "baseten-arrow");
+    assert_eq!(arrow.row_count, parquet.row_count);
+    assert_eq!(arrow.conversation_count, parquet.conversation_count);
+    assert_eq!(arrow.turn_count, parquet.turn_count);
+    assert_eq!(arrow.total_input_tokens, parquet.total_input_tokens);
 }
 
 #[tokio::test(flavor = "current_thread")]

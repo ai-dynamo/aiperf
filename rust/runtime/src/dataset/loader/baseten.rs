@@ -21,7 +21,7 @@
 //! `--trace-session-sample-ratio` whole-session subsampling is ported.
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -57,6 +57,7 @@ pub struct BasetenTraceComposer;
 const COL_TIME: &str = "timestamp_start_unix_ms";
 const COL_SESSION: &str = "provided_session_id";
 const COL_POOR_MAN_SESSION: &str = "poor_man_session_id";
+const PARQUET_BATCH_SIZE: usize = 128;
 
 fn required_columns() -> [&'static str; 4] {
     [COL_TIME, "prompt", "input_tokens", "output_tokens"]
@@ -412,67 +413,759 @@ impl ReplayOptions {
 }
 
 #[cfg(feature = "parquet")]
-fn read_parquet_rows(path: &Path) -> Result<Vec<Value>> {
-    use parquet::file::reader::{FileReader, SerializedFileReader};
+#[derive(Debug, Clone, Copy)]
+enum ColumnarKind {
+    Parquet,
+    ArrowIpc,
+}
 
-    let file = std::fs::File::open(path).map_err(|error| {
-        DatasetError::Validation(format!("failed to open {}: {error}", path.display()))
-    })?;
-    let reader = SerializedFileReader::new(file).map_err(|error| {
-        DatasetError::Validation(format!(
-            "failed to open {} as Parquet: {error}",
-            path.display()
-        ))
-    })?;
-    let rows = reader.get_row_iter(None).map_err(|error| {
-        DatasetError::Validation(format!(
-            "failed to read Parquet rows from {}: {error}",
-            path.display()
-        ))
-    })?;
-    rows.map(|row| {
-        row.map(|row| row.to_json_value()).map_err(|error| {
-            DatasetError::Validation(format!(
-                "failed to decode a Parquet row from {}: {error}",
-                path.display()
-            ))
+#[cfg(feature = "parquet")]
+#[derive(Debug)]
+struct ColumnarSource {
+    path: PathBuf,
+    file: std::fs::File,
+    kind: ColumnarKind,
+    schema: arrow::datatypes::SchemaRef,
+}
+
+#[cfg(feature = "parquet")]
+impl ColumnarSource {
+    fn open(path: &Path) -> Result<Self> {
+        use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+
+        let kind = match path.extension().and_then(|suffix| suffix.to_str()) {
+            Some("parquet") => ColumnarKind::Parquet,
+            Some("arrow" | "ipc") => ColumnarKind::ArrowIpc,
+            _ => {
+                return Err(DatasetError::Validation(format!(
+                    "unsupported Baseten columnar file {}",
+                    path.display()
+                )));
+            }
+        };
+        let file = std::fs::File::open(path).map_err(|error| {
+            DatasetError::Validation(format!("failed to open {}: {error}", path.display()))
+        })?;
+        let metadata_file = file.try_clone().map_err(|error| {
+            DatasetError::Validation(format!("failed to inspect {}: {error}", path.display()))
+        })?;
+        let schema = match kind {
+            ColumnarKind::Parquet => ParquetRecordBatchReaderBuilder::try_new(metadata_file)
+                .map_err(|error| {
+                    DatasetError::Validation(format!(
+                        "failed to open {} as Parquet: {error}",
+                        path.display()
+                    ))
+                })?
+                .schema()
+                .clone(),
+            ColumnarKind::ArrowIpc => {
+                arrow::ipc::reader::FileReader::try_new_buffered(metadata_file, None)
+                    .map_err(|error| {
+                        DatasetError::Validation(format!(
+                            "failed to open {} as Arrow IPC: {error}",
+                            path.display()
+                        ))
+                    })?
+                    .schema()
+            }
+        };
+        Ok(Self {
+            path: path.to_path_buf(),
+            file,
+            kind,
+            schema,
         })
-    })
-    .collect()
+    }
+
+    fn has_columns(&self, columns: &[&str]) -> bool {
+        columns
+            .iter()
+            .all(|column| self.schema.index_of(column).is_ok())
+    }
+
+    fn for_each_batch(
+        &self,
+        columns: &[&str],
+        mut visit: impl FnMut(arrow::record_batch::RecordBatch) -> Result<()>,
+    ) -> Result<()> {
+        use parquet::arrow::{ProjectionMask, arrow_reader::ParquetRecordBatchReaderBuilder};
+
+        let indices = columns
+            .iter()
+            .map(|column| {
+                self.schema.index_of(column).map_err(|_| {
+                    DatasetError::Validation(format!(
+                        "{} is missing required column {column}",
+                        self.path.display()
+                    ))
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let file = self.file.try_clone().map_err(|error| {
+            DatasetError::Validation(format!("failed to read {}: {error}", self.path.display()))
+        })?;
+        match self.kind {
+            ColumnarKind::Parquet => {
+                let builder = ParquetRecordBatchReaderBuilder::try_new(file).map_err(|error| {
+                    DatasetError::Validation(format!(
+                        "failed to read Parquet metadata from {}: {error}",
+                        self.path.display()
+                    ))
+                })?;
+                let projection = ProjectionMask::roots(builder.parquet_schema(), indices);
+                let reader = builder
+                    .with_batch_size(PARQUET_BATCH_SIZE)
+                    .with_projection(projection)
+                    .build()
+                    .map_err(|error| {
+                        DatasetError::Validation(format!(
+                            "failed to build Parquet reader for {}: {error}",
+                            self.path.display()
+                        ))
+                    })?;
+                for batch in reader {
+                    let batch = batch.map_err(|error| {
+                        DatasetError::Validation(format!(
+                            "failed to decode Parquet batch from {}: {error}",
+                            self.path.display()
+                        ))
+                    })?;
+                    visit_bounded_batches(batch, &mut visit)?;
+                }
+            }
+            ColumnarKind::ArrowIpc => {
+                let reader = arrow::ipc::reader::FileReader::try_new_buffered(file, Some(indices))
+                    .map_err(|error| {
+                        DatasetError::Validation(format!(
+                            "failed to build Arrow IPC reader for {}: {error}",
+                            self.path.display()
+                        ))
+                    })?;
+                for batch in reader {
+                    let batch = batch.map_err(|error| {
+                        DatasetError::Validation(format!(
+                            "failed to decode Arrow IPC batch from {}: {error}",
+                            self.path.display()
+                        ))
+                    })?;
+                    visit_bounded_batches(batch, &mut visit)?;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(feature = "parquet")]
+fn visit_bounded_batches(
+    batch: arrow::record_batch::RecordBatch,
+    visit: &mut impl FnMut(arrow::record_batch::RecordBatch) -> Result<()>,
+) -> Result<()> {
+    for offset in (0..batch.num_rows()).step_by(PARQUET_BATCH_SIZE) {
+        let batch = batch.slice(offset, (batch.num_rows() - offset).min(PARQUET_BATCH_SIZE));
+        #[cfg(test)]
+        record_columnar_scan(&batch);
+        visit(batch)?;
+    }
+    Ok(())
+}
+
+#[cfg(all(test, feature = "parquet"))]
+thread_local! {
+    static COLUMNAR_SCANS: std::cell::RefCell<Vec<(Vec<String>, usize)>> = const {
+        std::cell::RefCell::new(Vec::new())
+    };
+}
+
+#[cfg(all(test, feature = "parquet"))]
+fn record_columnar_scan(batch: &arrow::record_batch::RecordBatch) {
+    COLUMNAR_SCANS.with(|scans| {
+        scans.borrow_mut().push((
+            batch
+                .schema()
+                .fields()
+                .iter()
+                .map(|field| field.name().clone())
+                .collect(),
+            batch.num_rows(),
+        ));
+    });
+}
+
+#[cfg(all(test, feature = "parquet"))]
+fn take_columnar_scans() -> Vec<(Vec<String>, usize)> {
+    COLUMNAR_SCANS.with(|scans| std::mem::take(&mut *scans.borrow_mut()))
+}
+
+#[cfg(feature = "parquet")]
+fn columnar_schema_has_columns(path: &Path, columns: &[&str]) -> bool {
+    ColumnarSource::open(path).is_ok_and(|source| source.has_columns(columns))
 }
 
 #[cfg(not(feature = "parquet"))]
-fn read_parquet_rows(path: &Path) -> Result<Vec<Value>> {
+fn columnar_schema_has_columns(_path: &Path, _columns: &[&str]) -> bool {
+    false
+}
+
+#[cfg(feature = "parquet")]
+fn column_value_error(path: &Path, column: &str, ordinal: usize, detail: &str) -> DatasetError {
+    DatasetError::Validation(format!(
+        "{}: row {ordinal}: column {column}: {detail}",
+        path.display()
+    ))
+}
+
+#[cfg(feature = "parquet")]
+fn downcast_array<'a, T: 'static>(
+    array: &'a dyn arrow::array::Array,
+    path: &Path,
+    column: &str,
+    ordinal: usize,
+) -> Result<&'a T> {
+    array
+        .as_any()
+        .downcast_ref::<T>()
+        .ok_or_else(|| column_value_error(path, column, ordinal, "internal Arrow type mismatch"))
+}
+
+#[cfg(feature = "parquet")]
+fn unsigned_value(
+    array: &dyn arrow::array::Array,
+    row: usize,
+    path: &Path,
+    column: &str,
+    ordinal: usize,
+) -> Result<Option<u64>> {
+    use arrow::array::{Int32Array, Int64Array, UInt32Array, UInt64Array};
+    use arrow::datatypes::DataType;
+
+    if array.is_null(row) {
+        return Ok(None);
+    }
+    let value = match array.data_type() {
+        DataType::Int32 => {
+            i64::from(downcast_array::<Int32Array>(array, path, column, ordinal)?.value(row))
+        }
+        DataType::Int64 => downcast_array::<Int64Array>(array, path, column, ordinal)?.value(row),
+        DataType::UInt32 => {
+            return Ok(Some(u64::from(
+                downcast_array::<UInt32Array>(array, path, column, ordinal)?.value(row),
+            )));
+        }
+        DataType::UInt64 => {
+            return Ok(Some(
+                downcast_array::<UInt64Array>(array, path, column, ordinal)?.value(row),
+            ));
+        }
+        data_type => {
+            return Err(column_value_error(
+                path,
+                column,
+                ordinal,
+                &format!("expected an integer, got {data_type}"),
+            ));
+        }
+    };
+    u64::try_from(value)
+        .map(Some)
+        .map_err(|_| column_value_error(path, column, ordinal, "must be non-negative"))
+}
+
+#[cfg(feature = "parquet")]
+fn float_value(
+    array: &dyn arrow::array::Array,
+    row: usize,
+    path: &Path,
+    column: &str,
+    ordinal: usize,
+) -> Result<Option<f64>> {
+    use arrow::array::{Float32Array, Float64Array};
+    use arrow::datatypes::DataType;
+
+    if array.is_null(row) {
+        return Ok(None);
+    }
+    let value = match array.data_type() {
+        DataType::Float32 => {
+            f64::from(downcast_array::<Float32Array>(array, path, column, ordinal)?.value(row))
+        }
+        DataType::Float64 => {
+            downcast_array::<Float64Array>(array, path, column, ordinal)?.value(row)
+        }
+        _ => {
+            return unsigned_value(array, row, path, column, ordinal)
+                .map(|value| value.map(|v| v as f64));
+        }
+    };
+    if !value.is_finite() {
+        return Err(column_value_error(path, column, ordinal, "must be finite"));
+    }
+    Ok(Some(value))
+}
+
+#[cfg(feature = "parquet")]
+fn string_value(
+    array: &dyn arrow::array::Array,
+    row: usize,
+    path: &Path,
+    column: &str,
+    ordinal: usize,
+) -> Result<Option<String>> {
+    use arrow::array::{LargeStringArray, StringArray, StringViewArray};
+    use arrow::datatypes::DataType;
+
+    if array.is_null(row) {
+        return Ok(None);
+    }
+    match array.data_type() {
+        DataType::Utf8 => Ok(Some(
+            downcast_array::<StringArray>(array, path, column, ordinal)?
+                .value(row)
+                .to_owned(),
+        )),
+        DataType::LargeUtf8 => Ok(Some(
+            downcast_array::<LargeStringArray>(array, path, column, ordinal)?
+                .value(row)
+                .to_owned(),
+        )),
+        DataType::Utf8View => Ok(Some(
+            downcast_array::<StringViewArray>(array, path, column, ordinal)?
+                .value(row)
+                .to_owned(),
+        )),
+        DataType::Int32 | DataType::Int64 | DataType::UInt32 | DataType::UInt64 => {
+            Ok(unsigned_value(array, row, path, column, ordinal)?.map(|value| value.to_string()))
+        }
+        data_type => Err(column_value_error(
+            path,
+            column,
+            ordinal,
+            &format!("expected a string or integer, got {data_type}"),
+        )),
+    }
+}
+
+#[cfg(feature = "parquet")]
+fn hash_values(
+    array: &dyn arrow::array::Array,
+    row: usize,
+    path: &Path,
+    ordinal: usize,
+) -> Result<Vec<i64>> {
+    use arrow::array::{Int32Array, Int64Array, LargeListArray, ListArray};
+    use arrow::datatypes::DataType;
+
+    if array.is_null(row) {
+        return Ok(Vec::new());
+    }
+    let values = match array.data_type() {
+        DataType::List(_) => {
+            downcast_array::<ListArray>(array, path, "total_hashes", ordinal)?.value(row)
+        }
+        DataType::LargeList(_) => {
+            downcast_array::<LargeListArray>(array, path, "total_hashes", ordinal)?.value(row)
+        }
+        data_type => {
+            return Err(column_value_error(
+                path,
+                "total_hashes",
+                ordinal,
+                &format!("expected an integer list, got {data_type}"),
+            ));
+        }
+    };
+    match values.data_type() {
+        DataType::Int32 => {
+            Ok(
+                downcast_array::<Int32Array>(values.as_ref(), path, "total_hashes", ordinal)?
+                    .iter()
+                    .flatten()
+                    .map(i64::from)
+                    .collect(),
+            )
+        }
+        DataType::Int64 => {
+            Ok(
+                downcast_array::<Int64Array>(values.as_ref(), path, "total_hashes", ordinal)?
+                    .iter()
+                    .flatten()
+                    .collect(),
+            )
+        }
+        data_type => Err(column_value_error(
+            path,
+            "total_hashes",
+            ordinal,
+            &format!("expected integer list elements, got {data_type}"),
+        )),
+    }
+}
+
+#[cfg(feature = "parquet")]
+fn resolve_session_column(
+    has_provided: bool,
+    has_poor_man: bool,
+    configured: Option<&str>,
+) -> Result<Option<&'static str>> {
+    let requested = match configured.unwrap_or(COL_SESSION) {
+        COL_SESSION => COL_SESSION,
+        COL_POOR_MAN_SESSION => COL_POOR_MAN_SESSION,
+        other => {
+            return Err(DatasetError::Validation(format!(
+                "AIPERF_DATASET_BASETEN_SESSION_COLUMN must be {COL_SESSION} or \
+                 {COL_POOR_MAN_SESSION}, got {other}"
+            )));
+        }
+    };
+    let has_requested = if requested == COL_SESSION {
+        has_provided
+    } else {
+        has_poor_man
+    };
+    if has_requested {
+        return Ok(Some(requested));
+    }
+    let (fallback, has_fallback) = if requested == COL_SESSION {
+        (COL_POOR_MAN_SESSION, has_poor_man)
+    } else {
+        (COL_SESSION, has_provided)
+    };
+    Ok(has_fallback.then_some(fallback))
+}
+
+#[cfg(feature = "parquet")]
+fn selected_session_column(source: &ColumnarSource) -> Result<Option<&'static str>> {
+    let configured = match std::env::var("AIPERF_DATASET_BASETEN_SESSION_COLUMN") {
+        Ok(value) => Some(value),
+        Err(std::env::VarError::NotPresent) => None,
+        Err(error) => {
+            return Err(DatasetError::Validation(format!(
+                "failed to read AIPERF_DATASET_BASETEN_SESSION_COLUMN: {error}"
+            )));
+        }
+    };
+    resolve_session_column(
+        source.has_columns(&[COL_SESSION]),
+        source.has_columns(&[COL_POOR_MAN_SESSION]),
+        configured.as_deref(),
+    )
+}
+
+#[cfg(feature = "parquet")]
+struct ColumnarRows {
+    rows: Vec<(BasetenRow, Option<String>, usize)>,
+    min_timestamp: f64,
+}
+
+#[cfg(feature = "parquet")]
+#[derive(Debug)]
+struct TraceMetadata {
+    timestamp: f64,
+    session_id: Option<String>,
+}
+
+#[cfg(feature = "parquet")]
+struct BasetenBatchIndices {
+    timestamp: usize,
+    prompt: usize,
+    input_tokens: usize,
+    output_tokens: usize,
+    duration_e2e_ms: Option<usize>,
+    total_hashes: Option<usize>,
+    block_size: Option<usize>,
+}
+
+#[cfg(feature = "parquet")]
+impl BasetenBatchIndices {
+    fn new(batch: &arrow::record_batch::RecordBatch, path: &Path) -> Result<Self> {
+        let schema = batch.schema();
+        let required = |column: &str| {
+            schema.index_of(column).map_err(|_| {
+                DatasetError::Validation(format!(
+                    "{}: projected batch is missing column {column}",
+                    path.display()
+                ))
+            })
+        };
+        Ok(Self {
+            timestamp: required(COL_TIME)?,
+            prompt: required("prompt")?,
+            input_tokens: required("input_tokens")?,
+            output_tokens: required("output_tokens")?,
+            duration_e2e_ms: schema.index_of("duration_e2e_ms").ok(),
+            total_hashes: schema.index_of("total_hashes").ok(),
+            block_size: schema.index_of("block_size").ok(),
+        })
+    }
+
+    fn decode(
+        &self,
+        batch: &arrow::record_batch::RecordBatch,
+        row: usize,
+        path: &Path,
+        ordinal: usize,
+    ) -> Result<BasetenRow> {
+        let required_unsigned = |index: usize, column: &str| {
+            unsigned_value(batch.column(index).as_ref(), row, path, column, ordinal)?
+                .ok_or_else(|| column_value_error(path, column, ordinal, "must not be null"))
+        };
+        let timestamp = required_unsigned(self.timestamp, COL_TIME)?;
+        let prompt = string_value(
+            batch.column(self.prompt).as_ref(),
+            row,
+            path,
+            "prompt",
+            ordinal,
+        )?
+        .ok_or_else(|| column_value_error(path, "prompt", ordinal, "must not be null"))?;
+        let input_tokens = required_unsigned(self.input_tokens, "input_tokens")?;
+        let output_tokens = required_unsigned(self.output_tokens, "output_tokens")?;
+        let output_length = u32::try_from(output_tokens)
+            .map_err(|_| column_value_error(path, "output_tokens", ordinal, "does not fit in u32"))?
+            .max(1);
+        let duration_e2e_ms = self
+            .duration_e2e_ms
+            .map(|index| {
+                float_value(
+                    batch.column(index).as_ref(),
+                    row,
+                    path,
+                    "duration_e2e_ms",
+                    ordinal,
+                )
+            })
+            .transpose()?
+            .flatten();
+        let total_hashes = self
+            .total_hashes
+            .map(|index| hash_values(batch.column(index).as_ref(), row, path, ordinal))
+            .transpose()?
+            .unwrap_or_default();
+        let block_size = self
+            .block_size
+            .map(|index| {
+                unsigned_value(
+                    batch.column(index).as_ref(),
+                    row,
+                    path,
+                    "block_size",
+                    ordinal,
+                )?
+                .map(|value| {
+                    usize::try_from(value).map_err(|_| {
+                        column_value_error(path, "block_size", ordinal, "does not fit in usize")
+                    })
+                })
+                .transpose()
+            })
+            .transpose()?
+            .flatten();
+        Ok(BasetenRow {
+            prompt,
+            input_tokens,
+            output_tokens,
+            total_hashes,
+            provided_session_id: None,
+            poor_man_session_id: None,
+            duration_e2e_ms,
+            block_size,
+            timestamp: Some(timestamp as f64),
+            delay: None,
+            output_length,
+        })
+    }
+}
+
+#[cfg(feature = "parquet")]
+fn sampled_metadata_mask(
+    metadata: &[TraceMetadata],
+    ratio: Option<f64>,
+    has_session_column: bool,
+    rng_root: crate::rng::RngRoot,
+) -> Result<Vec<bool>> {
+    use crate::rng::compat::python_random::PythonRandomGenerator;
+    use crate::rng::derive::DerivedRandomGenerator;
+    use crate::rng::random_generator::RandomGenerator;
+
+    let Some(ratio) = ratio.filter(|_| has_session_column) else {
+        return Ok(vec![true; metadata.len()]);
+    };
+    let mut first_timestamps = HashMap::<&str, f64>::new();
+    for row in metadata {
+        if let Some(session_id) = row.session_id.as_deref() {
+            first_timestamps
+                .entry(session_id)
+                .and_modify(|timestamp| *timestamp = timestamp.min(row.timestamp))
+                .or_insert(row.timestamp);
+        }
+    }
+    let mut sessions = first_timestamps
+        .into_iter()
+        .map(|(session_id, timestamp)| (timestamp, session_id))
+        .collect::<Vec<_>>();
+    sessions.sort_by(|left, right| {
+        left.0
+            .partial_cmp(&right.0)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| left.1.cmp(right.1))
+    });
+    let mut rng = PythonRandomGenerator::from_rng_root(
+        rng_root,
+        crate::rng::namespace::DATASET_LOADER_BASETEN_TRACE_SESSION_SAMPLING,
+    );
+    let mut kept_sessions = sessions
+        .iter()
+        .filter(|_| rng.uniform(0.0, 1.0) < ratio)
+        .map(|(_, session_id)| *session_id)
+        .collect::<std::collections::HashSet<_>>();
+    if kept_sessions.is_empty() && !sessions.is_empty() {
+        let (_, session_id) = rng
+            .choice(&sessions)
+            .map_err(|error| DatasetError::Validation(error.to_string()))?;
+        kept_sessions.insert(*session_id);
+    }
+    Ok(metadata
+        .iter()
+        .map(|row| match row.session_id.as_deref() {
+            Some(session_id) => kept_sessions.contains(session_id),
+            None => rng.uniform(0.0, 1.0) < ratio,
+        })
+        .collect())
+}
+
+#[cfg(feature = "parquet")]
+fn read_columnar_rows(
+    path: &Path,
+    replay: &ReplayOptions,
+    rng_root: crate::rng::RngRoot,
+    max_rows: Option<usize>,
+) -> Result<ColumnarRows> {
+    let source = ColumnarSource::open(path)?;
+    let session_column = selected_session_column(&source)?;
+    let mut metadata_columns = vec![COL_TIME];
+    if let Some(session_column) = session_column {
+        metadata_columns.push(session_column);
+    }
+    let mut metadata = Vec::new();
+    source.for_each_batch(&metadata_columns, |batch| {
+        if max_rows.is_some_and(|limit| metadata.len() >= limit) {
+            return Ok(());
+        }
+        let timestamp_index = batch.schema().index_of(COL_TIME).map_err(|_| {
+            DatasetError::Validation(format!("{} is missing {COL_TIME}", path.display()))
+        })?;
+        let session_index = session_column
+            .map(|column| batch.schema().index_of(column))
+            .transpose()
+            .map_err(|_| {
+                DatasetError::Validation(format!("{} is missing session column", path.display()))
+            })?;
+        for row in 0..batch.num_rows() {
+            if max_rows.is_some_and(|limit| metadata.len() >= limit) {
+                break;
+            }
+            let ordinal = metadata.len() + 1;
+            let timestamp = unsigned_value(
+                batch.column(timestamp_index).as_ref(),
+                row,
+                path,
+                COL_TIME,
+                ordinal,
+            )?
+            .ok_or_else(|| column_value_error(path, COL_TIME, ordinal, "must not be null"))?
+                as f64;
+            let session_id = session_index
+                .map(|index| {
+                    string_value(
+                        batch.column(index).as_ref(),
+                        row,
+                        path,
+                        session_column.unwrap_or(COL_SESSION),
+                        ordinal,
+                    )
+                })
+                .transpose()?
+                .flatten();
+            metadata.push(TraceMetadata {
+                timestamp,
+                session_id,
+            });
+        }
+        Ok(())
+    })?;
+    let min_timestamp = metadata
+        .iter()
+        .map(|row| row.timestamp)
+        .fold(f64::INFINITY, f64::min);
+    let keep = sampled_metadata_mask(
+        &metadata,
+        replay.session_sample_ratio,
+        session_column.is_some(),
+        rng_root,
+    )?;
+
+    let mut columns = required_columns().to_vec();
+    if !replay.open_loop && source.has_columns(&["duration_e2e_ms"]) {
+        columns.push("duration_e2e_ms");
+    }
+    if !replay.omit_kv_hints {
+        for column in ["total_hashes", "block_size"] {
+            if source.has_columns(&[column]) {
+                columns.push(column);
+            }
+        }
+    }
+    let mut rows = Vec::with_capacity(keep.iter().filter(|is_kept| **is_kept).count());
+    let mut ordinal = 0_usize;
+    source.for_each_batch(&columns, |batch| {
+        let indices = BasetenBatchIndices::new(&batch, path)?;
+        for row in 0..batch.num_rows() {
+            if ordinal >= metadata.len() {
+                break;
+            }
+            let metadata_row = metadata.get(ordinal).ok_or_else(|| {
+                DatasetError::Validation(format!(
+                    "{} changed row count between columnar scans",
+                    path.display()
+                ))
+            })?;
+            let is_kept = keep.get(ordinal).copied().unwrap_or(false);
+            ordinal += 1;
+            if !is_kept {
+                continue;
+            }
+            rows.push((
+                indices.decode(&batch, row, path, ordinal)?,
+                metadata_row.session_id.clone(),
+                ordinal,
+            ));
+        }
+        Ok(())
+    })?;
+    if ordinal != metadata.len() {
+        return Err(DatasetError::Validation(format!(
+            "{} changed row count between columnar scans",
+            path.display()
+        )));
+    }
+    Ok(ColumnarRows {
+        rows,
+        min_timestamp,
+    })
+}
+
+#[cfg(not(feature = "parquet"))]
+fn read_columnar_rows(
+    path: &Path,
+    _replay: &ReplayOptions,
+    _rng_root: crate::rng::RngRoot,
+    _max_rows: Option<usize>,
+) -> Result<()> {
     Err(DatasetError::Validation(format!(
         "baseten_trace dataset {} requires an aiperf runner built with the `parquet` feature",
         path.display()
     )))
-}
-
-#[cfg(feature = "parquet")]
-fn parquet_schema_has_columns(path: &Path, columns: &[&str]) -> bool {
-    use parquet::file::reader::{FileReader, SerializedFileReader};
-
-    let Ok(file) = std::fs::File::open(path) else {
-        return false;
-    };
-    let Ok(reader) = SerializedFileReader::new(file) else {
-        return false;
-    };
-    let names: std::collections::HashSet<&str> = reader
-        .metadata()
-        .file_metadata()
-        .schema()
-        .get_fields()
-        .iter()
-        .map(|field| field.name())
-        .collect();
-    columns.iter().all(|column| names.contains(column))
-}
-
-#[cfg(not(feature = "parquet"))]
-fn parquet_schema_has_columns(_path: &Path, _columns: &[&str]) -> bool {
-    false
 }
 
 #[async_trait]
@@ -485,25 +1178,57 @@ impl DatasetLoader for BasetenTraceDatasetLoader {
         let Some(path) = &probe.path else {
             return false;
         };
-        if path.extension().and_then(|extension| extension.to_str()) != Some("parquet") {
+        if !matches!(
+            path.extension().and_then(|extension| extension.to_str()),
+            Some("parquet" | "arrow" | "ipc")
+        ) {
             return false;
         }
-        parquet_schema_has_columns(path, &required_columns())
+        columnar_schema_has_columns(path, &required_columns())
     }
 
     async fn load(&self, config: &LoadConfig) -> Result<Vec<RawRow>> {
-        let (raw_rows, origin_label) = match &config.source {
+        let replay = ReplayOptions::from_options(&config.options)?;
+        let (mut raw_rows, columnar_min_timestamp) = match &config.source {
             DatasetSource::Path(path) => {
-                let rows = read_parquet_rows(path)?;
-                (rows, path.display().to_string())
+                #[cfg(feature = "parquet")]
+                {
+                    let columnar =
+                        read_columnar_rows(path, &replay, config.rng_root, config.max_rows)?;
+                    let rows = columnar
+                        .rows
+                        .into_iter()
+                        .map(|(row, group_key, ordinal)| {
+                            (
+                                row,
+                                group_key,
+                                RowOrigin::FileLine {
+                                    path: path.clone(),
+                                    line: ordinal,
+                                },
+                            )
+                        })
+                        .collect();
+                    (rows, Some(columnar.min_timestamp))
+                }
+                #[cfg(not(feature = "parquet"))]
+                {
+                    read_columnar_rows(path, &replay, config.rng_root, config.max_rows)?;
+                    unreachable!()
+                }
             }
             DatasetSource::Url(_) | DatasetSource::HuggingFace { .. } => {
                 // Public / `--hf-dataset --hf-format baseten_trace` path: reuse the
                 // shared remote parquet/jsonl acquisition, then apply baseten
                 // replay normalization below.
                 let rows = crate::dataset::loader::public::load_raw_rows(config).await?;
-                let values = rows.into_iter().map(|row| row.value).collect();
-                (values, config.source.label())
+                let rows = rows
+                    .into_iter()
+                    .map(|raw| {
+                        parse_row(&raw.value, &raw.origin).map(|row| (row, None, raw.origin))
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                (rows, None)
             }
             _ => {
                 return Err(DatasetError::Validation(
@@ -512,19 +1237,15 @@ impl DatasetLoader for BasetenTraceDatasetLoader {
                 ));
             }
         };
-        let mut rows = raw_rows
-            .into_iter()
-            .map(|value| parse_row(&value, &origin_label))
-            .collect::<Result<Vec<_>>>()?;
-
-        let min_timestamp = rows
-            .iter()
-            .filter_map(|row| row.timestamp)
-            .fold(f64::INFINITY, f64::min);
-        let replay = ReplayOptions::from_options(&config.options)?;
-
-        let mut out = Vec::with_capacity(rows.len());
-        for row in rows.drain(..) {
+        let min_timestamp = columnar_min_timestamp.unwrap_or_else(|| {
+            raw_rows
+                .iter()
+                .filter_map(|(row, _, _)| row.timestamp)
+                .fold(f64::INFINITY, f64::min)
+        });
+        let mut out = Vec::with_capacity(raw_rows.len());
+        let mut next_ordinal = 0_u64;
+        for (row, group_key, origin) in raw_rows.drain(..) {
             let mut row = row;
             if let Some(timestamp) = row.timestamp {
                 let mut normalized = timestamp - min_timestamp;
@@ -542,16 +1263,23 @@ impl DatasetLoader for BasetenTraceDatasetLoader {
                 }
                 row.timestamp = Some(normalized);
             }
-            let wire = serde_json::to_vec(&row_to_value(&row)).map_err(DatasetError::from)?;
+            let value = row_to_value(&row);
+            let wire = serde_json::to_vec(&value).map_err(DatasetError::from)?;
+            let group_key = if columnar_min_timestamp.is_some() {
+                Some(group_key.unwrap_or_else(|| {
+                    let group_key = format!("baseten_{next_ordinal:06}");
+                    next_ordinal += 1;
+                    group_key
+                }))
+            } else {
+                None
+            };
             out.push(RawRow {
-                value: row_to_value(&row),
+                value,
                 wire: Some(Bytes::from(wire)),
                 session_id: None,
-                group_key: None,
-                origin: RowOrigin::FileLine {
-                    path: std::path::PathBuf::from(&origin_label),
-                    line: 0,
-                },
+                group_key,
+                origin,
             });
         }
         Ok(out)
@@ -647,10 +1375,13 @@ impl Composer for BasetenTraceComposer {
         segments: &mut SegmentPool,
     ) -> Result<Vec<Conversation>> {
         let replay = ReplayOptions::from_options(&config.format_options)?;
-        let mut parsed: Vec<BasetenRow> = rows
-            .into_iter()
-            .map(|row| row_from_value(&row.value))
-            .collect::<Result<Vec<_>>>()?;
+        let has_resolved_groups = rows.iter().all(|row| row.group_key.is_some());
+        let mut group_keys = Vec::with_capacity(rows.len());
+        let mut parsed = Vec::with_capacity(rows.len());
+        for row in rows {
+            group_keys.push(row.group_key);
+            parsed.push(row_from_value(&row.value)?);
+        }
 
         // Open-loop idle-gap reflow runs on every timed row, before grouping,
         // so a sparse (sampled) trace does not idle through dead air.
@@ -660,25 +1391,30 @@ impl Composer for BasetenTraceComposer {
             apply_idle_gap_cap(&mut parsed, replay.max_idle_gap_cap_ms);
         }
 
-        let session_key = choose_session_key(&parsed);
-        if let Some(ratio) = replay.session_sample_ratio {
+        let session_key = (!has_resolved_groups)
+            .then(|| choose_session_key(&parsed))
+            .flatten();
+        if !has_resolved_groups && let Some(ratio) = replay.session_sample_ratio {
             sample_trace_sessions(&mut parsed, session_key, ratio, config.rng_root)?;
         }
 
         let mut groups: HashMap<String, Vec<BasetenRow>> = HashMap::new();
         let mut order: Vec<String> = Vec::new();
         let mut next_ordinal: u64 = 0;
-        for row in parsed.drain(..) {
-            let session_id = match session_key {
-                Some(SessionKey::Provided) => row.provided_session_id.clone(),
-                Some(SessionKey::PoorMan) => row.poor_man_session_id.clone(),
-                None => None,
-            }
-            .unwrap_or_else(|| {
-                let id = format!("baseten_{next_ordinal:06}");
-                next_ordinal += 1;
-                id
-            });
+        for (index, row) in parsed.drain(..).enumerate() {
+            let session_id = group_keys
+                .get_mut(index)
+                .and_then(Option::take)
+                .or_else(|| match session_key {
+                    Some(SessionKey::Provided) => row.provided_session_id.clone(),
+                    Some(SessionKey::PoorMan) => row.poor_man_session_id.clone(),
+                    None => None,
+                })
+                .unwrap_or_else(|| {
+                    let id = format!("baseten_{next_ordinal:06}");
+                    next_ordinal += 1;
+                    id
+                });
             if !groups.contains_key(&session_id) {
                 order.push(session_id.clone());
             }
@@ -901,6 +1637,9 @@ fn build_request_body(
 mod tests {
     use std::sync::Arc;
 
+    use arrow::array::{Int64Array, RecordBatch, StringArray};
+    use arrow::datatypes::{DataType, Field, Schema};
+    use arrow::ipc::writer::FileWriter;
     use parquet::data_type::{ByteArrayType, Int64Type};
     use parquet::file::writer::SerializedFileWriter;
     use parquet::schema::parser::parse_message_type;
@@ -1060,6 +1799,118 @@ mod tests {
         path
     }
 
+    fn write_arrow_fixture(
+        directory: &Path,
+        suffix: &str,
+        rows: &[FixtureRow],
+    ) -> std::path::PathBuf {
+        let schema = Arc::new(Schema::new(vec![
+            Field::new(COL_TIME, DataType::Int64, false),
+            Field::new("prompt", DataType::Utf8, false),
+            Field::new("input_tokens", DataType::Int64, false),
+            Field::new("output_tokens", DataType::Int64, false),
+            Field::new(COL_SESSION, DataType::Utf8, false),
+            Field::new("duration_e2e_ms", DataType::Int64, false),
+        ]));
+        let batch = RecordBatch::try_new(
+            Arc::clone(&schema),
+            vec![
+                Arc::new(Int64Array::from_iter_values(
+                    rows.iter().map(|row| row.timestamp_start_unix_ms),
+                )),
+                Arc::new(StringArray::from_iter_values(
+                    rows.iter().map(|row| row.prompt),
+                )),
+                Arc::new(Int64Array::from_iter_values(
+                    rows.iter().map(|row| row.input_tokens),
+                )),
+                Arc::new(Int64Array::from_iter_values(
+                    rows.iter().map(|row| row.output_tokens),
+                )),
+                Arc::new(StringArray::from_iter_values(
+                    rows.iter().map(|row| row.provided_session_id),
+                )),
+                Arc::new(Int64Array::from_iter_values(
+                    rows.iter().map(|row| row.duration_e2e_ms),
+                )),
+            ],
+        )
+        .unwrap();
+        let path = directory.join(format!("baseten.{suffix}"));
+        let file = std::fs::File::create(&path).unwrap();
+        let mut writer = FileWriter::try_new(file, &schema).unwrap();
+        writer.write(&batch).unwrap();
+        writer.finish().unwrap();
+        path
+    }
+
+    fn write_session_policy_fixture(directory: &Path) -> std::path::PathBuf {
+        let schema = Arc::new(Schema::new(vec![
+            Field::new(COL_TIME, DataType::Int64, false),
+            Field::new("prompt", DataType::Utf8, false),
+            Field::new("input_tokens", DataType::Int64, false),
+            Field::new("output_tokens", DataType::Int64, false),
+            Field::new(COL_SESSION, DataType::Utf8, false),
+            Field::new(COL_POOR_MAN_SESSION, DataType::Utf8, false),
+        ]));
+        let batch = RecordBatch::try_new(
+            Arc::clone(&schema),
+            vec![
+                Arc::new(Int64Array::from_iter_values(0_i64..6)),
+                Arc::new(StringArray::from(vec!["a", "b", "c", "d", "e", "f"])),
+                Arc::new(Int64Array::from_iter_values(std::iter::repeat_n(1, 6))),
+                Arc::new(Int64Array::from_iter_values(std::iter::repeat_n(1, 6))),
+                Arc::new(StringArray::from(vec!["p1", "p1", "p2", "p2", "p3", "p4"])),
+                Arc::new(StringArray::from_iter_values(std::iter::repeat_n("one", 6))),
+            ],
+        )
+        .unwrap();
+        let path = directory.join("session-policy.arrow");
+        let file = std::fs::File::create(&path).unwrap();
+        let mut writer = FileWriter::try_new(file, &schema).unwrap();
+        writer.write(&batch).unwrap();
+        writer.finish().unwrap();
+        path
+    }
+
+    fn write_wide_late_invalid_fixture(directory: &Path) -> std::path::PathBuf {
+        let schema = Arc::new(Schema::new(vec![
+            Field::new(COL_TIME, DataType::Int64, false),
+            Field::new("prompt", DataType::Utf8, false),
+            Field::new("input_tokens", DataType::Int64, false),
+            Field::new("output_tokens", DataType::Int64, false),
+            Field::new(COL_SESSION, DataType::Utf8, false),
+            Field::new("unused_blob", DataType::Utf8, false),
+        ]));
+        let batch = RecordBatch::try_new(
+            Arc::clone(&schema),
+            vec![
+                Arc::new(Int64Array::from_iter_values(0_i64..131)),
+                Arc::new(StringArray::from_iter_values(std::iter::repeat_n(
+                    "prompt", 131,
+                ))),
+                Arc::new(Int64Array::from_iter_values(
+                    (0..131).map(|index| if index == 130 { -1 } else { 1 }),
+                )),
+                Arc::new(Int64Array::from_iter_values(std::iter::repeat_n(1, 131))),
+                Arc::new(StringArray::from_iter_values(std::iter::repeat_n(
+                    "session", 131,
+                ))),
+                Arc::new(StringArray::from_iter_values(std::iter::repeat_n(
+                    "unused-wide-value",
+                    131,
+                ))),
+            ],
+        )
+        .unwrap();
+        let path = directory.join("wide-late-invalid.arrow");
+        let file = std::fs::File::create(&path).unwrap();
+        let mut writer = FileWriter::try_new(file, &schema).unwrap();
+        writer.write(&batch).unwrap();
+        writer.finish().unwrap();
+        path
+    }
+
     async fn build(
         path: std::path::PathBuf,
         options: Map<String, Value>,
@@ -1112,6 +1963,112 @@ mod tests {
         assert!(!BasetenTraceDatasetLoader.can_load(&DatasetProbe {
             value: None,
             path: Some(not_parquet),
+        }));
+    }
+
+    #[tokio::test]
+    async fn arrow_ipc_detection_and_composition_match_parquet() {
+        let directory = tempfile::tempdir().unwrap();
+        let rows = [
+            FixtureRow {
+                timestamp_start_unix_ms: 1_000,
+                prompt: "first",
+                input_tokens: 4,
+                output_tokens: 3,
+                provided_session_id: "shared",
+                duration_e2e_ms: 10,
+            },
+            FixtureRow {
+                timestamp_start_unix_ms: 1_250,
+                prompt: "second",
+                input_tokens: 5,
+                output_tokens: 2,
+                provided_session_id: "shared",
+                duration_e2e_ms: 20,
+            },
+        ];
+        let parquet = write_fixture(directory.path(), &rows);
+        let arrow = write_arrow_fixture(directory.path(), "arrow", &rows);
+        let ipc = write_arrow_fixture(directory.path(), "ipc", &rows);
+        for path in [&arrow, &ipc] {
+            assert!(BasetenTraceDatasetLoader.can_load(&DatasetProbe {
+                value: None,
+                path: Some(path.clone()),
+            }));
+        }
+
+        let parquet_dataset = build(parquet, Map::new()).await;
+        let direct_rows = BasetenTraceDatasetLoader
+            .load(&LoadConfig::new(DatasetSource::Path(arrow.clone())))
+            .await
+            .unwrap();
+        assert_eq!(
+            direct_rows
+                .iter()
+                .map(|row| &row.origin)
+                .collect::<Vec<_>>(),
+            vec![
+                &RowOrigin::FileLine {
+                    path: arrow.clone(),
+                    line: 1,
+                },
+                &RowOrigin::FileLine {
+                    path: arrow.clone(),
+                    line: 2,
+                },
+            ]
+        );
+        let arrow_dataset = build(arrow, Map::new()).await;
+        let ipc_dataset = build(ipc, Map::new()).await;
+        assert_eq!(parquet_dataset.conversations().len(), 1);
+        assert_eq!(arrow_dataset.conversations().len(), 1);
+        assert_eq!(ipc_dataset.conversations().len(), 1);
+        let parquet_turns = &parquet_dataset.conversations()[0].turns;
+        let arrow_turns = &arrow_dataset.conversations()[0].turns;
+        let ipc_turns = &ipc_dataset.conversations()[0].turns;
+        assert_eq!(arrow_turns.len(), parquet_turns.len());
+        assert_eq!(ipc_turns.len(), parquet_turns.len());
+        for ((arrow_turn, ipc_turn), parquet_turn) in
+            arrow_turns.iter().zip(ipc_turns).zip(parquet_turns)
+        {
+            for columnar_turn in [arrow_turn, ipc_turn] {
+                assert_eq!(columnar_turn.timestamp_ms, parquet_turn.timestamp_ms);
+                assert_eq!(columnar_turn.input_tokens, parquet_turn.input_tokens);
+                assert_eq!(columnar_turn.max_tokens, parquet_turn.max_tokens);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn configured_default_session_column_controls_grouping() {
+        let directory = tempfile::tempdir().unwrap();
+        let dataset = build(write_session_policy_fixture(directory.path()), Map::new()).await;
+        let mut turn_counts = dataset
+            .conversations()
+            .iter()
+            .map(|conversation| conversation.turns.len())
+            .collect::<Vec<_>>();
+        turn_counts.sort_unstable();
+        assert_eq!(turn_counts, vec![1, 1, 2, 2]);
+    }
+
+    #[tokio::test]
+    async fn projected_batches_skip_unused_columns_and_validate_late_rows() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = write_wide_late_invalid_fixture(directory.path());
+        let _ = take_columnar_scans();
+        let error = BasetenTraceDatasetLoader
+            .load(&LoadConfig::new(DatasetSource::Path(path.clone())))
+            .await
+            .unwrap_err();
+        let message = error.to_string();
+        assert!(message.contains(&path.display().to_string()));
+        assert!(message.contains("row 131"));
+        assert!(message.contains("column input_tokens"));
+        let scans = take_columnar_scans();
+        assert!(!scans.is_empty());
+        assert!(scans.iter().all(|(columns, rows)| {
+            *rows <= PARQUET_BATCH_SIZE && !columns.iter().any(|column| column == "unused_blob")
         }));
     }
 
@@ -1583,5 +2540,140 @@ mod tests {
                 assert_eq!(count, 2, "session a must stay intact when kept");
             }
         }
+    }
+
+    #[test]
+    fn metadata_sampling_is_deterministic_and_keeps_whole_sessions() {
+        let metadata = [
+            TraceMetadata {
+                timestamp: 0.0,
+                session_id: Some("a".into()),
+            },
+            TraceMetadata {
+                timestamp: 1.0,
+                session_id: Some("a".into()),
+            },
+            TraceMetadata {
+                timestamp: 2.0,
+                session_id: Some("b".into()),
+            },
+            TraceMetadata {
+                timestamp: 3.0,
+                session_id: Some("b".into()),
+            },
+        ];
+        let first =
+            sampled_metadata_mask(&metadata, Some(0.5), true, RngRoot::new(Some(9))).unwrap();
+        let second =
+            sampled_metadata_mask(&metadata, Some(0.5), true, RngRoot::new(Some(9))).unwrap();
+        assert_eq!(first, second);
+        assert_eq!(first[0], first[1]);
+        assert_eq!(first[2], first[3]);
+        assert!(first.iter().any(|is_kept| *is_kept));
+    }
+
+    #[test]
+    fn metadata_sampling_is_disabled_without_a_session_column() {
+        let metadata = [
+            TraceMetadata {
+                timestamp: 0.0,
+                session_id: None,
+            },
+            TraceMetadata {
+                timestamp: 1.0,
+                session_id: None,
+            },
+        ];
+        assert_eq!(
+            sampled_metadata_mask(&metadata, Some(0.0), false, RngRoot::new(Some(9))).unwrap(),
+            vec![true, true]
+        );
+    }
+
+    #[test]
+    fn session_column_policy_covers_preference_configuration_fallback_and_absence() {
+        assert_eq!(
+            resolve_session_column(true, true, None).unwrap(),
+            Some(COL_SESSION)
+        );
+        assert_eq!(
+            resolve_session_column(true, true, Some(COL_POOR_MAN_SESSION)).unwrap(),
+            Some(COL_POOR_MAN_SESSION)
+        );
+        assert_eq!(
+            resolve_session_column(false, true, None).unwrap(),
+            Some(COL_POOR_MAN_SESSION)
+        );
+        assert_eq!(
+            resolve_session_column(true, false, Some(COL_POOR_MAN_SESSION)).unwrap(),
+            Some(COL_SESSION)
+        );
+        assert_eq!(resolve_session_column(false, false, None).unwrap(), None);
+        let error = resolve_session_column(true, true, Some("unknown")).unwrap_err();
+        assert!(error.to_string().contains("got unknown"));
+    }
+
+    #[tokio::test]
+    async fn max_rows_precedes_seeded_session_sampling_for_direct_and_registry_loads() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = write_session_policy_fixture(directory.path());
+        let mut options = Map::new();
+        options.insert("session_sample_ratio".into(), json!(0.5));
+        let mut direct_config =
+            LoadConfig::new(DatasetSource::Path(path.clone())).with_rng_root(RngRoot::new(Some(9)));
+        direct_config.max_rows = Some(4);
+        direct_config.options = options.clone();
+        let direct_rows = BasetenTraceDatasetLoader
+            .load(&direct_config)
+            .await
+            .unwrap();
+        assert!(!direct_rows.is_empty());
+        assert!(direct_rows.len() <= 4);
+        let direct_groups = direct_rows
+            .iter()
+            .map(|row| row.group_key.as_deref().unwrap())
+            .collect::<std::collections::HashSet<_>>();
+        assert!(
+            direct_groups
+                .iter()
+                .all(|group| matches!(*group, "p1" | "p2"))
+        );
+        for group in &direct_groups {
+            assert_eq!(
+                direct_rows
+                    .iter()
+                    .filter(|row| row.group_key.as_deref() == Some(*group))
+                    .count(),
+                2
+            );
+        }
+
+        let mut registry = LoaderRegistry::new();
+        registry
+            .register(DatasetFormatRegistration::new(
+                Arc::new(BasetenTraceDatasetLoader),
+                Arc::new(BasetenTraceComposer),
+            ))
+            .unwrap();
+        let mut compose = ComposeConfig::new("model", RngRoot::new(Some(9)));
+        compose.format_options = options;
+        let dataset = registry
+            .build_dataset(
+                Some("baseten_trace"),
+                &direct_config,
+                &compose,
+                &TiktokenTokenizer::builtin(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(dataset.conversations().len(), direct_groups.len());
+        assert_eq!(
+            dataset
+                .conversations()
+                .iter()
+                .map(|conversation| conversation.turns.len())
+                .sum::<usize>(),
+            direct_rows.len()
+        );
     }
 }
