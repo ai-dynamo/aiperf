@@ -29,6 +29,9 @@ use crate::engine::protocol::ModelsSpec;
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PublicDatasetSpec {
+    /// Exact system prompt applied to every composed conversation.
+    #[serde(default)]
+    pub system_prompt: Option<String>,
     /// Config-v2 public dataset name, retained for diagnostics.
     pub name: String,
     /// Native loader registration name.
@@ -101,6 +104,9 @@ pub struct PromptSelectionSpec {
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FileDatasetSpec {
+    /// Exact system prompt applied to every composed conversation.
+    #[serde(default)]
+    pub system_prompt: Option<String>,
     /// Absolute resolved path, mutually exclusive with records.
     #[serde(default)]
     pub path: Option<PathBuf>,
@@ -217,6 +223,9 @@ fn default_sampling_strategy() -> String {
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SyntheticDatasetSpec {
+    /// Exact system prompt applied to every generated conversation.
+    #[serde(default)]
+    pub system_prompt: Option<String>,
     /// Number of reusable conversations.
     pub entries: usize,
     /// Dataset-local seed overriding the run seed for generation and sampling.

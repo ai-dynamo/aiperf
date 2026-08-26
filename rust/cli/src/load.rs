@@ -557,6 +557,8 @@ pub fn resolve_inputs(flags: &ProfileFlags) -> anyhow::Result<Inputs> {
             .transpose()?,
         runtime_hop_routing: flags.hop_routing()?,
         input_file: flags.input_file.clone(),
+        system_prompt: flags.system_prompt.clone(),
+        system_prompt_file: flags.system_prompt_file.clone(),
         recorded_agent_graph,
         hardware_description: flags.hardware_description.clone(),
         endpoint_placement: flags
@@ -1657,6 +1659,47 @@ mod tests {
                 value["cfg"]["datasets"][0]["prompts"]["corpus"],
                 serde_json::json!("coding")
             );
+        });
+    }
+
+    #[test]
+    fn system_prompt_projects_every_dataset_variant() {
+        run_on_big_stack(|| {
+            for (kind, extra) in [
+                ("synthetic", Vec::<&str>::new()),
+                ("file", vec!["--input-file", "records.jsonl"]),
+                ("public", vec!["--public-dataset", "sharegpt"]),
+            ] {
+                let mut args = vec![
+                    "-m",
+                    "mock-model",
+                    "--endpoint-type",
+                    "chat",
+                    "--dry-run",
+                    "--system-prompt",
+                    "  exact prompt\n",
+                ];
+                args.extend(extra);
+                let run = super::resolve(&parse(&args)).expect("system prompt run resolves");
+                let dataset = run
+                    .cfg
+                    .datasets
+                    .as_ref()
+                    .and_then(|datasets| datasets.first())
+                    .expect("resolved dataset");
+                let prompt = match dataset {
+                    crate::model::dataset::Dataset::Synthetic(dataset) => {
+                        dataset.system_prompt.as_deref()
+                    }
+                    crate::model::dataset::Dataset::File(dataset) => {
+                        dataset.system_prompt.as_deref()
+                    }
+                    crate::model::dataset::Dataset::Public(dataset) => {
+                        dataset.system_prompt.as_deref()
+                    }
+                };
+                assert_eq!(prompt, Some("  exact prompt\n"), "{kind}");
+            }
         });
     }
 

@@ -2999,6 +2999,7 @@ mod tests {
     fn recorded_public_prompt_corpus_is_resolved_from_prompts() {
         let prepared = prepare_recorded_public(
             PublicDatasetSpec {
+                system_prompt: None,
                 name: "weka-public".into(),
                 format: "weka_trace".into(),
                 source: PublicDatasetSourceSpec::Url {

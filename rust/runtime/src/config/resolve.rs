@@ -388,6 +388,12 @@ pub struct Inputs {
     pub dataset_random_seed: Option<u64>,
     /// File-backed dataset path (mutually exclusive with the synthetic path).
     pub input_file: Option<PathBuf>,
+    /// Exact inline system-prompt source before startup resolution.
+    #[serde(default)]
+    pub system_prompt: Option<String>,
+    /// File-backed system-prompt source before startup resolution.
+    #[serde(default)]
+    pub system_prompt_file: Option<PathBuf>,
     /// Recorded-agent replay policy for an `agent_recording` file dataset.
     pub recorded_agent_graph: Option<RecordedAgentGraphConfig>,
     /// Free-form endpoint hardware provenance.
@@ -726,6 +732,10 @@ fn validate_baseten_only_trace_flags(inputs: &Inputs) -> anyhow::Result<()> {
 }
 
 pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
+    let system_prompt = crate::config::system_prompt::resolve_system_prompt(
+        inputs.system_prompt.as_deref(),
+        inputs.system_prompt_file.as_deref(),
+    )?;
     validate_baseten_only_trace_flags(&inputs)?;
     validate_baseten_extra_input_collisions(&inputs)?;
     if let Some(ratio) = inputs.trace_session_sample_ratio {
@@ -951,6 +961,7 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
             source.insert("revision".to_string(), serde_json::json!(rev));
         }
         Dataset::Public(crate::config::model::dataset::PublicDataset {
+            system_prompt: system_prompt.clone(),
             cache_bust,
             name: id.clone(),
             format,
@@ -983,6 +994,7 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
             source.insert("subset".to_string(), serde_json::json!(subset));
         }
         Dataset::Public(crate::config::model::dataset::PublicDataset {
+            system_prompt: system_prompt.clone(),
             cache_bust,
             name: "weka_hf".to_string(),
             format: "weka_trace".to_string(),
@@ -1034,6 +1046,7 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
             obj.insert("subset".to_string(), serde_json::json!(subset));
         }
         Dataset::Public(crate::config::model::dataset::PublicDataset {
+            system_prompt: system_prompt.clone(),
             cache_bust,
             name: name.clone(),
             format: meta.format.clone(),
@@ -1051,6 +1064,7 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
             anyhow::bail!("--uuid-and-strip requires endpoint type 'chat'");
         }
         Dataset::File(crate::config::model::dataset::FileDataset {
+            system_prompt: system_prompt.clone(),
             cache_bust,
             // Path-backed inputs are auto-detected; inline records require a format.
             format: inputs.custom_dataset_type.clone().or_else(|| {
@@ -1126,6 +1140,7 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
         })
     } else {
         Dataset::Synthetic(Synthetic {
+            system_prompt,
             prompts: Prompts {
                 cache_bust,
                 batch_size: inputs.batch_size,
