@@ -25,8 +25,8 @@ Every task of the allocation runs the identical command:
 srun aiperf slurm run --config benchmark.yaml
 ```
 
-`aiperf slurm run` (native, `rust/cli/src/slurm.rs`) resolves the task's role from
-the `SLURM_*` environment once and dispatches:
+`aiperf slurm run` (native, `rust/cli/src/slurm/mod.rs`) resolves the task's role
+from the `SLURM_*` environment once and dispatches:
 
 - **rank 0** (`SLURM_PROCID == 0`) becomes the **controller**. It projects the
   mounted Config v2 with `--cells <cell_count>` appended (so the controller path
@@ -47,11 +47,23 @@ native; no `slurm` invocation reaches Python.
 
 SLURM supplies placement, a public controller coordinate, and role-specific
 private material; the coordinate is not identity. Rank 0 requires
-`AIPERF_CONTROLLER_BOOTSTRAP_FILE`, and every cell rank requires its own
-`AIPERF_ROLE_BOOTSTRAP_FILE`. Each mount contains fixed binary role material,
-must be a regular no-follow file with exact `0600` permissions, and is acquired
-once into the process-owned security context. Key bytes are never carried in
-JSON, environment values, argv, or the controller coordinate.
+`AIPERF_CONTROLLER_BOOTSTRAP_FILE`, and every cell rank requires its own private
+bundle. Each mount contains fixed binary role material, must be a regular
+no-follow file with exact `0600` permissions, and is acquired once into the
+process-owned security context. Key bytes are never carried in JSON, environment
+values, argv, or the controller coordinate.
+
+Per-rank material cannot come from the job script: `srun` exports one environment
+to every task. The generated script therefore exports the controller bundle path
+and `AIPERF_ROLE_BOOTSTRAP_DIR`, the *directory* holding the cell bundles, and
+each cell resolves `<AIPERF_ROLE_BOOTSTRAP_DIR>/cell-<id>.bin` inside the binary
+from the same `SLURM_PROCID` the rank dispatch reads (`cell_id = SLURM_PROCID - 1`).
+An operator-provisioned `AIPERF_ROLE_BOOTSTRAP_FILE` takes precedence when set, so
+existing mount-per-pod deployments keep working unchanged. The resolved path is
+published back into `AIPERF_ROLE_BOOTSTRAP_FILE` before any cellular stage runs,
+because the runtime's one-shot role acquisition reads only that variable. Path
+resolution is the only thing that moved: the `0600`, regular-file, no-follow
+preconditions are enforced identically for a derived and a mounted path.
 
 The rank-0 hostname and Velo `_hello` are routing inputs only. Application
 admission begins with the signed registration and controller reply attestation,
@@ -122,6 +134,19 @@ a path typo minutes into an allocation. `--cells N` requests
 `--account`, `--time`, `--nodes`, `--ntasks-per-node`, `--gpus-per-node`, and
 `--output` map to the corresponding `#SBATCH` directives.
 
+Generation also provisions the run's session security. `--run-dir <path>` selects
+the run directory, defaulting to `<job-name>-slurm-run` beside the resolved config.
+One call to `mint_deployment_material` mints the whole roster
+(`Cell(0)..Cell(N-1)`) — one nonce, one roster, one controller key — and writes
+`<run-dir>/bootstrap/controller.bin` plus `<run-dir>/bootstrap/cell-<n>.bin`. The
+`bootstrap` directory is created `0700` and each bundle no-follow, create-new,
+`0600`, the same private-file contract the Kubernetes submission path uses. Minting
+happens before the script is emitted, and create-new semantics mean a second
+generation into an occupied run directory is *refused* rather than truncating
+material an already-submitted allocation still depends on; the script then exports
+`AIPERF_CONTROLLER_BOOTSTRAP_FILE` and `AIPERF_ROLE_BOOTSTRAP_DIR` at absolute
+paths. The script performs no per-rank environment expansion of its own.
+
 ## Future requirements
 
 - **Aggregator tier**: Hierarchical aggregation is unavailable in every launcher.
@@ -153,13 +178,14 @@ a path typo minutes into an allocation. `--cells N` requests
   `select_launcher`'s `slurm` branch.
 - `rust/runtime/src/engine/cellular_controller.rs` — the cross-host placement
   (`cross_host = is_k8s || is_slurm`) and `controller_bind_and_endpoint`.
-- `rust/cli/src/slurm.rs` and `rust/cli/src/dispatch.rs` — the `aiperf slurm run`
-  rank dispatch and routing.
-- `rust/cli/src/slurm/generate.rs` — the `aiperf slurm generate` sbatch generator
-  and its script-text unit tests; `rust/cli/tests/python_utility_delegation.rs`
-  proves the command emits its script without starting a Python interpreter.
+- `rust/cli/src/slurm/mod.rs` and `rust/cli/src/dispatch.rs` — the `aiperf slurm run`
+  rank dispatch, per-rank bootstrap resolution, and routing.
+- `rust/cli/src/slurm/generate.rs` — the `aiperf slurm generate` sbatch generator,
+  its per-rank material provisioning, and their unit tests;
+  `rust/cli/tests/python_utility_delegation.rs` proves the command emits its exact
+  script — bootstrap exports included — without starting a Python interpreter.
 - `rust/e2e-tests/scripts/slurm_sim.sh` — the loopback multi-cell (3-task) SLURM-allocation
-  simulation, and `rust/e2e-tests/scripts/slurm_sim_single_cell.sh` — the single-cell
-  (2-task) variant.
+  simulation, driven from `aiperf slurm generate` output, and
+  `rust/e2e-tests/scripts/slurm_sim_single_cell.sh` — the single-cell (2-task) variant.
 - `rust/runtime/src/engine/cell_launcher.rs` — `is_cross_host_launcher`, the gate the
   runner uses to promote the controller for a single cell under `slurm`/`k8s`.
