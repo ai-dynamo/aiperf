@@ -161,6 +161,7 @@ async fn build_owned_wire_index(
     replay: Vec<BroadcastEvent<DatasetChunk<WirePayload>>>,
     mut live: mpsc::UnboundedReceiver<DatasetWireEvent>,
     owns: impl Fn(u64) -> bool,
+    progress_timeout: Option<std::time::Duration>,
 ) -> anyhow::Result<DatasetIndex<WirePayload>> {
     let mut owned = HashMap::new();
     let mut accept = |event: BroadcastEvent<DatasetChunk<WirePayload>>| {
@@ -178,7 +179,16 @@ async fn build_owned_wire_index(
         }
         accept(event);
     }
-    while let Some(event) = live.recv().await {
+    loop {
+        let event = match progress_timeout {
+            Some(timeout) => tokio::time::timeout(timeout, live.recv())
+                .await
+                .map_err(|_| anyhow::anyhow!("dataset Velo live stream timed out"))?,
+            None => live.recv().await,
+        };
+        let Some(event) = event else {
+            break;
+        };
         match event {
             DatasetWireEvent::Item(chunk) => accept(BroadcastEvent::Item(chunk)),
             DatasetWireEvent::Finalized => return Ok(DatasetIndex::from_owned(owned)),
@@ -194,9 +204,7 @@ async fn build_owned_wire_index_with_timeout(
     owns: impl Fn(u64) -> bool,
     timeout: std::time::Duration,
 ) -> anyhow::Result<DatasetIndex<WirePayload>> {
-    tokio::time::timeout(timeout, build_owned_wire_index(replay, live, owns))
-        .await
-        .map_err(|_| anyhow::anyhow!("dataset Velo live stream timed out"))?
+    build_owned_wire_index(replay, live, owns, Some(timeout)).await
 }
 
 /// Controller-owned admission boundary for Velo request fan-out replay.
@@ -688,7 +696,7 @@ mod tests {
 
         let result = tokio::time::timeout(
             std::time::Duration::from_millis(100),
-            build_owned_wire_index(Vec::new(), rx, |_| true),
+            build_owned_wire_index(Vec::new(), rx, |_| true, None),
         )
         .await
         .expect("failed event must not hang");
@@ -715,6 +723,33 @@ mod tests {
         };
 
         assert!(error.to_string().contains("timed out"));
+    }
+
+    #[tokio::test]
+    async fn progressing_live_wire_stream_does_not_use_a_global_timeout() {
+        let (tx, rx) = mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            for request_id in 0..3 {
+                tokio::time::sleep(std::time::Duration::from_millis(6)).await;
+                tx.send(DatasetWireEvent::Item(DatasetChunk {
+                    chunk_id: request_id,
+                    requests: Vec::new(),
+                }))
+                .expect("test receiver is live");
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(6)).await;
+            tx.send(DatasetWireEvent::Finalized)
+                .expect("test receiver is live");
+        });
+
+        build_owned_wire_index_with_timeout(
+            Vec::new(),
+            rx,
+            |_| true,
+            std::time::Duration::from_millis(10),
+        )
+        .await
+        .expect("each live event arrives before the progress timeout");
     }
 
     #[test]
