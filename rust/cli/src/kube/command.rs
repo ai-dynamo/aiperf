@@ -51,15 +51,18 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
     if !COMMANDS.contains(&command) {
         anyhow::bail!("unknown native Kubernetes command {command}");
     }
-    if matches!(command, "init" | "generate") {
-        anyhow::bail!(
-            "native Kubernetes {command} is unavailable; use a strict native-k8s/v1 envelope with profile"
-        );
-    }
     if matches!(command, "sweep" | "index") {
         anyhow::bail!(
             "native Kubernetes {command} is unavailable: the shipped operator supports only AIPerfJob"
         );
+    }
+    if command == "generate" {
+        anyhow::bail!(
+            "native Kubernetes generate is unavailable; use a strict native-k8s/v1 envelope with profile"
+        );
+    }
+    if command == "init" {
+        return super::scaffold::run(&args[1..]);
     }
     if command == "dashboard" {
         anyhow::bail!(

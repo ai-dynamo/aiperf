@@ -13,6 +13,7 @@ pub mod manifest;
 pub mod projection;
 pub mod render;
 pub mod results;
+pub mod scaffold;
 pub mod submission;
 
 #[cfg(test)]
