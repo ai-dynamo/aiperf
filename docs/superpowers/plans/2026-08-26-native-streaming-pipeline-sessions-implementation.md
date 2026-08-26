@@ -383,6 +383,7 @@ git commit -m "feat(runtime): compose bounded streaming pipeline"
 
 **Files:**
 - Create: `rust/runtime/src/streaming/action/scheduled_request.rs`
+- Modify: `rust/runtime/src/streaming/action.rs`
 - Create: `rust/runtime/src/engine/streaming_execution.rs`
 - Modify: `rust/runtime/src/engine/online_execution.rs`
 - Modify: `rust/runtime/src/engine/mod.rs`
@@ -427,7 +428,7 @@ Run Step 2. Expected: PASS for dry-run/socket-free execution, timing, stable ord
 - [ ] **Step 5: Commit**
 
 ```bash
-git add rust/runtime/src/streaming/action/scheduled_request.rs rust/runtime/src/engine/streaming_execution.rs rust/runtime/src/engine/online_execution.rs rust/runtime/src/engine/mod.rs rust/runtime/tests/streaming_shadow_operation.rs
+git add rust/runtime/src/streaming/action.rs rust/runtime/src/streaming/action/scheduled_request.rs rust/runtime/src/engine/streaming_execution.rs rust/runtime/src/engine/online_execution.rs rust/runtime/src/engine/mod.rs rust/runtime/tests/streaming_shadow_operation.rs
 git commit -m "feat(engine): execute native streaming shadow replay"
 ```
 
@@ -487,6 +488,7 @@ git commit -m "feat(graph): execute cross-chunk streaming sessions"
 - Create: `rust/runtime/src/streaming/sensitive_state.rs`
 - Modify: `rust/runtime/src/streaming.rs`
 - Create: `rust/runtime/src/engine/streaming_secrets.rs`
+- Modify: `rust/runtime/src/engine/mod.rs`
 - Modify: `rust/runtime/src/streaming/session.rs`
 - Modify: `rust/runtime/src/engine/registry.rs:1113-1160` (`RunContext`)
 - Modify: `rust/runtime/src/engine/application.rs`
@@ -541,7 +543,7 @@ Run Step 2. Expected: PASS for divergent target behavior, correct restart, wrong
 - [ ] **Step 5: Commit**
 
 ```bash
-git add rust/runtime/src/streaming.rs rust/runtime/src/streaming/sensitive_state.rs rust/runtime/src/streaming/session.rs rust/runtime/src/engine/streaming_secrets.rs rust/runtime/src/engine/registry.rs rust/runtime/src/engine/application.rs rust/runtime/tests/streaming_sensitive_state.rs
+git add rust/runtime/src/streaming.rs rust/runtime/src/streaming/sensitive_state.rs rust/runtime/src/streaming/session.rs rust/runtime/src/engine/mod.rs rust/runtime/src/engine/streaming_secrets.rs rust/runtime/src/engine/registry.rs rust/runtime/src/engine/application.rs rust/runtime/tests/streaming_sensitive_state.rs
 git commit -m "feat(runtime): protect target-closed-loop session state"
 ```
 

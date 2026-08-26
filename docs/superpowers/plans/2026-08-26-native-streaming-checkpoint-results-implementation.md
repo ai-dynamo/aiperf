@@ -772,6 +772,7 @@ git commit -m "feat(runtime): coordinate checkpoint publication"
 **Files:**
 - Create: `rust/runtime/src/streaming/checkpoints/none.rs`
 - Create: `rust/runtime/src/streaming/checkpoint_factories.rs`
+- Modify: `rust/runtime/src/streaming.rs`
 - Modify: `rust/runtime/src/streaming/checkpoints.rs`
 - Modify: `rust/runtime/src/extensions/mod.rs`
 - Test: `rust/runtime/tests/streaming_checkpoint_factories.rs`
@@ -813,7 +814,7 @@ Run Step 2. Expected: registry inventory and `none` capability/refusal cases pas
 - [ ] **Step 5: Review and commit**
 
 ```bash
-git add rust/runtime/src/streaming/checkpoints.rs rust/runtime/src/streaming/checkpoints/none.rs rust/runtime/src/streaming/checkpoint_factories.rs rust/runtime/src/extensions/mod.rs rust/runtime/tests/streaming_checkpoint_factories.rs
+git add rust/runtime/src/streaming.rs rust/runtime/src/streaming/checkpoints.rs rust/runtime/src/streaming/checkpoints/none.rs rust/runtime/src/streaming/checkpoint_factories.rs rust/runtime/src/extensions/mod.rs rust/runtime/tests/streaming_checkpoint_factories.rs
 git commit -m "feat(runtime): register local checkpoint backends"
 ```
 

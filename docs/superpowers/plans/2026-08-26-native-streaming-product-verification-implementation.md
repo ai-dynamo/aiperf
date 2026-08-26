@@ -30,6 +30,7 @@ SPDX-License-Identifier: Apache-2.0
 - Modify: `rust/cli/src/flags.rs`
 - Modify: `rust/cli/src/load.rs`
 - Modify: `rust/cli/src/yaml.rs`
+- Modify: `rust/cli/src/lib.rs`
 - Modify: `rust/runtime/src/engine/protocol_v2.rs`
 - Modify: `rust/runtime/src/engine/application.rs`
 - Create: `rust/cli/src/streaming_results.rs`
@@ -96,7 +97,7 @@ pre-commit run check-docs-current --all-files
 - [ ] **Step 5: Commit**
 
 ```bash
-git add rust/cli/src/flags.rs rust/cli/src/load.rs rust/cli/src/yaml.rs rust/cli/src/streaming_results.rs rust/cli/tests/streaming_config.rs rust/cli/tests/streaming_capabilities.rs rust/cli/tests/streaming_results.rs rust/cli/tests/fixtures/streaming-shadow.yaml rust/runtime/src/engine/protocol_v2.rs rust/runtime/src/engine/application.rs docs/streaming-datasets.md
+git add rust/cli/src/lib.rs rust/cli/src/flags.rs rust/cli/src/load.rs rust/cli/src/yaml.rs rust/cli/src/streaming_results.rs rust/cli/tests/streaming_config.rs rust/cli/tests/streaming_capabilities.rs rust/cli/tests/streaming_results.rs rust/cli/tests/fixtures/streaming-shadow.yaml rust/runtime/src/engine/protocol_v2.rs rust/runtime/src/engine/application.rs docs/streaming-datasets.md
 git commit -m "feat(cli): expose native streaming replay"
 ```
 
