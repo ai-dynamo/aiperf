@@ -299,6 +299,42 @@ impl ScheduledPhaseResources for SlotPoolPhaseResources {
     }
 }
 
+/// Semantic switches controlling scheduled phase execution and retention.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ScheduledPhasePolicy {
+    /// Whether phase stop bounds control issuance.
+    pub is_stop_enforced: bool,
+    /// Whether compatibility records retain export-only request detail.
+    pub needs_performance_records: bool,
+    /// Whether the compatibility collector observes the request stream.
+    pub needs_performance_summary: bool,
+    /// Whether native records retain exporter/join-only row identities.
+    pub needs_native_record_dimensions: bool,
+    /// Whether full per-turn timing rows are retained in the report.
+    pub needs_timing_records: bool,
+    /// Whether post-drain reductions may share the bounded reduction pool.
+    pub needs_parallel_report_reduction: bool,
+    /// Whether issued turns route as out-of-band returned credits.
+    pub is_credit_dispatch_enabled: bool,
+    /// Whether the phase's own collector and native metrics are skipped.
+    pub is_local_measurement_discarded: bool,
+}
+
+impl Default for ScheduledPhasePolicy {
+    fn default() -> Self {
+        Self {
+            is_stop_enforced: true,
+            needs_performance_records: true,
+            needs_performance_summary: true,
+            needs_native_record_dimensions: true,
+            needs_timing_records: true,
+            needs_parallel_report_reduction: false,
+            is_credit_dispatch_enabled: false,
+            is_local_measurement_discarded: false,
+        }
+    }
+}
+
 /// One prepared phase lowered into the shared scheduled runtime.
 pub struct ScheduledPhasePlan {
     /// Lifecycle, stop, grace, concurrency, and seamless policy.
@@ -309,8 +345,8 @@ pub struct ScheduledPhasePlan {
     pub ancillary: ScheduledAncillaryPolicies,
     /// Terminal record processors attached to this phase.
     pub record_processors: Vec<Rc<dyn TurnRecordProcessor>>,
-    /// Whether the scheduled runtime enforces this phase's stop bounds.
-    pub enforce_stop: bool,
+    /// Semantic switches controlling phase execution and retained outputs.
+    pub policy: ScheduledPhasePolicy,
     /// Optional pre-captured observer/transport timeline origin.
     pub start_ns: Option<i64>,
     /// Phase-owned actuator/ramp lifecycle.
@@ -323,33 +359,6 @@ pub struct ScheduledPhasePlan {
     pub runtime_extension: Option<Rc<dyn ScheduledRuntimeExtension>>,
     /// Native metric policy for this phase's owned accumulator.
     pub metrics_config: MetricsConfig,
-    /// Whether the compatibility collector retains export-only request detail.
-    pub capture_performance_records: bool,
-    /// Whether the phase-local compatibility collector observes the request stream.
-    ///
-    /// Backends that already own the canonical compatibility report may disable
-    /// this duplicate observer while retaining AIPerf's native metrics observer.
-    /// The default stays enabled for online transports and independent parity
-    /// tests.
-    pub collect_performance_summary: bool,
-    /// Whether native records retain exporter/join-only row identities.
-    pub retain_native_metric_record_dimensions: bool,
-    /// Whether full per-turn timing rows are retained in the report.
-    pub capture_timing_records: bool,
-    /// Whether post-drain compatibility and native reductions may share the
-    /// bounded reduction pool.
-    pub parallel_report_reduction: bool,
-    /// Whether this phase routes issued turns as credits returned out of band
-    /// (`--dispatch global-push`) instead of awaiting one dispatch future per
-    /// request. Rejected at build time when the dispatcher cannot return
-    /// credits.
-    pub credit_dispatch: bool,
-    /// Whether this phase's own collector / native-metrics planes are read by
-    /// anyone. The pipelines that build their report from DRAINED WORKER records
-    /// set this, so the per-request work of populating planes nothing reads is
-    /// skipped — on a single issuer that waste lands entirely on the one thread
-    /// that bounds the run.
-    pub discard_local_measurement: bool,
     /// Run-wide observers that receive the exact phase-local measurement
     /// stream in addition to the phase's own collector and native metrics.
     ///
@@ -371,40 +380,33 @@ impl ScheduledPhasePlan {
             workload,
             ancillary,
             record_processors: Vec::new(),
-            enforce_stop: true,
+            policy: ScheduledPhasePolicy::default(),
             start_ns: None,
             controller: Rc::new(NoopScheduledPhaseController),
             resources: Rc::new(NoopScheduledPhaseResources),
             sidecars: Vec::new(),
             runtime_extension: None,
             metrics_config: MetricsConfig::default(),
-            capture_performance_records: true,
-            collect_performance_summary: true,
-            retain_native_metric_record_dimensions: true,
-            capture_timing_records: true,
-            parallel_report_reduction: false,
-            credit_dispatch: false,
-            discard_local_measurement: false,
             additional_observers: Vec::new(),
         }
     }
 
     /// Route this phase's issued turns as credits returned out of band.
     pub fn with_credit_dispatch(mut self, credit_dispatch: bool) -> Self {
-        self.credit_dispatch = credit_dispatch;
+        self.policy.is_credit_dispatch_enabled = credit_dispatch;
         self
     }
 
     /// Declare that nothing reads this phase's own collector / native-metrics
     /// planes (the report is built from drained worker records).
     pub fn with_discarded_local_measurement(mut self, discard: bool) -> Self {
-        self.discard_local_measurement = discard;
+        self.policy.is_local_measurement_discarded = discard;
         self
     }
 
     /// Preserve natural-exhaustion workloads that own their authored bounds.
     pub fn with_enforce_stop(mut self, enforce_stop: bool) -> Self {
-        self.enforce_stop = enforce_stop;
+        self.policy.is_stop_enforced = enforce_stop;
         self
     }
 
@@ -455,25 +457,25 @@ impl ScheduledPhasePlan {
 
     /// Configure compatibility-only per-request record retention.
     pub fn with_performance_record_capture(mut self, capture: bool) -> Self {
-        self.capture_performance_records = capture;
+        self.policy.needs_performance_records = capture;
         self
     }
 
     /// Configure whether this phase independently collects compatibility metrics.
     pub fn with_performance_summary_collection(mut self, collect: bool) -> Self {
-        self.collect_performance_summary = collect;
+        self.policy.needs_performance_summary = collect;
         self
     }
 
     /// Configure retention of native exporter/join-only row identities.
     pub fn with_native_metric_record_dimensions(mut self, retain: bool) -> Self {
-        self.retain_native_metric_record_dimensions = retain;
+        self.policy.needs_native_record_dimensions = retain;
         self
     }
 
     /// Configure retention of full per-turn timing records.
     pub fn with_timing_record_capture(mut self, capture: bool) -> Self {
-        self.capture_timing_records = capture;
+        self.policy.needs_timing_records = capture;
         self
     }
 
@@ -922,8 +924,10 @@ impl PhaseExecutionFactory for ScheduledPhaseExecutionFactory {
                 plan.metrics_config.clone(),
             ))
         });
-        let collector = Rc::new(CollectorObserver::new(plan.capture_performance_records));
-        let native_metrics = Rc::new(if !plan.retain_native_metric_record_dimensions {
+        let collector = Rc::new(CollectorObserver::new(
+            plan.policy.needs_performance_records,
+        ));
+        let native_metrics = Rc::new(if !plan.policy.needs_native_record_dimensions {
             NativeMetricsObserver::new_aggregate_only(
                 self.clock.clone(),
                 start_ns,
@@ -933,9 +937,11 @@ impl PhaseExecutionFactory for ScheduledPhaseExecutionFactory {
             NativeMetricsObserver::new(self.clock.clone(), start_ns, plan.metrics_config)
         });
         let mut delegates: Vec<Rc<dyn RequestObserver>> = Vec::with_capacity(
-            usize::from(plan.collect_performance_summary) + 1 + plan.additional_observers.len(),
+            usize::from(plan.policy.needs_performance_summary)
+                + 1
+                + plan.additional_observers.len(),
         );
-        if plan.collect_performance_summary {
+        if plan.policy.needs_performance_summary {
             delegates.push(collector.clone());
         }
         delegates.push(native_metrics.clone());
@@ -996,14 +1002,14 @@ impl PhaseExecutionFactory for ScheduledPhaseExecutionFactory {
             start_ns,
             self.dispatcher.clone(),
             config.stop,
-            plan.enforce_stop,
+            plan.policy.is_stop_enforced,
             collector,
             native_metrics,
             observer,
             issuance_gate,
         );
-        runtime.set_parallel_report_reduction(plan.parallel_report_reduction);
-        runtime.set_timing_record_capture(plan.capture_timing_records);
+        runtime.set_parallel_report_reduction(plan.policy.needs_parallel_report_reduction);
+        runtime.set_timing_record_capture(plan.policy.needs_timing_records);
         runtime.set_credit_latency_enabled(plan.workload.has_credit_timestamps());
         runtime.set_turn_lifecycle_observer(tracker.clone());
         for processor in plan.record_processors {
@@ -1022,7 +1028,7 @@ impl PhaseExecutionFactory for ScheduledPhaseExecutionFactory {
             plan.ancillary.url_selector,
             plan.ancillary.phase,
         );
-        if plan.credit_dispatch
+        if plan.policy.is_credit_dispatch_enabled
             && let Err(error) = runtime.enable_credit_dispatch()
         {
             return Rc::new(FailedScheduledPhaseExecution {
@@ -1037,7 +1043,7 @@ impl PhaseExecutionFactory for ScheduledPhaseExecutionFactory {
             workload: plan.workload,
             runtime,
             tracker,
-            wait_for_natural_drain: !plan.enforce_stop,
+            wait_for_natural_drain: !plan.policy.is_stop_enforced,
             credit_returns: RefCell::new(None),
             controller,
             resources: plan.resources,
@@ -1390,5 +1396,114 @@ impl PhaseDispatchTracker {
             });
         }
         count
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::rc::Rc;
+
+    use anyhow::Result;
+    use async_trait::async_trait;
+
+    use super::{ScheduledPhasePlan, ScheduledRuntime, Workload};
+    use crate::scheduled::ScheduledAncillaryPolicies;
+    use crate::timing::{PhaseConfig, PhaseKind, StopConfig};
+
+    struct EmptyWorkload;
+
+    #[async_trait(?Send)]
+    impl Workload for EmptyWorkload {
+        fn name(&self) -> &'static str {
+            "empty"
+        }
+
+        async fn execute(&self, _runtime: Rc<ScheduledRuntime>) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    fn plan() -> ScheduledPhasePlan {
+        ScheduledPhasePlan::new(
+            PhaseConfig::new("phase", PhaseKind::Profiling, StopConfig::default()),
+            Rc::new(EmptyWorkload),
+            ScheduledAncillaryPolicies::default(),
+        )
+    }
+
+    #[test]
+    fn scheduled_phase_policy_defaults_and_builders() {
+        let defaults = super::ScheduledPhasePolicy::default();
+        assert!(defaults.is_stop_enforced);
+        assert!(defaults.needs_performance_records);
+        assert!(defaults.needs_performance_summary);
+        assert!(defaults.needs_native_record_dimensions);
+        assert!(defaults.needs_timing_records);
+        assert!(!defaults.needs_parallel_report_reduction);
+        assert!(!defaults.is_credit_dispatch_enabled);
+        assert!(!defaults.is_local_measurement_discarded);
+        assert_eq!(plan().policy, defaults);
+
+        let mut expected = defaults;
+        expected.is_stop_enforced = false;
+        assert_eq!(plan().with_enforce_stop(false).policy, expected);
+
+        let mut expected = defaults;
+        expected.needs_performance_records = false;
+        assert_eq!(
+            plan().with_performance_record_capture(false).policy,
+            expected
+        );
+
+        let mut expected = defaults;
+        expected.needs_performance_summary = false;
+        assert_eq!(
+            plan().with_performance_summary_collection(false).policy,
+            expected
+        );
+
+        let mut expected = defaults;
+        expected.needs_native_record_dimensions = false;
+        assert_eq!(
+            plan().with_native_metric_record_dimensions(false).policy,
+            expected
+        );
+
+        let mut expected = defaults;
+        expected.needs_timing_records = false;
+        assert_eq!(plan().with_timing_record_capture(false).policy, expected);
+
+        let mut expected = defaults;
+        expected.is_credit_dispatch_enabled = true;
+        assert_eq!(plan().with_credit_dispatch(true).policy, expected);
+
+        let mut expected = defaults;
+        expected.is_local_measurement_discarded = true;
+        assert_eq!(
+            plan().with_discarded_local_measurement(true).policy,
+            expected
+        );
+
+        assert_eq!(
+            plan()
+                .with_enforce_stop(false)
+                .with_performance_record_capture(false)
+                .with_performance_summary_collection(false)
+                .with_native_metric_record_dimensions(false)
+                .with_timing_record_capture(false)
+                .with_credit_dispatch(true)
+                .with_discarded_local_measurement(true)
+                .policy,
+            super::ScheduledPhasePolicy {
+                is_stop_enforced: false,
+                needs_performance_records: false,
+                needs_performance_summary: false,
+                needs_native_record_dimensions: false,
+                needs_timing_records: false,
+                needs_parallel_report_reduction: false,
+                is_credit_dispatch_enabled: true,
+                is_local_measurement_discarded: true,
+            }
+        );
     }
 }
