@@ -158,6 +158,21 @@ fn requires_an_unambiguous_controller_coordinate() {
 }
 
 #[test]
+fn envelope_requires_an_explicit_controller_port() {
+    let mut portless = fixture("valid-one-cell-envelope.json");
+    portless["controllerAddress"] = Value::String("controller".to_string());
+    assert!(matches!(
+        validate_envelope(portless),
+        Err(KubeError::ContractValidation(message))
+            if message == "controllerAddress must be tcp://HOST:PORT or tcp://[IPv6]:PORT"
+    ));
+
+    let mut with_port = fixture("valid-one-cell-envelope.json");
+    with_port["controllerAddress"] = Value::String("controller:9500".to_string());
+    assert!(validate_envelope(with_port).is_ok());
+}
+
+#[test]
 fn refuses_non_v1_and_unknown_role_or_field() {
     assert!(matches!(
         validate_envelope(fixture("invalid-version-envelope.json")),
