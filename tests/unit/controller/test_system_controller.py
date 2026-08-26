@@ -647,7 +647,6 @@ class TestShutdownDeliveryGrace:
     ) -> None:
         """Populate service_map with an API ServiceRunInfo in the given lifecycle state."""
         from aiperf.common.models import ServiceRunInfo
-        from aiperf.plugin.enums import ServiceType
 
         info = ServiceRunInfo(
             service_type=ServiceType.API,
@@ -763,7 +762,6 @@ class TestShutdownDeliveryGrace:
     @staticmethod
     def _set_api_process_liveness(controller: SystemController, alive: bool) -> None:
         """Populate multi_process_info with an API process record reporting `alive`."""
-        from aiperf.plugin.enums import ServiceType
 
         proc = MagicMock()
         proc.is_alive.return_value = alive
