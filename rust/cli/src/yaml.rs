@@ -3232,7 +3232,7 @@ mod tests {
     fn schema_err(version: &str) -> String {
         resolve_str(
             &format!(
-                "schemaVersion: {version}\nbenchmark:\n  model: m\n  endpoint: {{type: chat, url: 127.0.0.1:8000}}\n  phases: {{type: concurrency, requests: 1, concurrency: 1}}\n"
+                "schemaVersion: \"{version}\"\nbenchmark:\n  model: m\n  endpoint: {{type: chat, url: 127.0.0.1:8000}}\n  phases: {{type: concurrency, requests: 1, concurrency: 1}}\n"
             ),
             Some("/tmp/x".into()),
         )
