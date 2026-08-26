@@ -50,5 +50,41 @@ commit as its second parent. Its first-parent diff is exactly the upstream
 seven-file Python/docs delta (856 insertions, 82 deletions); TraceLab #44 and
 other cumulative upstream changes are absent. No cherry-pick was used.
 
-Native implementation and final verification evidence are pending the TDD,
-task review, whole-branch review, and Graham gates recorded in the linked plan.
+## Native implementation
+
+- `ce88e7631f` committed the failing bounded-reanchor and environment-policy
+  tests before implementation.
+- `edaf58681a` added one construction-time environment capture and private
+  integer-nanosecond policy field, then applied saturated bounded re-anchoring
+  only to the local/sharded request-rate path. The global gate, clock seam,
+  interval draw order, and sampling behavior remain unchanged.
+- `a70ac2df39` added the Linux `RealClock` characterization and synchronized
+  the timing/scheduling documentation.
+
+The deterministic issuer test observes `[250, 250, 450, 450]` ns with a 100 ns
+catch-up window and `[250, 250, 500, 500]` ns with a zero window. The real-clock
+test completed exactly 5,000 of 5,000 requests: debug delivered 4,750.233
+requests/s in 1,052,579,898 ns, and release delivered 4,956.366 requests/s in
+1,008,803,639 ns.
+
+## Verification and review
+
+Focused verification passed: 12 request-rate library tests, 7 request-rate
+simulation integration tests, the debug and release real-clock
+characterizations, runtime-package formatting, both documentation guards, and
+range whitespace validation. The independent two-pass Graham review of
+`f423b618da..a70ac2df39` found no Critical or Important issues.
+
+Repository-wide gates expose only pre-existing failures in paths unchanged by
+this range: the runtime library golden expects package version `0.0.0` rather
+than `0.12.0`; engine-wide tests additionally lack two recorded-agent fixtures
+and retain two unrelated registry/feature-assumption failures; all-target
+Clippy reaches an unchanged test initializer missing
+`cache_bust_first_user_turn`; workspace formatting reaches the unchanged
+`rust/cli/src/yaml.rs:168` formatting drift. The engine library otherwise
+reported 2,342 passed and 7 ignored, and the no-engine library reported 1,785
+passed and 7 ignored. No #45 path produced a Clippy diagnostic.
+
+Disposition: **complete**.
+
+GRAHAM APPROVED

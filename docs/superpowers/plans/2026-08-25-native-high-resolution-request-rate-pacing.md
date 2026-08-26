@@ -33,10 +33,10 @@
 - Produces failing tests for pure `bounded_reanchor_target(target_ns, now_ns, max_catchup_ns)` behavior.
 - Produces failing parser tests for `parse_max_catchup_seconds(Option<&str>) -> Result<i64>`.
 
-- [ ] Add literal RED cases for below-window retention, exact boundary, beyond-window re-anchor, zero-window behavior, and saturated subtraction.
-- [ ] Add literal RED cases for omission/default, `0`, `10`, fractional seconds, non-numeric, `NaN`/infinity, negative, and above-maximum input; consolidate equivalent invalid cases in a table.
-- [ ] Run only the named library tests and retain the expected unresolved-symbol/behavior failure as RED evidence.
-- [ ] Commit tests separately only if the repository permits a compiling RED commit; otherwise retain RED output in the task report and commit with Task 2.
+- [x] Add literal RED cases for below-window retention, exact boundary, beyond-window re-anchor, zero-window behavior, and saturated subtraction.
+- [x] Add literal RED cases for omission/default, `0`, `10`, fractional seconds, non-numeric, `NaN`/infinity, negative, and above-maximum input; consolidate equivalent invalid cases in a table.
+- [x] Run only the named library tests and retain the expected unresolved-symbol/behavior failure as RED evidence.
+- [x] Commit tests separately only if the repository permits a compiling RED commit; otherwise retain RED output in the task report and commit with Task 2.
 
 ### Task 2: Apply the minimal native pacing policy
 
@@ -49,13 +49,13 @@
 - Consumes `AIPERF_TIMING_MAX_CATCHUP_SECONDS` once at workload construction.
 - Produces one private integer-nanosecond policy field and bounded local target selection without changing `GlobalRateGate`.
 
-- [ ] Implement the pure saturated re-anchor helper and parser with default/range constants.
-- [ ] Capture the environment once in `RequestRateWorkload::with_components`; propagate a descriptive constructor error.
-- [ ] Replace unconditional local re-anchor with the bounded helper while retaining the single `now_ns` sample and existing yield path.
-- [ ] Add an injected-policy constructor seam only if deterministic workload integration requires it; keep it crate-private and allocation-free.
-- [ ] Add `SimClock` workload assertions showing small lateness catches up on the original grid and large lateness re-anchors without a burst storm.
-- [ ] Run the focused RED tests to GREEN, then `cargo test -p aiperf-runtime --features engine --lib request_rate` and the `request_rate_sim` integration target.
-- [ ] Commit production code and its behavioral tests together.
+- [x] Implement the pure saturated re-anchor helper and parser with default/range constants.
+- [x] Capture the environment once in `RequestRateWorkload::with_components`; propagate a descriptive constructor error.
+- [x] Replace unconditional local re-anchor with the bounded helper while retaining the single `now_ns` sample and existing yield path.
+- [x] Add an injected-policy constructor seam only if deterministic workload integration requires it; keep it crate-private and allocation-free.
+- [x] Add `SimClock` workload assertions showing small lateness catches up on the original grid and large lateness re-anchors without a burst storm.
+- [x] Run the focused RED tests to GREEN, then `cargo test -p aiperf-runtime --features engine --lib request_rate` and the `request_rate_sim` integration target.
+- [x] Commit production code and its behavioral tests together.
 
 ### Task 3: Prove real high-rate delivery and synchronize current-truth docs
 
@@ -74,12 +74,12 @@
 - Consumes the real `RequestRateWorkload` and `RealClock` with an immediate in-process dispatcher.
 - Produces exact count, elapsed time, achieved-rate evidence and synchronized clock/scheduling documentation.
 
-- [ ] Write the integration test first with a request count and constant sub-millisecond interval that fails under per-tick re-anchor/timer quantization but completes quickly in normal CI.
-- [ ] Assert the exact requested/completed count and broad elapsed/rate bounds; never assert individual microsecond wakeup latency.
-- [ ] Run the integration in debug and release profiles; retain exact count, elapsed, and achieved-rate output as the benchmark receipt.
-- [ ] Update current-truth scheduling and architecture prose, including the unchanged global dense-slot boundary.
-- [ ] Synchronize all four agent instruction bodies, update `llms.txt`, and run both docs guards.
-- [ ] Commit integration evidence and synchronized documentation.
+- [x] Write the integration test first with a request count and constant sub-millisecond interval that fails under per-tick re-anchor/timer quantization but completes quickly in normal CI.
+- [x] Assert the exact requested/completed count and broad elapsed/rate bounds; never assert individual microsecond wakeup latency.
+- [x] Run the integration in debug and release profiles; retain exact count, elapsed, and achieved-rate output as the benchmark receipt.
+- [x] Update current-truth scheduling and architecture prose, including the unchanged global dense-slot boundary.
+- [x] Synchronize all four agent instruction bodies, update `llms.txt`, and run both docs guards.
+- [x] Commit integration evidence and synchronized documentation.
 
 ### Task 4: Review, repair, and close tracker #45
 
@@ -93,9 +93,9 @@
 - Consumes the full first-parent range from `f423b618da` through branch tip plus exact upstream ancestry.
 - Produces zero unresolved Critical/Important whole-branch or Graham findings and auditable closure evidence.
 
-- [ ] Run task-scoped spec/quality review after each implementation task and repair every blocking finding through the original implementer.
-- [ ] Run an independent whole-branch review, then the full Graham hot-path review for errors, allocation, descriptors, cancellation, clock discipline, concurrency, logging, names, comments, tests, and scope.
-- [ ] Repair every Critical/Important finding and obtain explicit re-review approval.
-- [ ] Run fresh format, focused integration, runtime library with/without `engine`, Clippy, docs guards, range whitespace, ancestry, status, and scope-diff commands with the mandated sccache/target directory.
-- [ ] Update the finding and campaign row with exact commits, test counts, benchmark receipt, ancestry proof, and final `GRAHAM APPROVED` verdict.
-- [ ] Commit closure artifacts separately and leave the isolated worktree clean except for the requested untracked `.venv` link.
+- [x] Run task-scoped spec/quality review after each implementation task and repair every blocking finding through the original implementer.
+- [x] Run an independent whole-branch review, then the full Graham hot-path review for errors, allocation, descriptors, cancellation, clock discipline, concurrency, logging, names, comments, tests, and scope.
+- [x] Repair every Critical/Important finding and obtain explicit re-review approval.
+- [x] Run fresh format, focused integration, runtime library with/without `engine`, Clippy, docs guards, range whitespace, ancestry, status, and scope-diff commands with the mandated sccache/target directory.
+- [x] Update the finding and campaign row with exact commits, test counts, benchmark receipt, ancestry proof, and final `GRAHAM APPROVED` verdict.
+- [x] Commit closure artifacts separately and leave the isolated worktree clean except for the requested untracked `.venv` link.
