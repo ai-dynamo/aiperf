@@ -83,15 +83,15 @@ composer, cargo tests, sccache.
   errors.
 - Consumes: parsed `PoolEntry` modality contents and four loader option values.
 
-- [ ] Write failing real-document composer tests for four modality counts,
+- [x] Write failing real-document composer tests for four modality counts,
   default inclusion, zero suppression, absent-modality zero preserving named
   association, and deterministic replacement sampling.
-- [ ] Write failing tests for multi-pool, named-group, image UUID, and all-present-
+- [x] Write failing tests for multi-pool, named-group, image UUID, and all-present-
   zero refusal.
-- [ ] Run the focused runtime tests and record each semantic failure.
-- [ ] Implement present-modality mode selection, metadata guards, and non-empty
+- [x] Run the focused runtime tests and record each semantic failure.
+- [x] Implement present-modality mode selection, metadata guards, and non-empty
   validation without changing the unit associated path.
-- [ ] Rerun focused runtime tests, record GREEN, and commit the slice.
+- [x] Rerun focused runtime tests, record GREEN, and commit the slice.
 
 ### Task 4: Native-binary loader integration
 
