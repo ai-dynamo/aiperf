@@ -4105,29 +4105,37 @@ fn chat_stream(
             let has_reasoning = !ctx.tokenized.reasoning_content_tokens.is_empty();
             let num = ctx.tokenized.tokens.len();
             let emit = num.min(MIDSTREAM_TOKENS_BEFORE_ERROR);
-            for (i, token) in ctx.tokenized.tokens.iter().take(emit).enumerate() {
+            let first_group_end = ctx.first_chunk_tokens.min(emit);
+            let mut group_start = 0;
+            while group_start < emit {
+                let group_end = if group_start == 0 {
+                    first_group_end
+                } else {
+                    group_start + 1
+                };
                 if !ctx.latency_sim.is_fast() {
-                    let _ = ctx.latency_sim.wait_for_index(i).await;
+                    for index in group_start..group_end {
+                        let _ = ctx.latency_sim.wait_for_index(index).await;
+                    }
                 }
-                let role = if i == 0 && !has_reasoning { Some("assistant") } else { None };
-                let chunk = ChatStreamChunk {
-                    id: &ctx.request_id,
-                    object: "chat.completion.chunk",
+                let content = ctx.tokenized.tokens[group_start..group_end].concat();
+                yield Ok::<Bytes, Infallible>(chat_generated_sse(
+                    &ctx,
                     created,
-                    model: &ctx.model,
-                    choices: [ChatChoiceDelta {
+                    ChatChoiceDelta {
                         index: 0,
                         finish_reason: None,
                         speculative_decoding_stats: None,
                         delta: ChatDelta {
-                            role,
-                            content: Some(token.as_str()),
+                            role: (group_start == 0 && !has_reasoning).then_some("assistant"),
+                            content: Some(&content),
                             reasoning_content: None,
                             tool_calls: None,
                         },
-                    }],
-                };
-                yield Ok::<Bytes, Infallible>(sse_chunk_ser(&chunk));
+                    },
+                    group_end,
+                ));
+                group_start = group_end;
             }
             yield Ok::<Bytes, Infallible>(sse_error_frame(
                 "Simulated mid-stream error injected by aiperf-mock-server",
