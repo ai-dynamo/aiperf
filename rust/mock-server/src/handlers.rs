@@ -1582,6 +1582,60 @@ mod spec_decode_acceptance_tests {
     }
 
     #[tokio::test]
+    async fn midstream_error_preserves_requested_bundling_and_cumulative_usage() {
+        let state = AppState::build(MockServerConfig {
+            fast: true,
+            no_tokenizer: true,
+            fixed_output_tokens: Some(6),
+            ..Default::default()
+        });
+        let request: ChatCompletionRequest = serde_json::from_value(json!({
+            "model": "test-model",
+            "messages": [{"role": "user", "content": "hello"}],
+            "stream": true,
+            "stream_options": {
+                "include_usage": true,
+                "continuous_usage_stats": true
+            },
+            "mock_first_chunk_tokens": 3,
+            "max_tokens": 6
+        }))
+        .unwrap();
+        let req_gen = GenRequest::Chat(&request);
+        let ctx = RequestCtx::build(
+            "chatcmpl",
+            &req_gen,
+            "/v1/chat/completions",
+            Instant::now(),
+            &state,
+        );
+        let frames = collect_sse_values(chat_stream(
+            state,
+            ctx,
+            "/v1/chat/completions".to_string(),
+            true,
+            true,
+        ))
+        .await;
+        let content_frames = frames
+            .iter()
+            .filter(|frame| {
+                frame["choices"][0]["delta"]["content"]
+                    .as_str()
+                    .is_some_and(|content| !content.is_empty())
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(content_frames.len(), 1);
+        assert_eq!(content_frames[0]["usage"]["completion_tokens"], 3);
+        assert!(
+            frames
+                .iter()
+                .all(|frame| frame["choices"] != json!([]) || frame.get("usage").is_none())
+        );
+    }
+
+    #[tokio::test]
     async fn zero_output_tool_call_defers_finish_to_stats_chunk() {
         let state = AppState::build(MockServerConfig {
             fast: true,
