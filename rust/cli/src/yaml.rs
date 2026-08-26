@@ -249,6 +249,9 @@ fn apply_cli_overrides(
     if let Some(v) = flags.max_context_length {
         inputs.max_context_length = Some(v);
     }
+    if let Some(batch_size) = flags.image_batch_size {
+        inputs.random_pool_image_batch_size = Some(batch_size);
+    }
     if let Some(v) = flags.trace_idle_gap_cap_seconds {
         inputs.trace_idle_gap_cap_seconds = Some(v);
     }
@@ -2550,7 +2553,10 @@ impl Benchmark {
             steady_state: false,
             steady_state_fraction: None,
             steady_state_hybrid: false,
-            random_pool_image_batch_size: None,
+            random_pool_image_batch_size: dataset
+                .as_ref()
+                .and_then(|dataset| dataset.images.as_ref())
+                .and_then(|images| images.batch_size),
             image_spec,
             audio_spec,
             video_spec,
