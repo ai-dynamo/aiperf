@@ -189,3 +189,16 @@ JOBSET_MANIFEST_URL = (
 JOBSET_INSTALL_HINT = (
     f"Install JobSet: kubectl apply --server-side -f {JOBSET_MANIFEST_URL}"
 )
+
+# Minimum per-container CPU/memory request (and, in guaranteed mode, limit)
+# emitted by the worker-pod resource splitter in jobset.py. `0m` CPU and
+# `0Mi` memory are the smallest quantities the apiserver/kubelet reject
+# outright, so every container gets at least the smallest valid non-zero
+# quantity of each unit, regardless of how thin its weighted share of the
+# pod budget is. Kept at the smallest representable unit (rather than a
+# larger "sane minimum") so a legitimately thin but non-zero budget -- e.g.
+# the shipped default topology of 10 workers + 10 record processors sharing
+# a modest WORKER_POD budget -- still splits without tripping the
+# config-time validation below.
+MIN_CONTAINER_CPU_MCPU = 1
+MIN_CONTAINER_MEMORY_MIB = 1

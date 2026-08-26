@@ -585,7 +585,7 @@ class TestSplitWorkerPodResourcesWiring:
                 env=[
                     {
                         "name": "AIPERF_K8S_RECORD_PROCESSOR_CPU_REQUEST",
-                        "value": "750m",
+                        "value": "40m",
                     }
                 ]
             ),
@@ -596,7 +596,7 @@ class TestSplitWorkerPodResourcesWiring:
         )
         # Last entry is the record processor container
         assert result[-1] is not None
-        assert result[-1]["requests"]["cpu"] == "750m"
+        assert result[-1]["requests"]["cpu"] == "40m"
 
     def test_returns_none_per_container_when_budget_absent(self) -> None:
         """resource_mode='none' propagates None through to each container slot."""
