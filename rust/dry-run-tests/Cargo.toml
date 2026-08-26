@@ -10,6 +10,6 @@ publish = false
 description = "Fast end-to-end tests for aiperf's socket-free dry-run transport."
 
 [dev-dependencies]
+flate2 = "1"
 serde_json = { workspace = true }
 tempfile = "3"
-
