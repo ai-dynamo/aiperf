@@ -549,6 +549,10 @@ Whole system:
   CLI/YAML projection, content-aware associated/flattened composition, and
   explicit refusal when batching would erase pool/group/cache identity or emit
   an empty turn.
+- [`docs/specs/2026-08-26-native-search-space-shape-inference.md`](docs/specs/2026-08-26-native-search-space-shape-inference.md)
+  — Origin #62 closure: Python generic Optuna search-space shape inference is not
+  applicable until native has a parsed arbitrary-dimension ask/tell planner;
+  named recipe axes remain unchanged.
 
 Execution and scheduling:
 

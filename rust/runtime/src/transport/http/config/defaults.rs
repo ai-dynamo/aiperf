@@ -212,7 +212,8 @@ pub struct ClientConfig {
     pub collect_trace_chunks: bool,
     /// When set, connect over this Unix-domain socket path instead of TCP
     /// (co-located high-throughput: bypasses the TCP/IP loopback softirq tax).
-    /// HTTP/1.1 is used over UDS. The request URL still supplies the path + Host.
+    /// Explicit HTTP/2 prior knowledge is supported over UDS; otherwise it uses
+    /// HTTP/1.1. The request URL still supplies the path + Host.
     pub uds_path: Option<String>,
     /// When set, tunnel TCP through this forward proxy via HTTP `CONNECT` before
     /// TLS. Dataset/tokenizer downloads set it from the proxy environment;

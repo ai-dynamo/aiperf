@@ -346,6 +346,79 @@ rejected in favor of typed recoverable errors and `panic=abort`. This changes th
 current execute-mode panic envelope and therefore requires the explicit product
 migration described below.
 
+## Public feasibility lab: evidence and gate disposition
+
+The standalone public lab at
+`https://github.com/ajcasagrande/rust-native-plugin-lab` is intentionally not an
+AIPerf codebase. The authoritative advanced result is commit
+`f5af252970ef73031da6fe0c449a894e0cc3b4ea` and GitHub Actions run
+`32955454915`. That run is green on Linux x86-64, macOS arm64, Windows x86-64,
+and Windows arm64. It builds real Rust `dylib` and `cdylib` plugins, one shared
+mimalloc 3.5.0 provider, host/mismatch/panic fixtures, and same-source shared and
+static allocator benchmarks. Each target uploads eight binary-evidence
+artifacts with format, architecture, exact size, imports, and exports.
+
+The exact-build mechanical results are positive:
+
+- plugin-allocated `String`, `Vec<u8>`, `Box<u64>`, `Arc<String>`, `Rc<String>`,
+  and `Pin<Box<dyn Future<Output = String>>>` cross to the host and are dropped
+  there; host-created owned values cross and are consumed/dropped by the plugin;
+- a stale revision whose every trait method aborts is rejected before the first
+  trait call, a valid `panic=abort` plugin terminates only its test subprocess,
+  and successfully returned library handles remain resident;
+- `aiperf_alloc_v1` is modeled as the shared mimalloc binary itself, not an
+  AIPerf wrapper/table. Host, `dylib`, and `cdylib` directly import all nine
+  required symbols: `mi_free`, `mi_malloc`, `mi_malloc_aligned`, `mi_realloc`,
+  `mi_realloc_aligned`, `mi_subproc_main`, `mi_version`, `mi_zalloc`, and
+  `mi_zalloc_aligned`; and
+- ordinary, zeroed, aligned, reallocation-prefix-preservation, and free paths
+  pass. Host and plugin observe mimalloc version `30500` and the same
+  process-global `mi_subproc_main()` pointer. Windows arm64 evidence is
+  PE/AArch64 and imports the required functions from `mimalloc.dll`.
+
+The allocator performance result is a **risk signal, not a passed performance
+gate**. One five-million-iteration CI smoke run produced these raw shared versus
+same-source-static mimalloc 3.5.0 timings:
+
+| Target | `mi_version`, shared vs static | 64-byte aligned alloc/free, shared vs static |
+|---|---:|---:|
+| Linux x86-64 | 6.319 vs 4.910 ns/op (`+1.409`) | 8.619 vs 6.344 ns/op (`+2.275`) |
+| macOS arm64 | 2.875 vs 2.277 ns/op (`+0.598`) | 6.045 vs 5.766 ns/op (`+0.279`) |
+| Windows x86-64 | 5.483 vs 4.387 ns/op (`+1.096`) | 8.433 vs 8.072 ns/op (`+0.361`) |
+| Windows arm64 | 1.942 vs 1.480 ns/op (`+0.462`) | 7.047 vs 6.909 ns/op (`+0.138`) |
+
+These single-run measurements conflate dynamic import/PLT/IAT cost, optimizer
+and linker differences, allocator work, and hosted-runner noise. They are not a
+production regression estimate and cannot be used to waive or fail the
+normative paired protocol. They do establish that allocator linkage overhead is
+measurable enough to require the full gate. The shared allocator topology is
+therefore mechanically feasible, but the zero-loss invariant is **not yet
+proven**. Any failure of the frozen structural, allocation-count/byte, or
+simultaneous non-inferiority gates rejects this architecture; production may
+not accept the measured overhead as a tradeoff.
+
+The lab also confirms limits that remain fundamental:
+
+1. Exact-build success does not establish a stable or sound Rust ABI for native
+   calls, trait objects, standard-library owned types, `Arc`/`Rc`, or futures.
+2. A revision check runs only after the native entry value has been called and
+   decoded; a calling-convention or entry-layout mismatch can be undefined
+   behavior before the check.
+3. Shared allocation is correct only while every relevant artifact actually
+   resolves to the same permanently resident provider; replacement, unload,
+   search-path substitution, or symbol interposition is unsafe.
+4. Panics cannot cross this seam and therefore abort the process.
+5. Residency is intentional process-lifetime retention, not safe unload.
+6. An unmangled export fixes symbol spelling only, not Rust ABI.
+7. The smoke benchmark cannot isolate pure import-stub cost.
+
+The lab once produced false-green linkage evidence because Mach-O leading
+underscores were not normalized and piped PowerShell native-command exit codes
+were not propagated. Commit `f5af252` adds red/green regression tests and fails
+closed on incomplete evidence. Production evidence tooling MUST preserve those
+lessons: normalize platform symbol spellings explicitly and propagate every
+native inspector's real exit status through pipelines.
+
 ## Compatibility contract
 
 The public plugin API is source-stable within its declared compatibility policy,
@@ -1931,8 +2004,11 @@ signature, rollback, and revocation rules explicitly.
 0. Complete the native-boundary feasibility gate: four-target `dylib`/`cdylib`
    probe, selected `cdylib` export/import maps, one shared allocator provider,
    `panic=abort`, distribution-controlled non-system closure inspection, and every proposed owned container
-   crossing. The public experiment proves the first two mechanical items only;
-   no production migration begins until the allocator and ownership gates pass.
+   crossing. Public lab commit `f5af252` proves the exact-build mechanical
+   ownership, abort, residency, and shared-provider import topology on four
+   targets, but does not prove Rust ABI soundness, production closure enforcement,
+   or the zero-loss performance gate. No production migration begins until the
+   complete production conformance and performance gates pass.
 1. Record clean-build, incremental-build, link-time, binary-size, runtime, CPU,
    and allocation baselines and freeze `plugin-parity.yaml`.
 2. Extract the ABI-facing API/core crates, narrow host contexts, exact ownership

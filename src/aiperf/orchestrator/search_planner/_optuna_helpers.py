@@ -291,6 +291,11 @@ def build_qlognei_candidates_func() -> Any:
         pending_x_n = (
             normalize(pending_x, bounds=bounds) if pending_x is not None else None
         )
+        # A multi-column train_y makes SingleTaskGP a batched multi-output
+        # model, so the custom kernel must carry the same leading dim. Derive
+        # it with BoTorch's own helper rather than hand-rolling Size([m]), so
+        # leading input batch dims stay correct too. See make_dsp_kernel's
+        # docstring for why the batch shape matters.
         _, aug_batch_shape = SingleTaskGP.get_batch_dimensions(
             train_X=train_x_n, train_Y=train_y
         )
