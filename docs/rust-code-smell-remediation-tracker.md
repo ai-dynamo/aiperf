@@ -45,7 +45,7 @@ Graham review and a commit.
 | --- | --- | --- | --- |
 | S01 | Socket-option failures are silently discarded | Complete — `ec97423efa` | Graham approved; focused tests green |
 | S03 | Transport-neutral dispatch hardwires `NativeMetricsObserver` | Complete — `fae122a100` | Independent Graham approved; RED→GREEN evidence recorded |
-| S04 | HTTP-owned shared transport configuration | Confirmed/narrowed; spec ready | Sol implementation plan |
+| S04 | HTTP-owned shared transport configuration | Complete | Integrated `164955a757`, `9042df24d3`; independent Graham r2 PASS |
 | S05 | HTTP hot path allocates/reparses unnecessarily | Confirmed/narrowed; spec ready | Sol implementation plan |
 | S06 | GPU worker mutex spans IPC awaits | Obsolete | Record retraction |
 | S07 | Unbounded graph/media channels | Confirmed/narrowed; spec ready | Sol implementation plan |
@@ -285,3 +285,9 @@ Graham review and a commit.
   execution; the cell path consumes the resolved run as well. The six-test CLI
   and seven-test cellular Dynosim suites are green, with independent Graham
   PASS.
+
+- 2026-08-26: S04 completed and integrated as `164955a757` and `9042df24d3`:
+  neutral execution carries only the shared transport policy, while HTTP keeps
+  each resolved endpoint's complete client configuration. The initial review
+  found graph HTTP and scheduled WebSocket profile-loss regressions; the P1
+  repair pins both bindings and the independent Graham r2 review passed.
