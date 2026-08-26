@@ -66,7 +66,7 @@ Graham review and a commit.
 | E07 | Global-push cancellation is misclassified as transport failure | Complete | Integrated `82bf74990c`; independent Graham PASS |
 | E08 | Declared terminal outputs cannot execute | Confirmed; spec ready | Sol implementation plan |
 | E09 | Multi-dataset requests silently retain only the first | Complete | Integrated `e8a787f47e`; independent Graham PASS |
-| E10 | Docker verifier orchestration is duplicated and diverges | Confirmed; spec ready | Sol implementation plan |
+| E10 | Docker verifier orchestration is duplicated and diverges | Complete | Integrated `34ac902468`, `101bf1a3d2`; independent Graham PASS |
 | E11 | CLI Dynosim runs skip process defaults | Confirmed; spec ready | Sol implementation plan |
 | C01 | Phaser Velo subscription accepts forged/replayed event | Complete — `cf09af5034` | Independent Graham approved; explicit benchmark trust-boundary contract |
 | C02 | Dataset Velo subscription accepts forged event or oversized payload | Complete — `c823d9c53e` through `6bb0066d47` | Independent Graham approved; RED→GREEN Velo fan-out bound, replay, and progress coverage recorded |
@@ -137,6 +137,13 @@ Graham review and a commit.
 - 2026-08-26: Completed C20. Dataset-analysis JSON persistence now propagates
   buffered-writer flush failures instead of reporting an artifact that may not
   have reached its sink; independent review passed its focused tests.
+
+- 2026-08-26: Completed E10. Ordinary, multi-step, and NativeGraph Docker
+  verification now share the same verifier transaction, including selected
+  test-root handling, cleanup, deadline, and joined-error behavior. The
+  selected-root behavioral RED passed after repair, the 78-test Harbor suite
+  passed (three Docker tests ignored), and the independent Graham re-review
+  passed before integration as `34ac902468` and `101bf1a3d2`.
 
 - 2026-08-25: Created the inventory and lifecycle criteria. Existing unrelated
   working-tree changes in `.dockerignore` and `artifacts/code-review.md` were
