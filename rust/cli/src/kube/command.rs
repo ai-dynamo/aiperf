@@ -521,8 +521,11 @@ fn run_generate(args: &[String]) -> anyhow::Result<i32> {
         })?;
 
     let config_bytes =
-        std::fs::read(&parsed.config).with_context(|| {
-            format!("failed to read config file {}", parsed.config.display())
+        std::fs::read(&parsed.config).map_err(|error| {
+            anyhow::anyhow!(
+                "failed to read config file {}: {error}",
+                parsed.config.display()
+            )
         })?;
     let config_sha256 = format!("{:x}", Sha256::digest(&config_bytes));
 
