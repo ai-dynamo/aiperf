@@ -952,7 +952,7 @@ pub(crate) async fn execute_graph_native(
     let start_time = profiling_start;
     let end_time = profiling_end;
     let endpoints_successful = endpoints_successful_set.into_iter().collect();
-    let media_metrics = sidecars.finalize_media_metrics().await.metrics;
+    let media_metrics = sidecars.finalize_media_metrics().await?.metrics;
     let summary = ReportSummary {
         start_time,
         end_time,

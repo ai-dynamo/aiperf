@@ -144,21 +144,28 @@ pub(crate) trait GraphExecutionEventSink: Send + Sync {
 
 /// Channel-backed execution-event sink used by native placement.
 pub(crate) struct ChannelRunnerGraphExecutionEventSink {
-    sender: mpsc::UnboundedSender<GraphExecutionEvent>,
+    sender: mpsc::Sender<GraphExecutionEvent>,
+    capacity: usize,
 }
 
 impl ChannelRunnerGraphExecutionEventSink {
     /// Bind the worker side to one phase-local coordinator receiver.
-    pub(crate) fn new(sender: mpsc::UnboundedSender<GraphExecutionEvent>) -> Self {
-        Self { sender }
+    pub(crate) fn new(sender: mpsc::Sender<GraphExecutionEvent>) -> Self {
+        let capacity = sender.capacity();
+        Self { sender, capacity }
     }
 }
 
 impl GraphExecutionEventSink for ChannelRunnerGraphExecutionEventSink {
     fn emit(&self, event: GraphExecutionEvent) -> Result<(), TraceError> {
-        self.sender
-            .send(event)
-            .map_err(|_| TraceError::Other("graph execution event receiver closed".into()))
+        self.sender.try_send(event).map_err(|error| match error {
+            mpsc::error::TrySendError::Full(_) => TraceError::QueueSaturated {
+                capacity: self.capacity,
+            },
+            mpsc::error::TrySendError::Closed(_) => {
+                TraceError::Other("graph execution event receiver closed".into())
+            }
+        })
     }
 }
 
@@ -3995,7 +4002,7 @@ executable = "tools/adapter.sh"
     fn empty_engine_graph_sink() -> EngineGraphSink {
         let clock: Rc<dyn Clock> = Rc::new(SimClock::new());
         let segments: Arc<dyn SegmentStore> = Arc::new(InMemorySegmentStore::default());
-        let (sender, _receiver) = mpsc::unbounded_channel();
+        let (sender, _receiver) = mpsc::channel(1);
         EngineGraphSink {
             clock: clock.clone(),
             endpoint_runtime: Rc::new(UnusedGraphEndpointRuntime),
@@ -4026,6 +4033,41 @@ executable = "tools/adapter.sh"
             replay_calls: Rc::new(RefCell::new(Vec::new())),
             replay_tools: Rc::new(RefCell::new(Vec::new())),
         }
+    }
+
+    #[tokio::test]
+    async fn channel_runner_events_are_bounded_and_fifo() {
+        let (sender, mut receiver) = mpsc::channel(2);
+        let sink = ChannelRunnerGraphExecutionEventSink::new(sender);
+        sink.emit(GraphExecutionEvent::TraceComplete {
+            trace_id: "first".into(),
+            node_count: 0,
+            requires_node_records: false,
+            result: Ok(()),
+        })
+        .expect("capacity accepts first event");
+        sink.emit(GraphExecutionEvent::TraceComplete {
+            trace_id: "second".into(),
+            node_count: 0,
+            requires_node_records: false,
+            result: Ok(()),
+        })
+        .expect("capacity accepts second event");
+        let error = sink
+            .emit(GraphExecutionEvent::TraceComplete {
+                trace_id: "third".into(),
+                node_count: 0,
+                requires_node_records: false,
+                result: Ok(()),
+            })
+            .expect_err("capacity plus one fails without blocking");
+        assert!(matches!(error, TraceError::QueueSaturated { .. }));
+        assert!(
+            matches!(receiver.recv().await, Some(GraphExecutionEvent::TraceComplete { trace_id, .. }) if trace_id == "first")
+        );
+        assert!(
+            matches!(receiver.recv().await, Some(GraphExecutionEvent::TraceComplete { trace_id, .. }) if trace_id == "second")
+        );
     }
 
     #[test]

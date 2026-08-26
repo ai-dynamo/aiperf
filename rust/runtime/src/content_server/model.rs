@@ -5,6 +5,8 @@
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde::{Deserialize, Serialize};
 
@@ -16,7 +18,33 @@ use serde::{Deserialize, Serialize};
 /// request rate bounds the in-flight volume.
 ///
 /// [`RequestTracker::record`]: crate::content_server::RequestTracker::record
-pub type ContentRecordSender = tokio::sync::mpsc::UnboundedSender<ContentRequestRecord>;
+#[derive(Clone, Debug)]
+pub struct ContentRecordSender {
+    sender: tokio::sync::mpsc::Sender<ContentRequestRecord>,
+    overflowed: Arc<AtomicBool>,
+}
+
+impl ContentRecordSender {
+    pub fn new(sender: tokio::sync::mpsc::Sender<ContentRequestRecord>) -> Self {
+        Self {
+            sender,
+            overflowed: Arc::new(AtomicBool::new(false)),
+        }
+    }
+    pub fn try_send(&self, record: ContentRequestRecord) -> Result<(), ()> {
+        match self.sender.try_send(record) {
+            Ok(()) => Ok(()),
+            Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+                self.overflowed.store(true, Ordering::Release);
+                Err(())
+            }
+            Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => Err(()),
+        }
+    }
+    pub fn overflowed(&self) -> bool {
+        self.overflowed.load(Ordering::Acquire)
+    }
+}
 
 /// One completed HTTP request served by the content server.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -167,5 +195,37 @@ mod tests {
         assert_eq!(disabled.base_url, "");
         assert!(disabled.content_dir.as_os_str().is_empty());
         assert_eq!(disabled.reason.as_deref(), Some("not initialized"));
+    }
+
+    #[test]
+    fn bounded_record_sender_latches_overflow_without_reordering_accepted_records() {
+        let (sender, mut receiver) = tokio::sync::mpsc::channel(2);
+        let sender = ContentRecordSender::new(sender);
+        let record = || ContentRequestRecord {
+            timestamp_ns: 0,
+            method: "GET".into(),
+            path: "/".into(),
+            query_string: String::new(),
+            http_version: String::new(),
+            client_host: String::new(),
+            client_port: 0,
+            request_headers: BTreeMap::new(),
+            status_code: 200,
+            content_type: String::new(),
+            response_headers: BTreeMap::new(),
+            body_bytes: 0,
+            body_chunk_count: 0,
+            latency_ns: 0,
+            time_to_first_byte_ns: 0,
+            time_to_first_body_byte_ns: 0,
+            transfer_duration_ns: 0,
+            error: None,
+        };
+        sender.try_send(record()).expect("first fits");
+        sender.try_send(record()).expect("second fits");
+        assert!(sender.try_send(record()).is_err());
+        assert!(sender.overflowed());
+        assert!(receiver.try_recv().is_ok());
+        assert!(receiver.try_recv().is_ok());
     }
 }

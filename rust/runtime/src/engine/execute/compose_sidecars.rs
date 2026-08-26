@@ -992,7 +992,7 @@ pub(crate) async fn execute_native_inner(
         profiling_server_summary.as_ref(),
         warmup_server_summary.as_ref(),
     )?;
-    let media_metrics = sidecars.finalize_media_metrics().await.metrics;
+    let media_metrics = sidecars.finalize_media_metrics().await?.metrics;
     let mut outcome = RunOutcome {
         run: ReportRunInfo {
             mode: Some("online".into()),
@@ -1140,6 +1140,7 @@ mod tests {
             server_metrics_jsonl_path: None,
             server_metrics_parquet_wire_path: None,
             media_handle: None,
+            media_record_sender: None,
         }
     }
 

@@ -7,6 +7,8 @@ use crate::graph::channel_store::StoreError;
 /// A trace-terminating error: it aborts the trace's remaining node firings.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TraceError {
+    /// The coordinator event queue cannot accept another ordered terminal fact.
+    QueueSaturated { capacity: usize },
     /// A channel orphaned (a producer failed and its readers can no longer be
     /// satisfied), or another channel-store error.
     Store(StoreError),
@@ -29,6 +31,7 @@ impl TraceError {
     /// A short, stable classification of the error kind.
     pub fn kind(&self) -> &'static str {
         match self {
+            TraceError::QueueSaturated { .. } => "queue_saturated",
             TraceError::Store(StoreError::Orphaned { .. }) => "orphan",
             TraceError::Store(_) => "store",
             TraceError::Cancelled(_) => "cancelled",
@@ -42,6 +45,9 @@ impl TraceError {
 impl std::fmt::Display for TraceError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            TraceError::QueueSaturated { capacity } => {
+                write!(f, "graph execution event queue reached capacity {capacity}")
+            }
             TraceError::Store(e) => write!(f, "{e}"),
             TraceError::Cancelled(message) => f.write_str(message),
             TraceError::UnsupportedNode { node_id, kind } => {

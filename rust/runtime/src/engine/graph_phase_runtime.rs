@@ -326,7 +326,7 @@ struct PreparedGraphPhase {
     phase_identity: PhaseIdentity,
     workload: GraphWorkload,
     placement: Rc<dyn TracePlacement>,
-    events: mpsc::UnboundedReceiver<GraphExecutionEvent>,
+    events: mpsc::Receiver<GraphExecutionEvent>,
     intervals: Rc<RefCell<Box<dyn crate::timing::IntervalGenerator>>>,
     session_slots: Option<Rc<SlotPool>>,
     prefill_initial: Option<usize>,
@@ -1229,7 +1229,7 @@ struct GraphPhaseExecution {
     adaptive_control_variable: Option<AdaptiveControlVariable>,
     controller: Rc<dyn ScheduledPhaseController>,
     failures: Rc<GraphPhaseFailures>,
-    events: RefCell<Option<mpsc::UnboundedReceiver<GraphExecutionEvent>>>,
+    events: RefCell<Option<mpsc::Receiver<GraphExecutionEvent>>>,
     captured: Rc<RefCell<Vec<CapturedRecord>>>,
     supplement: Rc<RefCell<GraphPhaseSupplement>>,
     terminal_callback: Option<GraphTraceTerminalCallback>,
@@ -2331,7 +2331,7 @@ fn prepare_graph_phase(
             unreachable!("unsupported graph phase rejected before input acquisition")
         }
     };
-    let (events_tx, events_rx) = mpsc::unbounded_channel();
+    let (events_tx, events_rx) = mpsc::channel(256);
     let event_sink: Arc<dyn GraphExecutionEventSink> =
         Arc::new(ChannelRunnerGraphExecutionEventSink::new(events_tx));
     let adaptive = graph_adaptive_config(phase, benchmark_id, artifact_dir)?;

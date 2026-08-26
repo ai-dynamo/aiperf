@@ -52,6 +52,7 @@ pub(crate) struct PreparedNativeSidecarResources {
     /// at the finalize tail after the content server (its record sender) is
     /// dropped.
     pub(crate) media_handle: Option<tokio::task::JoinHandle<MediaMetricsSummary>>,
+    pub(crate) media_record_sender: Option<crate::content_server::ContentRecordSender>,
 }
 
 /// Artifact filename for per-fetch media records.
@@ -141,6 +142,7 @@ impl NativeSidecarResourceFactory for BuiltinNativeSidecarResourceFactory {
             .transpose()?;
 
         let mut media_handle = None;
+        let mut media_record_sender = None;
         let content_server = match content_server_spec {
             Some(spec) => {
                 // Wire media-fetch metrics only when the server publishes files
@@ -153,7 +155,8 @@ impl NativeSidecarResourceFactory for BuiltinNativeSidecarResourceFactory {
                         "media_records",
                     )?;
                     let (record_tx, mut record_rx) =
-                        tokio::sync::mpsc::unbounded_channel::<ContentRequestRecord>();
+                        tokio::sync::mpsc::channel::<ContentRequestRecord>(256);
+                    let record_sender = crate::content_server::ContentRecordSender::new(record_tx);
                     let handle = tokio::spawn(async move {
                         let mut aggregator = MediaFetchAggregator::new();
                         let mut writer = match MediaRecordWriter::create(&path) {
@@ -177,7 +180,8 @@ impl NativeSidecarResourceFactory for BuiltinNativeSidecarResourceFactory {
                         aggregator.finish()
                     });
                     media_handle = Some(handle);
-                    Some(record_tx)
+                    media_record_sender = Some(record_sender.clone());
+                    Some(record_sender)
                 } else {
                     None
                 };
@@ -235,6 +239,7 @@ impl NativeSidecarResourceFactory for BuiltinNativeSidecarResourceFactory {
             server_metrics_jsonl_path,
             server_metrics_parquet_wire_path,
             media_handle,
+            media_record_sender,
         })
     }
 }
@@ -243,9 +248,9 @@ impl PreparedNativeSidecarResources {
     /// Shut the content server down (releasing the record sender) so the drain
     /// task reaches channel-close, then collect its finalized distributions.
     /// Returns an empty summary when there was no media wiring. Idempotent.
-    pub(crate) async fn finalize_media_metrics(&mut self) -> MediaMetricsSummary {
+    pub(crate) async fn finalize_media_metrics(&mut self) -> Result<MediaMetricsSummary> {
         let Some(handle) = self.media_handle.take() else {
-            return MediaMetricsSummary::default();
+            return Ok(MediaMetricsSummary::default());
         };
         // Dropping the server releases the tracker's sender; the drain task then
         // sees channel-close and finalizes. All fetches have completed by the
@@ -256,6 +261,10 @@ impl PreparedNativeSidecarResources {
         {
             tracing::warn!(error = %error, "content server shutdown during media finalize failed");
         }
+        let overflowed = self
+            .media_record_sender
+            .take()
+            .is_some_and(|sender| sender.overflowed());
         match handle.await {
             Ok(summary) => {
                 tracing::info!(
@@ -264,11 +273,14 @@ impl PreparedNativeSidecarResources {
                     negative_ttmf = summary.negative_ttmf,
                     "media-fetch metrics finalized"
                 );
-                summary
+                if overflowed {
+                    anyhow::bail!("media record queue overflowed")
+                }
+                Ok(summary)
             }
             Err(error) => {
                 tracing::warn!(error = %error, "media aggregator task failed to join");
-                MediaMetricsSummary::default()
+                Ok(MediaMetricsSummary::default())
             }
         }
     }
@@ -427,6 +439,7 @@ mod tests {
             server_metrics_jsonl_path: None,
             server_metrics_parquet_wire_path: None,
             media_handle: None,
+            media_record_sender: None,
         }
     }
 
@@ -435,10 +448,10 @@ mod tests {
         let mut resources = empty_resources();
         // No media wiring: finalize returns the empty summary and is safe to call
         // more than once (the handle is taken on the first call).
-        let first = resources.finalize_media_metrics().await;
+        let first = resources.finalize_media_metrics().await.unwrap();
         assert_eq!(first.total_fetches, 0);
         assert_eq!(first.unmatched, 0);
-        let second = resources.finalize_media_metrics().await;
+        let second = resources.finalize_media_metrics().await.unwrap();
         assert_eq!(second.total_fetches, 0);
         assert!(resources.live_sink().is_none());
     }

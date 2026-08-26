@@ -109,7 +109,7 @@ impl RequestTracker {
         // buffer below is independent, so the aggregator sees every record even
         // when retention is disabled.
         if let Some(sink) = &self.record_sink {
-            let _ = sink.send(record.clone());
+            let _ = sink.try_send(record.clone());
         }
         let mut state = self
             .state
@@ -201,9 +201,9 @@ mod tests {
 
     #[test]
     fn sink_forwards_every_record_even_with_retention_disabled() {
-        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let (tx, mut rx) = tokio::sync::mpsc::channel(3);
         // max_records = 0: nothing retained, but the sink must still see all.
-        let tracker = RequestTracker::new_with_sink(0, Some(tx));
+        let tracker = RequestTracker::new_with_sink(0, Some(ContentRecordSender::new(tx)));
         for index in 0..3 {
             tracker.record(record(index));
         }
