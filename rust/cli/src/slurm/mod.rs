@@ -79,12 +79,14 @@ fn resolve_role_bootstrap_path(
     if let Some(file) = file.filter(|value| !value.is_empty()) {
         return Ok(PathBuf::from(file));
     }
-    let directory = directory.filter(|value| !value.is_empty()).with_context(|| {
-        format!(
-            "SLURM cell {cell_id} has no deployment-provisioned {ROLE_BOOTSTRAP_FILE_ENV} \
+    let directory = directory
+        .filter(|value| !value.is_empty())
+        .with_context(|| {
+            format!(
+                "SLURM cell {cell_id} has no deployment-provisioned {ROLE_BOOTSTRAP_FILE_ENV} \
              or {ROLE_BOOTSTRAP_DIR_ENV} (generate the job script with `aiperf slurm generate`)"
-        )
-    })?;
+            )
+        })?;
     Ok(Path::new(&directory).join(format!("cell-{cell_id}.bin")))
 }
 

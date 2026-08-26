@@ -160,7 +160,10 @@ fn provision_material(run_dir: &Path, cells: u32) -> anyhow::Result<DeploymentMa
         .map_err(|error| anyhow::anyhow!("failed to mint cellular bootstrap material: {error}"))?;
 
     std::fs::create_dir_all(run_dir).map_err(|error| {
-        anyhow::anyhow!("failed to create run directory {}: {error}", run_dir.display())
+        anyhow::anyhow!(
+            "failed to create run directory {}: {error}",
+            run_dir.display()
+        )
     })?;
     let directory = run_dir.join(BOOTSTRAP_DIRECTORY);
     std::fs::DirBuilder::new()
@@ -455,9 +458,10 @@ mod tests {
         })
         .expect("script");
         assert!(
-            script
-                .text
-                .contains(&format!("export AIPERF_ROLE_BOOTSTRAP_DIR={}\n", bootstrap.display())),
+            script.text.contains(&format!(
+                "export AIPERF_ROLE_BOOTSTRAP_DIR={}\n",
+                bootstrap.display()
+            )),
             "{}",
             script.text
         );
@@ -473,10 +477,7 @@ mod tests {
         let before = std::fs::read(bootstrap.join(CONTROLLER_BUNDLE)).expect("first controller");
 
         let error = provision_material(&run_dir, 2).expect_err("second mint must be refused");
-        assert!(
-            error.to_string().contains("bootstrap material"),
-            "{error}"
-        );
+        assert!(error.to_string().contains("bootstrap material"), "{error}");
         assert_eq!(
             std::fs::read(bootstrap.join(CONTROLLER_BUNDLE)).expect("controller after refusal"),
             before,
