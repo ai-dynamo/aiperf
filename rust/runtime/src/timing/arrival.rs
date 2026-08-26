@@ -80,6 +80,34 @@ pub fn next_arrival_target(
 mod tests {
     use super::*;
 
+    #[test]
+    fn bounded_reanchor_preserves_small_lag_and_reanchors_large_lag() {
+        const NOW_NS: i64 = 20_000_000;
+        const WINDOW_NS: i64 = 10_000_000;
+
+        assert_eq!(bounded_reanchor_target(19_999_999, NOW_NS, WINDOW_NS), 19_999_999);
+        assert_eq!(bounded_reanchor_target(10_000_000, NOW_NS, WINDOW_NS), 10_000_000);
+        assert_eq!(bounded_reanchor_target(9_999_999, NOW_NS, WINDOW_NS), NOW_NS);
+    }
+
+    #[test]
+    fn zero_catchup_window_preserves_the_no_burst_policy() {
+        assert_eq!(bounded_reanchor_target(99, 100, 0), 100);
+        assert_eq!(bounded_reanchor_target(100, 100, 0), 100);
+    }
+
+    #[test]
+    fn bounded_reanchor_uses_saturating_threshold_arithmetic() {
+        assert_eq!(
+            bounded_reanchor_target(i64::MIN, i64::MIN, i64::MAX),
+            i64::MIN
+        );
+        assert_eq!(
+            bounded_reanchor_target(i64::MIN, i64::MAX, i64::MAX),
+            i64::MAX
+        );
+    }
+
     // The scheduled / dynosim policy: first arrival one interval in, and a target
     // that has fallen behind re-anchors to `now` with no catch-up burst. Uses
     // the `crate::run` / `crate::request_rate` loops' `next_target_ns` arithmetic.

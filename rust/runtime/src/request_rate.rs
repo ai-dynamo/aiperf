@@ -829,6 +829,33 @@ mod tests {
     use crate::scheduled::{ModelResponseMetadata, TurnDispatchOutcome, TurnDispatcher};
     use crate::test_util::synthetic_prepared_source;
 
+    #[test]
+    fn max_catchup_seconds_defaults_and_rounds_once_to_nanoseconds() {
+        assert_eq!(parse_max_catchup_seconds(None).unwrap(), 10_000_000);
+        assert_eq!(parse_max_catchup_seconds(Some("0")).unwrap(), 0);
+        assert_eq!(parse_max_catchup_seconds(Some("10")).unwrap(), 10_000_000_000);
+        assert_eq!(parse_max_catchup_seconds(Some("0.0000000015")).unwrap(), 2);
+    }
+
+    #[test]
+    fn max_catchup_seconds_rejects_invalid_values_informatively() {
+        for raw in ["not-a-number", "NaN", "inf", "-0.1", "10.000001"] {
+            let error = parse_max_catchup_seconds(Some(raw)).unwrap_err().to_string();
+            assert!(
+                error.contains("AIPERF_TIMING_MAX_CATCHUP_SECONDS"),
+                "missing variable name for {raw:?}: {error}"
+            );
+            assert!(
+                error.contains(raw),
+                "missing rejected value for {raw:?}: {error}"
+            );
+            assert!(
+                error.contains("0..=10"),
+                "missing accepted range for {raw:?}: {error}"
+            );
+        }
+    }
+
     struct DelayedDispatcher {
         clock: Rc<dyn Clock>,
     }
