@@ -56,6 +56,7 @@ const MAX_VELO_FRAME_BYTES: usize = 16 * 1024 * 1024;
 const VELO_TCP_PREAMBLE_BYTES: usize = 11;
 const VELO_ACTIVE_MESSAGE_FIXED_HEADER_BYTES: usize = 22;
 const MAX_DATASET_HANDLER_BYTES: usize = "aiperf.dataset.subscribe".len();
+const DATASET_LIVE_PROGRESS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
 fn dataset_compressed_limit() -> anyhow::Result<usize> {
     MAX_VELO_FRAME_BYTES
@@ -187,10 +188,22 @@ async fn build_owned_wire_index(
     anyhow::bail!("dataset Velo live stream ended before finalization")
 }
 
+async fn build_owned_wire_index_with_timeout(
+    replay: Vec<BroadcastEvent<DatasetChunk<WirePayload>>>,
+    live: mpsc::UnboundedReceiver<DatasetWireEvent>,
+    owns: impl Fn(u64) -> bool,
+    timeout: std::time::Duration,
+) -> anyhow::Result<DatasetIndex<WirePayload>> {
+    tokio::time::timeout(timeout, build_owned_wire_index(replay, live, owns))
+        .await
+        .map_err(|_| anyhow::anyhow!("dataset Velo live stream timed out"))?
+}
+
 /// Controller-owned admission boundary for Velo request fan-out replay.
 pub(crate) struct DatasetWirePublisher {
     publisher: DatasetPublisher<WirePayload>,
-    replay: Vec<BroadcastEvent<DatasetChunk<WirePayload>>>,
+    replay_event_bytes: usize,
+    replay_len: usize,
 }
 
 impl DatasetWirePublisher {
@@ -198,7 +211,8 @@ impl DatasetWirePublisher {
     pub(crate) fn new() -> Self {
         Self {
             publisher: DatasetPublisher::new(),
-            replay: Vec::new(),
+            replay_event_bytes: 0,
+            replay_len: 0,
         }
     }
 
@@ -222,21 +236,30 @@ impl DatasetWirePublisher {
             requests,
         };
         let event = BroadcastEvent::Item(chunk.clone());
-        zpack(&event)?;
-        let mut replay = self.replay.clone();
-        replay.push(event.clone());
-        zpack(&DatasetSubscribeReply { replay })?;
+        let event_bytes = rmp_serde::to_vec(&event)
+            .map_err(|error| anyhow::anyhow!("encode dataset wire event: {error}"))?
+            .len();
+        let replay_event_bytes = self
+            .replay_event_bytes
+            .checked_add(event_bytes)
+            .ok_or_else(|| anyhow::anyhow!("dataset replay size overflow"))?;
+        let replay_len = self
+            .replay_len
+            .checked_add(1)
+            .ok_or_else(|| anyhow::anyhow!("dataset replay length overflow"))?;
+        if Self::sealed_replay_size(replay_event_bytes, replay_len)? > dataset_wire_output_limit()?
+        {
+            anyhow::bail!("dataset wire value exceeds the protocol output limit");
+        }
 
         let chunk_id = self.publisher.add(chunk.requests);
-        self.replay.push(event);
+        self.replay_event_bytes = replay_event_bytes;
+        self.replay_len = replay_len;
         Ok(chunk_id)
     }
 
-    /// Seal only when the terminal replay reply fits too.
+    /// Seal the replay after every add admitted its prospective terminal form.
     pub(crate) fn finalize(&self) -> anyhow::Result<()> {
-        let mut replay = self.replay.clone();
-        replay.push(BroadcastEvent::Finalized);
-        zpack(&DatasetSubscribeReply { replay })?;
         self.publisher.finalize();
         Ok(())
     }
@@ -244,6 +267,39 @@ impl DatasetWirePublisher {
     /// Consume this boundary after the controller has sealed it.
     pub(crate) fn into_publisher(self) -> DatasetPublisher<WirePayload> {
         self.publisher
+    }
+
+    fn sealed_replay_size(event_bytes: usize, replay_len: usize) -> anyhow::Result<usize> {
+        let reply_empty = rmp_serde::to_vec(&DatasetSubscribeReply { replay: Vec::new() })
+            .map_err(|error| anyhow::anyhow!("encode empty dataset replay: {error}"))?
+            .len();
+        let empty_array_header = 1;
+        let reply_fixed = reply_empty
+            .checked_sub(empty_array_header)
+            .ok_or_else(|| anyhow::anyhow!("dataset replay size underflow"))?;
+        let terminal_bytes =
+            rmp_serde::to_vec(&BroadcastEvent::<DatasetChunk<WirePayload>>::Finalized)
+                .map_err(|error| anyhow::anyhow!("encode dataset terminal event: {error}"))?
+                .len();
+        let count = replay_len
+            .checked_add(1)
+            .ok_or_else(|| anyhow::anyhow!("dataset replay length overflow"))?;
+        let array_header = match count {
+            0..=15 => 1,
+            16..=65_535 => 3,
+            _ => 5,
+        };
+        reply_fixed
+            .checked_add(array_header)
+            .and_then(|size| size.checked_add(event_bytes))
+            .and_then(|size| size.checked_add(terminal_bytes))
+            .ok_or_else(|| anyhow::anyhow!("dataset replay size overflow"))
+    }
+
+    #[cfg(test)]
+    fn tracked_sealed_replay_size(&self) -> usize {
+        Self::sealed_replay_size(self.replay_event_bytes, self.replay_len)
+            .expect("tracked replay size is bounded")
     }
 }
 
@@ -393,7 +449,8 @@ impl DatasetClient {
             .map_err(|error| anyhow::anyhow!("dataset subscribe send: {error}"))?;
         let reply: DatasetSubscribeReply = zunpack(&reply_bytes)?;
 
-        build_owned_wire_index(reply.replay, live, owns).await
+        build_owned_wire_index_with_timeout(reply.replay, live, owns, DATASET_LIVE_PROGRESS_TIMEOUT)
+            .await
     }
 }
 
@@ -534,6 +591,95 @@ mod tests {
         assert_eq!(publisher.chunk_count(), 1);
     }
 
+    #[test]
+    fn add_rejects_when_only_the_prospective_terminal_replay_overflows() {
+        let mut publisher = DatasetWirePublisher::new();
+        let empty = DatasetChunk {
+            chunk_id: 0,
+            requests: vec![DatasetRequest {
+                request_id: 0,
+                payload: Vec::new(),
+            }],
+        };
+        let empty_item = BroadcastEvent::Item(empty.clone());
+        let item_base = rmp_serde::to_vec(&empty_item)
+            .expect("encode empty item")
+            .len();
+        let item_one_byte = rmp_serde::to_vec(&BroadcastEvent::Item(DatasetChunk {
+            chunk_id: 0,
+            requests: vec![DatasetRequest {
+                request_id: 0,
+                payload: vec![u8::MAX],
+            }],
+        }))
+        .expect("encode one-byte item")
+        .len();
+        let payload_byte_size = item_one_byte - item_base;
+        let unsealed_base = rmp_serde::to_vec(&DatasetSubscribeReply {
+            replay: vec![BroadcastEvent::Item(empty)],
+        })
+        .expect("encode empty replay")
+        .len();
+        let limit = dataset_wire_output_limit().expect("safe limit");
+        let mut payload = vec![u8::MAX; (limit - item_base.max(unsealed_base)) / payload_byte_size];
+        let candidate = BroadcastEvent::Item(DatasetChunk {
+            chunk_id: 0,
+            requests: vec![DatasetRequest {
+                request_id: 0,
+                payload: payload.clone(),
+            }],
+        });
+        let excess = rmp_serde::to_vec(&candidate)
+            .expect("encode candidate item")
+            .len()
+            .saturating_sub(limit);
+        payload.truncate(payload.len() - excess);
+        let unsealed_candidate = DatasetSubscribeReply {
+            replay: vec![BroadcastEvent::Item(DatasetChunk {
+                chunk_id: 0,
+                requests: vec![DatasetRequest {
+                    request_id: 0,
+                    payload: payload.clone(),
+                }],
+            })],
+        };
+        let excess = rmp_serde::to_vec(&unsealed_candidate)
+            .expect("encode candidate replay")
+            .len()
+            .saturating_sub(limit);
+        payload.truncate(payload.len() - excess);
+        let chunk = DatasetChunk {
+            chunk_id: 0,
+            requests: vec![DatasetRequest {
+                request_id: 0,
+                payload: payload.clone(),
+            }],
+        };
+        let item = BroadcastEvent::Item(chunk.clone());
+        assert!(zpack(&item).is_ok(), "item-only event fits");
+        let unsealed = DatasetSubscribeReply {
+            replay: vec![item.clone()],
+        };
+        assert!(zpack(&unsealed).is_ok(), "unsealed replay fits");
+        let sealed = DatasetSubscribeReply {
+            replay: vec![item, BroadcastEvent::Finalized],
+        };
+        assert!(
+            zpack(&sealed).is_err(),
+            "sealed replay exceeds the logical cap"
+        );
+
+        let error = publisher
+            .add(vec![DatasetRequest {
+                request_id: 0,
+                payload,
+            }])
+            .expect_err("sealed replay must be admitted before history mutation");
+
+        assert!(error.to_string().contains("protocol output limit"));
+        assert_eq!(publisher.chunk_count(), 0);
+    }
+
     #[tokio::test]
     async fn failed_live_wire_event_returns_promptly() {
         let (tx, rx) = mpsc::unbounded_channel();
@@ -551,6 +697,56 @@ mod tests {
         };
 
         assert!(error.to_string().contains("controller encode failed"));
+    }
+
+    #[tokio::test]
+    async fn stalled_live_wire_stream_times_out() {
+        let (_tx, rx) = mpsc::unbounded_channel();
+
+        let result = build_owned_wire_index_with_timeout(
+            Vec::new(),
+            rx,
+            |_| true,
+            std::time::Duration::from_millis(10),
+        )
+        .await;
+        let Err(error) = result else {
+            panic!("stalled live stream must fail");
+        };
+
+        assert!(error.to_string().contains("timed out"));
+    }
+
+    #[test]
+    fn tracked_sealed_replay_size_matches_messagepack_at_array_threshold() {
+        let mut publisher = DatasetWirePublisher::new();
+        for request_id in 0..16 {
+            publisher
+                .add(vec![DatasetRequest {
+                    request_id,
+                    payload: vec![0],
+                }])
+                .expect("small event fits");
+        }
+
+        let expected = rmp_serde::to_vec(&DatasetSubscribeReply {
+            replay: (0..16)
+                .map(|request_id| {
+                    BroadcastEvent::Item(DatasetChunk {
+                        chunk_id: request_id,
+                        requests: vec![DatasetRequest {
+                            request_id,
+                            payload: vec![0],
+                        }],
+                    })
+                })
+                .chain(std::iter::once(BroadcastEvent::Finalized))
+                .collect(),
+        })
+        .expect("encode sealed replay")
+        .len();
+
+        assert_eq!(publisher.tracked_sealed_replay_size(), expected);
     }
 
     #[tokio::test]
