@@ -86,6 +86,7 @@ implementation, test run, or review.
 | 58 | `9b60a3d479` | FakeTokenizer | complete | applicable | The ancestor's harness method had regressed from the semantic tree; this closure restores the exact zero-returning Python fake method, proves the native trait's existing zero default needs no duplicate API, and records Graham approval in `docs/origin-main-findings/commit-058-9b60a3d479.md`. |
 | 59 | `c9288da6c1` | mmap conversation cache | complete | not-applicable | Exact upstream object already entered through #60 actual merge `f1d39ad583`; Python-only mmap cursor/prefault/executor fix has no native backend. Findings/spec/Sol plan and Graham closure: `commit-059-c9288da6c1.md`. |
 | 60 | `c2889280a6` | random_pool batch sizes | complete | applicable | Native four-modality CLI/YAML/config projection, safe real-loader batching, and binary integration coverage approved at `5dd2939765`; exact target-only merge `f1d39ad583`. |
+| 61 | `4edbbf39d3` | constrained DSP GP kernel batching | complete | applicable | Native `search-pyo3` uses the in-tree qLogNEI helper. The DSP kernel now receives BoTorch's augmented batch shape at both kernel layers; focused CPU BoTorch and feature-gated Rust CLI tests pass. Closure: `docs/origin-main-findings/commit-061-4edbbf39d3.md`. |
 
 ## Per-commit record: 817a8d84ddb9
 

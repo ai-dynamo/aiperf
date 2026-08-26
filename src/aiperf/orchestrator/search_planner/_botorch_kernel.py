@@ -23,10 +23,11 @@ import math
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    import torch
     from gpytorch.kernels import ScaleKernel
 
 
-def make_dsp_kernel(d: int) -> ScaleKernel:
+def make_dsp_kernel(d: int, batch_shape: torch.Size | None = None) -> ScaleKernel:
     """Return a Hvarfner-DSP-scaled Matern 5/2 kernel for ``d`` input dims.
 
     The output ``ScaleKernel`` wraps an ARD ``MaternKernel(nu=2.5)`` with a
@@ -48,6 +49,8 @@ def make_dsp_kernel(d: int) -> ScaleKernel:
             nu=2.5,
             ard_num_dims=d,
             lengthscale_prior=LogNormalPrior(loc=loc, scale=scale),
+            batch_shape=batch_shape,
         ),
         outputscale_prior=GammaPrior(2.0, 0.15),
+        batch_shape=batch_shape,
     )
