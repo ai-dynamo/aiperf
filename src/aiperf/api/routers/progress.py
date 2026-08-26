@@ -10,6 +10,7 @@ heartbeat to the AIPerfJob, then mirrors progress onto JobSet annotations.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 from typing import Annotated, Any
@@ -365,12 +366,10 @@ class ProgressRouter(
         wake-ups into the one push already about to run.
         """
         while not self._stop_requested_event.is_set():
-            try:
+            with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(
                     self._status_push_requested.wait(), timeout=interval
                 )
-            except TimeoutError:
-                pass
             self._status_push_requested.clear()
             await self._patch_aiperfjob_status()
 
