@@ -64,10 +64,10 @@ Native implementation commits through `3af08f8807` provide:
   repair, and non-range special-token ISL compensation; and
 - a real Python/native profile A/B harness over the production HTTP request path.
 
-The earlier Baseten prerequisite commit `b244e54ea4` exists only because this branch is
-based on old shared HEAD `b009535bb8`. Integration must retain the current shared Baseten
-outcome work from `428e820510` and the open-loop correction from `aaba0e6990`; it must not
-reapply `b244e54ea4` over those newer semantics or restore closed-loop-only outcomes.
+The Baseten prerequisite commits `b244e54ea4` and `ae41a8b305` exist only because this
+branch is based on old shared HEAD `b009535bb8`; together they match the current shared
+outcome work in `428e820510` and its open-loop correction `aaba0e6990`. Integration must
+retain the shared fixes without duplicating them or restoring closed-loop-only outcomes.
 
 ## Mandatory semantic audits
 
@@ -92,5 +92,23 @@ captures.
 - Full production Python/native A/B: 13 passed, 0 failed; six cases × eight requests =
   48 ordered method/route/content-type/body/token-ID matches.
 
-Independent Graham approval and campaign closure remain pending; these receipts do not
-authorize provenance or tracker closure by themselves.
+## Final-tip verification and independent review
+
+Final implementation tip `ae41a8b305642b8f0272ab8ec13cd9c2130dac0e` was rebuilt
+before review. The mandatory production command passed 13 tests with no failures in
+52.44 seconds, including all 48 ordered Python/native captures. Workspace formatting,
+the Python-vector generator's `--check` mode, Ruff, `git diff --check`, and focused Rust
+random-range/config/projection suites also passed.
+
+The default runtime suite reported 1,796 passed, one failed, and seven ignored; the
+engine-feature suite reported 2,355 passed, five failed, and seven ignored. The failures
+are old-base report-version, missing recorded-agent-fixture, and registry-test issues.
+Every affected source, fixture, manifest, and golden path is byte-unchanged from
+`b009535bb8`; random-range and Baseten tests passed in both broad runs.
+
+An independent Graham review covered `b009535bb8..ae41a8b305` in two passes, including
+the RNG/dataset hot path, prefix continuation, config projection, mock capture and E2E,
+error handling, allocation/concurrency, tracing, naming, comments, test rigor, and diff
+scope. It approved the range with no Critical or Important findings. The three audits,
+final 13-test/48-capture receipt, exact second-parent ancestry, and review therefore close
+tracker 56 with no unresolved native divergence.
