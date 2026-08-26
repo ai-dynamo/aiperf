@@ -521,6 +521,7 @@ impl GlobalSlotPool {
                 Ok(permit) => {
                     permit.forget();
                     self.debt.fetch_sub(1, Ordering::AcqRel);
+                    self.notify.notify_waiters();
                     remaining -= 1;
                 }
                 Err(_) => break,
