@@ -70,8 +70,8 @@ Graham review and a commit.
 | E11 | CLI Dynosim runs skip process defaults | Confirmed; spec ready | Sol implementation plan |
 | C01 | Phaser Velo subscription accepts forged/replayed event | Complete — `cf09af5034` | Independent Graham approved; explicit benchmark trust-boundary contract |
 | C02 | Dataset Velo subscription accepts forged event or oversized payload | Confirmed/narrowed; spec needed | Sol implementation plan |
-| C03 | Duplicate cellular partition can satisfy completion barrier | Confirmed; spec needed | Sol implementation plan |
-| C04 | Eventstream prelude validation happens after accumulation | Confirmed; spec needed | Sol implementation plan |
+| C03 | Duplicate cellular partition can satisfy completion barrier | Complete — `1053327b41` | Independent Graham approved; RED→GREEN identity coverage recorded |
+| C04 | Eventstream prelude validation happens after accumulation | Complete — `4067dfc13b`, `7b0d6fce79` | Independent Graham approved; RED→GREEN parser and mock-caller coverage recorded |
 | C05 | Partial final HTTP frame lacks terminal decode error | Confirmed; spec needed | Sol implementation plan |
 | C06 | Authored HTTP body cap is not propagated to client config | Confirmed; spec needed | Sol implementation plan |
 | C07 | H2 prior knowledge is not usable over UDS | Confirmed; spec needed | Sol implementation plan |
@@ -166,3 +166,13 @@ Graham review and a commit.
   authenticity or replay guarantee, while generation ordering remains the
   benchmark-correctness invariant. It adds no runtime security mechanism and
   has RED→GREEN preservation evidence plus independent Graham PASS.
+- 2026-08-26: C03 completed and integrated as `1053327b41`: terminal cellular
+  receipts are keyed by validated cell identity, reject duplicate/out-of-range
+  and mixed-kind receipts, and complete only once every expected cell is
+  represented. Its three focused and 45 controller tests are green; independent
+  Graham review passed.
+- 2026-08-26: C04 completed and integrated as `4067dfc13b` and `7b0d6fce79`:
+  EventStream validates prelude fields before retaining a frame body, bounds
+  retained frames at the supported protocol maximum, and propagates decode
+  failure exactly once. RED→GREEN runtime boundary tests and the mock-server
+  caller regression are green; independent Graham review passed.
