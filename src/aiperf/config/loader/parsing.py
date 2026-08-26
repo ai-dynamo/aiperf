@@ -292,32 +292,38 @@ def parse_str_or_list_of_positive_values(input: Any) -> list[Any]:
     return output
 
 
-def parse_file(value: str | None) -> Path | None:
+def parse_file(value: str | Path | None) -> Path | None:
     """Parse an existing file/directory path from a CLI value.
 
     Args:
-        value: Path string from CLI/config input. ``None`` or an empty string
-            disables the path and returns ``None``.
+        value: Path string from CLI/config input, or a ``Path`` this
+            function already returned -- accepted as a pass-through so the
+            validator is idempotent when a caller round-trips an
+            already-parsed field value back through it (e.g. reconstructing
+            a model from another instance's field values). ``None`` or an
+            empty string disables the path and returns ``None``.
 
     Returns:
         A ``Path`` pointing to an existing file or directory, or ``None`` when no
         value was provided.
 
     Raises:
-        ValueError: If ``value`` is not a string, or if the path does not exist as
-            a file or directory.
+        ValueError: If ``value`` is not a string or Path, or if the path does not
+            exist as a file or directory.
     """
 
     if not value:
         return None
+    elif isinstance(value, Path):
+        path = value
     elif not isinstance(value, str):
         raise ValueError(f"Expected a string, but got {type(value).__name__}")
     else:
         path = Path(value)
-        if path.is_file() or path.is_dir():
-            return path
-        else:
-            raise ValueError(f"'{value}' is not a valid file or directory")
+    if path.is_file() or path.is_dir():
+        return path
+    else:
+        raise ValueError(f"'{value}' is not a valid file or directory")
 
 
 def validate_sequence_distribution(v: str | None) -> str | None:

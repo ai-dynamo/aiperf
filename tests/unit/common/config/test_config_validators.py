@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -9,10 +10,38 @@ from aiperf.config.loader.parsing import (
     coerce_value,
     normalize_http_url,
     normalize_http_urls,
+    parse_file,
     parse_str_as_numeric_dict,
     parse_str_or_dict_as_tuple_list,
     parse_str_or_list_of_positive_values,
 )
+
+
+class TestParseFile:
+    """Test suite for the parse_file function."""
+
+    def test_accepts_a_path_already_returned_by_itself(self, tmp_path: Path) -> None:
+        """Must be idempotent: re-applying to its own output must not raise.
+
+        Regression: CLIConfig.input_file's BeforeValidator only accepted
+        ``str`` input, so re-constructing a CLIConfig from an
+        already-parsed ``cli.input_file`` (a Path, per the return type)
+        raised "Expected a string, but got PosixPath" -- surfaced by
+        _inert_dataset_flags's solo-reconstruction pattern
+        (`_CLIConfig(**{field: getattr(cli, field)})`), which round-trips
+        an already-validated field's value back through its own validator.
+        """
+        target = tmp_path / "pool.jsonl"
+        target.touch()
+        parsed = parse_file(str(target))
+        assert parse_file(parsed) == parsed
+
+    def test_none_input_returns_none(self) -> None:
+        assert parse_file(None) is None
+
+    def test_missing_path_raises(self) -> None:
+        with pytest.raises(ValueError, match="not a valid file or directory"):
+            parse_file("/no/such/path/here")
 
 
 class TestCoerceValue:
