@@ -2218,13 +2218,8 @@ mod lowering_tests {
         }
     }
 
-    fn materialized_body(body: BodyPlan) -> Value {
-        serde_json::from_slice(&body.materialize_standalone().unwrap()).unwrap()
-    }
-
-    #[test]
-    fn streaming_chat_and_completions_request_usage_without_server_token_counting() {
-        let turns = [text_turn()];
+    fn openai_bodies(turn: Turn, endpoint: &RawEndpointConfig) -> [Value; 2] {
+        let turns = [turn];
         let request = PreparedRequest::new(
             "gpt-test",
             &turns,
@@ -2235,39 +2230,37 @@ mod lowering_tests {
             None,
             None,
         );
+        let materialize = |body: BodyPlan| {
+            serde_json::from_slice(&body.materialize_standalone().unwrap()).unwrap()
+        };
+        [
+            materialize(
+                ChatEndpoint
+                    .format_prepared_payload(&request, endpoint)
+                    .unwrap(),
+            ),
+            materialize(
+                CompletionsEndpoint
+                    .format_prepared_payload(&request, endpoint)
+                    .unwrap(),
+            ),
+        ]
+    }
+
+    #[test]
+    fn streaming_chat_and_completions_request_usage_without_server_token_counting() {
         let endpoint = RawEndpointConfig {
             streaming: true,
             ..RawEndpointConfig::default()
         };
 
-        let chat = materialized_body(
-            ChatEndpoint
-                .format_prepared_payload(&request, &endpoint)
-                .unwrap(),
-        );
-        let completions = materialized_body(
-            CompletionsEndpoint
-                .format_prepared_payload(&request, &endpoint)
-                .unwrap(),
-        );
-
-        assert_eq!(chat["stream_options"]["include_usage"], true);
-        assert_eq!(completions["stream_options"]["include_usage"], true);
+        for body in openai_bodies(text_turn(), &endpoint) {
+            assert_eq!(body["stream_options"]["include_usage"], true);
+        }
     }
 
     #[test]
     fn authored_stream_options_are_preserved_for_chat_and_completions() {
-        let turns = [text_turn()];
-        let request = PreparedRequest::new(
-            "gpt-test",
-            &turns,
-            None,
-            None,
-            CreditPhase::Profiling,
-            None,
-            None,
-            None,
-        );
         let endpoint = RawEndpointConfig {
             streaming: true,
             extra: Some(Map::from_iter([(
@@ -2277,18 +2270,7 @@ mod lowering_tests {
             ..RawEndpointConfig::default()
         };
 
-        let chat = materialized_body(
-            ChatEndpoint
-                .format_prepared_payload(&request, &endpoint)
-                .unwrap(),
-        );
-        let completions = materialized_body(
-            CompletionsEndpoint
-                .format_prepared_payload(&request, &endpoint)
-                .unwrap(),
-        );
-
-        for body in [chat, completions] {
+        for body in openai_bodies(text_turn(), &endpoint) {
             assert_eq!(body["stream_options"]["include_usage"], false);
             assert_eq!(body["stream_options"]["continuous_usage_stats"], true);
         }
@@ -2301,35 +2283,13 @@ mod lowering_tests {
             ("stream".to_owned(), Value::Bool(false)),
             ("stream_options".to_owned(), Value::Null),
         ]));
-        let turns = [turn];
-        let request = PreparedRequest::new(
-            "gpt-test",
-            &turns,
-            None,
-            None,
-            CreditPhase::Profiling,
-            None,
-            None,
-            None,
-        );
         let endpoint = RawEndpointConfig {
             streaming: true,
             use_server_token_count: true,
             ..RawEndpointConfig::default()
         };
 
-        let chat = materialized_body(
-            ChatEndpoint
-                .format_prepared_payload(&request, &endpoint)
-                .unwrap(),
-        );
-        let completions = materialized_body(
-            CompletionsEndpoint
-                .format_prepared_payload(&request, &endpoint)
-                .unwrap(),
-        );
-
-        for body in [chat, completions] {
+        for body in openai_bodies(turn, &endpoint) {
             assert_eq!(body["stream"], false);
             assert!(body["stream_options"].is_null());
         }
@@ -2337,40 +2297,23 @@ mod lowering_tests {
 
     #[test]
     fn null_options_are_initialized_but_truthy_non_objects_are_preserved() {
-        let turns = [text_turn()];
-        let request = PreparedRequest::new(
-            "gpt-test",
-            &turns,
-            None,
-            None,
-            CreditPhase::Profiling,
-            None,
-            None,
-            None,
-        );
         let mut endpoint = RawEndpointConfig {
             streaming: true,
             extra: Some(Map::from_iter([("stream_options".to_owned(), Value::Null)])),
             ..RawEndpointConfig::default()
         };
 
-        let null_options = materialized_body(
-            ChatEndpoint
-                .format_prepared_payload(&request, &endpoint)
-                .unwrap(),
-        );
-        assert_eq!(null_options["stream_options"]["include_usage"], true);
+        for body in openai_bodies(text_turn(), &endpoint) {
+            assert_eq!(body["stream_options"]["include_usage"], true);
+        }
 
         endpoint.extra = Some(Map::from_iter([(
             "stream_options".to_owned(),
             Value::String("provider-owned".to_owned()),
         )]));
-        let non_object = materialized_body(
-            ChatEndpoint
-                .format_prepared_payload(&request, &endpoint)
-                .unwrap(),
-        );
-        assert_eq!(non_object["stream_options"], "provider-owned");
+        for body in openai_bodies(text_turn(), &endpoint) {
+            assert_eq!(body["stream_options"], "provider-owned");
+        }
     }
 
     #[test]
