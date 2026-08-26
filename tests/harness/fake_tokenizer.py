@@ -66,3 +66,6 @@ class FakeTokenizer:
     @property
     def block_separation_token_id(self) -> int:
         return 1
+
+    def num_prompt_special_tokens(self) -> int:
+        return 0
