@@ -95,6 +95,7 @@ from aiperf.common.models.record_models import (
     TextResponseData,
     TimesliceResult,
     TokenCounts,
+    TokenIdResponseData,
     ToolCallResponseData,
     VideoResponseData,
 )
@@ -269,6 +270,7 @@ __all__ = [
     "TimesliceData",
     "TimesliceResult",
     "TokenCounts",
+    "TokenIdResponseData",
     "ToolCallResponseData",
     "TraceDataExport",
     "Turn",

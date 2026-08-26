@@ -16,6 +16,10 @@ class JMESPathResponseMixin:
     extractor in ``parse_response``. Falls back to auto-detect (embeddings,
     then rankings, then text) when the query is absent, mismatched, or raises.
 
+    Also reads ``endpoint.extra.response_is_token_ids`` (bool, default False)
+    to classify bare int/list[int] matches as ``TokenIdResponseData`` instead
+    of ``EmbeddingResponseData`` -- see ``convert_to_response_data``.
+
     Wiring contract -- required for the mixin to function:
 
     1. Mix it in to the LEFT of ``BaseEndpoint`` so this class's
@@ -45,6 +49,13 @@ class JMESPathResponseMixin:
         extra = self.model_endpoint.endpoint.extra
         extra_dict = dict(extra) if extra else {}
         response_field = extra_dict.get("response_field")
+        # Opt-in: disambiguates a bare int/list[int] as token IDs vs. embeddings.
+        response_is_token_ids = extra_dict.get("response_is_token_ids", False)
+        self._response_is_token_ids = (
+            response_is_token_ids
+            if isinstance(response_is_token_ids, bool)
+            else str(response_is_token_ids).strip().lower() in ("true", "1", "yes")
+        )
         self._compiled_jmespath = None
         if response_field:
             try:

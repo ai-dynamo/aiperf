@@ -23,6 +23,7 @@ from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.models.record_models import (
     ReasoningResponseData,
     TokenCounts,
+    TokenIdResponseData,
     ToolCallResponseData,
     find_last_non_empty_usage,
     first_content_chunk_completion_tokens,
@@ -641,6 +642,18 @@ class InferenceResultParser(CommunicationMixin):
         input_token_count = await self.compute_input_token_count(
             request_record, inputs=inputs
         )
+
+        # Explicit branch: get_text() returns "" for TokenIdResponseData, so
+        # the tokenizer path below would silently count zero, not raise.
+        token_id_responses = [
+            r.data for r in responses if isinstance(r.data, TokenIdResponseData)
+        ]
+        if token_id_responses:
+            return TokenCounts(
+                input=input_token_count,
+                reasoning=None,
+                output=sum(len(r.token_ids) for r in token_id_responses),
+            )
 
         tokenizer = await self.get_tokenizer(request_record.model_name)
         output_texts, reasoning_texts = self._parse_output_and_reasoning_texts(

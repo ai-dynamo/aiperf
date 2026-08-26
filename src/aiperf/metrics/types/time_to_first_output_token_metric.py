@@ -6,6 +6,7 @@ from aiperf.common.models import ParsedResponseRecord
 from aiperf.common.models.record_models import (
     ReasoningResponseData,
     TextResponseData,
+    TokenIdResponseData,
     ToolCallResponseData,
 )
 from aiperf.metrics import BaseRecordMetric
@@ -26,7 +27,8 @@ class TimeToFirstOutputTokenMetric(BaseRecordMetric[int]):
           reasoning tokens. For models without reasoning, TTFO and TTFT are equivalent.
         - Non-reasoning tokens: Includes TextResponseData with non-empty text,
           ReasoningResponseData with non-empty content field (regardless of reasoning field),
-          or ToolCallResponseData with non-empty text.
+          ToolCallResponseData with non-empty text, or TokenIdResponseData with
+          non-empty token_ids (raw-token-ID endpoints with no server-side text).
 
     Formula:
         Time to First Output = First Non-Reasoning Token Timestamp - Request Start Timestamp
@@ -75,6 +77,10 @@ class TimeToFirstOutputTokenMetric(BaseRecordMetric[int]):
                 or (
                     isinstance(response.data, ToolCallResponseData)
                     and response.data.tool_call_text
+                )
+                or (
+                    isinstance(response.data, TokenIdResponseData)
+                    and response.data.token_ids
                 )
             )
         except StopIteration:

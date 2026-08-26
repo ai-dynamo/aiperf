@@ -1258,6 +1258,15 @@ class EmbeddingResponseData(BaseResponseData):
 
 
 @dataclass(slots=True)
+class TokenIdResponseData(BaseResponseData):
+    """Raw-token-ID response data for endpoints with no server-side
+    detokenization. get_text() returns "" -- count via token_ids directly."""
+
+    token_ids: list[int]
+    """The raw output token IDs from the response."""
+
+
+@dataclass(slots=True)
 class RankingsResponseData(BaseResponseData):
     """Parsed rankings response data."""
 
@@ -1436,6 +1445,7 @@ class ParsedResponse:
         | ImageRetrievalResponseData
         | ImageResponseData
         | VideoResponseData
+        | TokenIdResponseData
         | BaseResponseData
         | None
     ] = None

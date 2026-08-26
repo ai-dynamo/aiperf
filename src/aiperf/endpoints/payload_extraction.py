@@ -258,7 +258,8 @@ def _collect_str_fields(
 
 
 def _walk_flat_fallbacks(payload: dict[str, Any], result: ExtractedPayload) -> None:
-    """Flat-field fallback shapes (completions / embeddings / rankings / HF).
+    """Flat-field fallback shapes (completions / embeddings / rankings / HF /
+    raw-token-tensor).
 
     Only consulted when no items-array was found so embeddings
     ``input: [str, ...]`` doesn't get double-counted with the chat/Responses
@@ -268,6 +269,9 @@ def _walk_flat_fallbacks(payload: dict[str, Any], result: ExtractedPayload) -> N
     if _append_string_or_list(payload, "prompt", result):
         return
     if _append_string_or_list(payload, "input", result):
+        return
+    # Raw-token-tensor models (no server-side tokenizer) send input_ids: list[int].
+    if _append_string_or_list(payload, "input_ids", result):
         return
     if _append_query_passages(payload, result):
         return

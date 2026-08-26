@@ -25,6 +25,7 @@ from aiperf.common.models import (
     RequestRecord,
     Text,
     TextResponseData,
+    TokenIdResponseData,
     Turn,
 )
 from aiperf.common.types import RequestOutputT
@@ -564,6 +565,8 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
         - list[list[float]] or list[float] -> EmbeddingResponseData
         - list[dict] -> RankingsResponseData
         - str -> TextResponseData
+        - int or list[int] -> TokenIdResponseData, only when
+          endpoint.extra.response_is_token_ids is set (else ambiguous with embeddings)
 
         Args:
             value: Extracted value from response
@@ -574,8 +577,15 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
         if value is None:
             return None
 
+        as_token_ids = getattr(self, "_response_is_token_ids", False)
+
+        if isinstance(value, int) and as_token_ids:
+            return TokenIdResponseData(token_ids=[value])
+
         if isinstance(value, list) and value:
             first = value[0]
+            if as_token_ids and isinstance(first, int):
+                return TokenIdResponseData(token_ids=value)
             if isinstance(first, list) and first and isinstance(first[0], int | float):
                 return EmbeddingResponseData(embeddings=value)
             if isinstance(first, int | float):
