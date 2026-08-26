@@ -8,8 +8,21 @@ use super::contract::{ControllerEnvelope, NativeK8sRole};
 use super::error::KubeError;
 use super::submission::BootstrapMaterialTarget;
 
-/// SHA-256 digest of the bootstrap bundle selected for each workload identity.
+/// SHA-256 digest of the bootstrap bundle this process minted for each workload identity.
 pub type BootstrapDigests = BTreeMap<BootstrapMaterialTarget, String>;
+
+/// The reference-only bootstrap fields an envelope declares for one workload identity.
+#[derive(Clone, Debug)]
+pub struct DeclaredBootstrap {
+    /// Immutable Secret name.
+    pub secret_name: String,
+    /// Role the bundle authorizes.
+    pub role: NativeK8sRole,
+    /// Absolute container mount path.
+    pub mount_path: String,
+    /// Authored digest, which is the integrity check against operator-supplied material.
+    pub sha256: String,
+}
 
 /// Every workload identity for which an envelope declares bootstrap material.
 pub fn bootstrap_targets(envelope: &ControllerEnvelope) -> BTreeSet<BootstrapMaterialTarget> {
@@ -27,73 +40,76 @@ pub fn bootstrap_targets(envelope: &ControllerEnvelope) -> BTreeSet<BootstrapMat
         .collect()
 }
 
-/// Locate the Secret name, authorized role, and mount path an envelope declares for one identity.
+/// Locate the bootstrap reference an envelope declares for one workload identity.
 ///
-/// Callers that mint material need these three reference-only fields before any bytes exist;
-/// the digest is the only field the minted bundle contributes back.
-pub fn declared_reference(
+/// Callers that mint material need the reference-only fields before any bytes exist;
+/// callers that accept operator-supplied material need the authored digest to check it.
+pub fn declared_bootstrap(
     envelope: &ControllerEnvelope,
     target: &BootstrapMaterialTarget,
-) -> Option<(String, NativeK8sRole, String)> {
+) -> Option<DeclaredBootstrap> {
     match target {
         BootstrapMaterialTarget::Role(name) => envelope
             .roles
             .iter()
             .find(|role| role.name == *name)
             .and_then(|role| role.bootstrap.as_ref())
-            .map(|bootstrap| {
-                (
-                    bootstrap.secret_name.clone(),
-                    bootstrap.role,
-                    bootstrap.mount_path.clone(),
-                )
+            .map(|bootstrap| DeclaredBootstrap {
+                secret_name: bootstrap.secret_name.clone(),
+                role: bootstrap.role,
+                mount_path: bootstrap.mount_path.clone(),
+                sha256: bootstrap.sha256.clone(),
             }),
         BootstrapMaterialTarget::Cell(cell_id) => envelope
             .cell_bootstraps
             .iter()
             .find(|bootstrap| bootstrap.cell_id == *cell_id)
-            .map(|bootstrap| {
-                (
-                    bootstrap.secret_name.clone(),
-                    bootstrap.role,
-                    bootstrap.mount_path.clone(),
-                )
+            .map(|bootstrap| DeclaredBootstrap {
+                secret_name: bootstrap.secret_name.clone(),
+                role: bootstrap.role,
+                mount_path: bootstrap.mount_path.clone(),
+                sha256: bootstrap.sha256.clone(),
             }),
     }
 }
 
-/// Rebuild an envelope whose bootstrap references carry the resolved bundle digests.
+/// Rebuild an envelope whose minted bootstrap references carry the minted bundle digests.
 ///
-/// Minted material cannot be predicted when the envelope is authored, so the submitted
-/// digest is always the digest of the bytes this process actually placed in the Secret.
-/// Every declared identity must be resolved; a missing one is a caller invariant failure.
+/// Minted material cannot be predicted when the envelope is authored, so a minted identity's
+/// submitted digest is the digest of the bytes this process placed in its Secret. An identity
+/// whose material the operator supplied keeps its authored digest, which stays the integrity
+/// check against the named file.
+///
+/// Every bundle in one run shares a single nonce and roster, so a run mints either every
+/// identity or none. A partial minted set is refused here as well as at the submission
+/// boundary, because such a run could only fail later at cellular registration.
 pub fn build_controller_envelope(
     base: &ControllerEnvelope,
-    digests: &BootstrapDigests,
+    minted: &BootstrapDigests,
 ) -> Result<ControllerEnvelope, KubeError> {
+    if !minted.is_empty() && minted.keys().cloned().collect::<BTreeSet<_>>() != bootstrap_targets(base)
+    {
+        return Err(KubeError::ContractValidation(
+            "minted bootstrap material must cover every declared workload identity or none"
+                .to_string(),
+        ));
+    }
     let mut envelope = base.clone();
     for role in &mut envelope.roles {
-        let name = role.name;
-        if let Some(bootstrap) = &mut role.bootstrap {
-            bootstrap
-                .sha256
-                .clone_from(resolve(digests, &BootstrapMaterialTarget::Role(name))?);
+        let target = BootstrapMaterialTarget::Role(role.name);
+        if let Some(bootstrap) = &mut role.bootstrap
+            && let Some(digest) = minted.get(&target)
+        {
+            bootstrap.sha256.clone_from(digest);
         }
     }
     for bootstrap in &mut envelope.cell_bootstraps {
         let target = BootstrapMaterialTarget::Cell(bootstrap.cell_id);
-        bootstrap.sha256.clone_from(resolve(digests, &target)?);
+        if let Some(digest) = minted.get(&target) {
+            bootstrap.sha256.clone_from(digest);
+        }
     }
     Ok(envelope)
-}
-
-fn resolve<'a>(
-    digests: &'a BootstrapDigests,
-    target: &BootstrapMaterialTarget,
-) -> Result<&'a String, KubeError> {
-    digests.get(target).ok_or_else(|| {
-        KubeError::ContractValidation(format!("no bootstrap material was resolved for {target:?}"))
-    })
 }
 
 #[cfg(test)]
@@ -110,9 +126,9 @@ mod tests {
     }
 
     #[test]
-    fn envelope_carries_resolved_digests_for_every_declared_identity() {
+    fn minted_digests_replace_every_authored_digest() {
         let base = fixture();
-        let digests = BootstrapDigests::from([
+        let minted = BootstrapDigests::from([
             (
                 BootstrapMaterialTarget::Role(NativeK8sRole::Controller),
                 "a".repeat(64),
@@ -120,7 +136,7 @@ mod tests {
             (BootstrapMaterialTarget::Cell(0), "b".repeat(64)),
         ]);
 
-        let projected = build_controller_envelope(&base, &digests).expect("projection");
+        let projected = build_controller_envelope(&base, &minted).expect("projection");
 
         assert_eq!(
             projected.roles[0]
@@ -132,18 +148,41 @@ mod tests {
         assert_eq!(projected.cell_bootstraps[0].sha256, "b".repeat(64));
         assert_eq!(
             bootstrap_targets(&base),
-            digests.keys().cloned().collect::<BTreeSet<_>>()
+            minted.keys().cloned().collect::<BTreeSet<_>>()
         );
     }
 
     #[test]
-    fn unresolved_identity_refuses_projection() {
+    fn operator_supplied_material_keeps_its_authored_digest() {
         let base = fixture();
-        let digests = BootstrapDigests::from([(
+
+        let projected =
+            build_controller_envelope(&base, &BootstrapDigests::new()).expect("projection");
+
+        assert_eq!(
+            projected.cell_bootstraps[0].sha256,
+            base.cell_bootstraps[0].sha256
+        );
+        assert_eq!(
+            projected.roles[0]
+                .bootstrap
+                .as_ref()
+                .map(|bootstrap| bootstrap.sha256.clone()),
+            base.roles[0]
+                .bootstrap
+                .as_ref()
+                .map(|bootstrap| bootstrap.sha256.clone())
+        );
+    }
+
+    #[test]
+    fn partially_minted_material_refuses_projection() {
+        let base = fixture();
+        let minted = BootstrapDigests::from([(
             BootstrapMaterialTarget::Role(NativeK8sRole::Controller),
             "a".repeat(64),
         )]);
 
-        assert!(build_controller_envelope(&base, &digests).is_err());
+        assert!(build_controller_envelope(&base, &minted).is_err());
     }
 }
