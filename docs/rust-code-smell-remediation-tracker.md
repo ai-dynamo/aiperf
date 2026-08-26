@@ -59,7 +59,7 @@ Graham review and a commit.
 | S15 | `ScheduledPhasePlan` booleans lack semantic prefixes | Complete — `13fdae4430` | Independent Graham approved; RED→GREEN policy coverage recorded |
 | E01 | Velo route registration does not bind signed peer identity | Complete | Integrated `ef7b966238`, `56e35146bb`; independent Graham r2 PASS |
 | E02 | Externally-driven evaluation skips preflight | Complete — `b488309a2c` | Independent Graham approved; RED→GREEN pre-side-effect Docker-capability coverage recorded |
-| E03 | NativeGraph execution ignores agent timeout | Confirmed; spec ready | Sol implementation plan |
+| E03 | NativeGraph execution ignores agent timeout | Complete — `1ee7587f7b`, `0d4f1b3a79` | Independent Graham r2 approved; exact-deadline, lifecycle, and Docker shared-deadline RED→GREEN evidence recorded |
 | E04 | Abort still starts ready tool nodes | Already fixed — `dfa0043510`, `af44cb48ef` | Duplicate of completed C10; independent Graham approval and behavioral RED→GREEN evidence are recorded in `6bc3f9f988` |
 | E05 | Closed-worker credit return can hang drain | Confirmed; spec ready | Sol implementation plan |
 | E06 | Sidecar setup/finish failures leak siblings | Complete | Integrated `bb5e3fe5ff`, `bb23c66b39`; independent Graham PASS |
@@ -90,6 +90,12 @@ Graham review and a commit.
 | B01 | AgentX integration fixtures omit required cache-bust option | Complete — `91b65b2044` | Independent Graham approved; compile regression green |
 
 ## Progress log
+
+- 2026-08-26: Completed E03. NativeGraph callback execution now consumes the
+  remaining shared agent deadline under the injected clock; deadline timeout
+  takes precedence even over an exact-boundary callback error, reaps once, and
+  skips post-callback lifecycle work. Focused, 13-test NativeGraph, and 80-test
+  Docker suites passed; independent Graham r2 approved the final series.
 
 - 2026-08-26: Completed S14. Dataset DAG validation now has public-constructor
   characterization tests for valid acceptance, fork-lineage rejection, and
