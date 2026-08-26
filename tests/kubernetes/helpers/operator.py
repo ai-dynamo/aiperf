@@ -435,6 +435,60 @@ class OperatorJobResult:
         return None
 
 
+async def copy_pull_secret_to_namespace(
+    kubectl: KubectlClient, secret_name: str, target_namespace: str
+) -> None:
+    """Copy an imagePullSecret from any accessible namespace into ``target_namespace``.
+
+    Searches all namespaces for ``secret_name`` and copies it into
+    ``target_namespace``.  No-op when the secret already exists there.
+    """
+    import re
+
+    existing = await kubectl.run(
+        "get", "secret", secret_name, "-n", target_namespace, check=False
+    )
+    if existing.returncode == 0:
+        logger.info(f"Pull secret {secret_name!r} already in {target_namespace}")
+        return
+
+    ns_list = await kubectl.run(
+        "get", "namespaces", "-o", "jsonpath={.items[*].metadata.name}", check=False
+    )
+    if ns_list.returncode != 0:
+        logger.warning(
+            f"Cannot list namespaces; pull secret {secret_name!r} may be missing "
+            f"in {target_namespace}"
+        )
+        return
+
+    for ns in ns_list.stdout.strip().split():
+        if ns == target_namespace:
+            continue
+        fetch = await kubectl.run(
+            "get", "secret", secret_name, "-n", ns, "-o", "yaml", check=False
+        )
+        if fetch.returncode != 0:
+            continue
+        raw = fetch.stdout
+        raw = re.sub(r"\n\s+namespace:.*", "", raw)
+        raw = re.sub(r"\n\s+resourceVersion:.*", "", raw)
+        raw = re.sub(r"\n\s+uid:.*", "", raw)
+        raw = re.sub(r"\n\s+creationTimestamp:.*", "", raw)
+        logger.info(
+            f"Copying pull secret {secret_name!r} from {ns!r} → {target_namespace!r}"
+        )
+        try:
+            await kubectl.apply(raw, namespace=target_namespace)
+            return
+        except RuntimeError as exc:
+            logger.warning(f"Failed to copy pull secret from {ns!r}: {exc}")
+
+    logger.warning(
+        f"Pull secret {secret_name!r} not found in any namespace; image pull may fail"
+    )
+
+
 class OperatorDeployer:
     """Manages operator deployment and AIPerfJob lifecycle."""
 
@@ -740,66 +794,8 @@ class OperatorDeployer:
     async def ensure_pull_secret_in_namespace(
         self, secret_name: str, target_namespace: str
     ) -> None:
-        """Copy a pull secret from any accessible namespace into ``target_namespace``.
-
-        Searches all accessible namespaces for a secret named ``secret_name``
-        and copies it into ``target_namespace``.  Safe to call when the secret
-        is already present — exits early without modifying anything.
-        """
-        import re
-
-        existing = await self.kubectl.run(
-            "get",
-            "secret",
-            secret_name,
-            "-n",
-            target_namespace,
-            check=False,
-        )
-        if existing.returncode == 0:
-            logger.info(f"Pull secret {secret_name!r} already in {target_namespace}")
-            return
-
-        ns_list = await self.kubectl.run(
-            "get",
-            "namespaces",
-            "-o",
-            "jsonpath={.items[*].metadata.name}",
-            check=False,
-        )
-        if ns_list.returncode != 0:
-            logger.warning(
-                f"Cannot list namespaces; pull secret {secret_name!r} may be missing "
-                f"in {target_namespace}"
-            )
-            return
-
-        for ns in ns_list.stdout.strip().split():
-            if ns == target_namespace:
-                continue
-            fetch = await self.kubectl.run(
-                "get", "secret", secret_name, "-n", ns, "-o", "yaml", check=False
-            )
-            if fetch.returncode != 0:
-                continue
-            # Strip per-resource metadata so kubectl apply creates a fresh copy.
-            raw = fetch.stdout
-            raw = re.sub(r"\n\s+namespace:.*", "", raw)
-            raw = re.sub(r"\n\s+resourceVersion:.*", "", raw)
-            raw = re.sub(r"\n\s+uid:.*", "", raw)
-            raw = re.sub(r"\n\s+creationTimestamp:.*", "", raw)
-            logger.info(
-                f"Copying pull secret {secret_name!r} from {ns!r} → {target_namespace!r}"
-            )
-            try:
-                await self.kubectl.apply(raw, namespace=target_namespace)
-                return
-            except RuntimeError as exc:
-                logger.warning(f"Failed to copy pull secret from {ns!r}: {exc}")
-
-        logger.warning(
-            f"Pull secret {secret_name!r} not found in any namespace; image pull may fail"
-        )
+        """Copy a pull secret from any accessible namespace into ``target_namespace``."""
+        await copy_pull_secret_to_namespace(self.kubectl, secret_name, target_namespace)
 
     async def _cleanup_existing_operator(self) -> None:
         """Remove any existing operator deployment that could conflict.

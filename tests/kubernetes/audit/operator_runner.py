@@ -24,6 +24,7 @@ from tests.kubernetes.audit.cases import AuditCase
 from tests.kubernetes.helpers.operator import (
     AIPerfJobConfig,
     OperatorDeployer,
+    copy_pull_secret_to_namespace,
 )
 
 logger = AIPerfLogger(__name__)
@@ -151,6 +152,11 @@ class OperatorAuditRunner:
         cfg = self._build_job_config(case, swept_value=swept_value)
 
         await self.deployer.kubectl.run("create", "namespace", namespace, check=False)
+
+        for secret in self.config.image_pull_secrets:
+            await copy_pull_secret_to_namespace(
+                self.deployer.kubectl, secret, namespace
+            )
 
         result = await self.deployer.run_job(
             config=cfg,

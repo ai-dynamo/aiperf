@@ -20,6 +20,7 @@ import yaml
 from aiperf.common.aiperf_logger import AIPerfLogger
 from tests.kubernetes.audit.cases import AuditCase
 from tests.kubernetes.helpers.kubectl import KubectlClient
+from tests.kubernetes.helpers.operator import copy_pull_secret_to_namespace
 
 logger = AIPerfLogger(__name__)
 
@@ -247,6 +248,9 @@ class BarePodDeployer:
         name = f"bare-{case.case_id}-{suffix}"
 
         await self.kubectl.create_namespace(namespace)
+
+        for secret in self.config.image_pull_secrets:
+            await copy_pull_secret_to_namespace(self.kubectl, secret, namespace)
 
         argv = self._build_args(case, swept_value=swept_value)
         manifest = self._build_job_manifest(name=name, namespace=namespace, argv=argv)
