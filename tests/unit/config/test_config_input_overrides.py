@@ -637,3 +637,38 @@ def test_public_dataset_still_switches_type_and_errors(
 ) -> None:
     with pytest.raises(ConfigurationError, match=r"--public-dataset"):
         resolve_config(cli(public_dataset="sharegpt"), random_pool_yaml)
+
+
+def test_inert_flag_message_reports_synthetic_for_an_omitted_yaml_type(
+    tmp_path: Path,
+) -> None:
+    """An inert flag against a YAML dataset with no `type:` key must name the
+    type it actually resolves to (synthetic), not the raw None.
+
+    Regression: the inert-flag check correctly defaults `dataset.get("type")
+    or DatasetType.SYNTHETIC` for the check itself, but the error message
+    interpolated the raw (unset) value, so an omitted `type:` -- legal, and
+    validated as synthetic -- printed "dataset of type None". Needs a
+    non-dataset flag (--streaming) alongside the inert one: without it,
+    ``build_cli_overrides`` returns nothing, ``pre_merged`` and ``merged``
+    alias the same dict, and the preliminary ``AIPerfConfig.model_validate``
+    call's own type-defaulting mutates the shared dict in place before this
+    check runs, masking the bug.
+    """
+    cfg_path = tmp_path / "no_type.yaml"
+    cfg_path.write_text(
+        """\
+schemaVersion: "2.0"
+benchmark:
+  model: test-model
+  endpoint:
+    url: http://localhost:8000
+  dataset: {}
+  phases:
+    type: concurrency
+    concurrency: 1
+    requests: 5
+"""
+    )
+    with pytest.raises(ConfigurationError, match=r"dataset of type 'synthetic'"):
+        resolve_config(cli(synthesis_max_isl=100, streaming=True), cfg_path)
