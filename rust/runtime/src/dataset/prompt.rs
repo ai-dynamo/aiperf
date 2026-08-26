@@ -83,6 +83,7 @@ enum CorpusSource {
 #[derive(Debug, Clone)]
 pub struct CorpusPromptGeneratorFactory {
     corpus: CorpusSource,
+    random_style: RandomCorpusStyle,
     reference_random: Option<ReferenceRandomPromptConfig>,
 }
 
@@ -97,6 +98,7 @@ impl CorpusPromptGeneratorFactory {
     pub fn sonnet() -> Self {
         Self {
             corpus: CorpusSource::Sonnet,
+            random_style: RandomCorpusStyle::Vllm,
             reference_random: None,
         }
     }
@@ -105,14 +107,21 @@ impl CorpusPromptGeneratorFactory {
     pub fn coding() -> Self {
         Self {
             corpus: CorpusSource::Coding,
+            random_style: RandomCorpusStyle::Vllm,
             reference_random: None,
         }
     }
 
     /// Use tokenizer-driven synthetic random generation.
     pub fn random() -> Self {
+        Self::random_with_style(RandomCorpusStyle::Vllm)
+    }
+
+    /// Use tokenizer-driven random generation with `style`'s token pool.
+    pub fn random_with_style(style: RandomCorpusStyle) -> Self {
         Self {
             corpus: CorpusSource::Random,
+            random_style: style,
             reference_random: None,
         }
     }
@@ -121,6 +130,7 @@ impl CorpusPromptGeneratorFactory {
     pub fn random_reference(style: RandomCorpusStyle, offsets: Arc<[usize]>) -> Self {
         Self {
             corpus: CorpusSource::Random,
+            random_style: style,
             reference_random: Some(ReferenceRandomPromptConfig { style, offsets }),
         }
     }
@@ -139,6 +149,7 @@ impl CorpusPromptGeneratorFactory {
         }
         Ok(Self {
             corpus: CorpusSource::Custom(corpus),
+            random_style: RandomCorpusStyle::Vllm,
             reference_random: None,
         })
     }
@@ -157,7 +168,7 @@ impl CorpusPromptGeneratorFactory {
     ) -> Result<PreparedCorpusPromptGeneratorFactory> {
         Ok(PreparedCorpusPromptGeneratorFactory {
             source: match &self.corpus {
-                CorpusSource::Random => PreparedPromptGeneratorSource::Random,
+                CorpusSource::Random => PreparedPromptGeneratorSource::Random(self.random_style),
                 _ => PreparedPromptGeneratorSource::Corpus(tokenize_corpus_arc(
                     &self.corpus,
                     tokenizer,
@@ -185,6 +196,7 @@ impl PromptGeneratorFactory for CorpusPromptGeneratorFactory {
             CorpusSource::Random => Ok(Box::new(RandomPromptGenerator::new(
                 tokenizer,
                 root,
+                self.random_style,
                 self.reference_random.clone(),
             )?)),
             _ => {
@@ -214,7 +226,7 @@ pub struct PreparedCorpusPromptGeneratorFactory {
 #[derive(Debug, Clone)]
 enum PreparedPromptGeneratorSource {
     Corpus(Arc<[u32]>),
-    Random,
+    Random(RandomCorpusStyle),
 }
 
 impl PromptGeneratorFactory for PreparedCorpusPromptGeneratorFactory {
@@ -231,9 +243,9 @@ impl PromptGeneratorFactory for PreparedCorpusPromptGeneratorFactory {
                     root,
                 )))
             }
-            PreparedPromptGeneratorSource::Random => {
-                Ok(Box::new(RandomPromptGenerator::new(tokenizer, root, None)?))
-            }
+            PreparedPromptGeneratorSource::Random(style) => Ok(Box::new(
+                RandomPromptGenerator::new(tokenizer, root, *style, None)?,
+            )),
         }
     }
 }
@@ -460,11 +472,14 @@ impl<'a> RandomPromptGenerator<'a> {
     fn new(
         tokenizer: &'a dyn TextTokenizer,
         root: RngRoot,
+        style: RandomCorpusStyle,
         reference: Option<ReferenceRandomPromptConfig>,
     ) -> Result<Self> {
-        let style = reference
-            .as_ref()
-            .map_or(RandomCorpusStyle::Vllm, |config| config.style);
+        debug_assert!(
+            reference
+                .as_ref()
+                .is_none_or(|config| config.style == style)
+        );
         let allowed_token_ids = match style {
             RandomCorpusStyle::Vllm => tokenizer.allowed_random_token_ids(),
             RandomCorpusStyle::Sglang => None,
@@ -1113,6 +1128,26 @@ mod tests {
             .create(&tokenizer, RngRoot::new(Some(5)))
             .unwrap();
         assert_eq!(generator.generate_token_ids(1, &[], 1).unwrap(), vec![9]);
+    }
+
+    #[test]
+    fn random_style_selects_pool_without_reference_offsets() {
+        let tokenizer = AllowedOnlyTokenizer;
+        let mut vllm = CorpusPromptGeneratorFactory::random_with_style(RandomCorpusStyle::Vllm)
+            .create(&tokenizer, RngRoot::new(Some(5)))
+            .unwrap();
+        let mut sglang = CorpusPromptGeneratorFactory::random_with_style(RandomCorpusStyle::Sglang)
+            .create(&tokenizer, RngRoot::new(Some(5)))
+            .unwrap();
+
+        assert_eq!(vllm.generate_token_ids(16, &[], 1).unwrap(), vec![1; 16]);
+        assert!(
+            sglang
+                .generate_token_ids(64, &[], 1)
+                .unwrap()
+                .iter()
+                .any(|token| *token != 1)
+        );
     }
 
     #[test]

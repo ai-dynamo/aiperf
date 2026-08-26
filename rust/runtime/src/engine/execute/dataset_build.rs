@@ -573,11 +573,14 @@ fn prompt_generator_factory(corpus: &str) -> Result<Arc<dyn PromptGeneratorFacto
 fn synthetic_prompt_generator(
     prompts: Option<&SyntheticPromptsSpec>,
 ) -> Result<Arc<dyn PromptGeneratorFactory>> {
-    prompt_generator_factory(
-        prompts
-            .and_then(|prompts| prompts.corpus.as_deref())
-            .unwrap_or("sonnet"),
-    )
+    match prompts.and_then(|prompts| prompts.corpus.as_deref()) {
+        Some("random") => Ok(Arc::new(CorpusPromptGeneratorFactory::random_with_style(
+            prompts.map_or(crate::dataset::RandomCorpusStyle::default(), |prompts| {
+                prompts.random_corpus_style
+            }),
+        ))),
+        corpus => prompt_generator_factory(corpus.unwrap_or("sonnet")),
+    }
 }
 
 fn authored_prompt_generator(
