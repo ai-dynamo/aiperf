@@ -175,7 +175,7 @@ listed enforcement and evidence MUST exist before generation 1 is released.
 | 13 | Open registry IDs and strict plugin-owned config; Config-v2 legacy/open union rejects mixtures | Schema, projection, serialization, CLI, protocol, and unknown-ID tests |
 | 14 | Root ownership/mode policy, privileged-mode restrictions, authenticated first-party inventory, explicit no-sandbox diagnostics | Discovery authority, privilege, tamper, rollback, and revocation tests |
 | 15 | Intended catalog fixes winners before native activation; any later failure poisons or fails without re-resolution | Loader/registration/runtime failure and no-promotion fixtures |
-| 16 | One verified `aiperf_alloc_v1` provider, with every `GlobalAlloc` shim importing its pinned `mi_*` ABI directly, plus `panic=abort` across all boundary artifacts | Cross-direction ownership/import-map tests and subprocess abort tests |
+| 16 | One verified `aiperf_alloc_v1` provider, with every `GlobalAlloc` shim importing and resolving its pinned `mi_*` ABI directly, plus `panic=abort` across all boundary artifacts | Cross-direction ownership/import-map tests, runtime GOT/bound-symbol/IAT origin checks, preload/interposition fixtures, and subprocess abort tests |
 
 ## Considered and rejected alternatives
 
@@ -442,12 +442,29 @@ arguments are path-remapped before canonicalization. The raw invocations and
 local paths MAY be retained in a separate diagnostic artifact, but they do not
 participate directly in a reproducible identity.
 
-The ABI-facing compiled-crate closure is conservative. It includes every exact
-artifact contributing to boundary layout, validity, drop glue, vtables, auto
-traits, associated types, generic instantiations, panic behavior, or allocator
-behavior, including private fields and generated code. A dependency is included
-unless the SDK proves it cannot affect any boundary value. Cargo metadata and
-source-tree hashes alone are insufficient.
+The common ABI-facing compiled-crate closure is conservative but not allowed to
+swallow plugin-private implementation code. It includes every exact prebuilt
+artifact whose representation, validity rule, trait/vtable layout, auto-trait
+contract, associated boundary type, generic boundary wrapper, drop convention,
+panic behavior, or allocator behavior is instantiated, interpreted, or relied
+on by both host and plugin. For a shared concrete boundary type this includes
+layout-affecting private fields and generated code even when absent from its
+public signature. A dependency is common unless the SDK proves that only one
+side can instantiate or interpret its values/code. Cargo metadata and source-
+tree hashes alone are insufficient.
+
+By contrast, a plugin's erased concrete factory, endpoint, transport, exporter,
+future, error, or validated-config type; its method bodies and concrete vtable/
+drop glue; and dependencies reachable only inside that implementation remain in
+that plugin's artifact-build record. The common universe binds the shared trait
+object representation, method signatures, boundary wrappers, and destruction
+calling convention, not the byte identity of each plugin-owned implementation.
+The host may call plugin vtable methods/drop glue only while its library is
+resident, but it never instantiates or interprets the erased concrete layout.
+Changing such private code therefore rebuilds only that plugin. If a private
+type becomes concrete at the boundary or host code begins to instantiate/
+interpret it, the SDK moves its exact artifact closure into the common universe
+and all plugins rebuild.
 
 The SDK embeds both records and IDs in a non-executable, platform-specific
 artifact section and repeats their IDs in the manifest. The loader parses and
@@ -615,6 +632,14 @@ The injected `GlobalAlloc` shim has these exact semantics:
 
 Actual ELF/Mach-O imports and PE import tables MUST prove that each compiled
 `GlobalAlloc` shim targets that provider; source configuration is not evidence.
+Allocator bindings are never lazy: the executable and plugins carry ELF
+`DF_BIND_NOW`/`DF_1_NOW` from `-z now`; Mach-O artifacts use bind-at-load/non-
+lazy symbol pointers and contain no lazy-bind opcode or lazy pointer for any
+required `mi_*` symbol; and PE uses the normal non-delay IAT. Static inspection
+rejects a lazy allocator relocation even if the platform loader would likely
+resolve it before first use. Plugin ELF loading additionally uses `RTLD_NOW` as
+specified below.
+
 After eager relocation and before any plugin entry call, the loader also resolves
 each required `mi_*` symbol on the exact retained provider handle and proves
 that every host/plugin shim relocation target equals an address inside that
@@ -812,7 +837,7 @@ artifacts:
     dependencies: [baseline:allocator]
 
 exporter:
-  otlp:
+  otel:
     priority: 0
     description: OpenTelemetry report exporter
     metadata: {}
@@ -1193,6 +1218,14 @@ The command behavior is explicit:
   and required packages, never fully shadowed optional packages. Validating one
   otherwise-shadowed package requires explicit `--plugin-manifest`, which makes
   it required for that diagnostic invocation;
+- `aiperf plugins lock --output <new-directory>` performs the same complete
+  composition/activation as `validate`, freezes actual descriptors and status,
+  then writes `plugin.lock` plus the complete `LockedCatalogBundle` store to a
+  private sibling temporary directory and atomically publishes the requested
+  directory. The output path MUST be absent, outside every active discovery
+  root, and on one filesystem; the command never overwrites or merges a bundle.
+  It executes trusted plugin code, reports that fact before activation, and is
+  the sole supported producer for hermetic lock bundles;
 - `aiperf config`, profile validation, execution, and native evaluation compose
   before opening artifacts or starting dashboards, control-hook networking,
   Tokio/Velo runtimes, dataset acquisition, or any registered component;
@@ -1275,8 +1308,8 @@ present; canonical package name/version/authority when decoded;
 complete distribution-controlled non-system artifact-closure digests and every
 plugin artifact-build ID; verified baseline module identities/digests; package
 authority/load status;
-per-entry status `winning|shadowed|ambiguous|quarantined`; stable quarantine
-reason code; every actual registered descriptor digest; canonical and alias
+per-entry status `winning|shadowed|ambiguous|quarantined`; the complete canonical
+sorted failure-receipt set; every actual registered descriptor digest; canonical and alias
 winner maps with priorities; required package identities; required component
 keys; and target system-library allowlist version. Malformed readable manifests
 use their raw-byte digest and stable failure code; unreadable entries use their
@@ -1285,6 +1318,23 @@ stable failure code. It excludes absolute paths and free-form
 diagnostic text. The digest is BLAKE3 over canonical length-delimited bytes.
 Every process rebuilds the full lock and reports the first structured difference
 before execution.
+
+Failure selection never depends on checker iteration order. Every discovered
+failure contributes one receipt sorted lexicographically by
+`(phase_ordinal, discovery_source_id, relative_entry_id, logical_object_id,
+error_code, evidence_digest)`; optional values use explicit absence tags. Phase
+ordinals follow the numbered resolution algorithm. `discovery_source_id` is the
+canonical length-delimited `(source_kind_ordinal, authored_index)` where kinds
+are distribution, platform-system, platform-user, environment, explicit-
+directory, explicit-manifest, or hermetic-bundle; each ordered root/argument has
+its zero-based index. It contains no local path. Directory-discovered manifest
+basenames MUST be lowercase ASCII and match either `plugins.yaml` or
+`[a-z0-9][a-z0-9_.-]*.plugins.yaml`; this exact basename is
+`relative_entry_id`. An explicit-manifest entry uses its authored argument index
+as the relative ID, so an unreadable platform pathname need not be encoded.
+`logical_object_id` is the manifest-declared normalized artifact identity when
+available. The evidence digest covers the presence-tagged evidence record. The
+lock retains all receipts; it never chooses one "first" quarantine reason.
 
 Automatic executable transfer is intentionally absent. Kubernetes, SLURM, and
 other cross-host distributions MUST package the same plugin artifacts on every
@@ -1563,8 +1613,11 @@ Fixed exporter enablement fields become an ordered open selection:
 
 ```yaml
 exporters:
-  - id: json
-  - id: otlp
+  - id: genai_perf_v1
+    config:
+      json: true
+      csv: true
+  - id: otel
     config:
       endpoint: http://collector:4318
 ```
@@ -1579,12 +1632,39 @@ serialization emits the open list when exporters are selected and omits it when
 none are selected. Existing CLI flags project through the same legacy
 normalizer. Each selected factory strictly decodes only its own `config` object.
 
+First-party exporter identities and legacy projection are frozen as follows.
+`file+n` and `uploader+n` mean order keys `n` and `1000+n`, respectively. Each
+enabled legacy source produces exactly one exporter instance; JSON/CSV toggles
+remain fields of that instance and never expand into separate `json` or `csv`
+IDs. Absent/disabled sources produce no instance.
+
+| Canonical ID | Legacy `cfg.export` source | Canonical open `config` | Order key |
+|---|---|---|---|
+| `genai_perf_v1` | `genai_perf` | Exact normalized `GenaiPerf` object, including `json`/`csv` toggles | `file+0` |
+| `server_metrics` | `server_metrics` | Exact normalized object, including `json`/`csv` toggles | `file+1` |
+| `timeslice` | No authored fixed field; current planner-derived internal config | Exact normalized current `TimesliceExportConfig` when enabled | `file+2` |
+| `accuracy_csv` | No authored fixed field; accuracy-mode planner enablement | Exact normalized current `AccuracyCsvExportConfig` when enabled | `file+3` |
+| `server_metrics_parquet` | `parquet` | Exact normalized `ParquetExport` object | `file+4` |
+| `console_txt` | `console_txt` | Exact normalized `ConsoleTxt` object | `file+5` |
+| `otel` | `otel` | Exact normalized `OtelExport` object | `uploader+0` |
+| `mlflow` | `mlflow` | Exact normalized `MlflowExport` object | `uploader+1` |
+| `wandb` | `wandb` | Exact normalized `WandbExport` object | `uploader+2` |
+
+The package/artifact may use the descriptive term OTLP, but the canonical
+registry/config/report ID remains the existing `otel`. Generation 1 defines no
+`json` or `otlp` alias. Using either as an ID fails with a diagnostic naming the
+valid canonical ID; legacy `cfg.export.otel` normalizes directly to `otel` with
+no rename. Changing, splitting, or aliasing one of these identities requires a
+separate compatibility migration.
+
 The canonical exporter representation is an authored ordered list of
-`{ id, config }`, with an empty object default for `config`. API generation 1
-rejects duplicate normalized exporter IDs in one run; multi-instance exporters
-are deferred to a later API generation with an explicit instance-key contract.
-Registry priority selects an implementation; list order does not override
-package priority.
+`{ id, config }`, with an empty object default for `config`. The host resolves
+every authored canonical/alias spelling through the frozen catalog first, then
+API generation 1 rejects duplicate resolved `(canonical factory ID, descriptor
+digest)` identities in one run. Two aliases of one winner therefore cannot
+instantiate it twice. Multi-instance exporters are deferred to a later API
+generation with an explicit instance-key contract. Registry priority selects an
+implementation; list order does not override package priority.
 
 Exporter execution order is still host-owned. Each exporter descriptor declares
 its order band and stable tie-break key. The host sorts enabled
@@ -1995,8 +2075,9 @@ The separately built exemplar suite contains at least:
   boxed-future allocate/reallocate/return/drop coverage in both directions for
   every family retained by the final traits, plus import-map proof that every
   shim imports the pinned `mi_*` ABI from the verified `aiperf_alloc_v1`
-  provider and every explicit boundary-storage allocation obeys the ownership
-  policy;
+  provider, runtime relocation targets resolve inside that exact provider under
+  preload/interposition fixtures, and every explicit boundary-storage allocation
+  obeys the ownership policy;
 - subprocess fixtures proving a plugin or host-callback panic aborts and is never
   reported as a caught registration/runtime error;
 - a plugin-defined object's `Drop` implementation that records completion before
@@ -2042,7 +2123,8 @@ behavior but does not satisfy loader, linkage, allocator, or ABI conformance.
 The feature is not complete without:
 
 - generated JSON Schema for `plugins.yaml` schema `2.0`;
-- `aiperf plugins list`, `validate`, and `inspect-build` documentation;
+- `aiperf plugins list`, `validate`, `inspect-build`, and `lock --output`
+  documentation;
 - a third-party Cargo template using only allowlisted public crates;
 - platform installation layouts and atomic package install/uninstall guidance;
 - host-ABI-universe and plugin-artifact-build mismatch troubleshooting guides;
