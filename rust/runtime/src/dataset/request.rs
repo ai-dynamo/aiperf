@@ -3763,9 +3763,10 @@ mod tests {
 
     #[test]
     fn warmup_phase_falls_back_to_live_format_not_profiling_cache() {
-        // A system-role first turn makes warmup differ from profiling: warmup folds
-        // the conversation system prompt into that first message, while profiling
-        // drops it. The profiling-phase cache must therefore never serve warmup.
+        // Warmup folds the conversation system prompt while live-formatting the
+        // first message. Profiling now preserves the same system-prompt semantics,
+        // so byte inequality no longer distinguishes the two paths; the test-only
+        // hit counter proves warmup still never consumes the profiling cache.
         let mut pool = SegmentPool::new();
         let system = pool
             .intern_text(
@@ -3821,6 +3822,7 @@ mod tests {
         let mut warmup_session =
             ConversationSession::new(dataset.clone(), SessionId::from("session")).unwrap();
         warmup_session.advance_to(0).unwrap();
+        let hits_before = CACHE_HITS.get();
         let warmup_body = warmup_session
             .materialize_prepared(
                 &EndpointRequestMaterializer,
@@ -3833,12 +3835,12 @@ mod tests {
             .body
             .to_wire()
             .unwrap();
+        assert_eq!(CACHE_HITS.get(), hits_before);
         let profiling_body = dispatch_turn(dataset, endpoint.as_ref(), 0, &Overrides::new());
-        // Warmup folds the conversation system prompt into the first message;
-        // profiling (the cached plan) does not — the two must diverge.
-        assert_ne!(warmup_body, profiling_body);
+        assert_eq!(CACHE_HITS.get(), hits_before + 1);
+        assert_eq!(warmup_body, profiling_body);
         let warmup: Value = serde_json::from_slice(&warmup_body).unwrap();
-        assert_eq!(warmup["messages"][0]["content"], "be terse\nbase");
+        assert_eq!(warmup["messages"][0]["content"], "be terse\n\nbase");
     }
 
     #[test]
