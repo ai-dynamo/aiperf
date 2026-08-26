@@ -31,6 +31,55 @@ async fn test_basic_image_retrieval() {
     assert!(!json["image_latency"].is_null());
 }
 
+#[tokio::test]
+async fn yaml_random_pool_honors_cli_image_batch_size() {
+    let h = AIPerfHarness::new().await;
+    let pool = write_jsonl(
+        h.artifact_path(),
+        "image_pool.jsonl",
+        &[
+            serde_json::json!({"image": "data:image/png;base64,iVBORw0KGgo="}),
+            serde_json::json!({"image": "data:image/png;base64,iVBORw0KGgoA"}),
+        ],
+    );
+    let config = h.artifact_path().join("image_retrieval_random_pool.yaml");
+    std::fs::write(
+        &config,
+        format!(
+            "schemaVersion: \"2.0\"\n\
+             benchmark:\n\
+            \x20 model: mock-model\n\
+            \x20 endpoint: {{type: image_retrieval, url: {}}}\n\
+            \x20 dataset: {{type: file, path: {}, format: random_pool}}\n\
+            \x20 phases: {{type: concurrency, requests: 2, concurrency: 1}}\n\
+            \x20 gpuTelemetry: {{enabled: false}}\n\
+            \x20 serverMetrics: {{enabled: false}}\n\
+            \x20 runtime: {{ui: none}}\n",
+            h.mock.url,
+            pool.display(),
+        ),
+    )
+    .expect("write random-pool config");
+
+    let r = h.run(&format!(
+        "--config {} --image-batch-size 2",
+        config.display()
+    ));
+    assert!(
+        r.success(),
+        "image retrieval run failed (exit {}):\nstdout:\n{}\nstderr:\n{}",
+        r.exit_code,
+        r.stdout,
+        r.stderr
+    );
+    assert_eq!(r.artifacts.request_count() as u32, 2);
+    assert_eq!(
+        r.artifacts.json()["total_num_images"]["avg"],
+        serde_json::json!(4.0),
+        "two requests must each submit the CLI-selected two-image random-pool batch"
+    );
+}
+
 /// Validates the aggregate and sweep-line image-sample throughput metrics with
 /// exact timing/calculation checks against the run's own reported scalars.
 #[tokio::test]

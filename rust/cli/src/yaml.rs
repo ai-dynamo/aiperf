@@ -222,6 +222,9 @@ fn apply_cli_overrides(
     overlay_bool(&mut inputs.apply_chat_template, flags.apply_chat_template);
     overlay_bool(&mut inputs.proxy_from_env, flags.proxy_from_env);
     overlay_bool(&mut inputs.prefetch_media_urls, flags.prefetch_media_urls);
+    if let Some(batch_size) = flags.image_batch_size {
+        inputs.random_pool_image_batch_size = Some(batch_size);
+    }
     overlay_bool(&mut inputs.uuid_and_strip, flags.uuid_and_strip);
     overlay_bool(&mut inputs.omit_kv_hints, flags.omit_kv_hints);
     overlay_bool(&mut inputs.open_loop_strict, flags.open_loop_strict);
@@ -1108,6 +1111,9 @@ struct DatasetSection {
     /// Per-dataset sampling seed (distinct from the top-level run `randomSeed`).
     #[serde(default, alias = "randomSeed")]
     random_seed: Option<u64>,
+    /// Images per request for file-backed `random_pool` datasets.
+    #[serde(default, alias = "imageBatchSize")]
+    image_batch_size: Option<u32>,
     prompts: Option<PromptsSection>,
     /// Shared-prefix / prefix-pool policy (`synthetic.prefix_prompts`).
     #[serde(default, alias = "prefixPrompts")]
@@ -1828,6 +1834,7 @@ impl Benchmark {
             });
         let num_conversations = dataset.as_ref().and_then(|d| d.num_conversations);
         let dataset_entries = dataset.as_ref().and_then(|d| d.entries);
+        let random_pool_image_batch_size = dataset.as_ref().and_then(|d| d.image_batch_size);
         // Per-dataset seed is separate from the top-level run seed.
         let dataset_random_seed = dataset.as_ref().and_then(|d| d.random_seed);
         let inter_turn_delay_cap_seconds = dataset
@@ -2550,7 +2557,7 @@ impl Benchmark {
             steady_state: false,
             steady_state_fraction: None,
             steady_state_hybrid: false,
-            random_pool_image_batch_size: None,
+            random_pool_image_batch_size,
             image_spec,
             audio_spec,
             video_spec,
@@ -3640,6 +3647,72 @@ benchmark:
             .expect("spawn worker")
             .join()
             .expect("worker panicked");
+    }
+
+    #[test]
+    fn cli_image_batch_size_overlays_yaml_random_pool() {
+        std::thread::Builder::new()
+            .stack_size(32 * 1024 * 1024)
+            .spawn(|| {
+                let yaml = cfg(
+                    "  dataset: {type: file, path: /tmp/images.jsonl, format: random_pool}\n  phases: {type: concurrency, requests: 1, concurrency: 1}\n",
+                );
+                let raw: serde_json::Value = serde_yaml::from_str(&yaml).unwrap();
+                let expanded = crate::expand::expand_config(raw).unwrap();
+                let flags = crate::flags::ProfileFlags::parse_from_args(&[
+                    "--image-batch-size".to_string(),
+                    "2".to_string(),
+                ])
+                .expect("flags parse");
+                let run = resolve_expanded_value(
+                    expanded,
+                    Some("/tmp/x".into()),
+                    Some(&flags),
+                )
+                .expect("overlay resolves");
+                let dataset = run
+                    .cfg
+                    .datasets
+                    .as_ref()
+                    .and_then(|datasets| datasets.first())
+                    .expect("dataset");
+                let crate::model::dataset::Dataset::File(file) = dataset else {
+                    panic!("expected a file dataset");
+                };
+                assert_eq!(
+                    file.options["image_batch_size"],
+                    serde_json::json!(2),
+                    "--image-batch-size must reach YAML random_pool inputs"
+                );
+            })
+            .expect("spawn worker")
+            .join()
+            .expect("worker panicked");
+    }
+
+    #[test]
+    fn yaml_image_batch_size_reaches_random_pool() {
+        let run = resolve_str(
+            &cfg(
+                "  dataset: {type: file, path: /tmp/images.jsonl, format: random_pool, imageBatchSize: 3}\n  phases: {type: concurrency, requests: 1, concurrency: 1}\n",
+            ),
+            Some("/tmp/x".into()),
+        )
+        .expect("random-pool image batch config resolves");
+        let dataset = run
+            .cfg
+            .datasets
+            .as_ref()
+            .and_then(|datasets| datasets.first())
+            .expect("dataset");
+        let crate::model::dataset::Dataset::File(file) = dataset else {
+            panic!("expected a file dataset");
+        };
+        assert_eq!(
+            file.options["image_batch_size"],
+            serde_json::json!(3),
+            "dataset.imageBatchSize must reach random_pool options"
+        );
     }
 
     /// An explicit `--synthesis-*` flag must override the corresponding
