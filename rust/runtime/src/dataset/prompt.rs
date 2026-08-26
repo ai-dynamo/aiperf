@@ -17,6 +17,9 @@ use crate::rng::{ConfiguredRandomGenerator, RngRoot, RuntimeRandomGenerator};
 
 use crate::dataset::corpus::{SHAKESPEARE_CORPUS, tokenize_corpus_chunked};
 use crate::dataset::error::{DatasetError, Result};
+use crate::dataset::random_range::{
+    RandomCorpusStyle, ReferenceRandomStream, SeededRandomRangePlan,
+};
 use crate::dataset::tokenizer::TextTokenizer;
 
 /// Generated text paired with the authoritative token sequence used to build it.
@@ -46,6 +49,46 @@ pub trait PromptGenerator {
         hash_ids: &[i64],
         block_size: usize,
     ) -> Result<GeneratedPrompt>;
+
+    /// Generate an additive prefix without consuming a body ordinal.
+    fn generate_prefix(&mut self, num_tokens: usize) -> Result<GeneratedPrompt> {
+        self.generate(num_tokens, &[], 1)
+    }
+
+    /// Generate standalone prefix IDs without requiring text decoding.
+    fn generate_prefix_token_ids(&mut self, num_tokens: usize) -> Result<Vec<u32>> {
+        Ok(self.generate_prefix(num_tokens)?.tokens)
+    }
+
+    /// Generate a body and prepend already-materialized prefix IDs.
+    fn generate_with_prefix(
+        &mut self,
+        _num_tokens: usize,
+        _prefix_tokens: &[u32],
+    ) -> Result<GeneratedPrompt> {
+        Err(DatasetError::Validation(
+            "prompt generator does not support additive prefixes".into(),
+        ))
+    }
+
+    /// Generate raw body IDs and prepend already-materialized prefix IDs.
+    fn generate_token_ids_with_prefix(
+        &mut self,
+        num_tokens: usize,
+        prefix_tokens: &[u32],
+    ) -> Result<Vec<u32>> {
+        let mut tokens = Vec::with_capacity(prefix_tokens.len().saturating_add(num_tokens));
+        tokens.extend_from_slice(prefix_tokens);
+        if num_tokens > 0 {
+            tokens.extend(self.generate_token_ids(num_tokens, &[], 1)?);
+        }
+        if tokens.is_empty() {
+            return Err(DatasetError::Validation(
+                "synthetic prompt and prefix cannot both be empty".into(),
+            ));
+        }
+        Ok(tokens)
+    }
 }
 
 /// Factory seam giving every composition pass independent deterministic state.
@@ -82,6 +125,15 @@ enum CorpusSource {
 #[derive(Debug, Clone)]
 pub struct CorpusPromptGeneratorFactory {
     corpus: CorpusSource,
+    random_style: RandomCorpusStyle,
+    reference_random: Option<ReferenceRandomPromptConfig>,
+}
+
+#[derive(Debug, Clone)]
+struct ReferenceRandomPromptConfig {
+    style: RandomCorpusStyle,
+    offsets: Arc<[usize]>,
+    seeded_plan: Option<SeededRandomRangePlan>,
 }
 
 impl CorpusPromptGeneratorFactory {
@@ -89,6 +141,8 @@ impl CorpusPromptGeneratorFactory {
     pub fn sonnet() -> Self {
         Self {
             corpus: CorpusSource::Sonnet,
+            random_style: RandomCorpusStyle::Vllm,
+            reference_random: None,
         }
     }
 
@@ -96,13 +150,50 @@ impl CorpusPromptGeneratorFactory {
     pub fn coding() -> Self {
         Self {
             corpus: CorpusSource::Coding,
+            random_style: RandomCorpusStyle::Vllm,
+            reference_random: None,
         }
     }
 
     /// Use tokenizer-driven synthetic random generation.
     pub fn random() -> Self {
+        Self::random_with_style(RandomCorpusStyle::Vllm)
+    }
+
+    /// Use tokenizer-driven random generation with `style`'s token pool.
+    pub fn random_with_style(style: RandomCorpusStyle) -> Self {
         Self {
             corpus: CorpusSource::Random,
+            random_style: style,
+            reference_random: None,
+        }
+    }
+
+    /// Use a reference style and preseeded conversation offsets.
+    pub fn random_reference(style: RandomCorpusStyle, offsets: Arc<[usize]>) -> Self {
+        Self {
+            corpus: CorpusSource::Random,
+            random_style: style,
+            reference_random: Some(ReferenceRandomPromptConfig {
+                style,
+                offsets,
+                seeded_plan: None,
+            }),
+        }
+    }
+
+    /// Continue prompt and prefix draws from a complete seeded range plan.
+    pub fn random_reference_plan(plan: SeededRandomRangePlan) -> Self {
+        let style = plan.style();
+        let offsets = Arc::from(plan.offsets());
+        Self {
+            corpus: CorpusSource::Random,
+            random_style: style,
+            reference_random: Some(ReferenceRandomPromptConfig {
+                style,
+                offsets,
+                seeded_plan: Some(plan),
+            }),
         }
     }
 
@@ -120,6 +211,8 @@ impl CorpusPromptGeneratorFactory {
         }
         Ok(Self {
             corpus: CorpusSource::Custom(corpus),
+            random_style: RandomCorpusStyle::Vllm,
+            reference_random: None,
         })
     }
 
@@ -137,7 +230,7 @@ impl CorpusPromptGeneratorFactory {
     ) -> Result<PreparedCorpusPromptGeneratorFactory> {
         Ok(PreparedCorpusPromptGeneratorFactory {
             source: match &self.corpus {
-                CorpusSource::Random => PreparedPromptGeneratorSource::Random,
+                CorpusSource::Random => PreparedPromptGeneratorSource::Random(self.random_style),
                 _ => PreparedPromptGeneratorSource::Corpus(tokenize_corpus_arc(
                     &self.corpus,
                     tokenizer,
@@ -162,7 +255,12 @@ impl PromptGeneratorFactory for CorpusPromptGeneratorFactory {
         root: RngRoot,
     ) -> Result<Box<dyn PromptGenerator + 'a>> {
         match &self.corpus {
-            CorpusSource::Random => Ok(Box::new(RandomPromptGenerator::new(tokenizer, root)?)),
+            CorpusSource::Random => Ok(Box::new(RandomPromptGenerator::new(
+                tokenizer,
+                root,
+                self.random_style,
+                self.reference_random.clone(),
+            )?)),
             _ => {
                 // Tokenize once into Arc and build the generator directly — avoid
                 // the prepare→create detour that would Arc::clone a temporary
@@ -190,7 +288,7 @@ pub struct PreparedCorpusPromptGeneratorFactory {
 #[derive(Debug, Clone)]
 enum PreparedPromptGeneratorSource {
     Corpus(Arc<[u32]>),
-    Random,
+    Random(RandomCorpusStyle),
 }
 
 impl PromptGeneratorFactory for PreparedCorpusPromptGeneratorFactory {
@@ -207,9 +305,9 @@ impl PromptGeneratorFactory for PreparedCorpusPromptGeneratorFactory {
                     root,
                 )))
             }
-            PreparedPromptGeneratorSource::Random => {
-                Ok(Box::new(RandomPromptGenerator::new(tokenizer, root)?))
-            }
+            PreparedPromptGeneratorSource::Random(style) => Ok(Box::new(
+                RandomPromptGenerator::new(tokenizer, root, *style, None)?,
+            )),
         }
     }
 }
@@ -326,6 +424,27 @@ impl PromptGenerator for CorpusPromptGenerator<'_> {
             tokens,
         })
     }
+
+    fn generate_with_prefix(
+        &mut self,
+        num_tokens: usize,
+        prefix_tokens: &[u32],
+    ) -> Result<GeneratedPrompt> {
+        let mut tokens = Vec::with_capacity(prefix_tokens.len().saturating_add(num_tokens));
+        tokens.extend_from_slice(prefix_tokens);
+        if num_tokens > 0 {
+            tokens.extend(self.sample_tokens(num_tokens)?);
+        }
+        if tokens.is_empty() {
+            return Err(DatasetError::Validation(
+                "synthetic prompt and prefix cannot both be empty".into(),
+            ));
+        }
+        Ok(GeneratedPrompt {
+            text: self.tokenizer.decode(&tokens)?,
+            tokens,
+        })
+    }
 }
 
 impl CorpusPromptGenerator<'_> {
@@ -408,7 +527,7 @@ impl CorpusPromptGenerator<'_> {
     }
 }
 
-const RANDOM_TEXT_REPAIR_ATTEMPTS: usize = 16;
+const RANDOM_TEXT_REPAIR_ATTEMPTS: usize = 10;
 
 #[derive(Clone, Copy)]
 enum RandomGenerationMode {
@@ -426,11 +545,29 @@ struct RandomPromptGenerator<'a> {
     vocab_size: Option<u32>,
     eos_token_id: Option<u32>,
     replacement_token: u32,
+    offsets: Option<Arc<[usize]>>,
+    offset_index: usize,
+    request_index: usize,
+    has_warned_offsets_exhausted: bool,
+    reference_stream: Option<ReferenceRandomStream>,
 }
 
 impl<'a> RandomPromptGenerator<'a> {
-    fn new(tokenizer: &'a dyn TextTokenizer, root: RngRoot) -> Result<Self> {
-        let allowed_token_ids = tokenizer.allowed_random_token_ids();
+    fn new(
+        tokenizer: &'a dyn TextTokenizer,
+        root: RngRoot,
+        style: RandomCorpusStyle,
+        reference: Option<ReferenceRandomPromptConfig>,
+    ) -> Result<Self> {
+        debug_assert!(
+            reference
+                .as_ref()
+                .is_none_or(|config| config.style == style)
+        );
+        let allowed_token_ids = match style {
+            RandomCorpusStyle::Vllm => tokenizer.allowed_random_token_ids(),
+            RandomCorpusStyle::Sglang => None,
+        };
         if allowed_token_ids
             .as_ref()
             .is_some_and(|tokens| tokens.is_empty())
@@ -447,8 +584,9 @@ impl<'a> RandomPromptGenerator<'a> {
                 tokenizer.name()
             )));
         }
-        let eos_token_id = tokenizer
-            .eos_token_id()
+        let eos_token_id = (style == RandomCorpusStyle::Vllm)
+            .then(|| tokenizer.eos_token_id())
+            .flatten()
             .filter(|eos| vocab_size.is_none_or(|size| *eos < size));
         let replacement_token = allowed_token_ids
             .as_deref()
@@ -463,6 +601,11 @@ impl<'a> RandomPromptGenerator<'a> {
                     tokenizer.name()
                 ))
             })?;
+        let reference_stream = reference
+            .as_ref()
+            .and_then(|config| config.seeded_plan.as_ref())
+            .map(SeededRandomRangePlan::continuation)
+            .transpose()?;
         Ok(Self {
             tokenizer,
             block_separator: tokenizer.block_separation_token_id(),
@@ -473,6 +616,11 @@ impl<'a> RandomPromptGenerator<'a> {
             vocab_size,
             eos_token_id,
             replacement_token,
+            offsets: reference.map(|config| config.offsets),
+            offset_index: 0,
+            request_index: 0,
+            has_warned_offsets_exhausted: false,
+            reference_stream,
         })
     }
 
@@ -593,7 +741,7 @@ impl<'a> RandomPromptGenerator<'a> {
                 candidate.truncate(target_len);
             } else {
                 let missing = target_len - candidate.len();
-                candidate.extend(self.sample_raw_tokens(missing)?);
+                candidate.extend(self.sample_independent_tokens(missing)?);
             }
         }
         Err(DatasetError::Validation(format!(
@@ -603,6 +751,62 @@ impl<'a> RandomPromptGenerator<'a> {
     }
 
     fn sample_raw_tokens(&mut self, count: usize) -> Result<Vec<u32>> {
+        if self.offsets.is_none() {
+            return self.sample_independent_tokens(count);
+        }
+        let pool_len = self.allowed_token_ids.as_ref().map_or_else(
+            || usize::try_from(self.vocab_size.unwrap_or(0)).unwrap_or(0),
+            |tokens| tokens.len(),
+        );
+        if pool_len == 0 {
+            return Err(DatasetError::Validation(
+                "random prompt token pool cannot be empty".into(),
+            ));
+        }
+        let cached_offset = self
+            .offsets
+            .as_ref()
+            .and_then(|offsets| offsets.get(self.offset_index))
+            .copied();
+        if cached_offset.is_none() && !self.has_warned_offsets_exhausted {
+            self.has_warned_offsets_exhausted = true;
+            tracing::warn!(
+                cached_offsets = self.offsets.as_ref().map_or(0, |offsets| offsets.len()),
+                "preseeded random prompt offsets exhausted; subsequent prompts no longer match the reference stream"
+            );
+        }
+        let offset = cached_offset
+            .map_or_else(
+                || {
+                    self.rng
+                        .randrange_u64(0, self.vocab_size.unwrap_or(pool_len as u32) as u64)
+                        .map(|value| value as usize)
+                },
+                Ok,
+            )
+            .map_err(|error| DatasetError::Validation(error.to_string()))?;
+        self.offset_index = self.offset_index.saturating_add(1);
+        let request_index = self.request_index;
+        self.request_index = self.request_index.saturating_add(1);
+        Ok((0..count)
+            .map(|index| {
+                let pool_index = ((offset as u128 + request_index as u128 + index as u128)
+                    % pool_len as u128) as usize;
+                self.allowed_token_ids
+                    .as_ref()
+                    .map_or(pool_index as u32, |tokens| tokens[pool_index])
+            })
+            .collect())
+    }
+
+    fn sample_independent_tokens(&mut self, count: usize) -> Result<Vec<u32>> {
+        if let Some(stream) = &mut self.reference_stream {
+            return Ok(stream
+                .draw_indices(self.vocab_size.unwrap_or(0) as usize, count)?
+                .into_iter()
+                .map(|index| index as u32)
+                .collect());
+        }
         let mut tokens = Vec::with_capacity(count);
         for _ in 0..count {
             let sampled = if let Some(allowed) = &self.allowed_token_ids {
@@ -621,6 +825,25 @@ impl<'a> RandomPromptGenerator<'a> {
             tokens.push(self.valid_token(sampled));
         }
         Ok(tokens)
+    }
+
+    fn sample_prefix_tokens(&mut self, count: usize) -> Result<Vec<u32>> {
+        let Some(stream) = &mut self.reference_stream else {
+            return self.sample_independent_tokens(count);
+        };
+        let pool_len = self.allowed_token_ids.as_ref().map_or_else(
+            || usize::try_from(self.vocab_size.unwrap_or(0)).unwrap_or(0),
+            |tokens| tokens.len(),
+        );
+        Ok(stream
+            .draw_indices(pool_len, count)?
+            .into_iter()
+            .map(|index| {
+                self.allowed_token_ids
+                    .as_ref()
+                    .map_or(index as u32, |tokens| tokens[index])
+            })
+            .collect())
     }
 
     fn replace_eos_in_place(&self, tokens: &mut [u32]) {
@@ -685,6 +908,50 @@ impl PromptGenerator for RandomPromptGenerator<'_> {
     ) -> Result<GeneratedPrompt> {
         let tokens =
             self.build_token_ids(num_tokens, hash_ids, block_size, RandomGenerationMode::Text)?;
+        Ok(GeneratedPrompt {
+            text: self.tokenizer.decode(&tokens)?,
+            tokens,
+        })
+    }
+
+    fn generate_prefix(&mut self, num_tokens: usize) -> Result<GeneratedPrompt> {
+        if num_tokens == 0 {
+            return Err(DatasetError::Validation(
+                "synthetic prefix length must be greater than zero".into(),
+            ));
+        }
+        let candidate = self.sample_prefix_tokens(num_tokens)?;
+        let tokens = self.repair_exact_text_tokens(candidate, num_tokens)?;
+        Ok(GeneratedPrompt {
+            text: self.tokenizer.decode(&tokens)?,
+            tokens,
+        })
+    }
+
+    fn generate_prefix_token_ids(&mut self, num_tokens: usize) -> Result<Vec<u32>> {
+        if num_tokens == 0 {
+            return Err(DatasetError::Validation(
+                "synthetic prefix length must be greater than zero".into(),
+            ));
+        }
+        self.sample_prefix_tokens(num_tokens)
+    }
+
+    fn generate_with_prefix(
+        &mut self,
+        num_tokens: usize,
+        prefix_tokens: &[u32],
+    ) -> Result<GeneratedPrompt> {
+        if prefix_tokens.is_empty() {
+            return self.generate(num_tokens, &[], 1);
+        }
+        let mut candidate = prefix_tokens.to_vec();
+        candidate.extend(self.sample_raw_tokens(num_tokens)?);
+        let target = prefix_tokens
+            .len()
+            .checked_add(num_tokens)
+            .ok_or_else(|| DatasetError::Validation("synthetic prompt length overflow".into()))?;
+        let tokens = self.repair_exact_text_tokens(candidate, target)?;
         Ok(GeneratedPrompt {
             text: self.tokenizer.decode(&tokens)?,
             tokens,
@@ -794,6 +1061,58 @@ mod tests {
 
         fn name(&self) -> &str {
             "allowed-only"
+        }
+    }
+
+    struct DenseIdentityTokenizer;
+
+    impl TextTokenizer for DenseIdentityTokenizer {
+        fn encode(&self, text: &str) -> Result<Vec<u32>> {
+            text.bytes()
+                .map(|byte| {
+                    byte.checked_sub(b'a')
+                        .filter(|value| *value < 10)
+                        .map(u32::from)
+                        .ok_or_else(|| {
+                            DatasetError::Tokenizer(format!("unexpected fixture byte {byte}"))
+                        })
+                })
+                .collect()
+        }
+
+        fn decode(&self, token_ids: &[u32]) -> Result<String> {
+            token_ids
+                .iter()
+                .map(|token| {
+                    u8::try_from(*token)
+                        .ok()
+                        .filter(|value| *value < 10)
+                        .map(|value| char::from(b'a' + value))
+                        .ok_or_else(|| {
+                            DatasetError::Tokenizer(format!("unexpected fixture token {token}"))
+                        })
+                })
+                .collect()
+        }
+
+        fn bos_token_id(&self) -> Option<u32> {
+            None
+        }
+
+        fn eos_token_id(&self) -> Option<u32> {
+            Some(9)
+        }
+
+        fn vocab_size(&self) -> Option<u32> {
+            Some(10)
+        }
+
+        fn allowed_random_token_ids(&self) -> Option<Arc<[u32]>> {
+            Some(Arc::from((0_u32..9).collect::<Vec<_>>()))
+        }
+
+        fn name(&self) -> &str {
+            "dense-identity"
         }
     }
 
@@ -987,6 +1306,90 @@ mod tests {
         let text = generator.generate(8, &[], 1).expect("text prompt");
         assert_eq!(text.tokens, vec![1; 8]);
         assert_eq!(text.text, "aaaaaaaa");
+    }
+
+    #[test]
+    fn reference_random_offsets_add_request_ordinal_and_style_selects_pool() {
+        let tokenizer = AllowedOnlyTokenizer;
+        let vllm = CorpusPromptGeneratorFactory::random_reference(
+            RandomCorpusStyle::Vllm,
+            Arc::from([2_usize, 2]),
+        );
+        let mut generator = vllm.create(&tokenizer, RngRoot::new(Some(5))).unwrap();
+        assert_eq!(generator.generate_token_ids(4, &[], 1).unwrap(), vec![1; 4]);
+
+        let sglang = CorpusPromptGeneratorFactory::random_reference(
+            RandomCorpusStyle::Sglang,
+            Arc::from([2_usize, 2]),
+        );
+        let mut generator = sglang.create(&tokenizer, RngRoot::new(Some(5))).unwrap();
+        assert_eq!(
+            generator.generate_token_ids(4, &[], 1).unwrap(),
+            vec![2, 3, 4, 5]
+        );
+        assert_eq!(
+            generator.generate_token_ids(4, &[], 1).unwrap(),
+            vec![3, 4, 5, 6]
+        );
+
+        let sglang_eos = CorpusPromptGeneratorFactory::random_reference(
+            RandomCorpusStyle::Sglang,
+            Arc::from([9_usize]),
+        );
+        let mut generator = sglang_eos
+            .create(&tokenizer, RngRoot::new(Some(5)))
+            .unwrap();
+        assert_eq!(generator.generate_token_ids(1, &[], 1).unwrap(), vec![9]);
+    }
+
+    #[test]
+    fn random_style_selects_pool_without_reference_offsets() {
+        let tokenizer = AllowedOnlyTokenizer;
+        let mut vllm = CorpusPromptGeneratorFactory::random_with_style(RandomCorpusStyle::Vllm)
+            .create(&tokenizer, RngRoot::new(Some(5)))
+            .unwrap();
+        let mut sglang = CorpusPromptGeneratorFactory::random_with_style(RandomCorpusStyle::Sglang)
+            .create(&tokenizer, RngRoot::new(Some(5)))
+            .unwrap();
+
+        assert_eq!(vllm.generate_token_ids(16, &[], 1).unwrap(), vec![1; 16]);
+        assert!(
+            sglang
+                .generate_token_ids(64, &[], 1)
+                .unwrap()
+                .iter()
+                .any(|token| *token != 1)
+        );
+    }
+
+    #[test]
+    fn reference_prefix_continues_shared_stream_without_consuming_body_ordinal() {
+        let plan = crate::dataset::RandomRangePlan::new(
+            RandomCorpusStyle::Sglang,
+            12,
+            4,
+            crate::dataset::RandomRangeRatio::same(1.0).unwrap(),
+            0,
+        )
+        .unwrap()
+        .preseed(2, 0, 10)
+        .unwrap();
+        assert_eq!(plan.offsets(), [5, 0]);
+        let tokenizer = DenseIdentityTokenizer;
+        let mut generator = CorpusPromptGeneratorFactory::random_reference_plan(plan)
+            .create(&tokenizer, RngRoot::new(Some(99)))
+            .unwrap();
+
+        let prefix = generator.generate_prefix(3).unwrap();
+        assert_eq!(prefix.tokens, [3, 3, 7]);
+        assert_eq!(generator.generate_token_ids(3, &[], 1).unwrap(), [5, 6, 7]);
+        assert_eq!(
+            generator
+                .generate_with_prefix(0, &prefix.tokens)
+                .unwrap()
+                .tokens,
+            prefix.tokens
+        );
     }
 
     #[test]

@@ -482,6 +482,10 @@ pub struct Inputs {
     pub prefix_reuse_ratio: Option<f64>,
     /// Authored prompt corpus selector for synthesized prompt content.
     pub prompt_corpus: Option<String>,
+    /// Uniform synthetic ISL/OSL window ratio.
+    pub random_range_ratio: Option<crate::dataset::RandomRangeRatioInput>,
+    /// Reference random-corpus behavior.
+    pub random_corpus_style: crate::dataset::RandomCorpusStyle,
     /// Bounded-memory sketch metric retention.
     pub sketch_metrics: bool,
     /// Closed-loop steady-state summary for concurrency-target runs.
@@ -1212,6 +1216,8 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
                 block_size: inputs.isl_block_size,
                 corpus: inputs.prompt_corpus.clone(),
                 sequence_distribution: inputs.sequence_distribution.clone(),
+                random_range_ratio: inputs.random_range_ratio,
+                random_corpus_style: inputs.random_corpus_style,
                 prefix_reuse_fraction: inputs.prefix_reuse_fraction,
                 prefix_reuse_ratio: inputs.prefix_reuse_ratio,
             },

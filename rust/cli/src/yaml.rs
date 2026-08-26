@@ -323,6 +323,16 @@ fn apply_cli_overrides(
     if let Some(corpus) = flags.prompt_corpus.clone() {
         inputs.prompt_corpus = Some(corpus);
     }
+    if let Some(ratio) = flags.random_range_ratio.as_deref() {
+        inputs.random_range_ratio = load::parse_random_range_ratio(Some(ratio))?;
+    }
+    if let Some(style) = flags.random_corpus_style.as_deref() {
+        inputs.random_corpus_style = match style {
+            "vllm" => aiperf_runtime::dataset::RandomCorpusStyle::Vllm,
+            "sglang" => aiperf_runtime::dataset::RandomCorpusStyle::Sglang,
+            other => anyhow::bail!("unknown random corpus style {other:?}"),
+        };
+    }
     if let Some(overlay) = explicit_synthesis_overlay(flags)? {
         match inputs.synthesis.as_mut() {
             Some(serde_json::Value::Object(existing)) => {
@@ -1368,6 +1378,10 @@ struct PromptsSection {
     #[serde(default, alias = "blockSize")]
     block_size: Option<u32>,
     corpus: Option<String>,
+    #[serde(default, alias = "randomRangeRatio")]
+    random_range_ratio: Option<aiperf_runtime::dataset::RandomRangeRatioInput>,
+    #[serde(default, alias = "randomCorpusStyle")]
+    random_corpus_style: Option<aiperf_runtime::dataset::RandomCorpusStyle>,
     #[serde(default, alias = "prefixReuseFraction")]
     prefix_reuse_fraction: Option<f64>,
     #[serde(default, alias = "prefixReuseRatio")]
@@ -1846,6 +1860,15 @@ impl Benchmark {
             .as_ref()
             .and_then(|d| d.prompts.as_ref())
             .and_then(|p| p.corpus.clone());
+        let random_range_ratio = dataset
+            .as_ref()
+            .and_then(|d| d.prompts.as_ref())
+            .and_then(|p| p.random_range_ratio);
+        let random_corpus_style = dataset
+            .as_ref()
+            .and_then(|d| d.prompts.as_ref())
+            .and_then(|p| p.random_corpus_style)
+            .unwrap_or_default();
         let sequence_distribution = dataset
             .as_ref()
             .and_then(|d| d.prompts.as_ref())
@@ -2588,6 +2611,8 @@ impl Benchmark {
             prefix_reuse_fraction,
             prefix_reuse_ratio,
             prompt_corpus,
+            random_range_ratio,
+            random_corpus_style,
             sketch_metrics: false,
             steady_state: false,
             steady_state_fraction: None,
@@ -3455,6 +3480,26 @@ mod tests {
         assert_eq!(
             v["cfg"]["datasets"][0]["prompts"]["corpus"],
             serde_json::json!("coding")
+        );
+    }
+
+    #[test]
+    fn synthetic_random_range_ratio_and_style_are_yaml_authorable() {
+        let run = resolve_str(
+            &cfg(
+                "  dataset: {prompts: {isl: 100, osl: 20, corpus: random, random_range_ratio: {input: 0.2, output: 0.4}, random_corpus_style: sglang}}\n  phases: {type: concurrency, requests: 2, concurrency: 1}\n",
+            ),
+            Some("/tmp/x".into()),
+        )
+        .expect("valid random-range config resolves");
+        let v = serde_json::to_value(&run).unwrap();
+        assert_eq!(
+            v["cfg"]["datasets"][0]["prompts"]["random_range_ratio"],
+            serde_json::json!({"input": 0.2, "output": 0.4})
+        );
+        assert_eq!(
+            v["cfg"]["datasets"][0]["prompts"]["random_corpus_style"],
+            serde_json::json!("sglang")
         );
     }
 

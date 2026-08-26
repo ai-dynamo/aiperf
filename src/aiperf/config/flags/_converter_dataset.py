@@ -15,6 +15,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from aiperf.config.flags._section_fields import TOKENIZER_FIELDS
+
 if TYPE_CHECKING:
     from aiperf.config.flags import CLIConfig
 

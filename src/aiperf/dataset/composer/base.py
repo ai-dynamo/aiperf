@@ -7,7 +7,11 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
 from aiperf.common import random_generator as rng
-from aiperf.common.enums import ConversationContextMode, ModelSelectionStrategy
+from aiperf.common.enums import (
+    ConversationContextMode,
+    ModelSelectionStrategy,
+    RandomCorpusStyle,
+)
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import Conversation, Turn
 from aiperf.common.models.sequence_distribution import (

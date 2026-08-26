@@ -20,6 +20,7 @@ pub mod hf_hub;
 pub mod materialize;
 pub mod model;
 pub mod prompt;
+pub mod random_range;
 pub mod request;
 pub mod runtime_dataset;
 pub mod sampler;
@@ -64,6 +65,10 @@ pub use model::{
 pub use prompt::{
     CorpusPromptGeneratorFactory, GeneratedPrompt, PreparedCorpusPromptGeneratorFactory,
     PromptGenerator, PromptGeneratorFactory,
+};
+pub use random_range::{
+    RandomCorpusStyle, RandomRangePlan, RandomRangeRatio, RandomRangeRatioInput,
+    SeededRandomRangePlan,
 };
 pub use request::{
     BuiltinEndpointResolver, ConversationSession, EndpointRequestMaterializer, EndpointResolver,

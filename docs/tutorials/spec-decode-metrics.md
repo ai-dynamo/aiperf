@@ -34,8 +34,8 @@ of the metrics reference.
 
 ## Prerequisites
 
-- A vLLM server running **speculative decoding** with **per-request metrics enabled** via
-  `--per-request-spec-decode-metrics summary` (or `detailed`). The field shape tracks vLLM
+- A vLLM server running **speculative decoding** with **per-request stats enabled** via
+  `--per-request-spec-decode-stats summary` (or `detailed`). The field shape tracks vLLM
   [PR #48915](https://github.com/vllm-project/vllm/pull/48915) -- confirm your vLLM build
   includes it.
 - **Direct-to-vLLM only.** Behind Dynamo the custom stats field is currently stripped, so
@@ -55,7 +55,7 @@ metrics at response-root `metrics.speculative_decoding`:
 docker run --gpus all -p 8000:8000 vllm/vllm-openai:latest \
   --model meta-llama/Llama-3.1-8B-Instruct \
   --speculative-config '{"model": "meta-llama/Llama-3.2-1B-Instruct", "num_speculative_tokens": 5, "method": "draft_model"}' \
-  --per-request-spec-decode-metrics summary
+  --per-request-spec-decode-stats summary
 ```
 
 Verify the server is ready:

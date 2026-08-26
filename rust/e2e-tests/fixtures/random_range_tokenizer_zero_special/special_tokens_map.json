@@ -1,0 +1,7 @@
+{
+  "bos_token": "[CLS]",
+  "cls_token": "[CLS]",
+  "eos_token": "[SEP]",
+  "sep_token": "[SEP]",
+  "unk_token": "[UNK]"
+}

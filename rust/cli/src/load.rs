@@ -604,6 +604,12 @@ pub fn resolve_inputs(flags: &ProfileFlags) -> anyhow::Result<Inputs> {
         prefix_reuse_fraction: flags.prefix_reuse_fraction,
         prefix_reuse_ratio: flags.prefix_reuse_ratio,
         prompt_corpus: flags.prompt_corpus.clone(),
+        random_range_ratio: parse_random_range_ratio(flags.random_range_ratio.as_deref())?,
+        random_corpus_style: match flags.random_corpus_style.as_deref().unwrap_or("vllm") {
+            "vllm" => aiperf_runtime::dataset::RandomCorpusStyle::Vllm,
+            "sglang" => aiperf_runtime::dataset::RandomCorpusStyle::Sglang,
+            other => anyhow::bail!("unknown random corpus style {other:?}"),
+        },
         sketch_metrics: flags.sketch_metrics.unwrap_or(false),
         steady_state: flags.steady_state.unwrap_or(false),
         steady_state_fraction: flags.steady_state_fraction,
@@ -644,6 +650,19 @@ pub fn resolve_inputs(flags: &ProfileFlags) -> anyhow::Result<Inputs> {
             .unwrap_or_else(|| PathBuf::from("artifacts")),
     };
     Ok(inputs)
+}
+
+pub(crate) fn parse_random_range_ratio(
+    authored: Option<&str>,
+) -> anyhow::Result<Option<aiperf_runtime::dataset::RandomRangeRatioInput>> {
+    authored
+        .map(|value| {
+            value.parse::<f64>().map_or_else(
+                |_| serde_json::from_str(value).map_err(Into::into),
+                |ratio| Ok(aiperf_runtime::dataset::RandomRangeRatioInput::Same(ratio)),
+            )
+        })
+        .transpose()
 }
 
 /// Resolve `--request-rate-series` against mutually exclusive scalar rate flags.

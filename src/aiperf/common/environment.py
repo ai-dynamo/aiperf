@@ -1310,24 +1310,6 @@ class _TimingSettings(BaseSettings):
         default=0.1,
         description="Update interval in seconds for continuous rate ramping (default 0.1s = 100ms)",
     )
-    HIGH_RES_TIMER: bool = Field(
-        default=True,
-        description="Use high-resolution rate-loop pacing instead of event-loop timers, which "
-        "quantize sub-millisecond sleeps to ~1ms granularity. Restores exact rate delivery and "
-        "arrival-distribution fidelity at high request rates. Uses a Linux timerfd (kernel "
-        "hrtimer, ~50us wakeup precision) when available, and a dedicated sleep thread on other "
-        "platforms (~100us POSIX, ~0.5ms Windows). Set to false to force event-loop timer pacing.",
-    )
-    MAX_CATCHUP_SECONDS: float = Field(
-        ge=0.0,
-        le=10.0,
-        default=0.01,
-        description="Maximum schedule backlog in seconds the rate loop is allowed to catch up on "
-        "before re-anchoring to the current time. Event-loop timers oversleep sub-millisecond "
-        "waits (~1ms granularity under uvloop/libuv); without a catch-up window every oversleep "
-        "permanently forfeits schedule and high request rates silently under-deliver. Bounded so "
-        "a genuine multi-second stall still re-anchors instead of firing a burst storm.",
-    )
 
 
 class _ServiceSettings(BaseSettings):

@@ -1050,6 +1050,14 @@ pub struct ProfileFlags {
     #[arg(long = "prompt-corpus", value_parser = ["sonnet", "coding", "random"])]
     pub prompt_corpus: Option<String>,
 
+    /// Uniform synthetic ISL/OSL window ratio (`--random-range-ratio`).
+    #[arg(long = "random-range-ratio")]
+    pub random_range_ratio: Option<String>,
+
+    /// Reference random-corpus behavior (`--random-corpus-style`).
+    #[arg(long = "random-corpus-style", value_parser = ["vllm", "sglang"])]
+    pub random_corpus_style: Option<String>,
+
     /// Cap on inter-turn delay, seconds (`--inter-turn-delay-cap-seconds`).
     #[arg(long = "inter-turn-delay-cap-seconds")]
     pub inter_turn_delay_cap_seconds: Option<f64>,
@@ -1635,6 +1643,24 @@ mod tests {
                     .as_deref(),
                 Some("random")
             );
+        });
+    }
+
+    #[test]
+    fn random_range_ratio_and_corpus_style_flags_parse() {
+        on_big_stack(|| {
+            let flags = parse(&[
+                "--random-range-ratio",
+                r#"{"input":0.2,"output":0.4}"#,
+                "--random-corpus-style",
+                "sglang",
+            ]);
+            assert_eq!(
+                flags.random_range_ratio.as_deref(),
+                Some(r#"{"input":0.2,"output":0.4}"#)
+            );
+            assert_eq!(flags.random_corpus_style.as_deref(), Some("sglang"));
+            assert_eq!(parse(&[]).random_corpus_style, None);
         });
     }
 }

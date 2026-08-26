@@ -414,6 +414,8 @@ impl Default for SyntheticVideoConfig {
 pub struct SyntheticPromptConfig {
     /// Input length sampled independently when no paired sequence distribution is configured.
     pub input_tokens: SamplingDistribution,
+    /// Server-added special tokens removed from independently sampled body lengths.
+    pub input_token_subtraction: usize,
     /// Number of independently generated text values in each turn.
     pub batch_size: usize,
     /// Fraction of generated prompts, in `[0, 1]`, that draw the shared reusable
@@ -429,6 +431,7 @@ impl Default for SyntheticPromptConfig {
     fn default() -> Self {
         Self {
             input_tokens: fixed(128.0),
+            input_token_subtraction: 0,
             batch_size: 1,
             prefix_reuse_fraction: 0.0,
             prefix_reuse_ratio: 0.5,

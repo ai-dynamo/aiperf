@@ -66,7 +66,7 @@ class SpecDecodeAdapterProtocol(Protocol):
 
 ```mermaid
 flowchart LR
-    R["Raw response<br/>metrics.speculative_decoding"]
+    R["Raw response<br/>choices[].speculative_decoding_stats"]
     P["ParsedResponse<br/>.spec_decode_stats (raw dict)"]
     A["Engine adapter<br/>(auto-detected)"]
     N["SpecDecodeAcceptanceRecord<br/>(engine-neutral)"]
