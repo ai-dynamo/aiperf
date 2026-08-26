@@ -57,7 +57,7 @@ Graham review and a commit.
 | S13 | Graph benchmark bypasses the transport seam | Confirmed/narrowed; spec ready | Sol implementation plan |
 | S14 | DAG validation test does not prove rejection | Confirmed; spec ready | Sol implementation plan |
 | S15 | `ScheduledPhasePlan` booleans lack semantic prefixes | Complete — `13fdae4430` | Independent Graham approved; RED→GREEN policy coverage recorded |
-| E01 | Velo route registration does not bind signed peer identity | Confirmed; rationale spec ready | Sol implementation plan |
+| E01 | Velo route registration does not bind signed peer identity | Complete | Integrated `ef7b966238`, `56e35146bb`; independent Graham r2 PASS |
 | E02 | Externally-driven evaluation skips preflight | Confirmed; spec ready | Sol implementation plan |
 | E03 | NativeGraph execution ignores agent timeout | Confirmed; spec ready | Sol implementation plan |
 | E04 | Abort still starts ready tool nodes | Confirmed; spec ready | Sol implementation plan |
@@ -291,3 +291,10 @@ Graham review and a commit.
   each resolved endpoint's complete client configuration. The initial review
   found graph HTTP and scheduled WebSocket profile-loss regressions; the P1
   repair pins both bindings and the independent Graham r2 review passed.
+
+- 2026-08-26: E01 completed and integrated as `ef7b966238` and `56e35146bb`:
+  the authenticated registration seam now records the benchmark's trusted-cell
+  route assumption without claiming per-push authenticity, replay protection,
+  or transport confidentiality. The review removed a vacuous source-string
+  test; real registration/replay and replay/live coverage remain, and the
+  independent Graham r2 review passed.
