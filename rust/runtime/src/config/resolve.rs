@@ -228,6 +228,7 @@ pub struct Inputs {
     pub timeout_seconds: Option<f64>,
     pub use_legacy_max_tokens: bool,
     pub use_server_token_count: bool,
+    pub per_chunk_usage: bool,
     pub download_video_content: bool,
     /// Extra request-body inputs (endpoint.extra).
     pub extra: serde_json::Map<String, serde_json::Value>,
@@ -927,6 +928,7 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
         streaming: inputs.streaming,
         use_legacy_max_tokens: inputs.use_legacy_max_tokens,
         use_server_token_count: inputs.use_server_token_count,
+        per_chunk_usage: inputs.per_chunk_usage,
         timeout_seconds: inputs.timeout_seconds.unwrap_or(DEFAULT_TIMEOUT_SECONDS),
         connection_reuse: resolved_connection_reuse,
         ssl_verify: inputs.ssl_verify.unwrap_or(true),

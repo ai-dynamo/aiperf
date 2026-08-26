@@ -22,15 +22,23 @@ fn config(endpoint_type: EndpointType) -> EndpointConfig {
 fn per_chunk_usage_requires_server_token_count() {
     let mut endpoint = config(EndpointType::Chat);
     endpoint.use_server_token_count = false;
-    let error = endpoint.validate().expect_err("server counts are mandatory");
-    assert!(error.to_string().contains("requires --use-server-token-count"));
+    let error = endpoint
+        .validate()
+        .expect_err("server counts are mandatory");
+    assert!(
+        error
+            .to_string()
+            .contains("requires --use-server-token-count")
+    );
 }
 
 #[test]
 fn per_chunk_usage_requires_streaming_chat() {
     let mut non_streaming = config(EndpointType::Chat);
     non_streaming.streaming = false;
-    let error = non_streaming.validate().expect_err("streaming is mandatory");
+    let error = non_streaming
+        .validate()
+        .expect_err("streaming is mandatory");
     assert!(error.to_string().contains("requires --streaming"));
 
     let error = config(EndpointType::Completions)

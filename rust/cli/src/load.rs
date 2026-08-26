@@ -383,6 +383,7 @@ pub fn resolve_inputs(flags: &ProfileFlags) -> anyhow::Result<Inputs> {
         timeout_seconds: flags.request_timeout_seconds,
         use_legacy_max_tokens: flags.use_legacy_max_tokens.unwrap_or(false),
         use_server_token_count: flags.use_server_token_count.unwrap_or(false),
+        per_chunk_usage: flags.per_chunk_usage.unwrap_or(false),
         download_video_content: flags.download_video_content.unwrap_or(false),
         extra: parse_extra_inputs(&flags.extra_inputs)?,
         // Flag URLs normalize here; YAML values remain authored until sidecar construction.

@@ -219,6 +219,7 @@ fn apply_cli_overrides(
         &mut inputs.use_server_token_count,
         flags.use_server_token_count,
     );
+    overlay_bool(&mut inputs.per_chunk_usage, flags.per_chunk_usage);
     overlay_bool(
         &mut inputs.download_video_content,
         flags.download_video_content,
@@ -1049,6 +1050,8 @@ struct EndpointSection {
     use_legacy_max_tokens: Option<bool>,
     #[serde(default, alias = "useServerTokenCount")]
     use_server_token_count: Option<bool>,
+    #[serde(default, alias = "perChunkUsage")]
+    per_chunk_usage: Option<bool>,
     #[serde(default, alias = "downloadVideoContent")]
     download_video_content: Option<bool>,
     #[serde(default)]
@@ -2380,6 +2383,7 @@ impl Benchmark {
             timeout_seconds: self.endpoint.timeout,
             use_legacy_max_tokens: self.endpoint.use_legacy_max_tokens.unwrap_or(false),
             use_server_token_count: self.endpoint.use_server_token_count.unwrap_or(false),
+            per_chunk_usage: self.endpoint.per_chunk_usage.unwrap_or(false),
             download_video_content: self.endpoint.download_video_content.unwrap_or(false),
             extra: self.endpoint.extra.unwrap_or_default(),
             server_metrics_urls: sm_urls,
