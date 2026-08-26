@@ -24,6 +24,7 @@ pub mod models;
 pub mod observability;
 pub mod prefix_cache;
 pub mod prom;
+pub mod request_capture;
 pub mod scheduler;
 pub mod sharded;
 pub mod state;
@@ -36,3 +37,4 @@ pub mod websocket;
 
 pub use app::{AppState, build_router};
 pub use config::MockServerConfig;
+pub use request_capture::RequestCapture;

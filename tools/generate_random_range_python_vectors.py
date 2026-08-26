@@ -11,9 +11,14 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+from tokenizers import AddedToken, Tokenizer
+from tokenizers.models import WordLevel
+from tokenizers.pre_tokenizers import Whitespace
+from tokenizers.processors import TemplateProcessing
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURE = ROOT / "rust/runtime/tests/fixtures/random_range_python_vectors.json"
+E2E_TOKENIZER_ROOT = ROOT / "rust/e2e-tests/fixtures"
 VOCAB_SIZE = 16
 SPECIAL_TOKEN_IDS = frozenset({3, 7, 15})
 VLLM_POOL = [token for token in range(VOCAB_SIZE) if token not in SPECIAL_TOKEN_IDS]
@@ -200,6 +205,71 @@ def rendered_fixture() -> str:
     return json.dumps(document, indent=2, sort_keys=True) + "\n"
 
 
+def rendered_e2e_tokenizer(*, prompt_special_tokens: int) -> dict[str, str]:
+    """Build an offline tokenizer with a checked prompt-special-token count."""
+    if prompt_special_tokens not in {0, 2}:
+        raise ValueError(
+            "the parity fixtures support zero or two prompt special tokens"
+        )
+    vocabulary = {
+        "[UNK]": 0,
+        "[CLS]": 1,
+        "[SEP]": 2,
+        **{chr(ord("a") + index): index + 3 for index in range(13)},
+    }
+    tokenizer = Tokenizer(WordLevel(vocab=vocabulary, unk_token="[UNK]"))
+    tokenizer.pre_tokenizer = Whitespace()
+    tokenizer.add_special_tokens(
+        [
+            AddedToken("[UNK]", special=True),
+            AddedToken("[CLS]", special=True),
+            AddedToken("[SEP]", special=True),
+        ]
+    )
+    if prompt_special_tokens == 2:
+        tokenizer.post_processor = TemplateProcessing(
+            single="[CLS] $A [SEP]",
+            pair="[CLS] $A [SEP] $B:1 [SEP]:1",
+            special_tokens=[("[CLS]", 1), ("[SEP]", 2)],
+        )
+    tokenizer_config = {
+        "added_tokens_decoder": {
+            str(token_id): {
+                "content": token,
+                "lstrip": False,
+                "normalized": False,
+                "rstrip": False,
+                "single_word": False,
+                "special": True,
+            }
+            for token_id, token in [(0, "[UNK]"), (1, "[CLS]"), (2, "[SEP]")]
+        },
+        "bos_token": "[CLS]",
+        "cls_token": "[CLS]",
+        "eos_token": "[SEP]",
+        "model_max_length": 1_000_000,
+        "sep_token": "[SEP]",
+        "tokenizer_class": "PreTrainedTokenizerFast",
+        "unk_token": "[UNK]",
+    }
+    special_tokens_map = {
+        "bos_token": "[CLS]",
+        "cls_token": "[CLS]",
+        "eos_token": "[SEP]",
+        "sep_token": "[SEP]",
+        "unk_token": "[UNK]",
+    }
+    return {
+        "tokenizer.json": tokenizer.to_str(pretty=True) + "\n",
+        "tokenizer_config.json": json.dumps(tokenizer_config, indent=2, sort_keys=True)
+        + "\n",
+        "special_tokens_map.json": json.dumps(
+            special_tokens_map, indent=2, sort_keys=True
+        )
+        + "\n",
+    }
+
+
 def main() -> int:
     """Write the fixture, or prove that it still matches NumPy."""
     parser = argparse.ArgumentParser()
@@ -208,15 +278,35 @@ def main() -> int:
     )
     args = parser.parse_args()
     rendered = rendered_fixture()
+    tokenizer_fixtures = {
+        "random_range_tokenizer_zero_special": rendered_e2e_tokenizer(
+            prompt_special_tokens=0
+        ),
+        "random_range_tokenizer_two_special": rendered_e2e_tokenizer(
+            prompt_special_tokens=2
+        ),
+    }
     if args.check:
         actual = FIXTURE.read_text(encoding="utf-8")
         if actual != rendered:
             raise SystemExit(
                 f"{FIXTURE.relative_to(ROOT)} differs; regenerate with {Path(__file__).name}"
             )
+        for directory, files in tokenizer_fixtures.items():
+            for name, expected in files.items():
+                path = E2E_TOKENIZER_ROOT / directory / name
+                if path.read_text(encoding="utf-8") != expected:
+                    raise SystemExit(
+                        f"{path.relative_to(ROOT)} differs; regenerate with {Path(__file__).name}"
+                    )
     else:
         FIXTURE.parent.mkdir(parents=True, exist_ok=True)
         FIXTURE.write_text(rendered, encoding="utf-8")
+        for directory, files in tokenizer_fixtures.items():
+            fixture_dir = E2E_TOKENIZER_ROOT / directory
+            fixture_dir.mkdir(parents=True, exist_ok=True)
+            for name, contents in files.items():
+                (fixture_dir / name).write_text(contents, encoding="utf-8")
     return 0
 
 
