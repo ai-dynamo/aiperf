@@ -119,16 +119,21 @@ The detailed design introduces these narrow boundaries:
 3. `StreamingSessionProgramFactory` and `StreamingSessionCoordinator` for
    registered conversation/agent-graph semantics, cross-partition causal state,
    explicit session closure, checkpoint restore, and seamless continuation.
-4. `DatasetActionStream` for pull-based action/watermark/barrier/end delivery.
+4. `DatasetActionSink`, per-binding `StreamingActionSubmitter`/
+   `StreamingActionDriver`, and host-owned `ActiveExecutionSet` for causally
+   ready actions, bounded multiplexed execution events, lifecycle control, and
+   terminal receipts.
 5. `EventTimePolicy`, `LateRecordPolicy`, and `ReplayAdmissionPolicy` for
    ordering and scheduling decisions independent of source/format.
-6. `StreamingCheckpointParticipant` for typed source/decoder/session/reorder/
-   action/placement state at one barrier.
+6. Stable `StreamingCheckpointParticipant` stage owners for typed source/
+   format/decode/session/reorder/action/execution/placement/result state at one
+   barrier; dynamic decoders and handles are aggregated beneath them.
 7. `StreamingCheckpointBackendFactory`, `StreamingCheckpointBackend`, and one
    generation transaction for atomic resume/result publication, epoch-aligned
    metric/record segments, and restart-safe final report assembly.
-8. `StreamingPlacement` for single-process, centrally ordered cellular, and
-   immutable-partition cellular execution.
+8. `StreamingPlacementPolicy` plus per-topology submitter, multiplexed driver,
+   separately borrowable control, and active-placement participant for local,
+   centrally ordered cellular, and immutable-partition cellular execution.
 
 Source, format, session program, action sink, and checkpoint backend are named
 registry categories. Policies are validated host-owned values or narrow injected traits

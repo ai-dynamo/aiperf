@@ -1,6 +1,11 @@
+<!--
+SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # Streaming dataset and shadow replay design
 
-This directory is the working design dossier for native Rust architectural
+This directory is the normative design dossier for native Rust architectural
 support for continuously produced datasets and time-shifted shadow replay.
 
 The design is intentionally broader than any first integration:
@@ -17,7 +22,8 @@ Documents:
 - `current-rust-seams.md` inventories the native traits and ownership boundaries
   that the design should reuse or generalize.
 - `architecture-options.md` compares candidate decompositions.
-- `streaming-dataset-shadow-replay-design.md` is the normative working design,
+- `streaming-dataset-shadow-replay-design.md` is the normative design,
   including cross-chunk sessions and checkpointed result publication.
 
-These are in-process research artifacts, not a committed product contract.
+Implementation and review records remain in this directory while the normative
+design is implemented through the linked durable plan.
