@@ -60,7 +60,7 @@ data["metrics"]["metric_name"]["series"][0]["stats"]["p99"]
 ```json
 {
   "schema_version": "1.1",
-  "aiperf_version": "0.12.0",
+  "aiperf_version": "0.13.0",
   "benchmark_id": "550e8400-e29b-41d4-a716-446655440000",
   "summary": { ... },
   "metrics_phase": "profiling",
@@ -73,7 +73,7 @@ data["metrics"]["metric_name"]["series"][0]["stats"]["p99"]
 | Field | Type | Description |
 |-------|------|-------------|
 | `schema_version` | string | Schema version for this export format (e.g., `"1.1"`) |
-| `aiperf_version` | string or null | AIPerf version that generated this export (e.g., `"0.12.0"`). `null` if version unavailable. |
+| `aiperf_version` | string or null | AIPerf version that generated this export (e.g., `"0.13.0"`). `null` if version unavailable. |
 | `benchmark_id` | string or null | Unique UUID identifying this benchmark run. `null` if not available. |
 | [`summary`](#summary-section) | object | Collection metadata and endpoint information. `phase_time_ranges` is present with at least a `profiling` entry when the profiling window is non-degenerate; `warmup` is the optional second key. |
 | `metrics_phase` | string | Benchmark phase represented by the top-level `metrics` field. Always `"profiling"` (kept for backward compatibility). |
@@ -883,7 +883,7 @@ for series in metric["series"]:
 ```json
 {
   "schema_version": "1.1",
-  "aiperf_version": "0.12.0",
+  "aiperf_version": "0.13.0",
   "benchmark_id": "550e8400-e29b-41d4-a716-446655440000",
   "metrics_phase": "profiling",
   "summary": {
