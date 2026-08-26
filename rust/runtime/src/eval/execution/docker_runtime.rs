@@ -497,10 +497,10 @@ pub(crate) fn prepare_external_driver_spawn(
             "external Driver execution plan",
         ));
     }
+    preflight_docker(runtime, plan)?;
     let prepared_driver = prepared_driver
         .into_driver_for(package, trial)
         .map_err(|_| EvalExecutionError::InvalidRecipe("prepared external Driver capability"))?;
-    preflight_docker(runtime, plan)?;
     let authorization =
         ExternallyDrivenAdapterAuthorization::resolve(package, trial, container, deadlines)?;
     let spawner_request = DockerAdapterSpawnerRequest::new(container, project)?;

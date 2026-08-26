@@ -6290,6 +6290,41 @@ fn external_driver_missing_spawner_refuses_before_docker_create() {
     assert_eq!(runtime.native_graph_secret_provider_calls.get(), 0);
 }
 
+#[tokio::test(flavor = "current_thread")]
+async fn external_driver_preflights_missing_docker_capability_before_driver_or_lifecycle() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = external_driver_task_root(&temporary, "");
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    let trial = resolve_docker_driver_trial(imported.clone());
+    let runtime = RecordingRuntime::default();
+    let prepared = prepare_external_driver(
+        &imported,
+        &resolve_docker_driver_trial_for_run(imported.clone(), b"different-driver-trial"),
+    );
+
+    let error = DockerProcessSandbox::new()
+        .execute_externally_driven_with_runtime(
+            &runtime,
+            &HarborSandboxRecipe::for_standard_task(
+                "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                Some("/work".to_owned()),
+            )
+            .unwrap(),
+            &imported.package,
+            &trial,
+            prepared,
+            &FixedSecret,
+        )
+        .await
+        .expect_err("missing Docker enforcement must fail before Driver preparation");
+
+    assert_eq!(error, EvalExecutionError::UnsupportedEnforcement("docker"));
+    assert_eq!(runtime.build_calls.get(), 0);
+    assert_eq!(runtime.events.borrow().as_slice(), ["preflight"]);
+}
+
 #[test]
 fn external_driver_shared_verifier_refuses_before_spawner_or_docker_create() {
     let temporary = tempfile::tempdir().unwrap();
