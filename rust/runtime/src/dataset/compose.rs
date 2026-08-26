@@ -737,4 +737,58 @@ mod tests {
         let second = conversations[1].turns[0].content[0].handles[0];
         assert_ne!(segments.id(first).unwrap(), segments.id(second).unwrap());
     }
+
+    #[test]
+    fn verbatim_system_prompt_participates_in_segment_identity() {
+        let compose = |verbatim: &str| {
+            let tokenizer = crate::dataset::tokenizer::TiktokenTokenizer::builtin();
+            let mut segments = SegmentPool::new();
+            let prompt = segments
+                .intern_text(
+                    None,
+                    "user",
+                    Bytes::from_static(b"prompt"),
+                    tokenizer.encode("prompt").unwrap().into_boxed_slice(),
+                )
+                .unwrap();
+            let original_prompt_id = segments.id(prompt).unwrap();
+            let mut conversation = Conversation::new("session");
+            conversation.turns.push(Turn {
+                content: smallvec::smallvec![crate::dataset::model::ContentGroup {
+                    kind: crate::dataset::model::MediaKind::Text,
+                    name: String::new(),
+                    handles: smallvec::smallvec![prompt],
+                    uuids: smallvec::smallvec![],
+                }],
+                ..Turn::default()
+            });
+            let mut config = ComposeConfig::new("model", RngRoot::new(Some(1)));
+            config.verbatim_system_prompt = Some(verbatim.into());
+
+            apply_common_contexts(
+                std::slice::from_mut(&mut conversation),
+                &config,
+                &tokenizer,
+                &mut segments,
+            )
+            .unwrap();
+
+            let system = conversation.system.unwrap();
+            let rebased_prompt = conversation.turns[0].content[0].handles[0];
+            (
+                segments.id(system).unwrap(),
+                segments.id(rebased_prompt).unwrap(),
+                original_prompt_id,
+            )
+        };
+
+        let first = compose("same prompt");
+        let same = compose("same prompt");
+        let changed = compose("changed prompt");
+
+        assert_eq!(first, same);
+        assert_ne!(first.0, changed.0);
+        assert_ne!(first.1, changed.1);
+        assert_ne!(first.1, first.2);
+    }
 }
