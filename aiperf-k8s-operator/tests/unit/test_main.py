@@ -94,6 +94,272 @@ async def test_operator_and_results_api_share_one_supervised_lifecycle(
 
 
 @pytest.mark.asyncio
+async def test_create_sweep_validates_envelope() -> None:
+    """Submitting an envelope with mismatched runId/namespace raises ValueError."""
+    payload = json.loads((FIXTURES / "valid-sweep-envelope.json").read_text())
+    # Fixture has runId="sweep-run-1", namespace="bench"; pass a wrong name to trigger error
+    with pytest.raises(ValueError, match="identity"):
+        await operator_main.create_sweep(
+            spec={"sweepEnvelope": payload},
+            name="wrong-name",
+            namespace="bench",
+            uid="test-uid",
+        )
+
+
+@pytest.mark.asyncio
+async def test_create_sweep_provisions_rbac(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The RBAC rule list for the sweep contains aiperfjobs and aiperfsweeps/status rules."""
+    payload = json.loads((FIXTURES / "valid-sweep-envelope.json").read_text())
+    roles_created: list[dict] = []
+
+    class FakeApiClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_: object) -> None:
+            pass
+
+        def sanitize_for_serialization(self, obj):
+            return obj
+
+    class FakeCore:
+        async def create_namespaced_service_account(self, **_):
+            pass
+
+        async def read_namespaced_service_account(self, **_):
+            return {}
+
+        async def create_namespaced_config_map(self, **_):
+            pass
+
+        async def read_namespaced_config_map(self, **_):
+            return {}
+
+    class FakeRbac:
+        async def create_namespaced_role(self, **kwargs):
+            roles_created.append(kwargs["body"])
+
+        async def read_namespaced_role(self, **_):
+            return {}
+
+        async def create_namespaced_role_binding(self, **_):
+            pass
+
+        async def read_namespaced_role_binding(self, **_):
+            return {}
+
+    class FakeObjects:
+        async def get_namespaced_custom_object(self, **_):
+            return {
+                "metadata": {
+                    "name": "sweep-run-1",
+                    "namespace": "bench",
+                    "uid": "test-uid",
+                }
+            }
+
+        async def patch_namespaced_custom_object_status(self, **_):
+            pass
+
+        async def create_namespaced_custom_object(self, **_):
+            pass
+
+    monkeypatch.setattr(operator_main.client, "ApiClient", lambda: FakeApiClient())
+    monkeypatch.setattr(operator_main.client, "CoreV1Api", lambda _: FakeCore())
+    monkeypatch.setattr(
+        operator_main.client, "RbacAuthorizationV1Api", lambda _: FakeRbac()
+    )
+    monkeypatch.setattr(
+        operator_main.client, "CustomObjectsApi", lambda _: FakeObjects()
+    )
+
+    await operator_main.create_sweep(
+        spec={"sweepEnvelope": payload},
+        name="sweep-run-1",
+        namespace="bench",
+        uid="test-uid",
+    )
+
+    assert len(roles_created) == 1
+    rules = roles_created[0]["rules"]
+    aiperfjobs_rule = next(
+        (r for r in rules if "aiperfjobs" in r.get("resources", [])), None
+    )
+    assert aiperfjobs_rule is not None, "Role must include an aiperfjobs rule"
+    assert set(aiperfjobs_rule["verbs"]) >= {"create", "get", "list", "watch", "delete"}
+    sweep_status_rule = next(
+        (r for r in rules if "aiperfsweeps/status" in r.get("resources", [])), None
+    )
+    assert sweep_status_rule is not None, (
+        "Role must include an aiperfsweeps/status rule"
+    )
+    assert "patch" in sweep_status_rule["verbs"]
+    assert sweep_status_rule.get("resourceNames") == ["sweep-run-1"]
+
+
+@pytest.mark.asyncio
+async def test_create_sweep_provisions_jobset_with_sweep_controller(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """JobSet has exactly one replicatedJob, one replica, sweep-controller, automountServiceAccountToken True."""
+    payload = json.loads((FIXTURES / "valid-sweep-envelope.json").read_text())
+    jobsets_created: list[dict] = []
+
+    class FakeApiClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_: object) -> None:
+            pass
+
+        def sanitize_for_serialization(self, obj):
+            return obj
+
+    class FakeCore:
+        async def create_namespaced_service_account(self, **_):
+            pass
+
+        async def read_namespaced_service_account(self, **_):
+            return {}
+
+        async def create_namespaced_config_map(self, **_):
+            pass
+
+        async def read_namespaced_config_map(self, **_):
+            return {}
+
+    class FakeRbac:
+        async def create_namespaced_role(self, **_):
+            pass
+
+        async def read_namespaced_role(self, **_):
+            return {}
+
+        async def create_namespaced_role_binding(self, **_):
+            pass
+
+        async def read_namespaced_role_binding(self, **_):
+            return {}
+
+    class FakeObjects:
+        async def get_namespaced_custom_object(self, **_):
+            return {
+                "metadata": {
+                    "name": "sweep-run-1",
+                    "namespace": "bench",
+                    "uid": "test-uid",
+                }
+            }
+
+        async def patch_namespaced_custom_object_status(self, **_):
+            pass
+
+        async def create_namespaced_custom_object(
+            self, group, version, namespace, plural, body, **_
+        ):
+            if plural == "jobsets":
+                jobsets_created.append(body)
+
+    monkeypatch.setattr(operator_main.client, "ApiClient", lambda: FakeApiClient())
+    monkeypatch.setattr(operator_main.client, "CoreV1Api", lambda _: FakeCore())
+    monkeypatch.setattr(
+        operator_main.client, "RbacAuthorizationV1Api", lambda _: FakeRbac()
+    )
+    monkeypatch.setattr(
+        operator_main.client, "CustomObjectsApi", lambda _: FakeObjects()
+    )
+
+    await operator_main.create_sweep(
+        spec={"sweepEnvelope": payload},
+        name="sweep-run-1",
+        namespace="bench",
+        uid="test-uid",
+    )
+
+    assert len(jobsets_created) == 1, "Exactly one JobSet must be created"
+    jobset = jobsets_created[0]
+    replicated_jobs = jobset["spec"]["replicatedJobs"]
+    assert len(replicated_jobs) == 1, "JobSet must have exactly one replicatedJob"
+    job = replicated_jobs[0]
+    assert job["replicas"] == 1
+    pod_spec = job["template"]["spec"]["template"]["spec"]
+    # sweep-controller needs True so it can call the kube API to create child AIPerfJobs
+    assert pod_spec.get("automountServiceAccountToken") is True
+    containers = pod_spec["containers"]
+    assert len(containers) == 1
+    container = containers[0]
+    assert container["name"] == "sweep-controller"
+    assert container["image"] == payload["imageReference"]
+    assert container["command"] == payload["sweepController"]["command"]
+    assert container["args"] == payload["sweepController"]["argv"]
+
+
+@pytest.mark.asyncio
+async def test_sweep_status_roll_up(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Child AIPerfJob events owned by a sweep update status.childRuns, completedRuns, failedRuns."""
+    sweep_name = "sweep-run-1"
+    sweep_uid = "test-sweep-uid"
+    job_name = "child-job-1"
+    namespace = "bench"
+
+    status_patches: list[dict] = []
+
+    class FakeApiClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_: object) -> None:
+            pass
+
+    class FakeObjects:
+        async def get_namespaced_custom_object(self, **_):
+            return {
+                "metadata": {"uid": sweep_uid},
+                "status": {"childRuns": [], "completedRuns": 0, "failedRuns": 0},
+            }
+
+        async def patch_namespaced_custom_object_status(self, **kwargs):
+            status_patches.append(kwargs)
+
+    monkeypatch.setattr(operator_main.client, "ApiClient", lambda: FakeApiClient())
+    monkeypatch.setattr(
+        operator_main.client, "CustomObjectsApi", lambda _: FakeObjects()
+    )
+
+    event = {
+        "type": "MODIFIED",
+        "object": {
+            "metadata": {
+                "name": job_name,
+                "namespace": namespace,
+                "ownerReferences": [
+                    {
+                        "apiVersion": "aiperf.nvidia.com/v1alpha1",
+                        "kind": "AIPerfSweep",
+                        "name": sweep_name,
+                        "uid": sweep_uid,
+                        "controller": True,
+                    }
+                ],
+            },
+            "status": {"phase": "Completed"},
+        },
+    }
+
+    await operator_main.observe_child_run(event=event)
+
+    assert len(status_patches) == 1, "Exactly one status patch must be issued"
+    patch_body = status_patches[0]["body"]
+    child_runs = patch_body["status"]["childRuns"]
+    assert len(child_runs) == 1
+    assert child_runs[0]["name"] == job_name
+    assert child_runs[0]["phase"] == "Completed"
+    assert patch_body["status"]["completedRuns"] == 1
+    assert patch_body["status"]["failedRuns"] == 0
+
+
+@pytest.mark.asyncio
 async def test_kubernetes_results_lifecycle_requires_the_exact_cr_identity() -> None:
     payload = json.loads((FIXTURES / "valid-one-cell-envelope.json").read_text())
     object_uid = "4f78fcbe-9aae-4cc9-ae19-204231b21575"
