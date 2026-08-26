@@ -7,13 +7,17 @@
 //! projection are asserted directly. When a W&B SDK interpreter is available,
 //! it additionally decodes the emitted file and checks run, summary, and exit records.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use super::*;
 use crate::export::ExportConfig;
 use crate::metrics_core::catalog::MetricTag;
-use crate::metrics_core::{AccumulatorSummary, NativeReport};
+use crate::metrics_core::{
+    AccumulatorSummary, MetricEntry, MetricSeries, NativeReport, ReportScalarStats, ReportStats,
+    ReportValue,
+};
 
 /// Create a unique empty scratch directory under the system temp dir.
 fn scratch_dir(tag: &str) -> PathBuf {
@@ -129,6 +133,111 @@ fn scalar_metric_populates_avg_column_only() {
         // std is index 6 in STAT_COLUMN_KEYS.
         assert_eq!(row.cells[6], None, "scalar std stays null");
     }
+}
+
+#[test]
+fn summary_series_selection_prefers_unique_unlabeled_aggregate() {
+    let mut report = sample_report();
+    report.metrics.insert(
+        "mixed_series".to_string(),
+        MetricEntry {
+            metric_type: "scalar",
+            unit: "ms".to_string(),
+            group: "default",
+            higher_is_better: false,
+            series: vec![
+                MetricSeries {
+                    labels: Some(BTreeMap::from([("model".to_string(), "a".to_string())])),
+                    endpoint_url: None,
+                    stats: ReportStats::Scalar(ReportScalarStats {
+                        value: ReportValue::Finite(1.0),
+                    }),
+                    timeslices: Vec::new(),
+                },
+                MetricSeries {
+                    labels: None,
+                    endpoint_url: None,
+                    stats: ReportStats::Scalar(ReportScalarStats {
+                        value: ReportValue::Finite(2.0),
+                    }),
+                    timeslices: Vec::new(),
+                },
+            ],
+        },
+    );
+
+    let row = build_metric_rows(&report)
+        .into_iter()
+        .find(|row| row.label == "mixed_series (ms)")
+        .expect("mixed metric row");
+
+    assert_eq!(row.cells[0], Some(2.0));
+}
+
+#[test]
+fn summary_series_selection_skips_missing_or_ambiguous_aggregates() {
+    let mut report = sample_report();
+    let scalar = |value: &str| MetricSeries {
+        labels: Some(BTreeMap::from([("model".to_string(), value.to_string())])),
+        endpoint_url: None,
+        stats: ReportStats::Scalar(ReportScalarStats {
+            value: ReportValue::Finite(1.0),
+        }),
+        timeslices: Vec::new(),
+    };
+    report.metrics.insert(
+        "labeled_only".to_string(),
+        MetricEntry {
+            metric_type: "scalar",
+            unit: "ms".to_string(),
+            group: "default",
+            higher_is_better: false,
+            series: vec![scalar("a"), scalar("b")],
+        },
+    );
+    report.metrics.insert(
+        "ambiguous".to_string(),
+        MetricEntry {
+            metric_type: "scalar",
+            unit: "ms".to_string(),
+            group: "default",
+            higher_is_better: false,
+            series: vec![
+                MetricSeries {
+                    labels: None,
+                    endpoint_url: None,
+                    stats: ReportStats::Scalar(ReportScalarStats {
+                        value: ReportValue::Finite(1.0),
+                    }),
+                    timeslices: Vec::new(),
+                },
+                MetricSeries {
+                    labels: None,
+                    endpoint_url: None,
+                    stats: ReportStats::Scalar(ReportScalarStats {
+                        value: ReportValue::Finite(2.0),
+                    }),
+                    timeslices: Vec::new(),
+                },
+            ],
+        },
+    );
+    report.metrics.insert(
+        "sole_labeled".to_string(),
+        MetricEntry {
+            metric_type: "scalar",
+            unit: "ms".to_string(),
+            group: "default",
+            higher_is_better: false,
+            series: vec![scalar("only")],
+        },
+    );
+
+    let rows = build_metric_rows(&report);
+
+    assert!(!rows.iter().any(|row| row.label == "labeled_only (ms)"));
+    assert!(!rows.iter().any(|row| row.label == "ambiguous (ms)"));
+    assert!(rows.iter().any(|row| row.label == "sole_labeled (ms)"));
 }
 
 #[test]

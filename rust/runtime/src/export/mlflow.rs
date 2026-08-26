@@ -26,7 +26,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::export::{ExportConfig, Exporter};
+use crate::export::{ExportConfig, Exporter, SummarySeries, summary_series};
 use crate::metrics_core::{MetricEntry, NativeReport, ReportStats, ReportValue};
 
 /// Percentile keys logged to MLflow, in payload order. Other percentiles are omitted.
@@ -169,14 +169,24 @@ fn derive_default_run_name(benchmark_id: Option<&str>) -> String {
 }
 
 /// Emit a bare metric tag for the representative value and `tag.stat` for other
-/// selected finite stats. The first series is the aggregate.
+/// selected finite stats.
 fn build_metric_payload(report: &NativeReport, cfg: &MlflowExportConfig) -> BTreeMap<String, f64> {
     let mut payload = BTreeMap::new();
     for (name, entry) in &report.metrics {
-        let Some(stats) = entry.series.first().map(|series| &series.stats) else {
-            continue;
+        match summary_series(&entry.series) {
+            SummarySeries::Selected(series) => push_stat_fields(&mut payload, name, &series.stats),
+            SummarySeries::Empty => {}
+            SummarySeries::NoAggregate => tracing::debug!(
+                metric = %name,
+                reason = "no_aggregate",
+                "skipping exporter metric without a unique summary series"
+            ),
+            SummarySeries::Ambiguous => tracing::debug!(
+                metric = %name,
+                reason = "ambiguous",
+                "skipping exporter metric without a unique summary series"
+            ),
         };
-        push_stat_fields(&mut payload, name, stats);
     }
 
     // `request_count` supplies the synthetic completed-request metric.
@@ -238,11 +248,15 @@ fn put(payload: &mut BTreeMap<String, f64>, tag: &str, field: Option<&str>, valu
     }
 }
 
-/// The single representative value of a metric's first series (its `avg`/value/
-/// total/`avg`), used for `aiperf.completed_requests`.
+/// The single representative value of a metric's selected summary series
+/// (its `avg`/value/total/`avg`), used for `aiperf.completed_requests`.
 fn representative_value(entry: &MetricEntry) -> Option<f64> {
-    let stats = entry.series.first().map(|series| &series.stats)?;
-    crate::export::flatten_stats(stats).avg.and_then(finite)
+    let SummarySeries::Selected(series) = summary_series(&entry.series) else {
+        return None;
+    };
+    crate::export::flatten_stats(&series.stats)
+        .avg
+        .and_then(finite)
 }
 
 fn finite(value: ReportValue) -> Option<f64> {
