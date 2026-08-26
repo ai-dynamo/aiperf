@@ -19,7 +19,7 @@ use tracing::{debug, info, warn};
 use super::auth::in_cluster_credentials;
 use super::client::{AIPERF_GROUP, AIPERF_VERSION, KubeClient, KubeWatchPoll};
 use super::contract::{
-    BootstrapReference, CellBootstrapReference, CONTRACT_VERSION, ControllerEnvelope,
+    BootstrapReference, CONTRACT_VERSION, CellBootstrapReference, ControllerEnvelope,
     NamedReference, NativeK8sRole, RoleEnvelope, SweepEnvelope, validate_sweep_envelope,
 };
 use super::manifest;
@@ -38,9 +38,8 @@ const WATCH_POLL_TIMEOUT: Duration = Duration::from_secs(5);
 /// Entry point dispatched from `dispatch.rs` for the `sweep-controller` command.
 pub fn run() -> anyhow::Result<i32> {
     // Read the sweep envelope from the operator-mounted ConfigMap.
-    let envelope_bytes = std::fs::read(SWEEP_ENVELOPE_PATH).map_err(|e| {
-        anyhow::anyhow!("failed to read sweep envelope {SWEEP_ENVELOPE_PATH}: {e}")
-    })?;
+    let envelope_bytes = std::fs::read(SWEEP_ENVELOPE_PATH)
+        .map_err(|e| anyhow::anyhow!("failed to read sweep envelope {SWEEP_ENVELOPE_PATH}: {e}"))?;
     let envelope_value: Value = serde_json::from_slice(&envelope_bytes)
         .map_err(|e| anyhow::anyhow!("failed to decode sweep envelope: {e}"))?;
     let envelope = validate_sweep_envelope(envelope_value)?;
@@ -52,12 +51,8 @@ pub fn run() -> anyhow::Result<i32> {
         .ok()
         .and_then(|p| p.parse::<u16>().ok())
         .unwrap_or(443);
-    let credentials = in_cluster_credentials(
-        host,
-        port,
-        Path::new(SA_TOKEN_PATH),
-        Path::new(SA_CA_PATH),
-    )?;
+    let credentials =
+        in_cluster_credentials(host, port, Path::new(SA_TOKEN_PATH), Path::new(SA_CA_PATH))?;
     let client = KubeClient::from_credentials(credentials)?;
 
     // Resolve the sweep CR UID for child owner references.
@@ -67,11 +62,7 @@ pub fn run() -> anyhow::Result<i32> {
 }
 
 /// Resolve the AIPerfSweep CR UID so child CRs can declare it as their owner.
-fn get_sweep_uid(
-    client: &KubeClient,
-    namespace: &str,
-    sweep_name: &str,
-) -> anyhow::Result<String> {
+fn get_sweep_uid(client: &KubeClient, namespace: &str, sweep_name: &str) -> anyhow::Result<String> {
     let path = format!(
         "/apis/{AIPERF_GROUP}/{AIPERF_VERSION}/namespaces/{namespace}/{AIPERFSWEEPS_PLURAL}/{sweep_name}"
     );
@@ -177,9 +168,7 @@ pub(crate) fn run_sweep(
 /// the `parameter` path; `build_child_specs` uses this for combination labels.
 /// Exposed so callers can test conversion parity without going through a full
 /// envelope round-trip.
-pub fn convert_axes(
-    axes: &[super::contract::SweepAxis],
-) -> Vec<SweepAxis> {
+pub fn convert_axes(axes: &[super::contract::SweepAxis]) -> Vec<SweepAxis> {
     axes.iter()
         .map(|axis| {
             let seg = axis
@@ -201,12 +190,9 @@ pub fn convert_axes(
 ///
 /// Grid combinations are produced first, then each combination is repeated
 /// `trials` times, yielding `combinations × trials` child configs.
-pub(crate) fn build_child_specs(
-    envelope: &SweepEnvelope,
-) -> anyhow::Result<Vec<BenchmarkConfig>> {
-    let base_config: BenchmarkConfig =
-        serde_json::from_value(envelope.base_config.clone())
-            .map_err(|e| anyhow::anyhow!("base_config is not a valid BenchmarkConfig: {e}"))?;
+pub(crate) fn build_child_specs(envelope: &SweepEnvelope) -> anyhow::Result<Vec<BenchmarkConfig>> {
+    let base_config: BenchmarkConfig = serde_json::from_value(envelope.base_config.clone())
+        .map_err(|e| anyhow::anyhow!("base_config is not a valid BenchmarkConfig: {e}"))?;
 
     // Convert contract axes (parameter + values) to plan axes (path + seg + values).
     let axes = convert_axes(&envelope.axes);
@@ -235,17 +221,12 @@ fn submit_child_run(
     base_config: &BenchmarkConfig,
 ) -> anyhow::Result<()> {
     let namespace = &sweep_envelope.namespace;
-    let cells = base_config
-        .runtime
-        .as_ref()
-        .map(|r| r.cells)
-        .unwrap_or(1);
+    let cells = base_config.runtime.as_ref().map(|r| r.cells).unwrap_or(1);
 
     // Mint fresh bootstrap material for this child run.
     let roles: Vec<CellularRole> = (0..cells).map(CellularRole::Cell).collect();
-    let material = mint_deployment_material(&roles).map_err(|e| {
-        anyhow::anyhow!("failed to mint bootstrap material for {run_id}: {e}")
-    })?;
+    let material = mint_deployment_material(&roles)
+        .map_err(|e| anyhow::anyhow!("failed to mint bootstrap material for {run_id}: {e}"))?;
 
     // Create the controller bootstrap Secret and record its digest.
     let controller_secret_name = format!("bootstrap-{run_id}-ctrl");
@@ -346,8 +327,7 @@ fn submit_child_run(
     let child_envelope = build_controller_envelope(&base_envelope, &minted)?;
 
     // Project to an AIPerfJob CR body and inject the sweep owner reference.
-    let mut cr_body =
-        manifest::project(&child_envelope).map_err(anyhow::Error::from)?;
+    let mut cr_body = manifest::project(&child_envelope).map_err(anyhow::Error::from)?;
     cr_body["metadata"]["ownerReferences"] = json!([{
         "apiVersion": format!("{AIPERF_GROUP}/{AIPERF_VERSION}"),
         "kind": "AIPerfSweep",
@@ -359,9 +339,8 @@ fn submit_child_run(
 
     let cr_bytes = serde_json::to_vec(&cr_body)
         .map_err(|e| anyhow::anyhow!("failed to serialize child AIPerfJob: {e}"))?;
-    let cr_path = format!(
-        "/apis/{AIPERF_GROUP}/{AIPERF_VERSION}/namespaces/{namespace}/aiperfjobs"
-    );
+    let cr_path =
+        format!("/apis/{AIPERF_GROUP}/{AIPERF_VERSION}/namespaces/{namespace}/aiperfjobs");
     let response = client.execute("POST", &cr_path, "application/json", cr_bytes)?;
     if !response.is_success() {
         anyhow::bail!(
@@ -407,9 +386,7 @@ fn post_bootstrap_secret(
         body_bytes,
     )?;
     if !(200..300).contains(&status) {
-        anyhow::bail!(
-            "bootstrap Secret {secret_name} creation returned HTTP {status}"
-        );
+        anyhow::bail!("bootstrap Secret {secret_name} creation returned HTTP {status}");
     }
     Ok(digest)
 }
@@ -431,12 +408,8 @@ fn wait_for_child_completion(
         loop {
             match watch.poll(WATCH_POLL_TIMEOUT)? {
                 KubeWatchPoll::Record(bytes) => {
-                    let event: Value =
-                        serde_json::from_slice(&bytes).map_err(|e| {
-                            anyhow::anyhow!(
-                                "invalid watch event for {job_id}: {e}"
-                            )
-                        })?;
+                    let event: Value = serde_json::from_slice(&bytes)
+                        .map_err(|e| anyhow::anyhow!("invalid watch event for {job_id}: {e}"))?;
                     match event["object"]["status"]["phase"].as_str() {
                         Some("Completed") => return Ok(true),
                         Some("Failed") => return Ok(false),

@@ -697,10 +697,7 @@ impl KubeTransport for SweepMockTransport {
         _credentials: &KubeCredentials,
         request: KubeRequest,
     ) -> Result<KubeResponse, KubeError> {
-        self.requests
-            .lock()
-            .expect("requests lock")
-            .push(request);
+        self.requests.lock().expect("requests lock").push(request);
         let (status, body) = self
             .responses
             .lock()
@@ -861,7 +858,11 @@ fn sweep_controller_submits_secrets_and_cr_per_child() {
         .filter(|r| r.method == "POST" && r.path.ends_with("/aiperfjobs"))
         .collect();
     // 2 children × 2 bootstrap secrets each = 4 secret POSTs
-    assert_eq!(secret_posts.len(), 4, "2 children × 2 secrets each = 4 secret POSTs");
+    assert_eq!(
+        secret_posts.len(),
+        4,
+        "2 children × 2 secrets each = 4 secret POSTs"
+    );
     assert_eq!(cr_posts.len(), 2, "one AIPerfJob CR per child");
 
     // Every CR body must carry an ownerReference to the sweep CR.
@@ -909,9 +910,7 @@ fn sweep_controller_patches_sweep_status_on_completion() {
     let requests = transport.requests.lock().expect("requests");
     let status_patches: Vec<_> = requests
         .iter()
-        .filter(|r| {
-            r.method == "PATCH" && r.path.contains("/aiperfsweeps/")
-        })
+        .filter(|r| r.method == "PATCH" && r.path.contains("/aiperfsweeps/"))
         .collect();
     assert!(
         !status_patches.is_empty(),
@@ -1007,10 +1006,7 @@ impl KubeTransport for SweepSubmitTransport {
         _credentials: &KubeCredentials,
         request: KubeRequest,
     ) -> Result<KubeResponse, KubeError> {
-        self.requests
-            .lock()
-            .expect("requests")
-            .push(request);
+        self.requests.lock().expect("requests").push(request);
         let (status, body) = self
             .responses
             .lock()
@@ -1025,7 +1021,9 @@ impl KubeTransport for SweepSubmitTransport {
         _credentials: &KubeCredentials,
         _request: KubeRequest,
     ) -> Result<KubeWatch, KubeError> {
-        Err(KubeError::Transport("watch not used in sweep submission tests".to_string()))
+        Err(KubeError::Transport(
+            "watch not used in sweep submission tests".to_string(),
+        ))
     }
 }
 
@@ -1046,7 +1044,10 @@ fn sweep_submission_creates_secret_then_cr() {
     assert_eq!(status, 201);
 
     let requests = transport.requests.lock().expect("requests");
-    assert!(requests.len() >= 2, "at least Secret POST and CR POST must be issued");
+    assert!(
+        requests.len() >= 2,
+        "at least Secret POST and CR POST must be issued"
+    );
     // The first POST must target /secrets.
     let secret_post = requests
         .iter()
@@ -1098,11 +1099,12 @@ fn sweep_submission_rolls_back_secret_on_cr_failure() {
     );
 
     let requests = transport.requests.lock().expect("requests");
-    let deletes: Vec<_> = requests
-        .iter()
-        .filter(|r| r.method == "DELETE")
-        .collect();
-    assert_eq!(deletes.len(), 1, "exactly one DELETE must be issued for rollback");
+    let deletes: Vec<_> = requests.iter().filter(|r| r.method == "DELETE").collect();
+    assert_eq!(
+        deletes.len(),
+        1,
+        "exactly one DELETE must be issued for rollback"
+    );
     assert!(
         deletes[0].path.contains("/secrets/bootstrap-sweep-"),
         "rollback DELETE must target the bootstrap Secret, got: {}",

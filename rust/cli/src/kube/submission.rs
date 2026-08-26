@@ -797,9 +797,8 @@ pub fn submit_sweep_transactionally(
 
     // 2. Mint sweep-controller bootstrap material.
     // Cell(0) satisfies the non-empty roster requirement; only material.controller is used.
-    let material = mint_deployment_material(&[CellularRole::Cell(0)]).map_err(|e| {
-        anyhow::anyhow!("failed to mint sweep-controller bootstrap material: {e}")
-    })?;
+    let material = mint_deployment_material(&[CellularRole::Cell(0)])
+        .map_err(|e| anyhow::anyhow!("failed to mint sweep-controller bootstrap material: {e}"))?;
     let controller_bytes = &material.controller;
 
     // 3. Write to a private per-run 0600 temp file (mirrors prepare_material pattern).

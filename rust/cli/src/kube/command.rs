@@ -13,8 +13,7 @@ use super::auth::KubeAuthOptions;
 use super::client::{KubeClient, KubeWatch, KubeWatchPoll};
 use super::contract::{
     BootstrapReference, CONTRACT_VERSION, CellBootstrapReference, ControllerEnvelope,
-    NamedReference, NativeK8sRole, RoleEnvelope, validate_envelope,
-    validate_sweep_envelope,
+    NamedReference, NativeK8sRole, RoleEnvelope, validate_envelope, validate_sweep_envelope,
 };
 use super::error::KubeError;
 use super::render::{OutputFormat, render};
@@ -140,7 +139,10 @@ pub(super) fn index_report(
 ) -> anyhow::Result<String> {
     let response = client.execute(
         "GET",
-        &format!("{operator_prefix}/api/results/{}", encode_segment(namespace)),
+        &format!(
+            "{operator_prefix}/api/results/{}",
+            encode_segment(namespace)
+        ),
         "",
         Vec::new(),
     )?;
@@ -736,23 +738,19 @@ fn run_sweep(args: &[String]) -> anyhow::Result<i32> {
     })?;
 
     // Load and validate the sweep envelope.
-    let envelope_bytes = std::fs::read(&envelope_path).map_err(|e| {
-        anyhow::anyhow!("failed to read sweep envelope {envelope_path}: {e}")
-    })?;
-    let envelope_value: serde_json::Value =
-        serde_json::from_slice(&envelope_bytes).map_err(|e| {
-            anyhow::anyhow!("failed to decode sweep envelope {envelope_path}: {e}")
-        })?;
+    let envelope_bytes = std::fs::read(&envelope_path)
+        .map_err(|e| anyhow::anyhow!("failed to read sweep envelope {envelope_path}: {e}"))?;
+    let envelope_value: serde_json::Value = serde_json::from_slice(&envelope_bytes)
+        .map_err(|e| anyhow::anyhow!("failed to decode sweep envelope {envelope_path}: {e}"))?;
     let envelope = validate_sweep_envelope(envelope_value).map_err(anyhow::Error::from)?;
 
     // Load the image capability document (validation happens inside submit).
     let cap_bytes = std::fs::read(&capability_path).map_err(|e| {
         anyhow::anyhow!("failed to read image capability document {capability_path}: {e}")
     })?;
-    let cap_value: serde_json::Value =
-        serde_json::from_slice(&cap_bytes).map_err(|e| {
-            anyhow::anyhow!("failed to decode image capability document {capability_path}: {e}")
-        })?;
+    let cap_value: serde_json::Value = serde_json::from_slice(&cap_bytes).map_err(|e| {
+        anyhow::anyhow!("failed to decode image capability document {capability_path}: {e}")
+    })?;
 
     let client = KubeClient::from_options(&auth_options(args)?)?;
     let status = submit_sweep_transactionally(&client, &envelope, cap_value)?;
