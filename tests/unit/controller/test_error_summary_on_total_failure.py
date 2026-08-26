@@ -15,7 +15,7 @@ operator with a single aggregate line. That is the least diagnostic output in
 precisely the runs that need it most, and it hid the HTTP status code.
 """
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 import pytest
 from rich.console import Console
@@ -25,6 +25,7 @@ from aiperf.common.models import (
     ErrorDetailsCount,
     ExitErrorInfo,
     MetricResult,
+    ProcessRecordsResult,
     ProfileResults,
 )
 from aiperf.controller.system_controller import SystemController
@@ -350,3 +351,47 @@ class TestPreExistingExitError:
         _, mock_exit = await self._run_shutdown(controller)
 
         mock_exit.assert_called_once()
+
+
+class TestAbsentNestedResults:
+    """``ProcessRecordsResult.results`` is declared required, but the records
+    handler defends against it being absent, so the exporter must too.
+
+    Reaching ``results.error_summary`` on an unset value raises
+    ``AttributeError``. The surrounding guard catches it, but then logs a
+    misleading "failed to render the error summary" line during shutdown.
+    """
+
+    @pytest.fixture
+    def controller(self, system_controller: SystemController) -> SystemController:
+        system_controller._profile_results = ProcessRecordsResult.model_construct(
+            results=None
+        )
+        system_controller._telemetry_results = None
+        system_controller._server_metrics_results = None
+        return system_controller
+
+    async def test_returns_quietly_when_nested_results_absent(
+        self, controller: SystemController
+    ) -> None:
+        """No spurious rendering-failure log, and no exception escapes."""
+        with patch.object(controller, "exception") as mock_exception:
+            await controller._export_error_summary()
+
+        mock_exception.assert_not_called()
+
+    async def test_failure_while_inspecting_results_is_contained(
+        self, controller: SystemController
+    ) -> None:
+        """Isolation must cover the guards, not only the rendering.
+
+        The guards run inside the try for this reason: an exception raised
+        while inspecting the results would otherwise escape and be swallowed by
+        the caller's broad shutdown guard, taking the exit-error panel and the
+        log-file path down with it.
+        """
+        exploding = MagicMock()
+        type(exploding).results = PropertyMock(side_effect=RuntimeError("boom"))
+        controller._profile_results = exploding
+
+        await controller._export_error_summary()

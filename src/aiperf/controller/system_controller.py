@@ -1110,13 +1110,19 @@ class SystemController(SignalHandlerMixin, BaseService):
         ``error_summary`` collected during the run is discarded in exactly the
         runs that carry the least other diagnostic information.
         """
-        if not self._profile_results:
-            return
-        results = self._profile_results.results
-        if not results.error_summary:
-            return
-
         try:
+            if not self._profile_results:
+                return
+            results = self._profile_results.results
+            # ``ProcessRecordsResult.results`` is declared required, but the
+            # PROCESS_RECORDS_RESULT handler still defends against it being
+            # absent (``if not message.results.results``), so match that here
+            # rather than raising AttributeError on ``.error_summary``.
+            if results is None:
+                return
+            if not results.error_summary:
+                return
+
             console = Console()
             if console.width < 100:
                 console.width = 100
@@ -1132,11 +1138,14 @@ class SystemController(SignalHandlerMixin, BaseService):
             )
             await exporter.export(console)
         except Exception:
-            # A rendering failure here must never suppress the exit-error panel
-            # and log-file path that the callers print immediately after. On a
-            # run where every request failed those are the operator's remaining
-            # diagnostics, and ``ExporterManager`` gives this same exporter
-            # equivalent isolation on the normal path.
+            # Nothing in this method may suppress the exit-error panel and
+            # log-file path that the callers print immediately after. On a run
+            # where every request failed those are the operator's remaining
+            # diagnostics, so the guards are inside the try as well: an
+            # AttributeError while inspecting the results would otherwise
+            # escape and be swallowed by the caller's broad shutdown guard,
+            # taking the panel down with it. ``ExporterManager`` gives this
+            # same exporter equivalent isolation on the normal path.
             self.exception("Failed to render the error summary table")
 
     def _inject_accuracy_results_into_records(self) -> None:
