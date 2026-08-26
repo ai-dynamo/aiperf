@@ -1,9 +1,0 @@
-# TYPE rpc_duration_seconds histogram
-rpc_duration_seconds_bucket{route="a",le="1"} 2
-rpc_duration_seconds_bucket{route="a",le="+Inf"} 3
-rpc_duration_seconds_sum{route="a"} 1.5
-rpc_duration_seconds_count{route="a"} 3
-rpc_duration_seconds_bucket{route="b",le="1"} 7
-rpc_duration_seconds_bucket{route="b",le="+Inf"} 10
-rpc_duration_seconds_sum{route="b"} 70
-rpc_duration_seconds_count{route="b"} 10

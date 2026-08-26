@@ -1,2 +1,0 @@
-# TYPE requests_total counter
-requests_total 100000001

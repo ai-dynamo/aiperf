@@ -1,2 +1,0 @@
-# TYPE request_info gauge
-request_info{message="left,right",quote="say\"hello",path="c:\\tmp"} 1
