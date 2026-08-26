@@ -813,4 +813,35 @@ mod tests {
                     || name == "X-Session-Affinity")
         );
     }
+
+    #[tokio::test]
+    async fn prepared_request_removes_authored_affinity_without_correlation() {
+        let base_urls = vec!["http://host/v1".to_string()];
+        let chat = prepared("chat");
+        let binding =
+            MetadataHttpEndpointBinding::from_prepared(chat.as_ref(), &base_urls, "fixture-model");
+        let mut request =
+            endpoint_request(Bytes::from_static(br#"{\"model\":\"m\",\"messages\":[]}"#));
+        request.headers = BTreeMap::from([
+            (
+                "x-session-affinity".to_string(),
+                "stale-lowercase".to_string(),
+            ),
+            (
+                "X-Session-Affinity".to_string(),
+                "stale-canonical".to_string(),
+            ),
+        ]);
+
+        let prepared = prepare_request(&binding, request).await.unwrap();
+        assert!(
+            prepared
+                .request_config()
+                .headers
+                .keys()
+                .all(|name| !name.eq_ignore_ascii_case("X-Session-Affinity")),
+            "prepared request retained affinity without a correlation ID: {:?}",
+            prepared.request_config().headers
+        );
+    }
 }

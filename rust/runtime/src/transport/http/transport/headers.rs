@@ -53,6 +53,7 @@ pub fn apply_default_session_affinity_header(
     correlation_id: Option<&str>,
 ) {
     let Some(correlation_id) = correlation_id else {
+        headers.retain(|name, _| !name.eq_ignore_ascii_case("X-Session-Affinity"));
         return;
     };
     let has_conflict = headers.iter().any(|(name, value)| {
@@ -117,8 +118,8 @@ pub fn build_headers(
     // session-affinity header ALONGSIDE the correlation header. Strip any
     // caller-supplied variants case-insensitively first, since HTTP header
     // names are case-insensitive and `h` is a plain string-keyed map.
+    apply_default_session_affinity_header(&mut h, cfg.correlation_id.as_deref());
     if let Some(corr) = &cfg.correlation_id {
-        apply_default_session_affinity_header(&mut h, Some(corr));
         if x_session_id_from_correlation_id {
             h.retain(|k, _| !k.eq_ignore_ascii_case("X-Session-ID"));
             h.insert("X-Session-ID".to_string(), corr.clone());
@@ -277,10 +278,16 @@ mod tests {
     }
 
     #[test]
-    fn session_affinity_is_absent_without_correlation_id() {
-        let cfg = RequestConfig::new("http://h/x");
+    fn session_affinity_removes_authored_variants_without_correlation_id() {
+        let cfg = RequestConfig::new("http://h/x")
+            .header("x-session-affinity", "stale-lowercase")
+            .header("X-Session-Affinity", "stale-canonical");
         let h = build_headers(&cfg, true, None, "aiperf/test", false, false, false);
-        assert_eq!(h.get("X-Session-Affinity"), None);
+        assert!(
+            h.keys()
+                .all(|name| !name.eq_ignore_ascii_case("X-Session-Affinity")),
+            "affinity must be absent without a correlation ID: {h:?}"
+        );
     }
 
     #[test]

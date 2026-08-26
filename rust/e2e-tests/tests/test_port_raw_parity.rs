@@ -311,14 +311,16 @@ async fn port55_default_session_affinity_header_raw_parity() {
 /// exercise the no-correlation boundary through a real native HTTP request and
 /// its raw `RequestRecord` capture against the same loopback mock.
 #[tokio::test]
-async fn port55_transport_raw_record_omits_affinity_without_correlation() {
+async fn port55_transport_raw_record_removes_authored_affinity_without_correlation() {
     let h = AIPerfHarness::new().await;
     let local = tokio::task::LocalSet::new();
     local
         .run_until(async {
             let clock: Rc<dyn Clock> = RealClock::new();
             let transport = HttpTransport::new(clock, ClientConfig::default());
-            let config = RequestConfig::new(format!("{}/v1/chat/completions", h.mock.url));
+            let config = RequestConfig::new(format!("{}/v1/chat/completions", h.mock.url))
+                .header("x-session-affinity", "stale-lowercase")
+                .header("X-Session-Affinity", "stale-canonical");
             let record = transport
                 .send_request(
                     &config,
@@ -343,7 +345,7 @@ async fn port55_transport_raw_record_omits_affinity_without_correlation() {
                     .request_headers
                     .keys()
                     .any(|name| name.eq_ignore_ascii_case("X-Session-Affinity")),
-                "a request without a correlation ID must not derive affinity: {:?}",
+                "a request without a correlation ID must remove authored affinity: {:?}",
                 record.request_headers
             );
         })
