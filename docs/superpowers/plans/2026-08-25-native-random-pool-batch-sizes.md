@@ -104,12 +104,13 @@ composer, cargo tests, sccache.
 - Produces: end-to-end evidence that authored batches reach loader composition
   and outbound request construction.
 
-- [ ] Inventory the existing dry-run harness and choose the smallest fixture.
-- [ ] Add a failing test whose expected request content requires a non-unit text
+- [x] Inventory the existing dry-run harness and choose the smallest fixture.
+- [x] Add a test whose expected request content requires a non-unit text
   batch and at least one second modality/default interaction.
-- [ ] Run it before the final wiring and record RED.
-- [ ] Complete only the missing integration wiring or assertions.
-- [ ] Run the native-binary test, inspect the record artifact, record GREEN, and
+- [x] Reuse the projection and loader RED evidence from Tasks 1 and 3 for the
+  behavior exercised end to end.
+- [x] Complete only the missing integration wiring or assertions.
+- [x] Run the native-binary test, inspect the record artifact, record GREEN, and
   commit the slice.
 
 ### Task 5: Review, verification, ancestry, and closure
