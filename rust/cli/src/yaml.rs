@@ -253,8 +253,24 @@ fn apply_cli_overrides(
     if let Some(v) = flags.max_context_length {
         inputs.max_context_length = Some(v);
     }
-    if let Some(batch_size) = flags.image_batch_size {
-        inputs.random_pool_image_batch_size = Some(batch_size);
+    for (target, batch_size) in [
+        (&mut inputs.random_pool_text_batch_size, flags.batch_size),
+        (
+            &mut inputs.random_pool_image_batch_size,
+            flags.image_batch_size,
+        ),
+        (
+            &mut inputs.random_pool_audio_batch_size,
+            flags.audio_batch_size,
+        ),
+        (
+            &mut inputs.random_pool_video_batch_size,
+            flags.video_batch_size,
+        ),
+    ] {
+        if let Some(batch_size) = batch_size {
+            *target = Some(batch_size);
+        }
     }
     if let Some(v) = flags.trace_idle_gap_cap_seconds {
         inputs.trace_idle_gap_cap_seconds = Some(v);
@@ -2557,10 +2573,22 @@ impl Benchmark {
             steady_state: false,
             steady_state_fraction: None,
             steady_state_hybrid: false,
+            random_pool_text_batch_size: dataset
+                .as_ref()
+                .and_then(|dataset| dataset.prompts.as_ref())
+                .and_then(|prompts| prompts.batch_size),
             random_pool_image_batch_size: dataset
                 .as_ref()
                 .and_then(|dataset| dataset.images.as_ref())
                 .and_then(|images| images.batch_size),
+            random_pool_audio_batch_size: dataset
+                .as_ref()
+                .and_then(|dataset| dataset.audio.as_ref())
+                .and_then(|audio| audio.batch_size),
+            random_pool_video_batch_size: dataset
+                .as_ref()
+                .and_then(|dataset| dataset.video.as_ref())
+                .and_then(|video| video.batch_size),
             image_spec,
             audio_spec,
             video_spec,
@@ -3596,15 +3624,15 @@ benchmark:
             .expect("worker panicked");
     }
 
-    /// A file-backed random pool uses the shared `dataset.images.batchSize` surface,
-    /// and an explicit CLI batch size has the usual config-overlay precedence.
+    /// A file-backed random pool uses every modality's shared batch-size surface,
+    /// and explicit CLI batch sizes have the usual config-overlay precedence.
     #[test]
-    fn random_pool_image_batch_size_yaml_and_cli_override() {
+    fn random_pool_modality_batch_sizes_yaml_and_cli_override() {
         std::thread::Builder::new()
             .stack_size(32 * 1024 * 1024)
             .spawn(|| {
                 let yaml = cfg(
-                    "  endpoint: {type: image_retrieval, url: http://127.0.0.1:8080}\n  dataset:\n    type: file\n    path: /tmp/images.jsonl\n    format: random_pool\n    images: {batchSize: 2}\n  phases: {type: concurrency, requests: 1, concurrency: 1}\n",
+                    "  endpoint: {type: chat, url: http://127.0.0.1:8080}\n  dataset:\n    type: file\n    path: /tmp/multimodal.jsonl\n    format: random_pool\n    prompts: {batchSize: 2}\n    images: {batch_size: 3}\n    audio: {batchSize: 4}\n    video: {batch_size: 5}\n  phases: {type: concurrency, requests: 1, concurrency: 1}\n",
                 );
                 let raw: serde_json::Value = serde_yaml::from_str(&yaml).unwrap();
                 let expanded = crate::expand::expand_config(raw).unwrap();
@@ -3617,14 +3645,35 @@ benchmark:
                 .expect("authored random-pool config resolves");
                 let authored = serde_json::to_value(&authored).unwrap();
                 assert_eq!(
-                    authored["cfg"]["datasets"][0]["options"]["image_batch_size"],
+                    authored["cfg"]["datasets"][0]["options"]["text_batch_size"],
                     serde_json::json!(2),
+                    "dataset.prompts.batchSize must reach random_pool options"
+                );
+                assert_eq!(
+                    authored["cfg"]["datasets"][0]["options"]["image_batch_size"],
+                    serde_json::json!(3),
                     "dataset.images.batchSize must reach random_pool options"
+                );
+                assert_eq!(
+                    authored["cfg"]["datasets"][0]["options"]["audio_batch_size"],
+                    serde_json::json!(4),
+                    "dataset.audio.batchSize must reach random_pool options"
+                );
+                assert_eq!(
+                    authored["cfg"]["datasets"][0]["options"]["video_batch_size"],
+                    serde_json::json!(5),
+                    "dataset.video.batchSize must reach random_pool options"
                 );
 
                 let flags = crate::flags::ProfileFlags::parse_from_args(&[
+                    "--batch-size".to_string(),
+                    "0".to_string(),
                     "--image-batch-size".to_string(),
-                    "3".to_string(),
+                    "6".to_string(),
+                    "--audio-batch-size".to_string(),
+                    "7".to_string(),
+                    "--video-batch-size".to_string(),
+                    "8".to_string(),
                 ])
                 .expect("flags parse");
                 let overlaid = resolve_expanded_value(
@@ -3635,9 +3684,24 @@ benchmark:
                 .expect("CLI-overlaid random-pool config resolves");
                 let overlaid = serde_json::to_value(&overlaid).unwrap();
                 assert_eq!(
+                    overlaid["cfg"]["datasets"][0]["options"]["text_batch_size"],
+                    serde_json::json!(0),
+                    "explicit --batch-size zero must override YAML"
+                );
+                assert_eq!(
                     overlaid["cfg"]["datasets"][0]["options"]["image_batch_size"],
-                    serde_json::json!(3),
+                    serde_json::json!(6),
                     "explicit --image-batch-size must override YAML"
+                );
+                assert_eq!(
+                    overlaid["cfg"]["datasets"][0]["options"]["audio_batch_size"],
+                    serde_json::json!(7),
+                    "explicit --audio-batch-size must override YAML"
+                );
+                assert_eq!(
+                    overlaid["cfg"]["datasets"][0]["options"]["video_batch_size"],
+                    serde_json::json!(8),
+                    "explicit --video-batch-size must override YAML"
                 );
             })
             .expect("spawn worker")

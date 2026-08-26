@@ -483,8 +483,14 @@ pub struct Inputs {
     pub steady_state_fraction: Option<f64>,
     /// Hybrid steady-state latency mode (full-run latency, windowed throughput).
     pub steady_state_hybrid: bool,
+    /// Explicit text batch size for file-backed `random_pool` inputs.
+    pub random_pool_text_batch_size: Option<u32>,
     /// Explicit image batch size for file-backed `random_pool` inputs.
     pub random_pool_image_batch_size: Option<u32>,
+    /// Explicit audio batch size for file-backed `random_pool` inputs.
+    pub random_pool_audio_batch_size: Option<u32>,
+    /// Explicit video batch size for file-backed `random_pool` inputs.
+    pub random_pool_video_batch_size: Option<u32>,
     /// Synthetic image spec (present when any image flag is set).
     pub image_spec: Option<ImageSpec>,
     /// Synthetic audio spec.
@@ -1067,13 +1073,17 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
                     .custom_dataset_type
                     .as_deref()
                     .unwrap_or("single_turn");
-                if format == "random_pool"
-                    && let Some(batch_size) = inputs.random_pool_image_batch_size
-                {
-                    o.insert(
-                        "image_batch_size".to_string(),
-                        serde_json::json!(batch_size),
-                    );
+                if format == "random_pool" {
+                    for (name, batch_size) in [
+                        ("text_batch_size", inputs.random_pool_text_batch_size),
+                        ("image_batch_size", inputs.random_pool_image_batch_size),
+                        ("audio_batch_size", inputs.random_pool_audio_batch_size),
+                        ("video_batch_size", inputs.random_pool_video_batch_size),
+                    ] {
+                        if let Some(batch_size) = batch_size {
+                            o.insert(name.to_string(), serde_json::json!(batch_size));
+                        }
+                    }
                 }
                 match format {
                     "mooncake_trace" => {

@@ -46,14 +46,14 @@ composer, cargo tests, sccache.
   `*_batch_size` file options.
 - Consumes: existing clap flags and YAML modality-section batch fields.
 
-- [ ] Write failing CLI-only projection tests for four distinct values and an
+- [x] Write failing CLI-only projection tests for four distinct values and an
   explicit zero.
-- [ ] Write failing YAML tests proving all-four preservation, camel-case decode,
+- [x] Write failing YAML tests proving all-four preservation, camel-case decode,
   per-field CLI precedence, and unset-CLI preservation.
-- [ ] Run focused CLI tests and record the missing text/audio/video projection
+- [x] Run focused CLI tests and record the missing text/audio/video projection
   failures.
-- [ ] Implement only the four-field projection and precedence behavior.
-- [ ] Rerun focused tests, record GREEN, and commit the slice.
+- [x] Implement only the four-field projection and precedence behavior.
+- [x] Rerun focused tests, record GREEN, and commit the slice.
 
 ### Task 2: Dataset-kind, format, and directory validation
 
