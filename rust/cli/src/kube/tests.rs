@@ -12,8 +12,9 @@ use super::client::{
     DEFAULT_REQUEST_DEADLINE, DEFAULT_WATCH_DEADLINE, KubeClient, KubeRequest, KubeTransport,
     KubeWatch,
 };
-use super::contract::{validate_envelope, validate_image_capabilities};
+use super::contract::{ControllerEnvelope, validate_envelope, validate_image_capabilities};
 use super::error::KubeError;
+use super::projection::{BootstrapDigests, build_controller_envelope};
 
 const FIXTURES: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -470,4 +471,78 @@ fn init_never_contacts_the_cluster() {
     ])
     .expect("kube init with unroutable KUBECONFIG must succeed");
     assert_eq!(exit, 0, "kube init must not contact the cluster");
+}
+
+// --- kube generate tests ---
+
+/// Helper: run `kube generate --envelope <fixture> --output <path>` and return the parsed envelope.
+fn run_generate_fixture(fixture_name: &str) -> (ControllerEnvelope, tempfile::TempDir) {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let output_path = dir.path().join("generated.json");
+    let exit = super::command::run(&[
+        "generate".to_string(),
+        "--envelope".to_string(),
+        format!("{FIXTURES}{fixture_name}"),
+        "--output".to_string(),
+        output_path.display().to_string(),
+    ])
+    .expect("generate command must succeed");
+    assert_eq!(exit, 0, "generate must exit 0");
+    let bytes = std::fs::read(&output_path).expect("output file must exist");
+    let value: Value = serde_json::from_slice(&bytes).expect("output must be valid JSON");
+    let envelope = serde_json::from_value::<ControllerEnvelope>(value)
+        .expect("output must deserialize as ControllerEnvelope");
+    (envelope, dir)
+}
+
+#[test]
+fn generate_output_validates() {
+    let (generated, _dir) = run_generate_fixture("valid-one-cell-envelope.json");
+    let as_value = serde_json::to_value(&generated).expect("round-trip to Value");
+    validate_envelope(as_value).expect("generated envelope must pass validate_envelope");
+}
+
+#[test]
+fn generate_matches_profile_projection() {
+    let (generated, _dir) = run_generate_fixture("valid-one-cell-envelope.json");
+    // Profile calls build_controller_envelope with minted digests; generate calls it with an
+    // empty map (no-op). Both must call the same function, so their non-digest fields are
+    // identical. With an empty digest map the result equals the base envelope exactly.
+    let base_value = fixture("valid-one-cell-envelope.json");
+    let base = validate_envelope(base_value).expect("base fixture valid");
+    let projected =
+        build_controller_envelope(&base, &BootstrapDigests::new()).expect("empty-map projection");
+    assert_eq!(
+        serde_json::to_string(&generated).expect("generated JSON"),
+        serde_json::to_string(&projected).expect("projected JSON"),
+        "generate must call build_controller_envelope with the same inputs as profile"
+    );
+}
+
+#[test]
+fn generate_never_contacts_the_cluster() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let kubeconfig_path = dir.path().join("unroutable.yaml");
+    std::fs::write(
+        &kubeconfig_path,
+        concat!(
+            "apiVersion: v1\ncurrent-context: test\n",
+            "clusters:\n- name: cluster\n  cluster:\n    server: https://192.0.2.1:6443\n",
+            "contexts:\n- name: test\n  context:\n    cluster: cluster\n    user: user\n",
+            "users:\n- name: user\n  user:\n    token: notoken\n",
+        ),
+    )
+    .expect("kubeconfig write");
+    unsafe { std::env::set_var("KUBECONFIG", kubeconfig_path.as_os_str()) };
+    let output_path = dir.path().join("generated.json");
+    let exit = super::command::run(&[
+        "generate".to_string(),
+        "--envelope".to_string(),
+        format!("{FIXTURES}valid-one-cell-envelope.json"),
+        "--output".to_string(),
+        output_path.display().to_string(),
+    ])
+    .expect("generate with unroutable KUBECONFIG must succeed");
+    assert_eq!(exit, 0, "generate must not contact the cluster");
+    assert!(output_path.exists(), "generate must write the output file");
 }
