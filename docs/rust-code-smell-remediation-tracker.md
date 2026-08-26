@@ -48,7 +48,7 @@ Graham review and a commit.
 | S04 | HTTP-owned shared transport configuration | Complete | Integrated `164955a757`, `9042df24d3`; independent Graham r2 PASS |
 | S05 | HTTP hot path allocates/reparses unnecessarily | Confirmed/narrowed; spec ready | Sol implementation plan |
 | S06 | GPU worker mutex spans IPC awaits | Obsolete | Record retraction |
-| S07 | Unbounded graph/media channels | Confirmed/narrowed; spec ready | Sol implementation plan |
+| S07 | Unbounded graph/media channels | Complete — `9c32b959e3`, `d5136f005e`, `c6e681abd7`, `66eaaf89b5` | Independent Graham r3 approved; RED→GREEN lifecycle and finalization evidence recorded |
 | S08 | Cellular test helper has a vacuous missing-log path | Complete — `860d93510b` | Independent Graham approved; RED→GREEN e2e evidence recorded |
 | S09 | Stale `dead_code` suppressions on live fields | Already fixed | Record retraction |
 | S10 | Disagg `TraceCollector` API suppressions lack coherent disposition | Complete on integration branch — `bacf85c014` | Independent Graham approved; await shared-file integration |
@@ -90,6 +90,12 @@ Graham review and a commit.
 | B01 | AgentX integration fixtures omit required cache-bust option | Complete — `91b65b2044` | Independent Graham approved; compile regression green |
 
 ## Progress log
+
+- 2026-08-26: Completed S07. Graph and media event delivery now uses bounded,
+  nonblocking queues: graph saturation deterministically fails and releases the
+  phase lifecycle, while media overflow is latched and fails sidecar
+  finalization. The saved RED timeout and both behavioral GREEN regressions
+  passed; independent Graham r3 approved the complete series.
 
 - 2026-08-26: Completed C11. Graph-runtime in-flight accounting is now an RAII
   responsibility, so a spawned task panic decrements and notifies idle waiters
