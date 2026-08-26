@@ -77,7 +77,7 @@ Graham review and a commit.
 | C07 | H2 prior knowledge is not usable over UDS | Complete — `0ed7e8980d` | Independent Graham approved; UDS H1/H2 RED→GREEN coverage recorded |
 | C08 | Graph successor waits for parent completion instead of first token | Complete — `f363004e9d`, `df6e18adb7` | Independent Graham approved; focused RED→GREEN and 320 graph tests green |
 | C09 | Graph firing delay ignores cancellation | Complete — `77e606b065`, `676025af64` | Independent Graham approved after deterministic post-token delay coverage; 321 graph tests green |
-| C10 | Graph cancellation still permits tool successor | Confirmed; spec needed | Sol implementation plan |
+| C10 | Graph cancellation still permits tool successor | Complete — `dfa0043510`, `af44cb48ef` | Independent Graham approved after deterministic pre-dispatch and in-flight cancellation coverage; 323 graph tests green |
 | C11 | Graph-runtime panic leaks idle accounting | Confirmed; spec needed | Sol implementation plan |
 | C14a | YAML accepts boolean `artifacts.records` outside the contract | Complete — `1999e28b54`, `55ce407c1d` | Independent Graham approved; isolated behavioral RED→GREEN and 42 YAML tests green |
 | C14b | YAML accepts unsupported schema versions | Confirmed; spec needed | Sol implementation plan |
@@ -90,6 +90,11 @@ Graham review and a commit.
 | B01 | AgentX integration fixtures omit required cache-bust option | Complete — `91b65b2044` | Independent Graham approved; compile regression green |
 
 ## Progress log
+
+- 2026-08-26: Completed C10. Tool successors now stop both before dispatch and
+  while dispatch is in flight when their trace is cancelled. The final regression
+  deterministically parks a tool dispatch before cancellation; independent
+  Graham review approved the repair.
 
 - 2026-08-26: Completed C19. Parquet histogram export now retains the
   deterministic union of observed bounds and remaps prior samples with zeroes
