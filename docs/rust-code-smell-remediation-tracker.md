@@ -76,7 +76,7 @@ Graham review and a commit.
 | C06 | Authored HTTP body cap is not propagated to client config | Complete — `0a9ba67232` | Independent Graham approved; clean-head behavioral RED→GREEN coverage recorded |
 | C07 | H2 prior knowledge is not usable over UDS | Complete — `0ed7e8980d` | Independent Graham approved; UDS H1/H2 RED→GREEN coverage recorded |
 | C08 | Graph successor waits for parent completion instead of first token | Complete — `f363004e9d`, `df6e18adb7` | Independent Graham approved; focused RED→GREEN and 320 graph tests green |
-| C09 | Graph firing delay ignores cancellation | Confirmed; spec needed | Sol implementation plan |
+| C09 | Graph firing delay ignores cancellation | Complete — `77e606b065`, `676025af64` | Independent Graham approved after deterministic post-token delay coverage; 321 graph tests green |
 | C10 | Graph cancellation still permits tool successor | Confirmed; spec needed | Sol implementation plan |
 | C11 | Graph-runtime panic leaks idle accounting | Confirmed; spec needed | Sol implementation plan |
 | C14a | YAML accepts boolean `artifacts.records` outside the contract | Complete — `1999e28b54`, `55ce407c1d` | Independent Graham approved; isolated behavioral RED→GREEN and 42 YAML tests green |
@@ -90,6 +90,11 @@ Graham review and a commit.
 | B01 | AgentX integration fixtures omit required cache-bust option | Complete — `91b65b2044` | Independent Graham approved; compile regression green |
 
 ## Progress log
+
+- 2026-08-26: Completed C09. Cancellation now races both the parent first-token
+  wait and the clock-injected firing delay; the regression waits until the child
+  is demonstrably parked at the post-token simulated deadline before canceling.
+  Independent Graham approval followed the coverage repair.
 
 - 2026-08-26: Completed C18. MLflow and W&B now share the same series
   selection rule: use the unique unlabeled aggregate when labels are mixed,
