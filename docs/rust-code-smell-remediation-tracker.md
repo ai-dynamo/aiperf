@@ -51,7 +51,7 @@ Graham review and a commit.
 | S07 | Unbounded graph/media channels | Complete — `9c32b959e3`, `d5136f005e`, `c6e681abd7`, `66eaaf89b5` | Independent Graham r3 approved; RED→GREEN lifecycle and finalization evidence recorded |
 | S08 | Cellular test helper has a vacuous missing-log path | Complete — `860d93510b` | Independent Graham approved; RED→GREEN e2e evidence recorded |
 | S09 | Stale `dead_code` suppressions on live fields | Already fixed | Record retraction |
-| S10 | Disagg `TraceCollector` API suppressions lack coherent disposition | Complete on integration branch — `bacf85c014` | Independent Graham approved; await shared-file integration |
+| S10 | Disagg `TraceCollector` API suppressions lack coherent disposition | Complete — `50e5581c1d` | Independent Graham approved; integrated producerless-API disposition |
 | S11 | `Inputs` is an unguarded god struct | Complete — `de8b24adb6`, `37a78fd0a2`, `2fc4d17c6e` | Independent Graham r2 approved; direct grouped-construction and flat-wire evidence recorded |
 | S12 | Cellular controller feature gates are scattered | Complete — `d1948cd50d` | Independent Graham approved; feature-on controller behavior and parent-gate boundary evidence recorded |
 | S13 | Graph benchmark bypasses the transport seam | Complete — `0e2e3f7aa1` | Independent Graham approved; default API boundary, opt-in transport feature, and DynoSim report evidence recorded |
@@ -90,6 +90,11 @@ Graham review and a commit.
 | B01 | AgentX integration fixtures omit required cache-bust option | Complete — `91b65b2044` | Independent Graham approved; compile regression green |
 
 ## Progress log
+
+- 2026-08-26: Completed S10. The Graham-approved collector integration refactor
+  is now on shared HEAD: producerless collector API surface and stale
+  suppressions were removed, while producer-facing observer vocabulary remains
+  explicit.
 
 - 2026-08-26: Completed E03. NativeGraph callback execution now consumes the
   remaining shared agent deadline under the injected clock; deadline timeout
