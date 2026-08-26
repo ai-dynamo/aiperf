@@ -376,6 +376,7 @@ pub struct GlobalSlotPool {
     /// compare-and-swap loop so two concurrent releases can never both absorb
     /// the same unit of debt and drive the count below zero.
     debt: std::sync::atomic::AtomicUsize,
+    notify: Notify,
 }
 
 impl GlobalSlotPool {
@@ -389,6 +390,7 @@ impl GlobalSlotPool {
             wait_count: std::sync::atomic::AtomicU64::new(0),
             current_limit: std::sync::atomic::AtomicUsize::new(initial_limit),
             debt: std::sync::atomic::AtomicUsize::new(0),
+            notify: Notify::new(),
         })
     }
 
@@ -399,20 +401,33 @@ impl GlobalSlotPool {
 
     /// Acquire one globally-shared slot, waiting if none are free.
     pub async fn acquire(self: &Arc<Self>) -> GlobalSlotGuard {
-        let had_permit_immediately = self.semaphore.available_permits() > 0;
-        if !had_permit_immediately {
-            self.wait_count
+        loop {
+            let mut notified = std::pin::pin!(self.notify.notified());
+            notified.as_mut().enable();
+            if self.debt() > 0 {
+                notified.await;
+                continue;
+            }
+            let had_permit_immediately = self.semaphore.available_permits() > 0;
+            if !had_permit_immediately {
+                self.wait_count
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
+            let permit = self
+                .semaphore
+                .acquire()
+                .await
+                .expect("GlobalSlotPool semaphore is never closed");
+            if self.debt() > 0 {
+                permit.forget();
+                self.semaphore.add_permits(1);
+                continue;
+            }
+            permit.forget();
+            self.acquire_count
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            return GlobalSlotGuard { pool: self.clone() };
         }
-        let permit = self
-            .semaphore
-            .acquire()
-            .await
-            .expect("GlobalSlotPool semaphore is never closed");
-        permit.forget();
-        self.acquire_count
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        GlobalSlotGuard { pool: self.clone() }
     }
 
     /// Try to acquire one globally-shared slot without blocking.
@@ -421,8 +436,15 @@ impl GlobalSlotPool {
     /// worker thread. Mirrors [`SlotPool::try_acquire`]'s nonblocking contract
     /// for new-session admission under `global` dispatch.
     pub fn try_acquire(self: &Arc<Self>) -> Option<GlobalSlotGuard> {
+        if self.debt() > 0 {
+            return None;
+        }
         match self.semaphore.try_acquire() {
             Ok(permit) => {
+                if self.debt() > 0 {
+                    drop(permit);
+                    return None;
+                }
                 permit.forget();
                 self.acquire_count
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -475,6 +497,7 @@ impl GlobalSlotPool {
                     .compare_exchange_weak(debt, debt - cancel, Ordering::AcqRel, Ordering::Acquire)
                     .is_ok()
                 {
+                    self.notify.notify_waiters();
                     break;
                 }
             }
@@ -484,21 +507,24 @@ impl GlobalSlotPool {
                 self.capacity_notify.notify_waiters();
             }
         } else if diff < 0 {
-            // Decrease: drain available permits now, track the remainder as debt.
-            let mut remaining = (-diff) as usize;
-            while remaining > 0 {
-                match self.semaphore.try_acquire() {
-                    Ok(permit) => {
-                        permit.forget();
-                        remaining -= 1;
-                    }
-                    // No free permit right now: the rest becomes debt, to be
-                    // absorbed by future releases instead of freeing slots.
-                    Err(_) => break,
+            self.decrease_with_hook((-diff) as usize, || {});
+        }
+    }
+
+    fn decrease_with_hook<F: FnOnce()>(&self, amount: usize, after_reservation: F) {
+        use std::sync::atomic::Ordering;
+        let mut remaining = amount;
+        self.debt.fetch_add(remaining, Ordering::AcqRel);
+        after_reservation();
+        while remaining > 0 {
+            match self.semaphore.try_acquire() {
+                Ok(permit) => {
+                    permit.forget();
+                    self.debt.fetch_sub(1, Ordering::AcqRel);
+                    self.notify.notify_waiters();
+                    remaining -= 1;
                 }
-            }
-            if remaining > 0 {
-                self.debt.fetch_add(remaining, Ordering::AcqRel);
+                Err(_) => break,
             }
         }
     }
@@ -564,6 +590,7 @@ impl GlobalSlotPool {
                 .is_ok()
             {
                 // Debt absorbed this release; no permit freed.
+                self.notify.notify_waiters();
                 return;
             }
         }
@@ -851,6 +878,30 @@ mod tests {
         // Second release now frees a real slot, landing at the reduced cap of 1.
         drop(g2);
         assert_eq!(pool.effective_slots(), 1);
+    }
+
+    #[test]
+    fn global_decrease_reserves_before_release_interleaving() {
+        let pool = GlobalSlotPool::new(1);
+        let guard = pool.try_acquire().unwrap();
+        pool.decrease_with_hook(1, || {
+            drop(guard);
+            assert_eq!(pool.effective_slots(), 0);
+        });
+        assert_eq!(pool.effective_slots(), 0);
+        assert_eq!(pool.debt(), 0);
+    }
+
+    #[test]
+    fn global_acquires_refuse_reserved_debt_until_drain_completes() {
+        let pool = GlobalSlotPool::new(1);
+        let held = pool.try_acquire().unwrap();
+        pool.debt.fetch_add(1, std::sync::atomic::Ordering::Release);
+        assert!(pool.try_acquire().is_none());
+        assert!(pool.try_acquire().is_none());
+        pool.debt.fetch_sub(1, std::sync::atomic::Ordering::Release);
+        drop(held);
+        assert!(pool.try_acquire().is_some());
     }
 
     #[test]
