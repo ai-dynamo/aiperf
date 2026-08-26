@@ -58,9 +58,12 @@ not a conforming implementation of this design.
 The following invariants apply together. None is optional:
 
 1. **Native Rust boundary.** The loader and plugins exchange the exact Rust
-   traits and Rust values declared by the AIPerf plugin API. There is no C ABI,
-   `abi_stable` facade, serialization layer, generated function table, Python
-   runtime, or process RPC between a factory and its host.
+   traits and Rust values declared by the AIPerf plugin API. No plugin entry,
+   category-trait, or transferred-data boundary uses a C ABI, `abi_stable`
+   facade, serialization layer, generated function table, Python runtime, or
+   process RPC. This does not prohibit ordinary implementation dependencies,
+   including the shared allocator provider, from using their upstream C ABI
+   internally without becoming the plugin contract.
 2. **Exact build compatibility.** A library is callable only when its
    SDK-produced `host_abi_universe_id` equals the host's identity, its unique
    `plugin_artifact_build_id` validates against that universe, and the complete
@@ -79,9 +82,13 @@ The following invariants apply together. None is optional:
    children, controllers, and cells use one resolved plugin-lock identity. No
    execution path constructs a separate built-in registry or discovers an
    additional plugin.
-5. **Process-lifetime residency.** A library whose code has been called is never
-   unloaded or replaced before process exit. No trait object's vtable or future
-   may outlive its defining code.
+5. **Process-lifetime residency after successful mapping.** Every library for
+   which the platform loader returns a handle is retained before AIPerf resolves
+   or calls its entry or permits any pointer/value to escape, and is never
+   unloaded or replaced before process exit. A platform may itself unmap a
+   module whose initializer fails before returning a handle; that failure
+   poisons composition and no plugin value can have escaped. No trait object's
+   vtable or future may outlive its defining code.
 6. **No runtime mutation.** Registration is impossible after freeze. There is no
    reload, unload, enable, disable, override, or priority change during a run.
 7. **Transactional packages.** A package contributes all declared entries or
@@ -127,7 +134,7 @@ decision changes.
 | Decision | Normative resolution | Detailed section |
 |---|---|---|
 | Artifact form | Multiple Rust `cdylib` artifacts named `.so`/`.dylib`/`.dll`, exporting a native-Rust entry function | Library contract; rejected alternatives |
-| Programming model | Native Rust traits and types; no C ABI or ABI-wrapper facade | Invariant 1; rejected alternatives |
+| Programming model | Native Rust traits and types; no C ABI or ABI-wrapper facade at the plugin entry/category/data boundary; implementation dependencies may retain their upstream ABI | Invariant 1; rejected alternatives |
 | Compatibility meaning | Source API is SemVer; binary loading requires an exact common host ABI universe plus a validated package-specific artifact-build record; either identity changing requires the affected rebuild; neither identity is an ABI proof | Compatibility contract |
 | Runtime lifecycle | Eagerly load active packages, register transactionally, freeze once, retain code until process exit | Composition and lifecycle |
 | Initial categories | Endpoint, transport, and exporter only | Runtime category behavior |
@@ -157,7 +164,7 @@ listed enforcement and evidence MUST exist before generation 1 is released.
 | 2 | Embedded common-universe and package-build records plus immutable, staged, rehashed distribution-controlled non-system executable closure | Build-input mismatch, artifact-swap, dependency-tamper, and loaded-module identity fixtures |
 | 3 | Frozen composition invoked before every named host-owned effect; plugin initialization explicitly remains trusted/effectful | Help/list/config/profile/eval/re-exec/cell effect-order tests |
 | 4 | Full canonical lock carried by dedicated re-exec/cell bootstrap and bound into signed cell registration | Same-lock reproduction and first-difference mismatch tests for every process role |
-| 5 | Handles enter the process-resident set before pointers escape; Unix retains/pins and Windows pins modules | Subprocess lifetime, object-drop, and attempted-unload fixtures |
+| 5 | Every successfully returned handle enters the process-resident set before symbol resolution/pointer escape; Unix retains/pins and Windows pins modules; initializer failure before a returned handle poisons with no escape | Subprocess lifetime, failed-initializer, object-drop, and attempted-unload fixtures |
 | 6 | Type-state builders expose no registration after consuming freeze; process-global differing-lock reuse fails | Compile-fail API tests plus same-process lifecycle tests |
 | 7 | Package-scoped staging commits all declared registrations together | Multi-entry rollback and descriptor-disagreement fixtures |
 | 8 | Versioned normalization, canonical-first alias rules, unique-max priority, deterministic ties | Canonical/alias/version/tie/shadow fixture matrix |
@@ -290,6 +297,54 @@ Allowing a plugin to depend directly on today's `aiperf-runtime` monocrate would
 recreate the large compile graph, expose private implementation details, risk
 duplicate global state, and create a dependency cycle between loader and
 loaded code. It was rejected in favor of focused downward API/core/SDK crates.
+
+### Per-library allocators with origin-specific destroy functions
+
+Letting each plugin allocate with its own allocator and returning every owned
+value through an origin-specific `destroy`/`free` callback can be made correct,
+but it changes ordinary Rust ownership into a generated destruction protocol.
+It adds function-table calls and origin metadata to drops, makes `String`,
+`Vec`, `Box`, `Arc`, `Rc`, errors, trait objects, and futures non-native at the
+boundary, and moves work onto request completion and potentially token-heavy
+paths. It was rejected because it violates both the native-trait requirement and
+the zero-added-hot-path-operation invariant.
+
+### Forbid all owned Rust values across the boundary
+
+A borrowed/static-only API would avoid cross-library allocation ownership, but
+endpoint, transport, async, error, and exporter contracts inevitably need owned
+buffers, futures, handles, and results. Requiring plugins to retain every value
+behind bespoke borrowed handles would recreate an ABI facade and complicate
+lifetime management. It is permitted only as the limited feasibility-spike
+stage before allocator conformance, not as the production contract.
+
+### Switch the complete process to `System`
+
+Using Rust's `System` allocator everywhere could reduce provider packaging on
+some Unix systems, but it abandons AIPerf's existing mimalloc performance
+baseline, does not by itself prove one compatible allocator instance across
+every Windows/native dependency topology, and would be a product-wide allocator
+migration unrelated to plugin modularity. It was rejected. The dynamic mimalloc
+provider must instead prove non-inferiority against the current statically linked
+mimalloc baseline.
+
+### AIPerf allocator wrapper or allocation function table
+
+An `aiperf_alloc_v1` Rust wrapper, selector, or generated table would provide an
+obvious stable ownership seam, but every allocation/reallocation/free would add
+another AIPerf-authored call or indirect dispatch and would no longer be the
+existing allocator path. It was rejected. `aiperf_alloc_v1` names and pins the
+shared mimalloc binary; the Rust `GlobalAlloc` shims import upstream `mi_*`
+symbols directly.
+
+### Unwind containment at the plugin boundary
+
+Keeping `panic=unwind` and wrapping every boundary call with `catch_unwind`
+would add containment calls, cannot make all foreign/native unwind interactions
+sound, and conflicts with the zero-additional-call-layer requirement. It was
+rejected in favor of typed recoverable errors and `panic=abort`. This changes the
+current execute-mode panic envelope and therefore requires the explicit product
+migration described below.
 
 ## Compatibility contract
 
@@ -560,6 +615,16 @@ The injected `GlobalAlloc` shim has these exact semantics:
 
 Actual ELF/Mach-O imports and PE import tables MUST prove that each compiled
 `GlobalAlloc` shim targets that provider; source configuration is not evidence.
+After eager relocation and before any plugin entry call, the loader also resolves
+each required `mi_*` symbol on the exact retained provider handle and proves
+that every host/plugin shim relocation target equals an address inside that
+provider's mapped executable ranges. ELF GOT/relocation slots, Mach-O bound
+symbol pointers, and PE IAT entries are inspected through platform-specific
+loader APIs. A symbol-name/import-table match with a different resolved address
+is interposition and poisons startup. The host shim is checked immediately after
+baseline verification; each plugin shim is checked immediately after mapping
+but before calling its entry symbol. Conformance includes preload/interposition
+fixtures on every platform.
 Import maps cannot prove the origin of every explicit allocation in arbitrary
 native code. Boundary-owned storage therefore MUST NOT be allocated through
 `System`, direct libc allocation, a native library allocator, or another
@@ -679,9 +744,11 @@ sketch fixes the borrowed-static declaration and call shape. The SDK macro emits
 package descriptor and build record, and prevents authors from selecting a
 different symbol name. The loader calls the symbol only after sidecar, embedded
 records, complete distribution-controlled non-system closure, and both build-
-identity validations. Unsafe code is confined
-to immutable artifact acquisition, process-lifetime residency, handle-scoped
-symbol resolution, and the initial native Rust call.
+identity validations. Unsafe code in host loader and SDK-generated glue is
+confined to immutable artifact acquisition, process-lifetime residency, handle-
+scoped symbol resolution, and the initial native Rust call; this does not claim
+that trusted third-party plugin implementations contain no author-owned unsafe
+Rust.
 
 `PluginPackageDescriptor` repeats package name, version, source API version,
 `host_abi_universe_id`, and `plugin_artifact_build_id`. The loader MUST compare
@@ -889,8 +956,9 @@ system/user/environment discovery and `--plugin-path`/`--plugin-manifest` are
 rejected as conflicting inputs, while the executable's authenticated
 distribution baseline is still verified. Every manifest, final artifact,
 package-build record, baseline requirement, winning/shadowed/ambiguous/
-quarantined status, and authority decision MUST appear exactly in the lock.
-Missing or extra generations, a recomputed quarantine reason that differs, or
+quarantined status, and authority decision MUST appear exactly in the lock;
+missing/unreadable inputs appear as typed absence/failure receipts rather than
+imaginary artifact bytes. Missing or extra generations, a recomputed quarantine reason that differs, or
 any digest/descriptor/host-universe difference fails the command; nothing is
 silently rediscovered, repaired, promoted, or omitted. Re-exec children inherit
 the parent's acquired staged authority rather than reopening the lock bundle.
@@ -958,7 +1026,9 @@ Registration is manifest-bound. When an extension registers a factory, the
 registry obtains its priority and package provenance from the active package
 context rather than trusting plugin-supplied ad hoc values. The package is
 staged transactionally; an error commits none of its entries. Priority
-resolution then produces one immutable winner per category and name.
+was already fixed before activation; registration verifies the package's actual
+entries against that precomputed winner/shadow/ambiguity map and then commits
+the already-selected entries without rerunning or changing priority resolution.
 
 Required first-party packages and required component keys are separate fields in
 the authenticated AIPerf distribution inventory. A required package need not
@@ -979,8 +1049,12 @@ AIPerf code and is the sole exception to the composition-before-host-effects
 ordering; AIPerf verifies that preexisting state before discovery:
 
 1. Enumerate every already-loaded non-system module, seed the process-global
-   loader-identity-to-digest map with the executable and those modules, and
-   verify every distribution-baseline requirement, including the allocator.
+   loader-identity-to-digest map with the executable and authenticated
+   distribution-baseline modules, and verify every baseline requirement,
+   including the allocator. Any other preloaded non-system module—including one
+   introduced by `LD_PRELOAD`, `DYLD_INSERT_LIBRARIES`, AppInit, or an equivalent
+   injection seam—fails startup before discovery unless its exact identity and
+   digest are authenticated in the target's distribution/system policy.
 2. Acquire discovery inputs and strictly decode manifests.
 3. Acquire and statically validate every complete immutable artifact closure.
 4. Assign authority, resolve canonical IDs and aliases, and fix priorities.
@@ -1020,10 +1094,26 @@ recreates the same plan, and compares its digest before constructing its
 `PreparedRun`. A mismatch fails before child effects. Each plan is immutable
 before any effect in its process.
 
+The plan digest never serializes or introspects plugin-owned opaque validated
+state. Every validation method returns that opaque native value together with a
+host-owned `FactoryValidationReceiptV1` containing the selected category and
+canonical factory ID, frozen descriptor digest, BLAKE3 digest of the host's
+canonical normalized authored config bytes, plugin-computed semantic-config
+digest after defaults/normalization, sorted host-resource requirements, and—for
+exporters—the exact canonical capture requirement. The plan digest covers the
+canonical normalized run DTO plus the sorted receipts. The child reruns factory
+validation and requires byte-identical receipts; it constructs a fresh local
+opaque value and never transfers the parent's value. A conforming factory MUST
+produce the same semantic digest and behavior for the same common universe,
+descriptor, and canonical input. Repeatability and default-value mutation
+fixtures enforce that rule; receipts are trusted declarations, not a sandbox
+against malicious native code.
+
 Production composition is process-global. The first platform load creates an
 unsealed process-resident `ActivatingLibrarySet`. Successful registration and
 freeze seal it as `LoadedLibrarySet` with the subsequently derived plugin-lock
-digest. Failure retains all mapped handles in a `PoisonedLibrarySet` with the
+digest. Failure retains every handle the loader actually returned in a
+`PoisonedLibrarySet` with the
 original activation error and no fictitious completed lock. A second
 composition request in the same process may reuse a successfully sealed set
 only when the requested lock digest is identical; a different digest is an
@@ -1035,9 +1125,13 @@ eliminates dependence on registry-clone or factory-product drop ordering.
 
 Before any pointer, descriptor, or object from a plugin becomes reachable, its
 handle is committed to the process-resident set. If failure occurs after the
-first platform-loader operation, the process-global loader is poisoned. All
-mapped handles remain resident, every later composition returns the original
-failure, and the process cannot execute a benchmark. Loader failure can follow
+first platform-loader operation, the process-global loader is poisoned. Every
+successfully obtained handle remains resident, every later composition returns
+the original failure, and the process cannot execute a benchmark. A platform
+loader may execute an initializer and then fail/unmap that module without ever
+returning a retainable handle (for example a rejected Windows
+`DLL_PROCESS_ATTACH`); AIPerf cannot prevent that OS-owned unmap, but no symbol
+was resolved and no pointer or value escaped. Loader failure can follow
 dependency mapping or native initializers, so the poison boundary is loader
 entry, not entry-symbol invocation.
 
@@ -1060,9 +1154,24 @@ Platform dependency loading is constrained as follows:
   map rejects conflicting non-system DLLs before native activation, and every
   successful module is pinned with `Library::pin`.
 
+Before loading, staging constructs one process-wide canonical object map keyed
+by `(loader identity, digest)` whose values carry origin
+`Executable`, `Baseline`, or `CanonicalStage`. Every byte-identical package
+claimant, regardless of package or platform, resolves to the same host-owned
+`CanonicalStage` file and absolute load path; the object is mapped once and its
+retained handle satisfies every claimant edge. A package dependency may reuse a
+`Baseline` object only through an explicit typed baseline requirement, never
+merely because its bytes match. Package-private logical paths remain provenance
+only. The map is seeded solely with the verified executable/baseline modules,
+adds canonical staged objects before native activation, and rejects an identity
+paired with any other digest or an unauthenticated preloaded origin. This
+coalescing rule is identical for ELF, Mach-O, and case-folded PE identities and
+eliminates loader-dependent accidental reuse of a different package's path.
+
 The SDK statically validates these policies and every dependency edge. Runtime
 validation records actual loaded module identities, paths, and digests. A
-plugin-private module's path and digest MUST equal the staged closure. A shared
+plugin-private module's path and digest MUST equal its `CanonicalStage` object.
+A shared
 distribution-baseline module is instead satisfied only by the exact preverified
 `(loader identity, digest)` already present in the seeded map; its mapped path is
 not expected to equal a nonexistent per-plugin staged path. Any already-loaded
@@ -1079,8 +1188,11 @@ The command behavior is explicit:
 - root `--help` and shell-completion generation do not discover or load plugins;
 - `aiperf plugins list` discovers and decodes manifests without executing code;
 - `aiperf plugins validate` performs closure, build-identity, dependency,
-  allocator, panic, entry-symbol, and
-  registration checks and therefore executes trusted plugin initialization;
+  allocator, panic, entry-symbol, and registration checks only for the active
+  intended load set and therefore executes trusted initialization for winners
+  and required packages, never fully shadowed optional packages. Validating one
+  otherwise-shadowed package requires explicit `--plugin-manifest`, which makes
+  it required for that diagnostic invocation;
 - `aiperf config`, profile validation, execution, and native evaluation compose
   before opening artifacts or starting dashboards, control-hook networking,
   Tokio/Velo runtimes, dataset acquisition, or any registered component;
@@ -1091,29 +1203,42 @@ The public parent composes before artifact logging, dashboard creation, control-
 hook networking, or child launch. Ordinary `--execute` gains a dedicated
 inherited private bootstrap authority carrying the canonical lock DTO, expected
 validated-run-plan digest, and
-handles to the parent's already-acquired private staged generations; benchmark
+handles to the parent's complete `LockedCatalogBundle`; benchmark
 stdin remains unchanged. On Unix these are no-follow directory/file descriptors
 with explicit inheritance. On Windows these are explicitly inheritable handles
 named in the child process attribute list; ambient handle inheritance is
 disabled. The channel is distinct from the existing cell-security descriptor.
 The child does not rediscover, reopen an explicit outside-root path, or race an
-installed generation; it rehashes and loads only objects reachable through the
-inherited staged authority, then proves the full lock before reading the
+installed generation; it rehashes all catalog inputs and loads only load-set
+objects reachable through the inherited authority, then proves the full lock before reading the
 benchmark request.
 
-Same-host cells receive the expected lock through their private bootstrap pipe.
-Cross-host Kubernetes/SLURM launch material includes the expected lock digest
-and complete required generation inventory. A cell composes immediately after
+Same-host cells receive the expected lock, the canonical normalized full run
+DTO, deterministic cell partition identity/rules, and expected cell-specific
+validated-plan digest through their private bootstrap pipe. Cross-host
+Kubernetes/SLURM launch material supplies the same values in a fixed-`0600`,
+no-follow bootstrap file rather than argv or environment, plus the complete
+locked-catalog inventory. The controller derives and hashes every cell slice
+before launch. A cell composes and derives its slice immediately after
 reading bootstrap material and before creating Tokio/Velo runtimes, dialing,
 fetching datasets, opening artifacts, or joining barriers. `CellRegister` gains
-the lock digest; the signed registration transcript binds it, and controller
+the lock and validated-plan digests; the signed registration transcript binds
+both, and controller
 registration verifies it transactionally before routes, artifact authorization,
 or barrier state commit. Remote hosts preinstall exact artifacts; automatic code
 transfer remains absent.
 
+Velo `RegisterReply` no longer provides the first authoritative cell run
+configuration. It repeats the prebootstrapped slice and plan digests for
+authenticated agreement; a difference is a registration failure. Plugin
+factories validate the local slice and reproduce byte-identical receipts before
+the Velo runtime exists. This is an explicit migration from the current
+register-then-compose cell order.
+
 This requires explicit product-schema migrations, not an assumption that the
 present launch DTOs already carry plugin state. `CellLaunchContext` gains the
-expected canonical lock and required-generation inventory. The native
+expected canonical lock, normalized run DTO, cell partition, validated-plan
+digest, and complete locked-catalog inventory. The native
 Kubernetes envelope, image-capabilities document, operator-owned JobSet pod
 specification, controller/cell bootstrap schema, and results provenance all bind
 the distribution generation, host ABI universe, plugin lock, and immutable
@@ -1123,17 +1248,40 @@ the same fields for every sibling rank before `srun` begins; peer startup order
 is not used as distribution or lock authority. Older envelopes/bootstrap
 schemas that cannot express these fields fail closed for plugin-enabled runs.
 
+`LockedCatalogBundle` is distinct from the intended load set and from
+distribution-required package authority. Its manifest record is presence-
+tagged: readable inputs contain exact raw bytes/digest; successfully decoded
+inputs additionally contain canonical bytes/digest; malformed inputs have no
+canonical form; and unreadable directory entries have neither raw nor canonical
+bytes. It contains every successfully acquired
+closure object needed to recompute its digest, including fully shadowed optional
+packages; stable typed acquisition/static-validation receipts for quarantined
+inputs; discovery-policy and authority inputs; the canonical status table; and
+the canonical object map. It never executes a quarantined or fully shadowed
+optional artifact. Parent, re-exec child, same-host cell, and cross-host image
+all receive or preinstall this complete immutable bundle and independently
+recompute the full catalog lock. A required-generation-only or load-set-only
+inventory is non-conforming because it cannot reproduce shadowed, ambiguous, or
+quarantined lock entries. A failure receipt binds the canonical discovery-
+source identity and normalized relative entry identity, explicit raw/canonical
+presence tags and their digests when present, attempted logical object identity,
+stable error code, and available acquired metadata; it never fabricates a raw
+digest or asks a child to recheck a mutable missing pathname.
+
 The canonical lock binds the full frozen catalog, not only executable winners.
 It contains lock schema and normalization versions; host ABI universe ID;
-every raw/canonical manifest digest; canonical package name/version/authority;
+every manifest's raw/canonical presence tags and corresponding digests when
+present; canonical package name/version/authority when decoded;
 complete distribution-controlled non-system artifact-closure digests and every
 plugin artifact-build ID; verified baseline module identities/digests; package
 authority/load status;
 per-entry status `winning|shadowed|ambiguous|quarantined`; stable quarantine
 reason code; every actual registered descriptor digest; canonical and alias
 winner maps with priorities; required package identities; required component
-keys; and target system-library allowlist version. Malformed manifests use their
-raw-byte digest and stable failure code. It excludes absolute paths and free-form
+keys; and target system-library allowlist version. Malformed readable manifests
+use their raw-byte digest and stable failure code; unreadable entries use their
+canonical discovery-source/relative-entry identity, absent-raw marker, and
+stable failure code. It excludes absolute paths and free-form
 diagnostic text. The digest is BLAKE3 over canonical length-delimited bytes.
 Every process rebuilds the full lock and reports the first structured difference
 before execution.
@@ -1261,8 +1409,9 @@ compatibility decoder remains through the next major Config schema, where its
 removal requires a separate migration record.
 
 The factory receives the raw JSON object once during strict startup validation
-and returns opaque native validated configuration. The host passes that value
-only to the exact factory instance that created it. No host switch on a closed
+and returns opaque native validated configuration plus a
+`FactoryValidationReceiptV1`. The host passes that value only to the exact
+factory instance that created it. No host switch on a closed
 transport enum and no `transport_typed` protocol copy may remain in CLI YAML,
 control hooks, validation, protocol projection, preparation, execution binding,
 capability reporting, or cellular projection.
@@ -1283,12 +1432,29 @@ Exporter plugins register `ExporterFactory` and supported capture vocabulary
 during process composition. Capture requirements are run-specific: after the
 frozen universe exists and the run configuration has been read and normalized,
 each selected factory strictly validates its opaque config and returns an
+opaque value plus `FactoryValidationReceiptV1` whose capture field is an
 `ExporterCaptureRequirementsV1` value from this closed host-owned vocabulary:
 `FinalReport`, `ExactRecordsV1`, and
 `FoldedProjectionV1(GenAiClientHistogramsV1)`. A requirement is a sorted set of
 those values, so a factory may request a defined union but cannot invent a
-projection name or schema. `ExactRecordsV1` is the existing canonical native
-profiling-record DTO sequence in admission order. The host combines requirements into an immutable
+projection name or schema. `ExactRecordsV1` is the existing full canonical
+native captured-record DTO sequence, including warmup and profiling records
+with their `benchmark_phase`; each exporter retains its existing phase-filter
+policy, and only the folded histogram projection is profiling-only. The exact
+record sequence has an explicit order per execution family:
+all scheduled workload families, including user-centric and their sharded or
+cellular forms, sort native captured records by ascending non-absent
+`request_index` and then UUID; the separate `outputs.json` projection may retain
+its existing `(session_num, turn_index)` order but does not define
+`ExactRecordsV1`. Non-cellular graph records sort by `(start_ns, UUID)` and then
+receive dense `request_index` values; cellular graph
+records concatenate ascending `cell_id`, sort within each cell by that cell's
+local `request_index` and UUID, and then receive dense controller-global
+`request_index` values. The latter intentionally remains deterministic per
+topology rather than claiming single-cell byte order. A missing required key or
+duplicate full ordering key is a typed capture failure. This preserves existing
+family-specific order; it does not redefine all records as admission ordered.
+The host combines requirements into an immutable
 `ValidatedRunPlan` and only then installs its existing per-worker capture/fold
 path and creates runtime effects. Capture plans are not part of the process-
 global plugin lock. No plugin callback, allocation, dispatch layer, or plugin-
@@ -1301,12 +1467,18 @@ unchecked join.
 
 `GenAiClientHistogramsV1` is the sole folded projection in API generation 1.
 Its versioned native Rust schema is a sorted map from
-`(metric, attributes)` to `ExplicitHistogramV1`, where `metric` is exactly one
-of `operation_duration_seconds`, `time_to_first_chunk_seconds`,
-`time_per_output_chunk_seconds`, `input_token_usage`, or
-`output_token_usage`; attributes are the normalized GenAI operation/provider
-dimensions plus optional `error_type` only where the existing projection emits
-it; and each histogram contains immutable finite ascending `f64` bounds,
+`(metric, capture_dimensions)` to `ExplicitHistogramV1`, where `metric` is exactly one
+of `gen_ai.client.operation.duration`,
+`gen_ai.client.operation.time_to_first_chunk`,
+`gen_ai.client.operation.time_per_output_chunk`, or
+`gen_ai.client.token.usage`. Capture dimensions contain only host-observed per-
+record distinctions: duration keys carry optional normalized `error_type`
+exactly where the existing record projection emits it, while token-usage keys
+carry `token_type` equal to `input` or `output` and never carry `error_type`.
+Operation name, provider name, and optional request model are deliberately not
+capture dimensions because they come from each selected exporter's opaque
+configuration and multiple OTLP instances may differ while sharing one fold.
+Each histogram contains immutable finite ascending `f64` bounds,
 `bounds.len() + 1` `u64` bucket counts, checked `u64` count, finite `f64` sum,
 and optional finite min/max. The SDK publishes the exact metric-source aliases,
 unit conversions, bounds arrays, success/error inclusion rules, and attribute
@@ -1317,16 +1489,67 @@ counts and counts with checked overflow, adds sums using the host's fixed
 deterministic merge order, and takes min/max. A key/bounds mismatch, overflow,
 or non-finite result is a typed execution failure before export.
 
+At export, each prepared OTLP instance independently decorates every projected
+histogram data point with its normalized `gen_ai.operation.name`,
+`gen_ai.provider.name`, and optional `gen_ai.request.model` from that instance's
+validated configuration, maps `error_type` to `error.type`, and maps
+`token_type` to `gen_ai.token.type`. Its semantic-config digest binds those
+values. Decoration performs no per-record work and does not require a distinct
+capture fold per exporter instance.
+
 Run-plan validation computes whether the selected workload, retention mode, and
 cellular topology can satisfy the union. `FinalReport` is always available.
-`ExactRecordsV1` under sketch/no-record retention or any mode that cannot return
-the exact canonical sequence fails before runtime construction; the host never
-silently enables expensive retention. `GenAiClientHistogramsV1` is folded once
+Selecting an exporter that declares `ExactRecordsV1` is explicit user consent
+to exact retention: the validated plan sets host-owned retention reason
+`RequiredByExporter(<exporter-id>)` and feeds it into the same planning decision
+as per-record artifacts, overriding the default exact-fold/no-record
+optimization. No separate environment-only control is required. An explicit
+sketch policy or execution mode that cannot produce the exact canonical
+sequence conflicts and fails before runtime construction with the exporter ID
+and remediation; selection never silently disables sketch or substitutes a
+fold. `GenAiClientHistogramsV1` is folded once
 per completed profiling record and is supported in retain, exact-fold, sketch,
 sharded, and cellular modes through worker-local accumulation and deterministic
 boundary merge. Warmup/excluded records follow the existing metrics-plane scope
 and do not enter it. Any selected exporter requirement that cannot be satisfied
 fails run validation with exporter ID, requirement, and conflicting mode.
+
+Cellular `ExactRecordsV1` requires an explicit protocol migration. The current
+`RecordsShardPartition<Vec<RecordIngest>>` remains the compact metrics path and
+cannot satisfy exact capture because it omits UUID, correlation ID, output/
+reasoning text, and raw exchange. When and only when the validated union requests
+`ExactRecordsV1`, each cell instead emits versioned
+`ExactRecordsPartitionV1` chunks containing its `cell_id`, monotonically dense
+chunk sequence, declared record count and byte length, BLAKE3 payload digest,
+and complete public `ExactRecordV1` DTOs (the full captured-record projection,
+including optional output/raw fields only when the host capture policy permits
+them). Chunks use the existing authenticated cell route, configured finite byte
+and record bounds, and bounded backpressure; the controller rejects gaps,
+duplicates, digest/length/count mismatches, unexpected cells, or resource-limit
+excess before exporter preparation.
+
+The controller reassembles each cell sequence, applies the family-specific
+canonical ordering above, and verifies exactly one record per declared identity
+before exposing the projection. Same-host and cross-host cells use the same wire
+DTO and merge rules. Runs not requesting exact records retain the existing
+`RecordIngest`/folded-store partitions and pay no exact-record transfer cost.
+This host-owned post-run transfer adds no plugin callback or request/token-path
+operation, but its bandwidth/memory and parity are separately benchmarked.
+
+Every cellular terminal payload also carries a versioned host-owned
+`CellCaptureBundleV1` independent of whether the metrics payload is current
+`Records` or `Store`. It binds the cell's validated-plan digest and contains
+exactly one presence-tagged result for every folded projection in that plan;
+generation 1 therefore carries an empty or populated
+`GenAiClientHistogramsV1` DTO with its projection ID, schema version, bounds,
+keys, counts, sums, extrema, and payload digest. A cell cannot omit an expected
+empty projection or add an unrequested one. The controller verifies the plan
+digest, cell identity, projection set, schema, canonical bytes, and digest before
+performing the checked deterministic worker/cell merge defined above. Missing,
+duplicate, injected, malformed, or plan-mismatched projection results fail the
+run before exporter preparation. This replaces the current local-only transient
+OTLP report side channel; neither the `Records` nor folded `Store` metrics mode
+may silently drop generic capture state.
 
 `NativeReport` MUST NOT contain an OTLP-specific implementation type. The current
 `OtelRecordAccumulator` and `NativeReport::otel_per_record` side channel become
@@ -1357,10 +1580,11 @@ none are selected. Existing CLI flags project through the same legacy
 normalizer. Each selected factory strictly decodes only its own `config` object.
 
 The canonical exporter representation is an authored ordered list of
-`{ id, config }`, with an empty object default for `config`. Duplicate exporter
-IDs in one run are rejected unless that exporter's public descriptor explicitly
-declares multi-instance support and defines an instance key. Registry priority
-selects an implementation; list order does not override package priority.
+`{ id, config }`, with an empty object default for `config`. API generation 1
+rejects duplicate normalized exporter IDs in one run; multi-instance exporters
+are deferred to a later API generation with an explicit instance-key contract.
+Registry priority selects an implementation; list order does not override
+package priority.
 
 Exporter execution order is still host-owned. Each exporter descriptor declares
 its order band and stable tie-break key. The host sorts enabled
@@ -1456,6 +1680,9 @@ The initial acceptance protocol is normative:
   endpoint of its 95% interval to be at least `0.99` for TTFT p50/p90/p99,
   inter-token-latency p50/p90/p99, and CPU time per successful request
   (equivalently, dynamic may not be more than 1% worse);
+- define exporter duration ratio as `static / dynamic` and require the lower
+  endpoint of its 95% interval to be at least `0.99` for exporter nanoseconds
+  per record;
 - require no increase in allocation count or allocated bytes per successful
   request in deterministic endpoint, transport-dispatch, response-reduction,
   and exporter-capture microbenchmarks;
@@ -1471,9 +1698,35 @@ Rust wrapper or dispatch table, and its call path, throughput, CPU, allocation
 count, and allocated bytes are compared against the monolithic allocator
 baseline. Failure blocks the architecture rather than redefining the baseline.
 
-A benchmark with a coefficient of variation above 2% for the primary metric is
-invalid, not a pass; every attempt remains retained and the complete experiment
-is rerun after diagnosing environmental noise. The
+A benchmark inventory entry names exactly one `primary_metric` from
+`successful_requests_per_second`, `output_tokens_per_second`,
+`cpu_nanoseconds_per_successful_request`, or
+`exporter_nanoseconds_per_record`, and names its non-inferiority ratio direction.
+For its 30 retained pairs, the harness computes the sample coefficient of
+variation as Bessel-corrected sample standard deviation divided by the absolute
+arithmetic mean for (a) the 30 static member summaries, (b) the 30 dynamic
+member summaries, and (c) the 30 positive paired ratios in the declared
+direction. If any of those three values exceeds 2%, the complete attempt is
+invalid, not a pass; every sample remains retained.
+
+The experiment identity is BLAKE3 over one canonical record containing: exact
+source tree and Cargo.lock digests; rustc/sysroot/target/profile and every
+compared artifact digest; benchmark-harness and mock-server artifact digests;
+canonical `plugin-parity.yaml` digest; CPU model/stepping/microcode, core and
+memory topology, firmware, kernel, allocator/provider, frequency/governor,
+affinity/isolation, and mock-server placement identities; and every environment
+value admitted by the harness. Omitted fields are forbidden. A change creates a
+new identity only through a reviewed experiment-change record that cites the
+prior attempts and explains why the changed field invalidates comparison; it
+cannot be used merely to replace a valid failure.
+
+At most three complete experiment attempts are permitted for one experiment
+identity. Only an invalid attempt may be rerun after a
+documented noise diagnosis. The first statistically valid attempt is
+authoritative whether it passes or fails and cannot be replaced by a later run.
+A product error is an immediate valid gate failure, not an invalid attempt.
+Three invalid attempts block migration until the source, environment, or
+inventory identity changes through review. The
 harness records raw samples, environment identity, and confidence intervals as
 CI artifacts. Threshold changes require an explicit design/specification
 change; a migration patch cannot loosen them to obtain a green result.
@@ -1486,7 +1739,8 @@ streaming at concurrency 1 and 64, a four-worker run, OTLP-disabled and OTLP-
 enabled capture runs, and an exporter pass over 100,000 deterministic records.
 Each entry freezes request budget, minimum valid duration, core assignment,
 mock-server placement, response shape, warmup count, estimator, bootstrap seed,
-and measured metrics. Each case performs five unmeasured warmup samples followed
+primary metric and ratio direction, measured metrics, and the infrastructure-
+invalidation classifier. Each case performs five unmeasured warmup samples followed
 by 30 paired samples. Changing any field is a performance-contract change and
 retains the prior result for comparison.
 
@@ -1532,6 +1786,8 @@ The failure policy is fixed by phase and authority:
 
 | Condition | Auto-discovered optional package | Distribution-required package | Explicit `--plugin-manifest` |
 |---|---|---|---|
+| Preloaded distribution-baseline provider missing/mismatched | Abort startup before discovery | Abort startup before discovery | Abort startup before discovery |
+| Locked-catalog/bootstrap digest, absence receipt, or plan mismatch | Fail before runtime effects | Fail before runtime effects | Fail before runtime effects |
 | Missing default discovery directory | Ignore | Fail if it contains the distribution generation | N/A |
 | Unreadable existing discovery directory or invalid environment path | Fail discovery policy | Fail discovery policy | N/A |
 | Unreadable/invalid manifest before activation | Quarantine and report | Fail composition | Fail command |
@@ -1542,7 +1798,8 @@ The failure policy is fixed by phase and authority:
 | Same non-system loader identity claimed by differing bytes | Quarantine every optional claimant | Fail composition | Fail command |
 | Equal-priority key tie | Record ambiguity; fail only if selected | Fail composition only for a required component key | Record ambiguity; fail if selected |
 | Any platform-loader/dependency activation failure | Poison process and fail composition | Poison process and fail composition | Poison process and fail command |
-| Entry symbol, descriptor, or registration error after activation | Roll back staging, poison process, fail composition | Same | Same |
+| Entry symbol, descriptor, or registration error after activation | Roll back only the registry transaction; retain staged generations and mapped handles; poison process and fail composition | Same | Same |
+| Post-load canonical lock mismatch | Retain mapped handles, poison process, fail composition | Same | Same |
 | Panic in any boundary code | Process aborts | Process aborts | Process aborts |
 | Selected key is quarantined/ambiguous | Fail validation before effects | Fail validation before effects | Fail validation before effects |
 | Runtime trait method returns error | Typed operation failure | Typed operation failure | Typed operation failure |
@@ -1747,15 +2004,23 @@ The separately built exemplar suite contains at least:
   library handle remains retained and without production unload;
 - same-process same-lock reuse/different-lock rejection, same-host re-exec, and
   remote-cell lock mismatch fixtures;
-- legacy/open transport Config-v2 acceptance, mixed-form rejection, legacy/open
+- absent transport normalization to HTTP, legacy/open transport Config-v2
+  acceptance, mixed-form rejection, neither-exporter acceptance, legacy/open
   exporter mutual exclusion, deterministic legacy exporter order, open-form
-  serialization, CLI projection, and protocol removal of `transport_typed`;
+  serialization/omission, CLI projection, and protocol removal of
+  `transport_typed`;
 - a third-party endpoint overriding a first-party endpoint over gRPC unary and
   streaming, proving the old static binding cannot survive;
 - Dynosim offline and online through the public direct-execution binding with no
   static ID switch;
 - OTLP retain, exact-fold, sketch/folded, sharded, and cellular parity with no
   plugin-specific report type or per-record plugin callback;
+- same-/cross-host cellular `ExactRecordsPartitionV1` bounded chunking,
+  ordering, digest/count/sequence rejection, and compact-path no-transfer tests;
+- cellular `CellCaptureBundleV1` Records/Store projection parity plus missing,
+  empty, duplicate, injected, schema, plan-digest, and payload-digest rejection;
+- ExactRecords exporter selection forcing explicit reason-tagged retention,
+  default exact-fold replacement, and sketch/incompatible-mode rejection;
 - best-effort exporter failure and capability-limited artifact-path tests,
   including rejection of unchecked joins;
 - help/list/config/profile/eval effect-order tests and plugin-initializer
