@@ -124,6 +124,7 @@ mod tests {
             streaming: false,
             use_legacy_max_tokens: false,
             use_server_token_count: false,
+            per_chunk_usage: false,
             timeout_seconds: 30.0,
             connection_reuse: ConnectionReuse::Pooled,
             ssl_verify: true,
