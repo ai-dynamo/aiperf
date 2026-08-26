@@ -83,7 +83,7 @@ implementation, test run, or review.
 | 55 | `dd3f09b0c3` | session-affinity header | complete | applicable | Native default-on `X-Session-Affinity` port is implemented in `e6d03a92f1` and corrected for no-correlation stale-header removal in `821412a095`; exact target merge `1a11e00297`, 21 raw native/Python-oracle cases, and independent Graham approval are recorded in `docs/origin-main-findings/commit-055-dd3f09b0c3.md`. |
 | 56 | `94fee7338b` | random range ratio | complete | applicable | Exact merge `cd31c0ae5a`; native PCG64/MT19937 stream, config, prefix/special-token semantics, and 48 byte-exact production captures are covered by three audits and independent Graham approval. |
 | 57 | `e10d53b1d3` | version 0.13.0 | pending | shared-product-action | Coordinated release decision, not standalone Rust port. |
-| 58 | `9b60a3d479` | FakeTokenizer | pending | not-applicable | Python test harness only. |
+| 58 | `9b60a3d479` | FakeTokenizer | complete | applicable | The ancestor's harness method had regressed from the semantic tree; this closure restores the exact zero-returning Python fake method, proves the native trait's existing zero default needs no duplicate API, and records Graham approval in `docs/origin-main-findings/commit-058-9b60a3d479.md`. |
 | 59 | `c9288da6c1` | mmap conversation cache | pending | not-applicable | No equivalent native mmap backend. |
 | 60 | `c2889280a6` | random_pool batch sizes | complete | applicable | Native four-modality CLI/YAML/config projection, safe real-loader batching, and binary integration coverage approved at `5dd2939765`; exact target-only merge `f1d39ad583`. |
 
