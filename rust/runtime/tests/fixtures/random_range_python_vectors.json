@@ -1,0 +1,1103 @@
+{
+  "cases": [
+    {
+      "algorithm": "numpy.random.default_rng/PCG64",
+      "entries": 8,
+      "input_bounds": [
+        8,
+        8
+      ],
+      "input_mean": 8,
+      "input_ratio": 0.0,
+      "inputs": [
+        8,
+        8,
+        8,
+        8,
+        8,
+        8,
+        8,
+        8
+      ],
+      "name": "vllm_scalar_zero_seed_0",
+      "offsets": [
+        13,
+        10,
+        8,
+        4,
+        4,
+        0,
+        1,
+        0
+      ],
+      "output_bounds": [
+        4,
+        4
+      ],
+      "output_mean": 4,
+      "output_ratio": 0.0,
+      "outputs": [
+        4,
+        4,
+        4,
+        4,
+        4,
+        4,
+        4,
+        4
+      ],
+      "requests": [
+        {
+          "request_utf8": "{\"max_tokens\":4,\"prompt_token_ids\":[0,1,2,4,5,6,8,9]}",
+          "token_ids": [
+            0,
+            1,
+            2,
+            4,
+            5,
+            6,
+            8,
+            9
+          ]
+        },
+        {
+          "request_utf8": "{\"max_tokens\":4,\"prompt_token_ids\":[13,14,0,1,2,4,5,6]}",
+          "token_ids": [
+            13,
+            14,
+            0,
+            1,
+            2,
+            4,
+            5,
+            6
+          ]
+        },
+        {
+          "request_utf8": "{\"max_tokens\":4,\"prompt_token_ids\":[12,13,14,0,1,2,4,5]}",
+          "token_ids": [
+            12,
+            13,
+            14,
+            0,
+            1,
+            2,
+            4,
+            5
+          ]
+        },
+        {
+          "request_utf8": "{\"max_tokens\":4,\"prompt_token_ids\":[9,10,11,12,13,14,0,1]}",
+          "token_ids": [
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            0,
+            1
+          ]
+        },
+        {
+          "request_utf8": "{\"max_tokens\":4,\"prompt_token_ids\":[10,11,12,13,14,0,1,2]}",
+          "token_ids": [
+            10,
+            11,
+            12,
+            13,
+            14,
+            0,
+            1,
+            2
+          ]
+        },
+        {
+          "request_utf8": "{\"max_tokens\":4,\"prompt_token_ids\":[6,8,9,10,11,12,13,14]}",
+          "token_ids": [
+            6,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14
+          ]
+        },
+        {
+          "request_utf8": "{\"max_tokens\":4,\"prompt_token_ids\":[9,10,11,12,13,14,0,1]}",
+          "token_ids": [
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            0,
+            1
+          ]
+        },
+        {
+          "request_utf8": "{\"max_tokens\":4,\"prompt_token_ids\":[9,10,11,12,13,14,0,1]}",
+          "token_ids": [
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            0,
+            1
+          ]
+        }
+      ],
+      "seed": 0,
+      "special_tokens": 0,
+      "style": "vllm",
+      "token_pool": [
+        0,
+        1,
+        2,
+        4,
+        5,
+        6,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14
+      ]
+    },
+    {
+      "algorithm": "numpy.random.default_rng/PCG64",
+      "entries": 8,
+      "input_bounds": [
+        7,
+        13
+      ],
+      "input_mean": 12,
+      "input_ratio": 0.25,
+      "inputs": [
+        7,
+        12,
+        11,
+        10,
+        10,
+        13,
+        7,
+        11
+      ],
+      "name": "vllm_split_seed_42_with_specials",
+      "offsets": [
+        8,
+        2,
+        13,
+        7,
+        8,
+        5,
+        2,
+        14
+      ],
+      "output_bounds": [
+        3,
+        9
+      ],
+      "output_mean": 6,
+      "output_ratio": 0.5,
+      "outputs": [
+        4,
+        3,
+        6,
+        9,
+        8,
+        8,
+        8,
+        8
+      ],
+      "requests": [
+        {
+          "request_utf8": "{\"max_tokens\":4,\"prompt_token_ids\":[10,11,12,13,14,0,1]}",
+          "token_ids": [
+            10,
+            11,
+            12,
+            13,
+            14,
+            0,
+            1
+          ]
+        },
+        {
+          "request_utf8": "{\"max_tokens\":3,\"prompt_token_ids\":[4,5,6,8,9,10,11,12,13,14,0,1]}",
+          "token_ids": [
+            4,
+            5,
+            6,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            0,
+            1
+          ]
+        },
+        {
+          "request_utf8": "{\"max_tokens\":6,\"prompt_token_ids\":[2,4,5,6,8,9,10,11,12,13,14]}",
+          "token_ids": [
+            2,
+            4,
+            5,
+            6,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14
+          ]
+        },
+        {
+          "request_utf8": "{\"max_tokens\":9,\"prompt_token_ids\":[12,13,14,0,1,2,4,5,6,8]}",
+          "token_ids": [
+            12,
+            13,
+            14,
+            0,
+            1,
+            2,
+            4,
+            5,
+            6,
+            8
+          ]
+        },
+        {
+          "request_utf8": "{\"max_tokens\":8,\"prompt_token_ids\":[14,0,1,2,4,5,6,8,9,10]}",
+          "token_ids": [
+            14,
+            0,
+            1,
+            2,
+            4,
+            5,
+            6,
+            8,
+            9,
+            10
+          ]
+        },
+        {
+          "request_utf8": "{\"max_tokens\":8,\"prompt_token_ids\":[12,13,14,0,1,2,4,5,6,8,9,10,11]}",
+          "token_ids": [
+            12,
+            13,
+            14,
+            0,
+            1,
+            2,
+            4,
+            5,
+            6,
+            8,
+            9,
+            10,
+            11
+          ]
+        },
+        {
+          "request_utf8": "{\"max_tokens\":8,\"prompt_token_ids\":[10,11,12,13,14,0,1]}",
+          "token_ids": [
+            10,
+            11,
+            12,
+            13,
+            14,
+            0,
+            1
+          ]
+        },
+        {
+          "request_utf8": "{\"max_tokens\":8,\"prompt_token_ids\":[10,11,12,13,14,0,1,2,4,5,6]}",
+          "token_ids": [
+            10,
+            11,
+            12,
+            13,
+            14,
+            0,
+            1,
+            2,
+            4,
+            5,
+            6
+          ]
+        }
+      ],
+      "seed": 42,
+      "special_tokens": 2,
+      "style": "vllm",
+      "token_pool": [
+        0,
+        1,
+        2,
+        4,
+        5,
+        6,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14
+      ]
+    },
+    {
+      "algorithm": "numpy.random.default_rng/PCG64",
+      "entries": 8,
+      "input_bounds": [
+        0,
+        22
+      ],
+      "input_mean": 12,
+      "input_ratio": 0.999999,
+      "inputs": [
+        16,
+        7,
+        8,
+        21,
+        16,
+        12,
+        10,
+        17
+      ],
+      "name": "vllm_near_upper_boundary_wide_seed",
+      "offsets": [
+        3,
+        9,
+        14,
+        10,
+        3,
+        5,
+        12,
+        2
+      ],
+      "output_bounds": [
+        1,
+        10
+      ],
+      "output_mean": 5,
+      "output_ratio": 0.999999,
+      "outputs": [
+        6,
+        8,
+        6,
+        6,
+        5,
+        6,
+        9,
+        3
+      ],
+      "requests": [
+        {
+          "request_utf8": "{\"max_tokens\":6,\"prompt_token_ids\":[4,5,6,8,9,10,11,12,13,14,0,1,2,4,5,6]}",
+          "token_ids": [
+            4,
+            5,
+            6,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            0,
+            1,
+            2,
+            4,
+            5,
+            6
+          ]
+        },
+        {
+          "request_utf8": "{\"max_tokens\":8,\"prompt_token_ids\":[12,13,14,0,1,2,4]}",
+          "token_ids": [
+            12,
+            13,
+            14,
+            0,
+            1,
+            2,
+            4
+          ]
+        },
+        {
+          "request_utf8": "{\"max_tokens\":6,\"prompt_token_ids\":[4,5,6,8,9,10,11,12]}",
+          "token_ids": [
+            4,
+            5,
+            6,
+            8,
+            9,
+            10,
+            11,
+            12
+          ]
+        },
+        {
+          "request_utf8": "{\"max_tokens\":6,\"prompt_token_ids\":[0,1,2,4,5,6,8,9,10,11,12,13,14,0,1,2,4,5,6,8,9]}",
+          "token_ids": [
+            0,
+            1,
+            2,
+            4,
+            5,
+            6,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            0,
+            1,
+            2,
+            4,
+            5,
+            6,
+            8,
+            9
+          ]
+        },
+        {
+          "request_utf8": "{\"max_tokens\":5,\"prompt_token_ids\":[9,10,11,12,13,14,0,1,2,4,5,6,8,9,10,11]}",
+          "token_ids": [
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            0,
+            1,
+            2,
+            4,
+            5,
+            6,
+            8,
+            9,
+            10,
+            11
+          ]
+        },
+        {
+          "request_utf8": "{\"max_tokens\":6,\"prompt_token_ids\":[12,13,14,0,1,2,4,5,6,8,9,10]}",
+          "token_ids": [
+            12,
+            13,
+            14,
+            0,
+            1,
+            2,
+            4,
+            5,
+            6,
+            8,
+            9,
+            10
+          ]
+        },
+        {
+          "request_utf8": "{\"max_tokens\":9,\"prompt_token_ids\":[6,8,9,10,11,12,13,14,0,1]}",
+          "token_ids": [
+            6,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            0,
+            1
+          ]
+        },
+        {
+          "request_utf8": "{\"max_tokens\":3,\"prompt_token_ids\":[11,12,13,14,0,1,2,4,5,6,8,9,10,11,12,13,14]}",
+          "token_ids": [
+            11,
+            12,
+            13,
+            14,
+            0,
+            1,
+            2,
+            4,
+            5,
+            6,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14
+          ]
+        }
+      ],
+      "seed": 18446744073709551613,
+      "special_tokens": 1,
+      "style": "vllm",
+      "token_pool": [
+        0,
+        1,
+        2,
+        4,
+        5,
+        6,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14
+      ]
+    },
+    {
+      "algorithm": "numpy.random.RandomState/MT19937",
+      "entries": 8,
+      "input_bounds": [
+        1,
+        9
+      ],
+      "input_mean": 9,
+      "input_ratio": 0.0,
+      "inputs": [
+        6,
+        1,
+        4,
+        4,
+        8,
+        4,
+        6,
+        3
+      ],
+      "name": "sglang_lower_boundary_seed_0",
+      "offsets": [
+        5,
+        9,
+        13,
+        8,
+        9,
+        4,
+        3,
+        0
+      ],
+      "output_bounds": [
+        1,
+        5
+      ],
+      "output_mean": 5,
+      "output_ratio": 0.0,
+      "outputs": [
+        5,
+        1,
+        1,
+        5,
+        3,
+        2,
+        1,
+        2
+      ],
+      "requests": [
+        {
+          "request_utf8": "{\"max_tokens\":5,\"prompt_token_ids\":[5,6,7,8,9,10]}",
+          "token_ids": [
+            5,
+            6,
+            7,
+            8,
+            9,
+            10
+          ]
+        },
+        {
+          "request_utf8": "{\"max_tokens\":1,\"prompt_token_ids\":[10]}",
+          "token_ids": [
+            10
+          ]
+        },
+        {
+          "request_utf8": "{\"max_tokens\":1,\"prompt_token_ids\":[15,0,1,2]}",
+          "token_ids": [
+            15,
+            0,
+            1,
+            2
+          ]
+        },
+        {
+          "request_utf8": "{\"max_tokens\":5,\"prompt_token_ids\":[11,12,13,14]}",
+          "token_ids": [
+            11,
+            12,
+            13,
+            14
+          ]
+        },
+        {
+          "request_utf8": "{\"max_tokens\":3,\"prompt_token_ids\":[13,14,15,0,1,2,3,4]}",
+          "token_ids": [
+            13,
+            14,
+            15,
+            0,
+            1,
+            2,
+            3,
+            4
+          ]
+        },
+        {
+          "request_utf8": "{\"max_tokens\":2,\"prompt_token_ids\":[9,10,11,12]}",
+          "token_ids": [
+            9,
+            10,
+            11,
+            12
+          ]
+        },
+        {
+          "request_utf8": "{\"max_tokens\":1,\"prompt_token_ids\":[9,10,11,12,13,14]}",
+          "token_ids": [
+            9,
+            10,
+            11,
+            12,
+            13,
+            14
+          ]
+        },
+        {
+          "request_utf8": "{\"max_tokens\":2,\"prompt_token_ids\":[7,8,9]}",
+          "token_ids": [
+            7,
+            8,
+            9
+          ]
+        }
+      ],
+      "seed": 0,
+      "special_tokens": 0,
+      "style": "sglang",
+      "token_pool": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15
+      ]
+    },
+    {
+      "algorithm": "numpy.random.RandomState/MT19937",
+      "entries": 8,
+      "input_bounds": [
+        6,
+        12
+      ],
+      "input_mean": 12,
+      "input_ratio": 0.5,
+      "inputs": [
+        10,
+        7,
+        8,
+        10,
+        6,
+        8,
+        8,
+        10
+      ],
+      "name": "sglang_midpoint_seed_42_with_specials",
+      "offsets": [
+        7,
+        7,
+        2,
+        5,
+        4,
+        1,
+        7,
+        11
+      ],
+      "output_bounds": [
+        3,
+        6
+      ],
+      "output_mean": 6,
+      "output_ratio": 0.5,
+      "outputs": [
+        4,
+        5,
+        5,
+        5,
+        5,
+        6,
+        3,
+        6
+      ],
+      "requests": [
+        {
+          "request_utf8": "{\"max_tokens\":4,\"prompt_token_ids\":[7,8,9,10,11,12,13,14,15,0]}",
+          "token_ids": [
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            0
+          ]
+        },
+        {
+          "request_utf8": "{\"max_tokens\":5,\"prompt_token_ids\":[8,9,10,11,12,13,14]}",
+          "token_ids": [
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14
+          ]
+        },
+        {
+          "request_utf8": "{\"max_tokens\":5,\"prompt_token_ids\":[4,5,6,7,8,9,10,11]}",
+          "token_ids": [
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ]
+        },
+        {
+          "request_utf8": "{\"max_tokens\":5,\"prompt_token_ids\":[8,9,10,11,12,13,14,15,0,1]}",
+          "token_ids": [
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            0,
+            1
+          ]
+        },
+        {
+          "request_utf8": "{\"max_tokens\":5,\"prompt_token_ids\":[8,9,10,11,12,13]}",
+          "token_ids": [
+            8,
+            9,
+            10,
+            11,
+            12,
+            13
+          ]
+        },
+        {
+          "request_utf8": "{\"max_tokens\":6,\"prompt_token_ids\":[6,7,8,9,10,11,12,13]}",
+          "token_ids": [
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13
+          ]
+        },
+        {
+          "request_utf8": "{\"max_tokens\":3,\"prompt_token_ids\":[13,14,15,0,1,2,3,4]}",
+          "token_ids": [
+            13,
+            14,
+            15,
+            0,
+            1,
+            2,
+            3,
+            4
+          ]
+        },
+        {
+          "request_utf8": "{\"max_tokens\":6,\"prompt_token_ids\":[2,3,4,5,6,7,8,9,10,11]}",
+          "token_ids": [
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11
+          ]
+        }
+      ],
+      "seed": 42,
+      "special_tokens": 2,
+      "style": "sglang",
+      "token_pool": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15
+      ]
+    },
+    {
+      "algorithm": "numpy.random.RandomState/MT19937",
+      "entries": 8,
+      "input_bounds": [
+        11,
+        11
+      ],
+      "input_mean": 11,
+      "input_ratio": 1.0,
+      "inputs": [
+        10,
+        10,
+        10,
+        10,
+        10,
+        10,
+        10,
+        10
+      ],
+      "name": "sglang_upper_boundary_wide_seed",
+      "offsets": [
+        3,
+        14,
+        15,
+        13,
+        6,
+        6,
+        0,
+        9
+      ],
+      "output_bounds": [
+        7,
+        7
+      ],
+      "output_mean": 7,
+      "output_ratio": 1.0,
+      "outputs": [
+        7,
+        7,
+        7,
+        7,
+        7,
+        7,
+        7,
+        7
+      ],
+      "requests": [
+        {
+          "request_utf8": "{\"max_tokens\":7,\"prompt_token_ids\":[3,4,5,6,7,8,9,10,11,12]}",
+          "token_ids": [
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12
+          ]
+        },
+        {
+          "request_utf8": "{\"max_tokens\":7,\"prompt_token_ids\":[15,0,1,2,3,4,5,6,7,8]}",
+          "token_ids": [
+            15,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8
+          ]
+        },
+        {
+          "request_utf8": "{\"max_tokens\":7,\"prompt_token_ids\":[1,2,3,4,5,6,7,8,9,10]}",
+          "token_ids": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10
+          ]
+        },
+        {
+          "request_utf8": "{\"max_tokens\":7,\"prompt_token_ids\":[0,1,2,3,4,5,6,7,8,9]}",
+          "token_ids": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9
+          ]
+        },
+        {
+          "request_utf8": "{\"max_tokens\":7,\"prompt_token_ids\":[10,11,12,13,14,15,0,1,2,3]}",
+          "token_ids": [
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            0,
+            1,
+            2,
+            3
+          ]
+        },
+        {
+          "request_utf8": "{\"max_tokens\":7,\"prompt_token_ids\":[11,12,13,14,15,0,1,2,3,4]}",
+          "token_ids": [
+            11,
+            12,
+            13,
+            14,
+            15,
+            0,
+            1,
+            2,
+            3,
+            4
+          ]
+        },
+        {
+          "request_utf8": "{\"max_tokens\":7,\"prompt_token_ids\":[6,7,8,9,10,11,12,13,14,15]}",
+          "token_ids": [
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15
+          ]
+        },
+        {
+          "request_utf8": "{\"max_tokens\":7,\"prompt_token_ids\":[0,1,2,3,4,5,6,7,8,9]}",
+          "token_ids": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9
+          ]
+        }
+      ],
+      "seed": 4294967300,
+      "special_tokens": 1,
+      "style": "sglang",
+      "token_pool": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15
+      ]
+    }
+  ],
+  "provenance": {
+    "draw_order": "all_inputs_then_all_outputs_then_all_offsets",
+    "generator": "tools/generate_random_range_python_vectors.py",
+    "numpy_version": "2.5.2",
+    "request_encoding": "json.dumps(sort_keys=True,separators=(',',':')).encode('utf-8')",
+    "token_formula": "pool[(offset + request_index + token_index) % len(pool)]",
+    "vllm_special_token_ids": [
+      3,
+      7,
+      15
+    ],
+    "vocab_size": 16
+  }
+}
