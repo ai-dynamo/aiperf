@@ -21,7 +21,7 @@
 //! are computed from lock-free per-worker accumulators merged once at the end.
 
 use std::cell::RefCell;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -29,6 +29,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use anyhow::Result;
 use async_trait::async_trait;
 use bytes::Bytes;
+use http::{HeaderMap, HeaderValue};
 
 use crate::clock::Clock;
 use crate::clock::real_clock::RealClock;
@@ -132,7 +133,7 @@ struct TransportMeteredSink {
     model: String,
     metrics: Rc<RefCell<WorkerMetrics>>,
     max_tokens: usize,
-    headers: BTreeMap<String, String>,
+    headers: HeaderMap,
     input_tokens_by_node: Arc<HashMap<String, usize>>,
     worker_id: String,
     /// The lane's sender (an h2 clone off the worker pool, or a standalone
@@ -327,10 +328,16 @@ impl GraphSink<Msg> for TransportMeteredSink {
     }
 }
 
-fn chat_headers() -> BTreeMap<String, String> {
-    let mut h = BTreeMap::new();
-    h.insert("Content-Type".to_string(), "application/json".to_string());
-    h.insert("Accept".to_string(), "text/event-stream".to_string());
+fn chat_headers() -> HeaderMap {
+    let mut h = HeaderMap::new();
+    h.insert(
+        http::header::CONTENT_TYPE,
+        HeaderValue::from_static("application/json"),
+    );
+    h.insert(
+        http::header::ACCEPT,
+        HeaderValue::from_static("text/event-stream"),
+    );
     h
 }
 

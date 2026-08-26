@@ -19,7 +19,9 @@ use crate::endpoints::{
     ServerResponse,
 };
 use bytes::Bytes;
+use http::{HeaderMap, HeaderName, HeaderValue};
 use serde_json::Value;
+use url::Url;
 
 use crate::transport::core::SseMessage;
 use crate::transport::core::{ConnectionReuseStrategy, ErrorDetails, RequestRecord, Response};
@@ -111,6 +113,8 @@ pub struct PreparedHttpEndpointRequest {
     /// re-encoded the body into something else. `None` means the wire body *is*
     /// the canonical body, which is every JSON endpoint.
     canonical_body: Option<Bytes>,
+    url: Url,
+    static_headers: HeaderMap,
     request_config: RequestConfig,
     streaming: bool,
     polling: Option<PollingOptions>,
@@ -155,6 +159,11 @@ impl SseMessageFilter for BindingSseMessageFilter<'_> {
 }
 
 impl PreparedHttpEndpointRequest {
+    /// Return the fully resolved URL, including request query parameters.
+    pub fn url(&self) -> &Url {
+        &self.url
+    }
+
     /// Return the endpoint's canonical JSON bytes before HTTP-specific lowering.
     ///
     /// Byte-identical to what a separately retained canonical handle held: the
@@ -196,8 +205,10 @@ impl PreparedHttpEndpointRequest {
         }
 
         transport
-            .send_request_bytes_with_first_token_filter(
+            .send_prepared_request_bytes_with_first_token_filter(
                 &self.request_config,
+                &self.url,
+                &self.static_headers,
                 self.wire_body,
                 self.streaming,
                 |ttft_ns, message| {
@@ -238,8 +249,10 @@ impl PreparedHttpEndpointRequest {
             responses: first_response_filter,
         };
         transport
-            .send_request_bytes_with_sse_filter(
+            .send_prepared_request_bytes_with_sse_filter(
                 &self.request_config,
+                &self.url,
+                &self.static_headers,
                 self.wire_body,
                 self.streaming,
                 &mut filter,
@@ -383,9 +396,31 @@ where
         RequestContentType::ApplicationJson => (body, None),
     };
 
-    let mut request_config = RequestConfig::new(policy.url);
+    let resolved_url = build_url(&policy.url, "", &parameters).map_err(|error| {
+        HttpEndpointBindingError::new(format!("bad url {}: {error}", policy.url))
+    })?;
+    let url = Url::parse(&resolved_url).map_err(|error| {
+        HttpEndpointBindingError::new(format!("bad url {resolved_url}: {error}"))
+    })?;
+    let static_headers = headers
+        .iter()
+        .map(|(name, value)| {
+            let name = HeaderName::try_from(name.as_str()).map_err(|error| {
+                HttpEndpointBindingError::new(format!(
+                    "invalid request header name {name:?}: {error}"
+                ))
+            })?;
+            let value = HeaderValue::try_from(value.as_str()).map_err(|error| {
+                HttpEndpointBindingError::new(format!(
+                    "invalid request header value for {name}: {error}"
+                ))
+            })?;
+            Ok((name, value))
+        })
+        .collect::<Result<HeaderMap, HttpEndpointBindingError>>()?;
+
+    let mut request_config = RequestConfig::new(resolved_url);
     request_config.headers = headers;
-    request_config.params = parameters;
     request_config.correlation_id = correlation_id;
     request_config.request_id = request_id;
     request_config.is_final_turn = is_final_turn;
@@ -395,6 +430,8 @@ where
     Ok(PreparedHttpEndpointRequest {
         wire_body,
         canonical_body,
+        url,
+        static_headers,
         request_config,
         streaming,
         polling: policy.polling,
@@ -843,5 +880,19 @@ mod tests {
             "prepared request retained affinity without a correlation ID: {:?}",
             prepared.request_config().headers
         );
+    }
+
+    #[tokio::test]
+    async fn prepared_request_retains_parsed_url_with_query_parameters() {
+        let base_urls = vec!["http://host/v1?existing=1".to_string()];
+        let chat = prepared("chat");
+        let binding =
+            MetadataHttpEndpointBinding::from_prepared(chat.as_ref(), &base_urls, "fixture-model");
+        let mut request =
+            endpoint_request(Bytes::from_static(br#"{\"model\":\"m\",\"messages\":[]}"#));
+        request.parameters.insert("dynamic".into(), "two".into());
+
+        let prepared = prepare_request(&binding, request).await.unwrap();
+        assert_eq!(prepared.url().query(), Some("dynamic=two&existing=1"));
     }
 }

@@ -4,13 +4,12 @@
 //! HTTP request dispatch, response collection, and timing.
 
 use std::cell::RefCell;
-use std::collections::BTreeMap;
 use std::rc::Rc;
 use std::task::{Context, Poll};
 
 use bytes::Bytes;
 use futures::{Stream, StreamExt};
-use http::Method;
+use http::{HeaderMap, Method};
 use http_body_util::BodyExt;
 use url::Url;
 
@@ -363,7 +362,7 @@ impl HttpClient {
     pub async fn request(
         &self,
         url: &Url,
-        headers: &BTreeMap<String, String>,
+        headers: &HeaderMap,
         body: Bytes,
         streaming: bool,
         on_first_token: impl FnMut(i64),
@@ -377,7 +376,7 @@ impl HttpClient {
         &self,
         method: Method,
         url: &Url,
-        headers: &BTreeMap<String, String>,
+        headers: &HeaderMap,
         body: Bytes,
         streaming: bool,
         on_first_token: impl FnMut(i64),
@@ -400,7 +399,7 @@ impl HttpClient {
         &self,
         method: Method,
         url: &Url,
-        headers: &BTreeMap<String, String>,
+        headers: &HeaderMap,
         body: Bytes,
         streaming: bool,
         mut on_first_token: impl FnMut(i64),
@@ -458,7 +457,7 @@ impl HttpClient {
     fn build_request(
         &self,
         url: &Url,
-        headers: &BTreeMap<String, String>,
+        headers: &HeaderMap,
         body: Bytes,
         completion: Rc<SendCompletion>,
     ) -> Result<hyper::Request<TimedBody>, ErrorDetails> {
@@ -471,7 +470,7 @@ impl HttpClient {
         &self,
         method: Method,
         url: &Url,
-        headers: &BTreeMap<String, String>,
+        headers: &HeaderMap,
         body: Bytes,
         completion: Rc<SendCompletion>,
     ) -> Result<hyper::Request<TimedBody>, ErrorDetails> {
@@ -484,9 +483,10 @@ impl HttpClient {
             .method(method)
             .uri(path_and_query.as_str());
         builder = builder.header(hyper::header::HOST, authority);
-        for (k, v) in headers {
-            builder = builder.header(k.as_str(), v.as_str());
-        }
+        builder
+            .headers_mut()
+            .ok_or_else(|| ErrorDetails::other("request builder rejected headers"))?
+            .extend(headers.clone());
         builder
             .body(TimedBody::with_completion(
                 body,
@@ -509,7 +509,7 @@ impl HttpClient {
         &self,
         sender: &mut Sender,
         url: &Url,
-        headers: &BTreeMap<String, String>,
+        headers: &HeaderMap,
         body: Bytes,
         streaming: bool,
         trace: &mut TraceData,
@@ -539,7 +539,7 @@ impl HttpClient {
         method: Method,
         sender: &mut Sender,
         url: &Url,
-        headers: &BTreeMap<String, String>,
+        headers: &HeaderMap,
         body: Bytes,
         streaming: bool,
         trace: &mut TraceData,
@@ -576,7 +576,7 @@ impl HttpClient {
         method: Method,
         sender: &mut Sender,
         url: &Url,
-        headers: &BTreeMap<String, String>,
+        headers: &HeaderMap,
         body: Bytes,
         streaming: bool,
         trace: &mut TraceData,
@@ -615,7 +615,7 @@ impl HttpClient {
         method: Method,
         sender: &mut Sender,
         url: &Url,
-        headers: &BTreeMap<String, String>,
+        headers: &HeaderMap,
         body: Bytes,
         streaming: bool,
         trace: &mut TraceData,
@@ -658,7 +658,7 @@ impl HttpClient {
         method: Method,
         sender: &mut Sender,
         url: &Url,
-        headers: &BTreeMap<String, String>,
+        headers: &HeaderMap,
         body: Bytes,
         streaming: bool,
         trace: &mut TraceData,
@@ -820,7 +820,7 @@ impl HttpClient {
         &self,
         sender: &mut Sender,
         url: &Url,
-        headers: &BTreeMap<String, String>,
+        headers: &HeaderMap,
         body: Bytes,
         on_first_token: &mut dyn FnMut(i64),
         on_message: &mut dyn FnMut(&SseMessage),
@@ -873,7 +873,7 @@ impl HttpClient {
         &self,
         sender: &mut Sender,
         url: &Url,
-        headers: &BTreeMap<String, String>,
+        headers: &HeaderMap,
         body: Bytes,
         max_sse_frame_bytes: usize,
         on_first_token: &mut dyn FnMut(i64),

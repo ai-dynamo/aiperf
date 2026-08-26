@@ -292,7 +292,8 @@ impl TransportSink {
         {
             anyhow::bail!("session header must be non-empty when configured");
         }
-        let mut transport = HttpTransport::new(clock.clone(), config.client);
+        let mut transport =
+            HttpTransport::new(clock.clone(), config.client).with_raw_capture(config.capture_raw);
         if let Some(header) = config.session_header {
             transport = transport.with_session_header(header);
         }

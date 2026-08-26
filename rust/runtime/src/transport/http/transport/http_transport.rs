@@ -7,7 +7,7 @@
 use std::rc::Rc;
 
 use bytes::Bytes;
-use http::Method;
+use http::{HeaderMap, HeaderName, HeaderValue, Method};
 
 use crate::clock::Clock;
 
@@ -37,6 +37,7 @@ pub struct HttpTransport {
     dynamo_session_id_from_correlation_id: bool,
     x_session_id_from_correlation_id: bool,
     x_smg_routing_key_from_correlation_id: bool,
+    capture_raw: bool,
 }
 
 impl HttpTransport {
@@ -63,6 +64,7 @@ impl HttpTransport {
             dynamo_session_id_from_correlation_id: dynamo_session_id_from_correlation_id_enabled(),
             x_session_id_from_correlation_id: x_session_id_from_correlation_id_enabled(),
             x_smg_routing_key_from_correlation_id: x_smg_routing_key_from_correlation_id_enabled(),
+            capture_raw: true,
         }
     }
 
@@ -76,6 +78,92 @@ impl HttpTransport {
     pub fn with_user_agent(mut self, ua: impl Into<String>) -> Self {
         self.user_agent = ua.into();
         self
+    }
+
+    /// Select whether request headers are retained for a raw HTTP artifact.
+    pub fn with_raw_capture(mut self, capture_raw: bool) -> Self {
+        self.capture_raw = capture_raw;
+        self
+    }
+
+    fn prepared_headers(
+        &self,
+        cfg: &RequestConfig,
+        static_headers: &HeaderMap,
+        streaming: bool,
+    ) -> Result<HeaderMap, ErrorDetails> {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            http::header::USER_AGENT,
+            header_value(&self.user_agent, "User-Agent")?,
+        );
+        if let Some(request_id) = cfg.request_id.as_deref() {
+            headers.insert(
+                HeaderName::from_static("x-request-id"),
+                header_value(request_id, "X-Request-ID")?,
+            );
+        }
+        if let Some(correlation_id) = cfg.correlation_id.as_deref() {
+            let name = self.session_header.as_deref().unwrap_or("X-Correlation-ID");
+            headers.insert(
+                HeaderName::try_from(name).map_err(|error| {
+                    ErrorDetails::other(format!("invalid session header {name:?}: {error}"))
+                })?,
+                header_value(correlation_id, name)?,
+            );
+        }
+        headers.extend(static_headers.clone());
+        headers.insert(
+            http::header::ACCEPT,
+            HeaderValue::from_static(if streaming {
+                "text/event-stream"
+            } else {
+                "application/json"
+            }),
+        );
+        headers
+            .entry(http::header::CONTENT_TYPE)
+            .or_insert(HeaderValue::from_static("application/json"));
+        if let Some(correlation_id) = cfg.correlation_id.as_deref() {
+            headers.insert(
+                HeaderName::from_static("x-session-affinity"),
+                header_value(correlation_id, "X-Session-Affinity")?,
+            );
+            if self.x_session_id_from_correlation_id {
+                headers.insert(
+                    HeaderName::from_static("x-session-id"),
+                    header_value(correlation_id, "X-Session-ID")?,
+                );
+            }
+            if self.x_smg_routing_key_from_correlation_id {
+                headers.insert(
+                    HeaderName::from_static("x-smg-routing-key"),
+                    header_value(correlation_id, "X-SMG-Routing-Key")?,
+                );
+            }
+            if self.dynamo_session_id_from_correlation_id {
+                headers.insert(
+                    HeaderName::from_static("x-dynamo-session-id"),
+                    header_value(correlation_id, "X-Dynamo-Session-ID")?,
+                );
+                if let Some(parent) = cfg.parent_correlation_id.as_deref() {
+                    headers.insert(
+                        HeaderName::from_static("x-dynamo-parent-session-id"),
+                        header_value(parent, "X-Dynamo-Parent-Session-ID")?,
+                    );
+                }
+            }
+        }
+        Ok(headers)
+    }
+
+    fn artifact_request_headers(
+        &self,
+        headers: &HeaderMap,
+    ) -> std::collections::BTreeMap<String, String> {
+        self.capture_raw
+            .then(|| header_record(headers))
+            .unwrap_or_default()
     }
 
     /// Build and send a request from a [`RequestConfig`] + JSON payload,
@@ -126,8 +214,15 @@ impl HttpTransport {
             }
         };
         let mut first_token_filter = SynchronousSseMessageFilter::new(first_token_filter);
-        self.send_body(cfg, Method::POST, body, streaming, &mut first_token_filter)
-            .await
+        self.send_body(
+            cfg,
+            Method::POST,
+            body,
+            streaming,
+            &mut first_token_filter,
+            None,
+        )
+        .await
     }
 
     /// Send an already-serialized JSON request body without decoding or
@@ -166,8 +261,15 @@ impl HttpTransport {
         first_token_filter: impl FnMut(i64, &SseMessage) -> bool,
     ) -> RequestRecord {
         let mut first_token_filter = SynchronousSseMessageFilter::new(first_token_filter);
-        self.send_body(cfg, Method::POST, body, streaming, &mut first_token_filter)
-            .await
+        self.send_body(
+            cfg,
+            Method::POST,
+            body,
+            streaming,
+            &mut first_token_filter,
+            None,
+        )
+        .await
     }
 
     /// Send serialized JSON while awaiting a backpressured SSE response filter.
@@ -178,8 +280,60 @@ impl HttpTransport {
         streaming: bool,
         first_token_filter: &mut impl SseMessageFilter,
     ) -> RequestRecord {
-        self.send_body(cfg, Method::POST, body, streaming, first_token_filter)
+        self.send_body(cfg, Method::POST, body, streaming, first_token_filter, None)
             .await
+    }
+
+    /// Dispatch a request whose endpoint URL and endpoint-owned headers were
+    /// parsed during request preparation.
+    pub async fn send_prepared_request_bytes_with_first_token_filter(
+        &self,
+        cfg: &RequestConfig,
+        url: &url::Url,
+        static_headers: &HeaderMap,
+        body: Bytes,
+        streaming: bool,
+        first_token_filter: impl FnMut(i64, &SseMessage) -> bool,
+    ) -> RequestRecord {
+        let mut first_token_filter = SynchronousSseMessageFilter::new(first_token_filter);
+        let headers = match self.prepared_headers(cfg, static_headers, streaming) {
+            Ok(headers) => headers,
+            Err(error) => return request_error(self.clock.now_ns(), self.clock.now_ns(), error),
+        };
+        self.send_body(
+            cfg,
+            Method::POST,
+            body,
+            streaming,
+            &mut first_token_filter,
+            Some((url, &headers)),
+        )
+        .await
+    }
+
+    /// Dispatch a prepared request through a backpressured SSE filter.
+    pub async fn send_prepared_request_bytes_with_sse_filter(
+        &self,
+        cfg: &RequestConfig,
+        url: &url::Url,
+        static_headers: &HeaderMap,
+        body: Bytes,
+        streaming: bool,
+        first_token_filter: &mut impl SseMessageFilter,
+    ) -> RequestRecord {
+        let headers = match self.prepared_headers(cfg, static_headers, streaming) {
+            Ok(headers) => headers,
+            Err(error) => return request_error(self.clock.now_ns(), self.clock.now_ns(), error),
+        };
+        self.send_body(
+            cfg,
+            Method::POST,
+            body,
+            streaming,
+            first_token_filter,
+            Some((url, &headers)),
+        )
+        .await
     }
 
     /// Send one streaming request without creating a terminal request record.
@@ -203,7 +357,7 @@ impl HttpTransport {
         }
 
         let start_ns = self.clock.now_ns();
-        let headers = build_headers(
+        let headers = header_map(build_headers(
             cfg,
             true,
             self.session_header.as_deref(),
@@ -211,7 +365,7 @@ impl HttpTransport {
             self.dynamo_session_id_from_correlation_id,
             self.x_session_id_from_correlation_id,
             self.x_smg_routing_key_from_correlation_id,
-        );
+        ))?;
         let full = build_url(&cfg.url, "", &cfg.params)
             .map_err(|error| ErrorDetails::other(format!("bad url {}: {error}", cfg.url)))?;
         let url = url::Url::parse(&full)
@@ -310,6 +464,7 @@ impl HttpTransport {
             Bytes::new(),
             false,
             &mut first_token_filter,
+            None,
         )
         .await
     }
@@ -321,36 +476,49 @@ impl HttpTransport {
         body: Bytes,
         streaming: bool,
         first_token_filter: &mut impl SseMessageFilter,
+        prepared: Option<(&url::Url, &HeaderMap)>,
     ) -> RequestRecord {
         let start_ns = self.clock.now_ns();
-        let headers = build_headers(
-            cfg,
-            streaming,
-            self.session_header.as_deref(),
-            &self.user_agent,
-            self.dynamo_session_id_from_correlation_id,
-            self.x_session_id_from_correlation_id,
-            self.x_smg_routing_key_from_correlation_id,
-        );
+        let (url, headers) = match prepared {
+            Some((url, headers)) => (url.clone(), headers.clone()),
+            None => {
+                let headers = match header_map(build_headers(
+                    cfg,
+                    streaming,
+                    self.session_header.as_deref(),
+                    &self.user_agent,
+                    self.dynamo_session_id_from_correlation_id,
+                    self.x_session_id_from_correlation_id,
+                    self.x_smg_routing_key_from_correlation_id,
+                )) {
+                    Ok(headers) => headers,
+                    Err(error) => return request_error(start_ns, self.clock.now_ns(), error),
+                };
+                let full = match build_url(&cfg.url, "", &cfg.params) {
+                    Ok(full) => full,
+                    Err(error) => {
+                        return request_error(
+                            start_ns,
+                            self.clock.now_ns(),
+                            ErrorDetails::other(format!("bad url {}: {error}", cfg.url)),
+                        );
+                    }
+                };
+                match url::Url::parse(&full) {
+                    Ok(url) => (url, headers),
+                    Err(error) => {
+                        return request_error(
+                            start_ns,
+                            self.clock.now_ns(),
+                            ErrorDetails::other(format!("bad url {full}: {error}")),
+                        );
+                    }
+                }
+            }
+        };
         let mut record = RequestRecord {
-            request_headers: headers.clone(),
+            request_headers: self.artifact_request_headers(&headers),
             ..RequestRecord::started(start_ns)
-        };
-        let full = match build_url(&cfg.url, "", &cfg.params) {
-            Ok(f) => f,
-            Err(e) => {
-                record.error = Some(ErrorDetails::other(format!("bad url {}: {e}", cfg.url)));
-                record.end_ns = Some(self.clock.now_ns());
-                return record;
-            }
-        };
-        let url = match url::Url::parse(&full) {
-            Ok(u) => u,
-            Err(e) => {
-                record.error = Some(ErrorDetails::other(format!("bad url {full}: {e}")));
-                record.end_ns = Some(self.clock.now_ns());
-                return record;
-            }
         };
         let body_len = body.len();
         let reuse = cfg.reuse;
@@ -505,6 +673,45 @@ fn positive_timeout(timeout_ns: Option<i64>) -> Option<i64> {
     timeout_ns.filter(|timeout| *timeout > 0)
 }
 
+fn header_value(value: &str, name: &str) -> Result<HeaderValue, ErrorDetails> {
+    HeaderValue::try_from(value).map_err(|error| {
+        ErrorDetails::other(format!("invalid request header value for {name}: {error}"))
+    })
+}
+
+fn header_map(
+    headers: std::collections::BTreeMap<String, String>,
+) -> Result<HeaderMap, ErrorDetails> {
+    headers
+        .into_iter()
+        .map(|(name, value)| {
+            let parsed_name = HeaderName::try_from(name.as_str()).map_err(|error| {
+                ErrorDetails::other(format!("invalid request header name {name:?}: {error}"))
+            })?;
+            Ok((parsed_name, header_value(&value, &name)?))
+        })
+        .collect()
+}
+
+fn header_record(headers: &HeaderMap) -> std::collections::BTreeMap<String, String> {
+    headers
+        .iter()
+        .map(|(name, value)| {
+            (
+                name.as_str().to_string(),
+                String::from_utf8_lossy(value.as_bytes()).into_owned(),
+            )
+        })
+        .collect()
+}
+
+fn request_error(start_ns: i64, end_ns: i64, error: ErrorDetails) -> RequestRecord {
+    let mut record = RequestRecord::started(start_ns);
+    record.error = Some(error);
+    record.end_ns = Some(end_ns);
+    record
+}
+
 fn minimum_timeout(first: Option<i64>, second: Option<i64>) -> Option<i64> {
     match (positive_timeout(first), positive_timeout(second)) {
         (Some(first), Some(second)) => Some(first.min(second)),
@@ -559,6 +766,22 @@ fn remaining_timeout(deadline_ns: Option<i64>, now_ns: i64) -> Result<Option<i64
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn raw_capture_gate_skips_request_header_artifact_map() {
+        let transport = HttpTransport::new(
+            Rc::new(crate::clock::SimClock::new()),
+            ClientConfig::default(),
+        )
+        .with_raw_capture(false);
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-static",
+            HeaderValue::from_static("retained-only-for-raw"),
+        );
+
+        assert!(transport.artifact_request_headers(&headers).is_empty());
+    }
 
     #[test]
     fn connect_budget_defaults_to_connect_timeout_without_retries() {
