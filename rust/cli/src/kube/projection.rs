@@ -87,7 +87,8 @@ pub fn build_controller_envelope(
     base: &ControllerEnvelope,
     minted: &BootstrapDigests,
 ) -> Result<ControllerEnvelope, KubeError> {
-    if !minted.is_empty() && minted.keys().cloned().collect::<BTreeSet<_>>() != bootstrap_targets(base)
+    if !minted.is_empty()
+        && minted.keys().cloned().collect::<BTreeSet<_>>() != bootstrap_targets(base)
     {
         return Err(KubeError::ContractValidation(
             "minted bootstrap material must cover every declared workload identity or none"
