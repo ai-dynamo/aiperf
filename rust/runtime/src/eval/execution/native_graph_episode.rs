@@ -304,8 +304,7 @@ where
 ///
 /// `remaining` derives from the deadline established before task-environment preparation;
 /// `authored_timeout` remains the error contract even after preparation consumes part of it.
-#[doc(hidden)]
-pub async fn run_native_graph_episode_callback_with_agent_deadline<T, Lease>(
+pub(crate) async fn run_native_graph_episode_callback_with_agent_deadline<T, Lease>(
     clock: Rc<dyn Clock>,
     authored_timeout: Duration,
     remaining: Result<Duration, EvalExecutionError>,
@@ -367,7 +366,7 @@ where
                         timeout: authored_timeout,
                     }),
                 };
-                if outcome.is_ok() && clock.now_ns() >= callback_deadline_ns {
+                if clock.now_ns() >= callback_deadline_ns {
                     outcome = Err(EvalExecutionError::Timeout {
                         phase: EvalExecutionPhase::Agent,
                         timeout: authored_timeout,
@@ -408,5 +407,103 @@ where
                 "native graph callback failed: {primary}; environment adapter cleanup failed: {cleanup}"
             ))),
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        cell::{Cell, RefCell},
+        rc::Rc,
+        time::Duration,
+    };
+
+    use async_trait::async_trait;
+
+    use super::*;
+    use crate::clock::SimClock;
+
+    struct Lease {
+        reaps: Rc<Cell<usize>>,
+    }
+
+    impl NativeGraphEpisodeLease for Lease {
+        fn is_authorized(&self) -> bool {
+            true
+        }
+        fn is_environment_acquired(&self) -> bool {
+            true
+        }
+        fn instruction(&self) -> &str {
+            "deadline fixture"
+        }
+    }
+
+    impl NativeGraphEpisodeBackendLease for Lease {
+        fn reap_environment_adapter<'a>(
+            &'a mut self,
+        ) -> Pin<Box<dyn Future<Output = Result<(), EvalExecutionError>> + 'a>> {
+            let reaps = self.reaps.clone();
+            Box::pin(async move {
+                reaps.set(reaps.get() + 1);
+                Ok(())
+            })
+        }
+    }
+
+    struct ExactDeadlineError {
+        clock: Rc<SimClock>,
+    }
+
+    #[async_trait(?Send)]
+    impl NativeGraphEpisodeCallback for ExactDeadlineError {
+        async fn run(
+            &mut self,
+            _: &mut dyn NativeGraphEpisodeLease,
+        ) -> Result<(), EvalExecutionError> {
+            self.clock.clone().sleep(10).await;
+            Err(EvalExecutionError::NativeGraphModel(
+                "callback error at deadline".to_owned(),
+            ))
+        }
+    }
+
+    #[test]
+    fn deadline_timeout_precedes_callback_error_at_the_exact_boundary() {
+        let sim_clock = Rc::new(SimClock::new());
+        let clock: Rc<dyn Clock> = sim_clock.clone();
+        let reaps = Rc::new(Cell::new(0));
+        let lifecycle = Rc::new(Cell::new(false));
+        let outcome = Rc::new(RefCell::new(None));
+        let mut callback = ExactDeadlineError {
+            clock: sim_clock.clone(),
+        };
+        let mut lease = Lease {
+            reaps: reaps.clone(),
+        };
+        let outcome_slot = outcome.clone();
+        let lifecycle_slot = lifecycle.clone();
+
+        sim_clock.clone().drive(Box::pin(async move {
+            let result = run_native_graph_episode_callback_with_agent_deadline(
+                clock,
+                Duration::from_nanos(10),
+                Ok(Duration::from_nanos(10)),
+                &mut callback,
+                &mut lease,
+                move || {
+                    lifecycle_slot.set(true);
+                    Ok(())
+                },
+            )
+            .await;
+            *outcome_slot.borrow_mut() = Some(result);
+        }));
+
+        assert!(
+            matches!(outcome.borrow_mut().take(), Some(Err(EvalExecutionError::Timeout { phase: EvalExecutionPhase::Agent, timeout })) if timeout == Duration::from_nanos(10))
+        );
+        assert_eq!(reaps.get(), 1);
+        assert!(!lifecycle.get());
     }
 }

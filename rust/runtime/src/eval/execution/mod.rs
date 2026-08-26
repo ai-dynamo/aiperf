@@ -51,7 +51,6 @@ pub use multi_step::{MultiStepExecutionResult, StepExecutionResult};
 pub use native_graph_episode::{
     NativeGraphEnvironmentAdapterStart, NativeGraphEpisodeBackendLease, NativeGraphEpisodeCallback,
     NativeGraphEpisodeLease, run_native_graph_episode_callback,
-    run_native_graph_episode_callback_with_agent_deadline,
 };
 #[cfg(feature = "engine")]
 pub use native_graph_episode::{

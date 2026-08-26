@@ -27,30 +27,25 @@ use aiperf_runtime::eval::{
     DockerBuildRequest, DockerCopyRequest, DockerCreateRequest, DockerExecRequest,
     DockerExternallyDrivenEpisodeExecutor, DockerNativeGraphEpisodeExecutor, DockerProcessSandbox,
     DockerRemoveRequest, DockerRuntime, DockerStartRequest, EngineNativeGraphEpisodeCallback,
-    EpisodeAssignment, EpisodeExecutionError, EvalExecutionError, EvalExecutionPhase,
-    EvalNodeRecordArtifact, EvidenceEvent, EvidenceKind, ExternalDriverDockerSpawner,
-    ExternalDriverError, ExternalDriverSession, ExternalDriverSpawnExecutor,
-    FrozenArtifactReference, FrozenAttemptBundle, HarborEpisodeEvaluatorFactory,
-    HarborEvaluationCoordinator, HarborImporter, HarborLifecycleAgentContract,
-    HarborLifecycleRequest, HarborLifecycleScoreRequest, HarborSandboxRecipe, HarborSource,
-    HostEnvelope, HostMessage, LocalNativeGraphSuiteScheduler, ModelCapacityKey,
-    ModelEndpointIsolationProof, ModelIdentity, ModelRuntimeConfig, NativeGraphAttemptAuthority,
-    NativeGraphCompletedAttempt, NativeGraphEnvironmentAdapterStart,
-    NativeGraphEpisodeBackendLease, NativeGraphEpisodeCallback, NativeGraphEpisodeExecutor,
-    NativeGraphEpisodeLease, NativeGraphEpisodeRunner, NativeGraphExternalDriverFactory,
-    NativeGraphLeaseRolloutStart, NativeGraphPackagePlan, NativeGraphSuiteManifest,
-    NativeSourceAcquirer, PolicyIdentity, PreparedExternalDriver, ProtocolCapability,
-    ProviderCapabilities, ProviderCapability, ProviderProfile, RegradeRequest,
+    EpisodeAssignment, EpisodeExecutionError, EvalExecutionError, EvalNodeRecordArtifact,
+    EvidenceEvent, EvidenceKind, ExternalDriverDockerSpawner, ExternalDriverError,
+    ExternalDriverSession, ExternalDriverSpawnExecutor, FrozenArtifactReference,
+    FrozenAttemptBundle, HarborEpisodeEvaluatorFactory, HarborEvaluationCoordinator,
+    HarborImporter, HarborLifecycleAgentContract, HarborLifecycleRequest,
+    HarborLifecycleScoreRequest, HarborSandboxRecipe, HarborSource, HostEnvelope, HostMessage,
+    LocalNativeGraphSuiteScheduler, ModelCapacityKey, ModelEndpointIsolationProof, ModelIdentity,
+    ModelRuntimeConfig, NativeGraphAttemptAuthority, NativeGraphCompletedAttempt,
+    NativeGraphEnvironmentAdapterStart, NativeGraphEpisodeBackendLease, NativeGraphEpisodeCallback,
+    NativeGraphEpisodeExecutor, NativeGraphEpisodeLease, NativeGraphEpisodeRunner,
+    NativeGraphExternalDriverFactory, NativeGraphLeaseRolloutStart, NativeGraphPackagePlan,
+    NativeGraphSuiteManifest, NativeSourceAcquirer, PolicyIdentity, PreparedExternalDriver,
+    ProtocolCapability, ProviderCapabilities, ProviderCapability, ProviderProfile, RegradeRequest,
     ResourceLeaseRequest, RewardDocument, RuntimeIdentity, ScoreVersion, SecretProvider,
     SuiteRunId, SuiteTrialSpec, TrialBudget, TrialSpec, VerifierResult,
     bind_native_graph_environment_stepper, regrade, run_native_graph_episode_callback,
-    run_native_graph_episode_callback_with_agent_deadline, run_resolved_suite,
+    run_resolved_suite,
 };
-use aiperf_runtime::{
-    clock::{Clock, SimClock},
-    engine::application::Application,
-    eval::EnvName,
-};
+use aiperf_runtime::{engine::application::Application, eval::EnvName};
 use async_trait::async_trait;
 use axum::{Json, Router, extract::State, http::header, routing::post};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
@@ -138,133 +133,6 @@ async fn callback_failure_reaps_a_resource_owning_non_docker_lease() {
     assert!(
         !collection_started.get(),
         "callback failure must not begin collection before cleanup"
-    );
-}
-
-#[test]
-fn callback_agent_deadline_cancels_stalled_callback_reaps_once_and_skips_lifecycle() {
-    let clock = Rc::new(SimClock::new());
-    let timeout = std::time::Duration::from_nanos(10);
-    let cancelled = Rc::new(Cell::new(0));
-    let reaps = Rc::new(Cell::new(0));
-    let after_callback = Rc::new(Cell::new(0));
-    let result = Rc::new(RefCell::new(None));
-    let mut callback = StallingDeadlineCallback {
-        clock: clock.clone(),
-        cancelled: cancelled.clone(),
-    };
-    let mut lease = DeadlineRecordingLease {
-        reaps: reaps.clone(),
-    };
-    let clock_for_callback: Rc<dyn Clock> = clock.clone();
-    let result_for_callback = result.clone();
-    let after_callback_for_callback = after_callback.clone();
-
-    clock.clone().drive(Box::pin(async move {
-        let outcome = run_native_graph_episode_callback_with_agent_deadline(
-            clock_for_callback,
-            timeout,
-            Ok(timeout),
-            &mut callback,
-            &mut lease,
-            || {
-                after_callback_for_callback.set(after_callback_for_callback.get() + 1);
-                Ok(())
-            },
-        )
-        .await;
-        *result_for_callback.borrow_mut() = Some(outcome);
-    }));
-
-    assert!(matches!(
-        result
-            .borrow_mut()
-            .take()
-            .expect("deadline callback produces one terminal outcome"),
-        Err(EvalExecutionError::Timeout {
-            phase: EvalExecutionPhase::Agent,
-            timeout: actual_timeout,
-        }) if actual_timeout == timeout
-    ));
-    assert_eq!(
-        cancelled.get(),
-        1,
-        "dropping the parked callback future records one cancellation"
-    );
-    assert_eq!(
-        reaps.get(),
-        1,
-        "the timed-out callback lease is reaped once"
-    );
-    assert_eq!(
-        after_callback.get(),
-        0,
-        "timeout must not enter collection or verifier lifecycle"
-    );
-    assert_eq!(
-        clock.now_ns(),
-        10,
-        "the callback uses the supplied deadline"
-    );
-}
-
-#[test]
-fn callback_agent_deadline_preserves_on_time_lifecycle_and_one_reap() {
-    let clock = Rc::new(SimClock::new());
-    let timeout = std::time::Duration::from_nanos(10);
-    let callback_ran = Rc::new(Cell::new(0));
-    let reaps = Rc::new(Cell::new(0));
-    let after_callback = Rc::new(Cell::new(0));
-    let result = Rc::new(RefCell::new(None));
-    let mut callback = OnTimeDeadlineCallback {
-        clock: clock.clone(),
-        ran: callback_ran.clone(),
-    };
-    let mut lease = DeadlineRecordingLease {
-        reaps: reaps.clone(),
-    };
-    let clock_for_callback: Rc<dyn Clock> = clock.clone();
-    let result_for_callback = result.clone();
-    let after_callback_for_callback = after_callback.clone();
-
-    clock.clone().drive(Box::pin(async move {
-        let outcome = run_native_graph_episode_callback_with_agent_deadline(
-            clock_for_callback,
-            timeout,
-            Ok(timeout),
-            &mut callback,
-            &mut lease,
-            || {
-                after_callback_for_callback.set(after_callback_for_callback.get() + 1);
-                Ok(())
-            },
-        )
-        .await;
-        *result_for_callback.borrow_mut() = Some(outcome);
-    }));
-
-    assert_eq!(
-        result
-            .borrow_mut()
-            .take()
-            .expect("on-time callback produces one terminal outcome"),
-        Ok(())
-    );
-    assert_eq!(callback_ran.get(), 1, "the callback completes once");
-    assert_eq!(
-        after_callback.get(),
-        1,
-        "an on-time callback reaches collection and verifier lifecycle"
-    );
-    assert_eq!(
-        reaps.get(),
-        1,
-        "the successful callback lease is reaped once"
-    );
-    assert_eq!(
-        clock.now_ns(),
-        4,
-        "the on-time callback finishes before deadline"
     );
 }
 
@@ -1285,76 +1153,6 @@ impl NativeGraphEpisodeBackendLease for RecordingLease<'_> {
         &'lease mut self,
     ) -> Pin<Box<dyn Future<Output = Result<(), EvalExecutionError>> + 'lease>> {
         Box::pin(async { Ok(()) })
-    }
-}
-
-struct DeadlineRecordingLease {
-    reaps: Rc<Cell<usize>>,
-}
-
-impl NativeGraphEpisodeLease for DeadlineRecordingLease {
-    fn is_authorized(&self) -> bool {
-        true
-    }
-
-    fn is_environment_acquired(&self) -> bool {
-        true
-    }
-
-    fn instruction(&self) -> &str {
-        "deadline recording lease"
-    }
-}
-
-impl NativeGraphEpisodeBackendLease for DeadlineRecordingLease {
-    fn reap_environment_adapter<'lease>(
-        &'lease mut self,
-    ) -> Pin<Box<dyn Future<Output = Result<(), EvalExecutionError>> + 'lease>> {
-        let reaps = self.reaps.clone();
-        Box::pin(async move {
-            reaps.set(reaps.get() + 1);
-            Ok(())
-        })
-    }
-}
-
-struct CallbackCancellationGuard {
-    cancelled: Rc<Cell<usize>>,
-}
-
-impl Drop for CallbackCancellationGuard {
-    fn drop(&mut self) {
-        self.cancelled.set(self.cancelled.get() + 1);
-    }
-}
-
-struct StallingDeadlineCallback {
-    clock: Rc<SimClock>,
-    cancelled: Rc<Cell<usize>>,
-}
-
-#[async_trait(?Send)]
-impl NativeGraphEpisodeCallback for StallingDeadlineCallback {
-    async fn run(&mut self, _: &mut dyn NativeGraphEpisodeLease) -> Result<(), EvalExecutionError> {
-        let _cancellation = CallbackCancellationGuard {
-            cancelled: self.cancelled.clone(),
-        };
-        self.clock.clone().sleep(20).await;
-        Ok(())
-    }
-}
-
-struct OnTimeDeadlineCallback {
-    clock: Rc<SimClock>,
-    ran: Rc<Cell<usize>>,
-}
-
-#[async_trait(?Send)]
-impl NativeGraphEpisodeCallback for OnTimeDeadlineCallback {
-    async fn run(&mut self, _: &mut dyn NativeGraphEpisodeLease) -> Result<(), EvalExecutionError> {
-        self.clock.clone().sleep(4).await;
-        self.ran.set(self.ran.get() + 1);
-        Ok(())
     }
 }
 

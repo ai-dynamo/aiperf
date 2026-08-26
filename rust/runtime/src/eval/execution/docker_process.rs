@@ -50,12 +50,13 @@ use crate::{
         NativeGraphEpisodeBackendLease, NativeGraphEpisodeCallback, NativeGraphEpisodeLease,
         PreparedExternalDriverCapability, ProviderCapability, ProviderProfile,
         ResolvedEpisodeTrial, RewardDocument, VerifierMode, run_native_graph_episode_callback,
-        run_native_graph_episode_callback_with_agent_deadline,
     },
 };
 
 #[cfg(feature = "engine")]
-use super::native_graph_episode::run_externally_driven_episode_session;
+use super::native_graph_episode::{
+    run_externally_driven_episode_session, run_native_graph_episode_callback_with_agent_deadline,
+};
 use super::{
     AuthorizedExternalDriverSpawn, BenchmarkExecutionPlan, BenchmarkStepPlan, ComposeProjectId,
     DockerAdapterLease, DockerAdapterProcess, DockerAdapterSpawnerRequest, DockerBuildRequest,
