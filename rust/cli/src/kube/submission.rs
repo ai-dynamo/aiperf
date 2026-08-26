@@ -1511,4 +1511,17 @@ mod tests {
             Err(KubeError::Transport("watch is not used".to_string()))
         }
     }
+
+    #[test]
+    fn projected_envelope_passes_strict_schema_validation() {
+        // Regression guard for the skip_serializing_if = "Option::is_none" fix on
+        // RoleEnvelope::bootstrap. manifest::project serializes ControllerEnvelope at
+        // spec.envelope; without the attribute, None bootstrap serialized as "bootstrap":null,
+        // which the strict JSON schema rejects. This test ensures re-adding a null-serializing
+        // optional field in ControllerEnvelope shows up immediately as a Rust test failure.
+        let envelope = fixture("valid-one-cell-envelope.json");
+        let projected = super::super::manifest::project(&envelope).expect("project envelope");
+        validate_envelope(projected["spec"]["envelope"].clone())
+            .expect("spec.envelope must pass strict schema validation after serialization");
+    }
 }
