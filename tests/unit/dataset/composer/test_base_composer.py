@@ -60,8 +60,15 @@ class TestBaseDatasetComposer:
 
     @pytest.fixture
     def mock_tokenizer(self):
-        """Create a mock tokenizer."""
-        return MagicMock()
+        """Create a mock tokenizer.
+
+        ``num_prompt_special_tokens`` returns a real int because the composer
+        subtracts it from the ISL target; 0 (the gpt2 case) keeps these tests
+        asserting the configured ISL directly.
+        """
+        tokenizer = MagicMock()
+        tokenizer.num_prompt_special_tokens = MagicMock(return_value=0)
+        return tokenizer
 
     def test_initialization_with_sequence_distribution(
         self, sequence_dist_config, mock_tokenizer

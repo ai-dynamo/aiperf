@@ -15,7 +15,7 @@ trace synthesis sub-configs live in sibling ``content.py`` / ``trace.py`` /
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, ClassVar, Literal
 
 from pydantic import (
     ConfigDict,
@@ -28,6 +28,7 @@ from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.enums import (
     DatasetFormat,
     DatasetType,
+    PromptCorpus,
 )
 from aiperf.config.dataset.content import (
     AudioConfig,
@@ -492,6 +493,50 @@ class FileDataset(SystemPromptMixin):
         ),
     ]
 
+    prompt_batch_size: Annotated[
+        int | None,
+        Field(
+            default=None,
+            ge=0,
+            description="Number of text items per request. "
+            "Only applies to format: random_pool; rejected on other formats. "
+            "Set to 0 to disable text inputs entirely (e.g. image/audio/video-only workloads).",
+        ),
+    ]
+
+    image_batch_size: Annotated[
+        int | None,
+        Field(
+            default=None,
+            ge=0,
+            description="Number of images per request. "
+            "Only applies to format: random_pool; rejected on other formats. "
+            "Set to 0 to disable image inputs entirely.",
+        ),
+    ]
+
+    audio_batch_size: Annotated[
+        int | None,
+        Field(
+            default=None,
+            ge=0,
+            description="Number of audio items per request. "
+            "Only applies to format: random_pool; rejected on other formats. "
+            "Set to 0 to disable audio inputs entirely.",
+        ),
+    ]
+
+    video_batch_size: Annotated[
+        int | None,
+        Field(
+            default=None,
+            ge=0,
+            description="Number of video items per request. "
+            "Only applies to format: random_pool; rejected on other formats. "
+            "Set to 0 to disable video inputs entirely.",
+        ),
+    ]
+
     block_size: Annotated[
         int | None,
         Field(
@@ -605,6 +650,28 @@ class FileDataset(SystemPromptMixin):
         return self
 
     @model_validator(mode="after")
+    def _validate_batch_sizes_random_pool_only(self) -> FileDataset:
+        """Reject per-modality batch sizes on non-random_pool formats.
+
+        These fields are only consumed by RandomPoolDatasetLoader. Setting them
+        on other formats is an error, not a silent no-op.
+        """
+        batch_fields = {
+            "prompt_batch_size": self.prompt_batch_size,
+            "image_batch_size": self.image_batch_size,
+            "audio_batch_size": self.audio_batch_size,
+            "video_batch_size": self.video_batch_size,
+        }
+        set_fields = {k: v for k, v in batch_fields.items() if v is not None}
+        if set_fields and self.format != DatasetFormat.RANDOM_POOL:
+            names = ", ".join(set_fields)
+            raise ValueError(
+                f"{names} are rejected on formats other than random_pool; "
+                f"got format: {self.format}."
+            )
+        return self
+
+    @model_validator(mode="after")
     def _validate_max_context_length_weka_only(self) -> FileDataset:
         """Reject max_context_length on provably non-Weka file formats.
 
@@ -656,6 +723,31 @@ class FileDataset(SystemPromptMixin):
         if records_set and isinstance(self.records, list) and not self.records:
             raise ValueError("`records:` must contain at least one record.")
 
+        return self
+
+    _HASH_ID_TRACE_FORMATS: ClassVar[frozenset[DatasetFormat]] = frozenset(
+        {
+            DatasetFormat.MOONCAKE_TRACE,
+            DatasetFormat.BAILIAN_TRACE,
+            DatasetFormat.BURST_GPT_TRACE,
+            DatasetFormat.SAGEMAKER_DATA_CAPTURE,
+            DatasetFormat.WEKA_TRACE,
+        }
+    )
+
+    @model_validator(mode="after")
+    def _validate_random_corpus_incompatible_with_trace(self) -> FileDataset:
+        if (
+            self.prompts is not None
+            and self.prompts.corpus == PromptCorpus.RANDOM
+            and self.format in self._HASH_ID_TRACE_FORMATS
+        ):
+            raise ValueError(
+                f"prompt_corpus 'random' is not compatible with format '{self.format}'; "
+                "trace loaders synthesize prompt content from a text corpus keyed by "
+                "hash_id — there is no corpus to draw from when corpus='random'. "
+                "Use corpus='sonnet' or 'coding', or switch to a synthetic dataset format."
+            )
         return self
 
     @model_validator(mode="after")

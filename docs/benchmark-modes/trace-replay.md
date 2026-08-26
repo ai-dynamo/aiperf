@@ -166,6 +166,9 @@ aiperf profile \
 
 AIPerf refuses parameter sweeps (e.g. `--concurrency 1,2,4`) against an auto-promoted trace; either pin a single value or pass `--no-fixed-schedule` to keep your sweep semantics.
 
+AIPerf sends the stable replay-session ID in both `X-Correlation-ID` and
+`X-Session-Affinity` so session-based traffic can be routed consistently.
+
 ### Large Baseten Parquet Traces
 
 The `baseten_trace` loader reads trace rows and sampled-session metadata in

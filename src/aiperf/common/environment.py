@@ -332,6 +332,16 @@ class _DatasetSettings(BaseSettings):
         "dataset.dat, index.dat, manifest.json, and (when produced) inputs.json. "
         "No automatic eviction is implemented yet -- delete the directory to reclaim disk.",
     )
+    MMAP_PREFAULT: bool = Field(
+        default=True,
+        description="If True, each memory-mapped dataset client walks every page of the "
+        "data file at open time (after madvise(MADV_WILLNEED)) to force-populate the OS "
+        "page cache. Reads afterwards are served warm, so no request pays a major page "
+        "fault mid-benchmark -- which would otherwise land in the measured latency. "
+        "Workers share the kernel page cache, so the disk read happens once regardless of "
+        "worker count. Costs a one-time startup pass proportional to dataset size; set to "
+        "False to trade predictable tail latency for faster startup on very large datasets.",
+    )
     PREFORMAT_PAYLOADS: bool = Field(
         default=False,
         description="If True, pre-encode single-turn / self-contained synthetic "
@@ -832,6 +842,10 @@ class _HTTPSettings(BaseSettings):
         "This transport setting is the supported way to enable generic HTTP session "
         "affinity. It is ADDITIVE (both headers are sent); --session-header only "
         "RENAMES the single correlation header.",
+    )
+    X_SESSION_AFFINITY_FROM_CORRELATION_ID: bool = Field(
+        default=True,
+        description="Also send X-Session-Affinity with the stable X-Correlation-ID value.",
     )
     X_SMG_ROUTING_KEY_FROM_CORRELATION_ID: bool = Field(
         default=False,
