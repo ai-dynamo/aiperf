@@ -54,7 +54,7 @@ Graham review and a commit.
 | S10 | Disagg `TraceCollector` API suppressions lack coherent disposition | Complete on integration branch — `bacf85c014` | Independent Graham approved; await shared-file integration |
 | S11 | `Inputs` is an unguarded god struct | Complete — `de8b24adb6`, `37a78fd0a2`, `2fc4d17c6e` | Independent Graham r2 approved; direct grouped-construction and flat-wire evidence recorded |
 | S12 | Cellular controller feature gates are scattered | Complete — `d1948cd50d` | Independent Graham approved; feature-on controller behavior and parent-gate boundary evidence recorded |
-| S13 | Graph benchmark bypasses the transport seam | Confirmed/narrowed; spec ready | Sol implementation plan |
+| S13 | Graph benchmark bypasses the transport seam | Complete — `0e2e3f7aa1` | Independent Graham approved; default API boundary, opt-in transport feature, and DynoSim report evidence recorded |
 | S14 | DAG validation test does not prove rejection | Confirmed; spec ready | Sol implementation plan |
 | S15 | `ScheduledPhasePlan` booleans lack semantic prefixes | Complete — `13fdae4430` | Independent Graham approved; RED→GREEN policy coverage recorded |
 | E01 | Velo route registration does not bind signed peer identity | Complete | Integrated `ef7b966238`, `56e35146bb`; independent Graham r2 PASS |
@@ -90,6 +90,12 @@ Graham review and a commit.
 | B01 | AgentX integration fixtures omit required cache-bust option | Complete — `91b65b2044` | Independent Graham approved; compile regression green |
 
 ## Progress log
+
+- 2026-08-26: Completed S13. Raw HTTP graph transport benchmarking is now an
+  explicit non-default feature, while the transport-neutral graph report type
+  is owned by `graph::report` and consumed by DynoSim. Default API absence,
+  opt-in compilation, and focused DynoSim regressions were RED→GREEN; Graham
+  review approved the final series.
 
 - 2026-08-26: Completed S12. The parent cellular-controller module gate is now
   the sole feature boundary; 47 redundant inner `cellular` attributes were
