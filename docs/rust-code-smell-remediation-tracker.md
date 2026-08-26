@@ -58,7 +58,7 @@ Graham review and a commit.
 | S14 | DAG validation test does not prove rejection | Confirmed; spec ready | Sol implementation plan |
 | S15 | `ScheduledPhasePlan` booleans lack semantic prefixes | Complete — `13fdae4430` | Independent Graham approved; RED→GREEN policy coverage recorded |
 | E01 | Velo route registration does not bind signed peer identity | Complete | Integrated `ef7b966238`, `56e35146bb`; independent Graham r2 PASS |
-| E02 | Externally-driven evaluation skips preflight | Confirmed; spec ready | Sol implementation plan |
+| E02 | Externally-driven evaluation skips preflight | Complete — `b488309a2c` | Independent Graham approved; RED→GREEN pre-side-effect Docker-capability coverage recorded |
 | E03 | NativeGraph execution ignores agent timeout | Confirmed; spec ready | Sol implementation plan |
 | E04 | Abort still starts ready tool nodes | Confirmed; spec ready | Sol implementation plan |
 | E05 | Closed-worker credit return can hang drain | Confirmed; spec ready | Sol implementation plan |
@@ -90,6 +90,12 @@ Graham review and a commit.
 | B01 | AgentX integration fixtures omit required cache-bust option | Complete — `91b65b2044` | Independent Graham approved; compile regression green |
 
 ## Progress log
+
+- 2026-08-26: Completed E02. Externally driven execution now checks Docker
+  capability before consuming the prepared Driver capability or triggering any
+  Driver/container/build side effect. The ordering regression was RED then
+  GREEN, the Docker runtime suite passed 79 tests, and independent Graham
+  review approved the change.
 
 - 2026-08-26: Completed S05. Prepared HTTP requests now retain their parsed
   URL and typed static headers through ordinary and bounded SSE dispatch;
