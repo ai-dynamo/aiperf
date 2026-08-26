@@ -530,7 +530,7 @@ impl SegmentStore for SegmentPool {
 }
 
 /// Frozen in-memory arena shared across worker threads.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct InMemorySegmentStore {
     arena: Box<[Segment]>,
 }

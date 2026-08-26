@@ -57,8 +57,11 @@ fn registered_live_driver_progresses_through_a_bounded_graph_stage() {
             .observe_stage(TraceStageResult {
                 plan_identity: "live-trace::stage-0".into(),
                 terminal_status: GraphReplyStatus::Completed,
-                channels: BTreeMap::new(),
-                output_handles: BTreeMap::new(),
+                channels: BTreeMap::from([("output".into(), json!({"answer": 7}))]),
+                output_handles: BTreeMap::from([
+                    ("output".into(), aiperf_runtime::dataset::Handle::new(7)),
+                    ("undeclared".into(), aiperf_runtime::dataset::Handle::new(8)),
+                ]),
             })
             .await
             .expect("completed stage is accepted");
@@ -67,7 +70,11 @@ fn registered_live_driver_progresses_through_a_bounded_graph_stage() {
             Some(TraceStageDirective::Complete(supplement))
                 if supplement.driver_kind == "native_graph_live"
                     && supplement.completed
-                    && supplement.terminal_outputs.is_empty()
+                    && supplement.terminal_outputs
+                        == BTreeMap::from([(
+                            "output".into(),
+                            aiperf_runtime::dataset::Handle::new(0),
+                        )])
         ));
         assert!(
             driver
@@ -278,7 +285,7 @@ adapter_manifest = "adapters.toml"
   "channels": { "output": { "type": "messages", "reducer": "add_messages" } },
   "nodes": [{ "id": "model", "kind": "model", "binding": "primary", "output": "output" }],
   "edges": [{ "source": "START", "target": "model" }, { "source": "model", "target": "END" }],
-  "terminal_outputs": []
+  "terminal_outputs": ["output"]
 }"#,
     )
     .expect("graph source");

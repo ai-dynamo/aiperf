@@ -4,10 +4,11 @@
 //! Bounded trace-terminal facts returned by pluggable graph drivers.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-use crate::dataset::Handle;
+use crate::dataset::{Handle, InMemorySegmentStore, SegmentStore};
 use crate::eval::ArtifactDigest;
 use crate::graph::replay::{ReplayCallMeasurement, ToolCallMeasurement};
 
@@ -44,6 +45,9 @@ pub struct TraceTerminalSupplement {
     /// Named opaque outputs selected by the authored terminal declaration.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub terminal_outputs: BTreeMap<String, Handle>,
+    /// Trace-local immutable catalog resolving terminal output handles.
+    #[serde(skip)]
+    terminal_output_store: Option<Arc<InMemorySegmentStore>>,
     /// Ordered opaque decisions made by a declared dynamic NativeGraph control.
     ///
     /// This records only contract-bound selection facts. Raw model replies, tool
@@ -433,6 +437,7 @@ impl TraceTerminalSupplement {
             calls: Vec::new(),
             tools: Vec::new(),
             terminal_outputs: BTreeMap::new(),
+            terminal_output_store: None,
             dynamic_control_receipts: Vec::new(),
         }
     }
@@ -447,6 +452,19 @@ impl TraceTerminalSupplement {
     pub fn with_terminal_outputs(mut self, outputs: BTreeMap<String, Handle>) -> Self {
         self.terminal_outputs = outputs;
         self
+    }
+
+    /// Attach the trace-local catalog resolving opaque terminal output handles.
+    pub(crate) fn with_terminal_output_store(mut self, store: Arc<InMemorySegmentStore>) -> Self {
+        self.terminal_output_store = Some(store);
+        self
+    }
+
+    /// Resolve a terminal output handle through this trace's frozen catalog.
+    pub fn terminal_output(&self, handle: Handle) -> Option<&crate::dataset::Payload> {
+        self.terminal_output_store
+            .as_deref()
+            .and_then(|store| store.get(handle).ok())
     }
 
     /// Attach the compact append-only dynamic-control evidence emitted by a driver.
