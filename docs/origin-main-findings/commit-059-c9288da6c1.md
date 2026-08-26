@@ -54,4 +54,5 @@ by the upstream Python backend.
 
 Self-Graham review covers the closure-only diff.  It finds no production hot
 path, synchronization, allocation, error, tracing, or interface change to
-review; the records accurately constrain the no-op decision.
+review; the records accurately constrain the no-op decision.  Root's
+independent Graham review approved the closure with no findings.
