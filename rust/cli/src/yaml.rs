@@ -168,7 +168,11 @@ fn explicit_synthesis_overlay(
     if flags.allow_dataset_wrap.unwrap_or(false) || flags.no_allow_dataset_wrap.unwrap_or(false) {
         insert("allow_dataset_wrap");
     }
-    if flags.cache_bust.as_ref().is_some_and(|target| target != "none") {
+    if flags
+        .cache_bust
+        .as_ref()
+        .is_some_and(|target| target != "none")
+    {
         insert("cache_bust_target");
     }
     if flags.dataset_sampling_strategy.is_some() {
