@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Native `aiperf config` subcommands.
 
-mod templates_data;
+pub(crate) mod templates_data;
 
 use std::path::PathBuf;
 
@@ -117,7 +117,7 @@ fn init(args: InitArgs) -> anyhow::Result<i32> {
     Ok(0)
 }
 
-fn list_templates(category: Option<&str>) {
+pub(crate) fn list_templates(category: Option<&str>) {
     let mut cats: std::collections::BTreeMap<&str, Vec<&templates_data::Template>> =
         std::collections::BTreeMap::new();
     for t in TEMPLATES {
@@ -170,7 +170,7 @@ fn expand(args: ExpandArgs) -> anyhow::Result<i32> {
 }
 
 /// Remove leading SPDX and YAML-language-server comment lines.
-fn strip_spdx_header(content: &str) -> String {
+pub(crate) fn strip_spdx_header(content: &str) -> String {
     let mut lines = content.lines().peekable();
     while let Some(line) = lines.peek() {
         let t = line.trim_start();
