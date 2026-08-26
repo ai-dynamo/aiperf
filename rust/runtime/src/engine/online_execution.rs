@@ -100,11 +100,34 @@ impl NativeTransportExecution for HttpNativeExecution {
         content_server_base: Option<std::sync::Arc<str>>,
         endpoints: Rc<crate::endpoints::PreparedEndpointTable>,
     ) -> Result<Rc<dyn crate::transport::core::Dispatcher>> {
+        self.build_graph_dispatcher_with_http_client(
+            clock,
+            run_origin_ns,
+            urls,
+            model,
+            transport_policy,
+            crate::transport::http::config::ClientConfig::default(),
+            content_server_base,
+            endpoints,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn build_graph_dispatcher_with_http_client(
+        &self,
+        clock: Rc<dyn crate::clock::Clock>,
+        run_origin_ns: i64,
+        urls: &[String],
+        model: &str,
+        transport_policy: crate::engine::turn_execution::ExecutionTransportPolicy,
+        http_client: crate::transport::http::config::ClientConfig,
+        content_server_base: Option<std::sync::Arc<str>>,
+        endpoints: Rc<crate::endpoints::PreparedEndpointTable>,
+    ) -> Result<Rc<dyn crate::transport::core::Dispatcher>> {
         // The request payload's only consumer is the raw artifact
         // (`CapturedHttpExchange`), so the handle is taken only under raw capture.
-        let mut transport_config =
-            crate::engine::turn_execution::http_sink_config(&transport_policy);
-        transport_config.content_server_base = content_server_base;
+        let transport_config =
+            graph_http_sink_config(&transport_policy, http_client, content_server_base);
         Ok(Rc::new(
             crate::transport::http::TransportSink::new_multi_configured(
                 clock,
@@ -128,6 +151,16 @@ impl NativeTransportExecution for HttpNativeExecution {
     fn run_metadata(&self) -> BTreeMap<String, String> {
         BTreeMap::new()
     }
+}
+
+fn graph_http_sink_config(
+    policy: &crate::engine::turn_execution::ExecutionTransportPolicy,
+    client: crate::transport::http::config::ClientConfig,
+    content_server_base: Option<std::sync::Arc<str>>,
+) -> crate::transport::http::TransportSinkConfig {
+    let mut config = crate::engine::turn_execution::http_sink_config_with_client(policy, client);
+    config.content_server_base = content_server_base;
+    config
 }
 
 /// Resolve the native execution binding for the selected transport.
@@ -2031,6 +2064,42 @@ mod tests {
     use bytes::Bytes;
 
     use super::*;
+
+    #[test]
+    fn graph_http_binding_retains_http_only_client_policy() {
+        let client = crate::transport::http::config::ClientConfig {
+            request_timeout_ns: Some(17),
+            max_response_body_bytes: Some(31),
+            http_version: crate::transport::http::models::HttpVersion::Http2PriorKnowledge,
+            keepalive_ns: Some(41),
+            max_connections_per_origin: 3,
+            use_dns_cache: false,
+            dns_cache_ttl_ns: Some(43),
+            collect_trace_chunks: true,
+            uds_path: Some("/tmp/aiperf.sock".into()),
+            ..Default::default()
+        };
+        let policy = crate::engine::turn_execution::ExecutionTransportPolicy {
+            total_timeout_ns: Some(19),
+            ..Default::default()
+        };
+
+        let config = graph_http_sink_config(&policy, client, None);
+
+        assert_eq!(config.client.request_timeout_ns, Some(17));
+        assert_eq!(config.client.max_response_body_bytes, Some(31));
+        assert_eq!(
+            config.client.http_version,
+            crate::transport::http::models::HttpVersion::Http2PriorKnowledge
+        );
+        assert_eq!(config.client.keepalive_ns, Some(41));
+        assert_eq!(config.client.max_connections_per_origin, 3);
+        assert!(!config.client.use_dns_cache);
+        assert_eq!(config.client.dns_cache_ttl_ns, Some(43));
+        assert!(config.client.collect_trace_chunks);
+        assert_eq!(config.client.uds_path.as_deref(), Some("/tmp/aiperf.sock"));
+        assert_eq!(config.client.total_timeout_ns, Some(19));
+    }
 
     fn canonical_recorded_agent_bundle() -> crate::graph::input::GraphInputBundle {
         let fixture = crate::graph::recorded::agent_recording::CanonicalReplayFixture::load()

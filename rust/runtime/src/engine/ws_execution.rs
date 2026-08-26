@@ -101,6 +101,7 @@ impl Drop for AffinityGateCleanup<'_> {
 #[derive(Clone, Debug)]
 pub struct WebSocketExecutionFactory {
     config: WebSocketTransportConfig,
+    client: crate::transport::http::config::ClientConfig,
 }
 
 /// Registry execution binding for native WebSocket endpoint dialects.
@@ -120,6 +121,20 @@ impl NativeTransportExecution for WebSocketNativeExecution {
     fn executor_factory(&self) -> Arc<dyn RequestExecutorFactory> {
         Arc::new(WebSocketExecutionFactory {
             config: self.config.clone(),
+            client: crate::transport::http::config::ClientConfig::default(),
+        })
+    }
+
+    fn executor_factory_for_endpoint(
+        &self,
+        profile: Option<&crate::engine::registry::ValidatedEndpointProfileV2>,
+    ) -> Arc<dyn RequestExecutorFactory> {
+        Arc::new(WebSocketExecutionFactory {
+            config: self.config.clone(),
+            client: profile.map_or_else(
+                crate::transport::http::config::ClientConfig::default,
+                |profile| profile.client.clone(),
+            ),
         })
     }
 
@@ -227,7 +242,7 @@ impl RequestExecutorFactory for WebSocketExecutionFactory {
         let hop_routing = HopRouting::Sticky;
         let labels = config.worker_labels.clone();
         build_native(
-            WebSocketSinkBuilder::from_config(&config, self.config.clone())?,
+            WebSocketSinkBuilder::from_config(&config, self.config.clone(), self.client.clone())?,
             workers,
             clock,
             anchor,
@@ -250,11 +265,12 @@ impl WebSocketSinkBuilder {
     fn from_config(
         config: &ExecutionBackendConfig,
         websocket: WebSocketTransportConfig,
+        client: crate::transport::http::config::ClientConfig,
     ) -> Result<Self> {
         Ok(Self {
             base_urls: config.base_urls.clone(),
             model: config.model.clone(),
-            transport: crate::engine::turn_execution::http_sink_config(&config.transport),
+            transport: websocket_http_sink_config(&config.transport, client),
             endpoints: config
                 .prepared_endpoints
                 .clone()
@@ -263,6 +279,13 @@ impl WebSocketSinkBuilder {
             capture_raw: config.transport.raw_capture,
         })
     }
+}
+
+fn websocket_http_sink_config(
+    policy: &crate::engine::turn_execution::ExecutionTransportPolicy,
+    client: crate::transport::http::config::ClientConfig,
+) -> crate::transport::http::TransportSinkConfig {
+    crate::engine::turn_execution::http_sink_config_with_client(policy, client)
 }
 
 impl ExecutionSinkBuilder for WebSocketSinkBuilder {
@@ -1737,6 +1760,40 @@ impl RequestExecutor for WebSocketTransportSink {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn websocket_binding_retains_http_only_client_policy() {
+        let client = crate::transport::http::config::ClientConfig {
+            request_timeout_ns: Some(17),
+            max_response_body_bytes: Some(31),
+            http_version: crate::transport::http::models::HttpVersion::Http2PriorKnowledge,
+            keepalive_ns: Some(41),
+            max_connections_per_origin: 3,
+            use_dns_cache: false,
+            dns_cache_ttl_ns: Some(43),
+            collect_trace_chunks: true,
+            ..Default::default()
+        };
+        let policy = crate::engine::turn_execution::ExecutionTransportPolicy {
+            total_timeout_ns: Some(19),
+            ..Default::default()
+        };
+
+        let config = websocket_http_sink_config(&policy, client);
+
+        assert_eq!(config.client.request_timeout_ns, Some(17));
+        assert_eq!(config.client.max_response_body_bytes, Some(31));
+        assert_eq!(
+            config.client.http_version,
+            crate::transport::http::models::HttpVersion::Http2PriorKnowledge
+        );
+        assert_eq!(config.client.keepalive_ns, Some(41));
+        assert_eq!(config.client.max_connections_per_origin, 3);
+        assert!(!config.client.use_dns_cache);
+        assert_eq!(config.client.dns_cache_ttl_ns, Some(43));
+        assert!(config.client.collect_trace_chunks);
+        assert_eq!(config.client.total_timeout_ns, Some(19));
+    }
     use std::task::{Context, Poll};
 
     use crate::body_plan::PreparedWsMessage;

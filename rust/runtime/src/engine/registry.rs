@@ -296,6 +296,30 @@ pub trait NativeTransportExecution: Send + Sync {
         endpoints: std::rc::Rc<crate::endpoints::PreparedEndpointTable>,
     ) -> Result<std::rc::Rc<dyn crate::transport::core::Dispatcher>>;
 
+    /// Bind a resolved HTTP-local client only at the transport boundary.
+    #[allow(clippy::too_many_arguments)]
+    fn build_graph_dispatcher_with_http_client(
+        &self,
+        clock: std::rc::Rc<dyn crate::clock::Clock>,
+        run_origin_ns: i64,
+        urls: &[String],
+        model: &str,
+        transport_policy: crate::engine::turn_execution::ExecutionTransportPolicy,
+        _http_client: crate::transport::http::config::ClientConfig,
+        content_server_base: Option<std::sync::Arc<str>>,
+        endpoints: std::rc::Rc<crate::endpoints::PreparedEndpointTable>,
+    ) -> Result<std::rc::Rc<dyn crate::transport::core::Dispatcher>> {
+        self.build_graph_dispatcher(
+            clock,
+            run_origin_ns,
+            urls,
+            model,
+            transport_policy,
+            content_server_base,
+            endpoints,
+        )
+    }
+
     /// Human-readable transport label used in graph tracing/diagnostics.
     fn graph_transport_label(&self) -> &'static str {
         "unknown"

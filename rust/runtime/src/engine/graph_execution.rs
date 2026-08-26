@@ -456,6 +456,7 @@ impl GraphEndpointRuntimeFactory for PreparedRunnerGraphEndpointRuntimeFactory {
                 endpoint_id: profile.endpoint_id.clone(),
                 keys,
                 urls: profile.config.urls.clone(),
+                http_client: profile.client.clone(),
                 transport_policy: crate::engine::turn_execution::ExecutionTransportPolicy {
                     total_timeout_ns: profile.client.total_timeout_ns,
                     ssl_verify: profile.client.ssl_verify,
@@ -477,12 +478,13 @@ impl GraphEndpointRuntimeFactory for PreparedRunnerGraphEndpointRuntimeFactory {
         let profiles = staged
             .into_iter()
             .map(|profile| {
-                let transport = profile.transport.build_graph_dispatcher(
+                let transport = profile.transport.build_graph_dispatcher_with_http_client(
                     clock.clone(),
                     run_origin_ns,
                     &profile.urls,
                     model,
                     profile.transport_policy,
+                    profile.http_client,
                     self.content_server_base.clone(),
                     table.clone(),
                 )?;
@@ -532,6 +534,7 @@ struct StagedGraphProfile {
     endpoint_id: EndpointId,
     keys: [EndpointKey; 2],
     urls: Vec<String>,
+    http_client: crate::transport::http::config::ClientConfig,
     transport_policy: crate::engine::turn_execution::ExecutionTransportPolicy,
     url_count: usize,
     input_token_counter: Arc<dyn InputTokenCounter>,

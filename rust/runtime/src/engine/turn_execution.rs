@@ -91,7 +91,18 @@ impl Default for ExecutionTransportPolicy {
 
 /// Bind shared execution policy to the HTTP sink's protocol-local defaults.
 pub(crate) fn http_sink_config(policy: &ExecutionTransportPolicy) -> TransportSinkConfig {
-    let mut config = TransportSinkConfig::default();
+    http_sink_config_with_client(policy, ClientConfig::default())
+}
+
+/// Bind shared execution policy without discarding resolved HTTP-local settings.
+pub(crate) fn http_sink_config_with_client(
+    policy: &ExecutionTransportPolicy,
+    client: ClientConfig,
+) -> TransportSinkConfig {
+    let mut config = TransportSinkConfig {
+        client,
+        ..TransportSinkConfig::default()
+    };
     config.client.total_timeout_ns = policy.total_timeout_ns;
     config.client.ssl_verify = policy.ssl_verify;
     config.client.max_connect_retries = policy.max_connect_retries;
@@ -281,13 +292,7 @@ impl HttpSinkBuilder {
         client.ssl_verify = config.transport.ssl_verify;
         client.max_connect_retries = config.transport.max_connect_retries;
         client.connect_retry_backoff_ns = config.transport.connect_retry_backoff_ns;
-        let transport = TransportSinkConfig {
-            client,
-            connection_reuse: config.transport.connection_reuse,
-            session_header: config.transport.session_header.clone(),
-            content_server_base: None,
-            capture_raw: config.transport.raw_capture,
-        };
+        let transport = http_sink_config_with_client(&config.transport, client);
         Self {
             base_urls: config.base_urls.clone(),
             model: config.model.clone(),
