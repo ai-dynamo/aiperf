@@ -22,6 +22,7 @@ from aiperf.config.control_hooks import (
     DEFAULT_RETRY_BACKOFF_SECONDS,
     DEFAULT_SERVER_PROFILER_START_PATH,
     DEFAULT_SERVER_PROFILER_STOP_PATH,
+    RESET_KV_CACHE_RETRYABLE_STATUS_CODES,
 )
 from aiperf.config.endpoint import EndpointConfig
 
@@ -137,9 +138,11 @@ async def _post_with_retry(
 ) -> None:
     """POST with bounded exponential-backoff retry on retryable failures only.
 
-    A retryable failure (timeout, connection error) may resolve if the
-    server is transiently busy with unrelated control-plane work; an
-    explicit non-2xx response is a real rejection and is never retried.
+    A retryable failure - a transport-level error (timeout, connection
+    error) or a response with a status in
+    ``RESET_KV_CACHE_RETRYABLE_STATUS_CODES`` (e.g. 503) - may resolve if
+    the server is transiently busy with unrelated control-plane work. Any
+    other non-2xx response is a real rejection and is never retried.
     """
     deadline = time.monotonic() + max_retry_seconds
     backoff = DEFAULT_RETRY_BACKOFF_SECONDS
@@ -148,7 +151,11 @@ async def _post_with_retry(
             await control_plane_post(url=url, headers=headers, timeout_s=timeout_s)
             return
         except ControlPlaneHttpError as error:
-            if not error.retryable or time.monotonic() + backoff >= deadline:
+            is_retryable = (
+                error.retryable
+                or error.status_code in RESET_KV_CACHE_RETRYABLE_STATUS_CODES
+            )
+            if not is_retryable or time.monotonic() + backoff >= deadline:
                 raise
             await asyncio.sleep(backoff)
             backoff = min(

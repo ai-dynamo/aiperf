@@ -22,12 +22,23 @@ class ControlPlaneHttpError(RuntimeError):
 
     ``retryable`` distinguishes transport-level failures (timeout, connection
     refused) - which may resolve if the caller waits and retries - from an
-    explicit non-2xx response, which is a real rejection retrying won't fix.
+    explicit non-2xx response, which is a real rejection retrying won't fix
+    in the general case. ``status_code`` carries the response status for a
+    non-2xx failure (``None`` for a transport-level failure) so a caller with
+    endpoint-specific knowledge can still treat certain statuses (e.g. 503)
+    as retryable without this module hardcoding that policy.
     """
 
-    def __init__(self, message: str, *, retryable: bool = False) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        retryable: bool = False,
+        status_code: int | None = None,
+    ) -> None:
         super().__init__(message)
         self.retryable = retryable
+        self.status_code = status_code
 
 
 async def control_plane_post(
@@ -59,7 +70,8 @@ async def control_plane_post(
             # Drain body without including it in the error (may contain secrets).
             await resp.read()
             raise ControlPlaneHttpError(
-                f"control_plane POST {safe_url} failed with status {resp.status}"
+                f"control_plane POST {safe_url} failed with status {resp.status}",
+                status_code=resp.status,
             )
     except ControlPlaneHttpError:
         raise

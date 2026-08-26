@@ -104,10 +104,13 @@ Setting any path/timeout override also enables the corresponding hook
 | Timeouts | 30s when unset (independent of `endpoint.timeout`) |
 | `reset_kv_cache` retry budget | 60s when unset |
 
-A retryable `reset_kv_cache` failure (timeout or connection error - never a
-non-2xx response) is retried with exponential backoff (starting at 1s,
-doubling up to an 8s cap) until `reset_kv_cache.max_retry_seconds` elapses.
-This tolerates a server that's transiently busy with unrelated control-plane
+A retryable `reset_kv_cache` failure - a transport-level error (timeout,
+connection error) or a response with status `409`, `423`, `429`, or `503`
+(standard "transient, try again" signals) - is retried with exponential
+backoff (starting at 1s, doubling up to an 8s cap) until
+`reset_kv_cache.max_retry_seconds` elapses. Any other non-2xx response
+(e.g. `400`/`401`/`403`/`404`) fails immediately. This tolerates a server
+that's transiently busy with unrelated control-plane
 work (e.g. finishing a profiler stop) when starting the next run.
 
 Paths must be **relative** (start with `/`) and must not contain `://`.

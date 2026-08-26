@@ -51,6 +51,7 @@ async def test_control_plane_post_raises_on_non_2xx() -> None:
             await control_plane_post(url=url, headers={}, timeout_s=2.0)
         assert "secret-body" not in str(exc_info.value)
         assert exc_info.value.retryable is False
+        assert exc_info.value.status_code == 500
     finally:
         await runner.cleanup()
 
@@ -73,6 +74,7 @@ async def test_control_plane_post_wraps_client_error() -> None:
                 timeout_s=0.1,
             )
         assert exc_info.value.retryable is True
+        assert exc_info.value.status_code is None
 
 
 @pytest.mark.asyncio
@@ -87,6 +89,7 @@ async def test_control_plane_post_wraps_timeout() -> None:
                 timeout_s=0.1,
             )
         assert exc_info.value.retryable is True
+        assert exc_info.value.status_code is None
 
 
 @pytest.mark.asyncio

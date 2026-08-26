@@ -34,6 +34,15 @@ DEFAULT_RETRY_BACKOFF_CAP_SECONDS = 8.0
 """Ceiling on the exponential backoff delay between retry attempts."""
 DEFAULT_RETRY_BACKOFF_MULTIPLIER = 2.0
 """Growth factor applied to the backoff delay after each retry attempt."""
+RESET_KV_CACHE_RETRYABLE_STATUS_CODES = frozenset({409, 423, 429, 503})
+"""HTTP statuses treated as transient for reset_kv_cache and retried.
+
+409 Conflict / 423 Locked / 429 Too Many Requests / 503 Service Unavailable
+are standard signals for "server busy with transient state, try again" -
+e.g. a server reporting a profiler-cleanup race explicitly instead of
+holding the socket open. Statuses outside this set (400/401/403/404/...)
+are real rejections and fail immediately.
+"""
 
 
 class ResetKvCacheConfig(BaseConfig):

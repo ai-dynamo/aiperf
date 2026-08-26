@@ -22,6 +22,7 @@ from aiperf.config.control_hooks import (
     DEFAULT_RETRY_BACKOFF_CAP_SECONDS,
     DEFAULT_RETRY_BACKOFF_MULTIPLIER,
     DEFAULT_RETRY_BACKOFF_SECONDS,
+    RESET_KV_CACHE_RETRYABLE_STATUS_CODES,
 )
 from aiperf.config.endpoint import EndpointConfig
 
@@ -270,6 +271,59 @@ async def test_run_reset_kv_cache_gives_up_once_retry_budget_exhausted() -> None
 
     assert exc_info.value is retryable_error
     assert post.await_count == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status_code", sorted(RESET_KV_CACHE_RETRYABLE_STATUS_CODES))
+async def test_run_reset_kv_cache_retries_known_transient_status_codes(
+    status_code: int,
+) -> None:
+    hooks = _hooks(
+        reset_urls=["http://a:8000/reset_prefix_cache"],
+        reset_max_retry_seconds=100.0,
+    )
+    headers = {"Authorization": "Bearer t"}
+    status_error = ControlPlaneHttpError(
+        f"status {status_code}", retryable=False, status_code=status_code
+    )
+    with (
+        patch(
+            "aiperf.common.control_hooks.control_plane_post",
+            new_callable=AsyncMock,
+            side_effect=[status_error, None],
+        ) as post,
+        patch(
+            "aiperf.common.control_hooks.asyncio.sleep", new_callable=AsyncMock
+        ) as sleep,
+    ):
+        await run_reset_kv_cache(hooks, headers)
+
+    assert post.await_count == 2
+    sleep.assert_awaited_once_with(DEFAULT_RETRY_BACKOFF_SECONDS)
+
+
+@pytest.mark.asyncio
+async def test_run_reset_kv_cache_does_not_retry_unknown_status_code() -> None:
+    hooks = _hooks(reset_urls=["http://a:8000/reset_prefix_cache"])
+    headers = {"Authorization": "Bearer t"}
+    assert 404 not in RESET_KV_CACHE_RETRYABLE_STATUS_CODES
+    error = ControlPlaneHttpError("status 404", retryable=False, status_code=404)
+    with (
+        patch(
+            "aiperf.common.control_hooks.control_plane_post",
+            new_callable=AsyncMock,
+            side_effect=error,
+        ) as post,
+        patch(
+            "aiperf.common.control_hooks.asyncio.sleep", new_callable=AsyncMock
+        ) as sleep,
+        pytest.raises(ControlPlaneHttpError) as exc_info,
+    ):
+        await run_reset_kv_cache(hooks, headers)
+
+    assert exc_info.value is error
+    post.assert_awaited_once()
+    sleep.assert_not_awaited()
 
 
 @pytest.mark.asyncio
