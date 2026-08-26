@@ -1624,6 +1624,9 @@ mod tests {
             .await
             .expect_err("non-string inferenceTime must be rejected");
         let message = error.to_string();
-        assert!(message.contains("invalid inferenceTime"), "unexpected error: {message}");
+        assert!(
+            message.contains("invalid inferenceTime"),
+            "unexpected error: {message}"
+        );
     }
 }
