@@ -327,6 +327,7 @@ struct PreparedGraphPhase {
     workload: GraphWorkload,
     placement: Rc<dyn TracePlacement>,
     events: mpsc::Receiver<GraphExecutionEvent>,
+    saturated: Arc<std::sync::atomic::AtomicBool>,
     intervals: Rc<RefCell<Box<dyn crate::timing::IntervalGenerator>>>,
     session_slots: Option<Rc<SlotPool>>,
     prefill_initial: Option<usize>,
@@ -1230,6 +1231,7 @@ struct GraphPhaseExecution {
     controller: Rc<dyn ScheduledPhaseController>,
     failures: Rc<GraphPhaseFailures>,
     events: RefCell<Option<mpsc::Receiver<GraphExecutionEvent>>>,
+    saturated: Arc<std::sync::atomic::AtomicBool>,
     captured: Rc<RefCell<Vec<CapturedRecord>>>,
     supplement: Rc<RefCell<GraphPhaseSupplement>>,
     terminal_callback: Option<GraphTraceTerminalCallback>,
@@ -1357,9 +1359,15 @@ impl GraphPhaseExecution {
         let phase_identity = self.phase_identity.clone();
         let sampler = self.adaptive_sampler.clone();
         let progress = self.progress.clone();
+        let saturated = self.saturated.clone();
+        let failures = self.failures.clone();
         let stop = self.drain_stop.clone();
         *self.drain_task.borrow_mut() = Some(tokio::task::spawn_local(async move {
             loop {
+                if saturated.load(std::sync::atomic::Ordering::Acquire) {
+                    failures.record("graph execution event queue saturated");
+                    return;
+                }
                 while let Ok(event) = events.try_recv() {
                     ingest_graph_execution_event_for_phase(
                         &captured,
@@ -1816,6 +1824,7 @@ impl PhaseExecutionFactory for GraphPhaseExecutionFactory {
             controller,
             failures: prepared.failures,
             events: RefCell::new(Some(prepared.events)),
+            saturated: prepared.saturated,
             captured: self.captured.clone(),
             supplement: self.supplement.clone(),
             terminal_callback: self.terminal_callback.clone(),
@@ -2332,8 +2341,10 @@ fn prepare_graph_phase(
         }
     };
     let (events_tx, events_rx) = mpsc::channel(256);
-    let event_sink: Arc<dyn GraphExecutionEventSink> =
-        Arc::new(ChannelRunnerGraphExecutionEventSink::new(events_tx));
+    let saturated = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let event_sink: Arc<dyn GraphExecutionEventSink> = Arc::new(
+        ChannelRunnerGraphExecutionEventSink::new(events_tx, saturated.clone()),
+    );
     let adaptive = graph_adaptive_config(phase, benchmark_id, artifact_dir)?;
     let prefill_initial = match (common.prefill_concurrency, adaptive.as_ref()) {
         (Some(limit), _) => Some(limit),
@@ -2418,6 +2429,7 @@ fn prepare_graph_phase(
         workload,
         placement,
         events: events_rx,
+        saturated,
         intervals,
         session_slots,
         prefill_initial,

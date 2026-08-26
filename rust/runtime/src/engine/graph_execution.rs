@@ -9,6 +9,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::body_plan::RequestBody;
 use crate::cellular::{CellPartition, ModuloCellPartition};
@@ -146,22 +147,33 @@ pub(crate) trait GraphExecutionEventSink: Send + Sync {
 pub(crate) struct ChannelRunnerGraphExecutionEventSink {
     sender: mpsc::Sender<GraphExecutionEvent>,
     capacity: usize,
+    saturated: Arc<AtomicBool>,
 }
 
 impl ChannelRunnerGraphExecutionEventSink {
     /// Bind the worker side to one phase-local coordinator receiver.
-    pub(crate) fn new(sender: mpsc::Sender<GraphExecutionEvent>) -> Self {
+    pub(crate) fn new(
+        sender: mpsc::Sender<GraphExecutionEvent>,
+        saturated: Arc<AtomicBool>,
+    ) -> Self {
         let capacity = sender.capacity();
-        Self { sender, capacity }
+        Self {
+            sender,
+            capacity,
+            saturated,
+        }
     }
 }
 
 impl GraphExecutionEventSink for ChannelRunnerGraphExecutionEventSink {
     fn emit(&self, event: GraphExecutionEvent) -> Result<(), TraceError> {
         self.sender.try_send(event).map_err(|error| match error {
-            mpsc::error::TrySendError::Full(_) => TraceError::QueueSaturated {
-                capacity: self.capacity,
-            },
+            mpsc::error::TrySendError::Full(_) => {
+                self.saturated.store(true, Ordering::Release);
+                TraceError::QueueSaturated {
+                    capacity: self.capacity,
+                }
+            }
             mpsc::error::TrySendError::Closed(_) => {
                 TraceError::Other("graph execution event receiver closed".into())
             }
@@ -4023,7 +4035,10 @@ executable = "tools/adapter.sh"
             run_origin_ns: 123,
             raw_enabled: false,
             terminal_nodes: RefCell::new(HashSet::new()),
-            events: Arc::new(ChannelRunnerGraphExecutionEventSink::new(sender)),
+            events: Arc::new(ChannelRunnerGraphExecutionEventSink::new(
+                sender,
+                Arc::new(AtomicBool::new(false)),
+            )),
             cache_bust_marker: None,
             cache_bust_target: crate::engine::graph_input::CacheBustTarget::None,
             arrivals: Cell::new(0),
@@ -4038,7 +4053,8 @@ executable = "tools/adapter.sh"
     #[tokio::test]
     async fn channel_runner_events_are_bounded_and_fifo() {
         let (sender, mut receiver) = mpsc::channel(2);
-        let sink = ChannelRunnerGraphExecutionEventSink::new(sender);
+        let sink =
+            ChannelRunnerGraphExecutionEventSink::new(sender, Arc::new(AtomicBool::new(false)));
         sink.emit(GraphExecutionEvent::TraceComplete {
             trace_id: "first".into(),
             node_count: 0,
