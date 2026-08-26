@@ -1469,17 +1469,7 @@ mod tests {
         assert_eq!(dataset.metadata().average_turn_count, 1.0);
     }
 
-    #[test]
-    fn dag_lineage_and_branch_attachment_are_validated() {
-        let mut pool = SegmentPool::new();
-        let message = pool
-            .intern_message(
-                None,
-                "user",
-                Bytes::from_static(br#"{"role":"user","content":"hi"}"#),
-                vec![1_u32].into_boxed_slice(),
-            )
-            .unwrap();
+    fn valid_dag_conversations(message: Handle) -> (Conversation, Conversation) {
         let branch_id = BranchId::from("root:0");
         let mut root = one_turn("root", message);
         root.turns[0].branch_ids.push(branch_id.clone());
@@ -1505,13 +1495,77 @@ mod tests {
             root_conversation_id: SessionId::from("root"),
         });
 
+        (root, child)
+    }
+
+    fn dag_message() -> (Handle, Arc<dyn SegmentStore>) {
+        let mut pool = SegmentPool::new();
+        let message = pool
+            .intern_message(
+                None,
+                "user",
+                Bytes::from_static(br#"{"role":"user","content":"hi"}"#),
+                vec![1_u32].into_boxed_slice(),
+            )
+            .unwrap();
+        (message, Arc::new(pool.freeze()))
+    }
+
+    #[test]
+    fn valid_dag_lineage_and_branch_attachment_are_accepted() {
+        let (message, segments) = dag_message();
+        let (root, child) = valid_dag_conversations(message);
+
         Dataset::new(
             vec![root, child],
-            Arc::new(pool.freeze()),
+            segments,
             "sequential",
             ConversationContextMode::DeltasWithoutResponses,
         )
         .unwrap();
+    }
+
+    #[test]
+    fn fork_child_with_mismatched_lineage_is_rejected() {
+        let (message, segments) = dag_message();
+        let (mut root, mut child) = valid_dag_conversations(message);
+        root.dag.as_mut().unwrap().branches[0].mode = ConversationBranchMode::Fork;
+        child.dag.as_mut().unwrap().agent_depth = 2;
+
+        let error = Dataset::new(
+            vec![root, child],
+            segments,
+            "sequential",
+            ConversationContextMode::DeltasWithoutResponses,
+        )
+        .expect_err("a Fork child with mismatched lineage must be rejected");
+
+        assert!(matches!(
+            error,
+            DatasetError::Validation(message)
+                if message.contains("lineage does not match Fork parent")
+        ));
+    }
+
+    #[test]
+    fn turn_with_unknown_branch_attachment_is_rejected() {
+        let (message, segments) = dag_message();
+        let (mut root, child) = valid_dag_conversations(message);
+        root.turns[0].branch_ids[0] = BranchId::from("root:unknown");
+
+        let error = Dataset::new(
+            vec![root, child],
+            segments,
+            "sequential",
+            ConversationContextMode::DeltasWithoutResponses,
+        )
+        .expect_err("a turn attachment to an unknown branch must be rejected");
+
+        assert!(matches!(
+            error,
+            DatasetError::Validation(message)
+                if message.contains("references unknown or repeated branch")
+        ));
     }
 
     #[test]
