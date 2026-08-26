@@ -1526,7 +1526,7 @@ mod tests {
     }
 
     #[test]
-    fn fork_child_with_mismatched_lineage_is_rejected() {
+    fn dag_fork_child_with_mismatched_lineage_is_rejected() {
         let (message, segments) = dag_message();
         let (mut root, mut child) = valid_dag_conversations(message);
         root.dag.as_mut().unwrap().branches[0].mode = ConversationBranchMode::Fork;
@@ -1548,7 +1548,7 @@ mod tests {
     }
 
     #[test]
-    fn turn_with_unknown_branch_attachment_is_rejected() {
+    fn dag_turn_with_unknown_branch_attachment_is_rejected() {
         let (message, segments) = dag_message();
         let (mut root, child) = valid_dag_conversations(message);
         root.turns[0].branch_ids[0] = BranchId::from("root:unknown");
