@@ -117,6 +117,7 @@ async fn legacy_dispatch_plan_lands_byte_exact_over_real_http() {
             streaming: true,
             ignore_eos: true,
             cache_bust_marker: None,
+            cache_bust_first_user_turn: false,
         },
     );
     assert_eq!(plan.len(), 3);
@@ -255,6 +256,7 @@ async fn streaming_run_captures_observed_timing_and_content_into_export_records(
             streaming: true,
             ignore_eos: true,
             cache_bust_marker: None,
+            cache_bust_first_user_turn: false,
         },
     );
     plan.sort_by_key(|i| i.dispatch_ns);
