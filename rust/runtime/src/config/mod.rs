@@ -11,6 +11,7 @@ pub mod model;
 pub mod phase_validate;
 pub mod redact;
 pub mod resolve;
+pub(crate) mod system_prompt;
 pub mod validate;
 
 /// Returns the Config-v2 schema version string this module targets.

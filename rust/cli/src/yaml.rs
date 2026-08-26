@@ -235,6 +235,10 @@ fn apply_cli_overrides(
     overlay_bool(&mut inputs.show_trace_timing, flags.show_trace_timing);
     overlay_bool(&mut inputs.use_think_time_only, flags.use_think_time_only);
     overlay_bool(&mut inputs.burst_phase_starts, flags.burst_phase_starts);
+    if flags.system_prompt.is_some() || flags.system_prompt_file.is_some() {
+        inputs.system_prompt = flags.system_prompt.clone();
+        inputs.system_prompt_file = flags.system_prompt_file.clone();
+    }
     if flags.show_trace_timing.unwrap_or(false) {
         inputs.export_trace = true;
     }
@@ -1136,6 +1140,12 @@ struct DatasetSection {
     /// Shared-prefix / prefix-pool policy (`synthetic.prefix_prompts`).
     #[serde(default, alias = "prefixPrompts")]
     prefix_prompts: Option<PrefixPromptsSection>,
+    /// Exact system prompt applied to every conversation.
+    #[serde(default, alias = "systemPrompt")]
+    system_prompt: Option<String>,
+    /// UTF-8 file containing the exact system prompt.
+    #[serde(default, alias = "systemPromptFile")]
+    system_prompt_file: Option<PathBuf>,
     /// Turns-per-session distribution (multi-turn).
     turns: Option<DistFields>,
     /// Inter-turn fixed delay distribution, milliseconds (`turn_delay`).
@@ -1912,6 +1922,12 @@ impl Benchmark {
                 length: p.length,
                 pool_size: p.pool_size,
             });
+        let system_prompt = dataset
+            .as_ref()
+            .and_then(|dataset| dataset.system_prompt.clone());
+        let system_prompt_file = dataset
+            .as_ref()
+            .and_then(|dataset| dataset.system_prompt_file.clone());
 
         // YAML sample rates retain their authored units.
         let image_spec = dataset.as_ref().and_then(|d| d.images.as_ref()).map(|i| {
@@ -2538,6 +2554,8 @@ impl Benchmark {
             random_seed,
             dataset_random_seed,
             input_file,
+            system_prompt,
+            system_prompt_file,
             recorded_agent_graph,
             hardware_description,
             endpoint_placement,
@@ -3040,7 +3058,10 @@ fn clone_num_or_dist(n: &NumOrDist) -> Distribution {
 
 #[cfg(test)]
 mod tests {
-    use super::{ConfigFile, UNIMPLEMENTED_KEYS, resolve_expanded_value, resolve_str};
+    use super::{
+        ConfigFile, UNIMPLEMENTED_KEYS, resolve_expanded_inputs, resolve_expanded_value,
+        resolve_str,
+    };
 
     #[test]
     fn websocket_transport_maps_every_authored_value() {
@@ -3625,8 +3646,57 @@ benchmark:
             .expect("worker panicked");
     }
 
-    /// A file-backed random pool uses every modality's shared batch-size surface,
-    /// and explicit CLI batch sizes have the usual config-overlay precedence.
+    #[test]
+    fn system_prompt_cli_source_replaces_the_yaml_source_unit() {
+        std::thread::Builder::new()
+            .stack_size(32 * 1024 * 1024)
+            .spawn(|| {
+                for (yaml_source, cli_source, expected_inline, expected_file) in [
+                    (
+                        "system_prompt_file: yaml-prompt.txt",
+                        vec!["--system-prompt", "cli inline"],
+                        Some("cli inline"),
+                        None,
+                    ),
+                    (
+                        "system_prompt: yaml inline",
+                        vec!["--system-prompt-file", "cli-prompt.txt"],
+                        None,
+                        Some(std::path::Path::new("cli-prompt.txt")),
+                    ),
+                ] {
+                    let yaml = cfg(&format!(
+                        "  dataset:\n    type: synthetic\n    {yaml_source}\n  phases: {{type: concurrency, requests: 1, concurrency: 1}}\n"
+                    ));
+                    let raw: serde_json::Value =
+                        serde_yaml::from_str(&yaml).expect("YAML parses");
+                    let expanded = crate::expand::expand_config(raw).expect("YAML expands");
+                    let flags = crate::flags::ProfileFlags::parse_from_args(
+                        &cli_source
+                            .iter()
+                            .map(|value| value.to_string())
+                            .collect::<Vec<_>>(),
+                    )
+                    .expect("CLI source parses");
+
+                    let inputs = resolve_expanded_inputs(
+                        expanded,
+                        Some("/tmp/x".into()),
+                        Some(&flags),
+                    )
+                    .expect("source overlay resolves");
+
+                    assert_eq!(inputs.system_prompt.as_deref(), expected_inline);
+                    assert_eq!(inputs.system_prompt_file.as_deref(), expected_file);
+                }
+            })
+            .expect("spawn worker")
+            .join()
+            .expect("worker panicked");
+    }
+
+    /// A file-backed random pool uses the shared `dataset.images.batchSize` surface,
+    /// and an explicit CLI batch size has the usual config-overlay precedence.
     #[test]
     fn random_pool_modality_batch_sizes_yaml_and_cli_override() {
         std::thread::Builder::new()

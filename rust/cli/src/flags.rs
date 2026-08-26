@@ -1015,6 +1015,14 @@ pub struct ProfileFlags {
     #[arg(long = "shared-system-prompt-length")]
     pub shared_system_prompt_length: Option<u32>,
 
+    /// Exact system prompt applied to every dataset conversation.
+    #[arg(long = "system-prompt", conflicts_with = "system_prompt_file")]
+    pub system_prompt: Option<String>,
+
+    /// UTF-8 file containing the exact system prompt.
+    #[arg(long = "system-prompt-file", conflicts_with = "system_prompt")]
+    pub system_prompt_file: Option<PathBuf>,
+
     /// Per-user context prompt length (`--user-context-prompt-length`).
     #[arg(long = "user-context-prompt-length")]
     pub user_context_prompt_length: Option<u32>,
@@ -1506,6 +1514,34 @@ mod tests {
     fn parse(args: &[&str]) -> ProfileFlags {
         let owned: Vec<String> = args.iter().map(|value| value.to_string()).collect();
         ProfileFlags::parse_from_args(&owned).expect("flags should parse")
+    }
+
+    #[test]
+    fn system_prompt_sources_parse_and_conflict() {
+        on_big_stack(|| {
+            let inline = parse(&["--system-prompt", "  exact\ntext  "]);
+            assert_eq!(inline.system_prompt.as_deref(), Some("  exact\ntext  "));
+            assert!(inline.system_prompt_file.is_none());
+
+            let file = parse(&["--system-prompt-file", "prompt.txt"]);
+            assert_eq!(
+                file.system_prompt_file.as_deref(),
+                Some(std::path::Path::new("prompt.txt"))
+            );
+            assert!(file.system_prompt.is_none());
+
+            let error = ProfileFlags::try_parse_from([
+                "profile",
+                "--system-prompt",
+                "inline",
+                "--system-prompt-file",
+                "prompt.txt",
+            ])
+            .expect_err("the two CLI sources must conflict")
+            .to_string();
+            assert!(error.contains("--system-prompt"), "{error}");
+            assert!(error.contains("--system-prompt-file"), "{error}");
+        });
     }
 
     #[test]

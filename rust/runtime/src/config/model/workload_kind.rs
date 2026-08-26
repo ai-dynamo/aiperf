@@ -126,6 +126,7 @@ mod tests {
 
     fn synthetic_dataset() -> Dataset {
         Dataset::Synthetic(Synthetic {
+            system_prompt: None,
             prompts: Prompts {
                 batch_size: 1,
                 isl: Distribution {
@@ -159,6 +160,7 @@ mod tests {
 
     fn file_dataset(format: &str) -> Dataset {
         Dataset::File(FileDataset {
+            system_prompt: None,
             format: Some(format.to_string()),
             sampling: Sampling("sequential".into()),
             options: serde_json::Map::new(),

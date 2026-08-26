@@ -74,7 +74,7 @@ implementation, test run, or review.
 | 46 | `e659d2a95a` | FFmpeg codec allowlist | pending | shared-product-action | Audit native codec defaults before porting shared Dockerfile policy. |
 | 47 | `9e96b499d1` | aiohttp minimum | pending | already-covered | Bundled Python bound already satisfies it. |
 | 48 | `260d00f5e9` | adaptive error-rate units | pending | applicable | Adaptive SLA differs from exported percentage/cancellation contract; pair with #25. |
-| 49 | `88242293b5` | verbatim system prompts | pending | applicable | Add CLI/file projection to existing composition seam. |
+| 49 | `88242293b5` | verbatim system prompts | complete | applicable | Exact merge `9eeeac98f9`; native one-time file/CLI resolution, BLAKE3 composition identity, OpenAI/Anthropic wire E2E, exact 40-test mapping, and Graham approval recorded. |
 | 50 | `ade1f69eb1` | seamless phase transitions | complete | applicable | Exact merge `8252633121`; incoming lowering plus local/cellular first-owner-start/last-owner-stop profiler coordination, focused integration coverage, and two Graham approvals recorded. |
 | 51 | `324bb05773` | per-chunk usage | pending | applicable | No first-chunk token multiplicity or option. |
 | 52 | `810fd8bdd4` | vLLM spec-decode wire | complete | applicable | Exact target-only merge `9fcd17c62e`; native root metrics, dense histogram normalization, automatic trailing-usage negotiation, four-mode mock/product integration, and 15/15 E2E are complete. Independent Graham review approved `082457b2de`. |

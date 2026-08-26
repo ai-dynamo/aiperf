@@ -99,7 +99,14 @@ stays valid across the cycle.
   field-inferring `hf` auto loader. `dag_jsonl` is deliberately *not* in this
   registry — it takes the graph path below.
 - **Composition** does turn finalization, ISL/OSL sequence-distribution sampling,
-  context injection, model selection, and `max_tokens`.
+  context injection, model selection, and `max_tokens`. `--system-prompt` and
+  `--system-prompt-file` resolve once at startup to one exact owned string for
+  synthetic, file, and public datasets. After format-specific leading-system
+  hoisting, composition installs that string or prepends it to authored system
+  text with exactly two newlines, then rebases every prefix-dependent descendant
+  handle. The generated synthetic user ISL remains unchanged and additive to
+  the system tokens; equal resolved text has equal segment identity regardless
+  of whether it came from a flag or file path.
 - **Sampling strategies** (random, sequential, shuffle) operate on ids and are
   deterministic under a seed.
 - **Tokenization** runs at load when semantic text must become token-keyed

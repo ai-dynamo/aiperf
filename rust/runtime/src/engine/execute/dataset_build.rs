@@ -466,6 +466,7 @@ pub(crate) async fn build_synthetic_dataset(
         requires_raw_token_ids,
     } = context;
     let mut compose = compose_config(models, rng_root)?;
+    compose.verbatim_system_prompt = spec.system_prompt.clone();
     compose.media_generator_factory = media_generator_factory;
     compose.requires_raw_token_ids = requires_raw_token_ids;
     compose.prompt_generator = synthetic_prompt_generator(spec.prompts.as_ref())?;
@@ -567,6 +568,7 @@ pub(crate) async fn build_file_dataset(
         .map(|seed| RngRoot::new(Some(seed)))
         .unwrap_or(run_rng_root);
     let mut compose = compose_config(models, rng_root)?;
+    compose.verbatim_system_prompt = spec.system_prompt.clone();
     compose.requires_raw_token_ids = requires_raw_token_ids;
     compose.hoist_leading_system_message = consumes_system_message;
     compose.output_length_distribution = spec.osl.as_ref().map(distribution).transpose()?;
@@ -666,6 +668,7 @@ pub(crate) async fn build_public_dataset(
     rng_root: RngRoot,
     tokenizer: &dyn TextTokenizer,
     requires_raw_token_ids: bool,
+    consumes_system_message: bool,
 ) -> Result<Dataset> {
     ensure!(
         !spec.name.trim().is_empty(),
@@ -700,7 +703,9 @@ pub(crate) async fn build_public_dataset(
         },
     };
     let mut compose = compose_config(models, rng_root)?;
+    compose.verbatim_system_prompt = spec.system_prompt.clone();
     compose.requires_raw_token_ids = requires_raw_token_ids;
+    compose.hoist_leading_system_message = consumes_system_message;
     compose.format_options = spec.options.clone();
     if spec.prefetch_media_urls {
         // Fetch remote image URLs once, now, before any credits are issued.

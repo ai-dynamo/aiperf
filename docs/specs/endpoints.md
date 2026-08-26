@@ -65,6 +65,22 @@ The object-safe `HttpEndpointBinding` (in `transport::http`) and
 lowering and decoding back into the canonical response shape (see
 [http-transport.md](http-transport.md) and [grpc-transport.md](grpc-transport.md)).
 
+### Verbatim system-message construction
+
+`EndpointDescriptor::consumes_system_message()` admits exactly `chat`,
+`responses`, `messages`, and `chat_embeddings`; profile validation rejects a
+verbatim system prompt for every other dialect before dataset construction.
+Chat and Chat Embeddings emit one leading system message. If authored Chat
+content already leads with `role: system`, string content becomes
+`custom + "\n\n" + authored`, while list-shaped content receives one leading
+text part. Only the colliding leading lowered wire is parsed; absent and
+standalone-system paths retain normal wire splicing. Responses uses top-level
+`instructions`. Anthropic uses its top-level `system` string when no raw blocks
+exist, or prepends one custom text block to the cloned authored block array,
+preserving block order, `cache_control`, and extensions. Formatting never
+mutates shared turn or lowered-wire state, so repeated requests cannot restack
+the prefix.
+
 ## Source anchors
 
 - `rust/runtime/src/endpoints/` (`endpoints.rs` `Endpoint` trait, `registry.rs`

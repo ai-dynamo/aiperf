@@ -1236,21 +1236,30 @@ fn serialize_rendered_messages(
         .collect()
 }
 
-/// Whether the first assembled message carries a `system` role. A lowered content
-/// wire is `render_turn_message` output — `{"role":"...",...}` with the role
-/// first — so a byte-prefix check is exact and avoids parsing on the hot path.
-fn rendered_first_is_system(messages: &[RenderedMessage]) -> bool {
-    match messages.first() {
-        Some(RenderedMessage::Value(value)) => {
-            value
-                .as_object()
-                .and_then(|obj| obj.get("role"))
-                .and_then(Value::as_str)
-                == Some("system")
+/// Whether Chat assembly's first non-empty message carries a `system` role.
+/// Inspect lowered wires without parsing so a conversation prompt pays the
+/// mutable-render cost only when it actually has to merge an authored system.
+fn turns_first_is_system(turns: &[Turn]) -> bool {
+    for turn in turns {
+        if let Some(lowered) = turn.lowered.as_ref() {
+            if let Some(wire) = lowered.first() {
+                return wire.starts_with(br#"{"role":"system""#);
+            }
+            continue;
         }
-        Some(RenderedMessage::Wire(wire)) => wire.starts_with(br#"{"role":"system""#),
-        None => false,
+        if let Some(raw_messages) = turn.raw_messages.as_ref() {
+            if let Some(message) = raw_messages.first() {
+                return message
+                    .as_object()
+                    .and_then(|object| object.get("role"))
+                    .and_then(Value::as_str)
+                    == Some("system");
+            }
+            continue;
+        }
+        return turn.role.as_deref() == Some("system");
     }
+    false
 }
 
 /// Assemble Chat Completions `messages` wires with system and user-context prefixes.
@@ -1258,18 +1267,20 @@ fn format_chat_message_wires(
     request: &PreparedRequest<'_>,
     turns: &[Turn],
 ) -> EndpointResult<SmallVec<[Bytes; 1]>> {
-    let warmup = request.credit_phase() == CreditPhase::Warmup;
-    // Under warmup the first turn is rendered to a mutable value so the system
-    // prompt can be folded in place; otherwise its lowered wire is spliced.
-    let mut rendered = rendered_turn_messages(turns, PartShape::Chat, warmup)?;
-    let first_is_system = rendered_first_is_system(&rendered);
+    let system = request.system_message().filter(|value| !value.is_empty());
+    let first_is_system = system.is_some() && turns_first_is_system(turns);
+    // Warmup already resolves composed media and can re-render its first turn.
+    // Profiling keeps lowered wires splice-only until an actual merge requires
+    // parsing the one leading system wire below.
+    let render_first = first_is_system && request.credit_phase() == CreditPhase::Warmup;
+    let mut rendered = rendered_turn_messages(turns, PartShape::Chat, render_first)?;
     let mut out = Vec::new();
-    if let Some(system) = request.system_message().filter(|value| !value.is_empty()) {
-        if first_is_system && warmup {
-            if let Some(RenderedMessage::Value(Value::Object(first))) = rendered.first_mut() {
-                prepend_system_into_object(first, system);
+    if let Some(system) = system {
+        if first_is_system {
+            if let Some(first) = rendered.first_mut() {
+                prepend_system_into_rendered(first, system)?;
             }
-        } else if !first_is_system {
+        } else {
             out.push(RenderedMessage::Value(
                 json!({"role":"system","content":system}),
             ));
@@ -1285,6 +1296,19 @@ fn format_chat_message_wires(
     }
     out.extend(rendered);
     serialize_rendered_messages(out)
+}
+
+fn prepend_system_into_rendered(first: &mut RenderedMessage, system: &str) -> EndpointResult<()> {
+    if let RenderedMessage::Wire(wire) = first {
+        *first = RenderedMessage::Value(serde_json::from_slice(wire)?);
+    }
+    let RenderedMessage::Value(Value::Object(first)) = first else {
+        return Err(EndpointError::InvalidRequest(
+            "leading Chat system message must be a JSON object".into(),
+        ));
+    };
+    prepend_system_into_object(first, system);
+    Ok(())
 }
 
 /// Assemble Responses `input` wires with the user-context prefix.
@@ -1548,12 +1572,12 @@ fn render_video_part(url: &str, shape: PartShape) -> EndpointResult<Value> {
 fn prepend_system_into_object(first: &mut Map<String, Value>, system: &str) {
     match first.get_mut("content") {
         Some(Value::String(content)) if content.is_empty() => *content = system.to_string(),
-        Some(Value::String(content)) => *content = format!("{system}\n{content}"),
+        Some(Value::String(content)) => *content = format!("{system}\n\n{content}"),
         Some(Value::Array(parts)) => parts.insert(0, json!({"type":"text","text":system})),
         Some(Value::Null) | None => {
             first.insert("content".into(), Value::String(system.to_string()));
         }
-        Some(other) => *other = Value::String(format!("{system}\n{other}")),
+        Some(other) => *other = Value::String(system.to_string()),
     }
 }
 
