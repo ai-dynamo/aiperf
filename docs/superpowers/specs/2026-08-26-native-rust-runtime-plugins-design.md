@@ -611,6 +611,16 @@ The injected `GlobalAlloc` shim has these exact semantics:
 
 Actual ELF/Mach-O imports and PE import tables MUST prove that each compiled
 `GlobalAlloc` shim targets that provider; source configuration is not evidence.
+After eager relocation and before any plugin entry call, the loader also resolves
+each required `mi_*` symbol on the exact retained provider handle and proves
+that every host/plugin shim relocation target equals an address inside that
+provider's mapped executable ranges. ELF GOT/relocation slots, Mach-O bound
+symbol pointers, and PE IAT entries are inspected through platform-specific
+loader APIs. A symbol-name/import-table match with a different resolved address
+is interposition and poisons startup. The host shim is checked immediately after
+baseline verification; each plugin shim is checked immediately after mapping
+but before calling its entry symbol. Conformance includes preload/interposition
+fixtures on every platform.
 Import maps cannot prove the origin of every explicit allocation in arbitrary
 native code. Boundary-owned storage therefore MUST NOT be allocated through
 `System`, direct libc allocation, a native library allocator, or another
@@ -730,9 +740,11 @@ sketch fixes the borrowed-static declaration and call shape. The SDK macro emits
 package descriptor and build record, and prevents authors from selecting a
 different symbol name. The loader calls the symbol only after sidecar, embedded
 records, complete distribution-controlled non-system closure, and both build-
-identity validations. Unsafe code is confined
-to immutable artifact acquisition, process-lifetime residency, handle-scoped
-symbol resolution, and the initial native Rust call.
+identity validations. Unsafe code in host loader and SDK-generated glue is
+confined to immutable artifact acquisition, process-lifetime residency, handle-
+scoped symbol resolution, and the initial native Rust call; this does not claim
+that trusted third-party plugin implementations contain no author-owned unsafe
+Rust.
 
 `PluginPackageDescriptor` repeats package name, version, source API version,
 `host_abi_universe_id`, and `plugin_artifact_build_id`. The loader MUST compare
@@ -940,8 +952,9 @@ system/user/environment discovery and `--plugin-path`/`--plugin-manifest` are
 rejected as conflicting inputs, while the executable's authenticated
 distribution baseline is still verified. Every manifest, final artifact,
 package-build record, baseline requirement, winning/shadowed/ambiguous/
-quarantined status, and authority decision MUST appear exactly in the lock.
-Missing or extra generations, a recomputed quarantine reason that differs, or
+quarantined status, and authority decision MUST appear exactly in the lock;
+missing/unreadable inputs appear as typed absence/failure receipts rather than
+imaginary artifact bytes. Missing or extra generations, a recomputed quarantine reason that differs, or
 any digest/descriptor/host-universe difference fails the command; nothing is
 silently rediscovered, repaired, promoted, or omitted. Re-exec children inherit
 the parent's acquired staged authority rather than reopening the lock bundle.
@@ -1032,8 +1045,12 @@ AIPerf code and is the sole exception to the composition-before-host-effects
 ordering; AIPerf verifies that preexisting state before discovery:
 
 1. Enumerate every already-loaded non-system module, seed the process-global
-   loader-identity-to-digest map with the executable and those modules, and
-   verify every distribution-baseline requirement, including the allocator.
+   loader-identity-to-digest map with the executable and authenticated
+   distribution-baseline modules, and verify every baseline requirement,
+   including the allocator. Any other preloaded non-system module—including one
+   introduced by `LD_PRELOAD`, `DYLD_INSERT_LIBRARIES`, AppInit, or an equivalent
+   injection seam—fails startup before discovery unless its exact identity and
+   digest are authenticated in the target's distribution/system policy.
 2. Acquire discovery inputs and strictly decode manifests.
 3. Acquire and statically validate every complete immutable artifact closure.
 4. Assign authority, resolve canonical IDs and aliases, and fix priorities.
@@ -1129,18 +1146,23 @@ Platform dependency loading is constrained as follows:
   successful module is pinned with `Library::pin`.
 
 Before loading, staging constructs one process-wide canonical object map keyed
-by `(loader identity, digest)`. Every byte-identical claimant, regardless of
-package or platform, resolves to the same host-owned staged file and absolute
-load path; the object is mapped once and its retained handle satisfies every
-claimant edge. Package-private logical paths remain provenance only. The map is
-seeded with the verified executable/baseline modules and rejects an identity
-paired with any other digest. This coalescing rule is identical for ELF,
-Mach-O, and case-folded PE identities and eliminates loader-dependent accidental
-reuse of a different package's path.
+by `(loader identity, digest)` whose values carry origin
+`Executable`, `Baseline`, or `CanonicalStage`. Every byte-identical package
+claimant, regardless of package or platform, resolves to the same host-owned
+`CanonicalStage` file and absolute load path; the object is mapped once and its
+retained handle satisfies every claimant edge. A package dependency may reuse a
+`Baseline` object only through an explicit typed baseline requirement, never
+merely because its bytes match. Package-private logical paths remain provenance
+only. The map is seeded solely with the verified executable/baseline modules,
+adds canonical staged objects before native activation, and rejects an identity
+paired with any other digest or an unauthenticated preloaded origin. This
+coalescing rule is identical for ELF, Mach-O, and case-folded PE identities and
+eliminates loader-dependent accidental reuse of a different package's path.
 
 The SDK statically validates these policies and every dependency edge. Runtime
 validation records actual loaded module identities, paths, and digests. A
-plugin-private module's path and digest MUST equal the staged closure. A shared
+plugin-private module's path and digest MUST equal its `CanonicalStage` object.
+A shared
 distribution-baseline module is instead satisfied only by the exact preverified
 `(loader identity, digest)` already present in the seeded map; its mapped path is
 not expected to equal a nonexistent per-plugin staged path. Any already-loaded
@@ -1182,19 +1204,32 @@ installed generation; it rehashes all catalog inputs and loads only load-set
 objects reachable through the inherited authority, then proves the full lock before reading the
 benchmark request.
 
-Same-host cells receive the expected lock through their private bootstrap pipe.
-Cross-host Kubernetes/SLURM launch material includes the expected lock digest
-and complete locked-catalog inventory. A cell composes immediately after
+Same-host cells receive the expected lock, the canonical normalized full run
+DTO, deterministic cell partition identity/rules, and expected cell-specific
+validated-plan digest through their private bootstrap pipe. Cross-host
+Kubernetes/SLURM launch material supplies the same values in a fixed-`0600`,
+no-follow bootstrap file rather than argv or environment, plus the complete
+locked-catalog inventory. The controller derives and hashes every cell slice
+before launch. A cell composes and derives its slice immediately after
 reading bootstrap material and before creating Tokio/Velo runtimes, dialing,
 fetching datasets, opening artifacts, or joining barriers. `CellRegister` gains
-the lock digest; the signed registration transcript binds it, and controller
+the lock and validated-plan digests; the signed registration transcript binds
+both, and controller
 registration verifies it transactionally before routes, artifact authorization,
 or barrier state commit. Remote hosts preinstall exact artifacts; automatic code
 transfer remains absent.
 
+Velo `RegisterReply` no longer provides the first authoritative cell run
+configuration. It repeats the prebootstrapped slice and plan digests for
+authenticated agreement; a difference is a registration failure. Plugin
+factories validate the local slice and reproduce byte-identical receipts before
+the Velo runtime exists. This is an explicit migration from the current
+register-then-compose cell order.
+
 This requires explicit product-schema migrations, not an assumption that the
 present launch DTOs already carry plugin state. `CellLaunchContext` gains the
-expected canonical lock and complete locked-catalog inventory. The native
+expected canonical lock, normalized run DTO, cell partition, validated-plan
+digest, and complete locked-catalog inventory. The native
 Kubernetes envelope, image-capabilities document, operator-owned JobSet pod
 specification, controller/cell bootstrap schema, and results provenance all bind
 the distribution generation, host ABI universe, plugin lock, and immutable
@@ -1205,8 +1240,11 @@ is not used as distribution or lock authority. Older envelopes/bootstrap
 schemas that cannot express these fields fail closed for plugin-enabled runs.
 
 `LockedCatalogBundle` is distinct from the intended load set and from
-distribution-required package authority. It contains the acquired raw and
-canonical bytes of every discovered manifest; every successfully acquired
+distribution-required package authority. Its manifest record is presence-
+tagged: readable inputs contain exact raw bytes/digest; successfully decoded
+inputs additionally contain canonical bytes/digest; malformed inputs have no
+canonical form; and unreadable directory entries have neither raw nor canonical
+bytes. It contains every successfully acquired
 closure object needed to recompute its digest, including fully shadowed optional
 packages; stable typed acquisition/static-validation receipts for quarantined
 inputs; discovery-policy and authority inputs; the canonical status table; and
@@ -1215,21 +1253,26 @@ optional artifact. Parent, re-exec child, same-host cell, and cross-host image
 all receive or preinstall this complete immutable bundle and independently
 recompute the full catalog lock. A required-generation-only or load-set-only
 inventory is non-conforming because it cannot reproduce shadowed, ambiguous, or
-quarantined lock entries. A failure receipt binds the raw manifest digest,
-attempted logical object identity, stable error code, and available acquired
-metadata; it never asks a child to recheck a mutable missing pathname.
+quarantined lock entries. A failure receipt binds the canonical discovery-
+source identity and normalized relative entry identity, explicit raw/canonical
+presence tags and their digests when present, attempted logical object identity,
+stable error code, and available acquired metadata; it never fabricates a raw
+digest or asks a child to recheck a mutable missing pathname.
 
 The canonical lock binds the full frozen catalog, not only executable winners.
 It contains lock schema and normalization versions; host ABI universe ID;
-every raw/canonical manifest digest; canonical package name/version/authority;
+every manifest's raw/canonical presence tags and corresponding digests when
+present; canonical package name/version/authority when decoded;
 complete distribution-controlled non-system artifact-closure digests and every
 plugin artifact-build ID; verified baseline module identities/digests; package
 authority/load status;
 per-entry status `winning|shadowed|ambiguous|quarantined`; stable quarantine
 reason code; every actual registered descriptor digest; canonical and alias
 winner maps with priorities; required package identities; required component
-keys; and target system-library allowlist version. Malformed manifests use their
-raw-byte digest and stable failure code. It excludes absolute paths and free-form
+keys; and target system-library allowlist version. Malformed readable manifests
+use their raw-byte digest and stable failure code; unreadable entries use their
+canonical discovery-source/relative-entry identity, absent-raw marker, and
+stable failure code. It excludes absolute paths and free-form
 diagnostic text. The digest is BLAKE3 over canonical length-delimited bytes.
 Every process rebuilds the full lock and reports the first structured difference
 before execution.
@@ -1385,8 +1428,24 @@ opaque value plus `FactoryValidationReceiptV1` whose capture field is an
 `FinalReport`, `ExactRecordsV1`, and
 `FoldedProjectionV1(GenAiClientHistogramsV1)`. A requirement is a sorted set of
 those values, so a factory may request a defined union but cannot invent a
-projection name or schema. `ExactRecordsV1` is the existing canonical native
-profiling-record DTO sequence in admission order. The host combines requirements into an immutable
+projection name or schema. `ExactRecordsV1` is the existing full canonical
+native captured-record DTO sequence, including warmup and profiling records
+with their `benchmark_phase`; each exporter retains its existing phase-filter
+policy, and only the folded histogram projection is profiling-only. The exact
+record sequence has an explicit order per execution family:
+all scheduled workload families, including user-centric and their sharded or
+cellular forms, sort native captured records by ascending non-absent
+`request_index` and then UUID; the separate `outputs.json` projection may retain
+its existing `(session_num, turn_index)` order but does not define
+`ExactRecordsV1`. Non-cellular graph records sort by `(start_ns, UUID)` and then
+receive dense `request_index` values; cellular graph
+records concatenate ascending `cell_id`, sort within each cell by that cell's
+local `request_index` and UUID, and then receive dense controller-global
+`request_index` values. The latter intentionally remains deterministic per
+topology rather than claiming single-cell byte order. A missing required key or
+duplicate full ordering key is a typed capture failure. This preserves existing
+family-specific order; it does not redefine all records as admission ordered.
+The host combines requirements into an immutable
 `ValidatedRunPlan` and only then installs its existing per-worker capture/fold
 path and creates runtime effects. Capture plans are not part of the process-
 global plugin lock. No plugin callback, allocation, dispatch layer, or plugin-
@@ -1399,12 +1458,18 @@ unchecked join.
 
 `GenAiClientHistogramsV1` is the sole folded projection in API generation 1.
 Its versioned native Rust schema is a sorted map from
-`(metric, attributes)` to `ExplicitHistogramV1`, where `metric` is exactly one
-of `operation_duration_seconds`, `time_to_first_chunk_seconds`,
-`time_per_output_chunk_seconds`, `input_token_usage`, or
-`output_token_usage`; attributes are the normalized GenAI operation/provider
-dimensions plus optional `error_type` only where the existing projection emits
-it; and each histogram contains immutable finite ascending `f64` bounds,
+`(metric, capture_dimensions)` to `ExplicitHistogramV1`, where `metric` is exactly one
+of `gen_ai.client.operation.duration`,
+`gen_ai.client.operation.time_to_first_chunk`,
+`gen_ai.client.operation.time_per_output_chunk`, or
+`gen_ai.client.token.usage`. Capture dimensions contain only host-observed per-
+record distinctions: duration keys carry optional normalized `error_type`
+exactly where the existing record projection emits it, while token-usage keys
+carry `token_type` equal to `input` or `output` and never carry `error_type`.
+Operation name, provider name, and optional request model are deliberately not
+capture dimensions because they come from each selected exporter's opaque
+configuration and multiple OTLP instances may differ while sharing one fold.
+Each histogram contains immutable finite ascending `f64` bounds,
 `bounds.len() + 1` `u64` bucket counts, checked `u64` count, finite `f64` sum,
 and optional finite min/max. The SDK publishes the exact metric-source aliases,
 unit conversions, bounds arrays, success/error inclusion rules, and attribute
@@ -1414,6 +1479,14 @@ and cell merge requires identical keys and bit-identical bounds, adds bucket
 counts and counts with checked overflow, adds sums using the host's fixed
 deterministic merge order, and takes min/max. A key/bounds mismatch, overflow,
 or non-finite result is a typed execution failure before export.
+
+At export, each prepared OTLP instance independently decorates every projected
+histogram data point with its normalized `gen_ai.operation.name`,
+`gen_ai.provider.name`, and optional `gen_ai.request.model` from that instance's
+validated configuration, maps `error_type` to `error.type`, and maps
+`token_type` to `gen_ai.token.type`. Its semantic-config digest binds those
+values. Decoration performs no per-record work and does not require a distinct
+capture fold per exporter instance.
 
 Run-plan validation computes whether the selected workload, retention mode, and
 cellular topology can satisfy the union. `FinalReport` is always available.
@@ -1455,10 +1528,11 @@ none are selected. Existing CLI flags project through the same legacy
 normalizer. Each selected factory strictly decodes only its own `config` object.
 
 The canonical exporter representation is an authored ordered list of
-`{ id, config }`, with an empty object default for `config`. Duplicate exporter
-IDs in one run are rejected unless that exporter's public descriptor explicitly
-declares multi-instance support and defines an instance key. Registry priority
-selects an implementation; list order does not override package priority.
+`{ id, config }`, with an empty object default for `config`. API generation 1
+rejects duplicate normalized exporter IDs in one run; multi-instance exporters
+are deferred to a later API generation with an explicit instance-key contract.
+Registry priority selects an implementation; list order does not override
+package priority.
 
 Exporter execution order is still host-owned. Each exporter descriptor declares
 its order band and stable tie-break key. The host sorts enabled
@@ -1554,6 +1628,9 @@ The initial acceptance protocol is normative:
   endpoint of its 95% interval to be at least `0.99` for TTFT p50/p90/p99,
   inter-token-latency p50/p90/p99, and CPU time per successful request
   (equivalently, dynamic may not be more than 1% worse);
+- define exporter duration ratio as `static / dynamic` and require the lower
+  endpoint of its 95% interval to be at least `0.99` for exporter nanoseconds
+  per record;
 - require no increase in allocation count or allocated bytes per successful
   request in deterministic endpoint, transport-dispatch, response-reduction,
   and exporter-capture microbenchmarks;
@@ -1580,8 +1657,19 @@ member summaries, and (c) the 30 positive paired ratios in the declared
 direction. If any of those three values exceeds 2%, the complete attempt is
 invalid, not a pass; every sample remains retained.
 
-At most three complete experiment attempts are permitted for one source/
-environment/inventory identity. Only an invalid attempt may be rerun after a
+The experiment identity is BLAKE3 over one canonical record containing: exact
+source tree and Cargo.lock digests; rustc/sysroot/target/profile and every
+compared artifact digest; benchmark-harness and mock-server artifact digests;
+canonical `plugin-parity.yaml` digest; CPU model/stepping/microcode, core and
+memory topology, firmware, kernel, allocator/provider, frequency/governor,
+affinity/isolation, and mock-server placement identities; and every environment
+value admitted by the harness. Omitted fields are forbidden. A change creates a
+new identity only through a reviewed experiment-change record that cites the
+prior attempts and explains why the changed field invalidates comparison; it
+cannot be used merely to replace a valid failure.
+
+At most three complete experiment attempts are permitted for one experiment
+identity. Only an invalid attempt may be rerun after a
 documented noise diagnosis. The first statistically valid attempt is
 authoritative whether it passes or fails and cannot be replaced by a later run.
 A product error is an immediate valid gate failure, not an invalid attempt.
@@ -1646,6 +1734,8 @@ The failure policy is fixed by phase and authority:
 
 | Condition | Auto-discovered optional package | Distribution-required package | Explicit `--plugin-manifest` |
 |---|---|---|---|
+| Preloaded distribution-baseline provider missing/mismatched | Abort startup before discovery | Abort startup before discovery | Abort startup before discovery |
+| Locked-catalog/bootstrap digest, absence receipt, or plan mismatch | Fail before runtime effects | Fail before runtime effects | Fail before runtime effects |
 | Missing default discovery directory | Ignore | Fail if it contains the distribution generation | N/A |
 | Unreadable existing discovery directory or invalid environment path | Fail discovery policy | Fail discovery policy | N/A |
 | Unreadable/invalid manifest before activation | Quarantine and report | Fail composition | Fail command |
@@ -1656,7 +1746,8 @@ The failure policy is fixed by phase and authority:
 | Same non-system loader identity claimed by differing bytes | Quarantine every optional claimant | Fail composition | Fail command |
 | Equal-priority key tie | Record ambiguity; fail only if selected | Fail composition only for a required component key | Record ambiguity; fail if selected |
 | Any platform-loader/dependency activation failure | Poison process and fail composition | Poison process and fail composition | Poison process and fail command |
-| Entry symbol, descriptor, or registration error after activation | Roll back staging, poison process, fail composition | Same | Same |
+| Entry symbol, descriptor, or registration error after activation | Roll back only the registry transaction; retain staged generations and mapped handles; poison process and fail composition | Same | Same |
+| Post-load canonical lock mismatch | Retain mapped handles, poison process, fail composition | Same | Same |
 | Panic in any boundary code | Process aborts | Process aborts | Process aborts |
 | Selected key is quarantined/ambiguous | Fail validation before effects | Fail validation before effects | Fail validation before effects |
 | Runtime trait method returns error | Typed operation failure | Typed operation failure | Typed operation failure |
