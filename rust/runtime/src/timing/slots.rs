@@ -486,19 +486,22 @@ impl GlobalSlotPool {
         } else if diff < 0 {
             // Decrease: drain available permits now, track the remainder as debt.
             let mut remaining = (-diff) as usize;
+            // Reserve the entire reduction before attempting the drain. A
+            // concurrent release must be absorbed while permits are being
+            // removed; recording debt only afterward leaves a transient window
+            // in which that release can over-admit a waiter.
+            self.debt.fetch_add(remaining, Ordering::AcqRel);
             while remaining > 0 {
                 match self.semaphore.try_acquire() {
                     Ok(permit) => {
                         permit.forget();
+                        self.debt.fetch_sub(1, Ordering::AcqRel);
                         remaining -= 1;
                     }
                     // No free permit right now: the rest becomes debt, to be
                     // absorbed by future releases instead of freeing slots.
                     Err(_) => break,
                 }
-            }
-            if remaining > 0 {
-                self.debt.fetch_add(remaining, Ordering::AcqRel);
             }
         }
     }
