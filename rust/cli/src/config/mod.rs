@@ -188,8 +188,9 @@ fn strip_spdx_header(content: &str) -> String {
     out
 }
 
-/// Replace the scalar value of the first matching top-level-ish key, preserving
-/// indentation and inline comments. Handles the shorthand `model:`/`url:` and
+/// Replace the whole line of the first matching top-level-ish key, preserving its
+/// indentation but not any trailing inline comment. Handles the shorthand
+/// `model:`/`url:` and
 /// plural `models:`/`urls:` (the latter written as a one-element inline list).
 fn override_scalar(content: &str, keys: &[&str], value: &str) -> String {
     let mut out = Vec::new();

@@ -33,7 +33,7 @@ use serde::Serialize;
 #[derive(Debug, Parser)]
 #[command(name = "eval", disable_help_subcommand = true)]
 struct EvalFlags {
-    /// Local task package JSON file.
+    /// Local task package directory or manifest file (`task.toml` / `task.json`).
     #[arg(long, conflicts_with_all = ["git_repository", "git_revision", "git_path"])]
     task: Option<PathBuf>,
     /// Local or remote Git repository containing a package pinned by `--git-revision`.
@@ -42,7 +42,7 @@ struct EvalFlags {
     /// Exact 40-hex commit for a Git package source.
     #[arg(long, requires_all = ["git_repository", "git_path"])]
     git_revision: Option<String>,
-    /// Repository-relative path to a Git package JSON file.
+    /// Repository-relative path to a Git package manifest (`task.toml` / `task.json`).
     #[arg(long, requires_all = ["git_repository", "git_revision"])]
     git_path: Option<String>,
     /// Immutable image identity used by the sandbox recipe.
@@ -93,7 +93,8 @@ enum VerifierModeFlag {
 /// User-facing execution backend selection.
 #[derive(Clone, Copy, Debug, ValueEnum)]
 enum SandboxFlag {
-    /// Use Docker for conventional task directories and local execution otherwise.
+    /// Use Docker for conventional task directories or separate verification, and
+    /// local execution otherwise.
     Auto,
     /// Use the temporary-root local process backend.
     Local,

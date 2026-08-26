@@ -3,8 +3,8 @@
 
 //! User-prompt, context, and coding-conversation renderers.
 //!
-//! This module also hosts the shared conversation scaffolding used by the two
-//! conversation renderers (`conversations` and `conversations_advanced`): the
+//! This module also hosts the shared conversation scaffolding used by both
+//! conversation modules (`conversations` and `conversations_advanced`): the
 //! natural-language bridge/request pools, per-conversation identifiers,
 //! placeholder-preserving fillers, and 18-way conversation dispatch.
 

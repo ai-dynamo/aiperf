@@ -93,6 +93,9 @@ pub struct RawEndpointConfig {
     pub use_legacy_max_tokens: bool,
     /// Request usage in streaming frames when supported.
     pub use_server_token_count: bool,
+    /// Request cumulative usage on every streaming chat content chunk.
+    #[serde(default, alias = "perChunkUsage")]
+    pub per_chunk_usage: bool,
     /// Headers merged into every request before per-turn header overrides.
     #[serde(default, skip_serializing)]
     pub headers: BTreeMap<String, String>,
@@ -124,6 +127,7 @@ impl Default for RawEndpointConfig {
             wait_for_model_mode_set: false,
             use_legacy_max_tokens: false,
             use_server_token_count: false,
+            per_chunk_usage: false,
             headers: BTreeMap::new(),
             api_key: None,
             extra: None,
@@ -156,6 +160,7 @@ impl fmt::Debug for RawEndpointConfig {
             .field("wait_for_model_mode_set", &self.wait_for_model_mode_set)
             .field("use_legacy_max_tokens", &self.use_legacy_max_tokens)
             .field("use_server_token_count", &self.use_server_token_count)
+            .field("per_chunk_usage", &self.per_chunk_usage)
             .field("header_names", &self.headers.keys().collect::<Vec<_>>())
             .field("has_api_key", &self.api_key.is_some())
             .field("extra", &self.extra)
@@ -208,6 +213,9 @@ pub struct EndpointConfig {
     pub use_legacy_max_tokens: bool,
     /// Request usage in streaming frames when supported.
     pub use_server_token_count: bool,
+    /// Request cumulative usage on every streaming chat content chunk.
+    #[serde(default, alias = "perChunkUsage")]
+    pub per_chunk_usage: bool,
     /// Headers merged into every request before per-turn header overrides.
     #[serde(default, skip_serializing)]
     pub headers: BTreeMap<String, String>,
@@ -244,6 +252,7 @@ impl fmt::Debug for EndpointConfig {
             .field("wait_for_model_mode_set", &self.wait_for_model_mode_set)
             .field("use_legacy_max_tokens", &self.use_legacy_max_tokens)
             .field("use_server_token_count", &self.use_server_token_count)
+            .field("per_chunk_usage", &self.per_chunk_usage)
             .field("header_names", &self.headers.keys().collect::<Vec<_>>())
             .field("has_api_key", &self.api_key.is_some())
             .field("extra", &self.extra)
@@ -278,6 +287,7 @@ impl From<&EndpointConfig> for RawEndpointConfig {
             wait_for_model_mode_set: config.wait_for_model_mode_set,
             use_legacy_max_tokens: config.use_legacy_max_tokens,
             use_server_token_count: config.use_server_token_count,
+            per_chunk_usage: config.per_chunk_usage,
             headers: config.headers.clone(),
             api_key: config.api_key.clone(),
             extra: config.extra.clone(),
@@ -306,6 +316,7 @@ impl From<EndpointConfig> for RawEndpointConfig {
             wait_for_model_mode_set: config.wait_for_model_mode_set,
             use_legacy_max_tokens: config.use_legacy_max_tokens,
             use_server_token_count: config.use_server_token_count,
+            per_chunk_usage: config.per_chunk_usage,
             headers: config.headers,
             api_key: config.api_key,
             extra: config.extra,
@@ -336,6 +347,7 @@ impl EndpointConfig {
             wait_for_model_mode_set: raw.wait_for_model_mode_set,
             use_legacy_max_tokens: raw.use_legacy_max_tokens,
             use_server_token_count: raw.use_server_token_count,
+            per_chunk_usage: raw.per_chunk_usage,
             headers: raw.headers,
             api_key: raw.api_key,
             extra: raw.extra,
@@ -381,6 +393,21 @@ impl RawEndpointConfig {
     ) -> EndpointResult<Self> {
         if self.streaming && !supports_streaming {
             self.streaming = false;
+        }
+        if self.per_chunk_usage && !self.use_server_token_count {
+            return Err(EndpointError::InvalidConfig(
+                "--per-chunk-usage requires --use-server-token-count".to_string(),
+            ));
+        }
+        if self.per_chunk_usage && endpoint_id != "chat" {
+            return Err(EndpointError::InvalidConfig(
+                "--per-chunk-usage requires endpoint type 'chat'".to_string(),
+            ));
+        }
+        if self.per_chunk_usage && !self.streaming {
+            return Err(EndpointError::InvalidConfig(
+                "--per-chunk-usage requires --streaming".to_string(),
+            ));
         }
         for url in &self.urls {
             validate_url(url)?;

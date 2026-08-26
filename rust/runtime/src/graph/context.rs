@@ -2,10 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Per-trace mutable state and node-result shapes.
 //!
-//! All fields are interior-mutable (`RefCell`) so every fire task (each
-//! holding an `Rc<TraceContext>`) shares them lock-free on the single runtime
-//! thread — the executor runs one trace per thread, so no synchronization is
-//! needed on the hot path.
+//! The mutable fields are interior-mutable (`RefCell`) so every fire task (each
+//! holding an `Rc<TraceContext>`) shares them lock-free — one trace's tasks all
+//! run on a single thread, so no synchronization is needed on the hot path.
 
 use crate::graph::channel_store::VersionedChannelStore;
 use crate::graph::errors::TraceError;

@@ -29,8 +29,9 @@ pub struct Runtime {
     /// [`DispatchMode::default`] (`Global`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dispatch: Option<DispatchMode>,
-    /// Worker-assignment policy for `dispatch == global-hop` with `workers > 1`
-    /// (`runtime.hop_routing`). Absent (`None`) omits the wire field, decoded as
+    /// Worker-assignment policy for the single-coordinator modes (`dispatch ==
+    /// global-hop` or `global-push`) with `workers > 1` (`runtime.hop_routing`).
+    /// Absent (`None`) omits the wire field, decoded as
     /// [`HopRouting::default`] (`RoundRobin`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hop_routing: Option<HopRouting>,

@@ -210,15 +210,15 @@ pub struct DryRunTransportConfigV2 {
     /// Root seed for the per-request jitter draw. Unused while both CVs are `0.0`.
     #[serde(default)]
     pub seed: u64,
-    /// Analytic latency curve: `linear` or `aiconfigurator_polynomial`.
+    /// Analytic latency curve: `linear`, `aiconfigurator_polynomial`, or `recorded`.
     #[serde(default)]
     pub latency_model: DryRunLatencyModel,
     /// KV-cache utilization in `[0, 1]` feeding the polynomial decode curve. Only
     /// consulted by the `aiconfigurator_polynomial` model.
     #[serde(default = "default_kv_utilization")]
     pub kv_utilization: f64,
-    /// Which clock drives the run (`real` default, or `sim` for deterministic
-    /// virtual-time execution via `drive_sim`).
+    /// Which clock drives the run (`sim` default, for deterministic virtual-time
+    /// execution via `drive_sim`, or `real` for the wall-clock path).
     #[serde(default)]
     pub clock: DryRunClock,
     /// Optional deterministic logical-worker placement.
@@ -276,8 +276,10 @@ pub struct DryRunParams {
     /// KV-cache utilization for the polynomial decode curve.
     pub kv_utilization: f64,
     /// Which clock drives the run (`sim` virtual-time vs `real` wall clock).
-    /// Consulted only by [`DryRunNativeExecution::uses_virtual_clock`] to select
-    /// the driver at the native driver layer.
+    /// Consulted by [`DryRunNativeExecution::uses_virtual_clock`] to select the
+    /// driver at the native driver layer, and by
+    /// [`DryRunNativeExecution::validate_run`] to refuse virtual workers under
+    /// `clock: real`.
     pub clock: DryRunClock,
 }
 

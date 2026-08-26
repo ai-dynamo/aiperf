@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Byte-exact port of the Python replay interval-barrier coordinator
-//! ([`aiperf.timing.replay_dependencies.ReplayBarrierCoordinator`], lines 156-331).
+//! (`ReplayBarrierCoordinator` in `src/aiperf/timing/replay_dependencies.py`,
+//! lines 156-348).
 //!
 //! A turn is released (issued) only after all of its recorded
 //! [`ReplayTurnKey`] predecessors have reached a terminal outcome. Per runtime
@@ -17,8 +18,8 @@
 //! iteration uses [`BTreeMap`]/[`BTreeSet`] so releases and snapshots are
 //! deterministic and match the Python `sorted(...)` semantics exactly.
 //!
-//! The [`ReplayIssueGate`](../../../src/aiperf/timing/replay_dependencies.py)
-//! async CreditIssuer adapter (Python lines 351-435) is intentionally NOT ported:
+//! The `ReplayIssueGate` async CreditIssuer adapter
+//! (`src/aiperf/timing/replay_dependencies.py`, lines 351-434) is NOT ported:
 //! it is a thin transport-facing wrapper with no barrier logic of its own.
 
 use std::collections::{BTreeMap, BTreeSet};

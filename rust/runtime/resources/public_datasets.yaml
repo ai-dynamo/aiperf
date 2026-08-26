@@ -6,11 +6,12 @@
 # =============================================================================
 # Curated `--public-dataset <name>` shortcuts over the native dataset loaders.
 # Each entry is pure data (no code) deserialized into `PublicMeta`
-# (rust/cli/src/model/public_catalog.rs); an arbitrary dataset not listed here can
-# still be benchmarked directly with `--hf-dataset <id>`.
+# (rust/runtime/src/config/model/public_catalog.rs); an arbitrary dataset not
+# listed here can still be benchmarked directly with `--hf-dataset <id>`.
 #
 # Fields per entry:
-#   format         registered loader id (see register_builtin_formats)
+#   format         registered loader id (see register_builtin_formats), or a
+#                  graph-input format id resolved by engine/graph_input.rs
 #   source         {type: hugging_face, dataset, subset, split[, revision]}
 #                  or {type: url, url}
 #   options        loader-specific options (e.g. prompt_column, conversation_column)

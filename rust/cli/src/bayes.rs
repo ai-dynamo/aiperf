@@ -139,7 +139,8 @@ pub struct OptunaPlanner {
 }
 
 impl OptunaPlanner {
-    /// Construct from a resolved [`BayesSpec`]; creates the seeded optuna study.
+    /// Construct from a resolved [`BayesSpec`]; creates the optuna study, seeded
+    /// only when the spec carries a seed.
     pub fn new(spec: BayesSpec) -> anyhow::Result<Self> {
         // BoTorch requires optional Python packages; TPE remains available.
         let sampler = match spec.sampler.as_str() {

@@ -87,7 +87,7 @@ mod spec_decode_tests {
         serde_json::json!({
             "mean_acceptance_length": 3.25,
             "draft_acceptance_rate": 0.5625,
-            "acceptance_histogram": {"0": 1, "1": 1, "2": 2, "3": 3, "4": 1},
+            "acceptance_histogram": [1, 1, 2, 3, 1],
             "num_accepted_draft_tokens": 18,
             "num_draft_tokens": 32,
             "num_spec_steps": 8,
@@ -101,7 +101,6 @@ mod spec_decode_tests {
     fn vllm_worked_example_normalizes_to_the_canonical_record() {
         let record = parse_vllm_spec_decode_stats(worked_payload(), Some(26))
             .expect("worked payload is canonical");
-
         assert_eq!(record.engine, "vllm");
         assert_eq!(
             record.acceptance_histogram,
@@ -130,13 +129,80 @@ mod spec_decode_tests {
     }
 
     #[test]
-    fn multiple_choices_do_not_claim_one_requests_stats() {
+    fn response_root_stats_are_independent_of_choice_count() {
         let response = serde_json::json!({
             "choices": [
                 {"speculative_decoding_stats": worked_payload()},
                 {"speculative_decoding_stats": worked_payload()}
-            ]
+            ],
+            "metrics": {"speculative_decoding": worked_payload()}
+        });
+        assert_eq!(
+            extract_vllm_spec_decode_stats(&response),
+            Some(&response["metrics"]["speculative_decoding"])
+        );
+    }
+
+    #[test]
+    fn obsolete_per_choice_stats_are_not_accepted() {
+        let response = serde_json::json!({
+            "choices": [{"speculative_decoding_stats": worked_payload()}]
         });
         assert_eq!(extract_vllm_spec_decode_stats(&response), None);
+    }
+
+    #[test]
+    fn dense_zero_step_and_fully_rejected_histograms_normalize_sparsely() {
+        let mut zero_step = worked_payload();
+        zero_step["mean_acceptance_length"] = serde_json::json!(1.0);
+        zero_step["draft_acceptance_rate"] = serde_json::json!(0.0);
+        zero_step["acceptance_histogram"] = serde_json::json!([0, 0, 0, 0, 0]);
+        zero_step["num_spec_steps"] = serde_json::json!(0);
+        zero_step["num_accepted_draft_tokens"] = serde_json::json!(0);
+        zero_step["num_draft_tokens"] = serde_json::json!(0);
+        zero_step["per_step_accepted"] = serde_json::json!([]);
+        zero_step["per_step_drafted"] = serde_json::json!([]);
+        let zero = parse_vllm_spec_decode_stats(zero_step, None).unwrap();
+        assert!(zero.acceptance_histogram.is_empty());
+
+        let mut rejected = worked_payload();
+        rejected["mean_acceptance_length"] = serde_json::json!(1.0);
+        rejected["draft_acceptance_rate"] = serde_json::json!(0.0);
+        rejected["acceptance_histogram"] = serde_json::json!([20, 0, 0, 0, 0]);
+        rejected["num_spec_steps"] = serde_json::json!(20);
+        rejected["num_accepted_draft_tokens"] = serde_json::json!(0);
+        rejected["num_draft_tokens"] = serde_json::json!(80);
+        rejected
+            .as_object_mut()
+            .unwrap()
+            .remove("per_step_accepted");
+        rejected.as_object_mut().unwrap().remove("per_step_drafted");
+        let rejected = parse_vllm_spec_decode_stats(rejected, None).unwrap();
+        assert_eq!(rejected.acceptance_histogram, BTreeMap::from([(0, 20)]));
+    }
+
+    #[test]
+    fn dense_histogram_rejects_obsolete_and_impossible_shapes() {
+        let mut obsolete = worked_payload();
+        obsolete["acceptance_histogram"] = serde_json::json!({"0": 1, "4": 1});
+        assert!(parse_vllm_spec_decode_stats(obsolete, None).is_err());
+
+        for histogram in [
+            serde_json::json!([1, 1, 2, 4]),
+            serde_json::json!([1, 1, 2, 3, 0, 1]),
+            serde_json::json!([1, 1, 2, false, 1]),
+        ] {
+            let mut payload = worked_payload();
+            payload["acceptance_histogram"] = histogram;
+            assert!(parse_vllm_spec_decode_stats(payload, None).is_err());
+        }
+    }
+
+    #[test]
+    fn missing_fixed_draft_width_accepts_the_observed_dense_histogram() {
+        let mut payload = worked_payload();
+        payload.as_object_mut().unwrap().remove("num_spec_tokens");
+        let record = parse_vllm_spec_decode_stats(payload, None).unwrap();
+        assert_eq!(record.num_spec_tokens, None);
     }
 }

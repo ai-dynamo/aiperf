@@ -178,6 +178,76 @@ fn assert_success(output: &Output) {
     assert_eq!(terminal["success"], true);
 }
 
+#[test]
+fn native_execute_reports_the_smallest_rejected_weka_peak() {
+    let temporary = tempfile::tempdir().unwrap();
+    let mut selected_synthesis = synthesis();
+    selected_synthesis["max_context_length"] = json!(20);
+    let dataset = json!({
+        "type": "file",
+        "format": "weka_trace",
+        "sampling": "sequential",
+        "synthesis": selected_synthesis,
+        "records": [
+            {
+                "id": "large",
+                "models": ["recorded-model"],
+                "block_size": 16,
+                "hash_id_scope": "global",
+                "requests": [{
+                    "t": 0.0,
+                    "type": "n",
+                    "model": "recorded-model",
+                    "in": 120,
+                    "out": 4,
+                    "hash_ids": [1]
+                }]
+            },
+            {
+                "id": "small",
+                "models": ["recorded-model"],
+                "block_size": 16,
+                "hash_id_scope": "global",
+                "requests": [{
+                    "t": 0.0,
+                    "type": "n",
+                    "model": "recorded-model",
+                    "in": 40,
+                    "out": 4,
+                    "hash_ids": [1]
+                }]
+            }
+        ]
+    });
+    let output = run_child(request(
+        "http://127.0.0.1:1",
+        &temporary.path().join("rejected-artifacts"),
+        "rejected-weka-peak",
+        dataset,
+    ));
+    assert!(
+        !output.status.success(),
+        "native execute unexpectedly succeeded"
+    );
+    let terminal: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(terminal["event"], "run_terminal");
+    assert_eq!(terminal["success"], false);
+    let message = terminal["errors"]
+        .as_array()
+        .and_then(|errors| errors.first())
+        .and_then(|error| error["message"].as_str())
+        .expect("failed native run must include one diagnostic");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        message.contains("Smallest trace requires 44 tokens; raise --max-context-length to at least that (e.g. --max-context-length 44) to admit any trace."),
+        "terminal={terminal}"
+    );
+    assert!(
+        !stderr.contains("Connection refused"),
+        "context rejection must precede endpoint I/O: stderr={stderr}"
+    );
+}
+
 /// A Graph-IR run must accept and run the same GPU/network/server telemetry
 /// side-channels the scheduled path does. Telemetry is a barrier-synchronized
 /// side-channel, not part of the workload, so an enabled-but-unreachable source

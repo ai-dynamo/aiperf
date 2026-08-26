@@ -6,9 +6,9 @@ use common::*;
 
 use aiperf_mock_server::config::MockServerConfig;
 
-// `--ui-type`/`--ui` is accepted by clap (flags.rs:518) and then never read: no
-// consumer of `flags.ui_type` exists, so there is no dashboard renderer to
-// exercise and `--ui dashboard` is inert. This body passes for that reason
+// `--ui-type`/`--ui` is accepted by clap (`ProfileFlags::ui_type`) and then only
+// warned about — it is listed in `profile.rs`'s `UNIMPLEMENTED_FLAGS`, so there is
+// no dashboard renderer to exercise and `--ui dashboard` is inert. This body passes for that reason
 // alone, which is why it stays ignored rather than being promoted — its
 // remaining assertions are duration-termination, already covered elsewhere.
 #[tokio::test]

@@ -22,25 +22,35 @@ use crate::extensions::AIPerfRegistry;
 ///   [`crate::timing::rate_gate::GlobalRateGate`] per cell, so aggregate
 ///   concurrency and rate across all worker threads is byte-exact against a
 ///   single global limiter, matching the Python baseline.
-/// - `GlobalHop` additionally routes every individual request through one
+/// - `GlobalHop` instead routes every individual request through one
 ///   coordinator-owned dispatcher, for cases where `Global`'s shared-admission
 ///   fix alone does not reproduce exact request-to-thread assignment order.
+/// - `GlobalPush` keeps that single-issuer order but routes each worker an
+///   identity-only credit the worker materializes and returns out of band, so the
+///   issuer sits in neither an individual request's lifetime nor its body
+///   construction.
 ///
 /// For `workers>1` scheduled runs this selector changes execution behavior:
-/// `Global`/`GlobalHop` build one per-cell [`crate::timing::GlobalSlotPool`] and
+/// `Global` builds one per-cell [`crate::timing::GlobalSlotPool`] and
 /// [`crate::timing::rate_gate::GlobalRateGate`] per phase that every worker
 /// thread admits and paces against, so aggregate concurrency and request rate
-/// match a single global limiter; `Sharded` retains the static `1/workers`
-/// per-thread partition. `workers==1` and the single-thread coordinator path
-/// have no cross-thread admission concern, so the mode is inert there.
+/// match a single global limiter; `GlobalHop`/`GlobalPush` need no cross-thread
+/// gate because their single issuer holds the whole cell-level cap in one local
+/// pool; `Sharded` retains the static `1/workers` per-thread partition.
+/// `workers==1` has no cross-thread admission concern, so no gate is built there
+/// — but the mode is not fully inert: `Global` also selects absolute-position
+/// dataset addressing, which a `--cells N` cell process reads at `workers == 1`
+/// too (see `execute::compose_sidecars`).
 ///
 /// The enum itself is defined in `crate::config::model::dispatch` (so the typed
 /// config model and runtime share one serde-stable type) and re-exported here to
 /// keep `crate::engine::protocol::DispatchMode` call sites unchanged.
 pub use crate::config::model::DispatchMode;
 
-/// Worker-assignment policy applied at the single [`DispatchMode::GlobalHop`]
-/// pick site (`ThreadPerCoreExecutor::execute_command`) when `workers > 1`.
+/// Worker-assignment policy applied at the one single-issuer pick site
+/// (`ThreadPerCoreExecutor::execute_command`) when `workers > 1`, shared by
+/// [`DispatchMode::GlobalHop`] and [`DispatchMode::GlobalPush`] (both run through
+/// `global_hop::run_single_coordinator`).
 ///
 /// Defined in the leaf config model (`config::model::dispatch`, so the typed
 /// config model and runtime share one serde-stable type) and re-exported here to
@@ -59,7 +69,9 @@ pub struct CatalogEntry {
     pub metadata: Value,
 }
 
-/// Linked runner inventory emitted by `--capabilities`.
+/// Linked runner inventory, reported through the in-process
+/// `aiperf_cli::execute_mode::capabilities_catalog` API (there is no
+/// `--capabilities` argv mode).
 #[derive(Debug, Serialize)]
 pub struct Catalog {
     /// Catalog document version.
@@ -68,11 +80,14 @@ pub struct Catalog {
     pub endpoint: BTreeMap<String, CatalogEntry>,
     /// Transport inventory.
     pub transport: BTreeMap<String, CatalogEntry>,
-    /// Linked custom dataset loaders.
+    /// Custom dataset loaders. Kept for the plugins.yaml document shape;
+    /// [`Self::from_registry`] leaves it empty.
     pub custom_dataset_loader: BTreeMap<String, CatalogEntry>,
-    /// Linked public dataset loaders.
+    /// Public dataset loaders. Kept for the plugins.yaml document shape;
+    /// [`Self::from_registry`] leaves it empty.
     pub public_dataset_loader: BTreeMap<String, CatalogEntry>,
-    /// Linked dataset samplers.
+    /// Dataset samplers. Kept for the plugins.yaml document shape;
+    /// [`Self::from_registry`] leaves it empty.
     pub dataset_sampler: BTreeMap<String, CatalogEntry>,
 }
 
@@ -268,8 +283,9 @@ pub struct ArtifactSpec {
     #[serde(default)]
     pub trace: bool,
     /// Base path (relative to the run directory) for the `--dry-run` dataset
-    /// analysis artifact family. When set, the graph path retains records and
-    /// emits `dataset_analysis.{txt,json,csv,html}` beside this path. Absent when
+    /// analysis artifact family. When set, both the graph and scheduled paths
+    /// retain records (it disqualifies exact-fold) and emit
+    /// `dataset_analysis.{txt,json,csv,html}` beside this path. Absent when
     /// the analysis is not requested. Populated by the CLI dry-run gating.
     #[serde(default)]
     pub dataset_analysis_path: Option<PathBuf>,

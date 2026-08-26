@@ -646,13 +646,15 @@ fn dispatch_body_consumed(
 /// is required per body as soon as two handles exist, so what `into_wire` saves
 /// depends entirely on how many handles the call site takes:
 ///
-/// - *One handle, then drop* — `grpc/sink.rs:344`, which parses the bytes and
-///   drops them. Consuming removes the only clone, so this banks −1 alloc.
-/// - *Two handles* — both HTTP sites. `http/sink.rs:391` takes `body.clone()`
-///   for the record payload, and the endpoint-aware path reaches
-///   `HttpTransport::send_body`, which clones into `RequestRecord::request_body`
-///   unconditionally. The promotion merely relocates to that second clone:
-///   1 alloc before, 1 alloc after. What is saved is a refcount inc/dec pair.
+/// - *One handle, then drop* — `grpc/sink.rs`, which `into_wire`s a non-decoded
+///   body, parses the bytes and drops them. Consuming removes the only clone,
+///   so this banks −1 alloc.
+/// - *Two handles* — any HTTP dispatch that keeps a second handle live:
+///   `endpoint_dispatch.rs`'s `request_payload` clone when an artifact consumes
+///   it, or the multipart re-encode in `prepare_request`, which retains the
+///   canonical JSON alongside the form-encoded wire bytes. The promotion merely
+///   relocates to that second clone: 1 alloc before, 1 alloc after. What is
+///   saved is a refcount inc/dec pair.
 ///
 /// The `SOLE HANDLE` rows model gRPC; the `SECOND HANDLE` rows model HTTP.
 ///
@@ -663,14 +665,14 @@ fn dispatch_body_consumed(
 /// while `floor` reports 3.0 / 527, so the promotion is one 24-byte `Shared`
 /// block that survives as long as *any* second handle does.
 ///
-/// Post-change the promotion is paid by the *first* clone in the chain,
-/// `endpoint_dispatch.rs:281`'s `canonical_body().clone()` for `request_payload`.
-/// Everything after it is a refcount bump, so deleting any single later clone —
-/// including the record clone in `HttpTransport::send_body` — buys nothing. The
-/// floor needs all three gone at once: gate `request_payload`, drop the record
-/// clone, and let `dispatch`/`dispatch_backpressured` consume `self` instead of
-/// cloning `wire_body` out of a still-live `prepared`. That last one is a plain
-/// ownership artifact of the transport handoff, not a raw-artifact cost.
+/// The three clones those rows model are gone from the JSON chat path:
+/// `endpoint_dispatch.rs` clones `canonical_body()` into `request_payload` only
+/// when `captures_request_payload()` reports that an artifact consumes it,
+/// `HttpTransport::send_body` takes the wire `Bytes` by value and keeps no copy
+/// on the record, and `dispatch`/`dispatch_backpressured` consume `self` so
+/// `wire_body` moves to the transport instead of being cloned out of a live
+/// `prepared`. `prepare_request` retains a second handle only for the multipart
+/// re-encode, so an artifact-free JSON dispatch sits at the modelled `floor`.
 ///
 /// These rows are a *model* — synthetic `.clone()` calls in the shape of the
 /// real chain, not a call into `prepare_request`/`dispatch`. That is sound for
@@ -718,8 +720,9 @@ fn chat_dispatch_wire_ownership_profile() {
         ));
 
         // HTTP shape: a second handle is taken immediately afterwards, the way
-        // `http/sink.rs:391` and `endpoint_binding.rs:297` both do. One
-        // promotion is owed either way; consuming only moves who pays it.
+        // `endpoint_dispatch.rs`'s gated `request_payload` clone and
+        // `prepare_request`'s multipart arm both do. One promotion is owed
+        // either way; consuming only moves who pays it.
         samples.push(measure(
             format!("[{size_label}] SECOND HANDLE, to_wire   (HTTP, before)"),
             len,
@@ -743,13 +746,12 @@ fn chat_dispatch_wire_ownership_profile() {
 
         // The full endpoint-aware chat chain, every handle that is live at once.
         //
-        // Four handles were taken per dispatch: `prepare_request` cloned the
-        // assembled body into `canonical_body`, `endpoint_dispatch.rs` cloned
-        // that into `request_payload`, `PreparedHttpEndpointRequest::dispatch`
-        // cloned `wire_body` for the transport, and `HttpTransport::send_body`
-        // cloned it once more into `RequestRecord::request_body`. Only the first
-        // clone allocates — it installs the shared control block — so a removed
-        // clone buys an allocation only when no later clone survives it.
+        // The four-handle shape this row models: an assembled body kept as
+        // `canonical_body`, a `request_payload` clone off it, a `wire_body`
+        // clone for the transport, and one more clone onto the record. Only the
+        // first clone allocates — it installs the shared control block — so a
+        // removed clone buys an allocation only when no later clone survives
+        // it, which is why the `after` row below still costs what `before` did.
         samples.push(measure(
             format!("[{size_label}] HTTP CHAIN before: canonical+payload+wire+record"),
             len,
@@ -776,13 +778,13 @@ fn chat_dispatch_wire_ownership_profile() {
                 (wire, payload, sent, recorded)
             },
         ));
-        // The floor the chain would reach if the wire handle were the only one:
-        // no promotion at all. The gap to the two rows above is not attributable
-        // to any single clone — it needs `request_payload` gated, the record
-        // clone dropped, *and* the dispatch handoff to consume `wire_body`
-        // rather than clone it out of a live `prepared`.
+        // The floor the chain reaches when the wire handle is the only one: no
+        // promotion at all. The gap to the two rows above is not attributable to
+        // any single clone — it takes `request_payload` gated, no record clone,
+        // *and* a dispatch handoff that consumes `wire_body` rather than cloning
+        // it out of a live `prepared`, which is where the path stands now.
         samples.push(measure(
-            format!("[{size_label}] HTTP CHAIN floor:  sole handle (needs all 3 gone)"),
+            format!("[{size_label}] HTTP CHAIN floor:  sole handle (no second handle)"),
             len,
             ITERS,
             || dispatch_body_consumed(&session, endpoint.as_ref(), &overrides),

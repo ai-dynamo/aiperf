@@ -171,28 +171,6 @@ fn concatenate_artifacts(
     Ok(())
 }
 
-/// Merge every cell's `inputs.json` into one full-dataset document.
-///
-/// A cell's `inputs.json` covers only the conversations THAT cell owns: the round-robin
-/// partition (`position % cell_count == cell_id`) slices the resident dataset before the
-/// document is generated, so cell `k` lists sessions `k, k+C, k+2C, …`. The slices are
-/// disjoint and tile the dataset exactly once, so their union is the single-process
-/// document — which is why this merges rather than copying one cell's file (copying cell
-/// 0's would emit `ceil(n/C)` of `n` sessions with a stride-`C` id gap).
-///
-/// The slices are re-INTERLEAVED round-robin (cell 0 row 0, cell 1 row 0, …, cell 0 row 1,
-/// …) rather than sorted by `session_id`: interleaving is the exact inverse of the
-/// `position % cell_count == cell_id` partition, so it reproduces the single-process
-/// document's dataset order for ANY id scheme. Sorting only works when ids are ordinal
-/// (`session_000012`); real datasets carry random UUID session ids, for which the sort
-/// order is arbitrary and need not match the single-cell document (GenAI-Perf compat,
-/// always-on per `rust_wire`). `cell_dirs` is indexed by cell id at the call site, which is
-/// what makes the interleave well-defined. Each payload body is carried through as an
-/// unparsed [`RawValue`] so the merged document re-emits its original compact bytes, the
-/// same as the single-process writer; parsing to `Value` would re-indent them and make the
-/// merged file differ from a single-cell run on formatting alone. A no-op when no cell
-/// wrote the file (e.g. inputs export disabled). Sources are owned by the controller's `ScratchTreeGuard`, so — like
-/// [`concatenate_cell_artifacts`] — this never deletes them.
 /// One cell's `inputs.json` as read for merging.
 #[derive(serde::Deserialize)]
 struct MergedInputsDocument {
@@ -216,6 +194,28 @@ struct MergedInputsRef<'a> {
     data: Vec<&'a MergedInputsRow>,
 }
 
+/// Merge every cell's `inputs.json` into one full-dataset document.
+///
+/// A cell's `inputs.json` covers only the conversations THAT cell owns: the round-robin
+/// partition (`position % cell_count == cell_id`) slices the resident dataset before the
+/// document is generated, so cell `k` lists sessions `k, k+C, k+2C, …`. The slices are
+/// disjoint and tile the dataset exactly once, so their union is the single-process
+/// document — which is why this merges rather than copying one cell's file (copying cell
+/// 0's would emit `ceil(n/C)` of `n` sessions with a stride-`C` id gap).
+///
+/// The slices are re-INTERLEAVED round-robin (cell 0 row 0, cell 1 row 0, …, cell 0 row 1,
+/// …) rather than sorted by `session_id`: interleaving is the exact inverse of the
+/// `position % cell_count == cell_id` partition, so it reproduces the single-process
+/// document's dataset order for ANY id scheme. Sorting only works when ids are ordinal
+/// (`session_000012`); real datasets carry random UUID session ids, for which the sort
+/// order is arbitrary and need not match the single-cell document (GenAI-Perf compat,
+/// always-on per `rust_wire`). `cell_dirs` is indexed by cell id at the call site, which is
+/// what makes the interleave well-defined. Each payload body is carried through as an
+/// unparsed [`RawValue`] so the merged document re-emits its original compact bytes, the
+/// same as the single-process writer; parsing to `Value` would re-indent them and make the
+/// merged file differ from a single-cell run on formatting alone. A no-op when no cell
+/// wrote the file (e.g. inputs export disabled). Sources are owned by the controller's `ScratchTreeGuard`, so — like
+/// [`concatenate_cell_artifacts`] — this never deletes them.
 pub(crate) fn merge_cell_inputs_json(
     cell_dirs: &[PathBuf],
     artifact_dir: &Path,

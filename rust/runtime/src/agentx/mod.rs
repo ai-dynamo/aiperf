@@ -4,15 +4,22 @@
 //! Standalone, byte-exact Rust port of the Python **AgentX v1.0** feature
 //! (WEKA trace replay + agentic-replay timing + scenario locks).
 //!
-//! This subsystem deliberately shares **no logic** with the next-gen graph-ir
-//! recorded path (`crate::graph::recorded`). It is a faithful 1:1 parity port of
-//! the Python implementation under `src/aiperf/dataset/loader/weka_*.py` and
-//! `src/aiperf/timing/`, intended to be deleted wholesale once graph-ir
-//! supersedes AgentX. See `specs/agentx-rust-port.md` for the design record.
+//! Its reconstruction, timing, and scheduling logic is deliberately separate
+//! from the graph-ir recorded path (`crate::graph::recorded`); the only shared
+//! seams are infrastructural — the public-dataset row loader
+//! ([`crate::dataset::load_raw_rows`]) behind [`crate::agentx::hf_dataset`], the
+//! virtual-clock driver (`crate::graph::runtime::drive_sim`) behind
+//! [`crate::agentx::replay`], and the canonical recorded-agent fixture the
+//! [`crate::agentx::scenario`] locks are applied to. It is
+//! a faithful 1:1 parity port of the Python implementation under
+//! `src/aiperf/dataset/loader/weka_*.py` and `src/aiperf/timing/`, intended to be
+//! deleted wholesale once graph-ir supersedes AgentX. See
+//! `specs/agentx-rust-port.md` for the design record.
 //!
 //! Parity is proven, not asserted: reconstruction is deterministic given
-//! `(seed, trace)`, and every module is cross-checked byte-for-byte against its
-//! Python counterpart's output over the in-repo `tests/fixtures/weka_traces*/`.
+//! `(seed, trace)`, and the reconstruction, corpus, scheduling, and dependency
+//! modules diff byte-for-byte against Python-generated goldens
+//! (`tools/agentx_*_golden.py`) over the in-repo `tests/fixtures/weka_traces*/`.
 
 pub mod cache_bust;
 pub mod chains;
@@ -22,8 +29,8 @@ pub mod export;
 /// Warmup-to-profile handoff observation for the accelerated cache-warmup
 /// substage (pure recorder + gate/recorder observer bundle).
 pub mod handoff;
-/// HuggingFace-hosted WEKA trace dataset download (JSON/JSONL always; Parquet
-/// under the `parquet` feature).
+/// HuggingFace-hosted WEKA trace dataset download (JSONL/JSON/CSV always;
+/// Parquet under the `parquet` feature).
 pub mod hf_dataset;
 pub mod idle_gap;
 pub mod loader;

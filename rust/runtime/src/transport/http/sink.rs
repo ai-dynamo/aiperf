@@ -3,9 +3,9 @@
 
 //! Online HTTP dispatch over Hyper.
 //!
-//! [`TransportSink`] implements `crate::dispatch`'s [`RequestSink`] using the
-//! clock-injected HTTP client. It is single-threaded (`!Send`, `Rc`-based) and
-//! driven on a `LocalSet`;
+//! [`TransportSink`] implements the runtime's [`Dispatcher`], [`TurnDispatcher`],
+//! and [`RequestExecutor`] seams over the clock-injected HTTP client. It is
+//! single-threaded (`!Send`, `Rc`-based) and driven on a `LocalSet`;
 //! admit/token times are stamped from the same clock origin the run loop uses for
 //! arrival, so all events share one timeline.
 //!
@@ -155,9 +155,9 @@ impl Default for TransportSinkConfig {
 
 /// Response-capturing request-dispatch seam used by the shared paced issuer.
 ///
-/// The online implementation is [`TransportSink`]; the optional in-process
-/// simulator implements the same contract, so pacing, admission, adaptive
-/// control, observers, and report construction do not branch on a backend.
+/// The optional in-process Dynamo simulator implements this contract under the
+/// `dynosim` feature, so pacing, admission, adaptive control, observers, and
+/// report construction do not branch on a backend.
 #[async_trait(?Send)]
 pub trait HttpRequestDispatcher: RequestSink<Request> {
     /// Resolve report dimensions using the same endpoint selection as dispatch.

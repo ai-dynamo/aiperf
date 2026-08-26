@@ -4,15 +4,16 @@
 //! Passthrough logging HTTP proxy.
 //!
 //! Usage:
-//!   UPSTREAM=http://vllm-server:8000 LISTEN=0.0.0.0:9000 aiperf-logproxy
+//!   UPSTREAM=http://vllm-server:8000 LISTEN=0.0.0.0:9000 logproxy
 //!
 //! Forwards every request byte-for-byte to `UPSTREAM` and streams the
 //! response back without buffering (so SSE/chunked streaming responses pass
-//! through live, preserving TTFT/ITL timing). Logs one line per request with
-//! method, path, status, time-to-first-byte, total duration, and response
-//! byte count. Gives multiple client tools (aiperf, locust, ...) an
-//! identical, independently-logged view of the same upstream server for
-//! apples-to-apples benchmark comparisons.
+//! through live, preserving TTFT/ITL timing). Logs several JSONL records per
+//! request: the request method/path/headers/body, the response status and
+//! time-to-first-byte, the first data chunk, and a final frame count, response
+//! byte count, and total duration. Gives multiple client tools (aiperf,
+//! locust, ...) an identical, independently-logged view of the same upstream
+//! server for apples-to-apples benchmark comparisons.
 
 use std::convert::Infallible;
 use std::net::SocketAddr;

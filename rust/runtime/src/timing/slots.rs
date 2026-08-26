@@ -87,11 +87,11 @@ impl SlotInner {
 /// `sharded` dispatch and by every phase type that has no cross-thread
 /// concern (`workers == 1`, or admission that is not thread-shared). `Global`
 /// wraps a [`GlobalSlotPool`] shared (via `Arc`) across every worker thread in
-/// a `global`/`global-hop` dispatch cell, so `acquire`/`try_acquire` admit
+/// a `global` dispatch cell, so `acquire`/`try_acquire` admit
 /// from one true cross-thread counter instead of a thread-local share. A
 /// `SlotPool` in `Global` mode carries the same debt-tracked graceful-drain
 /// semantics as `Local` (see [`GlobalSlotPool::set_limit`]), so concurrency
-/// ramps are exact under `global`/`global-hop` dispatch — a limit decrease
+/// ramps are exact under `global` dispatch — a limit decrease
 /// never transiently over-admits.
 enum SlotPoolBackend {
     Local(Rc<SlotInner>),
@@ -123,7 +123,7 @@ impl SlotPool {
     /// Create a pool that delegates every operation to a shared
     /// [`GlobalSlotPool`], so this thread's admission draws from the same
     /// cross-thread counter as every other worker thread holding a `SlotPool`
-    /// over the same `Arc<GlobalSlotPool>`. Used by `global`/`global-hop`
+    /// over the same `Arc<GlobalSlotPool>`. Used by `global`
     /// dispatch to enforce one true global concurrency limit.
     pub fn new_global(pool: Arc<GlobalSlotPool>) -> Self {
         Self {
@@ -178,7 +178,8 @@ impl SlotPool {
 
     /// Whether the underlying semaphore has no free permits.
     ///
-    /// This reflects the raw permit count and does **not** subtract debt; use
+    /// A `Local` pool reflects the raw permit count and does **not** subtract
+    /// debt; a `Global`-backed pool reports its debt-adjusted count. Use
     /// [`effective_slots`](Self::effective_slots) for debt-adjusted capacity.
     pub fn locked(&self) -> bool {
         match &self.backend {
@@ -359,7 +360,7 @@ pub struct GlobalSlotPool {
     current_limit: std::sync::atomic::AtomicUsize,
     /// Outstanding debt: releases to absorb before slots are freed again after
     /// a limit decrease. Mirrors [`SlotInner::debt`] but as an atomic, since
-    /// releases run concurrently across worker threads. Every mutation uses a
+    /// releases run concurrently across worker threads. Every decrement uses a
     /// compare-and-swap loop so two concurrent releases can never both absorb
     /// the same unit of debt and drive the count below zero.
     debt: std::sync::atomic::AtomicUsize,
@@ -405,7 +406,7 @@ impl GlobalSlotPool {
     ///
     /// Returns `None` immediately if no slot is currently free across any
     /// worker thread. Mirrors [`SlotPool::try_acquire`]'s nonblocking contract
-    /// for new-session admission under `global`/`global-hop` dispatch.
+    /// for new-session admission under `global` dispatch.
     pub fn try_acquire(self: &Arc<Self>) -> Option<GlobalSlotGuard> {
         match self.semaphore.try_acquire() {
             Ok(permit) => {
@@ -753,7 +754,7 @@ mod tests {
                     // Each OS thread builds its OWN `SlotPool` (a `!Send`,
                     // `Rc`-based handle) over the shared `Arc<GlobalSlotPool>` —
                     // exactly the shape `execute_scheduled_shard` would build
-                    // per worker thread under `global`/`global-hop` dispatch.
+                    // per worker thread under `global` dispatch.
                     let pool = SlotPool::new_global(global.clone());
                     let runtime = tokio::runtime::Builder::new_current_thread()
                         .enable_all()

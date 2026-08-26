@@ -20,7 +20,7 @@ path = "src/main.rs"
 # re-execs itself (`aiperf --execute`) over the protocol-v2 stdio seam for each
 # run/probe/cell. `grpc` (native gRPC transport) and `cellular` (`--cells N`
 # multi-process, carried over the `velo` git dependency — no sibling needed) are
-# default; only `dynosim` (needs the sibling checkout) is opt-in. `cargo build -p
+# default; only `dynosim` (git-sourced, no sibling needed either) is opt-in. `cargo build -p
 # aiperf-cli` and the shipped wheel — built with
 # `--features full` — keeps them; a lean HTTP-only binary drops them with
 # `--no-default-features`. The Makefile builds the wheel binary with the feature
@@ -38,20 +38,20 @@ default = ["grpc", "cellular", "parquet", "websocket"]
 # process-only commands in every build configuration.
 pyo3-embed = ["dep:pyo3"]
 # Opt-in scipy/optuna numerical seam for the dynamic search styles
-# (`--search-style smooth_isotonic|bo|optuna`). Implies `pyo3-embed`, so the
-# search build also gets in-process subcommand delegation (fully shell-out-free).
+# (`--search-style smooth_isotonic|bo|optuna`). Implies `pyo3-embed`; the embedded
+# interpreter serves only these planners — `analyze`/`plot` still shell out.
 search-pyo3 = ["pyo3-embed"]
 
 # Execution features, forwarded to the `aiperf` library. Previously the default
-# feature set of the former runner crate. `dynosim` requires the
-# sibling `dynamo-aiperf-native/lib/mocker` checkout at build time.
+# feature set of the former runner crate. `dynosim` builds the Dynamo mocker from
+# the pinned ai-dynamo/dynamo git dep in `runtime/Cargo.toml` (no sibling checkout).
 dynosim = ["aiperf-runtime/dynosim"]
 # Native gRPC transport (Tonic). A first-class transport over the same registry
 # seam as http/dynosim; in the `default` set. A lean HTTP-only binary drops it
 # (`--no-default-features`), which unregisters the `grpc` transport and its Riva
 # /KServe-gRPC execution path. Sibling-free.
 grpc = ["aiperf-runtime/grpc"]
-# Native WebSocket transport dependency and future registration seam. Config
+# Native WebSocket transport dependency and its registration seam. Config
 # parsing remains available without this feature so execution fails closed at
 # registry selection rather than falling back to HTTP.
 websocket = ["aiperf-runtime/websocket"]
@@ -74,7 +74,7 @@ dynamo-full = [
     "dynamo-profile",
 ]
 dynamo-parity = ["dynamo-full", "aiperf-runtime/dynamo-parity"]
-# Convenience: the full execution surface (sibling required).
+# Convenience: the full execution surface (all git-sourced, no sibling checkout).
 full = ["dynosim", "parquet", "cellular", "grpc", "websocket"]
 
 [dependencies]

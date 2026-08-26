@@ -15,9 +15,12 @@
 
 use crate::rng::error::Result;
 
-/// The full operation set of `random_generator.py`'s `RandomGenerator` class,
-/// dispatched across a CPython-MT stream (scalar ops) and a numpy-PCG64 stream
-/// (array ops) — see the module docs for the exact routing table.
+/// The full operation set of `random_generator.py`'s `RandomGenerator` class.
+///
+/// The Python-parity implementation splits these operations across a CPython-MT
+/// stream (scalar ops) and a numpy-PCG64 stream (array ops); see
+/// [`crate::rng::compat::python_random`]'s module docs for that routing table.
+/// The native implementation serves the same surface from one `Pcg64`.
 pub trait RandomGenerator {
     /// `random.Random.random()`: uniform float in `[0.0, 1.0)` (MT `res53`).
     fn random(&mut self) -> f64;

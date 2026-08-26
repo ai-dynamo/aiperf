@@ -33,6 +33,7 @@ use tiktoken_rs::{
 // `rustc_hash` is 2.x whose `FxHashMap` is a distinct, incompatible type.
 use tiktoken_rustc_hash::FxHashMap as TiktokenFxHashMap;
 use tokenizers::Tokenizer as HfTokenizer;
+use tokenizers::tokenizer::PostProcessor as _;
 
 use crate::clock::{Clock, RealClock};
 use crate::dataset::error::{DatasetError, Result};
@@ -93,6 +94,12 @@ pub trait TextTokenizer: Send + Sync {
     /// full `0..vocab_size` range.
     fn allowed_random_token_ids(&self) -> Option<Arc<[u32]>> {
         None
+    }
+
+    /// Number of tokens the endpoint tokenizer adds around bare input text.
+    /// Native encoders default to zero because [`Self::encode`] never adds them.
+    fn num_special_tokens_to_add(&self) -> usize {
+        0
     }
 
     /// BOS, then EOS, used as a synthetic block separator when available.
@@ -624,6 +631,7 @@ pub struct HuggingFaceTokenizer {
     eos_token_id: Option<u32>,
     vocab_size: Option<u32>,
     allowed_random_token_ids: Option<Arc<[u32]>>,
+    num_special_tokens_to_add: usize,
 }
 
 impl HuggingFaceTokenizer {
@@ -643,6 +651,7 @@ impl HuggingFaceTokenizer {
             eos_token_id: None,
             vocab_size: vocab_size_of(&introspect),
             allowed_random_token_ids: allowed_random_token_ids_of(&introspect),
+            num_special_tokens_to_add: num_special_tokens_to_add_of(&introspect),
         })
     }
 
@@ -660,6 +669,7 @@ impl HuggingFaceTokenizer {
             eos_token_id: None,
             vocab_size: vocab_size_of(&introspect),
             allowed_random_token_ids: allowed_random_token_ids_of(&introspect),
+            num_special_tokens_to_add: num_special_tokens_to_add_of(&introspect),
         };
         let config_path = directory.join("tokenizer_config.json");
         let tokenizer_config = if config_path.is_file() {
@@ -732,6 +742,12 @@ fn allowed_random_token_ids_of(tokenizer: &HfTokenizer) -> Option<Arc<[u32]>> {
     )
 }
 
+fn num_special_tokens_to_add_of(tokenizer: &HfTokenizer) -> usize {
+    tokenizer
+        .get_post_processor()
+        .map_or(0, |processor| processor.added_tokens(false))
+}
+
 /// Build a chat-template formatter for a model directory.
 ///
 /// The template lives either inline in `tokenizer_config.json` (`chat_template`)
@@ -796,6 +812,10 @@ impl TextTokenizer for HuggingFaceTokenizer {
 
     fn allowed_random_token_ids(&self) -> Option<Arc<[u32]>> {
         self.allowed_random_token_ids.clone()
+    }
+
+    fn num_special_tokens_to_add(&self) -> usize {
+        self.num_special_tokens_to_add
     }
 
     fn name(&self) -> &str {

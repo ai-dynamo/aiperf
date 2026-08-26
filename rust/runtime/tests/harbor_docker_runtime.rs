@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Redacted structured Docker command contracts for Harbor execution.
+//! Structured Docker and Compose command contracts for Harbor execution,
+//! including secret redaction in exec requests.
 #![cfg(feature = "engine")]
 
 use std::{

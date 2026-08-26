@@ -15,9 +15,9 @@ use crate::prom::AllMetrics;
 use crate::throughput::Throughput;
 
 /// Pre-resolved metric handles for one (endpoint, model) pair. Hot-path streaming
-/// hits `record_ttft` / `record_itl` / `record_streamed_token` once per token —
-/// caching these child refs avoids a label HashMap lookup inside each prometheus
-/// MetricVec on every call.
+/// hits `record_ttft_fast` / `record_itl_fast` / `record_streamed_token_fast` once
+/// per token — caching these child refs avoids a label HashMap lookup inside each
+/// prometheus MetricVec on every call.
 pub struct LabeledMetrics {
     pub tokens_streamed: GenericCounter<AtomicU64>,
     pub prompt_tokens: GenericCounter<AtomicU64>,

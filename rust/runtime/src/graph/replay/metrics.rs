@@ -126,13 +126,14 @@ pub struct ReplayTraceMetrics {
     pub trace_id: String,
     /// Per-call metrics in source-call order.
     pub calls: Vec<ReplayCallMetrics>,
-    /// Aggregate normalized end-to-end time, absent after any anomaly.
+    /// Aggregate normalized end-to-end time, absent after any invalidating
+    /// anomaly (see [`ReplayCallMetrics::is_valid`]).
     pub normalized_end_to_end_ms: Option<f64>,
-    /// Aggregate normalized inference time, absent after any anomaly.
+    /// Aggregate normalized inference time, absent after any invalidating anomaly.
     pub normalized_inference_ms: Option<f64>,
-    /// Aggregate normalized generation time, absent after any anomaly.
+    /// Aggregate normalized generation time, absent after any invalidating anomaly.
     pub normalized_generation_ms: Option<f64>,
-    /// Aggregate TTFT, absent after any anomaly.
+    /// Aggregate TTFT, absent after any invalidating anomaly.
     pub ttft_ms: Option<f64>,
     /// Aggregate ideal-prefix ISL growth.
     pub isl_delta: u64,

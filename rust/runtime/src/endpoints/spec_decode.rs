@@ -20,10 +20,6 @@ pub(crate) enum SpecDecodePayloadError {
     NonFiniteValue(&'static str),
     /// A floating metric is outside its canonical range.
     OutOfRange(&'static str),
-    /// A histogram key is not a non-negative decimal integer.
-    InvalidHistogramBucket(String),
-    /// Two wire keys normalize to the same integer bucket.
-    DuplicateHistogramBucket(u64),
     /// Aggregate or per-step counts contradict each other.
     InconsistentCounts(&'static str),
     /// Count arithmetic overflowed while validating the payload.
@@ -38,15 +34,6 @@ impl Display for SpecDecodePayloadError {
             Self::OutOfRange(field) => {
                 write!(formatter, "{field} must be between zero and one")
             }
-            Self::InvalidHistogramBucket(bucket) => {
-                write!(formatter, "invalid acceptance histogram bucket {bucket:?}")
-            }
-            Self::DuplicateHistogramBucket(bucket) => {
-                write!(
-                    formatter,
-                    "duplicate normalized acceptance histogram bucket {bucket}"
-                )
-            }
             Self::InconsistentCounts(message) => formatter.write_str(message),
             Self::CountOverflow => formatter.write_str("speculative-decoding count overflow"),
         }
@@ -59,7 +46,7 @@ impl std::error::Error for SpecDecodePayloadError {}
 struct VllmSpecDecodeStats {
     mean_acceptance_length: f64,
     draft_acceptance_rate: f64,
-    acceptance_histogram: BTreeMap<String, u64>,
+    acceptance_histogram: Vec<u64>,
     num_accepted_draft_tokens: u64,
     num_draft_tokens: u64,
     num_spec_steps: u64,
@@ -71,16 +58,13 @@ struct VllmSpecDecodeStats {
     per_step_drafted: Option<Vec<u64>>,
 }
 
-/// Extract vLLM's per-choice stats only when the response has one sequence.
+/// Extract vLLM's response-level speculative-decoding metrics.
 pub(crate) fn extract_vllm_spec_decode_stats(response: &Value) -> Option<&Value> {
-    let choices = response.get("choices")?.as_array()?;
-    if choices.len() != 1 {
-        return None;
-    }
-    choices
-        .first()?
+    let stats = response
+        .get("metrics")?
         .as_object()?
-        .get("speculative_decoding_stats")
+        .get("speculative_decoding")?;
+    stats.is_object().then_some(stats)
 }
 
 /// Normalize one vLLM stats object into the engine-neutral observer record.
@@ -105,15 +89,29 @@ pub(crate) fn parse_vllm_spec_decode_stats(
     }
     validate_per_step(&wire)?;
 
-    let mut histogram = BTreeMap::new();
-    for (bucket, count) in wire.acceptance_histogram {
-        let normalized = bucket
-            .parse::<u64>()
-            .map_err(|_| SpecDecodePayloadError::InvalidHistogramBucket(bucket))?;
-        if histogram.insert(normalized, count).is_some() {
-            return Err(SpecDecodePayloadError::DuplicateHistogramBucket(normalized));
+    if let Some(num_spec_tokens) = wire.num_spec_tokens {
+        let expected_len = num_spec_tokens
+            .checked_add(1)
+            .ok_or(SpecDecodePayloadError::CountOverflow)?;
+        let actual_len = u64::try_from(wire.acceptance_histogram.len())
+            .map_err(|_| SpecDecodePayloadError::CountOverflow)?;
+        if actual_len != expected_len {
+            return Err(SpecDecodePayloadError::InconsistentCounts(
+                "acceptance histogram length does not equal num_spec_tokens + 1",
+            ));
         }
     }
+    let histogram = wire
+        .acceptance_histogram
+        .into_iter()
+        .enumerate()
+        .filter(|(_, count)| *count != 0)
+        .map(|(bucket, count)| {
+            u64::try_from(bucket)
+                .map(|bucket| (bucket, count))
+                .map_err(|_| SpecDecodePayloadError::CountOverflow)
+        })
+        .collect::<Result<BTreeMap<_, _>, _>>()?;
     let steps = histogram
         .values()
         .try_fold(0_u64, |sum, count| sum.checked_add(*count))

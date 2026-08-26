@@ -53,11 +53,6 @@ fn message_json(m: &ChatMessage) -> Value {
     Value::Object(obj)
 }
 
-/// Build the OpenAI `/v1/chat/completions` request body for one dispatched turn.
-///
-/// `messages` is the full accumulated chat prefix for this turn (the endpoint
-/// concatenates deltas at request time; here the caller passes the resolved
-/// prefix). `max_tokens` is the recorded output cap; `model` the mapped name.
 /// Build just the accumulated `messages` array value (role/content objects),
 /// applying the cache-bust marker to the first message with the same placement
 /// rule as [`chat_request_body`]. Used by the agentic composer to intern each
@@ -72,6 +67,11 @@ pub(crate) fn chat_messages_array(
     Value::Array(msgs.iter().map(message_json).collect())
 }
 
+/// Build the OpenAI `/v1/chat/completions` request body for one dispatched turn.
+///
+/// `messages` is the full accumulated chat prefix for this turn (the endpoint
+/// concatenates deltas at request time; here the caller passes the resolved
+/// prefix). `max_tokens` is the recorded output cap; `model` the mapped name.
 pub fn chat_request_body(
     model: &str,
     messages: &[ChatMessage],

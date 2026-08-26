@@ -99,8 +99,8 @@ Pipeline {status} in {elapsed}s
     ))
 }
 
-/// Dispatch across config-file kinds. The candidate kind
-/// list depends on `lang` (`_lang_to_kinds`), so the `choice` index range and
+/// Dispatch across config-file kinds. The candidate kind list depends on `lang`
+/// (`_gen_config_file`'s `lang_to_kinds`), so the `choice` index range and
 /// mapping change with language; `None` uses the full 4-kind list.
 pub(super) fn config_file(
     r: &mut TemplateRenderer,

@@ -11,9 +11,9 @@
 //! makes the standalone tool fast, so bringing it in as an async task on the
 //! shared tokio runtime would reintroduce the scheduling overhead this
 //! bypass exists to avoid. Every request gets the same pre-built static
-//! payload — a single streamed chat-completion chunk for anything other than
-//! a bare `GET`, and a static model list for `GET`. There is no latency
-//! simulation, routing, token rendering, or endpoint dispatch.
+//! payload — one fixed SSE stream in the `--plaid-endpoint` shape for anything
+//! other than a bare `GET`, and a static model list for `GET`. There is no
+//! latency simulation, routing, token rendering, or endpoint dispatch.
 
 use std::io::{Read, Write};
 use std::net::TcpListener;
@@ -225,10 +225,6 @@ fn auto_parallelism() -> usize {
         .unwrap_or(1)
 }
 
-/// Bind `--host:--port` (and `--uds`, if set) and serve the static fastmock
-/// payload until the process exits, ignoring every other configured
-/// behavior. Blocking — call from `main` before any tokio runtime is built;
-/// this never touches async.
 /// Warn loudly on every startup path: this mode trades every behavioral
 /// guarantee the real mock server makes for raw socket throughput, and a
 /// quiet one-line log is easy to miss/forget once a session is scrolled past.
@@ -251,6 +247,10 @@ fn print_warning_banner() {
     );
 }
 
+/// Bind `--host:--port` (and `--uds`, if set) and serve the static fastmock
+/// payload until the process exits, ignoring every other configured
+/// behavior. Blocking — call from `main` before any tokio runtime is built;
+/// this never touches async.
 pub fn run(config: &MockServerConfig) -> anyhow::Result<()> {
     print_warning_banner();
     let threads = auto_parallelism();

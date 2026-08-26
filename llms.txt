@@ -68,8 +68,8 @@ purpose for each, so an agent knows which file to open for a given question.
   CLI and native controller/cell/results-sidecar roles; the independently packaged
   `aiperf-k8s-operator` owns reconciliation and the cluster-local durable-results
   API without importing `aiperf.*`. V1 ships only AIPerfJob; `validate` and
-  `profile` require an image-digest-bound capability document, while `sweep`,
-  `index`, and `dashboard` refuse. The immutable CR spec and per-run RBAC bind the
+  `profile` require an image-digest-bound capability document, while `init`,
+  `generate`, `sweep`, `index`, and `dashboard` refuse. The immutable CR spec and per-run RBAC bind the
   controller to status-only updates. The chart requires an explicit operator image
   repository and tag and installs JobSet, a fixed ClusterIP
   `aiperf-k8s-operator` Service, and a single-owner results PVC. The regular
@@ -77,7 +77,15 @@ purpose for each, so an agent knows which file to open for a given question.
   digest/length-checked artifacts, publishes the manifest last, and exits after
   durable acknowledgement. The service atomically publishes results under the
   namespace/job/run identity; `aiperf kube results` retrieves them through the
-  fixed Kubernetes Service proxy after producer deletion or operator restart.
+  fixed Kubernetes Service proxy after producer deletion or operator restart,
+  bounded by a 24-hour staging and 7-day published retention TTL.
+  `docs/specs/kubernetes-surface-gaps.md` is the companion ledger of what this
+  surface does not do, including the absent cross-host role-material minter that
+  currently blocks end-to-end cross-host Kubernetes and SLURM execution.
+  `docs/specs/native-kubernetes-completion.md` is the planned closure: a public
+  deployment minting seam, native `init`/`generate`, an `AIPerfSweep` resource
+  driven by a native sweep-controller role, and native `index`/`dashboard`, with
+  the reconciler staying Python and hierarchical aggregation still refused.
   This trusted namespace-level in-cluster service uses no application token,
   signature, public key, results-read Secret, authority ConfigMap, or external
   ingress. Controller and cell cellular bootstraps are separate from results.
@@ -448,6 +456,10 @@ profiler.
   (thread-per-core lanes, transport::http, UDS).
 - **How are prompts built without re-serializing?** `rust/runtime/src/dataset/segment.rs`
   (blake3 prefix-dependent dense handles) + `materialize.rs` (wire splice).
+  `--system-prompt`/`--system-prompt-file` resolve once into exact owned text;
+  `dataset/compose.rs` installs it after system hoisting and rebases descendants,
+  while Chat parses only a colliding leading lowered wire and Responses/Anthropic
+  use their native top-level system fields.
 - **How are generated media files served?**
   `src/aiperf/{common/environment.py,orchestrator/rust_wire.py}` (public settings
   and strict projection) → `rust/runtime/src/dataset/generator/` (publication seam) →
@@ -670,6 +682,9 @@ Inputs, endpoints, and graph:
 - [`docs/specs/2026-08-25-native-tracelab-recorded-graph.md`](docs/specs/2026-08-25-native-tracelab-recorded-graph.md) —
   native TraceLab JSONL/gzip conversion into the strict WEKA-shaped intermediate and Graph-IR,
   including reconstructed timing, cache-block identity, and Claude/Codex subagent containment joins.
+- [`docs/specs/2026-08-25-native-random-range-ratio.md`](docs/specs/2026-08-25-native-random-range-ratio.md) —
+  native vLLM/SGLang-compatible random-range ISL/OSL sampling and seeded random-corpus
+  draw order over the existing exact-length and raw-token composition paths.
 - [`docs/specs/2026-08-25-native-sharegpt-batch-encoding.md`](docs/specs/2026-08-25-native-sharegpt-batch-encoding.md) —
   approved native ShareGPT configuration performance port: an ordered tokenizer
   batch seam, bounded 4096-text composition batches, and exact preservation of
@@ -678,6 +693,9 @@ Inputs, endpoints, and graph:
   native Config-v2 `dataset.synthesis` precedence fix: explicit `--synthesis-*`
   flags overlay only their targeted YAML-authored trace-synthesis fields while
   preserving the remaining YAML values and existing `baseten_trace` validation.
+- [`docs/specs/2026-08-25-native-verbatim-system-prompts.md`](docs/specs/2026-08-25-native-verbatim-system-prompts.md) —
+  implemented origin #49 native port for startup-owned inline/file system prompts,
+  post-hoist prefix identity, and OpenAI/Anthropic production payloads.
 - [`docs/specs/prompt-corpus.md`](docs/specs/prompt-corpus.md) — the shared `prompts.corpus`
   seam for synthetic, count/hash-based trace, and recorded-graph prompt synthesis over
   the `sonnet`, `coding`, and exact-length `random` corpora.

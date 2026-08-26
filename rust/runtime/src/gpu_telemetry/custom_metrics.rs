@@ -265,7 +265,7 @@ mod tests {
              DCGM_FI_DEV_MEM_COPY_UTIL, gauge, Memory copy utilization (in %)\n";
         let loaded = parse_custom_metrics(csv);
 
-        // MEM_COPY_UTIL is a built-in (maps to mem_utilization) -> deduped.
+        // MEM_COPY_UTIL is a built-in (maps to nvidia_memory_utilization) -> deduped.
         assert_eq!(loaded.specs.len(), 3);
         assert!(
             !loaded

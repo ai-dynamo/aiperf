@@ -186,7 +186,8 @@ impl EndpointDescriptor {
     }
 
     /// Whether this endpoint emits `conversation.system` as an on-the-wire
-    /// system message (chat, responses, messages, chat_embeddings). Dataset
+    /// system message (chat, responses, realtime, messages, chat_embeddings —
+    /// realtime through its Responses [`legacy_type`](Self::legacy_type)). Dataset
     /// composition uses this to gate hoisting a leading authored `system` turn
     /// into the conversation-level system prompt: only these endpoints would
     /// carry it on the wire, so on the others the system turn is left in place
@@ -194,13 +195,8 @@ impl EndpointDescriptor {
     /// `EndpointMetadata.consumes_system_message`.
     pub fn consumes_system_message(self) -> bool {
         matches!(
-            self.legacy_type(),
-            Some(
-                EndpointType::Chat
-                    | EndpointType::Responses
-                    | EndpointType::Messages
-                    | EndpointType::ChatEmbeddings
-            )
+            self.id,
+            "chat" | "responses" | "messages" | "chat_embeddings"
         )
     }
 

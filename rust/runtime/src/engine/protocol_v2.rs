@@ -279,12 +279,13 @@ fn parse_dispatch_mode(runtime: &Value) -> Result<DispatchMode> {
 
 /// Decode the optional `runtime.hop_routing` worker-assignment selector.
 ///
-/// Only meaningful for a [`DispatchMode::GlobalHop`] run with `workers > 1`,
-/// where it chooses which worker thread executes each already-issued request
-/// (see [`HopRouting`]). Absent (`None`) leaves the runtime on its
-/// [`HopRouting::default`] (`RoundRobin`) placement; an unrecognized string is a
-/// hard decode error rather than a silent fallback. The value is inert under any
-/// other dispatch mode or `workers == 1`.
+/// Only meaningful for the single-issuer modes ([`DispatchMode::GlobalHop`] and
+/// [`DispatchMode::GlobalPush`], which share one worker-pick site) with
+/// `workers > 1`, where it chooses which worker thread executes each
+/// already-issued request (see [`HopRouting`]). Absent (`None`) leaves the
+/// runtime on its [`HopRouting::default`] (`RoundRobin`) placement; an
+/// unrecognized string is a hard decode error rather than a silent fallback. The
+/// value is inert under `Sharded`/`Global` and for `workers == 1`.
 fn parse_hop_routing(runtime: &Value) -> Result<Option<HopRouting>> {
     match runtime.get("hop_routing") {
         None | Some(Value::Null) => Ok(None),
@@ -662,10 +663,11 @@ pub struct AuthoredRunSpecV2 {
     /// implementation (`runtime.dispatch`). When omitted, single-process runs use
     /// [`DispatchMode::Global`] and cellular runs use [`DispatchMode::Sharded`].
     pub dispatch: DispatchMode,
-    /// Worker-assignment policy for `DispatchMode::GlobalHop` with `workers > 1`
+    /// Worker-assignment policy for the single-issuer modes
+    /// (`DispatchMode::GlobalHop`/`GlobalPush`) with `workers > 1`
     /// (`runtime.hop_routing`). `None` leaves the runtime on its
-    /// [`HopRouting::default`] (`RoundRobin`) placement; inert under any other
-    /// dispatch mode or `workers == 1`.
+    /// [`HopRouting::default`] (`RoundRobin`) placement; inert under
+    /// `Sharded`/`Global` and for `workers == 1`.
     pub hop_routing: Option<HopRouting>,
     resource_presence: ResourcePresenceV2,
 }

@@ -246,7 +246,7 @@ async fn video_generation_parameters(
         if check_fragmentation {
             assert!(
                 !details.is_fragmented,
-                "MP4 should use faststart, not fragmentation"
+                "MP4 must be a single-index container, not fragmented (no `moof` box)"
             );
         }
     }

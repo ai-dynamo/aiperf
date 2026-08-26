@@ -246,10 +246,11 @@ fn goldens_roundtrip_through_native_type() {
 /// The `.args` fixtures and their goldens pin absolute `/tmp` paths, so the
 /// files cannot be relocated into a tempdir without regenerating every golden.
 /// `load::resolve` reads a `--fixed-schedule` input to derive its request bound
-/// (`load.rs:222`), so `sched.jsonl`/`s.jsonl` must carry exactly the two
-/// non-empty lines the `fixed_sched`/`sched_offset` goldens record; the other
-/// two paths are only canonicalized, never read. Writing them here keeps the
-/// suite from depending on residue left by an earlier run.
+/// (`count_schedule_entries` in `load.rs`), so `sched.jsonl`/`s.jsonl` must
+/// carry exactly the two non-empty lines the `fixed_sched`/`sched_offset`
+/// goldens record; the other two paths are only canonicalized, never read.
+/// Writing them here keeps the suite from depending on residue left by an
+/// earlier run.
 fn ensure_fixture_inputs() {
     const ENTRY: &str = concat!(
         r#"{"timestamp":0,"input_length":8,"output_length":4}"#,

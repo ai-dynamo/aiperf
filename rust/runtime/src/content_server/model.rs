@@ -25,12 +25,12 @@ pub struct ContentRequestRecord {
     pub timestamp_ns: u64,
     /// HTTP method.
     pub method: String,
-    /// Percent-decoded URL path, matching the ASGI `scope["path"]` value.
+    /// Percent-decoded URL path.
     pub path: String,
     /// Raw query string without `?`.
     #[serde(default)]
     pub query_string: String,
-    /// HTTP version (`1.0`, `1.1`, `2`, or a future debug spelling).
+    /// HTTP version (`0.9`, `1.0`, `1.1`, `2`, `3`, or a future debug spelling).
     #[serde(default = "default_http_version")]
     pub http_version: String,
     /// Client IP address.

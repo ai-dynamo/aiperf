@@ -1,10 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Scenario-lock runtime helpers (Slice 4), ported from
+//! Scenario-lock runtime helpers, ported from
 //! `src/aiperf/common/scenario/`.
 //!
-//! So far: the context-overflow classifier (`context_overflow.py`). The
+//! Covers the frozen scenario specs (`inferencex_agentx_mvp.py`), the spec
+//! types (`base.py`), the name lookup (`registry.py`), invariant-lock
+//! application and violation reporting (`validator.py`), and the
+//! context-overflow classifier (`context_overflow.py`). The classifier's
 //! substring allowlist is passed in (Python reads it from
 //! `Environment.AGENTX.CONTEXT_OVERFLOW_SUBSTRINGS`).
 
@@ -106,7 +109,7 @@ pub struct RecordedAgentScenarioLock {
     pub workload_name: String,
     /// Required PinchBench image reference.
     pub pinch_image: String,
-    /// Exact worker and cell cardinality.
+    /// Exact worker cardinality.
     pub workers: u32,
     /// Exact cell cardinality.
     pub cells: u32,
@@ -853,7 +856,7 @@ mod tests {
         assert!(out.violations.is_empty());
         assert!(out.applied_locks.contains(&"streaming".to_string()));
 
-        // Explicit --no-streaming -> hard lock error (bypassable).
+        // Explicit `--streaming=false` -> hard lock error (bypassable).
         let bad = RunLockInputs {
             streaming: false,
             streaming_explicit: true,

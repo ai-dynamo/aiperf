@@ -552,7 +552,7 @@ async fn test_single_concurrency_artifact_layout() {
     let profile_runs_dir = root.join("profile_runs");
     assert!(profile_runs_dir.exists());
     let run_dirs = sorted_dirs(&profile_runs_dir, "run_");
-    assert_eq!(run_dirs.len(), 3, "Should have 3 trial directories");
+    assert_eq!(run_dirs.len(), 3, "Should have 3 run directories");
     assert_eq!(name_of(&run_dirs[0]), "run_0001");
     assert_eq!(name_of(&run_dirs[1]), "run_0002");
     assert_eq!(name_of(&run_dirs[2]), "run_0003");

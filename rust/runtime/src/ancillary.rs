@@ -3,7 +3,7 @@
 
 //! Application wiring for ancillary timing policy.
 //!
-//! Curve math and policy traits live in `aiperf-timing`; this module owns only
+//! Curve math and policy traits live in [`crate::timing`]; this module owns only
 //! CLI/runtime composition: phase ramp durations, the canonical 100ms rate-ramp
 //! cadence, seeded cancellation construction, and comma-separated endpoint
 //! normalization.

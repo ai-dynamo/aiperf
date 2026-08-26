@@ -46,8 +46,9 @@ const SEED: u32 = 4243;
 /// A deterministic single-turn streaming chat benchmark. The harness appends
 /// `--artifact-dir` and `--tokenizer`, overriding the corresponding fields.
 ///
-/// `workers: 1` forces the single-thread scheduled path, the only path exact-fold
-/// is eligible on — the `AIPERF_RUNTIME_EXACT_FOLD=0` A/B below depends on it.
+/// `workers: 1` forces the single-thread scheduled path, whose exact-fold capture
+/// the `AIPERF_RUNTIME_EXACT_FOLD=0` A/B below pins (eligibility itself does not
+/// read the worker count — sharded runs fold into per-worker stores).
 fn http_config(url: &str) -> String {
     format!(
         "schemaVersion: \"2.0\"\n\

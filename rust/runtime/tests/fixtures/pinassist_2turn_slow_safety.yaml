@@ -4,6 +4,10 @@
 # only after turn 1's USER-VISIBLE answer (summarize1), plus a think-time
 # (min_start_delay_us on turn-2 entry nodes = Cristian's "no-request root").
 # Node ids are turn-suffixed so the sink can classify per-node dispatch.
+# Slow-safety variant of pinassist_2turn.yaml: identical topology, but the
+# safety guards carry their own think-time (safety1 500ms, safety2 600ms) so the
+# guard, not the shopping chain, is the full-trace long pole while the
+# `terminal_for_user` answer stays on the shopping-chain timeline.
 graph:
   state:
     messages:      {type: messages, reducer: add_messages}

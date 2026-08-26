@@ -233,8 +233,17 @@ impl PreparedEndpointBehavior for MessagesEndpoint {
             payload.insert("stream".into(), Value::Bool(true));
         }
 
-        if let Some(system) = latest_turn_attr(turns, |turn| turn.raw_system.as_ref()) {
-            payload.insert("system".into(), Value::Array(system.clone()));
+        if let Some(raw_system) = latest_turn_attr(turns, |turn| turn.raw_system.as_ref()) {
+            let system =
+                if let Some(system) = request.system_message().filter(|value| !value.is_empty()) {
+                    let mut combined = Vec::with_capacity(raw_system.len() + 1);
+                    combined.push(json!({"type":"text","text":system}));
+                    combined.extend(raw_system.iter().cloned());
+                    combined
+                } else {
+                    raw_system.clone()
+                };
+            payload.insert("system".into(), Value::Array(system));
         } else if let Some(system) = request.system_message().filter(|value| !value.is_empty()) {
             payload.insert("system".into(), Value::String(system.to_string()));
         }

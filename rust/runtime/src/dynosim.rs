@@ -257,15 +257,15 @@ impl OfflineAicConfig {
         let backend = self
             .backend
             .clone()
-            .context("AIC replay modeling requires --aic-backend")?;
+            .context("AIC replay modeling requires aic.backend")?;
         let system = self
             .system
             .clone()
-            .context("AIC replay modeling requires --aic-system")?;
+            .context("AIC replay modeling requires aic.system")?;
         let model_path = self
             .model_path
             .clone()
-            .context("AIC replay modeling requires --aic-model-path")?;
+            .context("AIC replay modeling requires aic.model_path")?;
         args.aic_backend = Some(backend);
         args.aic_system = Some(system);
         args.aic_model_path = Some(model_path);
@@ -373,8 +373,8 @@ impl OfflineEngineConfig {
     /// Set the canonical Dynamo goodput thresholds without exposing the
     /// optional backend crate's concrete DTO to embedding applications.
     ///
-    /// The runner uses this narrow constructor so `aiperf` remains the only
-    /// crate that directly depends on `dynamo-mocker`. Threshold validation is
+    /// The runner uses this narrow constructor so `aiperf-runtime` remains the
+    /// only crate that directly depends on `dynamo-mocker`. Threshold validation is
     /// completed before an engine is initialized.
     pub fn with_sla_thresholds(
         mut self,
@@ -477,11 +477,11 @@ impl OfflineEngineConfig {
         if estimator.is_some() {
             anyhow::ensure!(
                 self.router_mode == OfflineRouterMode::Kv,
-                "AIC replay modeling requires --offline-router kv"
+                "AIC replay modeling requires router_mode=kv"
             );
             anyhow::ensure!(
                 configured,
-                "AIC replay modeling requires --router-config with router_prefill_load_model='aic'"
+                "AIC replay modeling requires router with router_prefill_load_model='aic'"
             );
         } else {
             anyhow::ensure!(
@@ -495,7 +495,7 @@ impl OfflineEngineConfig {
     fn engine_args(&self) -> Result<MockEngineArgs> {
         anyhow::ensure!(
             self.profile.is_none() || self.extra_engine_args.is_none(),
-            "--engine-profile conflicts with --extra-engine-args"
+            "engine_profile conflicts with engine"
         );
         match (&self.profile, &self.extra_engine_args) {
             (Some(path), None) => self.finalize_engine_args(
@@ -505,7 +505,7 @@ impl OfflineEngineConfig {
                 "aggregate",
             ),
             (None, Some(json)) => self.finalize_engine_args(
-                MockEngineArgs::from_json_str(json).context("invalid --extra-engine-args JSON")?,
+                MockEngineArgs::from_json_str(json).context("invalid engine JSON")?,
                 "aggregate",
             ),
             (None, None) => self.finalize_engine_args(MockEngineArgs::default(), "default"),
@@ -518,12 +518,11 @@ impl OfflineEngineConfig {
             (Some(prefill), Some(decode)) => Ok((
                 self.finalize_engine_args(
                     MockEngineArgs::from_json_str(prefill)
-                        .context("invalid --prefill-engine-args JSON")?,
+                        .context("invalid prefill_engine JSON")?,
                     "prefill",
                 )?,
                 self.finalize_engine_args(
-                    MockEngineArgs::from_json_str(decode)
-                        .context("invalid --decode-engine-args JSON")?,
+                    MockEngineArgs::from_json_str(decode).context("invalid decode_engine JSON")?,
                     "decode",
                 )?,
             )),
@@ -535,7 +534,7 @@ impl OfflineEngineConfig {
                 Ok((prefill, decode))
             }
             _ => anyhow::bail!(
-                "disaggregated offline mode requires both --prefill-engine-args and --decode-engine-args"
+                "disaggregated offline mode requires both prefill_engine and decode_engine"
             ),
         }
     }
@@ -545,13 +544,14 @@ impl OfflineEngineConfig {
             return Ok(None);
         }
         let mut value = match &self.router_config {
-            Some(json) => serde_json::from_str::<serde_json::Value>(json)
-                .context("invalid --router-config JSON")?,
+            Some(json) => {
+                serde_json::from_str::<serde_json::Value>(json).context("invalid router JSON")?
+            }
             None => serde_json::json!({}),
         };
         let object = value
             .as_object_mut()
-            .context("--router-config must contain a JSON object")?;
+            .context("router must contain a JSON object")?;
         if let Some(path) = &self.router_policy_config {
             object.insert(
                 "router_policy_config".to_string(),
@@ -2571,21 +2571,21 @@ fn load_trace_driver(
 ) -> Result<WorkloadDriver> {
     anyhow::ensure!(
         config.arrival_speedup_ratio.is_finite() && config.arrival_speedup_ratio > 0.0,
-        "--arrival-speedup-ratio must be a finite positive number"
+        "arrival_speedup_ratio must be a finite positive number"
     );
     if let Some(limit) = config.replay_concurrency {
-        anyhow::ensure!(limit > 0, "--replay-concurrency must be positive");
+        anyhow::ensure!(limit > 0, "replay_concurrency must be positive");
     }
     if let Some(cap) = config.max_sim_time_ms {
         anyhow::ensure!(
             cap.is_finite() && cap >= 0.0,
-            "--max-sim-time-seconds must be finite and non-negative"
+            "max_sim_time_ms must be finite and non-negative"
         );
     }
     if config.format == OfflineTraceFormat::AppliedComputeAgentic {
         anyhow::ensure!(
             config.replay_concurrency.is_some(),
-            "--trace-format=applied_compute_agentic requires --replay-concurrency"
+            "applied_compute_agentic trace format requires replay_concurrency"
         );
     }
     if matches!(
@@ -2595,7 +2595,7 @@ fn load_trace_driver(
     {
         anyhow::ensure!(
             config.format != OfflineTraceFormat::AgenticMooncake,
-            "agentic_mooncake trace format is not supported with --replay-concurrency"
+            "agentic_mooncake trace format is not supported with replay_concurrency"
         );
     }
     if engine_config.topology == OfflineTopology::Disaggregated {
@@ -2666,7 +2666,7 @@ fn load_trace_driver(
                 );
                 anyhow::ensure!(
                     config.replay_concurrency.is_none(),
-                    "agentic Dynamo request traces are not supported with --replay-concurrency"
+                    "agentic Dynamo request traces are not supported with replay_concurrency"
                 );
                 agentic_trace_driver(trace, engine_block_size, config.arrival_speedup_ratio)
             }
@@ -2707,11 +2707,11 @@ pub fn write_dynamo_worker_artifacts_json(
 ) -> Result<()> {
     anyhow::ensure!(
         engine_config.topology == OfflineTopology::Single,
-        "timed worker artifacts require --offline-topology single"
+        "timed worker artifacts require topology=single"
     );
     anyhow::ensure!(
         trace_config.replay_concurrency.is_none(),
-        "timed worker artifacts require authored trace timing, not --replay-concurrency"
+        "timed worker artifacts require authored trace timing, not replay_concurrency"
     );
     let (args, _) = OfflineEngineConfig::configure_aic(engine_config.engine_args()?)?;
     let trace = load_worker_artifact_trace(trace_config)?;
@@ -3987,7 +3987,7 @@ pub struct NativeLiveBaseline {
 
 /// Run Dynamo's own wall-clock online concurrency replay driver
 /// (`simulate_concurrency_live_requests`) as the apples-to-apples baseline for a
-/// `replay_mode=online` product run. Requests are built in the native format:
+/// `transport.type: dynosim_online` product run. Requests are built in the native format:
 /// each request's tokens come from Dynamo's `TurnTrace::synthesize_tokens`
 /// conversion of the same source-trace `hash_ids` the AIPerf runner ships, so
 /// the two drivers feed the engine byte-identical inputs. `engine_args_json` is
@@ -4221,7 +4221,7 @@ pub fn run_scheduled_backend_offline(
 ///
 /// Unlike the offline path this is not deterministic (real timers carry jitter),
 /// and it advances in real time: trace timing must already be speed-scaled (as
-/// the offline `--speedup-ratio` does) or the run takes the trace's real
+/// the offline `arrival_speedup_ratio` does) or the run takes the trace's real
 /// duration. Use it to measure the engine/scheduler/router at its live
 /// throughput ceiling with the serving stack removed.
 pub fn run_scheduled_backend_online(
@@ -4315,7 +4315,7 @@ pub fn run_scheduled_backend_offline_deferred_with_delivery(
 /// Identical scheduled workload, dispatcher, materializer, observer, and report
 /// path; only the driver ([`drive_real_with_source`]) and the relaxed parity
 /// finalizer differ. Used by the runner's scheduled pair when the authored
-/// backend selects `replay_mode = online`.
+/// transport selects `dynosim_online`.
 pub fn run_scheduled_backend_online_deferred_with_delivery(
     engine_config: OfflineEngineConfig,
     model: String,
@@ -5694,8 +5694,8 @@ mod tests {
     /// Dynamo's `simulate_concurrency_live_requests` is the real-clock native
     /// baseline — its report measures wall-clock latency via `Instant::elapsed`,
     /// exactly like AIPerf's observer. The gate: request/token counts are exact,
-    /// every latency stat is within 3%, and AIPerf's throughput is at least the
-    /// native throughput.
+    /// every latency stat is within 20% (8ms floor), and AIPerf's throughput is
+    /// at least the native throughput.
     #[test]
     fn online_matches_native_dynamo_live_replay_apples_to_apples() {
         use dynamo_mocker::replay::simulate_concurrency_live_requests;

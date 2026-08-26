@@ -4,13 +4,17 @@
 //! The velo-backed cell↔controller transport.
 //!
 //! Realizes the [`CellClient`] / [`ControllerTransport`] seam over the Velo 0.5
-//! messaging framework. Five named handlers on the
-//! controller carry the whole protocol:
+//! messaging framework. Six named handlers on the controller carry the whole
+//! protocol:
 //!
 //! - [`HANDLER_REGISTER`] (unary): a cell sends its [`CellRegister`] (its own
 //!   `PeerInfo` + `cell_id`); the controller `register_peer`s it (so replies and
-//!   later messages route back) and returns that cell's serialized `CellLaunchSpec`.
-//! - [`HANDLER_HEARTBEAT`] (fire-and-forget): a cell's periodic
+//!   later messages route back) and returns that cell's `RegisterReply`, whose
+//!   `envelope` is the cell's sliced execute envelope.
+//! - [`HANDLER_PREFLIGHT`] (fire-and-forget): a cell's
+//!   [`CellMessage::Preflight`] capability result, which ticks the controller's
+//!   pre-START preflight barrier instead of reaching the application channel.
+//! - [`HANDLER_HEARTBEAT`] (fire-and-forget): a cell's terminal
 //!   [`CellMessage::Heartbeat`].
 //! - [`HANDLER_PHASE_SIGNAL`] (fire-and-forget): a cell's named
 //!   [`CellMessage::PhaseSignal`] barrier notification.
@@ -63,7 +67,8 @@ pub(crate) type PlanRegistration =
 /// The controller's reply to a cell's registration: the cell's sliced execute
 /// envelope plus the handle of the run-wide **START** event. The cell awaits that
 /// event before dispatching, so every cell begins the benchmark together once the
-/// controller has seen all `cell_count` registrations (synchronized start).
+/// controller has seen all `cell_count` registrations and every cell's preflight
+/// report (synchronized start).
 #[derive(Debug, Clone)]
 pub struct RegisterReply {
     /// The cell's sliced execute envelope (protocol-v2 JSON bytes).
@@ -288,7 +293,8 @@ pub struct VeloControllerTransport {
     _velo: Arc<Velo>,
     receiver: mpsc::Receiver<Result<CellMessage, CellTransportError>>,
     /// Notified once every `cell_count` cell has registered — the controller then
-    /// triggers the START event (synchronized start).
+    /// awaits the preflight barrier before triggering the START event
+    /// (synchronized start).
     all_registered: Arc<Notify>,
     preflight: Arc<crate::graph::supplement::GraphCellPreflightBarrier>,
 }
@@ -770,8 +776,9 @@ impl VeloCellClient {
     }
 
     /// Block until the controller triggers the run-wide START event (a synchronized
-    /// start: every cell resumes together once all cells have registered). A
-    /// poisoned event (the controller aborted before starting) surfaces as an error.
+    /// start: every cell resumes together once all cells have registered and passed
+    /// preflight). A poisoned event (the controller aborted before starting)
+    /// surfaces as an error.
     pub async fn await_start(&self, start_event: EventHandle) -> Result<(), CellTransportError> {
         self.velo
             .event_manager()

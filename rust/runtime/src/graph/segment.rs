@@ -6,7 +6,7 @@
 //! Graph prompts and ordinary dataset turns use exactly the same dense arena,
 //! BLAKE3 hash domains, prefix-parent identity, and byte-concatenation path. This
 //! module contains only the graph message convenience function; storage lives in
-//! `aiperf-dataset` so a second graph-only implementation cannot drift.
+//! `crate::dataset` so a second graph-only implementation cannot drift.
 
 use bytes::Bytes;
 

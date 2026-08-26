@@ -291,8 +291,9 @@ pub trait NativeGraphEpisodeCallback {
 /// Invokes an authorized NativeGraph callback before collection and verification.
 ///
 /// The backend supplies `after_callback` for its existing declared artifact and
-/// verifier lifecycle. A successful callback keeps the adapter alive until that
-/// lifecycle completes; a failed callback skips it and reaps immediately. The
+/// verifier lifecycle. After a successful callback the adapter is reaped either
+/// before that lifecycle starts or after it completes, as the backend lease
+/// requires; a failed callback skips the lifecycle and reaps immediately. The
 /// caller still owns its ordinary reverse cleanup transaction.
 pub async fn run_native_graph_episode_callback<T, Lease>(
     callback: &mut dyn NativeGraphEpisodeCallback,

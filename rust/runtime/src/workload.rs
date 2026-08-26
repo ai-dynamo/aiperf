@@ -24,7 +24,7 @@ pub struct SkeletonWorkload {
 }
 
 impl SkeletonWorkload {
-    /// Mint one fresh [`Request`] with a new correlation id. Stateless, so the
+    /// Mint one fresh [`Request`] with a new uuid. Stateless, so the
     /// run loop can pull requests on demand and let the stop conditions (not a fixed
     /// list length) decide when to stop.
     ///

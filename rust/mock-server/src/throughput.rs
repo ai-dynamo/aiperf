@@ -188,7 +188,7 @@ mod tests {
             1.0,
         );
         tp.record_tokens(5);
-        // Wait a few sample ticks (20 ms covers 2× 10ms sampling intervals).
+        // Wait a few sample ticks (30 ms covers 3× 10ms sampling intervals).
         tokio::time::sleep(Duration::from_millis(30)).await;
         assert!(counter.load(Ordering::SeqCst) >= 1);
     }

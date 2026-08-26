@@ -47,7 +47,10 @@ pub enum ResponseV2 {
 pub struct ProcessResultV2 {
     /// Exactly one response object for stdout JSONL.
     pub response: ResponseV2,
-    /// Zero for success, one for a validated run failure, or two for protocol failure.
+    /// Zero for success or one for a validated run failure; the coordinator
+    /// emits no other value. Protocol failures (unreadable envelope,
+    /// unserializable response) never reach here and exit 2 from the
+    /// `execute_mode` wrapper instead.
     pub exit_code: i32,
 }
 

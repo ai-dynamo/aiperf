@@ -330,7 +330,7 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
     }
 
     // A grid `--search-recipe` expands its search space into a static grid sweep
-    // over config paths (mutating the built cfg per variation). (bayes/isotonic
+    // over its axes (overriding the authoring inputs per variation). (bayes/isotonic
     // recipes run a dynamic ask-tell loop, handled elsewhere.)
     if let Some(recipe) = crate::search::expand_recipe(&flags)? {
         return run_recipe_sweep(&flags, recipe);
@@ -530,8 +530,6 @@ fn run_single(flags: &ProfileFlags, inputs: load::Inputs) -> anyhow::Result<i32>
     Ok(code)
 }
 
-/// Execute a YAML `sweep:` block: expand its variations, resolve+stamp each into
-/// a run, then run every cell and write the aggregate (single trial per cell).
 /// Execute a non-sweep config `multiRun.numRuns > 1` as repeated trials of one
 /// variation, reusing the shared cell runner so cooldown, seeding, warmup
 /// suppression, and the aggregate match the `--num-profile-runs` flag path.
@@ -652,7 +650,7 @@ fn run_search_loop(flags: &ProfileFlags) -> anyhow::Result<i32> {
         let iter = planner.iteration();
         let label = format!("search_iter_{iter:04}");
 
-        // Build this probe's run: mutate the built cfg's profiling concurrency.
+        // Build this probe's run: override the authoring profiling concurrency.
         let dir = crate::sweep::artifact_dir::resolve(
             &base_artifact_dir,
             true,
@@ -1288,8 +1286,8 @@ fn run_goodput_loop(flags: &ProfileFlags) -> anyhow::Result<i32> {
 }
 
 /// Build the stamped per-cell runs for a grid `--search-recipe` (testable
-/// independently of execution): resolve the base run, mutate the built cfg at
-/// each recipe axis per variation, and stamp the sweep envelope + artifact dir.
+/// independently of execution): normalize the base authoring inputs, override each
+/// recipe axis on them per variation, and stamp the sweep envelope + artifact dir.
 pub fn plan_recipe_cells(
     flags: &ProfileFlags,
     recipe: &crate::search::RecipeSweep,
@@ -1355,7 +1353,7 @@ pub fn plan_recipe_cells(
 /// sweep envelope (`sweep_id`, `variation`, `random_seed`) and its per-cell
 /// artifact dir. Testable independently of execution.
 ///
-/// Trials come from `multiRun.numRuns` (folded onto `--profile-runs`) and the
+/// Trials come from `multiRun.numRuns` (folded onto `--num-profile-runs`) and the
 /// iteration order from `--parameter-sweep-mode`, both read off `overrides`: an
 /// authored `sweep:` block plus `multiRun.numRuns: N` yields `N` trials of every
 /// variation, matching the non-sweep path's `run_config_trials`.

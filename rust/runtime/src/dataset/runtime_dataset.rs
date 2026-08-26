@@ -250,18 +250,20 @@ impl Dataset {
     /// shared (`Arc::new`). The store is thawed (preserving every existing
     /// handle), each eligible turn is rendered through the injected
     /// [`TurnMessageLowerer`] to the exact wire the dispatch path would emit,
-    /// interned as a `Message` segment, and recorded on `turn.messages`; the
-    /// unified `body` handles are refreshed and the frozen store is swapped in.
+    /// interned as a `Message` segment, and recorded on `turn.body`; the frozen
+    /// store is swapped in.
     ///
     /// Carve-outs (kept on the live render path for byte-parity): turns with a
-    /// per-turn `endpoint` override, complete `raw_payload` bodies, token-native
-    /// `raw_token_ids`, preformatted `raw_messages`, or already-lowered/authored
-    /// `messages`. The turn's `content` is intentionally retained so
+    /// per-turn `endpoint` override, preformatted `raw_messages`, or a non-empty
+    /// `body` — which covers complete `raw_payload` bodies, token-native
+    /// `raw_token_ids`, and already-lowered message wires alike, since
+    /// [`Turn::dispatch_body`] records all three there. The turn's `content` is
+    /// intentionally retained so
     /// input-token accounting and the warmup first-turn re-render still resolve
     /// it. A turn whose content cannot render for this shape (Responses video,
     /// Messages audio/video, …) is skipped so the identical error still surfaces
     /// at dispatch. Idempotent: a second call finds every eligible turn already
-    /// carrying `messages` and is a no-op.
+    /// carrying a `body` and is a no-op.
     pub fn lower_messages_for_endpoint(&mut self, lowerer: &dyn TurnMessageLowerer) -> Result<()> {
         // Thaw preserves every existing handle; new `Message` wires are appended
         // and the store is refrozen once. Conversations are mutated in place when
@@ -933,11 +935,13 @@ fn validate_turn(
     Ok(())
 }
 
-/// Assemble the endpoint turns for one static-context turn exactly as
-/// `ConversationSession::endpoint_turns` does for these two modes, so a plan
-/// precomputed from them is byte-identical to the dispatch-time plan. Restricted
-/// to the static modes (the only modes `precompute_body_plans` caches), where the
-/// turn sequence is a pure function of the frozen conversation.
+/// Assemble the endpoint turns for one response-independent turn exactly as
+/// `ConversationSession::endpoint_turns` does for that mode, so a plan
+/// precomputed from them is byte-identical to the dispatch-time plan. Accepts
+/// any turn of the two static modes, plus turn 0 of either `WithoutResponses`
+/// mode; a `WithoutResponses` continuation turn interleaves live replies and is
+/// rejected, since only for the accepted turns is the sequence a pure function
+/// of the frozen conversation.
 fn static_endpoint_turns(
     store: &dyn SegmentStore,
     conversation: &Conversation,
@@ -994,7 +998,7 @@ fn reply_marker_wire(index: usize) -> Bytes {
 /// renders a `lowered` turn *verbatim* — extending the array with its wires,
 /// whatever they contain and however many there are, inspecting neither. Every
 /// message-array dialect does (`rendered_turn_messages` in
-/// `endpoints::endpoints`), and the Responses replay-unsafe filter that might
+/// `endpoints::implementation`), and the Responses replay-unsafe filter that might
 /// look like an exception runs at lowering time inside `ShapeLowerer::lower_turn`,
 /// so it is already baked into the wires before capture. But nothing enforces
 /// it: a future formatter that filtered or merged lowered wires by content would

@@ -5,7 +5,7 @@
 //! The cell registers the controller's `PeerInfo` and sends its own `PeerInfo`
 //! through the typed registration handler so replies can route back.
 //!
-//! Run: `cargo run -p aiperf-runtime --features velo --example velo_cell_spike`
+//! Run: `cargo run -p aiperf-runtime --features cellular --example velo_cell_spike`
 
 use std::sync::Arc;
 

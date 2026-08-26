@@ -66,7 +66,8 @@ pub struct GpuTelemetryConfig {
     pub enabled: bool,
     /// Collector backend id.
     pub collector: String,
-    /// Summary vs dashboard mode.
+    /// Reporting mode. The native runtime implements only `"summary"` (the
+    /// default); lowering rejects any other value.
     pub mode: String,
     /// Custom-metrics CSV path.
     pub metrics_file: Option<String>,

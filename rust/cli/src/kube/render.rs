@@ -13,7 +13,7 @@ pub enum OutputFormat {
     /// Human-readable single-line-per-resource summary.
     #[default]
     Text,
-    /// Byte-preserving pretty JSON of the exact API response.
+    /// Pretty-printed JSON re-serialization of the decoded API response.
     Json,
 }
 

@@ -2,12 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 //! HTTP `CONNECT`-tunnel proxy support for the Clock-injected connector.
 //!
-//! Only dataset/tokenizer downloads opt into this (by setting
-//! [`crate::transport::http::config::ClientConfig::proxy`]); the measured
-//! benchmark hot path never sets it, so its connect stays byte-identical and
-//! proxy-free. Tunnelling happens before any request bytes, so the injected
-//! clock is unaffected. Loopback targets are always excluded, preserving the
-//! rule that inference traffic must never traverse an ambient proxy.
+//! Dataset/tokenizer downloads opt in from the proxy environment; benchmark
+//! traffic opts in explicitly through `--proxy`/`--proxy-from-env` (both land in
+//! [`crate::transport::http::config::ClientConfig::proxy`]), and a run that opts
+//! into neither keeps a byte-identical proxy-free connect. Tunnelling happens
+//! before any request bytes, so the injected clock is unaffected. Ambient
+//! (environment-derived) proxying always excludes loopback targets, preserving
+//! the rule that local inference traffic never traverses an ambient proxy.
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
@@ -107,7 +108,7 @@ pub async fn connect_via_proxy(
 
     // Read until the end of the response headers (CRLFCRLF). The response can
     // arrive across reads, and the tunnelled body must not be consumed here, so
-    // read one byte past the terminator boundary only.
+    // any byte landing past the terminator is an error rather than buffered data.
     let mut buf = Vec::with_capacity(256);
     let mut chunk = [0u8; 256];
     loop {

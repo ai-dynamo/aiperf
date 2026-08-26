@@ -568,7 +568,7 @@ mod tests {
     /// end-to-end proof of the aggregate cap actually enforced on the wire —
     /// the same kind of proof `GlobalSlotPool`'s own cross-OS-thread test uses,
     /// applied here at the full `ScheduledRuntime`/`ShardedShared` integration
-    /// level via `aiperf-mock-server`-shaped HTTP execution.
+    /// level via HTTP execution against this file's own [`FixedMock`] server.
     #[test]
     fn global_dispatch_enforces_true_aggregate_concurrency_cap_sharded_does_not() {
         // Proves the whole point of `DispatchMode::Global`: with a concurrency
@@ -2422,8 +2422,9 @@ mod tests {
     /// `sharded_scheduled::owned_positions`. There is exactly one worker
     /// thread to own the full budget either way, so the two dispatch modes
     /// resolve to the SAME sliced phase and the SAME single-loop coordinator
-    /// path (this file's own module doc: "`workers == 1` uses one co-located
-    /// worker sink on the coordinator's current-thread runtime"). This is the
+    /// path (the repository's documented execution model: "`workers == 1` uses
+    /// one co-located worker sink on the coordinator's current-thread runtime
+    /// and `LocalSet`"). This is the
     /// general shape of "every case NOT affected by static partitioning must
     /// produce identical output between modes", verified against the actual
     /// partitioning math rather than assumed from intuition.

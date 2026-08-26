@@ -20,8 +20,9 @@ use aiperf_runtime::metrics_core::{
 
 const SECOND_NS: i64 = 1_000_000_000;
 
-/// Builds a profiling record spanning `[start_s, end_s)` seconds with a single
-/// output token so request-latency is exactly the request span.
+/// Builds a profiling record spanning `[start_s, end_s)` seconds, so its
+/// request latency is exactly that span. Two output tokens arrive 100ms and
+/// 200ms after the start.
 fn record(correlation: &str, start_s: i64, end_s: i64) -> RecordIngest {
     let start_ns = start_s * SECOND_NS;
     let end_ns = end_s * SECOND_NS;
@@ -130,7 +131,8 @@ fn steady_state_is_gated_off_by_default() {
     for ingest in [record("r0", 0, 5), record("r1", 1, 6)] {
         accumulator.process_record(&ingest);
     }
-    // Feature disabled by default and no target -> no steady outcome.
+    // Disabled by default; and even when enabled, a zero concurrency target
+    // yields no steady window.
     assert!(steady_state_summary(&accumulator, &SteadyStateConfig::default(), 5).is_none());
     let enabled = SteadyStateConfig {
         enabled: true,

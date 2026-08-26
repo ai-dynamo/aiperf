@@ -7,7 +7,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish = false
-description = "Full-stack e2e tests: aiperf-mock-server + python -m aiperf profile."
+description = "Full-stack e2e tests: aiperf-mock-server + the native `aiperf` binary."
 
 [dev-dependencies]
 aiperf-runtime = { path = "../runtime" }
@@ -49,6 +49,6 @@ libc.workspace = true
 # POSIX-signal delivery to the spawned `aiperf` child (SIGINT graceful-cancel
 # tests). Unix-only: `nix` does not build on windows-msvc, so gate it and stub
 # the two signal helpers on non-unix (the e2e suite is unix-oriented anyway —
-# it drives `python -m aiperf profile` over POSIX signals).
+# it drives the native `aiperf` binary over POSIX signals).
 [target.'cfg(unix)'.dev-dependencies]
 nix = { version = "0.29", features = ["signal", "process"] }

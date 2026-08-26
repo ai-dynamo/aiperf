@@ -3,10 +3,11 @@
 
 //! Profiling-phase GPU telemetry composition for the single-run process.
 //!
-//! The phase driver supplies the hard barriers. This module forces a DCGM
-//! counter scrape before issuance, samples gauges on the injected Clock, forces
-//! the closing counter scrape after all returns, and joins the resulting
-//! efficiency values into the same native-v2 report as request metrics.
+//! The phase driver supplies the hard barriers. This module forces a counter
+//! scrape from every configured source (DCGM, NVML, or AMD-SMI) before
+//! issuance, samples gauges on the injected Clock, forces the closing counter
+//! scrape after all returns, and joins the resulting efficiency values into the
+//! same native-v2 report as request metrics.
 
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
@@ -39,7 +40,12 @@ pub(crate) struct GpuTelemetryRun {
 }
 
 impl GpuTelemetryRun {
-    /// Builds all configured sources over one Clock-injected control transport.
+    /// Build the configured sources: DCGM scrapers share one Clock-injected
+    /// control transport, while the URL-less NVML/AMD-SMI collectors each spawn a
+    /// local source. A local source that fails to spawn is warned about and
+    /// dropped rather than failing the run, so the collector set can end up
+    /// smaller than the authored source list (an empty set leaves telemetry
+    /// silent).
     pub(crate) async fn new(spec: &GpuTelemetrySpec, clock: Rc<dyn Clock>) -> Result<Self> {
         ensure!(
             spec.collection_interval_ns > 0,

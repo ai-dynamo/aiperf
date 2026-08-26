@@ -39,8 +39,10 @@ const OSL_MISMATCH_MAX_TOKEN_THRESHOLD: u64 = 50;
 /// Usage discrepancy percentage threshold.
 const USAGE_PCT_DIFF_THRESHOLD: f64 = 10.0;
 
-/// Console-artifact export policy. Enabled by default (the `.txt` artifact is a
-/// stable CI-log surface); the fixed render width is carried here.
+/// Console-artifact export policy. The projected profile request always enables
+/// this sink (the `.txt` artifact is a stable CI-log surface), while an absent
+/// `export.console_txt` block decodes to disabled like every other sink. The
+/// fixed render width is carried here.
 ///
 /// Configuration controls grouping, headers, display order, filtering, and
 /// table titles.

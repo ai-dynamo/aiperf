@@ -76,22 +76,26 @@ flowchart LR
 
 ## The vLLM adapter
 
-`VLLMSpecDecodeAdapter` reads vLLM's per-choice `speculative_decoding_stats`
-object, emitted when the server runs with `--per-request-spec-decode-stats`
+`VLLMSpecDecodeAdapter` reads vLLM's response-root
+`metrics.speculative_decoding` object, emitted when the server runs with
+`--per-request-spec-decode-metrics`
 (`summary` or `detailed`). The field names and shape track vLLM PR
 [#48915](https://github.com/vllm-project/vllm/pull/48915); its *Per-Request
 Acceptance Metrics* feature doc is the authoritative wire-format reference. It is
 present on chat and completions, streaming and non-streaming; in streaming it
-rides the finish-reason chunk's choice, which AIPerf already parses, so no extra
-endpoint code is needed.
+rides the final empty-choice usage chunk. AIPerf automatically requests that
+chunk for streaming chat and completions, independently of the configured token
+count source. An explicit author `stream_options.include_usage: false` remains
+authoritative and prevents the server from returning the chunk and its metrics.
 
 The wire object maps to the record one-to-one, except:
 
-- **Histogram keys are JSON strings** and are int-cast into the record.
+- **`acceptance_histogram` is a dense JSON integer array.** Array index `j` is
+  the accepted-draft count and the value is the number of steps in that bucket.
+  The adapter converts it to the sparse record map and drops zero-count buckets.
 - **`completion_tokens`** comes from the response `usage`, not the payload. In
-  streaming that usage rides the trailing `include_usage` chunk, which AIPerf
-  auto-injects only when `endpoint.use_server_token_count` is enabled; otherwise
-  (or whenever the server omits usage) `completion_tokens` stays `None`.
+  streaming that usage rides the same trailing chunk as the metrics. Whenever
+  the server omits usage, `completion_tokens` stays `None`.
 - **`num_draft_tokens`** is vLLM's post-adjustment count: drafts invalidated by
   structured-output/grammar constraints are already subtracted server-side.
 - **`num_spec_tokens`** is always present (the configured `num_speculative_tokens`);
@@ -106,16 +110,14 @@ The wire object maps to the record one-to-one, except:
 - **Field absent** (spec decode off, or the request had no verify steps): the
   record is `None` and dependent metrics simply do not show. This is the common
   case and is not an error.
-- **Zero-step / fully-rejected**: reported verbatim (empty or `{0: N}`
-  histogram, `mean_acceptance_length == 1.0`).
+- **Zero-step / fully-rejected**: the all-zero or bucket-zero-only dense wire
+  array normalizes to an empty or `{0: N}` sparse record histogram, with
+  `mean_acceptance_length == 1.0`.
 - **Malformed payload**: the adapter degrades to `None` rather than raising, so
   one bad response cannot abort a run. Records whose aggregate counts contradict
   each other (histogram not summing to `num_spec_steps`, etc.) are rejected the
   same way.
-- **`n > 1`**: when a request produces multiple sequences, each choice carries
-  its own per-sequence stats, but `completion_tokens` is request-level. Rather
-  than mix one sequence's acceptance with all sequences' token count, the record
-  is suppressed (`None`) for `n > 1`, mirroring how per-request timing metrics
-  are suppressed for multi-sequence requests.
+- **`n > 1`**: vLLM leaves `metrics.speculative_decoding` null for requests with
+  multiple sequences, so no client-side choice suppression is needed.
 - **Behind Dynamo** the custom field is currently stripped, so this path is
   direct-to-vLLM only.

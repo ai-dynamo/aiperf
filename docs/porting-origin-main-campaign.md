@@ -33,7 +33,7 @@ implementation, test run, or review.
 | 5 | `ce715ae849` | agentic think-time idle guard | complete | applicable | Merged in `6e8da730e8`; native scenario default/lock port in `ad4c2a54f4`, `6e78b41d35`, and `729c59f64a`; Graham approved. |
 | 6 | `93b6223373` | telemetry field rename | complete | applicable | Merged in `4ab850c79d`; native artifact migration and custom-prefix closure in `726fcb614b`, `4763b53f0f`, and `978bc93fea`; Graham approved. |
 | 7 | `86ea3f7deb` | detailed JSONL fallback | complete | already-covered | Merged in `f027104364`; native detailed aggregation already reads the canonical JSONL path directly, while the compatibility Python regression passes. Graham approved. |
-| 8 | `5566aae1e1` | ShareGPT batch encoding | pending | applicable | Native composition has no batch-tokenizer seam. |
+| 8 | `5566aae1e1` | ShareGPT batch encoding | complete | applicable | Actual upstream merge `6521729344`; native ordered batch seam and bounded ShareGPT reconstruction in `4e39be3aee` / `67e6f3988d`; independently Graham-approved on current shared HEAD. Closure: `docs/origin-main-findings/commit-008-5566aae1e1.md`. |
 | 9 | `844efe1b36` | full synthesis prefix blocks | complete | applicable | Merged in `cb1d016398`; native implementation preserves whole prefix blocks and both synthesize-to-profile mock-server E2Es are green. |
 | 10 | `ffc943a9fe` | FFmpeg CVE bump | complete | shared-product-action | Merged in `830f579589`; coupled FFmpeg 8.1.2 attribution contract test is green and reviews approved. Test-image build reached FFmpeg then exposed the unrelated missing `COPY contracts` wheel-builder defect; no rebuilt-image claim. |
 | 11 | `d55ae21d34` | ShareGPT tutorial timeout | merged | not-applicable | Merged in `4d52f494e3`; documentation-only cold-cache timeout guidance, no native test candidate. Closure: `docs/origin-main-findings/commit-011-d55ae21d34.md`. |
@@ -74,14 +74,14 @@ implementation, test run, or review.
 | 46 | `e659d2a95a` | FFmpeg codec allowlist | pending | shared-product-action | Audit native codec defaults before porting shared Dockerfile policy. |
 | 47 | `9e96b499d1` | aiohttp minimum | pending | already-covered | Bundled Python bound already satisfies it. |
 | 48 | `260d00f5e9` | adaptive error-rate units | pending | applicable | Adaptive SLA differs from exported percentage/cancellation contract; pair with #25. |
-| 49 | `88242293b5` | verbatim system prompts | pending | applicable | Add CLI/file projection to existing composition seam. |
-| 50 | `ade1f69eb1` | seamless phase transitions | pending | already-covered | Native lowers incoming flag to predecessor handoff. |
-| 51 | `324bb05773` | per-chunk usage | pending | applicable | No first-chunk token multiplicity or option. |
-| 52 | `810fd8bdd4` | vLLM spec-decode wire | pending | applicable | Root metrics/histogram/trailing usage absent. |
+| 49 | `88242293b5` | verbatim system prompts | complete | applicable | Exact merge `9eeeac98f9`; native one-time file/CLI resolution, BLAKE3 composition identity, OpenAI/Anthropic wire E2E, exact 40-test mapping, and Graham approval recorded. |
+| 50 | `ade1f69eb1` | seamless phase transitions | complete | applicable | Exact merge `8252633121`; incoming lowering plus local/cellular first-owner-start/last-owner-stop profiler coordination, focused integration coverage, and two Graham approvals recorded. |
+| 51 | `324bb05773` | per-chunk usage | complete | applicable | Exact target-only merge `7520bbefcc`; native authoring, response reduction, corrected primary/adaptive metrics, both OpenAI mock streaming routes, mandatory exact-upstream Python/native E2E, inherited-suite classifications, and independent two-pass Graham approval are recorded in `docs/origin-main-findings/commit-051-324bb05773.md`. |
+| 52 | `810fd8bdd4` | vLLM spec-decode wire | complete | applicable | Exact target-only merge `9fcd17c62e`; native root metrics, dense histogram normalization, automatic trailing-usage negotiation, four-mode mock/product integration, and 15/15 E2E are complete. Independent Graham review approved `082457b2de`. |
 | 53 | `e5ebe915df` | enum inequality | pending | not-applicable | Python enum behavior only. |
-| 54 | `bfe33151de` | rejected peak diagnostics | pending | applicable | Actual target is WEKA/Dynamo selection, not Baseten. |
+| 54 | `bfe33151de` | rejected peak diagnostics | complete | applicable | AgentX/HF, WEKA (including TraceLab), and Dynamo selection; target-only merge `352ca1b032`, implementation `4022b433c9`, independent Graham approved. |
 | 55 | `dd3f09b0c3` | session-affinity header | complete | applicable | Native default-on `X-Session-Affinity` port is implemented in `e6d03a92f1` and corrected for no-correlation stale-header removal in `821412a095`; exact target merge `1a11e00297`, 21 raw native/Python-oracle cases, and independent Graham approval are recorded in `docs/origin-main-findings/commit-055-dd3f09b0c3.md`. |
-| 56 | `94fee7338b` | random range ratio | pending | applicable | Random corpus exists; ratio surface/sampling is absent. |
+| 56 | `94fee7338b` | random range ratio | complete | applicable | Exact merge `cd31c0ae5a`; native PCG64/MT19937 stream, config, prefix/special-token semantics, and 48 byte-exact production captures are covered by three audits and independent Graham approval. |
 | 57 | `e10d53b1d3` | version 0.13.0 | pending | shared-product-action | Coordinated release decision, not standalone Rust port. |
 | 58 | `9b60a3d479` | FakeTokenizer | pending | not-applicable | Python test harness only. |
 | 59 | `c9288da6c1` | mmap conversation cache | pending | not-applicable | No equivalent native mmap backend. |

@@ -131,6 +131,7 @@ pub fn audio_duration_seconds(raw: &[u8]) -> Result<f64> {
 }
 
 /// Decode any FFmpeg-readable audio into PCM WAV and return its exact duration.
+/// RIFF/WAVE input is already a WAV container and is returned verbatim.
 pub fn transcode_audio_to_wav(raw: &[u8]) -> Result<(Bytes, f64)> {
     if let Some(duration) = wav_duration(raw)? {
         return Ok((Bytes::copy_from_slice(raw), duration));

@@ -3,14 +3,17 @@
 
 //! Multi-process cellular controller.
 //!
-//! When a run requests `cfg.runtime.cells > 1`, the receiving runner becomes the
-//! controller rather than executing in-process. It partitions the request budget by
-//! `(cell_id, cell_count)`, spawns one `aiperf --cell` child per cell (each a
-//! separate OS process, wired with the autonomous issuer and per-cell sampler),
+//! When a run requests `cfg.runtime.cells > 1` — or any `cells >= 1` under a
+//! cross-host launcher — the receiving runner becomes the controller rather than
+//! executing in-process. It partitions the request budget by
+//! `(cell_id, cell_count)`, has the selected launcher produce one `aiperf --cell`
+//! process per cell (locally spawned, or expected to already exist under k8s /
+//! SLURM; each wired with the autonomous issuer and per-cell sampler),
 //! serves the [`transport`](crate::cellular::transport) endpoint the cells ship
 //! their records-shard partitions and heartbeats back over, merges every cell's
-//! records in global dispatch-ordinal order into the single authoritative
-//! `native-v2.json`, and fails the run loudly if any cell exits non-zero. The
+//! records into the single authoritative `native-v2.json` (scheduled runs in global
+//! dispatch-ordinal order, graph runs concatenated by cell id, exact-fold runs as
+//! folded stores), and fails the run loudly if any cell exits non-zero. The
 //! controller exposes cellular execution as one protocol-v2 run.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -39,8 +42,8 @@ use crate::engine::cellular_kind::CellularRunKind;
 use crate::graph::supplement::GraphCellSupplement;
 
 // The velo transport + launcher wiring is the only part of the controller that
-// needs the `velo` feature; the validation, budget-slicing, merge, and report
-// assembly below are plain envelope/metric logic reused by the non-velo build.
+// needs the `cellular` feature; the validation, budget-slicing, merge, and report
+// assembly below are plain envelope/metric logic reused by the non-cellular build.
 #[cfg(feature = "cellular")]
 use crate::cellular::transport::CellPhaseSignal;
 #[cfg(feature = "cellular")]
@@ -61,9 +64,8 @@ use crate::engine::cellular_bootstrap::{
 };
 #[cfg(feature = "cellular")]
 use crate::engine::control_hooks::{
-    PreparedEndpointControlHooks, PreparedServerProfilerHook,
-    prepare_endpoint_control_hooks_from_profile_value, run_reset_kv_cache, start_server_profiler,
-    stop_server_profiler,
+    PreparedEndpointControlHooks, PreparedServerProfilerHook, ServerProfilerCoordinator,
+    prepare_endpoint_control_hooks_from_profile_value, run_reset_kv_cache,
 };
 #[cfg(feature = "cellular")]
 use crate::engine::control_plane_http::{
@@ -71,11 +73,12 @@ use crate::engine::control_plane_http::{
     NativeControlPlaneHttpProviderFactory,
 };
 
-/// Env toggle for barrier-free start: the controller
-/// triggers START immediately instead of gathering all N cell registrations first
-/// (the O(N) fan-in rendezvous). Default off (the tight synchronized start). Cells
-/// registering after the trigger see the completed event instantly (velo's
-/// completed-event cache), so each starts on its own registration.
+/// Env toggle for barrier-free start: the controller skips the explicit
+/// all-registrations wait instead of gathering all N cell registrations first.
+/// START stays gated on the all-cell replay preflight barrier, which every cell
+/// reports to immediately after registering, so this does not remove the O(N)
+/// fan-in. Default off (the explicit synchronized start). A cell registering after
+/// the trigger sees the completed event instantly (velo's completed-event cache).
 pub const CELL_BARRIER_FREE_ENV: &str = "AIPERF_CELL_BARRIER_FREE";
 
 /// Env toggle routing the run-wide START through the monotonic phaser control plane
@@ -110,6 +113,112 @@ impl CellularTopologyPlan {
         Ok(Self {
             expected_partitions: cell_count,
         })
+    }
+}
+
+#[cfg(feature = "cellular")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TerminalPartitionKind {
+    Records,
+    Store,
+}
+
+#[cfg(feature = "cellular")]
+impl TerminalPartitionKind {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Records => "records",
+            Self::Store => "store",
+        }
+    }
+}
+
+#[cfg(feature = "cellular")]
+enum TerminalPartition {
+    Records(RecordsShardPartition),
+    Store(ColumnStorePartition),
+}
+
+#[cfg(feature = "cellular")]
+struct TerminalPartitions {
+    partitions: Vec<Option<TerminalPartition>>,
+    kind: Option<TerminalPartitionKind>,
+}
+
+#[cfg(feature = "cellular")]
+impl TerminalPartitions {
+    fn new(cell_count: u32) -> Self {
+        Self {
+            partitions: (0..cell_count).map(|_| None).collect(),
+            kind: None,
+        }
+    }
+
+    fn insert_records(&mut self, partition: RecordsShardPartition) -> Result<()> {
+        self.insert(
+            partition.cell_id(),
+            TerminalPartitionKind::Records,
+            TerminalPartition::Records(partition),
+        )
+    }
+
+    fn insert_store(&mut self, partition: ColumnStorePartition) -> Result<()> {
+        self.insert(
+            partition.cell_id(),
+            TerminalPartitionKind::Store,
+            TerminalPartition::Store(partition),
+        )
+    }
+
+    fn insert(
+        &mut self,
+        cell_id: u32,
+        kind: TerminalPartitionKind,
+        partition: TerminalPartition,
+    ) -> Result<()> {
+        let Some(slot) = self.partitions.get_mut(cell_id as usize) else {
+            bail!(
+                "terminal {} partition reported out-of-range cell {cell_id} (expected cell ids 0..{})",
+                kind.name(),
+                self.partitions.len()
+            );
+        };
+        if let Some(expected) = self.kind {
+            ensure!(
+                expected == kind,
+                "terminal partition kind changed at cell {cell_id}: expected {}, received {}",
+                expected.name(),
+                kind.name()
+            );
+        }
+        ensure!(
+            slot.is_none(),
+            "duplicate terminal {} partition for cell {cell_id}",
+            kind.name()
+        );
+        self.kind = Some(kind);
+        *slot = Some(partition);
+        Ok(())
+    }
+
+    fn is_complete(&self) -> bool {
+        self.partitions.iter().all(Option::is_some)
+    }
+
+    fn received_count(&self) -> usize {
+        self.partitions.iter().flatten().count()
+    }
+
+    fn into_parts(self) -> (Vec<RecordsShardPartition>, Vec<ColumnStorePartition>) {
+        let mut records = Vec::new();
+        let mut stores = Vec::new();
+        for partition in self.partitions.into_iter().flatten() {
+            match partition {
+                TerminalPartition::Records(partition) => records.push(partition),
+                TerminalPartition::Store(partition) => stores.push(partition),
+            }
+        }
+        (records, stores)
     }
 }
 
@@ -529,9 +638,14 @@ fn prepare_controller_control_hooks(
 
 #[cfg(feature = "cellular")]
 struct CellularProfilerCoordinator {
-    hook: PreparedServerProfilerHook,
-    active_phase: Option<String>,
-    phase_released: bool,
+    profiler: Rc<ServerProfilerCoordinator>,
+    phases: BTreeMap<String, CellularProfilerPhase>,
+}
+
+#[cfg(feature = "cellular")]
+#[derive(Default)]
+struct CellularProfilerPhase {
+    is_released: bool,
     ready_cells: BTreeSet<u32>,
     complete_cells: BTreeSet<u32>,
 }
@@ -540,11 +654,8 @@ struct CellularProfilerCoordinator {
 impl CellularProfilerCoordinator {
     fn new(hook: PreparedServerProfilerHook) -> Self {
         Self {
-            hook,
-            active_phase: None,
-            phase_released: false,
-            ready_cells: BTreeSet::new(),
-            complete_cells: BTreeSet::new(),
+            profiler: Rc::new(ServerProfilerCoordinator::new(hook)),
+            phases: BTreeMap::new(),
         }
     }
 
@@ -556,48 +667,49 @@ impl CellularProfilerCoordinator {
         phase: &str,
         signal: CellPhaseSignal,
     ) -> Result<()> {
-        if self.active_phase.is_none() {
-            self.active_phase = Some(phase.to_owned());
-            self.phase_released = false;
-            self.ready_cells.clear();
-            self.complete_cells.clear();
-        }
-        ensure!(
-            self.active_phase.as_deref() == Some(phase),
-            "controller-owned server profiler received phase signal for {phase:?} while {:?} is active",
-            self.active_phase
-        );
         match signal {
             CellPhaseSignal::Ready => {
-                self.ready_cells.insert(cell_id);
-                if !self.phase_released && self.ready_cells.len() == cell_count as usize {
-                    start_server_profiler(&self.hook).await.with_context(|| {
+                let needs_release = {
+                    let state = self.phases.entry(phase.to_owned()).or_default();
+                    state.ready_cells.insert(cell_id);
+                    !state.is_released && state.ready_cells.len() == cell_count as usize
+                };
+                if needs_release {
+                    self.profiler.acquire().await.with_context(|| {
                         format!("starting controller-owned server profiler for phase {phase:?}")
                     })?;
+                    self.phases
+                        .get_mut(phase)
+                        .ok_or_else(|| anyhow!("server profiler phase {phase:?} disappeared"))?
+                        .is_released = true;
                     phaser.advance(crate::cellular::phaser::PhaseTransition::PhaseAdvance(
                         phase.to_owned(),
                     ));
-                    self.phase_released = true;
                 }
             }
             CellPhaseSignal::Complete => {
-                ensure!(
-                    self.phase_released,
-                    "controller-owned server profiler received a completion for phase {phase:?} before the phase gate opened"
-                );
-                self.complete_cells.insert(cell_id);
-                if self.complete_cells.len() == cell_count as usize {
-                    if let Err(error) = stop_server_profiler(&self.hook).await {
+                let is_complete = {
+                    let state = self.phases.get_mut(phase).ok_or_else(|| {
+                        anyhow!(
+                            "controller-owned server profiler received a completion for unknown phase {phase:?}"
+                        )
+                    })?;
+                    ensure!(
+                        state.is_released,
+                        "controller-owned server profiler received a completion for phase {phase:?} before the phase gate opened"
+                    );
+                    state.complete_cells.insert(cell_id);
+                    state.complete_cells.len() == cell_count as usize
+                };
+                if is_complete {
+                    self.phases.remove(phase);
+                    if let Err(error) = self.profiler.release().await {
                         tracing::warn!(
                             phase,
-                            error = format!("{error:#}"),
+                            error = %error,
                             "controller-owned server profiler stop failed after profiling drain"
                         );
                     }
-                    self.active_phase = None;
-                    self.phase_released = false;
-                    self.ready_cells.clear();
-                    self.complete_cells.clear();
                 }
             }
         }
@@ -606,7 +718,7 @@ impl CellularProfilerCoordinator {
 
     /// True while the profiling gate has opened and stop has not run yet.
     fn needs_stop(&self) -> bool {
-        self.phase_released
+        self.profiler.has_owners()
     }
 
     /// Stop the profiler if start already ran and stop has not.
@@ -615,29 +727,22 @@ impl CellularProfilerCoordinator {
     /// cell finished its profiling phase, so this is a safe drain barrier when
     /// Complete signals are delayed or lost on the fire-and-forget control path.
     async fn ensure_stopped(&mut self, phase_fallback: &str) {
-        if !self.phase_released {
+        if !self.profiler.has_owners() {
             return;
         }
-        let phase = self
-            .active_phase
-            .clone()
-            .unwrap_or_else(|| phase_fallback.to_owned());
-        if let Err(error) = stop_server_profiler(&self.hook).await {
+        if let Err(error) = self.profiler.force_stop().await {
             tracing::warn!(
-                phase = phase.as_str(),
-                error = format!("{error:#}"),
+                phase = phase_fallback,
+                error = %error,
                 "controller-owned server profiler stop failed after cellular drain"
             );
         }
-        self.active_phase = None;
-        self.phase_released = false;
-        self.ready_cells.clear();
-        self.complete_cells.clear();
+        self.phases.clear();
     }
 }
 
 /// Runs one benchmark across `cell_count` cells and writes the merged report to
-/// `report_path`. Blocks until every cell ships. Requires the `velo` feature (the
+/// `report_path`. Blocks until every cell ships. Requires the `cellular` feature (the
 /// cell transport).
 #[cfg(feature = "cellular")]
 pub fn run_cellular(
@@ -1285,18 +1390,17 @@ fn run_cellular_with_startup_probe<P: StartupProbe>(
         // trigger the START event so all cells begin dispatching together. This is a
         // tight O(N) fan-in rendezvous that fights unbounded horizontal scale.
         //
-        // `AIPERF_CELL_BARRIER_FREE=1` triggers START without gathering all registrations:
-        // the controller triggers START IMMEDIATELY, without gathering all N
-        // registrations. A cell that registers *after* the trigger sees the completed
-        // event instantly (velo's completed-event cache), so each cell starts as soon
-        // as it has its envelope — no O(N) rendezvous. The tradeoff is looser start
-        // correlation across cells (arrival-epoch jitter), which is aggregate-equivalent
-        // (the same bar as rate/ramp) and does not affect data-deterministic metrics.
-        // A failed cell is still caught by the collect loop's failure watch below.
+        // `AIPERF_CELL_BARRIER_FREE=1` skips only this explicit all-registrations wait.
+        // START itself stays behind the preflight barrier below, which every cell reports
+        // to right after registering, so the O(N) fan-in survives the toggle; what is
+        // dropped is the separate registration wait and its own timeout. A cell that
+        // registers *after* the trigger sees the completed event instantly (velo's
+        // completed-event cache). A failed cell is still caught by the collect loop's
+        // failure watch below.
         if barrier_free {
             tracing::info!(
-                "barrier-free start: triggering immediately without the O(N) register \
-                 rendezvous (cells start on their own registration; looser cross-cell start sync)"
+                "barrier-free start: skipping the explicit register rendezvous \
+                 (START still waits for every cell's preflight report)"
             );
         } else {
             tokio::select! {
@@ -1346,31 +1450,23 @@ fn run_cellular_with_startup_probe<P: StartupProbe>(
         // ship-then-exit race resolves in the cell's favour when both land together.
         let deadline = tokio::time::sleep(collect_timeout());
         tokio::pin!(deadline);
-        // A cell ships EXACTLY ONE terminal partition, of one of two kinds depending on
-        // the mode it ran (the whole run is uniform — every cell got the same envelope
-        // + env, so they never mix): a `Partition` (retain path: raw records for the
-        // byte-exact global-order/concatenation merge) or a `StorePartition`
-        // (metrics-only exact-fold: the cell's folded exact store, no record Vec). Count
-        // BOTH toward the one-per-cell termination barrier; the merge below dispatches on
-        // which kind arrived.
-        let mut partitions: Vec<RecordsShardPartition> = Vec::with_capacity(cell_count as usize);
-        let mut store_partitions: Vec<ColumnStorePartition> =
-            Vec::with_capacity(cell_count as usize);
+        // A cell ships EXACTLY ONE terminal partition, of one run-wide kind: raw records
+        // for retain mode or a folded store for metrics-only exact folding. Receipt identity
+        // is keyed by cell id so duplicates and out-of-range messages cannot satisfy the
+        // all-cells barrier.
+        let mut terminal_partitions = TerminalPartitions::new(cell_count);
         let mut replay_supplements: Vec<GraphCellSupplement> = Vec::new();
         let mut heartbeats: BTreeMap<u32, MetricsHeartbeat> = BTreeMap::new();
         // The frontend tails this file into AIPerfJob CR status.
         let live_progress_log = std::env::var_os("AIPERF_CELLULAR_HEARTBEAT_LOG")
             .filter(|path| !path.is_empty())
             .map(std::path::PathBuf::from);
-        let collected = |records: &[RecordsShardPartition], stores: &[ColumnStorePartition]| {
-            records.len() + stores.len()
-        };
         // The flat topology receives one terminal partition per cell.
         let mut profiler = endpoint_control_hooks
             .take()
             .and_then(|hooks| hooks.server_profiler)
             .map(CellularProfilerCoordinator::new);
-        while collected(&partitions, &store_partitions) < expected_partitions as usize {
+        while !terminal_partitions.is_complete() {
             tokio::select! {
                 biased;
                 message = transport.recv() => match message.context("receiving from cell")? {
@@ -1378,16 +1474,18 @@ fn run_cellular_with_startup_probe<P: StartupProbe>(
                         "cell {cell_id} sent replay preflight through the terminal stream"
                     ),
                     Some(CellMessage::Partition(partition)) => {
-                        if let Some(supplement) = partition.graph_supplement().cloned() {
+                        let supplement = partition.graph_supplement().cloned();
+                        terminal_partitions.insert_records(partition)?;
+                        if let Some(supplement) = supplement {
                             replay_supplements.push(supplement);
                         }
-                        partitions.push(partition);
                     }
                     Some(CellMessage::StorePartition(partition)) => {
-                        if let Some(supplement) = partition.graph_supplement().cloned() {
+                        let supplement = partition.graph_supplement().cloned();
+                        terminal_partitions.insert_store(*partition)?;
+                        if let Some(supplement) = supplement {
                             replay_supplements.push(supplement);
                         }
-                        store_partitions.push(*partition);
                     }
                     Some(CellMessage::Heartbeat { cell_id, heartbeat }) => {
                         heartbeats.insert(cell_id, *heartbeat);
@@ -1403,16 +1501,17 @@ fn run_cellular_with_startup_probe<P: StartupProbe>(
                     }
                     None => bail!(
                         "transport closed with {} of {expected_partitions} partitions",
-                        collected(&partitions, &store_partitions)
+                        terminal_partitions.received_count()
                     ),
                 },
                 Some(failure) = watchers.recv_failure() => bail!("{failure}"),
                 _ = &mut deadline => bail!(
                     "cellular run timed out with {} of {expected_partitions} partitions",
-                    collected(&partitions, &store_partitions)
+                    terminal_partitions.received_count()
                 ),
             }
         }
+        let (partitions, store_partitions) = terminal_partitions.into_parts();
         if let Some(profiler) = profiler.as_mut()
             && profiler.needs_stop()
         {
@@ -1686,21 +1785,6 @@ fn controller_artifact_bind() -> std::net::SocketAddr {
         .unwrap_or_else(|| std::net::SocketAddr::from(([0, 0, 0, 0], DEFAULT_ARTIFACT_PORT)))
 }
 
-/// The controller's velo bind plus the `tcp://HOST:PORT` endpoint string cells
-/// `velo.connect` to. The coordinate stays `tcp://` everywhere so the HTTP artifact
-/// plane (which derives its authority by swapping the port on this coordinate) keeps
-/// working — hence local uses a known loopback port, not UDS.
-/// - **cross-host (k8s / SLURM)**: bind the well-known port (`AIPERF_CONTROLLER_PORT`,
-///   default 9500) on all interfaces so cells on other hosts can reach it. The cell
-///   endpoint is injected into each cell's environment out of band — by the operator
-///   for k8s, by the `aiperf slurm run` rank dispatch (from the allocation's rank-0
-///   host) for SLURM — as `AIPERF_CELL_CONTROLLER_ADDR`. The returned coordinate is
-///   that same env value (empty for k8s, `tcp://<rank0-host>:<port>` for SLURM); it is
-///   used only for the artifact-authority derivation, not for cell discovery (the
-///   "expect, don't spawn" launchers do not inject it).
-/// - **local**: pre-bind a loopback TCP listener so the actual port is known before
-///   build; cells connect to `tcp://127.0.0.1:<port>`.
-///
 /// Whether the controller's cell coordinate (`AIPERF_CELL_CONTROLLER_ADDR`, a
 /// `tcp://HOST:PORT` velo endpoint) resolves to a LOOPBACK host — i.e. a co-located
 /// deployment where cells write to a shared filesystem instead of shipping over HTTP.
@@ -1726,6 +1810,20 @@ fn controller_coordinate_is_loopback() -> bool {
         .unwrap_or_else(|_| host.eq_ignore_ascii_case("localhost"))
 }
 
+/// The controller's velo bind plus the `tcp://HOST:PORT` endpoint string cells
+/// `velo.connect` to. The coordinate stays `tcp://` everywhere so the HTTP artifact
+/// plane (which derives its authority by swapping the port on this coordinate) keeps
+/// working — hence local uses a known loopback port, not UDS.
+/// - **cross-host (k8s / SLURM)**: bind the well-known port (`AIPERF_CONTROLLER_PORT`,
+///   default 9500) on all interfaces so cells on other hosts can reach it. The cell
+///   endpoint is injected into each cell's environment out of band — by the operator
+///   for k8s, by the `aiperf slurm run` rank dispatch (from the allocation's rank-0
+///   host) for SLURM — as `AIPERF_CELL_CONTROLLER_ADDR`. The returned coordinate is
+///   that same env value (empty for k8s, `tcp://<rank0-host>:<port>` for SLURM); it is
+///   used only for the artifact-authority derivation, not for cell discovery (the
+///   "expect, don't spawn" launchers do not inject it).
+/// - **local**: pre-bind a loopback TCP listener so the actual port is known before
+///   build; cells connect to `tcp://127.0.0.1:<port>`.
 #[cfg(feature = "cellular")]
 fn controller_bind_and_endpoint(
     cross_host: bool,
@@ -3152,6 +3250,88 @@ mod tests {
     use std::sync::{Mutex, OnceLock};
 
     use super::*;
+
+    #[test]
+    fn terminal_partitions_reject_duplicate_same_kind() {
+        let mut terminal = TerminalPartitions::new(2);
+        terminal
+            .insert_records(RecordsShardPartition::new(0, Vec::new()))
+            .expect("first cell receipt is accepted");
+        assert!(!terminal.is_complete());
+
+        let duplicate = terminal
+            .insert_records(RecordsShardPartition::new(0, Vec::new()))
+            .expect_err("duplicate receipt must be rejected");
+        assert!(duplicate.to_string().contains("cell 0"));
+        assert!(!terminal.is_complete());
+
+        let out_of_range = terminal
+            .insert_records(RecordsShardPartition::new(2, Vec::new()))
+            .expect_err("out-of-range receipt must be rejected");
+        assert!(out_of_range.to_string().contains("cell 2"));
+        assert!(!terminal.is_complete());
+    }
+
+    #[test]
+    fn terminal_partitions_reject_mixed_kinds() {
+        let mut terminal = TerminalPartitions::new(2);
+        terminal
+            .insert_records(RecordsShardPartition::new(0, Vec::new()))
+            .expect("first receipt fixes the terminal kind");
+
+        let mixed = terminal
+            .insert_store(ColumnStorePartition::from_store(
+                1,
+                crate::metrics_core::store::ColumnStore::new(),
+            ))
+            .expect_err("store receipt must not follow a records receipt");
+        let message = mixed.to_string();
+        assert!(message.contains("records"));
+        assert!(message.contains("store"));
+    }
+
+    #[test]
+    fn terminal_partitions_complete_after_each_cell_receipt_once() {
+        let mut terminal = TerminalPartitions::new(2);
+        terminal
+            .insert_records(RecordsShardPartition::new(0, Vec::new()))
+            .expect("first cell receipt is accepted");
+        assert!(!terminal.is_complete());
+        terminal
+            .insert_records(RecordsShardPartition::new(1, Vec::new()))
+            .expect("second cell receipt is accepted");
+        assert!(terminal.is_complete());
+    }
+
+    #[tokio::test]
+    async fn cellular_profiler_keeps_one_session_across_overlapping_phases() {
+        let hook =
+            PreparedServerProfilerHook::empty_for_test(Rc::new(crate::clock::SimClock::new()));
+        let mut profiler = CellularProfilerCoordinator::new(hook);
+        let phaser = crate::cellular::phaser::Phaser::new();
+
+        profiler
+            .on_signal(&phaser, 1, 0, "first", CellPhaseSignal::Ready)
+            .await
+            .expect("first phase releases");
+        profiler
+            .on_signal(&phaser, 1, 0, "second", CellPhaseSignal::Ready)
+            .await
+            .expect("overlapping successor releases");
+        profiler
+            .on_signal(&phaser, 1, 0, "second", CellPhaseSignal::Complete)
+            .await
+            .expect("successor completes");
+
+        assert!(profiler.needs_stop());
+        assert_eq!(phaser.current_generation(), 2);
+
+        profiler
+            .on_signal(&phaser, 1, 0, "first", CellPhaseSignal::Complete)
+            .await
+            .expect("predecessor drains");
+        assert!(!profiler.needs_stop());
+    }
 
     struct DropProbe(Arc<AtomicUsize>);
 

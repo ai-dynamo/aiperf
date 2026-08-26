@@ -30,7 +30,7 @@ use super::{
     WorkspaceProvisioner, policy::contains_detaching_command,
 };
 
-/// Docker label key whose value is the exact controller-minted replay run label.
+/// Docker label key whose value is the exact replay run or trace-invocation cleanup label.
 pub const CONTAINER_RUN_LABEL_KEY: &str = "aiperf.recorded-agent.run-label";
 
 const TERMINAL_PREFIX: &[u8] = b"\0aiperf-terminal:";
@@ -413,7 +413,7 @@ impl ToolDispatcher for DeferredNativeToolDispatcher {
     }
 }
 
-/// Opaque Docker container identifier returned after successful start.
+/// Opaque Docker container identifier returned by container creation.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ContainerId(String);
 
@@ -445,7 +445,7 @@ pub struct ContainerMount {
 pub struct ContainerCreateSpec {
     /// Recipe-selected image, inspected before creation.
     pub image: String,
-    /// Sanitized unique name used only for operator diagnosis.
+    /// Sanitized unique name used for operator diagnosis and pre-create cleanup.
     pub name: String,
     /// Persisted labels used for recovery cleanup.
     pub labels: BTreeMap<String, String>,
@@ -556,7 +556,7 @@ pub trait ContainerRuntime {
     /// Force-remove one known container with an explicit cleanup bound.
     async fn force_remove(&self, id: &ContainerId, timeout_ns: u64)
     -> Result<(), ToolSandboxError>;
-    /// Start best-effort removal when an opening future is dropped mid-command.
+    /// Start best-effort removal when a container guard is dropped without disarming.
     fn force_remove_on_drop(&self, _id: &ContainerId) {}
     /// Return only containers carrying this exact label key and value.
     async fn list_by_label(

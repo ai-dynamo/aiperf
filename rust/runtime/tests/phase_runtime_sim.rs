@@ -20,7 +20,7 @@ use aiperf_runtime::metrics_core::RequestTrace;
 use aiperf_runtime::multiturn::{ConversationSource, IssuedCredit, TurnToSend};
 use aiperf_runtime::phase_runtime::{
     RampScheduledPhaseController, ScheduledPhaseController, ScheduledPhasePlan,
-    ScheduledPhaseResources, SlotPoolPhaseResources, run_scheduled_phases,
+    ScheduledPhaseResources, ScheduledPhaseSidecar, SlotPoolPhaseResources, run_scheduled_phases,
 };
 use aiperf_runtime::scheduled::{
     ScheduledAncillaryPolicies, ScheduledRuntime, SingleTurnDatasetWorkload, TurnDispatchOutcome,
@@ -208,6 +208,58 @@ fn production_adapter_debt_drains_shared_capacity_during_seamless_handoff() {
     let events = observer.events.borrow();
     assert!(events.contains(&PhaseEvent::Start("profiling".into(), 0)));
     assert!(events.contains(&PhaseEvent::Complete("warmup".into(), 20)));
+}
+
+#[test]
+fn seamless_handoff_finishes_each_phase_sidecar_after_its_return_drain() {
+    let clock = Rc::new(SimClock::new());
+    let sidecar_events = Rc::new(RefCell::new(Vec::new()));
+    let dispatcher: Rc<dyn TurnDispatcher> = Rc::new(DelayedDispatcher {
+        clock: clock.clone(),
+        dispatched: Cell::new(0),
+    });
+    let observer: Rc<dyn PhaseObserver> = Rc::new(TimelineObserver {
+        clock: clock.clone(),
+        events: RefCell::new(Vec::new()),
+    });
+    let plans = vec![
+        ScheduledPhasePlan::new(
+            phase_config("first", PhaseKind::Profiling, true),
+            one_request_workload(),
+            ScheduledAncillaryPolicies::default(),
+        )
+        .with_sidecars(vec![Rc::new(RecordingSidecar::new(
+            "first",
+            clock.clone(),
+            sidecar_events.clone(),
+        ))]),
+        ScheduledPhasePlan::new(
+            phase_config("second", PhaseKind::Profiling, false),
+            one_request_workload(),
+            ScheduledAncillaryPolicies::default(),
+        )
+        .with_sidecars(vec![Rc::new(RecordingSidecar::new(
+            "second",
+            clock.clone(),
+            sidecar_events.clone(),
+        ))]),
+    ];
+    let clock_dyn: Rc<dyn Clock> = clock.clone();
+
+    drive_sim(clock, async move {
+        run_scheduled_phases(plans, clock_dyn, dispatcher, observer).await
+    })
+    .unwrap();
+
+    assert_eq!(
+        sidecar_events.borrow().as_slice(),
+        &[
+            ("first", "start", 0),
+            ("second", "start", 0),
+            ("second", "finish", 5),
+            ("first", "finish", 20),
+        ]
+    );
 }
 
 #[test]
@@ -450,6 +502,41 @@ impl TurnDispatcher for DebtDispatcher {
 struct DelayedProcessor {
     clock: Rc<SimClock>,
     completed_at: Cell<Option<i64>>,
+}
+
+struct RecordingSidecar {
+    phase: &'static str,
+    clock: Rc<SimClock>,
+    events: SidecarEvents,
+}
+
+type SidecarEvent = (&'static str, &'static str, i64);
+type SidecarEvents = Rc<RefCell<Vec<SidecarEvent>>>;
+
+impl RecordingSidecar {
+    fn new(phase: &'static str, clock: Rc<SimClock>, events: SidecarEvents) -> Self {
+        Self {
+            phase,
+            clock,
+            events,
+        }
+    }
+}
+
+impl ScheduledPhaseSidecar for RecordingSidecar {
+    fn start(&self) -> aiperf_runtime::timing::LocalPhaseFuture<anyhow::Result<()>> {
+        self.events
+            .borrow_mut()
+            .push((self.phase, "start", self.clock.now_ns()));
+        Box::pin(async { Ok(()) })
+    }
+
+    fn finish(&self) -> aiperf_runtime::timing::LocalPhaseFuture<anyhow::Result<()>> {
+        self.events
+            .borrow_mut()
+            .push((self.phase, "finish", self.clock.now_ns()));
+        Box::pin(async { Ok(()) })
+    }
 }
 
 #[async_trait(?Send)]

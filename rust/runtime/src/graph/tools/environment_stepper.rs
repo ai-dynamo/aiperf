@@ -1126,7 +1126,7 @@ pub enum EnvironmentStepperError {
     ProtocolConfigMismatch,
     /// The binding had no immutable input reference declarations.
     MissingArtifactBindings,
-    /// The immutable environment episode identity had no protocol episode correlation.
+    /// The immutable environment episode identity was empty.
     InvalidEpisodeIdentity,
     /// The immutable environment binding selected a zero operation deadline.
     InvalidOperationDeadline,

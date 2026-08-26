@@ -87,7 +87,7 @@ pub trait NativeGraphLowererProvider: Send + Sync {
     ) -> Result<Arc<dyn GraphLowererFactory>, NativeGraphFactoryError>;
 }
 
-/// Built-in package-bound lowerer provider for schema-1.1 NativeGraph sources.
+/// Built-in package-bound lowerer provider for `native_graph/1.0` sources.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct PackageNativeGraphLowererProvider;
 

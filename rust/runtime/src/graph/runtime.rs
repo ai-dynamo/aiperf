@@ -457,7 +457,7 @@ where
 /// network): the `RealClock` + in-process-transport corner of the
 /// `{transport, clock}` matrix. Speed scaling is expressed in the (already
 /// speed-adjusted) trace times, so an event at source time `t` is stepped when
-/// the wall clock reaches `t`; `--speedup-ratio` therefore shows up as smaller
+/// the wall clock reaches `t`; speed scaling therefore shows up as smaller
 /// `t` values and shorter real sleeps, exactly as in the virtual driver.
 ///
 /// `wakeup` is notified by the source's producer (the in-process sink) whenever

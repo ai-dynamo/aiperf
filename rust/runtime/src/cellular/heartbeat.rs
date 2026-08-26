@@ -3,7 +3,7 @@
 
 //! Live cellular metrics heartbeats.
 //!
-//! A [`MetricsHeartbeat`] is a bounded-cadence (≤1 s) live snapshot: monotonic
+//! A [`MetricsHeartbeat`] is a phase-progress-cadence live snapshot: monotonic
 //! counters, concurrency saturation, and associatively-mergeable t-digest sketches
 //! of the key latency distributions (TTFT / ITL / request latency). Live
 //! percentiles are sketch-derived; final reports remain exact from record

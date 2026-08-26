@@ -3,7 +3,7 @@
 
 [workspace]
 resolver = "3"
-# The 16 aiperf-* library crates were absorbed into `rust/aiperf`. There is no
+# The 16 aiperf-* library crates were absorbed into `rust/runtime`. There is no
 # separate runner executable: `rust/cli` (binary `aiperf`) is now
 # BOTH the entry point and the execution engine, re-execing itself (`aiperf
 # --execute`) over the protocol-v2 stdio seam for each run/probe/cell.
@@ -92,9 +92,9 @@ url = "2"
 
 # Plain `cargo build --release`/`--release -p <crate>` uses cargo's stock
 # release defaults (opt-level=3, lto=false, codegen-units=16) — fast to build,
-# for local iteration and non-shipped crates. Shipped product binaries
-# (aiperf-cli, aiperf-mock-server) build via the `optimized` profile below
-# instead, via `make native-cli`/`bundle-cli`/`mock-server-native`.
+# for local iteration and non-shipped crates, and also what `make native-cli`
+# and `make mock-server-native` use. The packaged binary builds via the
+# `optimized` profile below instead, through `make bundle-cli`/`make wheel`.
 
 # Whole-program-optimized profile for the actual shipped product binaries.
 # `cargo build --profile optimized -p aiperf-cli`/`aiperf-mock-server`.

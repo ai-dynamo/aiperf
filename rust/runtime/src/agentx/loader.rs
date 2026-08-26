@@ -9,11 +9,12 @@
 //! `raw_messages` + timing + prefix-cache tallies into
 //! [`ReconstructedConversation`]s.
 //!
-//! Scope so far: the **main-conversation** path (a trace's top-level normal
-//! requests, `source_kind = "weka_main"`), no subagent/flat-chain expansion and
-//! no idle-gap time-warp. Those layer on next. The token generator is injected
-//! via [`super::synth::TokenSynth`] (a [`super::corpus::CorpusTokenSynth`] in
-//! production; a stub in parity tests).
+//! One trace yields the root conversation from its top-level normal requests
+//! (`source_kind = "weka_main"`) plus one conversation per detected flat worker
+//! chain (`weka_flat`) and per active subagent chain (`weka_subagent`); the
+//! idle-gap time-warp is applied after chain detection and before any timing is
+//! derived. The token generator is injected via [`super::synth::TokenSynth`] (a
+//! [`super::corpus::CorpusTokenSynth`] in production; a stub in parity tests).
 
 use std::collections::{HashMap, HashSet};
 
@@ -397,14 +398,6 @@ pub fn reconstruct_conversation(
     })
 }
 
-/// Convert a parsed `WekaTrace` into its reconstructed conversations (the root
-/// `weka_main` conversation plus one `weka_subagent` child per active subagent
-/// chain). Ports the no-flat-chain, no-idle-warp path of
-/// `WekaTraceLoader.convert_to_conversations`.
-///
-/// `synth` must be freshly scoped to `trace_id` (its per-scope block cache is
-/// shared across the trace's conversations under the `local` hash namespace).
-/// Flat-chain splitting and the idle-gap time-warp are not yet applied.
 /// Detected spawn/join structure for one subagent entry, used to surface
 /// [`SpawnBranch`]/[`JoinPrerequisite`] onto the root conversation's turns.
 struct SubagentSpawn {
@@ -420,6 +413,15 @@ struct SubagentSpawn {
     child_session_ids: Vec<String>,
 }
 
+/// Convert a parsed `WekaTrace` into its reconstructed conversations: the root
+/// `weka_main` conversation, one `weka_flat` conversation per detected flat
+/// worker chain, and one `weka_subagent` child per active subagent chain (ports
+/// `WekaTraceLoader.convert_to_conversations`).
+///
+/// `synth` must be freshly scoped to `trace_id` (its per-scope block cache is
+/// shared across the trace's conversations under the `local` hash namespace).
+/// Chain detection runs on raw timestamps; the idle-gap time-warp is applied
+/// afterwards, before per-turn timing is derived.
 pub fn convert_trace_to_conversations(
     trace_id: &str,
     trace: &crate::agentx::trace::WekaTrace,
@@ -652,11 +654,11 @@ pub fn convert_trace_to_conversations(
     Ok(out)
 }
 
-/// One trace's conversion result: its trace id and the reconstructed
-/// conversations (or the turn-0 prefix error).
+/// One trace's conversion result: its reconstructed conversations, or the
+/// turn-0 prefix error.
 pub type TraceConversions = Result<Vec<ReconstructedConversation>, PrefixTooTruncated>;
 
-/// Reconstruct many traces **serially** (Slice 2 reference path). `make_synth`
+/// Reconstruct many traces **serially**, the reference ordering. `make_synth`
 /// builds a fresh, trace-scoped [`TokenSynth`] for each `(trace_id, block_size)`.
 pub fn convert_traces_serial<S, MK>(
     traces: &[(String, crate::agentx::trace::WekaTrace)],
@@ -678,7 +680,7 @@ where
         .collect()
 }
 
-/// Reconstruct many traces **in parallel** (Slice 2, `rayon`). Each trace is
+/// Reconstruct many traces **in parallel** over `rayon`. Each trace is
 /// self-contained (own trace-scoped synth + hash namespace), so the output is
 /// **byte-identical to [`convert_traces_serial`]** regardless of thread count.
 pub fn convert_traces_parallel<S, MK>(
@@ -836,10 +838,10 @@ pub fn hf_select_traces(
 
 /// Parse HF dataset rows into `WekaTrace`s and apply filter-then-cap selection
 /// (Python `SemiAnalysisCCTracesWekaLoader._validate_rows`). Each row is a JSON
-/// object validated as a `WekaTrace`; invalid rows error. The literal HuggingFace
-/// download is the only piece not here — it is a thin adapter that yields these
-/// rows (a `Vec<serde_json::Value>`), so the parse + select + delegate logic is
-/// fully implemented and testable without the network.
+/// object validated as a `WekaTrace`; invalid rows error. Rows arrive as a
+/// `Vec<serde_json::Value>` from the download adapter in
+/// [`crate::agentx::hf_dataset`], so parse, select, and delegation are
+/// exercisable without the network.
 pub fn load_hf_traces_from_rows(
     rows: Vec<serde_json::Value>,
     hf_dataset_name: &str,
@@ -861,12 +863,17 @@ pub fn load_hf_traces_from_rows(
         })?;
         traces.push((trace.id.clone(), trace));
     }
-    Ok(hf_select_traces(
-        traces,
-        num_dataset_entries,
-        max_context_length,
-        max_osl,
-    ))
+    let (selected, stats) =
+        hf_select_traces(traces, num_dataset_entries, max_context_length, max_osl);
+    if selected.is_empty() && max_context_length.is_some() && stats.rejected_by_maxctx > 0 {
+        return Err(crate::agentx::selection::no_eligible_traces_error(
+            hf_dataset_name,
+            stats,
+            num_dataset_entries,
+            max_context_length,
+        ));
+    }
+    Ok((selected, stats))
 }
 
 /// Build a [`NormalReq`] from a wire normal request.
@@ -1050,7 +1057,7 @@ mod tests {
             .unwrap();
             // Produce the export-level raw records from the real-corpus
             // reconstruction and confirm every turn's content+timing survives
-            // serialization byte-for-byte (the export.records raw artifact).
+            // serialization byte-for-byte (the artifacts.records raw artifact).
             let export_records = crate::agentx::export::raw_export_trace(&convs, None);
             let total_turns: usize = convs.iter().map(|c| c.turns.len()).sum();
             assert_eq!(export_records.len(), total_turns, "export record count");
@@ -1152,6 +1159,40 @@ mod tests {
         let bad = vec![serde_json::json!({"id": "x", "bogus": 1})];
         let err = load_hf_traces_from_rows(bad, "ds", None, None, None).unwrap_err();
         assert!(err.contains("failed WekaTrace validation"));
+    }
+
+    #[test]
+    fn hf_rows_all_rejected_report_the_smallest_peak_context() {
+        let row = |id: &str, input_tokens: i64, output_tokens: i64| {
+            serde_json::json!({
+                "id": id,
+                "models": ["m"],
+                "block_size": 4,
+                "hash_id_scope": "local",
+                "requests": [{
+                    "t": 0.0,
+                    "type": "n",
+                    "model": "m",
+                    "in": input_tokens,
+                    "out": output_tokens,
+                    "hash_ids": [1]
+                }]
+            })
+        };
+        let error = load_hf_traces_from_rows(
+            vec![row("too-large", 900, 50), row("smaller", 100, 4)],
+            "org/weka",
+            None,
+            Some(100),
+            None,
+        )
+        .expect_err("every trace exceeds the configured context cap");
+
+        assert!(error.contains("No eligible traces in org/weka"), "{error}");
+        assert!(
+            error.contains("Smallest trace requires 104 tokens; raise --max-context-length to at least that (e.g. --max-context-length 104) to admit any trace."),
+            "{error}"
+        );
     }
 
     #[test]

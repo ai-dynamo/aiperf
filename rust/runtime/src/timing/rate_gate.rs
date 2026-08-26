@@ -118,7 +118,7 @@ impl GlobalRateGate {
     /// Claim the next fire slot and wait for it via `clock`.
     ///
     /// Each caller claims a monotonically-increasing slot by atomically
-    /// advancing `next_fire_ns`. The caller then sleeps until their fire time
+    /// advancing `next_slot`. The caller then sleeps until their fire time
     /// has arrived according to `clock`. Returns the claimed fire time (in
     /// run-clock nanoseconds) so callers — notably tests proving the
     /// cross-thread claim property — can record which slot they were
@@ -175,12 +175,12 @@ mod tests {
     /// Proves the cross-thread serialization property the doc comments
     /// assert: real `std::thread::spawn` OS threads racing `wait_turn`
     /// concurrently each claim a distinct, gapless slot in the shared
-    /// `next_fire_ns` sequence. Each thread builds its own current-thread
+    /// `next_slot` sequence. Each thread builds its own current-thread
     /// runtime, `LocalSet`, and `Rc<RealClock>` (both `!Send`), all anchored
     /// to one shared [`RealClockAnchor`] (`Copy`/`Send`) so every thread's
     /// `now_ns()` sits on the same timeline; the only thing actually shared
     /// across threads for the claim itself is the `Arc<GlobalRateGate>` and
-    /// its internal `AtomicI64`.
+    /// its internal `AtomicU64`.
     #[test]
     fn global_rate_gate_serializes_fire_times_across_real_os_threads() {
         use std::sync::Mutex;

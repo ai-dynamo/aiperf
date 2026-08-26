@@ -328,6 +328,12 @@ impl AIPerfHarness {
         self.run_in_artifact_dir(profile_args, self.artifact_path())
     }
 
+    /// Run a profile into a named child of this harness's artifact directory.
+    /// This keeps A/B outputs disjoint when both products target the same mock.
+    pub fn run_in(&self, profile_args: &str, artifact_subdir: &str) -> RunResult {
+        self.run_env_in(profile_args, artifact_subdir, &[])
+    }
+
     /// Like [`run`](Self::run) but with an explicit timeout in seconds.
     pub fn run_timeout(&self, profile_args: &str, secs: u64) -> RunResult {
         self.run_timeout_in_artifact_dir(profile_args, secs, self.artifact_path())
@@ -386,6 +392,28 @@ impl AIPerfHarness {
         self.exec_into_artifact_dir(args, DEFAULT_TIMEOUT_SECS, extra_env, artifact_dir)
     }
 
+    /// Like [`run_in`](Self::run_in) with extra subprocess environment values.
+    pub fn run_env_in(
+        &self,
+        profile_args: &str,
+        artifact_subdir: &str,
+        extra_env: &[(&str, &str)],
+    ) -> RunResult {
+        let artifact_dir = self.artifact_path().join(artifact_subdir);
+        std::fs::create_dir_all(&artifact_dir).expect("create named artifact directory");
+        let mut args = vec!["profile".to_string()];
+        args.extend(shell_split(profile_args));
+        args.push("--artifact-dir".to_string());
+        args.push(artifact_dir.display().to_string());
+        if !args.iter().any(|a| a == "--tokenizer") {
+            args.push("--tokenizer".to_string());
+            args.push(default_tokenizer());
+        }
+        let mut result = self.exec_env(args, DEFAULT_TIMEOUT_SECS, extra_env);
+        result.artifacts.dir = artifact_dir;
+        result
+    }
+
     /// Run an arbitrary non-profile subcommand (e.g. `plot ...`). No
     /// `--artifact-dir`/`--tokenizer` are appended and no server is required.
     pub fn run_no_server(&self, args: &str) -> RunResult {
@@ -412,8 +440,8 @@ impl AIPerfHarness {
         extra_env: &[(&str, &str)],
         artifact_dir: &Path,
     ) -> RunResult {
-        // The Python frontend owns the `AIPERF_RUNTIME_ENGINE=python` selector.
-        // Exact-upstream oracles may name an older executable module explicitly.
+        // The Python frontend owns the `AIPERF_RUNTIME_ENGINE=python` selector;
+        // exact-upstream oracles may name an older executable module explicitly.
         let python_module = extra_env
             .iter()
             .find(|(key, _)| *key == "AIPERF_E2E_PYTHON_MODULE")

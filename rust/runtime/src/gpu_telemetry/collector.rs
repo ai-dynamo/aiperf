@@ -64,7 +64,8 @@ impl GpuTelemetryCollector {
         self.source.shutdown().await
     }
 
-    /// Performs one cadence scrape and ingests it unless its body is unchanged.
+    /// Performs one cadence scrape, ingesting it and returning its record count.
+    /// A source that yields no scrape ingests nothing and returns 0.
     pub async fn scrape_continuous(
         &self,
         accumulator: &mut GpuTelemetryAccumulator,

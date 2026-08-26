@@ -422,9 +422,10 @@ impl PreparedEndpointBehavior for ChatEndpoint {
         }
         merge_extra(&mut payload, endpoint.extra.as_ref());
         merge_extra(&mut payload, last.extra_body.as_ref());
-        if endpoint.streaming && endpoint.use_server_token_count {
-            ensure_include_usage(&mut payload);
-        }
+        ensure_openai_stream_usage(
+            &mut payload,
+            endpoint.per_chunk_usage && endpoint.use_server_token_count,
+        );
         build_reserved_plan(&payload, "messages", message_wires)
     }
 
@@ -1046,9 +1047,7 @@ impl PreparedEndpointBehavior for CompletionsEndpoint {
         }
         merge_extra(&mut payload, endpoint.extra.as_ref());
         merge_extra(&mut payload, turn.extra_body.as_ref());
-        if endpoint.streaming && endpoint.use_server_token_count {
-            ensure_include_usage(&mut payload);
-        }
+        ensure_openai_stream_usage(&mut payload, false);
         Ok(BodyPlan::from_object(&payload)?)
     }
 }
@@ -1240,21 +1239,30 @@ fn serialize_rendered_messages(
         .collect()
 }
 
-/// Whether the first assembled message carries a `system` role. A lowered content
-/// wire is `render_turn_message` output — `{"role":"...",...}` with the role
-/// first — so a byte-prefix check is exact and avoids parsing on the hot path.
-fn rendered_first_is_system(messages: &[RenderedMessage]) -> bool {
-    match messages.first() {
-        Some(RenderedMessage::Value(value)) => {
-            value
-                .as_object()
-                .and_then(|obj| obj.get("role"))
-                .and_then(Value::as_str)
-                == Some("system")
+/// Whether Chat assembly's first non-empty message carries a `system` role.
+/// Inspect lowered wires without parsing so a conversation prompt pays the
+/// mutable-render cost only when it actually has to merge an authored system.
+fn turns_first_is_system(turns: &[Turn]) -> bool {
+    for turn in turns {
+        if let Some(lowered) = turn.lowered.as_ref() {
+            if let Some(wire) = lowered.first() {
+                return wire.starts_with(br#"{"role":"system""#);
+            }
+            continue;
         }
-        Some(RenderedMessage::Wire(wire)) => wire.starts_with(br#"{"role":"system""#),
-        None => false,
+        if let Some(raw_messages) = turn.raw_messages.as_ref() {
+            if let Some(message) = raw_messages.first() {
+                return message
+                    .as_object()
+                    .and_then(|object| object.get("role"))
+                    .and_then(Value::as_str)
+                    == Some("system");
+            }
+            continue;
+        }
+        return turn.role.as_deref() == Some("system");
     }
+    false
 }
 
 /// Assemble Chat Completions `messages` wires with system and user-context prefixes.
@@ -1262,18 +1270,20 @@ fn format_chat_message_wires(
     request: &PreparedRequest<'_>,
     turns: &[Turn],
 ) -> EndpointResult<SmallVec<[Bytes; 1]>> {
-    let warmup = request.credit_phase() == CreditPhase::Warmup;
-    // Under warmup the first turn is rendered to a mutable value so the system
-    // prompt can be folded in place; otherwise its lowered wire is spliced.
-    let mut rendered = rendered_turn_messages(turns, PartShape::Chat, warmup)?;
-    let first_is_system = rendered_first_is_system(&rendered);
+    let system = request.system_message().filter(|value| !value.is_empty());
+    let first_is_system = system.is_some() && turns_first_is_system(turns);
+    // Warmup already resolves composed media and can re-render its first turn.
+    // Profiling keeps lowered wires splice-only until an actual merge requires
+    // parsing the one leading system wire below.
+    let render_first = first_is_system && request.credit_phase() == CreditPhase::Warmup;
+    let mut rendered = rendered_turn_messages(turns, PartShape::Chat, render_first)?;
     let mut out = Vec::new();
-    if let Some(system) = request.system_message().filter(|value| !value.is_empty()) {
-        if first_is_system && warmup {
-            if let Some(RenderedMessage::Value(Value::Object(first))) = rendered.first_mut() {
-                prepend_system_into_object(first, system);
+    if let Some(system) = system {
+        if first_is_system {
+            if let Some(first) = rendered.first_mut() {
+                prepend_system_into_rendered(first, system)?;
             }
-        } else if !first_is_system {
+        } else {
             out.push(RenderedMessage::Value(
                 json!({"role":"system","content":system}),
             ));
@@ -1289,6 +1299,19 @@ fn format_chat_message_wires(
     }
     out.extend(rendered);
     serialize_rendered_messages(out)
+}
+
+fn prepend_system_into_rendered(first: &mut RenderedMessage, system: &str) -> EndpointResult<()> {
+    if let RenderedMessage::Wire(wire) = first {
+        *first = RenderedMessage::Value(serde_json::from_slice(wire)?);
+    }
+    let RenderedMessage::Value(Value::Object(first)) = first else {
+        return Err(EndpointError::InvalidRequest(
+            "leading Chat system message must be a JSON object".into(),
+        ));
+    };
+    prepend_system_into_object(first, system);
+    Ok(())
 }
 
 /// Assemble Responses `input` wires with the user-context prefix.
@@ -1552,12 +1575,12 @@ fn render_video_part(url: &str, shape: PartShape) -> EndpointResult<Value> {
 fn prepend_system_into_object(first: &mut Map<String, Value>, system: &str) {
     match first.get_mut("content") {
         Some(Value::String(content)) if content.is_empty() => *content = system.to_string(),
-        Some(Value::String(content)) => *content = format!("{system}\n{content}"),
+        Some(Value::String(content)) => *content = format!("{system}\n\n{content}"),
         Some(Value::Array(parts)) => parts.insert(0, json!({"type":"text","text":system})),
         Some(Value::Null) | None => {
             first.insert("content".into(), Value::String(system.to_string()));
         }
-        Some(other) => *other = Value::String(format!("{system}\n{other}")),
+        Some(other) => *other = Value::String(system.to_string()),
     }
 }
 
@@ -1585,6 +1608,33 @@ fn ensure_include_usage(payload: &mut Map<String, Value>) {
         Some(_) | None => {
             payload.insert("stream_options".into(), json!({"include_usage": true}));
         }
+    }
+}
+
+fn ensure_openai_stream_usage(payload: &mut Map<String, Value>, continuous: bool) {
+    if payload.get("stream") != Some(&Value::Bool(true)) {
+        return;
+    }
+    match payload.get_mut("stream_options") {
+        Some(Value::Object(stream_options)) => {
+            stream_options
+                .entry("include_usage")
+                .or_insert(Value::Bool(true));
+            if continuous {
+                stream_options
+                    .entry("continuous_usage_stats")
+                    .or_insert(Value::Bool(true));
+            }
+        }
+        Some(Value::Null) | None => {
+            let mut stream_options =
+                Map::from_iter([("include_usage".to_owned(), Value::Bool(true))]);
+            if continuous {
+                stream_options.insert("continuous_usage_stats".to_owned(), Value::Bool(true));
+            }
+            payload.insert("stream_options".into(), Value::Object(stream_options));
+        }
+        Some(_) => {}
     }
 }
 
@@ -2203,6 +2253,172 @@ mod lowering_tests {
             images: vec![Media::new(vec![image.to_string()])],
             ..Turn::default()
         }
+    }
+
+    fn openai_bodies(turn: Turn, endpoint: &RawEndpointConfig) -> [Value; 2] {
+        let turns = [turn];
+        let request = PreparedRequest::new(
+            "gpt-test",
+            &turns,
+            None,
+            None,
+            CreditPhase::Profiling,
+            None,
+            None,
+            None,
+        );
+        let materialize = |body: BodyPlan| {
+            serde_json::from_slice(&body.materialize_standalone().unwrap()).unwrap()
+        };
+        [
+            materialize(
+                ChatEndpoint
+                    .format_prepared_payload(&request, endpoint)
+                    .unwrap(),
+            ),
+            materialize(
+                CompletionsEndpoint
+                    .format_prepared_payload(&request, endpoint)
+                    .unwrap(),
+            ),
+        ]
+    }
+
+    #[test]
+    fn streaming_chat_and_completions_request_usage_without_server_token_counting() {
+        let endpoint = RawEndpointConfig {
+            streaming: true,
+            ..RawEndpointConfig::default()
+        };
+
+        for body in openai_bodies(text_turn(), &endpoint) {
+            assert_eq!(body["stream_options"]["include_usage"], true);
+        }
+    }
+
+    #[test]
+    fn authored_stream_options_are_preserved_for_chat_and_completions() {
+        let endpoint = RawEndpointConfig {
+            streaming: true,
+            extra: Some(Map::from_iter([(
+                "stream_options".to_owned(),
+                json!({"include_usage": false, "continuous_usage_stats": true}),
+            )])),
+            ..RawEndpointConfig::default()
+        };
+
+        for body in openai_bodies(text_turn(), &endpoint) {
+            assert_eq!(body["stream_options"]["include_usage"], false);
+            assert_eq!(body["stream_options"]["continuous_usage_stats"], true);
+        }
+    }
+
+    #[test]
+    fn effective_stream_value_controls_usage_negotiation() {
+        let mut turn = text_turn();
+        turn.extra_body = Some(Map::from_iter([
+            ("stream".to_owned(), Value::Bool(false)),
+            ("stream_options".to_owned(), Value::Null),
+        ]));
+        let endpoint = RawEndpointConfig {
+            streaming: true,
+            use_server_token_count: true,
+            ..RawEndpointConfig::default()
+        };
+
+        for body in openai_bodies(turn, &endpoint) {
+            assert_eq!(body["stream"], false);
+            assert!(body["stream_options"].is_null());
+        }
+    }
+
+    #[test]
+    fn null_options_are_initialized_but_truthy_non_objects_are_preserved() {
+        let mut endpoint = RawEndpointConfig {
+            streaming: true,
+            extra: Some(Map::from_iter([("stream_options".to_owned(), Value::Null)])),
+            ..RawEndpointConfig::default()
+        };
+
+        for body in openai_bodies(text_turn(), &endpoint) {
+            assert_eq!(body["stream_options"]["include_usage"], true);
+        }
+
+        endpoint.extra = Some(Map::from_iter([(
+            "stream_options".to_owned(),
+            Value::String("provider-owned".to_owned()),
+        )]));
+        for body in openai_bodies(text_turn(), &endpoint) {
+            assert_eq!(body["stream_options"], "provider-owned");
+        }
+    }
+
+    fn chat_payload(endpoint: &RawEndpointConfig) -> Value {
+        let [chat, _completions] = openai_bodies(text_turn(), endpoint);
+        chat
+    }
+
+    #[test]
+    fn chat_per_chunk_usage_injects_only_when_opted_in() {
+        let mut endpoint = RawEndpointConfig {
+            streaming: true,
+            use_server_token_count: true,
+            per_chunk_usage: true,
+            ..RawEndpointConfig::default()
+        };
+        let enabled = chat_payload(&endpoint);
+        assert_eq!(
+            enabled["stream_options"],
+            json!({"include_usage": true, "continuous_usage_stats": true})
+        );
+
+        endpoint.per_chunk_usage = false;
+        let disabled = chat_payload(&endpoint);
+        assert_eq!(disabled["stream_options"], json!({"include_usage": true}));
+    }
+
+    #[test]
+    fn chat_per_chunk_usage_preserves_authored_stream_options() {
+        let endpoint = RawEndpointConfig {
+            streaming: true,
+            use_server_token_count: true,
+            per_chunk_usage: true,
+            extra: Some(Map::from_iter([(
+                "stream_options".to_owned(),
+                json!({
+                    "include_usage": false,
+                    "continuous_usage_stats": false,
+                    "unrelated": "retained"
+                }),
+            )])),
+            ..RawEndpointConfig::default()
+        };
+        assert_eq!(
+            chat_payload(&endpoint)["stream_options"],
+            json!({
+                "include_usage": false,
+                "continuous_usage_stats": false,
+                "unrelated": "retained"
+            })
+        );
+    }
+
+    #[test]
+    fn chat_per_chunk_usage_leaves_non_object_stream_options_unchanged() {
+        let endpoint = RawEndpointConfig {
+            streaming: true,
+            use_server_token_count: true,
+            per_chunk_usage: true,
+            extra: Some(Map::from_iter([(
+                "stream_options".to_owned(),
+                Value::String("authored-invalid-shape".to_owned()),
+            )])),
+            ..RawEndpointConfig::default()
+        };
+        assert_eq!(
+            chat_payload(&endpoint)["stream_options"],
+            "authored-invalid-shape"
+        );
     }
 
     #[test]

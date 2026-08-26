@@ -122,7 +122,7 @@ pub fn legacy_pick_start_turn(seed: u64, candidates: &[i64]) -> Option<i64> {
     Some(candidates[idx])
 }
 
-/// Sample the timestamped-trace t* in `[lo, hi]` via numpy
+/// Sample the timestamped-trace t* in `[lo, hi)` via numpy
 /// `default_rng(seed).uniform(lo, hi)` (Python `_build_timestamped_trajectory`),
 /// reproduced as `lo + random()*(hi-lo)`. Returns `lo` when `hi == lo`.
 pub fn timestamped_t_star_ms(seed: u64, lo: f64, hi: f64) -> f64 {

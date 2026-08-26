@@ -29,7 +29,9 @@ pub fn validate(cfg: &BenchmarkConfig) -> Result<()> {
     validate_prefill_requires_streaming(cfg)?;
     validate_endpoint_profile_names(cfg)?;
     validate_phase_dataset_compatibility(cfg)?;
+    validate_system_prompt_compatibility(cfg)?;
     validate_cache_bust_compatibility(cfg)?;
+    validate_warmup_isolation_system(cfg)?;
     validate_recorded_agent_replay(cfg)?;
     validate_agentic_cache_warmup(cfg)?;
     Ok(())
@@ -203,15 +205,98 @@ fn validate_phase_dataset_compatibility(cfg: &BenchmarkConfig) -> Result<()> {
     Ok(())
 }
 
+/// Reject a verbatim system prompt that conflicts with synthetic context shape
+/// or would be dropped by an endpoint without a system-message wire field.
+fn validate_system_prompt_compatibility(cfg: &BenchmarkConfig) -> Result<()> {
+    let Some(dataset) = cfg.datasets.as_ref().and_then(|datasets| datasets.first()) else {
+        return Ok(());
+    };
+    let system_prompt = match dataset {
+        Dataset::Synthetic(dataset) => dataset.system_prompt.as_deref(),
+        Dataset::File(dataset) => dataset.system_prompt.as_deref(),
+        Dataset::Public(dataset) => dataset.system_prompt.as_deref(),
+    };
+    let Some(system_prompt) = system_prompt else {
+        return Ok(());
+    };
+    if system_prompt.trim().is_empty() {
+        bail!("system prompt cannot be empty or whitespace-only");
+    }
+
+    if let Dataset::Synthetic(dataset) = dataset
+        && let Some(prefixes) = dataset.prefix_prompts.as_ref()
+    {
+        if prefixes.shared_system_length.is_some() {
+            bail!(
+                "--system-prompt/--system-prompt-file and \
+                 --shared-system-prompt-length are mutually exclusive: both fill \
+                 the system message"
+            );
+        }
+        if prefixes.pool_size.is_some_and(|value| value > 0)
+            || prefixes.length.is_some_and(|value| value > 0)
+        {
+            bail!(
+                "--system-prompt/--system-prompt-file and \
+                 --num-prefix-prompts/--prefix-prompt-length are mutually exclusive: \
+                 both fill the system-message prefix slot"
+            );
+        }
+    }
+
+    let endpoint_type = cfg
+        .endpoint
+        .as_ref()
+        .map(|endpoint| endpoint.endpoint_type.0.as_str())
+        .unwrap_or("");
+    if !matches!(
+        endpoint_type,
+        "chat" | "chat_embeddings" | "messages" | "responses"
+    ) {
+        bail!(
+            "--system-prompt/--system-prompt-file is not supported by endpoint type \
+             '{endpoint_type}' (no system role), so the text would never reach the wire. \
+             Supported endpoint types: chat, chat_embeddings, messages, responses."
+        );
+    }
+    Ok(())
+}
+
+/// A synthetic warmup-isolation system marker requires a statically present
+/// system message; a verbatim prompt satisfies that contract.
+fn validate_warmup_isolation_system(cfg: &BenchmarkConfig) -> Result<()> {
+    if cache_bust_target(cfg) != CacheBustTarget::WarmupIsolationSystem {
+        return Ok(());
+    }
+    let Some(Dataset::Synthetic(dataset)) =
+        cfg.datasets.as_ref().and_then(|datasets| datasets.first())
+    else {
+        return Ok(());
+    };
+    let has_system = dataset.system_prompt.is_some()
+        || dataset
+            .prefix_prompts
+            .as_ref()
+            .is_some_and(|prefixes| prefixes.shared_system_length.is_some());
+    if !has_system {
+        bail!(
+            "cache_bust=warmup_isolation_system requires a shared system prompt, \
+             but no shared_system_length or verbatim system prompt is configured"
+        );
+    }
+    Ok(())
+}
+
 /// The agentic-replay timing-mode identifier (Python `TimingMode.AGENTIC_REPLAY`).
 const AGENTIC_REPLAY: &str = "agentic_replay";
 
 /// Resolve the default dataset's cache-bust target.
 ///
 /// Mirrors Python `BenchmarkConfig.get_cache_bust_target`: for a synthetic
-/// dataset the target lives at `prompts.cache_bust.target`; for a file-backed
-/// dataset it lives at the dataset-level `cache_bust.target`. Any other dataset
-/// kind (or an absent dataset section) resolves to `None`.
+/// dataset the target lives at `prompts.cache_bust.target`; for a file-backed or
+/// public dataset it lives at the dataset-level `cache_bust.target`. An absent
+/// dataset section, or a dataset that authored no `cache_bust` block, resolves
+/// to `None`.
 fn cache_bust_target(cfg: &BenchmarkConfig) -> CacheBustTarget {
     let Some(dataset) = cfg.datasets.as_ref().and_then(|d| d.first()) else {
         return CacheBustTarget::None;
@@ -537,6 +622,80 @@ mod tests {
     #[test]
     fn valid_config_passes() {
         assert!(validate(&cfg(valid_value())).is_ok());
+    }
+
+    #[test]
+    fn verbatim_system_prompt_requires_a_system_message_endpoint() {
+        let supported = ["chat", "chat_embeddings", "messages", "responses"];
+        for endpoint_type in supported {
+            let mut value = valid_value();
+            value["endpoint"]["type"] = json!(endpoint_type);
+            value["datasets"] = json!([{
+                "type": "file",
+                "system_prompt": "exact prompt",
+                "sampling": "sequential",
+                "options": {},
+                "path": "/tmp/dataset.jsonl"
+            }]);
+            assert!(validate(&cfg(value)).is_ok(), "{endpoint_type}");
+        }
+
+        let mut value = valid_value();
+        value["endpoint"]["type"] = json!("completions");
+        value["datasets"] = json!([{
+            "type": "file",
+            "system_prompt": "exact prompt",
+            "sampling": "sequential",
+            "options": {},
+            "path": "/tmp/dataset.jsonl"
+        }]);
+        let error = validate(&cfg(value)).unwrap_err().to_string();
+        assert!(error.contains("would never reach the wire"), "{error}");
+        assert!(error.contains("completions"), "{error}");
+    }
+
+    #[test]
+    fn verbatim_system_prompt_conflicts_with_synthetic_system_and_prefix_pool() {
+        for prefix_prompts in [
+            json!({"shared_system_length": 12}),
+            json!({"pool_size": 2, "length": 12}),
+        ] {
+            let mut value = valid_value();
+            value["datasets"] = json!([{
+                "type": "synthetic",
+                "system_prompt": "exact prompt",
+                "prompts": {"batch_size": 1, "isl": {"value": 8.0}},
+                "prefix_prompts": prefix_prompts,
+                "sampling": "sequential",
+                "turn_delay_ratio": 1.0
+            }]);
+            let error = validate(&cfg(value)).unwrap_err().to_string();
+            assert!(error.contains("mutually exclusive"), "{error}");
+        }
+
+        let mut value = valid_value();
+        value["datasets"] = json!([{
+            "type": "synthetic",
+            "system_prompt": "exact prompt",
+            "prompts": {"batch_size": 1, "isl": {"value": 8.0}},
+            "prefix_prompts": {"user_context_length": 12},
+            "sampling": "sequential",
+            "turn_delay_ratio": 1.0
+        }]);
+        assert!(validate(&cfg(value)).is_ok());
+    }
+
+    #[test]
+    fn verbatim_system_prompt_satisfies_warmup_isolation_system() {
+        let mut without_system = valid_value();
+        without_system["datasets"] = synthetic_with_cache_bust("warmup_isolation_system");
+        let error = validate(&cfg(without_system)).unwrap_err().to_string();
+        assert!(error.contains("requires a shared system prompt"), "{error}");
+
+        let mut with_system = valid_value();
+        with_system["datasets"] = synthetic_with_cache_bust("warmup_isolation_system");
+        with_system["datasets"][0]["system_prompt"] = json!("exact prompt");
+        assert!(validate(&cfg(with_system)).is_ok());
     }
 
     #[test]

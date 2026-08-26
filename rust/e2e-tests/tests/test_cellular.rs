@@ -442,10 +442,10 @@ async fn test_cellular_hierarchy_is_refused() {
 }
 
 /// `AIPERF_CELL_BARRIER_FREE=1` makes the
-/// controller trigger START immediately instead of gathering all N cell registrations
-/// first (the O(N) fan-in rendezvous). Start timing does not affect the dataset-
-/// deterministic metrics, so a barrier-free run reproduces the synchronized-start run's
-/// deterministic metrics exactly.
+/// controller skip only the explicit all-registrations wait; START still waits for
+/// every cell's replay preflight report, so the O(N) fan-in survives. Start timing does
+/// not affect the dataset-deterministic metrics, so a barrier-free run reproduces the
+/// synchronized-start run's deterministic metrics exactly.
 #[tokio::test]
 async fn test_cellular_barrier_free_matches_synchronized() {
     let args = |url: &str| {

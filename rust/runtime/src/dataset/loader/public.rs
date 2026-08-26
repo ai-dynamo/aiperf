@@ -1140,7 +1140,7 @@ async fn load_hugging_face_revision_rows(
                 "Hugging Face revision metadata for {dataset}@{revision} has no siblings"
             ))
         })?;
-    // Prefer the dataset's declared `cardData.data_files` mapping: it maps
+    // Prefer the dataset's declared `cardData.configs[].data_files` mapping: it maps
     // (config, split) -> file path directly, so files not named after the split
     // (e.g. a single root `traces.jsonl` mapped to split `train`) resolve. Fall
     // back to matching the split by file name for datasets that omit the mapping.

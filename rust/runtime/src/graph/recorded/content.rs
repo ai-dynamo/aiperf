@@ -6,10 +6,11 @@
 //! `coding`/`sonnet` replay the existing byte-exact corpus-window scheme: each
 //! KV block uses a per-block CPython MT19937 seeded from
 //! `sha256(f"{corpus_child_seed}:{trace_id}:{hash_id}")[:8]`, draws a start
-//! offset via `randrange(corpus_len)`, and takes `[sep] + corpus[start..]`
-//! (wrapping), where `sep` is the tokenizer's block-separation token (BOS/EOS)
-//! and consumes one slot. `random` instead samples deterministic non-EOS token
-//! IDs directly from the tokenizer vocabulary under the same hash-scoped seed.
+//! offset via `randrange(corpus_len)`, and takes `corpus[start..]` (wrapping)
+//! for the full `block_size`. The block-separation token (BOS/EOS) seam exists
+//! but is driven `None` by every recorded compiler, so no slot is consumed.
+//! `random` instead samples deterministic non-EOS token IDs directly from the
+//! tokenizer vocabulary under the same hash-scoped seed.
 //!
 //! Truncating a full `block_size` realization to a message's partial-tail length
 //! remains prefix-stable: for one `(scope, hash)` pair, a shorter request is
@@ -48,7 +49,8 @@ pub(crate) trait RecordedContentSynthesizer {
 /// Immutable corpus state shared across every per-trace synthesizer.
 ///
 /// Tokenizing the corpus and deriving the hash seed is done once; the result is
-/// `Send + Sync` (a token vector, a `u64`, an `Option<u32>`, and a `Send + Sync`
+/// `Send + Sync` (a token vector, a `u64`, an optional random-vocabulary config,
+/// an `Option<u32>`, a `bool`, and a `Send + Sync`
 /// tokenizer reference), so many [`CorpusContentSynthesizer`]s can borrow it
 /// concurrently from a rayon fan-out — each owning only its private block cache.
 pub(crate) struct CorpusShared<'a> {
@@ -282,9 +284,9 @@ impl RecordedContentSynthesizer for CorpusContentSynthesizer<'_> {
     }
 
     fn decode(&self, tokens: &[u32]) -> Result<String, RecordedTraceError> {
-        // `parallel_decode` uses `skip_special_tokens=True`, so the per-block
-        // separator (BOS/EOS) is consumed as a
-        // window slot but never appears in the sent text. Strip it here to match.
+        // Defensive: when a caller drives a block separator (BOS/EOS), it is a
+        // window slot rather than sent text, so it is stripped before decode.
+        // Unreachable while every recorded compiler leaves `sep_token` `None`.
         if let Some(sep) = self.shared.sep_token
             && tokens.contains(&sep)
         {
@@ -304,9 +306,10 @@ impl RecordedContentSynthesizer for CorpusContentSynthesizer<'_> {
 
 /// Draw one KV block's tokens.
 ///
-/// With `python_parity`, the window start reproduces the Python reference byte
-/// for byte: seed a CPython MT from `sha256(f"{hash_seed}:{scope}:{hash}")[:8]`
-/// (big-endian) and take `randrange(corpus_len)`. By default the start is derived
+/// With `python_parity` (the default), the window start reproduces the Python
+/// reference byte for byte: seed a CPython MT from
+/// `sha256(f"{hash_seed}:{scope}:{hash}")[:8]` (big-endian) and take
+/// `randrange(corpus_len)`. Otherwise the start is derived
 /// directly from a BLAKE3 digest of the same key (`blake3(...)[:8] % corpus_len`),
 /// which avoids seeding a fresh 624-word Mersenne state per block. Both paths take
 /// the same wrapping `window_len`-token window and optionally prepend `sep`, so

@@ -145,16 +145,16 @@ fn flatten(attrs: &[KeyValue]) -> BTreeMap<String, String> {
 /// Populated `bucket_counts` require the retain path, forced here with
 /// `AIPERF_RUNTIME_EXACT_FOLD=0`. Per-record OTLP is only reachable that way on a
 /// multi-worker run, and `runtime.workers` defaults to the machine's parallelism
-/// (`protocol_v2.rs:222`), so the default is sharded: the sharded fold arm returns only
-/// *errored* records to the post-run `observe_otel_record` loop
-/// (`compose_sidecars.rs:708`) while `folded_otel` is assigned solely inside the
-/// `!shardable` branch (`compose_sidecars.rs:494`). Neither source fires, so
+/// (`protocol_v2.rs`'s `default_worker_count`), so the default is sharded: the sharded
+/// fold arm returns only *errored* records to the post-run `observe_otel_record` loop
+/// (`compose_sidecars.rs:1065`) while `folded_otel` is assigned solely inside the
+/// `!shardable` branch (`compose_sidecars.rs:568`). Neither source fires, so
 /// `report.otel_per_record` stays `None` and the sink falls back to aggregate-only
 /// points whose `bucket_counts` are all zero (`otel.rs:464`). Verified directly: the
 /// same run at default settings reaches the composition point with 0 captured records;
 /// with exact-fold disabled it has all 6. `--export-level raw` alone does not force the
 /// retain path — per-record artifacts stream through the record lane and so do not
-/// disqualify exact-fold (`plan.rs:594`).
+/// disqualify exact-fold (`plan.rs`'s `wants_per_record_artifacts`).
 #[tokio::test]
 async fn test_otlp_export_posts_genai_histograms_with_populated_buckets() {
     const REQUESTS: u32 = 6;
@@ -317,7 +317,7 @@ async fn test_mlflow_file_store_export_writes_a_readable_run() {
     }
 
     // `params/` is deliberately not asserted non-empty: `MlflowExport::build`
-    // hardcodes `params: BTreeMap::new()` (`runtime/src/config/model/export.rs:397`)
+    // hardcodes `params: BTreeMap::new()` (`runtime/src/config/model/export.rs:417`)
     // and nothing ever inserts into it, so the directory is created and left empty for
     // every run. Asserting on it would assert a gap, not a contract.
 }

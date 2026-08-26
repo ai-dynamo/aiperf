@@ -515,13 +515,16 @@ fn format_native_time(ns: Option<i64>) -> String {
 }
 
 /// Render `<stem>_aiperf.json` in this field order: `schema_version`,
-/// `aiperf_version`, `benchmark_id`, declared metrics, `input_config`, `run_info`,
-/// `was_cancelled`, `error_summary`, `warmup_metrics`, then alphabetical extras.
+/// `aiperf_version`, `benchmark_id`, declared metrics, `telemetry_data`,
+/// `input_config`, `run_info`, `was_cancelled`, `error_summary`,
+/// `warmup_metrics`, `steady_state`, alphabetical extras, then
+/// `pooled_spec_decode_acceptance_histogram`.
 /// Caller-owned values are spliced from `cfg.envelope`;
 /// the sink pins `schema_version` and derives `was_cancelled` / `error_summary`
 /// from the [`NativeReport`]. `telemetry_data` is projected from the report's
 /// GPU-telemetry series (see [`render_telemetry_data`]) and omitted when the run
-/// carried none. Absent `start_time`, `end_time`, and `branch_stats` are omitted.
+/// carried none; `steady_state` and the pooled histogram are omitted when the run
+/// produced neither.
 fn render_json(report: &NativeReport, cfg: &GenaiPerfExportConfig) -> String {
     let collected = collect_metrics(&report.metrics, cfg);
     let mut by_name: HashMap<&str, &Projected> = HashMap::new();
@@ -781,6 +784,5 @@ fn render_csv(report: &NativeReport, cfg: &GenaiPerfExportConfig) -> anyhow::Res
     Ok(String::from_utf8(out)?)
 }
 
-/// A CRLF-terminated, minimally quoted CSV writer over an in-memory buffer.
 #[cfg(test)]
 mod tests;

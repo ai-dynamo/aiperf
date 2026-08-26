@@ -804,7 +804,7 @@ pub async fn fetch_cell_envelope() -> Result<DownloadedCellEnvelope> {
         .map_err(|error| anyhow::anyhow!("cell {cell_id} preflight report: {error}"))?;
     // Block until START. Either the phaser reaches generation 1 or the
     // single-shot event triggers — every cell resumes together once the controller has
-    // seen the registrations (or immediately, barrier-free). A poisoned event / finalized
+    // seen every cell's preflight report. A poisoned event / finalized
     // phaser (the controller aborted before starting) surfaces here as an error.
     if let Some((phaser_velo, phaser_controller)) = phaser_handles {
         let mut sub = crate::cellular::transport::phaser_velo::PhaserClient::subscribe(

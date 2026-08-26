@@ -6,7 +6,7 @@
 //! without naming its fields, [`infer_row_layout`] inspects one row and decides
 //! which field carries the prompt (and whether it is a message array) and which
 //! field, if any, carries the reference completion. Pure `serde_json` — no loader
-//! or compose state — so every branch is unit-tested below.
+//! or compose state — so its branches are unit-tested below.
 
 use serde_json::Value;
 

@@ -20,6 +20,8 @@ pub struct SelectionStats {
     pub rejected_by_maxctx: u64,
     /// Largest peak context observed across all scanned candidates.
     pub largest_observed: i64,
+    /// Smallest peak context observed across all scanned candidates.
+    pub smallest_observed: Option<i64>,
     /// Candidates that passed the filter.
     pub eligible: u64,
     /// Candidates actually kept (`== eligible` unless the cap truncated).
@@ -42,6 +44,11 @@ pub fn filter_then_cap<T>(
         if peak > stats.largest_observed {
             stats.largest_observed = peak;
         }
+        stats.smallest_observed = Some(
+            stats
+                .smallest_observed
+                .map_or(peak, |smallest| smallest.min(peak)),
+        );
         if let Some(max) = max_context_length
             && peak > max
         {
@@ -58,6 +65,31 @@ pub fn filter_then_cap<T>(
     }
     stats.loaded = kept.len() as u64;
     (kept, stats)
+}
+
+/// Format the all-rejected context-cap error from one completed selection pass.
+pub(crate) fn no_eligible_traces_error(
+    source: &str,
+    stats: SelectionStats,
+    num_dataset_entries: Option<usize>,
+    max_context_length: Option<i64>,
+) -> String {
+    let max_context_length = max_context_length
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "None".to_string());
+    let num_dataset_entries = num_dataset_entries
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "None".to_string());
+    let mut message = format!(
+        "No eligible traces in {source} after filter-then-cap (scanned {}, --max-context-length={max_context_length}, --num-dataset-entries={num_dataset_entries}).",
+        stats.scanned,
+    );
+    if let Some(smallest) = stats.smallest_observed {
+        message.push_str(&format!(
+            " Smallest trace requires {smallest} tokens; raise --max-context-length to at least that (e.g. --max-context-length {smallest}) to admit any trace."
+        ));
+    }
+    message
 }
 
 #[cfg(test)]
@@ -84,5 +116,11 @@ mod tests {
         assert_eq!(kept, vec!["a", "b"]);
         assert_eq!(stats.loaded, 2);
         assert_eq!(stats.rejected_by_maxctx, 0);
+    }
+
+    #[test]
+    fn records_the_smallest_observed_peak_including_zero() {
+        let (_, stats) = filter_then_cap(vec![("zero", 0), ("high", 12), ("low", 8)], None, None);
+        assert_eq!(stats.smallest_observed, Some(0));
     }
 }

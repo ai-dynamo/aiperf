@@ -46,7 +46,7 @@ pub enum EnvironmentRecipe {
     /// A staged PinchBench workspace mounted at `/workspace`.
     #[serde(rename = "pinchbench")]
     PinchBench,
-    /// An image-native SWE-Bench task rooted at `/testbed`.
+    /// A SWE-Bench task rooted at `/testbed`, image-native unless a local replay stages it.
     #[serde(rename = "swebench")]
     SweBench,
 }

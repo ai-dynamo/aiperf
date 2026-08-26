@@ -665,7 +665,7 @@ pub enum ArtifactError {
     ArtifactBytesQuotaExceeded { limit: u64, requested: u64 },
     /// An upload reservation would exceed the episode-wide byte maximum.
     TotalBytesQuotaExceeded { limit: u64, requested: u64 },
-    /// An upload reservation would exceed the entry maximum.
+    /// An upload reservation or frozen manifest selection would exceed the entry maximum.
     ArtifactCountQuotaExceeded { limit: usize },
     /// A read capability would exceed the active-grant maximum.
     DownloadHandleLimit { limit: usize },

@@ -21,7 +21,7 @@ use crate::dataset::generator::{
 };
 use crate::dataset::loader::{DatasetLoader, DatasetProbe, DatasetSource, LoadConfig, RawRow};
 use crate::dataset::model::{ContentGroup, Conversation, ConversationContextMode, MediaKind, Turn};
-use crate::dataset::prompt::PromptGenerator;
+use crate::dataset::prompt::{GeneratedPrompt, PromptGenerator};
 use crate::dataset::segment::{Handle, Role, SegmentPool};
 use crate::dataset::tokenizer::TextTokenizer;
 
@@ -119,7 +119,11 @@ impl Composer for SyntheticComposer {
             let generator = prompt_generator.as_mut().ok_or_else(|| {
                 DatasetError::Validation("synthetic prefixes require a tokenizer".into())
             })?;
-            build_prefix_pool(&shape.prefixes, generator.as_mut())?
+            build_prefix_pool(
+                &shape.prefixes,
+                generator.as_mut(),
+                config.requires_raw_token_ids,
+            )?
         } else {
             Vec::new()
         };
@@ -161,6 +165,8 @@ impl Composer for SyntheticComposer {
         let mut length_rng = component_rng(config.rng_root, "composer.turn.sequence_length");
         let mut finalizer = config.finalizer()?;
         let mut conversations = Vec::with_capacity(shape.entries);
+        let mut random_range_ordinal = 0_usize;
+        let mut has_warned_random_range_exhausted = false;
 
         for conversation_index in 0..shape.entries {
             let mut conversation = Conversation::new(ids.next_id());
@@ -225,12 +231,31 @@ impl Composer for SyntheticComposer {
                     turn.delay_ms = Some(delay);
                 }
 
-                let paired_lengths = config
-                    .sequence_length_distribution
-                    .as_ref()
-                    .map(|distribution| distribution.sample(&mut length_rng))
-                    .transpose()
-                    .map_err(|error| DatasetError::Validation(error.to_string()))?;
+                let paired_lengths = if let Some(plan) = &config.random_range_plan {
+                    let pair = if let Some(pair) = plan.pair(random_range_ordinal) {
+                        pair
+                    } else {
+                        if !has_warned_random_range_exhausted {
+                            tracing::warn!(
+                                component = "dataset.random_range",
+                                preseed_size = plan.inputs().len(),
+                                turn_ordinal = random_range_ordinal,
+                                "random range cache exhausted; falling back to deterministic sampling"
+                            );
+                            has_warned_random_range_exhausted = true;
+                        }
+                        plan.fallback_pair(&mut length_rng)?
+                    };
+                    random_range_ordinal = random_range_ordinal.saturating_add(1);
+                    Some(pair)
+                } else {
+                    config
+                        .sequence_length_distribution
+                        .as_ref()
+                        .map(|distribution| distribution.sample(&mut length_rng))
+                        .transpose()
+                        .map_err(|error| DatasetError::Validation(error.to_string()))?
+                };
                 if let Some((_, output)) = paired_lengths {
                     turn.max_tokens = Some(u32::try_from(output).map_err(|_| {
                         DatasetError::Validation(format!("sampled OSL {output} exceeds u32"))
@@ -242,15 +267,20 @@ impl Composer for SyntheticComposer {
                         Some((input, _)) => usize::try_from(input).map_err(|_| {
                             DatasetError::Validation(format!("sampled ISL {input} exceeds usize"))
                         })?,
-                        None => usize::try_from(
-                            prompt
-                                .input_tokens
-                                .sample_int(&mut length_rng)
-                                .map_err(|error| DatasetError::Validation(error.to_string()))?,
-                        )
-                        .map_err(|_| {
-                            DatasetError::Validation("sampled ISL exceeds usize".into())
-                        })?,
+                        None => {
+                            let sampled = usize::try_from(
+                                prompt
+                                    .input_tokens
+                                    .sample_int(&mut length_rng)
+                                    .map_err(|error| DatasetError::Validation(error.to_string()))?,
+                            )
+                            .map_err(|_| {
+                                DatasetError::Validation("sampled ISL exceeds usize".into())
+                            })?;
+                            sampled
+                                .saturating_sub(prompt.input_token_subtraction)
+                                .max(1)
+                        }
                     };
                     let generator = prompt_generator.as_deref_mut().ok_or_else(|| {
                         DatasetError::Validation("synthetic prompts require a tokenizer".into())
@@ -259,7 +289,15 @@ impl Composer for SyntheticComposer {
                         let token_ids = if let Some(reuse) = prefix_reuse.as_mut() {
                             reuse.prompt_token_ids(generator, input_tokens)?
                         } else {
-                            generator.generate_token_ids(input_tokens, &[], 1)?
+                            let selected_prefix = (turn_index == 0 && !prefix_pool.is_empty())
+                                .then(|| prefix_rng.choice(&prefix_pool).ok())
+                                .flatten();
+                            if let Some(prefix) = selected_prefix {
+                                generator
+                                    .generate_token_ids_with_prefix(input_tokens, &prefix.tokens)?
+                            } else {
+                                generator.generate_token_ids(input_tokens, &[], 1)?
+                            }
                         };
                         turn.input_tokens = Some(token_ids.len() as u64);
                         let handle = segments.intern_token_ids(parent, token_ids)?;
@@ -302,21 +340,18 @@ impl Composer for SyntheticComposer {
                     } else {
                         let mut handles = SmallVec::new();
                         for _ in 0..prompt.batch_size {
-                            let generated = generator.generate(input_tokens, &[], 1)?;
                             let selected_prefix = (turn_index == 0 && !prefix_pool.is_empty())
                                 .then(|| prefix_rng.choice(&prefix_pool).ok().cloned())
                                 .flatten();
-                            let (text, tokens) = if let Some(prefix) = selected_prefix.as_ref() {
-                                let text = format!("{prefix} {}", generated.text);
-                                let tokens = tokenizer.encode(&text)?;
-                                (text, tokens)
+                            let generated = if let Some(prefix) = selected_prefix.as_ref() {
+                                generator.generate_with_prefix(input_tokens, &prefix.tokens)?
                             } else {
-                                (generated.text, generated.tokens)
+                                generator.generate(input_tokens, &[], 1)?
                             };
                             turn.input_tokens = Some(
                                 turn.input_tokens
                                     .unwrap_or(0)
-                                    .checked_add(tokens.len() as u64)
+                                    .checked_add(generated.tokens.len() as u64)
                                     .ok_or_else(|| {
                                         DatasetError::Validation(
                                             "input token count overflow".into(),
@@ -330,8 +365,8 @@ impl Composer for SyntheticComposer {
                                 Some(segments.intern_text(
                                     parent,
                                     "user",
-                                    Bytes::from(prefix.clone()),
-                                    tokenizer.encode(&prefix)?.into_boxed_slice(),
+                                    Bytes::from(prefix.text),
+                                    prefix.tokens.into_boxed_slice(),
                                 )?)
                             } else {
                                 parent
@@ -339,8 +374,8 @@ impl Composer for SyntheticComposer {
                             let handle = segments.intern_text(
                                 content_parent,
                                 "user",
-                                Bytes::from(text),
-                                tokens.into_boxed_slice(),
+                                Bytes::from(generated.text),
+                                generated.tokens.into_boxed_slice(),
                             )?;
                             parent = Some(handle);
                             handles.push(handle);
@@ -575,13 +610,13 @@ fn validate_raw_token_shape(config: &ComposeConfig, shape: &SyntheticDatasetConf
             "raw-token synthetic datasets require prompt batch_size=1".into(),
         ));
     }
-    if has_prefixes(&shape.prefixes)
+    if shape.prefixes.shared_system_tokens.is_some()
+        || shape.prefixes.user_context_tokens.is_some()
         || config.shared_system_prompt.is_some()
         || !config.user_context_prompts.is_empty()
     {
         return Err(DatasetError::Validation(
-            "raw-token synthetic datasets do not support prefix, system, or user-context text"
-                .into(),
+            "raw-token synthetic datasets do not support system or user-context text".into(),
         ));
     }
     if shape
@@ -669,15 +704,21 @@ fn has_prefixes(prefixes: &SyntheticPrefixConfig) -> bool {
 fn build_prefix_pool(
     prefixes: &SyntheticPrefixConfig,
     generator: &mut dyn PromptGenerator,
-) -> Result<Vec<String>> {
+    requires_raw_token_ids: bool,
+) -> Result<Vec<GeneratedPrompt>> {
     let (Some(size), Some(tokens)) = (prefixes.pool_size, prefixes.prefix_tokens) else {
         return Ok(Vec::new());
     };
     (0..size)
-        .map(|index| {
-            let hash = i64::try_from(index)
-                .map_err(|_| DatasetError::Validation("prefix pool exceeds i64".into()))?;
-            Ok(generator.generate(tokens, &[hash], tokens)?.text)
+        .map(|_| {
+            if requires_raw_token_ids {
+                Ok(GeneratedPrompt {
+                    text: String::new(),
+                    tokens: generator.generate_prefix_token_ids(tokens)?,
+                })
+            } else {
+                generator.generate_prefix(tokens)
+            }
         })
         .collect()
 }
@@ -1028,6 +1069,7 @@ mod tests {
             turns: SamplingDistribution::fixed(1.0).unwrap(),
             prompts: Some(SyntheticPromptConfig {
                 input_tokens: SamplingDistribution::fixed(12.0).unwrap(),
+                input_token_subtraction: 0,
                 batch_size: 1,
                 prefix_reuse_fraction: 0.5,
                 prefix_reuse_ratio: 0.5,
@@ -1067,6 +1109,38 @@ mod tests {
             (9..=21).contains(&warm),
             "warm share {warm} should be near half of 30"
         );
+    }
+
+    #[tokio::test]
+    async fn verbatim_system_prompt_is_additive_to_synthetic_user_isl() {
+        let registry = LoaderRegistry::with_builtin_formats().unwrap();
+        let load = LoadConfig::new(DatasetSource::Inline(json!({"__aiperf_synthetic": true})));
+        let mut compose = ComposeConfig::new("model", RngRoot::new(Some(41)));
+        compose.verbatim_system_prompt = Some("exact system text".into());
+        compose.synthetic_config = Some(SyntheticDatasetConfig {
+            entries: 1,
+            turns: SamplingDistribution::fixed(1.0).unwrap(),
+            prompts: Some(SyntheticPromptConfig {
+                input_tokens: SamplingDistribution::fixed(12.0).unwrap(),
+                batch_size: 1,
+                ..SyntheticPromptConfig::default()
+            }),
+            ..SyntheticDatasetConfig::default()
+        });
+        let tokenizer = TiktokenTokenizer::builtin();
+
+        let dataset = registry
+            .build_dataset(Some("synthetic"), &load, &compose, &tokenizer)
+            .await
+            .unwrap();
+
+        let conversation = &dataset.conversations()[0];
+        let system = conversation.system.unwrap();
+        let Payload::Text { bytes, .. } = dataset.segments().get(system).unwrap() else {
+            panic!("system prompt must be text");
+        };
+        assert_eq!(bytes, "exact system text");
+        assert_eq!(conversation.turns[0].input_tokens, Some(12));
     }
 
     #[tokio::test]
@@ -1289,6 +1363,33 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn independently_sampled_isl_subtracts_server_special_tokens() {
+        let registry = LoaderRegistry::with_builtin_formats().unwrap();
+        let load = LoadConfig::new(DatasetSource::Inline(json!({"__aiperf_synthetic": true})));
+        let mut compose = ComposeConfig::new("model", RngRoot::new(Some(17)));
+        compose.synthetic_config = Some(SyntheticDatasetConfig {
+            entries: 1,
+            prompts: Some(SyntheticPromptConfig {
+                input_tokens: SamplingDistribution::fixed(8.0).unwrap(),
+                input_token_subtraction: 2,
+                batch_size: 1,
+                ..SyntheticPromptConfig::default()
+            }),
+            ..SyntheticDatasetConfig::default()
+        });
+        let dataset = registry
+            .build_dataset(
+                Some("synthetic"),
+                &load,
+                &compose,
+                &TiktokenTokenizer::builtin(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(dataset.conversations()[0].turns[0].input_tokens, Some(6));
+    }
+
+    #[tokio::test]
     async fn raw_token_synthetic_composition_never_decodes_text() {
         use crate::dataset::tokenizer::NoDecodeTokenizer;
 
@@ -1329,6 +1430,43 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn raw_token_prefix_pool_is_composed_without_decoding() {
+        use crate::dataset::tokenizer::NoDecodeTokenizer;
+
+        let registry = LoaderRegistry::with_builtin_formats().unwrap();
+        let load = LoadConfig::new(DatasetSource::Inline(json!({"__aiperf_synthetic": true})));
+        let mut compose = ComposeConfig::new("model", RngRoot::new(Some(23)));
+        compose.requires_raw_token_ids = true;
+        compose.prompt_generator = Arc::new(crate::dataset::CorpusPromptGeneratorFactory::random());
+        compose.synthetic_config = Some(SyntheticDatasetConfig {
+            entries: 1,
+            prompts: Some(crate::dataset::generator::SyntheticPromptConfig {
+                input_tokens: SamplingDistribution::fixed(8.0).unwrap(),
+                batch_size: 1,
+                ..crate::dataset::generator::SyntheticPromptConfig::default()
+            }),
+            prefixes: SyntheticPrefixConfig {
+                pool_size: Some(1),
+                prefix_tokens: Some(4),
+                ..SyntheticPrefixConfig::default()
+            },
+            ..SyntheticDatasetConfig::default()
+        });
+
+        let dataset = registry
+            .build_dataset(Some("synthetic"), &load, &compose, &NoDecodeTokenizer)
+            .await
+            .unwrap();
+        let turn = &dataset.conversations()[0].turns[0];
+        assert_eq!(turn.input_tokens, Some(12));
+        let handle = *turn.body.first().expect("raw token handle");
+        let Payload::TokenIds { token_ids } = dataset.segments().get(handle).unwrap() else {
+            panic!("raw-token synthetic prompt must be stored as token IDs");
+        };
+        assert_eq!(token_ids.len(), 12);
+    }
+
+    #[tokio::test]
     async fn raw_token_prefix_reuse_shares_leading_token_run() {
         let registry = LoaderRegistry::with_builtin_formats().unwrap();
         let load = LoadConfig::new(DatasetSource::Inline(json!({"__aiperf_synthetic": true})));
@@ -1340,6 +1478,7 @@ mod tests {
             turns: SamplingDistribution::fixed(1.0).unwrap(),
             prompts: Some(crate::dataset::generator::SyntheticPromptConfig {
                 input_tokens: SamplingDistribution::fixed(12.0).unwrap(),
+                input_token_subtraction: 0,
                 batch_size: 1,
                 prefix_reuse_fraction: 1.0,
                 prefix_reuse_ratio: 0.5,

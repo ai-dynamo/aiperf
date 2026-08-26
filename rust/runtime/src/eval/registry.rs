@@ -27,7 +27,7 @@ impl RegistryReference {
         Ok(reference)
     }
 
-    /// Validates that this mutable manifest can run without registry access.
+    /// Validates that this local manifest can run without registry access.
     pub fn validate_offline(&self) -> Result<(), RegistryError> {
         if self.id.trim().is_empty() {
             return Err(RegistryError::EmptyLocalManifestId);
@@ -60,7 +60,7 @@ pub enum RegistryError {
     EmptyLocalManifestId,
     /// A local manifest must select at least one task.
     EmptyTaskSelection,
-    /// A local manifest selected one mutable task identity more than once.
+    /// A local manifest selected one task identity more than once.
     DuplicateTaskId(String),
 }
 

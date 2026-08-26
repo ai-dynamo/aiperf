@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Static web-UI assets, embedded into the binary at build time.
 //!
-//! The whole `src/server/ui/` tree (the "best-of-both" Preact + Chart.js SPA plus
-//! its vendored deps) is compiled into the executable via [`include_dir`], so
-//! `aiperf serve` is a single self-contained always-on server with no external
-//! asset directory and no CDN dependency. Unknown non-API paths fall back to
-//! `index.html` so the SPA's client-side router owns navigation.
+//! The whole `src/server/ui/` tree (the "best-of-both" Preact + Chart.js SPA) is
+//! compiled into the executable via [`include_dir`], so `aiperf serve` needs no
+//! external asset directory; the SPA's own deps are not vendored — `index.html`
+//! resolves Preact from an import map and Chart.js from a CDN. Unknown non-API
+//! paths fall back to `index.html` so the SPA's client-side router owns navigation.
 
 use axum::http::{StatusCode, Uri, header};
 use axum::response::{IntoResponse, Response};

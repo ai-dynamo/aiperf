@@ -29,7 +29,7 @@ pub const ADAPTIVE_SCHEMA_VERSION: u32 = 2;
 
 /// Render a nanosecond instant carried on an adaptive event as an ISO-8601 UTC
 /// string with microsecond precision and a trailing `Z`
-/// (e.g. `2026-07-13T17:02:30.123456Z`).
+/// (e.g. `1784048550123456789` renders as `2026-07-14T17:02:30.123456Z`).
 ///
 /// The value is derived from the same `timestamp_ns` already recorded on the
 /// event — never from an ambient `SystemTime::now()`/`Utc::now()` read — so the
@@ -75,11 +75,14 @@ pub struct CorrelationContext {
     pub phase_id: String,
     /// Human-readable phase name.
     pub phase_name: Option<String>,
-    /// Optional wall-clock phase-start representation supplied by an exporter.
+    /// Optional wall-clock phase-start representation. Reserved schema field:
+    /// no producer sets it today, so it is emitted as `null`.
     pub phase_start_ts: Option<String>,
-    /// Optional wall-clock phase-end representation supplied by an exporter.
+    /// Optional wall-clock phase-end representation. Reserved schema field:
+    /// no producer sets it today, so it is emitted as `null`.
     pub phase_end_ts: Option<String>,
-    /// Optional fault-injection window identifier.
+    /// Optional fault-injection window identifier. Reserved schema field: no
+    /// producer sets it today, so it is emitted as `null`.
     pub fault_window_id: Option<String>,
 }
 
@@ -137,7 +140,8 @@ pub struct AdaptiveEvent {
     pub completed: usize,
     /// Returned request attempts in the window.
     pub sent: usize,
-    /// In-flight request count when an issuer supplies it.
+    /// In-flight request count. Reserved schema field: the controller event
+    /// carries no in-flight depth, so this is always emitted as `null`.
     pub in_flight: Option<usize>,
     /// Cancelled request count.
     pub cancelled: usize,
@@ -246,9 +250,11 @@ pub struct AdaptiveCandidate {
     pub candidate_value: f64,
     /// Alias for the assessed control value.
     pub control_value: f64,
-    /// Optional wall-clock start representation.
+    /// Optional wall-clock start representation. Reserved schema field: the
+    /// window carries only `start_ns`, so this is always emitted as `null`.
     pub start_ts: Option<String>,
-    /// Optional wall-clock end representation.
+    /// Optional wall-clock end representation. Reserved schema field: the
+    /// window carries only `end_ns`, so this is always emitted as `null`.
     pub end_ts: Option<String>,
     /// Clock start in nanoseconds.
     pub start_ns: i64,

@@ -172,7 +172,8 @@ impl<'a> SessionSynthesizer<'a> {
         target.max(turns_cfg.min).min(turns_cfg.max)
     }
 
-    /// Generate `sess-` followed by the first six RNG bytes as lowercase hex.
+    /// Generate `sess-` followed by lowercase hex of the first six bytes. The
+    /// full 16-byte draw is consumed to hold the seeded stream position.
     fn session_id(&mut self) -> String {
         let b = self.rng.bytes(16);
         let mut s = String::with_capacity(5 + 12);

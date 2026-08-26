@@ -13,9 +13,9 @@ use serde::{Deserialize, Serialize};
 
 use super::dataset_session::DatasetIndex;
 
-/// An endpoint-ready request the `ControlledIssuer` dispatches from the fan-out index:
-/// the target URL and exact body bytes to POST. The controller broadcasts compiled
-/// requests, and each cell dispatches its owned requests.
+/// An endpoint-ready request the cell's dataset fan-out issuer dispatches from the
+/// fan-out index: the target URL and exact body bytes to POST. The controller
+/// broadcasts compiled requests, and each cell dispatches its owned requests.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WireRequest {
     /// The endpoint URL to POST to (e.g. `http://host:port/v1/chat/completions`).
@@ -104,8 +104,8 @@ impl DispatchTracker {
         self.states.get(&request_id).copied()
     }
 
-    /// Total accepted distribution misses (surfaced in the report as a distinct error
-    /// class, never folded into server errors).
+    /// Total accepted distribution misses, kept as a distinct count and never folded
+    /// into server errors. The dataset fan-out issuer fails the run when it is nonzero.
     pub fn distribution_misses(&self) -> u64 {
         self.misses
     }

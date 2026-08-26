@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 //! The dashboard HTTP API: cross-run browse over the [`super::index`] plane.
 //!
-//! Browse-plane routes (this cut): list every run (session + historical), fetch a
-//! run's full `native-v2.json`, and fetch its projected metric summary. The live
-//! in-flight streaming plane (`/api/runs/:id/stream` over SSE, heartbeat-fed) is a
-//! follow-on. Static UI assets are served from the [`super::assets`] fallback.
+//! Browse-plane routes: list every run (session + historical), fetch a run's full
+//! `native-v2.json`, and fetch its projected metric summary. The live in-flight
+//! streaming plane is `/api/live` over SSE, heartbeat-fed by [`super::live`].
+//! Static UI assets are served from the [`super::assets`] fallback.
 
 use std::path::Path;
 

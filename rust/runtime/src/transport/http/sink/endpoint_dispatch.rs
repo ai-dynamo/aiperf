@@ -49,10 +49,9 @@ use crate::transport::http::sse::ChatChunk;
 /// Metadata absorption for a streamed chat chunk, equivalent to
 /// [`absorb_wire_response_metadata`] on the same body but without a `Value`.
 ///
-/// Deliberately NOT [`super::absorb_chat_chunk_metadata`]: that one also appends
-/// content and reasoning into the metadata, which on this path is the job of
-/// `reduce_parsed_response`. Using it here would emit every delta twice. It also
-/// scans all choices, whereas the generic reader takes `choices[0]` only.
+/// Deliberately narrow: content and reasoning deltas are `reduce_parsed_response`'s
+/// job on this path, so appending them here too would emit every delta twice. Like
+/// the generic reader, this takes `choices[0]` only.
 ///
 /// `cached_prompt_tokens` is untouched because the caller only takes this path
 /// for chunks with no `usage`, and the generic reader leaves it unchanged there.
@@ -85,6 +84,7 @@ trait RuntimeEndpointAdapter {
     fn parse_response(&self, response: &ServerResponse) -> EndpointResult<Option<ParsedResponse>>;
     fn build_assistant_turn(&self, record: &EndpointRequestRecord) -> EndpointResult<Option<Turn>>;
     fn captures_assistant_turn(&self) -> bool;
+    fn captures_first_content_chunk_usage(&self) -> bool;
 }
 
 pub(super) struct EndpointDispatchHooks<'a> {
@@ -231,6 +231,10 @@ impl RuntimeEndpointAdapter for WorkerPreparedEndpointAdapter<'_> {
 
     fn captures_assistant_turn(&self) -> bool {
         self.0.captures_assistant_turn()
+    }
+
+    fn captures_first_content_chunk_usage(&self) -> bool {
+        self.0.config().as_raw().per_chunk_usage
     }
 }
 
@@ -602,27 +606,17 @@ impl TransportSink {
                 && let Response::Sse(message) = response
                 && !message.is_done()
                 && let Some(data) = message.data()
-                && let Ok(mut chunk) = serde_json::from_str::<ChatChunk>(data)
+                && let Ok(chunk) = serde_json::from_str::<ChatChunk>(data)
                 // A chunk carrying usage still needs `ParsedResponse.usage` as a
                 // `Value`, so hand those (one per request) to the generic path.
                 && chunk.usage.is_none()
             {
-                let chunk_spec_decode_stats = captures_spec_decode
-                    .then(|| chunk.take_speculative_decoding_stats())
-                    .flatten();
-                let retained_spec_decode_stats = chunk_spec_decode_stats
-                    .as_ref()
-                    .and_then(Value::as_object)
-                    .is_some_and(|object| !object.is_empty());
-                if retained_spec_decode_stats {
-                    spec_decode_stats = chunk_spec_decode_stats;
-                }
                 absorb_chat_chunk_wire_metadata(&chunk, &mut model_response);
                 // Matches the generic parse: with no usage, a chunk yields a
                 // ParsedResponse only when it carries response data, so
                 // role-only frames leave `parsed_any` alone exactly as before.
                 let data = chunk.into_stream_response_data();
-                if data.is_some() || retained_spec_decode_stats {
+                if data.is_some() {
                     parsed_any = true;
                     let parsed = ParsedResponse {
                         perf_ns: u64::try_from(message.perf_ns).unwrap_or_default(),
@@ -638,6 +632,8 @@ impl TransportSink {
                             model_response: &mut model_response,
                             endpoint_metrics: &mut endpoint_metrics,
                             observed_usage: &mut observed_usage,
+                            capture_first_content_chunk_usage: endpoint
+                                .captures_first_content_chunk_usage(),
                         },
                     );
                 }
@@ -694,6 +690,8 @@ impl TransportSink {
                     model_response: &mut model_response,
                     endpoint_metrics: &mut endpoint_metrics,
                     observed_usage: &mut observed_usage,
+                    capture_first_content_chunk_usage: endpoint
+                        .captures_first_content_chunk_usage(),
                 },
             );
             parsed_content |= carried_content;
@@ -1036,8 +1034,8 @@ mod tests {
     async fn spec_decode_chat_handler() -> impl IntoResponse {
         let body = concat!(
             "data: {\"id\":\"x\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"a\"},\"finish_reason\":null}]}\n\n",
-            "data: {\"id\":\"x\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\",\"speculative_decoding_stats\":{\"mean_acceptance_length\":3.25,\"draft_acceptance_rate\":0.5625,\"acceptance_histogram\":{\"0\":1,\"1\":1,\"2\":2,\"3\":3,\"4\":1},\"num_accepted_draft_tokens\":18,\"num_draft_tokens\":32,\"num_spec_steps\":8,\"num_spec_tokens\":4,\"per_step_accepted\":[2,3,1,4,2,0,3,3],\"per_step_drafted\":[4,4,4,4,4,4,4,4]}}]}\n\n",
-            "data: {\"id\":\"x\",\"object\":\"chat.completion.chunk\",\"choices\":[],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":2}}\n\n",
+            "data: {\"id\":\"x\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: {\"id\":\"x\",\"object\":\"chat.completion.chunk\",\"choices\":[],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":2},\"metrics\":{\"speculative_decoding\":{\"mean_acceptance_length\":3.25,\"draft_acceptance_rate\":0.5625,\"acceptance_histogram\":[1,1,2,3,1],\"num_accepted_draft_tokens\":18,\"num_draft_tokens\":32,\"num_spec_steps\":8,\"num_spec_tokens\":4,\"per_step_accepted\":[2,3,1,4,2,0,3,3],\"per_step_drafted\":[4,4,4,4,4,4,4,4]}}}\n\n",
             "data: [DONE]\n\n",
         );
         ([(header::CONTENT_TYPE, "text/event-stream")], body)
@@ -1054,7 +1052,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn finish_only_spec_decode_chunk_reaches_the_terminal_record() {
+    async fn trailing_usage_spec_decode_metrics_reach_the_terminal_record() {
         let local = tokio::task::LocalSet::new();
         local
             .run_until(async {
@@ -1103,7 +1101,7 @@ mod tests {
                 assert!(!record.errored);
                 let acceptance = record
                     .spec_decode_acceptance
-                    .expect("finish-only stats reach the observer record");
+                    .expect("trailing usage metrics reach the observer record");
                 assert_eq!(acceptance.num_spec_steps, 8);
                 assert_eq!(acceptance.num_accepted_draft_tokens, 18);
                 assert_eq!(acceptance.num_draft_tokens, 32);

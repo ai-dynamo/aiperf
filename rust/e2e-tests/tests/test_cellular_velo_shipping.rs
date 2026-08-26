@@ -29,7 +29,7 @@ const CELLS: u32 = 3;
 /// Concurrency cap (>= CELLS so it splits per cell without flooring to 1).
 const CONCURRENCY: u32 = 6;
 
-/// A single-turn synthetic config with the always-on per-record artifacts
+/// A single-turn synthetic config with every per-record artifact this suite compares
 /// (records jsonl + raw + outputs) enabled, seeded, partitioned across `cells`.
 fn config(url: &str, cells: u32) -> String {
     format!(

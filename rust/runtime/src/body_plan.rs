@@ -943,8 +943,8 @@ pub enum SizeHint {
     /// retains no slack, and can assert the finished buffer against it.
     Exact(usize),
     /// A rough guess, used when a store-dependent
-    /// [`Segment`](FieldValue::Segment) value makes the exact length
-    /// unknowable without resolving the store.
+    /// [`Segment`](FieldValue::Segment) or [`Segments`](FieldValue::Segments)
+    /// value makes the exact length unknowable without resolving the store.
     Estimated(usize),
 }
 

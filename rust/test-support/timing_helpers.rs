@@ -429,7 +429,8 @@ pub fn verify_no_interleaving_within_session<R: ProfileExport>(result: &R) -> Re
     verify_no_interleaving_within_session_records(&sessions(&rows)?)
 }
 
-/// Verify that credit issue order switches between conversations at least once.
+/// Verify credit issue order switches between conversations at least
+/// `sessions - 1` times (a single session is vacuously interleaved).
 pub fn verify_sessions_can_interleave<R: ProfileExport>(result: &R) -> Result<(), String> {
     let rows = result.profile_export_records();
     let sessions = sessions(&rows)?;

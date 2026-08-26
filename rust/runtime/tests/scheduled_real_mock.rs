@@ -116,8 +116,9 @@ fn run_local<F: std::future::Future>(future: F) -> F::Output {
 }
 
 /// Verify `BodyPlan::raw` and `JsonBodyMaterializer` preserve authored bytes and
-/// tail-splice dispatch overrides as required by segment-unification §4 and
-/// endpoint-body-construction §4.
+/// tail-splice dispatch overrides as required by
+/// `docs/specs/endpoint-body-construction.md` ("Materialization and the two wire
+/// paths").
 #[test]
 fn raw_payload_body_plan_dispatches_byte_exactly_to_the_real_mock() {
     let Some(mock) = RealMock::spawn() else {
@@ -302,8 +303,8 @@ fn both_scheduled_strategies_match_real_mock_timing() {
         .filter(|turn| turn.turn_index == 0)
         .map(|turn| turn.scheduled_offset_ns / 1_000_000)
         .collect::<Vec<_>>();
-    // Relative to the first target — invariant to the fixed warm-start grid lead
-    // (`SCHEDULE_START_LEAD_NS`) that shifts every absolute offset equally.
+    // User-centric targets are already offsets from the captured run start, so
+    // this states the assertion as pure spacing from the first target.
     let base = first_targets[0];
     let relative_targets: Vec<i64> = first_targets.iter().map(|t| t - base).collect();
     assert_eq!(relative_targets, vec![0, 50, 150, 300]);

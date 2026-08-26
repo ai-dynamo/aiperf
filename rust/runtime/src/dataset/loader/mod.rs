@@ -343,7 +343,7 @@ pub struct DatasetFormatRegistration {
 }
 
 impl DatasetFormatRegistration {
-    /// Pair one loader with its composer, rejecting mismatched registration names.
+    /// Pair one loader with its composer, taking the format name from the loader.
     pub fn new(loader: Arc<dyn DatasetLoader>, composer: Arc<dyn Composer>) -> Self {
         Self {
             name: loader.name().to_string(),

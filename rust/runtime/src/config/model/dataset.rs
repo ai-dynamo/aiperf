@@ -177,6 +177,8 @@ fn default_prompts() -> Prompts {
         block_size: None,
         corpus: None,
         sequence_distribution: None,
+        random_range_ratio: None,
+        random_corpus_style: Default::default(),
         prefix_reuse_fraction: None,
         prefix_reuse_ratio: None,
         cache_bust: None,
@@ -214,6 +216,12 @@ pub struct Prompts {
     /// Mixed ISL/OSL sequence distribution (`--seq-dist`; present when authored).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sequence_distribution: Option<Vec<SeqDistEntry>>,
+    /// Uniform random ISL/OSL window ratio.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub random_range_ratio: Option<crate::dataset::RandomRangeRatioInput>,
+    /// Reference random-corpus behavior.
+    #[serde(default)]
+    pub random_corpus_style: crate::dataset::RandomCorpusStyle,
     /// Fraction of prompts reusing a shared leading prefix (present when authored).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prefix_reuse_fraction: Option<f64>,
@@ -352,6 +360,9 @@ pub struct Rankings {
 /// The typed synthetic dataset body.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Synthetic {
+    /// Exact system prompt applied to every generated conversation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system_prompt: Option<String>,
     /// Prompt-generation policy. `load.rs` and `yaml.rs` both synthesize a
     /// default block from `default_isl` when none is authored, so an authored
     /// protocol-v2 request omitting it must resolve the same way rather than
@@ -463,6 +474,9 @@ fn default_use_family_sampling() -> bool {
 /// A file-backed trace or replay dataset.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct FileDataset {
+    /// Exact system prompt applied to every composed conversation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system_prompt: Option<String>,
     /// Native file format id, omitted when the runtime should auto-detect it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub format: Option<String>,
@@ -508,6 +522,9 @@ pub struct FileDataset {
 /// A named public dataset with explicit source coordinates.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PublicDataset {
+    /// Exact system prompt applied to every composed conversation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system_prompt: Option<String>,
     /// Catalog name (e.g. `sharegpt`).
     pub name: String,
     /// Native loader format id.
@@ -566,6 +583,7 @@ mod tests {
     #[test]
     fn synthetic_tag_and_scalar_dist() {
         let d = Dataset::Synthetic(Synthetic {
+            system_prompt: None,
             prompts: Prompts {
                 batch_size: 1,
                 isl: Distribution {
@@ -579,6 +597,8 @@ mod tests {
                 block_size: None,
                 corpus: Some("coding".into()),
                 sequence_distribution: None,
+                random_range_ratio: None,
+                random_corpus_style: Default::default(),
                 prefix_reuse_fraction: None,
                 prefix_reuse_ratio: None,
                 cache_bust: None,

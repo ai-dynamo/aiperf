@@ -92,7 +92,7 @@ async fn test_zip_sweep_preserves_authored_pairing() {
     );
     // Only the two paired runs were executed and aggregated. Note that
     // `metadata.num_combinations` is NOT asserted here: it is computed as the
-    // product of per-axis distinct values (cli/src/sweep/aggregate.rs:346), which
+    // product of per-axis distinct values (cli/src/sweep/aggregate.rs:353), which
     // assumes a cartesian plan and so reports 4 for this 2-run zip. That is a
     // product-side inaccuracy, not something this test should encode as correct.
     assert_eq!(agg["num_profile_runs"].as_u64(), Some(2));
@@ -273,7 +273,8 @@ fn sweep_aggregate(root: &Path) -> serde_json::Value {
     )
 }
 
-/// `"mean=8,concurrency=2"` per aggregated combination, order-independent.
+/// `"concurrency=2,mean=8"` per aggregated combination: the pairs are sorted, so
+/// the string does not depend on the aggregate's own key order.
 fn combination_parameters(aggregate: &serde_json::Value) -> BTreeSet<String> {
     aggregate["per_combination_metrics"]
         .as_array()

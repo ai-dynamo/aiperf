@@ -438,6 +438,7 @@ impl GrpcTransportSink {
                     model_response: &mut model_response,
                     endpoint_metrics: &mut endpoint_metrics,
                     observed_usage: &mut usage,
+                    capture_first_content_chunk_usage: endpoint.config().as_raw().per_chunk_usage,
                 },
             );
             parsed_content |= carried_content;

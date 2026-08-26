@@ -179,7 +179,7 @@ pub struct RequestRateWorkload {
     intervals: Rc<RefCell<Box<dyn IntervalGenerator>>>,
     session_slots: Option<Rc<SlotPool>>,
     prefill_slots: Option<Rc<SlotPool>>,
-    /// When set (`global`/`global-hop` dispatch on a rate phase), arrival pacing
+    /// When set (`global` dispatch on a rate phase), arrival pacing
     /// draws its base fire time from this cell-shared gate instead of this
     /// thread's local `intervals`, so aggregate issuance across all `W` worker
     /// threads matches one global rate exactly.
@@ -254,8 +254,9 @@ impl RequestRateWorkload {
         //
         // - A turn-less conversation cannot reach any source. `Dataset::new`
         //   rejects one for EVERY conversation at construction, before a
-        //   partition exists (`dataset/dataset.rs`, `validate_conversation_handles`),
-        //   so no residue can hide a row the full corpus would have caught.
+        //   partition exists (`dataset/runtime_dataset.rs`,
+        //   `validate_conversation_handles`), so no residue can hide a row the
+        //   full corpus would have caught.
         // - An empty residue cannot reach here either: a partitioned source bails
         //   with "partition owns no sampleable sessions" and an unpartitioned one
         //   bails with `DatasetError::EmptySampler`, both inside the source
@@ -595,7 +596,7 @@ impl Workload for RequestRateWorkload {
             // following tick is drawn before this tick attempts admission.
             let now_ns = runtime.now_ns();
             let scheduled_ns = if let Some(gate) = &self.rate_gate {
-                // Global/global-hop dispatch: claim one distinct base slot from
+                // Global dispatch: claim one distinct base slot from
                 // the cell-shared gate (evenly-spaced across all worker threads,
                 // so their union is exactly the global rate grid). Anchor it to
                 // phase start plus one interval — matching the local path's
@@ -676,8 +677,8 @@ impl Workload for RequestRateWorkload {
                 match self.try_issue_new_session(runtime.clone(), scheduled_ns) {
                     Ok(NewSessionOutcome::Issued) => {}
                     Ok(NewSessionOutcome::NoSlot) => {
-                        // A `Global`-backed session pool (`global`/`global-hop`
-                        // dispatch) may next free a slot on a DIFFERENT worker
+                        // A `Global`-backed session pool (`global` dispatch)
+                        // may next free a slot on a DIFFERENT worker
                         // thread's release, which never fires this thread's own
                         // `state.progress` `Notify` (only THIS thread's own
                         // `enqueue`/`release_session` calls do). Blocking on it

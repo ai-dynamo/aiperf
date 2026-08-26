@@ -3,7 +3,7 @@
 
 //! Unified dataset substrate for every AIPerf execution mode.
 //!
-//! The crate owns the linear `load -> compose -> store -> sample -> materialize`
+//! This module owns the linear `load -> compose -> store -> sample -> materialize`
 //! pipeline. Text, preformatted messages, raw request bodies, tools, headers, and
 //! multimodal content are interned once in a prefix-dependent content-addressed
 //! [`SegmentPool`]. [`Conversation`] and [`Turn`] contain only dense [`Handle`]s,
@@ -20,6 +20,7 @@ pub mod hf_hub;
 pub mod materialize;
 pub mod model;
 pub mod prompt;
+pub mod random_range;
 pub mod request;
 pub mod runtime_dataset;
 pub mod sampler;
@@ -64,6 +65,10 @@ pub use model::{
 pub use prompt::{
     CorpusPromptGeneratorFactory, GeneratedPrompt, PreparedCorpusPromptGeneratorFactory,
     PromptGenerator, PromptGeneratorFactory,
+};
+pub use random_range::{
+    RandomCorpusStyle, RandomRangePlan, RandomRangeRatio, RandomRangeRatioInput,
+    SeededRandomRangePlan,
 };
 pub use request::{
     BuiltinEndpointResolver, ConversationSession, EndpointRequestMaterializer, EndpointResolver,

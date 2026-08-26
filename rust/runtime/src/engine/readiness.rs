@@ -107,7 +107,8 @@ pub trait PreparedOnlineReadiness: fmt::Debug {
     /// Whether no endpoint profile enabled readiness.
     fn is_empty(&self) -> bool;
 
-    /// Number of sequential `(URL, model)` targets.
+    /// Number of sequential targets: one per prepared probe, so a
+    /// `wait_for_model_mode = "both"` profile contributes two per `(URL, model)`.
     fn target_count(&self) -> usize;
 
     /// Wait for every target through the injected Clock and transport.

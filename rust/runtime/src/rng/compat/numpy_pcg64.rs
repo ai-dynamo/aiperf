@@ -29,8 +29,9 @@
 //! `default_rng(int_seed)` == `SeedSequence(int_seed)` -> `generate_state(4,
 //! uint64)` -> PCG64 128-bit state/increment split -> XSL-RR 128->64 output.
 
-/// The four `SeedSequence` hashing constants and shift, from
-/// `bit_generator.pyx` lines 58-64.
+/// The six `SeedSequence` hashing constants and the shift below, from
+/// `bit_generator.pyx` lines 58-64. `INIT_A` is `mix_entropy`'s initial hash
+/// constant.
 const INIT_A: u32 = 0x43b0_d7e5;
 /// Multiplier stepped inside `hashmix`.
 const MULT_A: u32 = 0x931e_8875;

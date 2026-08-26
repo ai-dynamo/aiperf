@@ -31,7 +31,7 @@ use super::{
 const DEFAULT_MAX_STDOUT_FRAME_BYTES: usize = 64 * 1024;
 const DEFAULT_MAX_STDERR_BYTES: usize = 16 * 1024;
 
-/// Unforgeable identity shared only by an exact-profile authorization and its requests.
+/// Unforgeable identity shared only by one minted spawn authorization and its requests.
 #[derive(Clone, Debug)]
 struct ExactSpawnToken(Rc<()>);
 
@@ -408,7 +408,7 @@ pub trait AdapterRuntimeFactory {
     ) -> Result<Box<dyn SupervisedAdapter>, AdapterSupervisionError>;
 }
 
-/// The only lifecycle interface used by future live NativeGraph runners.
+/// The only lifecycle interface used by live NativeGraph runners.
 #[async_trait(?Send)]
 pub trait SupervisedAdapter {
     /// Admits and sends exactly one host-authorized protocol transition.

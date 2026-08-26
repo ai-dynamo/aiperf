@@ -207,9 +207,9 @@ pub(crate) fn build_native_scheduled_phase_plan_with_source_factory(
                     shared.prefill.clone(),
                 )?
                 .with_failure_policy(on_failure)
-                // Under `global`/`global-hop` dispatch this phase paces against
-                // the cell-shared gate; `None` (sharded / single-thread) leaves
-                // local `intervals` pacing intact.
+                // Under `global` dispatch this phase paces against the
+                // cell-shared gate; `None` (every other mode / single-thread)
+                // leaves local `intervals` pacing intact.
                 .with_rate_gate(shared.rate.clone())
                 .with_deferred_single_turn_bodies(defer_single_turn_bodies),
             ) as Rc<dyn Workload>;
@@ -466,6 +466,7 @@ pub(crate) async fn build_synthetic_dataset(
         requires_raw_token_ids,
     } = context;
     let mut compose = compose_config(models, rng_root)?;
+    compose.verbatim_system_prompt = spec.system_prompt.clone();
     compose.media_generator_factory = media_generator_factory;
     compose.requires_raw_token_ids = requires_raw_token_ids;
     compose.prompt_generator = synthetic_prompt_generator(spec.prompts.as_ref())?;
@@ -481,8 +482,60 @@ pub(crate) async fn build_synthetic_dataset(
             .as_deref()
             .map(sequence_length_distribution)
             .transpose()?;
+        if let Some(authored_ratio) = prompts.random_range_ratio {
+            ensure!(
+                prompts.sequence_distribution.is_none(),
+                "random_range_ratio cannot be combined with sequence_distribution"
+            );
+            let input_mean = fixed_range_mean(
+                prompts.isl.as_ref(),
+                "random_range_ratio requires an explicitly authored fixed ISL",
+            )?;
+            let output_mean = fixed_range_mean(
+                prompts.osl.as_ref(),
+                "random_range_ratio requires an explicitly authored fixed OSL",
+            )?;
+            let special_tokens = i64::try_from(tokenizer.num_special_tokens_to_add())?;
+            let policy = crate::dataset::RandomRangePlan::new(
+                prompts.random_corpus_style,
+                input_mean,
+                output_mean,
+                authored_ratio.checked(prompts.random_corpus_style)?,
+                special_tokens,
+            )?;
+            policy.validate_minimum_input(
+                spec.prefix_prompts
+                    .as_ref()
+                    .and_then(|prefixes| prefixes.length)
+                    .unwrap_or(0),
+            )?;
+            let vocab_size = tokenizer
+                .vocab_size()
+                .filter(|size| *size > 0)
+                .ok_or_else(|| anyhow!("random_range_ratio requires a tokenizer vocabulary"))?;
+            let seed = rng_root
+                .seed()
+                .unwrap_or_else(|| rng_root.derive_seed_or_entropy("dataset.random_range"));
+            let seeded = policy.preseed(spec.entries, seed, vocab_size)?;
+            if prompts.corpus.as_deref() == Some("random") {
+                compose.prompt_generator = Arc::new(
+                    CorpusPromptGeneratorFactory::random_reference_plan(seeded.clone()),
+                );
+            }
+            compose.random_range_plan = Some(seeded);
+            compose.sequence_length_distribution = None;
+        }
     }
-    compose.synthetic_config = Some(synthetic_config(spec)?);
+    let mut synthetic = synthetic_config(spec)?;
+    if spec
+        .prompts
+        .as_ref()
+        .is_some_and(|prompts| prompts.random_range_ratio.is_none())
+        && let Some(prompts) = synthetic.prompts.as_mut()
+    {
+        prompts.input_token_subtraction = tokenizer.num_special_tokens_to_add();
+    }
+    compose.synthetic_config = Some(synthetic);
     let mut load = LoadConfig::new(DatasetSource::Inline(if rankings {
         serde_json::json!({"__aiperf_synthetic_rankings": true})
     } else {
@@ -505,6 +558,22 @@ pub(crate) async fn build_synthetic_dataset(
         .map_err(Into::into)
 }
 
+fn fixed_range_mean(spec: Option<&DistributionSpec>, missing: &str) -> Result<i64> {
+    let value = match spec.ok_or_else(|| anyhow!(missing.to_string()))? {
+        DistributionSpec::Fixed(value) => value.value,
+        DistributionSpec::Normal(value) if value.stddev == 0.0 => value.mean,
+        DistributionSpec::Normal(_) => {
+            bail!("random_range_ratio cannot be combined with non-zero sequence stddev")
+        }
+        _ => bail!("random_range_ratio requires fixed ISL and OSL distributions"),
+    };
+    ensure!(
+        value.is_finite() && value >= 0.0 && value <= i64::MAX as f64,
+        "random_range_ratio mean must be finite, non-negative, and representable"
+    );
+    Ok(value as i64)
+}
+
 fn prompt_generator_factory(corpus: &str) -> Result<Arc<dyn PromptGeneratorFactory>> {
     let factory: Arc<dyn PromptGeneratorFactory> = match corpus {
         "sonnet" => Arc::new(CorpusPromptGeneratorFactory::sonnet()),
@@ -518,11 +587,14 @@ fn prompt_generator_factory(corpus: &str) -> Result<Arc<dyn PromptGeneratorFacto
 fn synthetic_prompt_generator(
     prompts: Option<&SyntheticPromptsSpec>,
 ) -> Result<Arc<dyn PromptGeneratorFactory>> {
-    prompt_generator_factory(
-        prompts
-            .and_then(|prompts| prompts.corpus.as_deref())
-            .unwrap_or("sonnet"),
-    )
+    match prompts.and_then(|prompts| prompts.corpus.as_deref()) {
+        Some("random") => Ok(Arc::new(CorpusPromptGeneratorFactory::random_with_style(
+            prompts.map_or(crate::dataset::RandomCorpusStyle::default(), |prompts| {
+                prompts.random_corpus_style
+            }),
+        ))),
+        corpus => prompt_generator_factory(corpus.unwrap_or("sonnet")),
+    }
 }
 
 fn authored_prompt_generator(
@@ -567,6 +639,7 @@ pub(crate) async fn build_file_dataset(
         .map(|seed| RngRoot::new(Some(seed)))
         .unwrap_or(run_rng_root);
     let mut compose = compose_config(models, rng_root)?;
+    compose.verbatim_system_prompt = spec.system_prompt.clone();
     compose.requires_raw_token_ids = requires_raw_token_ids;
     compose.hoist_leading_system_message = consumes_system_message;
     compose.output_length_distribution = spec.osl.as_ref().map(distribution).transpose()?;
@@ -666,6 +739,7 @@ pub(crate) async fn build_public_dataset(
     rng_root: RngRoot,
     tokenizer: &dyn TextTokenizer,
     requires_raw_token_ids: bool,
+    consumes_system_message: bool,
 ) -> Result<Dataset> {
     ensure!(
         !spec.name.trim().is_empty(),
@@ -700,7 +774,9 @@ pub(crate) async fn build_public_dataset(
         },
     };
     let mut compose = compose_config(models, rng_root)?;
+    compose.verbatim_system_prompt = spec.system_prompt.clone();
     compose.requires_raw_token_ids = requires_raw_token_ids;
+    compose.hoist_leading_system_message = consumes_system_message;
     compose.format_options = spec.options.clone();
     if spec.prefetch_media_urls {
         // Fetch remote image URLs once, now, before any credits are issued.
@@ -770,6 +846,7 @@ pub(crate) fn synthetic_config(spec: &SyntheticDatasetSpec) -> Result<SyntheticD
             Ok(
                 (input_tokens.expected_value() > 0.0).then_some(SyntheticPromptConfig {
                     input_tokens,
+                    input_token_subtraction: 0,
                     batch_size: prompts.batch_size,
                     prefix_reuse_fraction: prompts.prefix_reuse_fraction,
                     prefix_reuse_ratio: prompts.prefix_reuse_ratio,
@@ -1393,33 +1470,40 @@ mod tests {
     }
 
     #[test]
-    fn authored_seamless_lowers_to_the_previous_phase_outbound_handoff() {
-        let phases: Vec<PhaseSpec> = serde_json::from_value(json!([{
-            "type": "concurrency",
-            "name": "warmup",
-            "exclude_from_results": true,
-            "requests": 1,
-            "concurrency": 1
-        }, {
-            "type": "concurrency",
-            "name": "profiling",
-            "exclude_from_results": false,
-            "requests": 1,
-            "concurrency": 1,
-            "seamless": true
-        }]))
-        .unwrap();
+    fn authored_seamless_is_incoming_for_every_transition() {
+        assert_eq!(
+            lowered_seamless_handoffs(&[false, true, false, true]),
+            [true, false, true, false]
+        );
+        assert_eq!(lowered_seamless_handoffs(&[true, false]), [false, false]);
+    }
 
-        let lowered = phases
+    fn lowered_seamless_handoffs(authored: &[bool]) -> Vec<bool> {
+        let phases = authored
+            .iter()
+            .enumerate()
+            .map(|(index, &seamless)| {
+                serde_json::from_value(json!({
+                    "type": "concurrency",
+                    "name": format!("phase-{index}"),
+                    "exclude_from_results": false,
+                    "requests": 1,
+                    "concurrency": 1,
+                    "seamless": seamless
+                }))
+                .unwrap()
+            })
+            .collect::<Vec<PhaseSpec>>();
+
+        phases
             .iter()
             .enumerate()
             .map(|(index, phase)| {
-                phase_config(phase, phase_seamless_to_next(&phases, index)).unwrap()
+                phase_config(phase, phase_seamless_to_next(&phases, index))
+                    .unwrap()
+                    .seamless
             })
-            .collect::<Vec<_>>();
-
-        assert!(lowered[0].seamless);
-        assert!(!lowered[1].seamless);
+            .collect()
     }
 
     #[test]
@@ -1553,6 +1637,52 @@ mod tests {
         };
         assert_eq!(token_ids.len(), 8);
         assert!(!token_ids.contains(&9));
+    }
+
+    #[tokio::test]
+    async fn random_range_ratio_reaches_composed_native_lengths_in_reference_order() {
+        use crate::dataset::tokenizer::NoDecodeTokenizer;
+
+        let spec = synthetic(json!({
+            "entries": 4,
+            "prompts": {
+                "isl": {"value": 100.0},
+                "osl": {"value": 20.0},
+                "corpus": "random",
+                "random_range_ratio": {"input": 0.3, "output": 0.5},
+                "random_corpus_style": "vllm"
+            }
+        }));
+        let registry = AIPerfRegistry::builtin().unwrap();
+        let dataset = build_synthetic_dataset(
+            &spec,
+            SyntheticDatasetBuildContext {
+                registry: &registry,
+                models: &models(),
+                rng_root: RngRoot::new(Some(42)),
+                tokenizer: &NoDecodeTokenizer,
+                rankings: false,
+                media_generator_factory: Arc::new(
+                    crate::dataset::NativeSyntheticMediaGeneratorFactory::default(),
+                ),
+                requires_raw_token_ids: true,
+            },
+        )
+        .await
+        .unwrap();
+
+        let inputs: Vec<_> = dataset
+            .conversations()
+            .iter()
+            .map(|conversation| conversation.turns[0].input_tokens.unwrap())
+            .collect();
+        let outputs: Vec<_> = dataset
+            .conversations()
+            .iter()
+            .map(|conversation| conversation.turns[0].max_tokens.unwrap())
+            .collect();
+        assert_eq!(inputs, [75, 117, 109, 96]);
+        assert_eq!(outputs, [19, 28, 11, 24]);
     }
 
     #[tokio::test]

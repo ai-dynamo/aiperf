@@ -26,9 +26,9 @@ use async_trait::async_trait;
 
 #[tokio::test(flavor = "current_thread")]
 async fn trace_opens_environment_then_warmup_then_profile_then_cleanup() {
-    // This catches a lifecycle implementation that measures before its trace
-    // environment and one authored warmup have completed, or cleans up before
-    // the profiling dispatch reaches its terminal record.
+    // This pins the vocabulary a lifecycle dispatches with: warmup and
+    // profiling carry distinct `TraceSubphase` values while sharing one trace
+    // instance id. It inspects the contexts only; it runs no lifecycle.
     let warmup = GraphDispatchContext {
         phase: Phase::Warmup,
         trace_subphase: TraceSubphase::Warmup,

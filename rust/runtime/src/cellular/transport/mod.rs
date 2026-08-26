@@ -53,7 +53,7 @@ pub mod dataset_velo;
 #[cfg(all(feature = "cellular", feature = "engine"))]
 pub mod phaser_velo;
 /// The velo-backed cell↔controller transport (cell client + controller
-/// endpoint), gated on the `velo` feature.
+/// endpoint), gated on the `cellular` + `engine` features.
 #[cfg(all(feature = "cellular", feature = "engine"))]
 pub mod velo_transport;
 
@@ -114,8 +114,8 @@ pub enum CellMessage {
 }
 
 /// velo handler name: cell → controller registration. The reply carries the
-/// cell's serialized `CellLaunchSpec` (rmp), and the call ticks the controller's
-/// readiness barrier.
+/// cell's sliced execute envelope (rmp-wrapped protocol-v2 JSON bytes), and the
+/// call ticks the controller's readiness barrier.
 pub const HANDLER_REGISTER: &str = "aiperf.cell.register";
 /// velo handler name: cell → controller heartbeat (fire-and-forget `am_send`).
 pub const HANDLER_HEARTBEAT: &str = "aiperf.cell.heartbeat";
@@ -134,8 +134,8 @@ pub const HANDLER_STORE_PARTITION: &str = "aiperf.cell.store_partition";
 
 /// The cell's registration request: its `cell_id` plus its own serialized
 /// `velo::PeerInfo` (rmp-encoded) so the controller can `register_peer` it and
-/// route the reply (and later messages) back. The reply is the cell's
-/// `CellLaunchSpec` bytes (rmp).
+/// route the reply (and later messages) back. The reply is an rmp
+/// `RegisterReply` carrying the cell's sliced execute envelope bytes.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CellRegister {
     /// Zero-based cell identifier — the barrier key.

@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Recorded-trace compilation shared by WEKA, Dynamo, and AIPerf trace inputs.
+//! Recorded-trace compilation shared by the WEKA, Dynamo, TraceLab,
+//! `aiperf.trace.v1`, and recorded-agent inputs.
 
 pub mod agent_recording;
 mod aiperf_trace;
@@ -65,7 +66,8 @@ pub struct RecordedTraceInputConfig {
     pub root_limit: Option<usize>,
     /// Peak per-request input-plus-output ceiling.
     pub max_context_length: Option<usize>,
-    /// WEKA top-level output cap; Dynamo deliberately ignores this value.
+    /// WEKA top-level output cap; the Dynamo and `aiperf_trace` compilers
+    /// deliberately ignore this value.
     pub max_osl: Option<usize>,
     /// True-idle gap cap. `None` replays raw recorded gaps.
     pub idle_gap_cap_seconds: Option<f64>,
@@ -97,6 +99,23 @@ impl RecordedTraceInputConfig {
         }
         Ok(())
     }
+}
+
+/// Build the common all-rejected context-cap diagnostic after a completed
+/// format-specific selection scan.
+pub(crate) fn rejected_peak_context_error(
+    source: &str,
+    scanned: usize,
+    root_limit: Option<usize>,
+    max_context_length: usize,
+    smallest_observed: usize,
+) -> RecordedTraceError {
+    let num_dataset_entries = root_limit
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "None".to_string());
+    RecordedTraceError(format!(
+        "No eligible traces in {source} after filter-then-cap (scanned {scanned}, --max-context-length={max_context_length}, --num-dataset-entries={num_dataset_entries}). Smallest trace requires {smallest_observed} tokens; raise --max-context-length to at least that (e.g. --max-context-length {smallest_observed}) to admit any trace."
+    ))
 }
 
 /// Focused parse, validation, synthesis, or lowering failure.

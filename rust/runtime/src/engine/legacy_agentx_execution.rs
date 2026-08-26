@@ -1,18 +1,21 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Legacy AgentX weka execution: a self-contained loader+runtime, selected by
-//! `--weka-semantics legacy` (the default under an agentic-replay scenario).
+//! Legacy AgentX weka execution seam, reserved for `--weka-semantics legacy`
+//! (the value [`crate::config::resolve`] derives by default under an
+//! agentic-replay scenario).
 //!
-//! This is a separate execution path from graph-ir: it loads a WEKA trace source
-//! (HF dataset or file) through the byte-exact [`crate::agentx`] loader, samples a
-//! per-tree t\*, builds the agentic dispatch plan (warmup→profiling with byte-exact
-//! cache-bust markers), fires it through the run's production transport honoring
-//! the dispatch schedule on the real clock, and feeds each response into the same
-//! shared record lane + metrics accumulator the graph/scheduled paths use — so it
-//! produces engine-parity `profile_export.jsonl` and `profile_export_aiperf.json`.
+//! The intended path is separate from graph-ir: load a WEKA trace source (HF
+//! dataset or file) through the byte-exact [`crate::agentx`] loader, sample a
+//! per-tree t\*, build the agentic dispatch plan (warmup→profiling with
+//! byte-exact cache-bust markers), fire it through the run's production
+//! transport honoring the dispatch schedule on the real clock, and feed each
+//! response into the same shared record lane + metrics accumulator the
+//! graph/scheduled paths use.
 //!
-//! Gated on the `agentx` feature; the graph-ir path is untouched.
+//! None of that is wired here yet: the one entry point below refuses
+//! unconditionally and has no callers, so the graph-ir path is the only weka
+//! runtime this module affects.
 
 use std::sync::Arc;
 
@@ -25,10 +28,10 @@ use crate::engine::registry::{
 
 /// Prepare the legacy AgentX weka operation from the validated run + workload.
 ///
-/// Captures the weka dataset descriptor, resolved endpoint/transport binding,
-/// tokenizer, phases, metrics + artifact policy, and the scenario timing knobs
-/// (t\* window, cache-bust target). The returned operation's `execute` owns its
-/// own current-thread runtime (the transport is `!Send`).
+/// # Errors
+///
+/// Always. The preparation is unimplemented, so every call returns an error
+/// directing the caller at `--weka-semantics graph-ir`; no argument is read.
 pub fn prepare_legacy_agentx_operation(
     _run: &AuthoredRunSpecV2,
     _context: &RunContext,

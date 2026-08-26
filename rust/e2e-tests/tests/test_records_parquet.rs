@@ -221,6 +221,6 @@ async fn test_records_parquet_sidecar_mirrors_jsonl() {
                 .and_then(|cell| cell.parse::<f64>().ok())
                 .is_some_and(|v| v > 0.0)
         }),
-        "at least one CSV request_latency_value should be a positive number"
+        "at least one CSV `Request Latency (ms)` cell should be a positive number"
     );
 }

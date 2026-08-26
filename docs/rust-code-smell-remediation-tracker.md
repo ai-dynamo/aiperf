@@ -49,14 +49,14 @@ Graham review and a commit.
 | S05 | HTTP hot path allocates/reparses unnecessarily | Confirmed/narrowed; spec ready | Sol implementation plan |
 | S06 | GPU worker mutex spans IPC awaits | Obsolete | Record retraction |
 | S07 | Unbounded graph/media channels | Confirmed/narrowed; spec ready | Sol implementation plan |
-| S08 | Cellular test helper has a vacuous missing-log path | Confirmed; spec ready | Sol implementation plan |
+| S08 | Cellular test helper has a vacuous missing-log path | Complete — `860d93510b` | Independent Graham approved; RED→GREEN e2e evidence recorded |
 | S09 | Stale `dead_code` suppressions on live fields | Already fixed | Record retraction |
-| S10 | Disagg `TraceCollector` API suppressions lack coherent disposition | Confirmed/narrowed; spec ready | Sol implementation plan |
+| S10 | Disagg `TraceCollector` API suppressions lack coherent disposition | Complete on integration branch — `bacf85c014` | Independent Graham approved; await shared-file integration |
 | S11 | `Inputs` is an unguarded god struct | Confirmed/narrowed; spec ready | Sol implementation plan |
 | S12 | Cellular controller feature gates are scattered | Confirmed; spec ready | Sol implementation plan |
 | S13 | Graph benchmark bypasses the transport seam | Confirmed/narrowed; spec ready | Sol implementation plan |
 | S14 | DAG validation test does not prove rejection | Confirmed; spec ready | Sol implementation plan |
-| S15 | `ScheduledPhasePlan` booleans lack semantic prefixes | Confirmed; spec ready | Sol implementation plan |
+| S15 | `ScheduledPhasePlan` booleans lack semantic prefixes | Complete — `13fdae4430` | Independent Graham approved; RED→GREEN policy coverage recorded |
 | E01 | Velo route registration does not bind signed peer identity | Confirmed; rationale spec ready | Sol implementation plan |
 | E02 | Externally-driven evaluation skips preflight | Confirmed; spec ready | Sol implementation plan |
 | E03 | NativeGraph execution ignores agent timeout | Confirmed; spec ready | Sol implementation plan |
@@ -68,10 +68,10 @@ Graham review and a commit.
 | E09 | Multi-dataset requests silently retain only the first | Confirmed; spec ready | Sol implementation plan |
 | E10 | Docker verifier orchestration is duplicated and diverges | Confirmed; spec ready | Sol implementation plan |
 | E11 | CLI Dynosim runs skip process defaults | Confirmed; spec ready | Sol implementation plan |
-| C01 | Phaser Velo subscription accepts forged/replayed event | Confirmed; rationale candidate | Benchmark-proportional disposition |
+| C01 | Phaser Velo subscription accepts forged/replayed event | Complete — `cf09af5034` | Independent Graham approved; explicit benchmark trust-boundary contract |
 | C02 | Dataset Velo subscription accepts forged event or oversized payload | Confirmed/narrowed; spec needed | Sol implementation plan |
-| C03 | Duplicate cellular partition can satisfy completion barrier | Confirmed; spec needed | Sol implementation plan |
-| C04 | Eventstream prelude validation happens after accumulation | Confirmed; spec needed | Sol implementation plan |
+| C03 | Duplicate cellular partition can satisfy completion barrier | Complete — `1053327b41` | Independent Graham approved; RED→GREEN identity coverage recorded |
+| C04 | Eventstream prelude validation happens after accumulation | Complete — `4067dfc13b`, `7b0d6fce79` | Independent Graham approved; RED→GREEN parser and mock-caller coverage recorded |
 | C05 | Partial final HTTP frame lacks terminal decode error | Confirmed; spec needed | Sol implementation plan |
 | C06 | Authored HTTP body cap is not propagated to client config | Confirmed; spec needed | Sol implementation plan |
 | C07 | H2 prior knowledge is not usable over UDS | Confirmed; spec needed | Sol implementation plan |
@@ -135,3 +135,44 @@ Graham review and a commit.
   the six planned source paths passed with no findings. The task commit also
   contains unrelated user-owned changes, which were explicitly excluded from
   the remediation review scope.
+- 2026-08-25: The Task 3 S03 record-finalization coverage was green before a
+  production edit, proving the Task 2 engine wrapper had already supplied the
+  planned behavior. It is therefore a documented test-only plan correction,
+  not a manufactured TDD production change: its two success/failure regressions
+  and focused 18-test suite are green and independent Graham review passed.
+  Reviewed commit `ab2c390e3c` is staged on an integration branch because a
+  concurrent user-owned change currently modifies the same shared file.
+- 2026-08-25: S08 completed in `860d93510b`: the cellular E2E helper now
+  distinguishes absent/unreadable logs from a readable log with no matching
+  entries. It has an `E0425` test-first RED, focused and pinned-CLI E2E GREEN
+  receipts, and an independent Graham PASS.
+- 2026-08-25: S10 completed its isolated remediation as `bacf85c014`: all
+  removed APIs were verified producerless outside collector-local tests;
+  compatibility fields now serialize as explicit zero/null values and the live
+  Dynosim SLA path remains. Exact and 37-test focused GREEN receipts plus
+  independent Graham PASS are recorded. It awaits shared-file integration
+  behind a concurrent user-owned `collector.rs` edit.
+- 2026-08-25: S15 completed in `13fdae4430`: eight phase switches are now
+  semantic `ScheduledPhasePolicy` fields with legacy fluent builders preserved.
+  The missing-type RED, compiled all-target gate, executed focused policy GREEN,
+  and independent Graham PASS are recorded.
+- 2026-08-25: Follow-on S15 runtime-effects verification found and repaired a
+  real consumer omission in `e004061d87`: local-measurement discard now gates
+  native/compatibility metric planes while keeping timing lifecycle records.
+  The task has behavioral RED, focused/simulation/online/broad GREEN evidence,
+  and an independent Graham PASS.
+- 2026-08-25: C01 completed in `cf09af5034` with the approved, test-pinned
+  benchmark trust disclosure: raw live controller pushes have no per-push
+  authenticity or replay guarantee, while generation ordering remains the
+  benchmark-correctness invariant. It adds no runtime security mechanism and
+  has RED→GREEN preservation evidence plus independent Graham PASS.
+- 2026-08-26: C03 completed and integrated as `1053327b41`: terminal cellular
+  receipts are keyed by validated cell identity, reject duplicate/out-of-range
+  and mixed-kind receipts, and complete only once every expected cell is
+  represented. Its three focused and 45 controller tests are green; independent
+  Graham review passed.
+- 2026-08-26: C04 completed and integrated as `4067dfc13b` and `7b0d6fce79`:
+  EventStream validates prelude fields before retaining a frame body, bounds
+  retained frames at the supported protocol maximum, and propagates decode
+  failure exactly once. RED→GREEN runtime boundary tests and the mock-server
+  caller regression are green; independent Graham review passed.

@@ -76,7 +76,7 @@ pub enum NativeK8sRole {
     Controller,
     /// Cellular worker process.
     Cell,
-    /// Read-only final-artifact server.
+    /// Final-artifact uploader for the durable operator results API.
     ResultsSidecar,
 }
 

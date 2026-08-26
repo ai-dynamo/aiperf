@@ -10,13 +10,13 @@ description = "Rust-native AIPerf load-generation runtime used by the subprocess
 
 [features]
 default = ["parquet", "cellular", "grpc"]
-# Hosts the v2 protocol / registry / execution layer (the ~30k-line engine
-# modules under `src/engine/`). Only `aiperf-cli` opts in; `mock-server`/`e2e`
-# and other library consumers build without it, so the gated module and its
+# Hosts the v2 protocol / registry / execution layer (the ~75k-line engine
+# modules under `src/engine/`). Only `aiperf-cli` opts in; `mock-server` and
+# other direct library consumers build without it, so the gated module and its
 # dependency surface stay out of their builds.
 engine = []
 # Native gRPC transport (Clock-injected Tonic HTTP/2 channels): the
-# `transport_grpc` prepared-sink stack, the engine's `grpc`/`grpc_execution`
+# `transport::grpc` prepared-sink stack, the engine's `grpc`/`grpc_execution`
 # placement path, the `grpc` runner transport factory, and the KServe OIP v2 /
 # Riva ASR-TTS-NLP wire codecs. gRPC is *just another transport* over the same
 # `RequestSink`/`RunnerTransportFactory` seam as `http`/`dynosim`, so it composes
@@ -36,8 +36,8 @@ websocket = ["dep:tokio-tungstenite"]
 # runner (e.g. a lightweight nightly wheel) builds without it: the exporter is
 # unregistered and `.parquet` dataset inputs are rejected with a clear error.
 parquet = ["dep:arrow", "dep:parquet"]
-# Requires the sibling `dynamo-aiperf-native/lib/mocker` checkout. Its runtime
-# integration stays out of default builds.
+# Pulls the Dynamo mocker from the pinned ai-dynamo/dynamo git dep below (no
+# sibling checkout). Its runtime integration stays out of default builds.
 dynosim = ["dep:dynamo-mocker"]
 # Forward the mocker's optional capabilities. The mocker now always builds with
 # the runtime router and ZMQ publisher, so `dynamo-router-runtime` /
@@ -148,16 +148,15 @@ tar = "0.4"
 # Already linked transitively by `parquet` (its `zstd` feature); declared directly
 # so the streaming compress/decompress artifact-shipping module can `use zstd`
 # WITHOUT the `parquet` feature (a lite runner ships artifacts too). Enabled by the
-# `velo` feature (the only path that ships bytes cross-host).
+# `cellular` feature (the only path that ships bytes cross-host).
 zstd = { version = "0.13", optional = true }
 tokio-rustls = "0.26"
 tokio-stream = "0.1"
 tower-http = { version = "0.6", features = ["fs"] }
 webpki-roots = "0.26"
 # dynosim's Dynamo native deps are fetched from the upstream ai-dynamo/dynamo git
-# repo at a pinned rev (no sibling checkout required). REPO/REV mirror the
-# Dockerfile's DYNAMO_AIPERF_NATIVE_REPO/DYNAMO_AIPERF_NATIVE_REF build args; bump
-# both together when moving the pin.
+# repo at a pinned rev (no sibling checkout required). `dynamo-mocker` and
+# `dynamo-kv-router` below share one rev; bump both together when moving the pin.
 dynamo-mocker = { git = "https://github.com/ai-dynamo/dynamo.git", rev = "14e2cf76b04736e9b99412dfbe76cf1af45ae67a", package = "dynamo-mocker", optional = true, default-features = false }
 # AIC timing bridge (feature `dynamo-aic-forward-pass`): the embedded-Python AIC
 # runtime lives here in the consumer, not in the pure-Rust mocker.

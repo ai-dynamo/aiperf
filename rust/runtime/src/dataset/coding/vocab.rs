@@ -858,7 +858,8 @@ pub(super) const CUDA_ERRORS: &[&str] = &[
     "CUDA error: device-side assert triggered",
 ];
 
-// Language-specific tool transcripts select their matching file-path pool.
+// Language-specific renderers (tool transcripts, tracebacks, diffs) select their
+// matching file-path pool through `file_pool`.
 pub(super) const PYTHON_FILE_PATHS: &[&str] = &[
     "src/main.py",
     "src/config.py",

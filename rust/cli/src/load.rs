@@ -293,7 +293,8 @@ pub fn resolve_inputs(flags: &ProfileFlags) -> anyhow::Result<Inputs> {
 
     // Fixed-schedule replays each timestamped entry once, so the request bound is
     // the schedule length (the input file's non-empty line count).
-    // `--no-fixed-schedule` wins over `--fixed-schedule` (clap overrides_with).
+    // The pair's mutual clap `overrides_with` keeps only whichever was passed
+    // last; the guard below then also honors an explicit `--no-fixed-schedule true`.
     let want_fixed =
         flags.fixed_schedule.unwrap_or(false) && !flags.no_fixed_schedule.unwrap_or(false);
     let (fixed_schedule, request_count) = if want_fixed {
@@ -383,6 +384,7 @@ pub fn resolve_inputs(flags: &ProfileFlags) -> anyhow::Result<Inputs> {
         timeout_seconds: flags.request_timeout_seconds,
         use_legacy_max_tokens: flags.use_legacy_max_tokens.unwrap_or(false),
         use_server_token_count: flags.use_server_token_count.unwrap_or(false),
+        per_chunk_usage: flags.per_chunk_usage.unwrap_or(false),
         download_video_content: flags.download_video_content.unwrap_or(false),
         extra: parse_extra_inputs(&flags.extra_inputs)?,
         // Flag URLs normalize here; YAML values remain authored until sidecar construction.
@@ -557,6 +559,8 @@ pub fn resolve_inputs(flags: &ProfileFlags) -> anyhow::Result<Inputs> {
             .transpose()?,
         runtime_hop_routing: flags.hop_routing()?,
         input_file: flags.input_file.clone(),
+        system_prompt: flags.system_prompt.clone(),
+        system_prompt_file: flags.system_prompt_file.clone(),
         recorded_agent_graph,
         hardware_description: flags.hardware_description.clone(),
         endpoint_placement: flags
@@ -601,6 +605,12 @@ pub fn resolve_inputs(flags: &ProfileFlags) -> anyhow::Result<Inputs> {
         prefix_reuse_fraction: flags.prefix_reuse_fraction,
         prefix_reuse_ratio: flags.prefix_reuse_ratio,
         prompt_corpus: flags.prompt_corpus.clone(),
+        random_range_ratio: parse_random_range_ratio(flags.random_range_ratio.as_deref())?,
+        random_corpus_style: match flags.random_corpus_style.as_deref().unwrap_or("vllm") {
+            "vllm" => aiperf_runtime::dataset::RandomCorpusStyle::Vllm,
+            "sglang" => aiperf_runtime::dataset::RandomCorpusStyle::Sglang,
+            other => anyhow::bail!("unknown random corpus style {other:?}"),
+        },
         sketch_metrics: flags.sketch_metrics.unwrap_or(false),
         steady_state: flags.steady_state.unwrap_or(false),
         steady_state_fraction: flags.steady_state_fraction,
@@ -641,6 +651,19 @@ pub fn resolve_inputs(flags: &ProfileFlags) -> anyhow::Result<Inputs> {
             .unwrap_or_else(|| PathBuf::from("artifacts")),
     };
     Ok(inputs)
+}
+
+pub(crate) fn parse_random_range_ratio(
+    authored: Option<&str>,
+) -> anyhow::Result<Option<aiperf_runtime::dataset::RandomRangeRatioInput>> {
+    authored
+        .map(|value| {
+            value.parse::<f64>().map_or_else(
+                |_| serde_json::from_str(value).map_err(Into::into),
+                |ratio| Ok(aiperf_runtime::dataset::RandomRangeRatioInput::Same(ratio)),
+            )
+        })
+        .transpose()
 }
 
 /// Resolve `--request-rate-series` against mutually exclusive scalar rate flags.
@@ -913,7 +936,7 @@ pub(crate) fn build_synthesis(flags: &ProfileFlags) -> anyhow::Result<Option<ser
         return Ok(None);
     }
     // clap's f64 parser accepts `nan`/`inf`; JSON has no non-finite numbers, so reject
-    // them with a clean error instead of panicking in `Number::from_f64`.
+    // them with a clean error instead of the bare `None` from `Number::from_f64`.
     let f = |v: f64| -> anyhow::Result<serde_json::Value> {
         serde_json::Number::from_f64(v)
             .map(serde_json::Value::Number)
@@ -1040,7 +1063,7 @@ fn build_rankings(flags: &ProfileFlags) -> Option<crate::model::dataset::Ranking
     })
 }
 
-/// One rankings sub-distribution: a `{mean, stddev}` normal when the mean flag is
+/// One rankings sub-distribution: a `{mean, stddev}` normal when either flag is
 /// set (stddev defaults to 0.0, matching `NormalDistribution`), else the config's
 /// `FixedDistribution{value}` default.
 fn rankings_dist(mean: Option<f64>, stddev: Option<f64>, default_value: f64) -> Distribution {
@@ -1660,6 +1683,47 @@ mod tests {
                 value["cfg"]["datasets"][0]["prompts"]["corpus"],
                 serde_json::json!("coding")
             );
+        });
+    }
+
+    #[test]
+    fn system_prompt_projects_every_dataset_variant() {
+        run_on_big_stack(|| {
+            for (kind, extra) in [
+                ("synthetic", Vec::<&str>::new()),
+                ("file", vec!["--input-file", "records.jsonl"]),
+                ("public", vec!["--public-dataset", "sharegpt"]),
+            ] {
+                let mut args = vec![
+                    "-m",
+                    "mock-model",
+                    "--endpoint-type",
+                    "chat",
+                    "--dry-run",
+                    "--system-prompt",
+                    "  exact prompt\n",
+                ];
+                args.extend(extra);
+                let run = super::resolve(&parse(&args)).expect("system prompt run resolves");
+                let dataset = run
+                    .cfg
+                    .datasets
+                    .as_ref()
+                    .and_then(|datasets| datasets.first())
+                    .expect("resolved dataset");
+                let prompt = match dataset {
+                    crate::model::dataset::Dataset::Synthetic(dataset) => {
+                        dataset.system_prompt.as_deref()
+                    }
+                    crate::model::dataset::Dataset::File(dataset) => {
+                        dataset.system_prompt.as_deref()
+                    }
+                    crate::model::dataset::Dataset::Public(dataset) => {
+                        dataset.system_prompt.as_deref()
+                    }
+                };
+                assert_eq!(prompt, Some("  exact prompt\n"), "{kind}");
+            }
         });
     }
 

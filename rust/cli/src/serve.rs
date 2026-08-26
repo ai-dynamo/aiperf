@@ -90,7 +90,7 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
 
     // Standalone serve has no live run loop feeding it, so its session index starts
     // empty (every run comes from the disk scan) and its live slot stays `None` (the
-    // `/api/live` SSE simply reports idle).
+    // `/api/live` SSE then emits no event at all, only its keep-alive).
     let session = Arc::new(Mutex::new(Vec::new()));
     let live = Arc::new(Mutex::new(None));
     let handle = server::start(

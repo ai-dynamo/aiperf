@@ -7,10 +7,12 @@
 //! Reproduces `np.random.default_rng(seed).<method>()` bit-for-bit for the
 //! methods AIPerf's seeded dataset generators use: `random`, `standard_normal`,
 //! `normal`, `lognormal`, `integers`, `bytes`, and weighted/uniform `choice`.
-//! Algorithms follow the NumPy 1.26.4 C source
+//! Algorithms are transcribed from the NumPy 1.26.4 C source
 //! (`src/distributions/distributions.c`, `_generator.pyx`), cited per method;
 //! the normal-ziggurat tables are extracted verbatim in
-//! `crate::rng::compat::ziggurat_constants`. Golden-vector tested against numpy.
+//! `crate::rng::compat::ziggurat_constants`. The golden vectors in this file's
+//! tests come from numpy 2.5.1, which produces the same streams for these
+//! methods.
 
 use crate::rng::compat::numpy_pcg64::NumpyPcg64;
 use crate::rng::compat::ziggurat_constants::{
@@ -108,8 +110,8 @@ impl NumpyGenerator {
     }
 
     /// Bounded uint32 via numpy's Lemire algorithm
-    /// (`buffered_bounded_lemire_uint32`). `rng` is the inclusive max
-    /// (`high - low`), must be `!= 0xFFFFFFFF`.
+    /// (`buffered_bounded_lemire_uint32`). `rng` is the inclusive span
+    /// (`high - 1 - low` for an exclusive `high`), and must be `!= 0xFFFFFFFF`.
     fn bounded_lemire_u32(&mut self, rng: u32) -> u32 {
         let rng_excl = (rng as u64) + 1;
         let mut m = (self.bit.next_u32() as u64) * rng_excl;

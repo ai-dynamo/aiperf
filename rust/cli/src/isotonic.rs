@@ -16,7 +16,7 @@ use crate::search::{SlaFilter, op_str, python_round, resolve_bounds_and_sla_filt
 const SLA_PRECISION_DEFAULT: f64 = 0.05;
 /// Internal probes added before the first fit.
 const FIT_INTERNAL_PROBES: i64 = 3;
-/// Refit when PAVA produces at most this many distinct values.
+/// Refit when PAVA produces fewer than this many distinct values.
 const FIT_MIN_DISTINCT: usize = 3;
 /// Maximum fit cycles.
 const MAX_REFIT_CYCLES: i64 = 3;
@@ -62,7 +62,8 @@ fn normalize_margins(
     best_key
 }
 
-/// Return the replicate budget, clamped to `[3, 20]`.
+/// Return the adaptive replicate budget, clamped to `[3, 20]`. A positive
+/// `override_n` short-circuits the formula and is returned unclamped.
 fn replicate_count(sigma_margin: f64, threshold: f64, override_n: i64) -> i64 {
     const FLOOR: i64 = 3;
     const CEIL: i64 = 20;
@@ -97,8 +98,8 @@ pub struct IsotonicSpec {
 
 impl IsotonicSpec {
     /// Resolve from the CLI flags: `--concurrency-min/max` bounds (default
-    /// `[1,1000]`), `--search-max-iterations` (default 30), SLA filters, and
-    /// `--sla-replicates`.
+    /// `[1,1000]`), `--search-max-iterations` (default 30), and the SLA filters.
+    /// The replicate budget is not authorable — it is always left adaptive.
     pub fn from_flags(flags: &crate::flags::ProfileFlags) -> anyhow::Result<Self> {
         let (lo, hi, sla_filters) = resolve_bounds_and_sla_filters(flags)?;
         Ok(Self {

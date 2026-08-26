@@ -115,7 +115,8 @@ impl Display for Role {
 /// One interned wire payload.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Payload {
-    /// Pre-serialized endpoint message keyed by its authoritative token IDs.
+    /// Pre-serialized endpoint message keyed by its role, authoritative token
+    /// IDs, and exact wire bytes.
     Message {
         /// Message role, framed into the content hash.
         role: Role,

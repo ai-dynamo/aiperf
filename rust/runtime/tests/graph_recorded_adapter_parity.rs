@@ -3,9 +3,11 @@
 
 //! Byte-exact replay parity across recorded trace formats.
 //!
-//! The fixture's one intentional RNG amendment is the repository's canonical
-//! `aiperf-rng` BLAKE3/PCG64 stream. With that stream held common, both source
-//! formats must lower to the same topology and exact materialized message bytes.
+//! Both fixtures pin the same `content_root_seed`, and recorded content
+//! synthesis derives its stream from that seed alone (the SHA-256 child seed and
+//! CPython-parity window draw in `graph::recorded::content`). With that stream
+//! held common, both source formats must lower to the same topology and exact
+//! materialized message bytes.
 #![cfg(feature = "engine")]
 
 use std::collections::BTreeMap;

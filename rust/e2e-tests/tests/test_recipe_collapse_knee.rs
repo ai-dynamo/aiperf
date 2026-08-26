@@ -144,9 +144,9 @@ async fn test_max_concurrency_under_sla_finds_knee_monotonic() {
 }
 
 /// `--search-style bo` needs the scipy/optuna numerical core, which only exists
-/// in a `search-pyo3` build (it embeds Python). The e2e binary is built with the
-/// default feature set on purpose (`Makefile:212`), so the CLI rejects the run
-/// before any search happens. Run with `--features search-pyo3` to exercise it.
+/// in a `search-pyo3` build (it embeds Python). `search-pyo3` is deliberately
+/// left out of the shipped feature set (`Makefile:215`), so the CLI rejects the
+/// run before any search happens. Run with `--features search-pyo3` to exercise it.
 #[tokio::test]
 #[ignore = "requires a --features search-pyo3 build (embedded Python scipy/optuna); \
             the default e2e binary rejects --search-style bo"]
@@ -190,14 +190,15 @@ async fn max_concurrency_under_sla_finds_knee(search_style: &str, knee_band: (i6
     );
 }
 
-/// The `max-goodput-under-slo` recipe is not implemented natively. The CLI names
-/// the recipes it does support: `concurrency-ramp`, `prefill-ttft-curve`,
-/// `decode-itl-curve`, `pareto-sweep`, and `max-concurrency-under-sla
-/// --search-style grid`. The assertions below are the intended contract for when
-/// the recipe lands -- do not weaken them.
+/// The `max-goodput-under-slo` recipe is implemented natively (`run_goodput_loop`)
+/// but gated behind `search-pyo3`, which the shipped feature set excludes. Without
+/// it the recipe falls through to grid expansion and is rejected, naming the grid
+/// recipes: `concurrency-ramp`, `prefill-ttft-curve`, `decode-itl-curve`,
+/// `pareto-sweep`, and `max-concurrency-under-sla --search-style grid`. The
+/// assertions below are the intended contract -- do not weaken them.
 #[tokio::test]
-#[ignore = "product gap: search recipe max-goodput-under-slo is unsupported natively; \
-            the CLI rejects it before the run starts"]
+#[ignore = "requires a --features search-pyo3 build (embedded Python optuna); \
+            the default e2e binary rejects --search-recipe max-goodput-under-slo"]
 async fn test_max_goodput_under_slo_finds_knee() {
     let h = AIPerfHarness::new_with(collapse_mock_config()).await;
     let r = h.run_timeout(

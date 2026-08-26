@@ -29,6 +29,9 @@ use crate::engine::protocol::ModelsSpec;
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PublicDatasetSpec {
+    /// Exact system prompt applied to every composed conversation.
+    #[serde(default)]
+    pub system_prompt: Option<String>,
     /// Config-v2 public dataset name, retained for diagnostics.
     pub name: String,
     /// Native loader registration name.
@@ -101,6 +104,9 @@ pub struct PromptSelectionSpec {
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FileDatasetSpec {
+    /// Exact system prompt applied to every composed conversation.
+    #[serde(default)]
+    pub system_prompt: Option<String>,
     /// Absolute resolved path, mutually exclusive with records.
     #[serde(default)]
     pub path: Option<PathBuf>,
@@ -217,6 +223,9 @@ fn default_sampling_strategy() -> String {
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SyntheticDatasetSpec {
+    /// Exact system prompt applied to every generated conversation.
+    #[serde(default)]
+    pub system_prompt: Option<String>,
     /// Number of reusable conversations.
     pub entries: usize,
     /// Dataset-local seed overriding the run seed for generation and sampling.
@@ -276,6 +285,12 @@ pub struct SyntheticPromptsSpec {
     /// Paired ISL/OSL mixture, which takes precedence over independent lengths.
     #[serde(default)]
     pub sequence_distribution: Option<Vec<SequenceDistributionEntrySpec>>,
+    /// Uniform random ISL/OSL window ratio.
+    #[serde(default)]
+    pub random_range_ratio: Option<crate::dataset::RandomRangeRatioInput>,
+    /// Reference random-corpus behavior (`vllm` or `sglang`).
+    #[serde(default)]
+    pub random_corpus_style: crate::dataset::RandomCorpusStyle,
     /// Fraction of prompts, in `[0, 1]`, that reuse a shared leading token prefix
     /// so a server KV cache observes prefix hits. The default `0.0` keeps every
     /// prompt unique.
@@ -285,6 +300,9 @@ pub struct SyntheticPromptsSpec {
     /// the shared prefix.
     #[serde(default = "default_prefix_reuse_ratio")]
     pub prefix_reuse_ratio: f64,
+    /// Per-conversation cache-bust marker policy.
+    #[serde(default)]
+    pub cache_bust: Option<DatasetCacheBustSpec>,
 }
 
 /// One paired input/output sequence-length bucket.
@@ -813,19 +831,77 @@ enum PublicDatasetInput {
 /// Decode an authored dataset source through `serde_json::Value`.
 ///
 /// Every adapter source is an internally tagged (`#[serde(tag = "type")]`) enum
-/// whose payload nests `#[serde(untagged)]` [`DistributionSpec`] fields. serde's
-/// tagged and untagged machinery both buffer input through
-/// `serde::__private::de::Content`, and serde_json's streaming `from_str`
-/// populates that buffer in a form the untagged float variants fail to match —
-/// a valid `{"value": 4.0}` distribution is rejected with "data did not match
-/// any variant". The `serde_json::Value` deserializer buffers the same content
-/// correctly, so routing every source decode through a `Value` sidesteps the
-/// streaming-only defect while preserving each variant's strict field checking.
+/// whose payload nests [`DistributionSpec`] fields with a hand-written
+/// key-dispatching deserializer. serde's internally tagged machinery buffers
+/// input through `serde::__private::de::Content`, and serde_json's streaming
+/// `from_str` populates that buffer in a form those nested float fields fail to
+/// match, so a valid `{"value": 4.0}` distribution is rejected. The
+/// `serde_json::Value` deserializer buffers the same content correctly, so
+/// routing every source decode through a `Value` sidesteps the streaming-only
+/// defect while preserving each variant's strict field checking.
 fn decode_dataset_source<T>(raw: &RawValue) -> serde_json::Result<T>
 where
     T: serde::de::DeserializeOwned,
 {
     serde_json::from_value(serde_json::from_str::<Value>(raw.get())?)
+}
+
+fn validate_system_prompt_endpoint(
+    system_prompt: Option<&str>,
+    endpoint: &EndpointDescriptor,
+) -> Result<()> {
+    let Some(system_prompt) = system_prompt else {
+        return Ok(());
+    };
+    ensure!(
+        !system_prompt.trim().is_empty(),
+        "system prompt cannot be empty or whitespace-only"
+    );
+    ensure!(
+        endpoint.consumes_system_message(),
+        "system prompt is not supported by endpoint type {:?} (no system role), so the text \
+         would never reach the wire; supported endpoint types: chat, chat_embeddings, messages, \
+         responses",
+        endpoint.id
+    );
+    Ok(())
+}
+
+fn validate_synthetic_system_prompt(spec: &SyntheticDatasetSpec) -> Result<()> {
+    let Some(_system_prompt) = spec.system_prompt.as_deref() else {
+        if spec
+            .prompts
+            .as_ref()
+            .and_then(|prompts| prompts.cache_bust.as_ref())
+            .and_then(|cache_bust| cache_bust.target.as_deref())
+            == Some("warmup_isolation_system")
+        {
+            let has_generated_system = spec
+                .prefix_prompts
+                .as_ref()
+                .is_some_and(|prefixes| prefixes.shared_system_length.is_some());
+            ensure!(
+                has_generated_system,
+                "cache_bust=warmup_isolation_system requires a shared system prompt, but no \
+                 shared_system_length or verbatim system prompt is configured"
+            );
+        }
+        return Ok(());
+    };
+    if let Some(prefixes) = spec.prefix_prompts.as_ref() {
+        ensure!(
+            prefixes.shared_system_length.is_none(),
+            "system_prompt and prefix_prompts.shared_system_length are mutually exclusive: \
+             both fill the system message"
+        );
+        ensure!(
+            !prefixes.pool_size.is_some_and(|value| value > 0)
+                && !prefixes.length.is_some_and(|value| value > 0),
+            "system_prompt and prefix_prompts.pool_size/length are mutually exclusive: both \
+             fill the system-message prefix slot"
+        );
+    }
+    Ok(())
 }
 
 #[async_trait(?Send)]
@@ -841,6 +917,11 @@ impl DatasetInputAdapter for SyntheticDatasetInputAdapter {
     ) -> Result<PreparedDatasetInput> {
         let SyntheticDatasetInput::Synthetic(spec) =
             decode_dataset_source(raw).context("decoding synthetic dataset source")?;
+        validate_system_prompt_endpoint(
+            spec.system_prompt.as_deref(),
+            context.endpoint_descriptor,
+        )?;
+        validate_synthetic_system_prompt(&spec)?;
         let rng_root = spec
             .random_seed
             .map_or(context.run_rng_root, |seed| RngRoot::new(Some(seed)));
@@ -882,6 +963,10 @@ impl DatasetInputAdapter for FileDatasetInputAdapter {
     ) -> Result<PreparedDatasetInput> {
         let FileDatasetInput::File(spec) =
             decode_dataset_source(raw).context("decoding file dataset source")?;
+        validate_system_prompt_endpoint(
+            spec.system_prompt.as_deref(),
+            context.endpoint_descriptor,
+        )?;
         ensure!(
             spec.format != "dag_jsonl",
             "scheduled workloads cannot consume a direct dag_jsonl graph program"
@@ -927,6 +1012,10 @@ impl DatasetInputAdapter for PublicDatasetInputAdapter {
     ) -> Result<PreparedDatasetInput> {
         let PublicDatasetInput::Public(spec) =
             decode_dataset_source(raw).context("decoding public dataset source")?;
+        validate_system_prompt_endpoint(
+            spec.system_prompt.as_deref(),
+            context.endpoint_descriptor,
+        )?;
         ensure!(
             spec.format != "dag_jsonl",
             "scheduled workloads cannot consume a direct dag_jsonl graph program"
@@ -941,6 +1030,7 @@ impl DatasetInputAdapter for PublicDatasetInputAdapter {
             rng_root,
             context.tokenizer,
             context.endpoint_descriptor.requires_raw_token_ids,
+            context.endpoint_descriptor.consumes_system_message(),
         )
         .await?;
         dataset.validate_for_endpoint(context.endpoint_descriptor)?;
@@ -989,6 +1079,70 @@ fn checked_default_output_tokens(expected: f64) -> Result<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::endpoints::{ChatEndpoint, CompletionsEndpoint, Endpoint};
+
+    #[test]
+    fn strict_dataset_boundary_validates_system_prompt_capability_and_shape() {
+        validate_system_prompt_endpoint(Some("exact"), ChatEndpoint.descriptor()).unwrap();
+        let error =
+            validate_system_prompt_endpoint(Some("exact"), CompletionsEndpoint.descriptor())
+                .unwrap_err()
+                .to_string();
+        assert!(error.contains("would never reach the wire"), "{error}");
+
+        for prefix_prompts in [
+            serde_json::json!({"shared_system_length": 4}),
+            serde_json::json!({"pool_size": 2, "length": 4}),
+        ] {
+            let SyntheticDatasetInput::Synthetic(spec) =
+                serde_json::from_value(serde_json::json!({
+                    "type": "synthetic",
+                    "system_prompt": "exact",
+                    "entries": 1,
+                    "prefix_prompts": prefix_prompts,
+                    "turns": {"value": 1.0},
+                    "turn_delay_ms": {"value": 0.0}
+                }))
+                .unwrap();
+            let error = validate_synthetic_system_prompt(&spec)
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains("mutually exclusive"), "{error}");
+        }
+    }
+
+    #[test]
+    fn strict_dataset_boundary_accepts_verbatim_warmup_system_and_user_context() {
+        let SyntheticDatasetInput::Synthetic(spec) = serde_json::from_value(serde_json::json!({
+            "type": "synthetic",
+            "system_prompt": "exact",
+            "entries": 1,
+            "prompts": {
+                "cache_bust": {"target": "warmup_isolation_system"}
+            },
+            "prefix_prompts": {"user_context_length": 4},
+            "turns": {"value": 1.0},
+            "turn_delay_ms": {"value": 0.0}
+        }))
+        .unwrap();
+        validate_synthetic_system_prompt(&spec).unwrap();
+
+        let SyntheticDatasetInput::Synthetic(without_system) =
+            serde_json::from_value(serde_json::json!({
+                "type": "synthetic",
+                "entries": 1,
+                "prompts": {
+                    "cache_bust": {"target": "warmup_isolation_system"}
+                },
+                "turns": {"value": 1.0},
+                "turn_delay_ms": {"value": 0.0}
+            }))
+            .unwrap();
+        let error = validate_synthetic_system_prompt(&without_system)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("requires a shared system prompt"), "{error}");
+    }
 
     #[test]
     fn distribution_spec_decodes_under_arbitrary_precision() {
@@ -1026,6 +1180,40 @@ mod tests {
                 .and_then(|prompts| prompts.corpus.as_deref()),
             Some("coding")
         );
+    }
+
+    #[test]
+    fn synthetic_random_range_ratio_decodes_scalar_and_split_protocol_v2() {
+        for (ratio, style, expected) in [
+            (
+                "0.3",
+                "sglang",
+                crate::dataset::RandomRangeRatioInput::Same(0.3),
+            ),
+            (
+                r#"{"input":0.2,"output":0.4}"#,
+                "vllm",
+                crate::dataset::RandomRangeRatioInput::Split {
+                    input: 0.2,
+                    output: 0.4,
+                },
+            ),
+        ] {
+            let json = format!(
+                r#"{{"type":"synthetic","entries":1,"sampling":"sequential","prompts":{{"isl":{{"value":100}},"osl":{{"value":20}},"corpus":"random","random_range_ratio":{ratio},"random_corpus_style":"{style}"}},"turns":{{"value":1}},"turn_delay_ms":{{"value":0}}}}"#
+            );
+            let SyntheticDatasetInput::Synthetic(spec) = serde_json::from_str(&json).unwrap();
+            let prompts = spec.prompts.unwrap();
+            assert_eq!(prompts.random_range_ratio, Some(expected));
+            assert_eq!(
+                prompts.random_corpus_style,
+                if style == "sglang" {
+                    crate::dataset::RandomCorpusStyle::Sglang
+                } else {
+                    crate::dataset::RandomCorpusStyle::Vllm
+                }
+            );
+        }
     }
 
     #[test]

@@ -4,7 +4,7 @@
 //! Warmup-to-profile handoff observation for the accelerated cache-warmup
 //! substage — a port of the return-observation half of Python's
 //! `AgenticReplayStrategy.observe_credit_return`
-//! (`src/aiperf/timing/strategies/agentic_replay.py`, lines 698-717).
+//! (`src/aiperf/timing/strategies/agentic_replay.py`, lines 757-776).
 //!
 //! During accelerated cache-pressure warmup Python runs `observe_credit_return`
 //! on *every* credit return: it advances the replay barrier gate
@@ -38,7 +38,7 @@
 //! `_add_pending_handoff_states` / `_pending_turn_handoff_state` /
 //! `_handoff_lane_for_turn` / `_handoff_residual_delay_ms` /
 //! `_handoff_base_delay_ms` / `_build_handoff_replay_boundaries` /
-//! `_build_handoff_trajectories` (lines 749-1094). Join annotations are empty
+//! `_build_handoff_trajectories` (lines 834-1161). Join annotations are empty
 //! for the linear MVP (Python `_handoff_annotations` returns `({}, {})` when
 //! there is no branch orchestrator); the `TreeGate`-annotation hookup is left to
 //! Task 6 wiring. All wall values flow through the injected
@@ -153,7 +153,7 @@ impl HandoffRecorder {
     }
 
     /// Observe one credit return: pop both records on a final turn, otherwise
-    /// record the live credit and its return wall (Python lines 710-717). The
+    /// record the live credit and its return wall (Python lines 769-776). The
     /// barrier-gate `complete` call is the caller's responsibility (it precedes
     /// this in `observe_credit_return`).
     pub fn observe(&mut self, credit: HandoffCredit, is_final: bool, wall_ns: i64) {
@@ -298,7 +298,7 @@ impl PendingHandoffTurn {
 }
 
 /// Recorded next-turn/previous-turn metadata a returned credit needs to compute
-/// its base delay (the inputs of Python `_handoff_base_delay_ms`, lines 978-1006).
+/// its base delay (the inputs of Python `_handoff_base_delay_ms`, lines 1045-1073).
 ///
 /// All fields are already `_as_timestamp_ms`-coerced by the caller: a non-finite
 /// or absent source value is `None`. When `next_delay_ms` is `Some`, it wins;
@@ -316,13 +316,13 @@ pub struct HandoffBaseDelayInputs {
 }
 
 /// Coerce a metadata timestamp to finite ms, treating non-finite as absent
-/// (port of Python `_as_timestamp_ms`, `trajectory_source.py` lines 892-901).
+/// (port of Python `_as_timestamp_ms`, `trajectory_source.py` lines 900-909).
 fn as_timestamp_ms(value: Option<f64>) -> Option<f64> {
     value.filter(|v| v.is_finite())
 }
 
 /// Recorded delay from a returned warmup credit to its next turn (port of Python
-/// `_handoff_base_delay_ms`, lines 978-1006).
+/// `_handoff_base_delay_ms`, lines 1045-1073).
 ///
 /// The `delay_ms` path wins when present and finite (clamped `>= 0`); otherwise
 /// the timestamp fallback `next_ts - prev_ts - max(0, prev_api)` applies (clamped
@@ -346,7 +346,7 @@ pub fn base_delay_ms(inputs: &HandoffBaseDelayInputs) -> f64 {
 }
 
 /// Residual profiling dispatch delay for a drained warmup stream (port of Python
-/// `_handoff_residual_delay_ms`, lines 958-976).
+/// `_handoff_residual_delay_ms`, lines 1025-1043).
 ///
 /// Carries the next turn's recorded `base_ms` forward, minus any wall-clock time
 /// already spent waiting for the drain/finalize (`returned_ns` present), floored
@@ -425,7 +425,7 @@ where
 
 /// Build a returned credit's handoff state, or `None` when it has no lane or is
 /// already on its final turn (port of Python `_returned_credit_handoff_state`,
-/// lines 836-865). Join annotations are empty for the linear MVP.
+/// lines 903-932). Join annotations are empty for the linear MVP.
 fn returned_credit_handoff_state(
     credit: &HandoffCredit,
     root_to_lane: &BTreeMap<String, usize>,
@@ -456,7 +456,7 @@ fn returned_credit_handoff_state(
 }
 
 /// Resolve a pending turn's lane (port of Python `_handoff_lane_for_turn`,
-/// lines 943-956): root id, then effective-root id, then parent correlation,
+/// lines 1010-1023): root id, then effective-root id, then parent correlation,
 /// then the turn's own correlation.
 fn handoff_lane_for_turn(
     root_correlation_id: &str,
@@ -480,7 +480,7 @@ fn handoff_lane_for_turn(
 
 /// Build a barrier-pending turn's handoff state at offset `0.0`, or `None` when
 /// it has no lane, is a duplicate of an already-seen state, or is past its final
-/// turn (port of Python `_pending_turn_handoff_state`, lines 907-941).
+/// turn (port of Python `_pending_turn_handoff_state`, lines 974-1008).
 fn pending_turn_handoff_state(
     root_correlation_id: &str,
     turn: &PendingHandoffTurn,
@@ -497,7 +497,7 @@ fn pending_turn_handoff_state(
     if seen.contains(&key) || turn.turn_index >= turn.num_turns {
         return None;
     }
-    // Mirror Python `_pending_turn_handoff_state` line 923: record this turn's
+    // Mirror Python `_pending_turn_handoff_state` line 990: record this turn's
     // effective-root -> lane so a LATER pending turn in the same finalize whose
     // effective-root matches resolves its lane via this write. Dropping it would
     // silently strand such turns (Finding 1).
@@ -519,7 +519,7 @@ fn pending_turn_handoff_state(
 }
 
 /// Tree-root id shared by every stream of a lane's states (port of Python
-/// `_lane_root_corr`, lines 287-324): the first non-`None` `root_correlation_id`,
+/// `_lane_root_corr`, lines 303-340): the first non-`None` `root_correlation_id`,
 /// else the first depth-0 `x_correlation_id`, else the first non-`None`
 /// `parent_correlation_id`, else the first `x_correlation_id`.
 fn lane_root_corr(states: &[HandoffConversationState]) -> Option<String> {
@@ -538,7 +538,7 @@ fn lane_root_corr(states: &[HandoffConversationState]) -> Option<String> {
 
 /// Merge live stream positions with terminal warmup history into sorted
 /// replay-resume boundaries (port of Python `_build_handoff_replay_boundaries`,
-/// lines 1008-1034).
+/// lines 1075-1101).
 fn build_handoff_replay_boundaries(
     states: &[HandoffConversationState],
     completed_prefixes: impl Fn(&str) -> Vec<ReplayResumeBoundary>,
@@ -573,7 +573,7 @@ fn build_handoff_replay_boundaries(
 /// Ports Python `finalize_phase` / `_build_handoff_states` /
 /// `_add_returned_handoff_states` / `_add_pending_handoff_states` /
 /// `_build_handoff_replay_boundaries` / `_build_handoff_trajectories`
-/// (lines 749-1094) for the linear-lane MVP: join annotations are empty, so no
+/// (lines 808-1161) for the linear-lane MVP: join annotations are empty, so no
 /// state is `waiting_on_children` or branch-gated. Returned credits are projected
 /// first (deduped by `(conversation_id, x_correlation_id, next_turn_index)`),
 /// then barrier-pending turns at offset `0.0`; each lane's states are sorted
@@ -681,7 +681,7 @@ where
 }
 
 /// Signal an accelerated-warmup drain (port of Python `_finish_accelerated_warmup`,
-/// lines 630-634): pause the replay barrier gate so no newly ready turn is issued,
+/// lines 689-693): pause the replay barrier gate so no newly ready turn is issued,
 /// letting the already-issued requests drain.
 ///
 /// The `mark_sending_complete` half (stop new issuance) is the caller's execute-loop

@@ -49,8 +49,9 @@ pub(crate) const HEADLINE: &[(&str, &str, &str)] = &[
 const PERCENTILE_FIELDS: &[&str] = &["p1", "p5", "p10", "p25", "p50", "p75", "p90", "p95", "p99"];
 
 /// Aggregate the finished cells: render the table and write the aggregate
-/// artifacts. Returns the process exit code (`0` full success; `1` when fewer
-/// than two runs succeeded).
+/// artifacts. Returns the process exit code: on the single-trial path `1` when
+/// any cell failed, and on the multi-trial path `1` only when fewer than two
+/// runs succeeded (later failures are reported in the aggregate, not the code).
 ///
 /// `is_sweep` selects the sweep vs non-sweep multi-run layout; `order` selects
 /// the REPEATED/INDEPENDENT per-variation + sweep-aggregate directory placement.
@@ -67,7 +68,7 @@ pub fn finish(
     // sweep at `<base>/[aggregate/]?(profile_runs/trial_NNNN|)/dir_name`. The
     // sweep aggregate always sits at `<base>/sweep_aggregate` (or, for REPEATED
     // multi-run, `<base>/aggregate/sweep_aggregate`). We derive `<base>` from the
-    // configured artifact dir, falling back to the shallowest common ancestor.
+    // configured artifact dir, falling back to the first cell's parent dir.
     let base = flags
         .artifact_dir
         .clone()
@@ -205,7 +206,8 @@ fn failed_runs(classified: &[Classified]) -> Vec<crate::sweep::confidence::Faile
         .collect()
 }
 
-/// Shallowest common ancestor of every cell's artifact dir (fallback base).
+/// The first cell's parent artifact dir (fallback base). Cells of one run share
+/// a parent, so the first one stands in for all of them.
 fn common_base(outcomes: &[CellOutcome]) -> Option<PathBuf> {
     outcomes
         .first()

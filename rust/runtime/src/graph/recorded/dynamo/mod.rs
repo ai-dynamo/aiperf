@@ -20,7 +20,7 @@ use crate::graph::model::GraphTraceProgram;
 use super::content::CorpusContentSynthesizer;
 use super::source::load_dynamo_documents;
 use super::trie::{RecordedGraphLowering, RecordedRequest, graph_plan, lower_recorded_graph};
-use super::{RecordedTraceError, RecordedTraceInputConfig};
+use super::{RecordedTraceError, RecordedTraceInputConfig, rejected_peak_context_error};
 use schema::{EventType, ReplayMetrics, RequestMetrics, TraceRecord, parse_record};
 
 const DEFAULT_VIRTUAL_BLOCK_SIZE: usize = 16;
@@ -50,9 +50,9 @@ pub async fn compile_dynamo_trace_input(
     let chains = build_chains(records)?;
     validate_forest(&chains)?;
     let selected = select_trees(&chains, config.root_limit, config.max_context_length)?;
-    // Resolve this authority across the complete capture before per-tree
-    // selection/build. A mixed-size tree cannot be hidden behind a root or
-    // context filter and make the remaining trees silently executable.
+    // Resolve this authority across the complete capture, not just the selected
+    // trees, before any per-tree build. A mixed-size tree cannot be hidden behind
+    // a root or context filter and make the remaining trees silently executable.
     let block_size = resolve_block_size(&chains)?;
     let owned = CorpusContentSynthesizer::build_owned(
         tokenizer,
@@ -311,6 +311,8 @@ fn select_trees(
             .push(session_id.clone());
     }
     let mut selected = Vec::new();
+    let mut scanned = 0;
+    let mut smallest_rejected = None;
     for (root, mut sessions) in trees {
         sessions.sort();
         let peak = sessions
@@ -319,7 +321,12 @@ fn select_trees(
             .map(|record| request_peak_context(record.request.as_ref()))
             .max()
             .unwrap_or(0);
-        if max_context.is_some_and(|limit| peak > limit) {
+        scanned += 1;
+        if let Some(limit) = max_context
+            && peak > limit
+        {
+            smallest_rejected =
+                Some(smallest_rejected.map_or(peak, |smallest: usize| smallest.min(peak)));
             continue;
         }
         selected.push((root, sessions));
@@ -328,6 +335,15 @@ fn select_trees(
         }
     }
     if selected.is_empty() {
+        if let (Some(limit), Some(smallest)) = (max_context, smallest_rejected) {
+            return Err(rejected_peak_context_error(
+                "Dynamo selection",
+                scanned,
+                root_limit,
+                limit,
+                smallest,
+            ));
+        }
         return Err(RecordedTraceError(
             "Dynamo selection rejected every session tree".into(),
         ));
@@ -875,6 +891,27 @@ mod tests {
                 ("child".into(), vec!["child".into()]),
                 ("root".into(), vec!["root".into()]),
             ]
+        );
+    }
+
+    #[test]
+    fn all_context_rejected_trees_report_the_smallest_peak() {
+        let records = vec![
+            fallback_record("larger", "l0", 0, 120),
+            fallback_record("smaller", "s0", 1, 40),
+        ];
+        let chains = build_chains(collect_records(raws(records)).unwrap()).unwrap();
+        let error = select_trees(&chains, None, Some(20))
+            .expect_err("every session tree exceeds the context cap");
+        assert!(
+            error.0.contains("No eligible traces in Dynamo selection after filter-then-cap (scanned 2, --max-context-length=20"),
+            "{}",
+            error.0
+        );
+        assert!(
+            error.0.contains("Smallest trace requires 41 tokens; raise --max-context-length to at least that (e.g. --max-context-length 41) to admit any trace."),
+            "{}",
+            error.0
         );
     }
 

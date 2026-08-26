@@ -249,7 +249,7 @@ impl LiveAgentPolicyDecisionCollector {
 }
 
 impl AgentTurn {
-    /// Construct one selected response and its sequential tool calls.
+    /// Construct one selected response and its copied-context marking.
     pub fn new(selection: ResponseSelection, is_copied_context: bool) -> Self {
         Self {
             selection,
@@ -359,7 +359,7 @@ pub struct StaticAgentTurnCoordinator {
     turns: Vec<AgentTurn>,
 }
 
-/// In-memory factory retaining deterministic turns solely for seam tests.
+/// In-memory factory retaining deterministic turns for recorded replay and seam tests.
 #[derive(Clone, Debug)]
 pub struct StaticAgentTurnCoordinatorFactory {
     turns: Vec<AgentTurn>,

@@ -235,8 +235,8 @@ mod tests {
     }
 
     // The attach seam: an item added "concurrently" with an attach lands in exactly
-    // one of {replay, live} — never both, never neither. We can't truly race a
-    // `parking_lot::Mutex` deterministically, but we assert the boundary invariant by
+    // one of {replay, live} — never both, never neither. We can't truly race the
+    // inner `std::sync::Mutex` deterministically, but we assert the boundary invariant by
     // interleaving attach and add and checking each consumer sees a gap-free prefix.
     #[tokio::test]
     async fn no_gap_or_duplicate_at_the_attach_seam() {

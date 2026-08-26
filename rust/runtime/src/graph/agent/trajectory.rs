@@ -24,7 +24,7 @@ pub struct AgentTrajectory {
     pub invocation_id: String,
     /// Selected response wires in dispatch order.
     pub dispatched_response_wires: Vec<Bytes>,
-    /// Turn indexes that reused earlier response bytes as copied context.
+    /// Turn indexes that consumed copied context instead of a new generation.
     pub copied_context_turns: Vec<usize>,
     /// Correlated terminal tool outcomes in dispatch order.
     pub tool_results: Vec<ToolDispatchResult>,
@@ -88,7 +88,7 @@ pub trait AgentTrajectorySink {
     fn snapshot(&self) -> AgentTrajectory;
 }
 
-/// In-memory trajectory sink for deterministic driver tests.
+/// In-memory trajectory sink for deterministic trace drivers and driver tests.
 #[derive(Default)]
 pub struct InMemoryAgentTrajectorySink {
     trajectory: RefCell<AgentTrajectory>,

@@ -5,7 +5,7 @@
 
 use super::*;
 
-/// Per-cell shared admission gates for `Global`/`GlobalHop` dispatch.
+/// Per-cell shared admission gates for `Global` dispatch.
 ///
 /// Built once per cell, on the main thread, before worker threads spawn, from
 /// this cell's phase specs — the *cell-level* budgets (already narrowed from
@@ -18,8 +18,8 @@ use super::*;
 ///
 /// Present only under [`DispatchMode::Global`]; `None` for
 /// [`DispatchMode::Sharded`] (per-thread `1/W` slicing needs no shared gate) and
-/// for [`DispatchMode::GlobalHop`] (its single coordinator loop enforces the
-/// full cap through one local `SlotPool` — see
+/// for [`DispatchMode::GlobalHop`]/[`DispatchMode::GlobalPush`] (their single
+/// coordinator loop enforces the full cap through one local `SlotPool` — see
 /// [`crate::engine::global_hop`]). The shared gate exists specifically to make
 /// `Global`'s `W` independent scheduling loops jointly exact.
 pub(crate) struct GlobalAdmission {
@@ -176,13 +176,16 @@ pub(crate) struct ShardedShared {
     pub(crate) phase_ordinal_bases: HashMap<MetricsPhase, usize>,
     /// Selected admission strategy for this cell's worker threads.
     pub(crate) dispatch_mode: DispatchMode,
-    /// Resolved worker-assignment policy applied by the [`DispatchMode::GlobalHop`]
-    /// hop executor when `workers > 1`. `RoundRobin` for every other mode and for
-    /// `workers == 1` (where it is inert).
+    /// Resolved worker-assignment policy, read by the single-coordinator hop
+    /// executor ([`DispatchMode::GlobalHop`] and [`DispatchMode::GlobalPush`],
+    /// both through [`crate::engine::global_hop::run_single_coordinator`]) when
+    /// `workers > 1`. Carried verbatim from the authored `runtime.hop_routing`
+    /// (`RoundRobin` when absent) and inert under every other mode and for
+    /// `workers == 1`.
     pub(crate) hop_routing: crate::engine::protocol::HopRouting,
-    /// Per-phase shared admission gates for `Global`/`GlobalHop` dispatch,
-    /// built once on the main thread from this cell's (already cell-level-sliced,
-    /// not thread-level-sliced) phase budgets. `None` under `Sharded`.
+    /// Per-phase shared admission gates for `Global` dispatch, built once on the
+    /// main thread from this cell's (already cell-level-sliced, not
+    /// thread-level-sliced) phase budgets. `None` under every other mode.
     pub(crate) global_admission: Option<Arc<GlobalAdmission>>,
 }
 
@@ -490,7 +493,7 @@ pub(crate) async fn execute_scheduled_pipeline(
         let mut plans = Vec::with_capacity(sliced_phases.len());
         let mut profiling_index = 0usize;
         for (phase_index, phase) in sliced_phases.iter().enumerate() {
-            // Under `global`/`global-hop`, a phase with a shared cell-level
+            // Under `global`, a phase with a shared cell-level
             // concurrency gate admits from that gate (this thread's OWN
             // SlotPool::new_global handle over it) instead of the persistent
             // local `shared_resources` pool. See `phase_scheduled_resources`.

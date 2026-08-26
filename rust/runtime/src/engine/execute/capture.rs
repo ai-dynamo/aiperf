@@ -79,8 +79,10 @@ pub(crate) struct RunCapture {
     /// each record is stamped with its absolute dispatch `request_index` before the
     /// fold, so `export_results` yields exact percentiles/timeslices/series — not the
     /// sketch approximation. Distinct from `metrics_only` (sketch); the two are
-    /// mutually exclusive. Selected only for the single-thread `DirectIssuanceAuthority`
-    /// scheduled path with no per-record file artifacts (see [`exact_fold_eligible`]).
+    /// mutually exclusive. Selected for both the single-thread and thread-per-core
+    /// sharded scheduled paths when nothing downstream needs a retained record
+    /// (per-record file artifacts stream through `record_lane` instead — see
+    /// [`exact_fold_eligible`]).
     pub(crate) exact_fold: bool,
     /// Monotonic dispatch-ordinal counter for exact-fold, incremented once per
     /// [`RunCapture::begin`]. Its value at `begin` is the turn's `flat_local` — the
@@ -256,8 +258,10 @@ impl RunCapture {
 
     /// Attach the streaming per-record artifact lane, consumed once per completed
     /// record in the exact-fold [`Self::fold_record`] path before the record is
-    /// dropped. Builder-style so only the single-thread exact-fold call site opts in;
-    /// every other construction leaves it `None` and uses the batch writers.
+    /// dropped. Builder-style so only an exact-fold call site opts in (the
+    /// single-thread coordinator with the run's own artifact paths, or one
+    /// per-shard lane per worker thread); every other construction leaves it
+    /// `None` and uses the batch writers.
     pub(crate) fn with_record_lane(mut self, lane: Option<Rc<RecordArtifactLane>>) -> Self {
         self.record_lane = lane;
         self
@@ -1455,7 +1459,7 @@ mod tests {
     /// The live-results sink must read a non-consuming clone. The
     /// worker returns `snapshot_record` (not `drain_terminal_record`), so the
     /// authoritative record stays in the worker observer and the end-of-run drain
-    /// still counts every live-emitted request — a `--live` run cannot undercount.
+    /// still counts every live-emitted request — a live-results run cannot undercount.
     #[test]
     fn live_record_snapshot_does_not_consume_the_drain_record() {
         let clock: Rc<dyn Clock> = Rc::new(SimClock::new());

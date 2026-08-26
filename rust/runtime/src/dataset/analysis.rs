@@ -283,8 +283,9 @@ pub struct DatasetShape {
     pub multi_turn_conversations: u64,
     /// Distribution of turn counts per conversation, when non-empty.
     pub turns_per_conversation: Option<StatSummary>,
-    /// Distinct model names referenced by the dataset. Populated by a later
-    /// adapter; empty until then.
+    /// Distinct model names referenced by the dataset. [`AnalyzedTurn`] carries
+    /// no model name, so [`dataset_shape`] always leaves this empty; only a
+    /// caller holding model information can fill it.
     pub models: Vec<String>,
     /// Largest zero-based turn index observed.
     pub max_turn_index: usize,
@@ -660,8 +661,9 @@ impl Default for AnalysisOptions {
 /// a conversation, turn `i` reuses turn `i - 1`'s leading
 /// `floor(prev_isl / block_size)` blocks so multi-turn prefixes chain, and a
 /// shared `system_handle` maps to a shared leading block run across
-/// conversations. The [`IdentitySource::TokenBlocks`] variant is reserved for a
-/// later materialized-token path and is not produced here.
+/// conversations. These are the only two sources this function reports;
+/// [`IdentitySource::TokenBlocks`] describes a materialized-token derivation
+/// that no analysis path produces.
 fn request_blocks(
     turns: &[AnalyzedTurn],
     opts: &AnalysisOptions,

@@ -471,7 +471,7 @@ fn write_non_canonical_scenario_config(dir: &Path, url: &str) -> PathBuf {
 /// not the canonical manifest's tasks and recording digests.
 ///
 /// This guards a check with no other coverage. `validate_canonical_recorded_agent_bundle`
-/// (`online_execution.rs:1284`) runs only behind `workload.recorded_agent_default`,
+/// (`online_execution.rs:1332`) runs only behind `workload.recorded_agent_default`,
 /// which the runner derives from `cfg.scenario` — so if that flag is ever dropped
 /// while threading the workload config, validation silently stops running and the
 /// run *succeeds* instead of failing to decode. The resolve-side scenario locks do

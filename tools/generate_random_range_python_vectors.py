@@ -1,0 +1,305 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+"""Generate NumPy reference vectors for native random-range parity tests."""
+
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+from tokenizers import AddedToken, Tokenizer
+from tokenizers.models import WordLevel
+from tokenizers.pre_tokenizers import Whitespace
+from tokenizers.processors import TemplateProcessing
+
+ROOT = Path(__file__).resolve().parents[1]
+FIXTURE = ROOT / "rust/runtime/tests/fixtures/random_range_python_vectors.json"
+E2E_TOKENIZER_ROOT = ROOT / "rust/e2e-tests/fixtures"
+VOCAB_SIZE = 16
+SPECIAL_TOKEN_IDS = frozenset({3, 7, 15})
+VLLM_POOL = [token for token in range(VOCAB_SIZE) if token not in SPECIAL_TOKEN_IDS]
+
+
+CASES: tuple[dict[str, Any], ...] = (
+    {
+        "name": "vllm_scalar_zero_seed_0",
+        "style": "vllm",
+        "seed": 0,
+        "entries": 8,
+        "input_mean": 8,
+        "output_mean": 4,
+        "input_ratio": 0.0,
+        "output_ratio": 0.0,
+        "special_tokens": 0,
+    },
+    {
+        "name": "vllm_split_seed_42_with_specials",
+        "style": "vllm",
+        "seed": 42,
+        "entries": 8,
+        "input_mean": 12,
+        "output_mean": 6,
+        "input_ratio": 0.25,
+        "output_ratio": 0.5,
+        "special_tokens": 2,
+    },
+    {
+        "name": "vllm_near_upper_boundary_wide_seed",
+        "style": "vllm",
+        "seed": 18_446_744_073_709_551_613,
+        "entries": 8,
+        "input_mean": 12,
+        "output_mean": 5,
+        "input_ratio": 0.999_999,
+        "output_ratio": 0.999_999,
+        "special_tokens": 1,
+    },
+    {
+        "name": "sglang_lower_boundary_seed_0",
+        "style": "sglang",
+        "seed": 0,
+        "entries": 8,
+        "input_mean": 9,
+        "output_mean": 5,
+        "input_ratio": 0.0,
+        "output_ratio": 0.0,
+        "special_tokens": 0,
+    },
+    {
+        "name": "sglang_midpoint_seed_42_with_specials",
+        "style": "sglang",
+        "seed": 42,
+        "entries": 8,
+        "input_mean": 12,
+        "output_mean": 6,
+        "input_ratio": 0.5,
+        "output_ratio": 0.5,
+        "special_tokens": 2,
+    },
+    {
+        "name": "sglang_upper_boundary_wide_seed",
+        "style": "sglang",
+        "seed": 4_294_967_300,
+        "entries": 8,
+        "input_mean": 11,
+        "output_mean": 7,
+        "input_ratio": 1.0,
+        "output_ratio": 1.0,
+        "special_tokens": 1,
+    },
+)
+
+
+def fold_seed(seed: int) -> int:
+    """Match AIPerf's wide-seed fold for NumPy's legacy MT19937 seeder."""
+    return (seed & 0xFFFF_FFFF) ^ (seed >> 32)
+
+
+def bounds(case: dict[str, Any]) -> tuple[tuple[int, int], tuple[int, int]]:
+    """Compute inclusive reference bounds for one authored case."""
+    if case["style"] == "vllm":
+        adjusted = max(0, case["input_mean"] - case["special_tokens"])
+        input_bounds = (
+            max(0, int(np.floor(adjusted * (1.0 - case["input_ratio"])))),
+            int(np.ceil(adjusted * (1.0 + case["input_ratio"]))),
+        )
+        output_bounds = (
+            max(1, int(np.floor(case["output_mean"] * (1.0 - case["output_ratio"])))),
+            max(1, int(np.ceil(case["output_mean"] * (1.0 + case["output_ratio"])))),
+        )
+        return input_bounds, output_bounds
+    return (
+        (max(1, int(case["input_mean"] * case["input_ratio"])), case["input_mean"]),
+        (max(1, int(case["output_mean"] * case["output_ratio"])), case["output_mean"]),
+    )
+
+
+def generate_case(authored: dict[str, Any]) -> dict[str, Any]:
+    """Run the actual NumPy reference stream and compose exact token vectors."""
+    case = dict(authored)
+    input_bounds, output_bounds = bounds(case)
+    if case["style"] == "vllm":
+        generator = np.random.default_rng(case["seed"])
+        algorithm = "numpy.random.default_rng/PCG64"
+        pool = VLLM_POOL
+    else:
+        generator = np.random.RandomState(fold_seed(case["seed"]))
+        algorithm = "numpy.random.RandomState/MT19937"
+        pool = list(range(VOCAB_SIZE))
+
+    # The three vectorized calls, in this order, are the compatibility contract.
+    inputs = (
+        generator.integers(input_bounds[0], input_bounds[1] + 1, size=case["entries"])
+        if case["style"] == "vllm"
+        else generator.randint(
+            input_bounds[0], input_bounds[1] + 1, size=case["entries"]
+        )
+    )
+    outputs = (
+        generator.integers(output_bounds[0], output_bounds[1] + 1, size=case["entries"])
+        if case["style"] == "vllm"
+        else generator.randint(
+            output_bounds[0], output_bounds[1] + 1, size=case["entries"]
+        )
+    )
+    offsets = (
+        generator.integers(0, VOCAB_SIZE, size=case["entries"])
+        if case["style"] == "vllm"
+        else generator.randint(0, VOCAB_SIZE, size=case["entries"])
+    )
+
+    if case["style"] == "sglang":
+        inputs = np.maximum(1, inputs - case["special_tokens"])
+
+    requests = []
+    for request_index, (input_len, offset) in enumerate(
+        zip(inputs.tolist(), offsets.tolist(), strict=True)
+    ):
+        token_ids = [
+            pool[(offset + request_index + token_index) % len(pool)]
+            for token_index in range(input_len)
+        ]
+        requests.append({"token_ids": token_ids})
+
+    case.update(
+        {
+            "algorithm": algorithm,
+            "input_bounds": list(input_bounds),
+            "output_bounds": list(output_bounds),
+            "inputs": inputs.tolist(),
+            "outputs": outputs.tolist(),
+            "offsets": offsets.tolist(),
+            "token_pool": pool,
+            "requests": requests,
+        }
+    )
+    return case
+
+
+def rendered_fixture() -> str:
+    """Return the stable, human-reviewable fixture representation."""
+    document = {
+        "provenance": {
+            "generator": "tools/generate_random_range_python_vectors.py",
+            "numpy_version": np.__version__,
+            "draw_order": "all_inputs_then_all_outputs_then_all_offsets",
+            "token_formula": "pool[(offset + request_index + token_index) % len(pool)]",
+            "vocab_size": VOCAB_SIZE,
+            "vllm_special_token_ids": sorted(SPECIAL_TOKEN_IDS),
+        },
+        "cases": [generate_case(case) for case in CASES],
+    }
+    return json.dumps(document, indent=2, sort_keys=True) + "\n"
+
+
+def rendered_e2e_tokenizer(*, prompt_special_tokens: int) -> dict[str, str]:
+    """Build an offline tokenizer with a checked prompt-special-token count."""
+    if prompt_special_tokens not in {0, 2}:
+        raise ValueError(
+            "the parity fixtures support zero or two prompt special tokens"
+        )
+    vocabulary = {
+        "[UNK]": 0,
+        "[CLS]": 1,
+        "[SEP]": 2,
+        **{chr(ord("a") + index): index + 3 for index in range(13)},
+    }
+    tokenizer = Tokenizer(WordLevel(vocab=vocabulary, unk_token="[UNK]"))
+    tokenizer.pre_tokenizer = Whitespace()
+    tokenizer.add_special_tokens(
+        [
+            AddedToken("[UNK]", special=True),
+            AddedToken("[CLS]", special=True),
+            AddedToken("[SEP]", special=True),
+        ]
+    )
+    if prompt_special_tokens == 2:
+        tokenizer.post_processor = TemplateProcessing(
+            single="[CLS] $A [SEP]",
+            pair="[CLS] $A [SEP] $B:1 [SEP]:1",
+            special_tokens=[("[CLS]", 1), ("[SEP]", 2)],
+        )
+    tokenizer_config = {
+        "added_tokens_decoder": {
+            str(token_id): {
+                "content": token,
+                "lstrip": False,
+                "normalized": False,
+                "rstrip": False,
+                "single_word": False,
+                "special": True,
+            }
+            for token_id, token in [(0, "[UNK]"), (1, "[CLS]"), (2, "[SEP]")]
+        },
+        "bos_token": "[CLS]",
+        "cls_token": "[CLS]",
+        "eos_token": "[SEP]",
+        "model_max_length": 1_000_000,
+        "sep_token": "[SEP]",
+        "tokenizer_class": "PreTrainedTokenizerFast",
+        "unk_token": "[UNK]",
+    }
+    special_tokens_map = {
+        "bos_token": "[CLS]",
+        "cls_token": "[CLS]",
+        "eos_token": "[SEP]",
+        "sep_token": "[SEP]",
+        "unk_token": "[UNK]",
+    }
+    return {
+        "tokenizer.json": tokenizer.to_str(pretty=True) + "\n",
+        "tokenizer_config.json": json.dumps(tokenizer_config, indent=2, sort_keys=True)
+        + "\n",
+        "special_tokens_map.json": json.dumps(
+            special_tokens_map, indent=2, sort_keys=True
+        )
+        + "\n",
+    }
+
+
+def main() -> int:
+    """Write the fixture, or prove that it still matches NumPy."""
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--check", action="store_true", help="fail when the fixture differs"
+    )
+    args = parser.parse_args()
+    rendered = rendered_fixture()
+    tokenizer_fixtures = {
+        "random_range_tokenizer_zero_special": rendered_e2e_tokenizer(
+            prompt_special_tokens=0
+        ),
+        "random_range_tokenizer_two_special": rendered_e2e_tokenizer(
+            prompt_special_tokens=2
+        ),
+    }
+    if args.check:
+        actual = FIXTURE.read_text(encoding="utf-8")
+        if actual != rendered:
+            raise SystemExit(
+                f"{FIXTURE.relative_to(ROOT)} differs; regenerate with {Path(__file__).name}"
+            )
+        for directory, files in tokenizer_fixtures.items():
+            for name, expected in files.items():
+                path = E2E_TOKENIZER_ROOT / directory / name
+                if path.read_text(encoding="utf-8") != expected:
+                    raise SystemExit(
+                        f"{path.relative_to(ROOT)} differs; regenerate with {Path(__file__).name}"
+                    )
+    else:
+        FIXTURE.parent.mkdir(parents=True, exist_ok=True)
+        FIXTURE.write_text(rendered, encoding="utf-8")
+        for directory, files in tokenizer_fixtures.items():
+            fixture_dir = E2E_TOKENIZER_ROOT / directory
+            fixture_dir.mkdir(parents=True, exist_ok=True)
+            for name, contents in files.items():
+                (fixture_dir / name).write_text(contents, encoding="utf-8")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -554,7 +554,9 @@ pub struct AccuracyRunReport {
     pub accuracy: AccuracyAnalysis,
     /// Unified native-v2 performance, accuracy, and evaluator report.
     pub native_report: NativeReport,
-    /// Full per-response grading records in deterministic dataset order.
+    /// Full per-response grading records in the deterministic capture order
+    /// established by `validate_captures` (issue `sequence`, then
+    /// `correlation_id`), not dataset order.
     pub records: Vec<AccuracyRecord>,
     /// Transport/provider failures. Failed requests remain in the denominator.
     pub failures: Vec<AccuracyFailure>,

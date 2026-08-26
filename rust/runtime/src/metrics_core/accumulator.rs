@@ -13,6 +13,7 @@ use crate::metrics_core::catalog::{
 };
 use crate::metrics_core::definition::{Definition, Native, metric_definition};
 use crate::metrics_core::ingest::{InferenceDimensions, RecordIngest};
+use crate::metrics_core::itl::decode_tokens_after_first_chunk;
 use crate::metrics_core::kernel::{DistributionStats, linear_distribution, nearest_distribution};
 use crate::metrics_core::sidecar::SidecarMetric;
 use crate::metrics_core::store::{ColumnStore, ListMetricBackend, MetricsStorageMode};
@@ -159,10 +160,12 @@ pub struct MetricsConfig {
     pub osl_mismatch_threshold_pct: f64,
     /// Absolute OSL mismatch cap in tokens.
     pub osl_mismatch_max_tokens: f64,
-    /// Source input-token accounting from server-reported `usage.prompt_tokens`
-    /// instead of client-side tokenization. When enabled,
-    /// `TokenCounts.input = usage.prompt_tokens`; output
-    /// is already server-authoritative in the accumulator regardless.
+    /// Source visible token accounting from the endpoint's `usage` fields
+    /// instead of client-side tokenization. When enabled, `TokenCounts.input`
+    /// is `usage.prompt_tokens` and `output`/`reasoning` come from
+    /// `usage.completion_tokens`/`usage.reasoning_tokens`; otherwise all three
+    /// are the client-tokenized counts. `metrics.rs` applies that per-mode
+    /// choice, so the accumulator only ever sees the resolved `TokenCounts`.
     pub use_server_token_count: bool,
     /// Per-record retention mode. [`MetricsStorageMode::Sketch`] streams each value
     /// into a bounded-memory t-digest instead of retaining it, trading exact
@@ -563,7 +566,7 @@ impl MetricsAccumulator {
             }
         };
         if !record.errored && !record.canceled {
-            self.compute_record_metrics(row);
+            self.compute_record_metrics(row, record.tokens.first_content_chunk_tokens);
             self.compute_good_request(row);
         }
         if sketch_mode {
@@ -879,19 +882,20 @@ impl MetricsAccumulator {
         results.remove(MetricTag::NetworkRtt.as_str());
     }
 
-    fn compute_record_metrics(&mut self, row: usize) {
+    fn compute_record_metrics(&mut self, row: usize, first_content_chunk_tokens: Option<u64>) {
         let latency = self.store.metric_f64(row, MetricTag::RequestLatency);
         let ttft = self.store.metric_f64(row, MetricTag::TimeToFirstToken);
         let osl = self.store.metric_f64(row, MetricTag::OutputSequenceLength);
         let isl = self.store.metric_f64(row, MetricTag::InputSequenceLength);
 
         if let (Some(latency), Some(ttft), Some(osl)) = (latency, ttft, osl)
-            && osl >= 2.0
+            && let Some(decode_tokens) =
+                decode_tokens_after_first_chunk(osl as u64, first_content_chunk_tokens)
         {
             self.set_finite_record(
                 row,
                 MetricTag::InterTokenLatency,
-                (latency - ttft) / (osl - 1.0),
+                (latency - ttft) / decode_tokens as f64,
             );
         }
         // Client-observed interval from the first to final content response.
@@ -1731,6 +1735,7 @@ mod tests {
             output: Some(9),
             reasoning: Some(1),
             requested_output: Some(10),
+            first_content_chunk_tokens: None,
         };
         record.usage = UsageMetrics {
             prompt_tokens: Some(100),
@@ -2425,6 +2430,54 @@ mod tests {
             summary.finite_value(MetricTag::OverallUsagePromptCacheReadPct),
             Some(50.0)
         );
+    }
+
+    #[test]
+    fn bundled_first_content_chunk_corrects_itl_and_tps_per_user() {
+        let mut record = successful_record(1_000_000_000, 1_100_000_000);
+        record.tokens.first_content_chunk_tokens = Some(4);
+        let mut accumulator = MetricsAccumulator::new();
+        accumulator.process_record(&record);
+        let summary = accumulator.summarize();
+
+        let itl_ms = summary
+            .result(MetricTag::InterTokenLatency)
+            .unwrap()
+            .distribution()
+            .unwrap()
+            .avg
+            .as_f64()
+            .unwrap();
+        assert!((itl_ms - 80.0 / 6.0).abs() < 1e-12);
+        assert_eq!(
+            summary
+                .result(MetricTag::OutputTokenThroughputPerUser)
+                .unwrap()
+                .distribution()
+                .unwrap()
+                .avg,
+            MetricValue::Finite(75.0)
+        );
+    }
+
+    #[test]
+    fn inconsistent_first_content_chunk_counts_fall_back_to_legacy_itl() {
+        for first_content_chunk_tokens in [0, 10, 11] {
+            let mut record = successful_record(1_000_000_000, 1_100_000_000);
+            record.tokens.first_content_chunk_tokens = Some(first_content_chunk_tokens);
+            let mut accumulator = MetricsAccumulator::new();
+            accumulator.process_record(&record);
+            let summary = accumulator.summarize();
+            let itl_ms = summary
+                .result(MetricTag::InterTokenLatency)
+                .unwrap()
+                .distribution()
+                .unwrap()
+                .avg
+                .as_f64()
+                .unwrap();
+            assert!((itl_ms - 80.0 / 9.0).abs() < 1e-12);
+        }
     }
 
     #[test]

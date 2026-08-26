@@ -206,7 +206,7 @@ impl ActionSessionAuthority {
 
 /// Opaque single-use environment action admitted by one selected bound encoder.
 ///
-/// Only [`BoundNativeGraphActionEncoder::admit`] can construct this capability. Its artifact
+/// Only [`BoundNativeGraphActionEncoder`] admission can construct this capability. Its artifact
 /// reference remains crate-private so it can only be dispatched by the environment-stepper seam.
 pub struct AdmittedEnvironmentAction {
     encoder: ActionEncoderFactoryId,

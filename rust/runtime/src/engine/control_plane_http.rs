@@ -729,7 +729,8 @@ pub struct NativeControlPlaneHttpProvider {
 }
 
 impl NativeControlPlaneHttpProvider {
-    /// Create a provider over the run's one RealClock and deployment resolver.
+    /// Create a provider over the run's one injected [`Clock`] and deployment
+    /// resolver.
     #[must_use]
     pub fn new(clock: Rc<dyn Clock>, secrets: Arc<dyn SecretProviderResolver>) -> Self {
         Self::with_client_policy(clock, secrets, ControlPlaneClientPolicy::default())

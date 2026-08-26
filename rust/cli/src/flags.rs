@@ -138,13 +138,15 @@ pub struct ProfileFlags {
     #[arg(long = "dispatch")]
     pub dispatch: Option<String>,
 
-    /// Worker-assignment policy for `--dispatch global-hop` with `workers > 1`
+    /// Worker-assignment policy for `--dispatch global-hop`/`global-push` with
+    /// `workers > 1`
     /// (`--hop-routing`): `round-robin` (default; deterministic, load-even, but
     /// fragments a session's worker-local connection pool), `sticky` (each
     /// conversation hashed to one worker so its sticky connection pool reuses
     /// one connection per session), or `least-loaded` (a new session goes to the
     /// shallowest-in-flight worker, then binds sticky). Absent, this resolves to
-    /// `sticky` when `--conn-reuse sticky-user-sessions` is selected, else
+    /// `sticky` when `--connection-reuse-strategy sticky-user-sessions` is
+    /// selected, else
     /// `round-robin`. Inert under any other dispatch mode or `workers == 1`.
     #[arg(long = "hop-routing")]
     pub hop_routing: Option<String>,
@@ -367,7 +369,7 @@ pub struct ProfileFlags {
     /// `round_robin`).
     #[arg(long = "url-strategy")]
     pub url_strategy: Option<String>,
-    /// Disable auto fixed-schedule detection (`--no-fixed-schedule`).
+    /// Negate `--fixed-schedule` (`--no-fixed-schedule`).
     #[arg(
         long = "no-fixed-schedule",
         num_args = 0..=1,
@@ -377,7 +379,8 @@ pub struct ProfileFlags {
     pub no_fixed_schedule: Option<bool>,
 
     /// Public-dataset loader filters as `key=value` (`--dataset-filter`, repeatable).
-    /// Requires `--public-dataset`; merged into the dataset's loader options.
+    /// Requires `--public-dataset` or `--hf-dataset`; merged into the dataset's
+    /// loader options.
     #[arg(long = "dataset-filter", num_args = 1..)]
     pub dataset_filter: Option<Vec<String>>,
 
@@ -411,7 +414,7 @@ pub struct ProfileFlags {
     /// OSL search step count (`--osl-steps`).
     #[arg(long = "osl-steps")]
     pub osl_steps: Option<i64>,
-    /// Paired ISL:OSL workload shapes (`--isl-osl-pairs`, repeatable `isl:osl`).
+    /// Paired ISL/OSL workload shapes (`--isl-osl-pairs`, repeatable `isl/osl`).
     #[arg(long = "isl-osl-pairs", num_args = 1..)]
     pub isl_osl_pairs: Option<Vec<String>>,
     /// Degradation-knee metric tag (`--degradation-metric-tag`).
@@ -423,8 +426,6 @@ pub struct ProfileFlags {
     /// Degradation-knee threshold fraction (`--degradation-threshold`).
     #[arg(long = "degradation-threshold")]
     pub degradation_threshold: Option<f64>,
-    /// Paired ISL/OSL shapes for pareto-sweep (`--isl-osl-pairs`, `isl/osl` list).
-    // (declared above via `isl_osl_pairs`)
     /// Adaptive search style (`--search-style`: smooth_isotonic/monotonic/bo/optuna/grid).
     #[arg(long = "search-style")]
     pub search_style: Option<String>,
@@ -509,7 +510,8 @@ pub struct ProfileFlags {
     /// SLO attainment fraction (`--slo-attainment-fraction`).
     #[arg(long = "slo-attainment-fraction")]
     pub slo_attainment_fraction: Option<f64>,
-    /// Enable OTel live-streaming (`--stream`; requires `--otel-url`).
+    /// Accepted for compatibility and unused (`--stream`); `--otel-url` alone
+    /// enables the OTLP export.
     #[arg(long = "stream", num_args = 0..=1, default_missing_value = "true")]
     pub stream: Option<bool>,
 
@@ -757,6 +759,11 @@ pub struct ProfileFlags {
     #[arg(long = "use-server-token-count", num_args = 0..=1, default_missing_value = "true")]
     pub use_server_token_count: Option<bool>,
 
+    /// Request cumulative usage on every streaming chat chunk
+    /// (`--per-chunk-usage`). Requires streaming server token counts.
+    #[arg(long = "per-chunk-usage", num_args = 0..=1, default_missing_value = "true")]
+    pub per_chunk_usage: Option<bool>,
+
     /// Connection reuse policy (`--connection-reuse-strategy`):
     /// `pooled` (default), `never`, `sticky-user-sessions`.
     #[arg(long = "connection-reuse-strategy")]
@@ -887,7 +894,7 @@ pub struct ProfileFlags {
     pub public_dataset: Option<String>,
 
     /// HuggingFace dataset repo for the generic Weka loader (`--hf-weka-dataset`).
-    /// Auto-selects `--public-dataset weka_hf` when unset.
+    /// Selects `--public-dataset weka_hf` when `--public-dataset` is unset.
     #[arg(long = "hf-weka-dataset")]
     pub hf_weka_dataset: Option<String>,
 
@@ -1013,6 +1020,14 @@ pub struct ProfileFlags {
     #[arg(long = "shared-system-prompt-length")]
     pub shared_system_prompt_length: Option<u32>,
 
+    /// Exact system prompt applied to every dataset conversation.
+    #[arg(long = "system-prompt", conflicts_with = "system_prompt_file")]
+    pub system_prompt: Option<String>,
+
+    /// UTF-8 file containing the exact system prompt.
+    #[arg(long = "system-prompt-file", conflicts_with = "system_prompt")]
+    pub system_prompt_file: Option<PathBuf>,
+
     /// Per-user context prompt length (`--user-context-prompt-length`).
     #[arg(long = "user-context-prompt-length")]
     pub user_context_prompt_length: Option<u32>,
@@ -1039,6 +1054,14 @@ pub struct ProfileFlags {
     /// Prompt corpus selector for synthesized prompt content (`--prompt-corpus`).
     #[arg(long = "prompt-corpus", value_parser = ["sonnet", "coding", "random"])]
     pub prompt_corpus: Option<String>,
+
+    /// Uniform synthetic ISL/OSL window ratio (`--random-range-ratio`).
+    #[arg(long = "random-range-ratio")]
+    pub random_range_ratio: Option<String>,
+
+    /// Reference random-corpus behavior (`--random-corpus-style`).
+    #[arg(long = "random-corpus-style", value_parser = ["vllm", "sglang"])]
+    pub random_corpus_style: Option<String>,
 
     /// Cap on inter-turn delay, seconds (`--inter-turn-delay-cap-seconds`).
     #[arg(long = "inter-turn-delay-cap-seconds")]
@@ -1460,7 +1483,7 @@ impl ProfileFlags {
                 .map_err(|_| {
                     anyhow::anyhow!(
                         "--dispatch {value:?} is not a recognized dispatch mode; expected \
-                         \"sharded\", \"global\", or \"global-hop\""
+                         \"sharded\", \"global\", \"global-hop\", or \"global-push\""
                     )
                 }),
         }
@@ -1504,6 +1527,34 @@ mod tests {
     fn parse(args: &[&str]) -> ProfileFlags {
         let owned: Vec<String> = args.iter().map(|value| value.to_string()).collect();
         ProfileFlags::parse_from_args(&owned).expect("flags should parse")
+    }
+
+    #[test]
+    fn system_prompt_sources_parse_and_conflict() {
+        on_big_stack(|| {
+            let inline = parse(&["--system-prompt", "  exact\ntext  "]);
+            assert_eq!(inline.system_prompt.as_deref(), Some("  exact\ntext  "));
+            assert!(inline.system_prompt_file.is_none());
+
+            let file = parse(&["--system-prompt-file", "prompt.txt"]);
+            assert_eq!(
+                file.system_prompt_file.as_deref(),
+                Some(std::path::Path::new("prompt.txt"))
+            );
+            assert!(file.system_prompt.is_none());
+
+            let error = ProfileFlags::try_parse_from([
+                "profile",
+                "--system-prompt",
+                "inline",
+                "--system-prompt-file",
+                "prompt.txt",
+            ])
+            .expect_err("the two CLI sources must conflict")
+            .to_string();
+            assert!(error.contains("--system-prompt"), "{error}");
+            assert!(error.contains("--system-prompt-file"), "{error}");
+        });
     }
 
     #[test]
@@ -1597,6 +1648,24 @@ mod tests {
                     .as_deref(),
                 Some("random")
             );
+        });
+    }
+
+    #[test]
+    fn random_range_ratio_and_corpus_style_flags_parse() {
+        on_big_stack(|| {
+            let flags = parse(&[
+                "--random-range-ratio",
+                r#"{"input":0.2,"output":0.4}"#,
+                "--random-corpus-style",
+                "sglang",
+            ]);
+            assert_eq!(
+                flags.random_range_ratio.as_deref(),
+                Some(r#"{"input":0.2,"output":0.4}"#)
+            );
+            assert_eq!(flags.random_corpus_style.as_deref(), Some("sglang"));
+            assert_eq!(parse(&[]).random_corpus_style, None);
         });
     }
 }

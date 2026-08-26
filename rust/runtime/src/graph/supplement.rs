@@ -73,9 +73,9 @@ pub enum DynamicControlOperation {
 pub struct DynamicControlCounters {
     /// Number of completed acyclic stages when the receipt was appended.
     pub completed_stages: u32,
-    /// Iterations consumed for the selected loop, or zero for non-loop receipts.
+    /// Iterations consumed for the selected loop, or zero on branch and merge receipts.
     pub loop_iterations: u32,
-    /// Retries consumed for the selected loop, or zero for non-retry receipts.
+    /// Retries consumed for the selected loop, or zero on branch and merge receipts.
     pub retries: u32,
 }
 

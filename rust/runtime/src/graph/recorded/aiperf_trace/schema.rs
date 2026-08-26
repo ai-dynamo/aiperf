@@ -130,7 +130,7 @@ struct UsageWire {
     #[serde(default)]
     output_tokens: Option<usize>,
     // `input_tokens` / `cache_read_input_tokens` / `tool_usage` are ignored — the
-    // adapter derives input length block-granularly from the segments' hash_ids.
+    // adapter derives input length from the referenced segments' exact `tokens`.
 }
 
 #[derive(Deserialize)]

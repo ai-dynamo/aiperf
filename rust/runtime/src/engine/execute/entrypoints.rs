@@ -351,7 +351,9 @@ fn attach_server_profiler_hook(
         provider.as_ref(),
         profile,
     )?;
-    sidecars.server_profiler = hooks.server_profiler;
+    sidecars.server_profiler = hooks
+        .server_profiler
+        .map(|hook| Rc::new(crate::engine::control_hooks::ServerProfilerCoordinator::new(hook)));
     Ok(())
 }
 
@@ -661,9 +663,9 @@ pub(crate) async fn execute_graph_native(
     // The dry-run dataset analysis is a per-record consumer: it reads the FULL
     // retained record set (clean + errored) to build the length, timeline, and
     // prefix-cache sections, so requesting it forces retain mode on the graph
-    // path (exact-fold would drop the clean records mid-run). Threaded as a local
-    // disqualifier on `graph_exact_fold` rather than a shared `ExactFoldInputs`
-    // field to keep the change scoped to the graph path.
+    // path (exact-fold would drop the clean records mid-run). The shared
+    // `wants_per_record_artifacts` already disqualifies it; this local guard
+    // states the graph path's own requirement rather than relying on that.
     let wants_dataset_analysis = request.artifacts.dataset_analysis_path.is_some();
     let graph_exact_fold = exact_fold_enabled_by_env()
         && !wants_dataset_analysis
@@ -1521,8 +1523,8 @@ pub(crate) fn write_records_parquet_artifact(
 }
 
 /// Emit the optional per-record CSV sidecar beside the per-request JSONL. Unlike
-/// the Parquet sidecar this needs no extra Cargo feature (CSV is stdlib), so it is
-/// always available.
+/// the Parquet sidecar this needs no extra Cargo feature (the writer is
+/// hand-rolled over `std::io`), so it is always available.
 pub(crate) fn write_records_csv_artifact(
     request: &NativeRunSpec,
     captured: &[CapturedRecord],

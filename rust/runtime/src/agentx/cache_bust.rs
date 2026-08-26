@@ -45,7 +45,8 @@ impl CacheBustTarget {
 const DIGEST_LEN: usize = 12; // 12 hex chars = 48 bits
 const SUFFIX_SEP: &str = "::";
 
-/// Strip any descendant suffix (`::sa:`/`::fa:`/`:sN`) to the root trace id.
+/// Strip any descendant suffix (`::sa:`/`::fa:`/`::aux:`/`::wg:`) to the root
+/// trace id by cutting at the first `::`.
 /// Every member of a trajectory tree shares one base trace id.
 pub fn base_trace_id(conversation_id: &str) -> &str {
     conversation_id

@@ -4,9 +4,12 @@
 //! Profiling-bounded network RTT calibration for one native run.
 //!
 //! The scheduled phase supplies the start/end barriers. Interval probes are
-//! fire-and-forget, while the final barrier tops every target up to the
-//! configured successful-sample floor before the metrics accumulator is
-//! summarized.
+//! fire-and-forget (the final barrier aborts whatever is still in flight),
+//! after which each target is topped up toward the configured successful-sample
+//! floor before the metrics accumulator is summarized. The top-up is best
+//! effort: it stops at `complete_topup_timeout_ns` (shared across all targets)
+//! or at twice the floor in attempts per target, so a target can finish below
+//! the floor.
 
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeSet;

@@ -36,7 +36,8 @@ pub struct ConfidenceMetric {
     pub min: f64,
     /// Maximum across runs.
     pub max: f64,
-    /// Coefficient of variation (`std/mean`; `+inf` when `mean == 0`).
+    /// Coefficient of variation (`std/mean`; `+inf` when `mean == 0`, and `0.0`
+    /// for a single run, where `std` is itself `0.0`).
     pub cv: f64,
     /// Standard error (`std/sqrt(n)`).
     pub se: f64,

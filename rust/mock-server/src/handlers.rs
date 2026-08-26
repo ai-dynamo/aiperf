@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use aiperf_runtime::rng::RustRandomGenerator;
-use aiperf_runtime::transport::core::EventStreamMessage;
+use aiperf_runtime::transport::core::{EventStreamEncodeError, EventStreamMessage};
 use axum::Json;
 use axum::body::Body;
 use axum::extract::State;
@@ -130,6 +130,10 @@ pub(crate) struct RequestCtx {
     pub(crate) tool_call: Option<ToolCallSpec>,
     /// Emits the canonical speculative-decoding fixture on this chat response.
     pub(crate) spec_decode_acceptance: bool,
+    /// Emits cumulative usage on each streamed reasoning/content frame.
+    pub(crate) continuous_usage_stats: bool,
+    /// Number of output tokens carried by the first streamed content frame.
+    pub(crate) first_chunk_tokens: usize,
 }
 
 /// Deterministic OpenAI-compatible function call. `arguments` is a
@@ -231,6 +235,17 @@ impl RequestCtx {
             &request_id,
             latency_cached,
         );
+        let (continuous_usage_stats, first_chunk_tokens) = match req_gen {
+            GenRequest::Chat(request) => (
+                request.continuous_usage_stats(),
+                request.first_chunk_tokens(),
+            ),
+            GenRequest::Completion(request) => (
+                request.continuous_usage_stats(),
+                request.first_chunk_tokens(),
+            ),
+            _ => (false, 1),
+        };
         Self {
             request_id,
             latency_sim,
@@ -241,6 +256,8 @@ impl RequestCtx {
             null_object_chunk,
             tool_call: None,
             spec_decode_acceptance: state.config.spec_decode_acceptance,
+            continuous_usage_stats,
+            first_chunk_tokens,
         }
     }
 }
@@ -251,7 +268,7 @@ fn spec_decode_acceptance_fixture() -> &'static Value {
         json!({
             "mean_acceptance_length": 3.25,
             "draft_acceptance_rate": 0.5625,
-            "acceptance_histogram": {"0": 1, "1": 1, "2": 2, "3": 3, "4": 1},
+            "acceptance_histogram": [1, 1, 2, 3, 1],
             "num_accepted_draft_tokens": 18,
             "num_draft_tokens": 32,
             "num_spec_steps": 8,
@@ -670,9 +687,18 @@ struct ChatResponseMessage<'a> {
 struct ChatResponseChoice<'a> {
     index: u32,
     finish_reason: &'a str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    speculative_decoding_stats: Option<&'a Value>,
     message: ChatResponseMessage<'a>,
+}
+
+#[derive(Serialize)]
+struct SpecDecodeMetrics<'a> {
+    speculative_decoding: &'a Value,
+}
+
+fn spec_decode_metrics(is_enabled: bool) -> Option<SpecDecodeMetrics<'static>> {
+    is_enabled.then(|| SpecDecodeMetrics {
+        speculative_decoding: spec_decode_acceptance_fixture(),
+    })
 }
 
 #[derive(Serialize)]
@@ -683,6 +709,8 @@ struct ChatResponse<'a> {
     model: &'a str,
     choices: [ChatResponseChoice<'a>; 1],
     usage: &'a Usage,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    metrics: Option<SpecDecodeMetrics<'static>>,
 }
 
 /// Serializes as a single JSON string equal to the concatenation of `tokens`,
@@ -756,10 +784,6 @@ fn write_chat_response_bytes(
     serde_json::to_writer(&mut buf, model).unwrap();
     buf.extend_from_slice(br#","choices":[{"index":0,"finish_reason":"#);
     serde_json::to_writer(&mut buf, finish_reason).unwrap();
-    if spec_decode_acceptance {
-        buf.extend_from_slice(br#","speculative_decoding_stats":"#);
-        serde_json::to_writer(&mut buf, spec_decode_acceptance_fixture()).unwrap();
-    }
     buf.extend_from_slice(br#","message":{"role":"assistant","content":"#);
     serde_json::to_writer(&mut buf, &TokenJoin(content_tokens)).unwrap();
     if !reasoning_tokens.is_empty() {
@@ -777,6 +801,11 @@ fn write_chat_response_bytes(
     }
     buf.extend_from_slice(br#"}}],"usage":"#);
     serde_json::to_writer(&mut buf, usage).unwrap();
+    if spec_decode_acceptance {
+        buf.extend_from_slice(br#","metrics":{"speculative_decoding":"#);
+        serde_json::to_writer(&mut buf, spec_decode_acceptance_fixture()).unwrap();
+        buf.push(b'}');
+    }
     buf.push(b'}');
     buf
 }
@@ -844,8 +873,6 @@ mod chat_response_serialize_tests {
             choices: [ChatResponseChoice {
                 index: 0,
                 finish_reason,
-                speculative_decoding_stats: spec_decode_acceptance
-                    .then_some(spec_decode_acceptance_fixture()),
                 message: ChatResponseMessage {
                     role: "assistant",
                     content: content_tokens.concat(),
@@ -854,6 +881,7 @@ mod chat_response_serialize_tests {
                 },
             }],
             usage,
+            metrics: spec_decode_metrics(spec_decode_acceptance),
         };
         serde_json::to_vec(&resp).unwrap()
     }
@@ -865,16 +893,19 @@ mod chat_response_serialize_tests {
         // in every user-influenced field, so escaping parity is exercised.
         let content = vec![" he\"llo".to_string(), " wo\\rld\n".to_string()];
         let reasoning = vec!["think ".to_string(), "hard".to_string()];
-        let cases: Vec<(&str, Option<ToolCallSpec>, &[String])> =
-            vec![("plain", None, &[]), ("reasoning", None, &reasoning)];
-        for (label, tc, rsn) in cases {
+        let cases: Vec<(&str, bool, Option<ToolCallSpec>, &[String])> = vec![
+            ("plain", false, None, &[]),
+            ("reasoning", false, None, &reasoning),
+            ("spec_decode", true, None, &[]),
+        ];
+        for (label, spec_decode, tc, rsn) in cases {
             let got = write_chat_response_bytes(
                 "chatcmpl-x\"1",
                 "mo\"del",
                 1234567890,
                 "stop",
                 tc.as_ref(),
-                false,
+                spec_decode,
                 &content,
                 rsn,
                 &usage,
@@ -885,7 +916,7 @@ mod chat_response_serialize_tests {
                 1234567890,
                 "stop",
                 tc.as_ref(),
-                false,
+                spec_decode,
                 &content,
                 rsn,
                 &usage,
@@ -960,9 +991,6 @@ fn build_chat_response(ctx: &RequestCtx) -> ChatResponse<'_> {
         choices: [ChatResponseChoice {
             index: 0,
             finish_reason,
-            speculative_decoding_stats: ctx
-                .spec_decode_acceptance
-                .then_some(spec_decode_acceptance_fixture()),
             message: ChatResponseMessage {
                 role: "assistant",
                 content: ctx.tokenized.content(),
@@ -971,6 +999,7 @@ fn build_chat_response(ctx: &RequestCtx) -> ChatResponse<'_> {
             },
         }],
         usage: &ctx.usage,
+        metrics: spec_decode_metrics(ctx.spec_decode_acceptance),
     }
 }
 
@@ -983,7 +1012,7 @@ mod spec_decode_acceptance_tests {
         json!({
             "mean_acceptance_length": 3.25,
             "draft_acceptance_rate": 0.5625,
-            "acceptance_histogram": {"0": 1, "1": 1, "2": 2, "3": 3, "4": 1},
+            "acceptance_histogram": [1, 1, 2, 3, 1],
             "num_accepted_draft_tokens": 18,
             "num_draft_tokens": 32,
             "num_spec_steps": 8,
@@ -1014,6 +1043,17 @@ mod spec_decode_acceptance_tests {
         })
     }
 
+    fn completion_request(stream: bool, include_usage: bool) -> CompletionRequest {
+        serde_json::from_value(json!({
+            "model": "test-model",
+            "prompt": ["hello"],
+            "stream": stream,
+            "stream_options": {"include_usage": include_usage},
+            "max_tokens": 2
+        }))
+        .unwrap()
+    }
+
     fn sse_values(body: &[u8]) -> Vec<Value> {
         String::from_utf8_lossy(body)
             .split("\n\n")
@@ -1023,46 +1063,607 @@ mod spec_decode_acceptance_tests {
             .collect()
     }
 
+    async fn collect_sse_values(
+        stream: impl Stream<Item = Result<Bytes, Infallible>>,
+    ) -> Vec<Value> {
+        let chunks = futures::StreamExt::collect::<Vec<_>>(stream).await;
+        let mut body = Vec::new();
+        for chunk in chunks {
+            body.extend_from_slice(&chunk.unwrap());
+        }
+        sse_values(&body)
+    }
+
+    fn timed_state(fixed_output_tokens: Option<usize>) -> Arc<AppState> {
+        AppState::build(MockServerConfig {
+            no_tokenizer: true,
+            fixed_output_tokens,
+            ttft: 0.01,
+            itl: 0.01,
+            ..Default::default()
+        })
+    }
+
     #[tokio::test]
-    async fn nonstream_choice_carries_opt_in_canonical_stats() {
+    async fn nonstream_chat_carries_root_metrics() {
         let state = enabled_state();
         let (content_type, body) = render_chat_completion_fast(&state, &request(false));
         assert_eq!(content_type, "application/json");
         let response: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(
-            response["choices"][0]["speculative_decoding_stats"],
+            response["metrics"]["speculative_decoding"],
             expected_stats()
+        );
+        assert!(
+            response["choices"][0]
+                .get("speculative_decoding_stats")
+                .is_none()
         );
     }
 
     #[tokio::test]
-    async fn stream_emits_finish_only_stats_before_usage_only_chunk() {
+    async fn streaming_chat_carries_metrics_on_the_usage_chunk() {
         let state = enabled_state();
         let (content_type, body) = render_chat_completion_fast(&state, &request(true));
         assert_eq!(content_type, "text/event-stream");
         let frames = sse_values(&body);
 
-        let (finish_index, finish) = frames
+        let finish = frames
             .iter()
-            .enumerate()
-            .find(|(_, frame)| frame["choices"][0]["finish_reason"] == "length")
+            .find(|frame| frame["choices"][0]["finish_reason"] == "length")
             .expect("finish-reason frame");
-        assert_eq!(finish["choices"][0]["delta"], json!({}));
-        assert_eq!(
-            finish["choices"][0]["speculative_decoding_stats"],
-            expected_stats()
+        assert!(
+            finish["choices"][0]
+                .get("speculative_decoding_stats")
+                .is_none()
         );
         assert!(finish.get("usage").is_none());
 
-        let usage_index = frames
+        let usage = frames
             .iter()
-            .position(|frame| frame["choices"] == json!([]) && frame.get("usage").is_some())
+            .find(|frame| frame["choices"] == json!([]) && frame.get("usage").is_some())
             .expect("usage-only frame");
-        assert!(finish_index < usage_index);
+        assert_eq!(usage["metrics"]["speculative_decoding"], expected_stats());
     }
 
     #[tokio::test]
-    async fn zero_output_tool_call_defers_finish_to_stats_chunk() {
+    async fn stream_bundles_first_content_and_emits_cumulative_usage() {
+        let state = AppState::build(MockServerConfig {
+            fast: true,
+            no_tokenizer: true,
+            fixed_output_tokens: Some(6),
+            ..Default::default()
+        });
+        let request: ChatCompletionRequest = serde_json::from_value(json!({
+            "model": "test-model",
+            "messages": [{"role": "user", "content": "hello"}],
+            "stream": true,
+            "stream_options": {
+                "include_usage": true,
+                "continuous_usage_stats": true
+            },
+            "mock_first_chunk_tokens": 3,
+            "max_tokens": 6
+        }))
+        .unwrap();
+        let (content_type, body) = render_chat_completion_fast(&state, &request);
+        assert_eq!(content_type, "text/event-stream");
+        let frames = sse_values(&body);
+        let content_frames = frames
+            .iter()
+            .filter(|frame| {
+                frame["choices"][0]["delta"]["content"]
+                    .as_str()
+                    .is_some_and(|content| !content.is_empty())
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(content_frames.len(), 4);
+        assert_eq!(
+            content_frames
+                .iter()
+                .map(|frame| frame["usage"]["completion_tokens"].as_u64())
+                .collect::<Vec<_>>(),
+            vec![Some(3), Some(4), Some(5), Some(6)]
+        );
+        assert_eq!(
+            content_frames[0]["choices"][0]["delta"]["role"],
+            "assistant"
+        );
+        assert_eq!(content_frames[3]["choices"][0]["finish_reason"], "length");
+        assert!(
+            frames
+                .iter()
+                .any(|frame| frame["choices"] == json!([])
+                    && frame["usage"]["completion_tokens"] == 6)
+        );
+    }
+
+    #[tokio::test]
+    async fn stream_keeps_terminal_and_continuous_usage_independent() {
+        let state = AppState::build(MockServerConfig {
+            fast: true,
+            no_tokenizer: true,
+            fixed_output_tokens: Some(3),
+            ..Default::default()
+        });
+
+        for continuous_usage_stats in [None, Some(false)] {
+            let stream_options = continuous_usage_stats.map_or_else(
+                || json!({"include_usage": true}),
+                |value| {
+                    json!({
+                        "include_usage": true,
+                        "continuous_usage_stats": value
+                    })
+                },
+            );
+            let request: ChatCompletionRequest = serde_json::from_value(json!({
+                "model": "test-model",
+                "messages": [{"role": "user", "content": "hello"}],
+                "stream": true,
+                "stream_options": stream_options,
+                "max_tokens": 3
+            }))
+            .unwrap();
+            let (_, body) = render_chat_completion_fast(&state, &request);
+            let frames = sse_values(&body);
+            let content_frames = frames.iter().filter(|frame| {
+                frame["choices"][0]["delta"]["content"]
+                    .as_str()
+                    .is_some_and(|content| !content.is_empty())
+            });
+            assert!(
+                content_frames
+                    .into_iter()
+                    .all(|frame| frame.get("usage").is_none())
+            );
+            assert_eq!(
+                frames
+                    .iter()
+                    .filter(|frame| frame["choices"] == json!([]) && frame.get("usage").is_some())
+                    .count(),
+                1
+            );
+        }
+
+        let continuous_without_terminal: ChatCompletionRequest = serde_json::from_value(json!({
+            "model": "test-model",
+            "messages": [{"role": "user", "content": "hello"}],
+            "stream": true,
+            "stream_options": {
+                "include_usage": false,
+                "continuous_usage_stats": true
+            },
+            "max_tokens": 3
+        }))
+        .unwrap();
+        let (_, body) = render_chat_completion_fast(&state, &continuous_without_terminal);
+        let frames = sse_values(&body);
+        let content_frames = frames
+            .iter()
+            .filter(|frame| {
+                frame["choices"][0]["delta"]["content"]
+                    .as_str()
+                    .is_some_and(|content| !content.is_empty())
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            content_frames
+                .iter()
+                .all(|frame| frame.get("usage").is_some())
+        );
+        assert!(
+            frames
+                .iter()
+                .all(|frame| frame["choices"] != json!([]) || frame.get("usage").is_none())
+        );
+    }
+
+    #[tokio::test]
+    async fn reasoning_stream_emits_cumulative_usage_on_every_generated_chunk() {
+        let state = AppState::build(MockServerConfig {
+            fast: true,
+            no_tokenizer: true,
+            ..Default::default()
+        });
+        let request: ChatCompletionRequest = serde_json::from_value(json!({
+            "model": "qwen-test",
+            "messages": [{"role": "user", "content": "hello world"}],
+            "stream": true,
+            "stream_options": {
+                "include_usage": true,
+                "continuous_usage_stats": true
+            },
+            "reasoning_effort": "low",
+            "max_tokens": 4
+        }))
+        .unwrap();
+        let (_, body) = render_chat_completion_fast(&state, &request);
+        let frames = sse_values(&body);
+        let reasoning_frames = frames
+            .iter()
+            .filter(|frame| {
+                frame["choices"][0]["delta"]["reasoning_content"]
+                    .as_str()
+                    .is_some_and(|content| !content.is_empty())
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(reasoning_frames.len(), 4);
+        assert_eq!(
+            reasoning_frames
+                .iter()
+                .map(|frame| {
+                    (
+                        frame["usage"]["prompt_tokens"].as_u64(),
+                        frame["usage"]["completion_tokens"].as_u64(),
+                        frame["usage"]["total_tokens"].as_u64(),
+                    )
+                })
+                .collect::<Vec<_>>(),
+            vec![
+                (Some(3), Some(1), Some(4)),
+                (Some(3), Some(2), Some(5)),
+                (Some(3), Some(3), Some(6)),
+                (Some(3), Some(4), Some(7)),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn text_stream_bundles_first_content_and_emits_cumulative_usage() {
+        let state = AppState::build(MockServerConfig {
+            fast: true,
+            no_tokenizer: true,
+            fixed_output_tokens: Some(6),
+            ..Default::default()
+        });
+        let request: CompletionRequest = serde_json::from_value(json!({
+            "model": "test-model",
+            "prompt": "hello",
+            "stream": true,
+            "stream_options": {
+                "include_usage": true,
+                "continuous_usage_stats": true
+            },
+            "mock_first_chunk_tokens": 3,
+            "max_tokens": 6
+        }))
+        .unwrap();
+        let (content_type, body) = render_text_completion_fast(&state, &request);
+        assert_eq!(content_type, "text/event-stream");
+        let frames = sse_values(&body);
+        let content_frames = frames
+            .iter()
+            .filter(|frame| {
+                frame["choices"][0]["text"]
+                    .as_str()
+                    .is_some_and(|content| !content.is_empty())
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(content_frames.len(), 4);
+        assert_eq!(
+            content_frames
+                .iter()
+                .map(|frame| frame["usage"]["completion_tokens"].as_u64())
+                .collect::<Vec<_>>(),
+            vec![Some(3), Some(4), Some(5), Some(6)]
+        );
+        assert_eq!(content_frames[3]["choices"][0]["finish_reason"], "length");
+        assert!(
+            frames
+                .iter()
+                .any(|frame| frame["choices"] == json!([])
+                    && frame["usage"]["completion_tokens"] == 6)
+        );
+    }
+
+    #[tokio::test]
+    async fn text_stream_without_continuous_usage_keeps_usage_terminal_only() {
+        let state = AppState::build(MockServerConfig {
+            fast: true,
+            no_tokenizer: true,
+            fixed_output_tokens: Some(3),
+            ..Default::default()
+        });
+
+        for continuous_usage_stats in [None, Some(false)] {
+            let stream_options = continuous_usage_stats.map_or_else(
+                || json!({"include_usage": true}),
+                |value| {
+                    json!({
+                        "include_usage": true,
+                        "continuous_usage_stats": value
+                    })
+                },
+            );
+            let request: CompletionRequest = serde_json::from_value(json!({
+                "model": "test-model",
+                "prompt": "hello",
+                "stream": true,
+                "stream_options": stream_options,
+                "max_tokens": 3
+            }))
+            .unwrap();
+            let (_, body) = render_text_completion_fast(&state, &request);
+            let frames = sse_values(&body);
+            assert!(frames.iter().all(|frame| {
+                frame["choices"][0]["text"]
+                    .as_str()
+                    .is_none_or(|content| content.is_empty() || frame.get("usage").is_none())
+            }));
+            assert_eq!(
+                frames
+                    .iter()
+                    .filter(|frame| frame["choices"] == json!([]) && frame.get("usage").is_some())
+                    .count(),
+                1
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn timed_chat_and_text_streams_bundle_first_content_with_cumulative_usage() {
+        let state = timed_state(Some(6));
+        let chat_request: ChatCompletionRequest = serde_json::from_value(json!({
+            "model": "test-model",
+            "messages": [{"role": "user", "content": "hello"}],
+            "stream": true,
+            "stream_options": {
+                "include_usage": true,
+                "continuous_usage_stats": true
+            },
+            "mock_first_chunk_tokens": 3,
+            "max_tokens": 6
+        }))
+        .unwrap();
+        let chat_gen = GenRequest::Chat(&chat_request);
+        let chat_ctx = RequestCtx::build(
+            "chatcmpl",
+            &chat_gen,
+            "/v1/chat/completions",
+            Instant::now(),
+            &state,
+        );
+        let chat_frames = collect_sse_values(chat_stream(
+            state.clone(),
+            chat_ctx,
+            "/v1/chat/completions".to_string(),
+            true,
+            false,
+        ))
+        .await;
+        let chat_usage = chat_frames
+            .iter()
+            .filter(|frame| {
+                frame["choices"][0]["delta"]["content"]
+                    .as_str()
+                    .is_some_and(|content| !content.is_empty())
+            })
+            .map(|frame| frame["usage"]["completion_tokens"].as_u64())
+            .collect::<Vec<_>>();
+        assert_eq!(chat_usage, vec![Some(3), Some(4), Some(5), Some(6)]);
+
+        let text_request: CompletionRequest = serde_json::from_value(json!({
+            "model": "test-model",
+            "prompt": "hello",
+            "stream": true,
+            "stream_options": {
+                "include_usage": true,
+                "continuous_usage_stats": true
+            },
+            "mock_first_chunk_tokens": 3,
+            "max_tokens": 6
+        }))
+        .unwrap();
+        let text_gen = GenRequest::Completion(&text_request);
+        let text_ctx =
+            RequestCtx::build("cmpl", &text_gen, "/v1/completions", Instant::now(), &state);
+        let text_frames = collect_sse_values(text_stream(
+            state,
+            text_ctx,
+            "/v1/completions".to_string(),
+            true,
+        ))
+        .await;
+        let text_usage = text_frames
+            .iter()
+            .filter(|frame| {
+                frame["choices"][0]["text"]
+                    .as_str()
+                    .is_some_and(|content| !content.is_empty())
+            })
+            .map(|frame| frame["usage"]["completion_tokens"].as_u64())
+            .collect::<Vec<_>>();
+        assert_eq!(text_usage, vec![Some(3), Some(4), Some(5), Some(6)]);
+    }
+
+    #[tokio::test]
+    async fn timed_streams_keep_absent_or_false_continuous_usage_terminal_only() {
+        for continuous_usage_stats in [None, Some(false)] {
+            let stream_options = continuous_usage_stats.map_or_else(
+                || json!({"include_usage": true}),
+                |value| {
+                    json!({
+                        "include_usage": true,
+                        "continuous_usage_stats": value
+                    })
+                },
+            );
+            let state = timed_state(Some(3));
+            let chat_request: ChatCompletionRequest = serde_json::from_value(json!({
+                "model": "test-model",
+                "messages": [{"role": "user", "content": "hello"}],
+                "stream": true,
+                "stream_options": stream_options,
+                "max_tokens": 3
+            }))
+            .unwrap();
+            let chat_gen = GenRequest::Chat(&chat_request);
+            let chat_ctx = RequestCtx::build(
+                "chatcmpl",
+                &chat_gen,
+                "/v1/chat/completions",
+                Instant::now(),
+                &state,
+            );
+            let chat_frames = collect_sse_values(chat_stream(
+                state.clone(),
+                chat_ctx,
+                "/v1/chat/completions".to_string(),
+                true,
+                false,
+            ))
+            .await;
+            assert!(chat_frames.iter().all(|frame| {
+                frame["choices"][0]["delta"]["content"]
+                    .as_str()
+                    .is_none_or(|content| content.is_empty() || frame.get("usage").is_none())
+            }));
+            assert_eq!(
+                chat_frames
+                    .iter()
+                    .filter(|frame| frame["choices"] == json!([]) && frame.get("usage").is_some())
+                    .count(),
+                1
+            );
+
+            let text_request: CompletionRequest = serde_json::from_value(json!({
+                "model": "test-model",
+                "prompt": "hello",
+                "stream": true,
+                "stream_options": stream_options,
+                "max_tokens": 3
+            }))
+            .unwrap();
+            let text_gen = GenRequest::Completion(&text_request);
+            let text_ctx =
+                RequestCtx::build("cmpl", &text_gen, "/v1/completions", Instant::now(), &state);
+            let text_frames = collect_sse_values(text_stream(
+                state,
+                text_ctx,
+                "/v1/completions".to_string(),
+                true,
+            ))
+            .await;
+            assert!(text_frames.iter().all(|frame| {
+                frame["choices"][0]["text"]
+                    .as_str()
+                    .is_none_or(|content| content.is_empty() || frame.get("usage").is_none())
+            }));
+            assert_eq!(
+                text_frames
+                    .iter()
+                    .filter(|frame| frame["choices"] == json!([]) && frame.get("usage").is_some())
+                    .count(),
+                1
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn timed_reasoning_stream_emits_cumulative_usage_on_every_chunk() {
+        let state = timed_state(None);
+        let request: ChatCompletionRequest = serde_json::from_value(json!({
+            "model": "qwen-test",
+            "messages": [{"role": "user", "content": "hello world"}],
+            "stream": true,
+            "stream_options": {"continuous_usage_stats": true},
+            "reasoning_effort": "low",
+            "max_tokens": 4
+        }))
+        .unwrap();
+        let req_gen = GenRequest::Chat(&request);
+        let ctx = RequestCtx::build(
+            "chatcmpl",
+            &req_gen,
+            "/v1/chat/completions",
+            Instant::now(),
+            &state,
+        );
+        let frames = collect_sse_values(chat_stream(
+            state,
+            ctx,
+            "/v1/chat/completions".to_string(),
+            false,
+            false,
+        ))
+        .await;
+        let reasoning_usage = frames
+            .iter()
+            .filter(|frame| {
+                frame["choices"][0]["delta"]["reasoning_content"]
+                    .as_str()
+                    .is_some_and(|content| !content.is_empty())
+            })
+            .map(|frame| frame["usage"]["completion_tokens"].as_u64())
+            .collect::<Vec<_>>();
+        assert_eq!(reasoning_usage, vec![Some(1), Some(2), Some(3), Some(4)]);
+        assert!(
+            frames
+                .iter()
+                .all(|frame| frame["choices"] != json!([]) || frame.get("usage").is_none())
+        );
+    }
+
+    #[tokio::test]
+    async fn midstream_error_preserves_requested_bundling_and_cumulative_usage() {
+        let state = AppState::build(MockServerConfig {
+            fast: true,
+            no_tokenizer: true,
+            fixed_output_tokens: Some(6),
+            ..Default::default()
+        });
+        let request: ChatCompletionRequest = serde_json::from_value(json!({
+            "model": "test-model",
+            "messages": [{"role": "user", "content": "hello"}],
+            "stream": true,
+            "stream_options": {
+                "include_usage": true,
+                "continuous_usage_stats": true
+            },
+            "mock_first_chunk_tokens": 3,
+            "max_tokens": 6
+        }))
+        .unwrap();
+        let req_gen = GenRequest::Chat(&request);
+        let ctx = RequestCtx::build(
+            "chatcmpl",
+            &req_gen,
+            "/v1/chat/completions",
+            Instant::now(),
+            &state,
+        );
+        let frames = collect_sse_values(chat_stream(
+            state,
+            ctx,
+            "/v1/chat/completions".to_string(),
+            true,
+            true,
+        ))
+        .await;
+        let content_frames = frames
+            .iter()
+            .filter(|frame| {
+                frame["choices"][0]["delta"]["content"]
+                    .as_str()
+                    .is_some_and(|content| !content.is_empty())
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(content_frames.len(), 1);
+        assert_eq!(content_frames[0]["usage"]["completion_tokens"], 3);
+        assert!(
+            frames
+                .iter()
+                .all(|frame| frame["choices"] != json!([]) || frame.get("usage").is_none())
+        );
+    }
+
+    #[tokio::test]
+    async fn zero_output_tool_call_finishes_before_root_metrics() {
         let state = AppState::build(MockServerConfig {
             fast: true,
             no_tokenizer: true,
@@ -1080,27 +1681,46 @@ mod spec_decode_acceptance_tests {
             .filter(|frame| frame["choices"][0]["delta"].get("tool_calls").is_some())
             .collect();
         assert_eq!(tool_frames.len(), 2);
-        assert!(
-            tool_frames
-                .iter()
-                .all(|frame| frame["choices"][0]["finish_reason"].is_null())
-        );
-
-        let (finish_index, finish) = frames
+        assert_eq!(tool_frames[1]["choices"][0]["finish_reason"], "tool_calls");
+        let usage = frames
             .iter()
-            .enumerate()
-            .find(|(_, frame)| frame["choices"][0]["finish_reason"] == "tool_calls")
-            .expect("finish-only stats frame");
-        assert_eq!(finish["choices"][0]["delta"], json!({}));
+            .find(|frame| frame["choices"] == json!([]) && frame.get("usage").is_some())
+            .expect("usage-only frame");
+        assert_eq!(usage["metrics"]["speculative_decoding"], expected_stats());
+    }
+
+    #[tokio::test]
+    async fn completions_emit_the_same_root_wire_in_both_modes() {
+        let state = enabled_state();
+        let (content_type, body) =
+            render_text_completion_fast(&state, &completion_request(false, true));
+        assert_eq!(content_type, "application/json");
+        let response: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(
-            finish["choices"][0]["speculative_decoding_stats"],
+            response["metrics"]["speculative_decoding"],
             expected_stats()
         );
-        let usage_index = frames
+
+        let (content_type, body) =
+            render_text_completion_fast(&state, &completion_request(true, true));
+        assert_eq!(content_type, "text/event-stream");
+        let frames = sse_values(&body);
+        let usage = frames
             .iter()
-            .position(|frame| frame["choices"] == json!([]) && frame.get("usage").is_some())
+            .find(|frame| frame["choices"] == json!([]) && frame.get("usage").is_some())
             .expect("usage-only frame");
-        assert!(finish_index < usage_index);
+        assert_eq!(usage["metrics"]["speculative_decoding"], expected_stats());
+    }
+
+    #[tokio::test]
+    async fn streaming_metrics_require_the_usage_chunk() {
+        let state = enabled_state();
+        let (_, body) = render_text_completion_fast(&state, &completion_request(true, false));
+        assert!(
+            sse_values(&body)
+                .iter()
+                .all(|frame| frame.get("metrics").is_none())
+        );
     }
 }
 
@@ -1284,7 +1904,7 @@ pub async fn text_completions(
 }
 
 fn build_completion_response(ctx: &RequestCtx) -> Value {
-    json!({
+    let mut response = json!({
         "id": ctx.request_id,
         "object": "text_completion",
         "created": now_secs(),
@@ -1295,7 +1915,16 @@ fn build_completion_response(ctx: &RequestCtx) -> Value {
             "text": ctx.tokenized.content(),
         }],
         "usage": ctx.usage,
-    })
+    });
+    if ctx.spec_decode_acceptance
+        && let Value::Object(object) = &mut response
+    {
+        object.insert(
+            "metrics".to_owned(),
+            json!({"speculative_decoding": spec_decode_acceptance_fixture()}),
+        );
+    }
+    response
 }
 
 /// Token-native usage has no reasoning split.
@@ -1450,6 +2079,7 @@ fn sagemaker_request_to_chat(
             min_tokens,
             reasoning_effort: None,
             priority: None,
+            mock_first_chunk_tokens: 1,
         })
     } else {
         Err(AppError {
@@ -1519,14 +2149,12 @@ pub async fn sagemaker_invoke(
 /// dropped: AWS SageMaker eventstream responses have no terminal sentinel,
 /// they end at HTTP body EOF.
 ///
-/// The `data: ` prefix (and a trailing `\n`) is preserved in the
-/// `PayloadPart.Bytes` payload rather than stripped: real SageMaker
-/// containers (HF TGI/vLLM/LMI) emit the raw SSE-formatted line inside the
-/// PayloadPart, and clients (boto3-based benchmarkers, AIPerf's SageMaker
-/// transport) buffer/parse PayloadPart bytes as `data: {...}` lines. See
-/// `~/nvidia/projects/aws-issue/sample-InferenceBenchmarker/factories/sagemakerai_realtime/factories_llm_textgeneration_stream.py`
-/// for the reference client-side parsing this mirrors.
-fn sse_to_eventstream<S>(sse: S) -> impl Stream<Item = Result<Bytes, Infallible>>
+/// The `data: ` prefix is stripped rather than preserved: the AWS
+/// `PayloadPart.Bytes` member carries the raw inner chat-completion-chunk JSON
+/// directly, not the SSE-framed `data: {...}` line, so clients (boto3-based
+/// benchmarkers, AIPerf's SageMaker transport) parse bare JSON out of each
+/// PayloadPart.
+fn sse_to_eventstream<S>(sse: S) -> impl Stream<Item = Result<Bytes, EventStreamEncodeError>>
 where
     S: Stream<Item = Result<Bytes, Infallible>>,
 {
@@ -1544,17 +2172,22 @@ where
                 // `EventStreamMessage::payload_part`) — not the SSE-framed
                 // `data: {...}\n` line. Emit the stripped payload so the frame
                 // matches the documented contract and real bare-JSON wire form.
-                let frame =
-                    EventStreamMessage::payload_part(Bytes::copy_from_slice(rest)).encode();
-                yield Ok::<Bytes, Infallible>(frame);
+                match EventStreamMessage::payload_part(Bytes::copy_from_slice(rest)).encode() {
+                    Ok(frame) => yield Ok(frame),
+                    Err(error) => {
+                        yield Err(error);
+                        return;
+                    }
+                }
             }
         }
     }
 }
 
-fn eventstream_response<S>(body: S) -> Response
+fn eventstream_response<S, E>(body: S) -> Response
 where
-    S: Stream<Item = Result<Bytes, Infallible>> + Send + 'static,
+    S: Stream<Item = Result<Bytes, E>> + Send + 'static,
+    E: Into<axum::BoxError> + 'static,
 {
     Response::builder()
         .status(StatusCode::OK)
@@ -1612,6 +2245,7 @@ fn responses_as_chat(req: &ResponsesRequest) -> ChatCompletionRequest {
         min_tokens: None,
         reasoning_effort: req.reasoning_effort.clone(),
         priority: None,
+        mock_first_chunk_tokens: 1,
     }
 }
 
@@ -2389,6 +3023,7 @@ pub async fn kserve_v2_infer(
                 min_tokens: None,
                 reasoning_effort: None,
                 priority: None,
+                mock_first_chunk_tokens: 1,
             };
             let req_gen = GenRequest::Chat(&mock_chat);
             let ctx = RequestCtx::build("kserve", &req_gen, endpoint, start, &state);
@@ -2475,6 +3110,7 @@ pub async fn kserve_v1_predict(
         min_tokens: None,
         reasoning_effort: None,
         priority: None,
+        mock_first_chunk_tokens: 1,
     };
     let req_gen = GenRequest::Chat(&mock_chat);
     let ctx = RequestCtx::build("kserve-v1", &req_gen, endpoint, start, &state);
@@ -2576,6 +3212,7 @@ pub async fn custom_multimodal(
         min_tokens: None,
         reasoning_effort: None,
         priority: None,
+        mock_first_chunk_tokens: 1,
     };
     let req_gen = GenRequest::Chat(&mock_req);
     let ctx = RequestCtx::build("chatcmpl", &req_gen, endpoint, start, &state);
@@ -2719,6 +3356,7 @@ pub async fn image_generation(
         min_tokens: None,
         reasoning_effort: None,
         priority: None,
+        mock_first_chunk_tokens: 1,
     };
     let req_gen = GenRequest::Chat(&mock_chat);
     let ctx = RequestCtx::build("img", &req_gen, endpoint, start, &state);
@@ -2802,6 +3440,7 @@ pub async fn solido_rag(
         min_tokens: None,
         reasoning_effort: None,
         priority: None,
+        mock_first_chunk_tokens: 1,
     };
     let req_gen = GenRequest::Chat(&mock_chat);
     let ctx = RequestCtx::build("rag", &req_gen, endpoint, start, &state);
@@ -2885,8 +3524,6 @@ struct ChatChoiceDelta<'a> {
     index: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     finish_reason: Option<&'static str>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    speculative_decoding_stats: Option<&'a Value>,
     delta: ChatDelta<'a>,
 }
 
@@ -2936,6 +3573,33 @@ struct ChatStreamChunk<'a> {
 }
 
 #[derive(serde::Serialize)]
+struct PartialUsage {
+    prompt_tokens: usize,
+    completion_tokens: usize,
+    total_tokens: usize,
+}
+
+impl PartialUsage {
+    fn cumulative(ctx: &RequestCtx, completion_tokens: usize) -> Self {
+        Self {
+            prompt_tokens: ctx.usage.prompt_tokens,
+            completion_tokens,
+            total_tokens: ctx.usage.prompt_tokens + completion_tokens,
+        }
+    }
+}
+
+#[derive(serde::Serialize)]
+struct ChatStreamContinuousChunk<'a> {
+    id: &'a str,
+    object: &'static str,
+    created: i64,
+    model: &'a str,
+    choices: [ChatChoiceDelta<'a>; 1],
+    usage: PartialUsage,
+}
+
+#[derive(serde::Serialize)]
 struct ChatStreamUsageChunk<'a> {
     id: &'a str,
     object: &'static str,
@@ -2943,6 +3607,8 @@ struct ChatStreamUsageChunk<'a> {
     model: &'a str,
     choices: [(); 0],
     usage: &'a crate::models::Usage,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    metrics: Option<SpecDecodeMetrics<'static>>,
 }
 
 #[derive(serde::Serialize)]
@@ -2963,6 +3629,16 @@ struct TextStreamChunk<'a> {
 }
 
 #[derive(serde::Serialize)]
+struct TextStreamContinuousChunk<'a> {
+    id: &'a str,
+    object: &'static str,
+    created: i64,
+    model: &'a str,
+    choices: [TextChoiceDelta<'a>; 1],
+    usage: PartialUsage,
+}
+
+#[derive(serde::Serialize)]
 struct TextStreamUsageChunk<'a> {
     id: &'a str,
     object: &'static str,
@@ -2970,6 +3646,8 @@ struct TextStreamUsageChunk<'a> {
     model: &'a str,
     choices: [(); 0],
     usage: &'a crate::models::Usage,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    metrics: Option<SpecDecodeMetrics<'static>>,
 }
 
 #[derive(serde::Serialize)]
@@ -3032,8 +3710,184 @@ where
         .expect("body ok")
 }
 
+fn chat_generated_sse(
+    ctx: &RequestCtx,
+    created: i64,
+    choice: ChatChoiceDelta<'_>,
+    completion_tokens: usize,
+) -> Bytes {
+    if ctx.continuous_usage_stats {
+        return sse_chunk_ser(&ChatStreamContinuousChunk {
+            id: &ctx.request_id,
+            object: "chat.completion.chunk",
+            created,
+            model: &ctx.model,
+            choices: [choice],
+            usage: PartialUsage::cumulative(ctx, completion_tokens),
+        });
+    }
+    sse_chunk_ser(&ChatStreamChunk {
+        id: &ctx.request_id,
+        object: "chat.completion.chunk",
+        created,
+        model: &ctx.model,
+        choices: [choice],
+    })
+}
+
+fn text_generated_sse(
+    ctx: &RequestCtx,
+    created: i64,
+    choice: TextChoiceDelta<'_>,
+    completion_tokens: usize,
+) -> Bytes {
+    if ctx.continuous_usage_stats {
+        return sse_chunk_ser(&TextStreamContinuousChunk {
+            id: &ctx.request_id,
+            object: "text_completion",
+            created,
+            model: &ctx.model,
+            choices: [choice],
+            usage: PartialUsage::cumulative(ctx, completion_tokens),
+        });
+    }
+    sse_chunk_ser(&TextStreamChunk {
+        id: &ctx.request_id,
+        object: "text_completion",
+        created,
+        model: &ctx.model,
+        choices: [choice],
+    })
+}
+
+fn render_chat_usage_body(ctx: &RequestCtx, include_usage: bool) -> Bytes {
+    let created = now_secs();
+    let has_reasoning = !ctx.tokenized.reasoning_content_tokens.is_empty();
+    let mut buf = Vec::with_capacity(128 * (ctx.tokenized.count() + include_usage as usize + 1));
+    let mut completion_tokens = 0;
+
+    for token in &ctx.tokenized.reasoning_content_tokens {
+        completion_tokens += 1;
+        buf.extend_from_slice(&chat_generated_sse(
+            ctx,
+            created,
+            ChatChoiceDelta {
+                index: 0,
+                finish_reason: None,
+                delta: ChatDelta {
+                    role: Some("assistant"),
+                    content: None,
+                    reasoning_content: Some(token.as_str()),
+                    tool_calls: None,
+                },
+            },
+            completion_tokens,
+        ));
+    }
+
+    let has_tool_call = ctx.tool_call.is_some();
+    let num_tokens = ctx.tokenized.tokens.len();
+    let first_group_end = ctx.first_chunk_tokens.min(num_tokens);
+    let mut group_start = 0;
+    while group_start < num_tokens {
+        let group_end = if group_start == 0 {
+            first_group_end
+        } else {
+            group_start + 1
+        };
+        let content = ctx.tokenized.tokens[group_start..group_end].concat();
+        completion_tokens += group_end - group_start;
+        buf.extend_from_slice(&chat_generated_sse(
+            ctx,
+            created,
+            ChatChoiceDelta {
+                index: 0,
+                finish_reason: (group_end == num_tokens && !has_tool_call)
+                    .then_some(ctx.tokenized.finish_reason),
+                delta: ChatDelta {
+                    role: (group_start == 0 && !has_reasoning).then_some("assistant"),
+                    content: Some(&content),
+                    reasoning_content: None,
+                    tool_calls: None,
+                },
+            },
+            completion_tokens,
+        ));
+        group_start = group_end;
+    }
+
+    if let Some(tool_call) = &ctx.tool_call {
+        let lead_role = !has_reasoning && num_tokens == 0;
+        for chunk in tool_call_frames(ctx, created, tool_call, lead_role, true) {
+            write_sse_into(&mut buf, &chunk);
+        }
+    }
+    if include_usage {
+        write_sse_into(
+            &mut buf,
+            &ChatStreamUsageChunk {
+                id: &ctx.request_id,
+                object: "chat.completion.chunk",
+                created,
+                model: &ctx.model,
+                choices: [],
+                usage: &ctx.usage,
+                metrics: spec_decode_metrics(ctx.spec_decode_acceptance),
+            },
+        );
+    }
+    buf.extend_from_slice(b"data: [DONE]\n\n");
+    Bytes::from(buf)
+}
+
+fn render_text_usage_body(ctx: &RequestCtx, include_usage: bool) -> Bytes {
+    let created = now_secs();
+    let mut buf = Vec::with_capacity(128 * (ctx.tokenized.tokens.len() + 2));
+    let num_tokens = ctx.tokenized.tokens.len();
+    let first_group_end = ctx.first_chunk_tokens.min(num_tokens);
+    let mut group_start = 0;
+    while group_start < num_tokens {
+        let group_end = if group_start == 0 {
+            first_group_end
+        } else {
+            group_start + 1
+        };
+        let content = ctx.tokenized.tokens[group_start..group_end].concat();
+        buf.extend_from_slice(&text_generated_sse(
+            ctx,
+            created,
+            TextChoiceDelta {
+                index: 0,
+                text: &content,
+                finish_reason: (group_end == num_tokens).then_some(ctx.tokenized.finish_reason),
+            },
+            group_end,
+        ));
+        group_start = group_end;
+    }
+    if include_usage {
+        write_sse_into(
+            &mut buf,
+            &TextStreamUsageChunk {
+                id: &ctx.request_id,
+                object: "text_completion",
+                created,
+                model: &ctx.model,
+                choices: [],
+                usage: &ctx.usage,
+                metrics: spec_decode_metrics(ctx.spec_decode_acceptance),
+            },
+        );
+    }
+    buf.extend_from_slice(b"data: [DONE]\n\n");
+    Bytes::from(buf)
+}
+
 /// Renders the complete fast-mode chat stream into one allocation.
 fn render_chat_fast_body(ctx: &RequestCtx, include_usage: bool) -> Bytes {
+    if ctx.continuous_usage_stats || ctx.first_chunk_tokens > 1 {
+        return render_chat_usage_body(ctx, include_usage);
+    }
     let created = now_secs();
     let has_reasoning = !ctx.tokenized.reasoning_content_tokens.is_empty();
     let est = 128
@@ -3052,7 +3906,6 @@ fn render_chat_fast_body(ctx: &RequestCtx, include_usage: bool) -> Bytes {
             choices: [ChatChoiceDelta {
                 index: 0,
                 finish_reason: None,
-                speculative_decoding_stats: None,
                 delta: ChatDelta {
                     role: Some("assistant"),
                     content: None,
@@ -3073,7 +3926,7 @@ fn render_chat_fast_body(ctx: &RequestCtx, include_usage: bool) -> Bytes {
         } else {
             None
         };
-        let finish = if i + 1 == num && !has_tool_call && !ctx.spec_decode_acceptance {
+        let finish = if i + 1 == num && !has_tool_call {
             Some(ctx.tokenized.finish_reason)
         } else {
             None
@@ -3086,7 +3939,6 @@ fn render_chat_fast_body(ctx: &RequestCtx, include_usage: bool) -> Bytes {
             choices: [ChatChoiceDelta {
                 index: 0,
                 finish_reason: finish,
-                speculative_decoding_stats: None,
                 delta: ChatDelta {
                     role,
                     content: Some(token.as_str()),
@@ -3100,13 +3952,9 @@ fn render_chat_fast_body(ctx: &RequestCtx, include_usage: bool) -> Bytes {
 
     if let Some(tc) = &ctx.tool_call {
         let lead_role = !has_reasoning && num == 0;
-        for chunk in tool_call_frames(ctx, created, tc, lead_role, !ctx.spec_decode_acceptance) {
+        for chunk in tool_call_frames(ctx, created, tc, lead_role, true) {
             write_sse_into(&mut buf, &chunk);
         }
-    }
-
-    if ctx.spec_decode_acceptance {
-        write_sse_into(&mut buf, &spec_decode_finish_chunk(ctx, created));
     }
 
     if include_usage {
@@ -3117,6 +3965,7 @@ fn render_chat_fast_body(ctx: &RequestCtx, include_usage: bool) -> Bytes {
             model: &ctx.model,
             choices: [],
             usage: &ctx.usage,
+            metrics: spec_decode_metrics(ctx.spec_decode_acceptance),
         };
         write_sse_into(&mut buf, &usage_chunk);
     }
@@ -3126,6 +3975,9 @@ fn render_chat_fast_body(ctx: &RequestCtx, include_usage: bool) -> Bytes {
 }
 
 fn render_text_fast_body(ctx: &RequestCtx, include_usage: bool) -> Bytes {
+    if ctx.continuous_usage_stats || ctx.first_chunk_tokens > 1 {
+        return render_text_usage_body(ctx, include_usage);
+    }
     let created = now_secs();
     let est = 128 * (ctx.tokenized.tokens.len() + include_usage as usize + 1);
     let mut buf: Vec<u8> = Vec::with_capacity(est);
@@ -3157,6 +4009,7 @@ fn render_text_fast_body(ctx: &RequestCtx, include_usage: bool) -> Bytes {
             model: &ctx.model,
             choices: [],
             usage: &ctx.usage,
+            metrics: spec_decode_metrics(ctx.spec_decode_acceptance),
         };
         write_sse_into(&mut buf, &usage_chunk);
     }
@@ -3191,8 +4044,7 @@ fn render_tgi_fast_body(ctx: &RequestCtx) -> Bytes {
 }
 
 /// Emits two deltas whose argument fragments concatenate to the configured
-/// string. The second carries `finish_reason: "tool_calls"` unless a separate
-/// finish-only speculative-decoding frame follows it.
+/// string. The second carries `finish_reason: "tool_calls"` when requested.
 fn tool_call_frames<'a>(
     ctx: &'a RequestCtx,
     created: i64,
@@ -3209,7 +4061,6 @@ fn tool_call_frames<'a>(
         choices: [ChatChoiceDelta {
             index: 0,
             finish_reason: None,
-            speculative_decoding_stats: None,
             delta: ChatDelta {
                 role: if lead_role { Some("assistant") } else { None },
                 content: None,
@@ -3234,7 +4085,6 @@ fn tool_call_frames<'a>(
         choices: [ChatChoiceDelta {
             index: 0,
             finish_reason: emit_finish_reason.then_some("tool_calls"),
-            speculative_decoding_stats: None,
             delta: ChatDelta {
                 role: None,
                 content: None,
@@ -3252,30 +4102,6 @@ fn tool_call_frames<'a>(
         }],
     };
     [open, close]
-}
-
-fn spec_decode_finish_chunk(ctx: &RequestCtx, created: i64) -> ChatStreamChunk<'_> {
-    ChatStreamChunk {
-        id: &ctx.request_id,
-        object: "chat.completion.chunk",
-        created,
-        model: &ctx.model,
-        choices: [ChatChoiceDelta {
-            index: 0,
-            finish_reason: Some(if ctx.tool_call.is_some() {
-                "tool_calls"
-            } else {
-                ctx.tokenized.finish_reason
-            }),
-            speculative_decoding_stats: Some(spec_decode_acceptance_fixture()),
-            delta: ChatDelta {
-                role: None,
-                content: None,
-                reasoning_content: None,
-                tool_calls: None,
-            },
-        }],
-    }
 }
 
 fn chat_stream(
@@ -3297,29 +4123,36 @@ fn chat_stream(
             let has_reasoning = !ctx.tokenized.reasoning_content_tokens.is_empty();
             let num = ctx.tokenized.tokens.len();
             let emit = num.min(MIDSTREAM_TOKENS_BEFORE_ERROR);
-            for (i, token) in ctx.tokenized.tokens.iter().take(emit).enumerate() {
+            let first_group_end = ctx.first_chunk_tokens.min(emit);
+            let mut group_start = 0;
+            while group_start < emit {
+                let group_end = if group_start == 0 {
+                    first_group_end
+                } else {
+                    group_start + 1
+                };
                 if !ctx.latency_sim.is_fast() {
-                    let _ = ctx.latency_sim.wait_for_index(i).await;
+                    for index in group_start..group_end {
+                        let _ = ctx.latency_sim.wait_for_index(index).await;
+                    }
                 }
-                let role = if i == 0 && !has_reasoning { Some("assistant") } else { None };
-                let chunk = ChatStreamChunk {
-                    id: &ctx.request_id,
-                    object: "chat.completion.chunk",
+                let content = ctx.tokenized.tokens[group_start..group_end].concat();
+                yield Ok::<Bytes, Infallible>(chat_generated_sse(
+                    &ctx,
                     created,
-                    model: &ctx.model,
-                    choices: [ChatChoiceDelta {
+                    ChatChoiceDelta {
                         index: 0,
                         finish_reason: None,
-                        speculative_decoding_stats: None,
                         delta: ChatDelta {
-                            role,
-                            content: Some(token.as_str()),
+                            role: (group_start == 0 && !has_reasoning).then_some("assistant"),
+                            content: Some(&content),
                             reasoning_content: None,
                             tool_calls: None,
                         },
-                    }],
-                };
-                yield Ok::<Bytes, Infallible>(sse_chunk_ser(&chunk));
+                    },
+                    group_end,
+                ));
+                group_start = group_end;
             }
             yield Ok::<Bytes, Infallible>(sse_error_frame(
                 "Simulated mid-stream error injected by aiperf-mock-server",
@@ -3380,86 +4213,126 @@ fn chat_stream(
             last_emit = Some(emit_at);
             idx += 1;
             state.recorder.record_streamed_token_fast(&labeled);
-            let chunk = ChatStreamChunk {
-                id: &ctx.request_id,
-                object: "chat.completion.chunk",
+            yield Ok::<Bytes, Infallible>(chat_generated_sse(
+                &ctx,
                 created,
-                model: &ctx.model,
-                choices: [ChatChoiceDelta {
+                ChatChoiceDelta {
                     index: 0,
                     finish_reason: None,
-                    speculative_decoding_stats: None,
                     delta: ChatDelta {
                         role: Some("assistant"),
                         content: None,
                         reasoning_content: Some(token.as_str()),
                         tool_calls: None,
                     },
-                }],
-            };
-            yield Ok::<Bytes, Infallible>(sse_chunk_ser(&chunk));
+                },
+                idx,
+            ));
         }
 
         // A tool-call turn carries its finish reason on the final call delta.
         let has_tool_call = ctx.tool_call.is_some();
         let num = ctx.tokenized.tokens.len();
-        // Middle-token frames share a byte-identical envelope. Boundary frames
-        // use full serialization because they carry role or finish metadata.
-        let mid_prefix: Vec<u8> = {
-            let mut p = Vec::with_capacity(96);
-            p.extend_from_slice(b"data: {\"id\":");
-            serde_json::to_writer(&mut p, &ctx.request_id).expect("serialize id");
-            p.extend_from_slice(b",\"object\":\"chat.completion.chunk\",\"created\":");
-            p.extend_from_slice(created.to_string().as_bytes());
-            p.extend_from_slice(b",\"model\":");
-            serde_json::to_writer(&mut p, &ctx.model).expect("serialize model");
-            p.extend_from_slice(b",\"choices\":[{\"index\":0,\"delta\":{\"content\":");
-            p
-        };
-        for (i, token) in ctx.tokenized.tokens.iter().enumerate() {
-            let emit_at = ctx.latency_sim.wait_for_index(idx).await;
-            if first_emit.is_none() {
-                first_emit = Some(emit_at);
-                let ttft = emit_at.duration_since(ctx.start);
-                state.recorder.record_ttft_fast(&labeled, ttft.as_secs_f64());
-            } else if let Some(last) = last_emit {
-                let itl = emit_at.duration_since(last);
-                state.recorder.record_itl_fast(&labeled, itl.as_secs_f64());
-            }
-            last_emit = Some(emit_at);
-            idx += 1;
-            state.recorder.record_streamed_token_fast(&labeled);
-            let role = if i == 0 && !has_reasoning { Some("assistant") } else { None };
-            let finish = if i + 1 == num && !has_tool_call && !ctx.spec_decode_acceptance {
-                Some(ctx.tokenized.finish_reason)
-            } else {
-                None
-            };
-            if role.is_none() && finish.is_none() {
-                let mut out = Vec::with_capacity(mid_prefix.len() + token.len() + 8);
-                out.extend_from_slice(&mid_prefix);
-                serde_json::to_writer(&mut out, token.as_str()).expect("serialize token");
-                out.extend_from_slice(b"}}]}\n\n");
-                yield Ok::<Bytes, Infallible>(Bytes::from(out));
-            } else {
-                let chunk = ChatStreamChunk {
-                    id: &ctx.request_id,
-                    object: "chat.completion.chunk",
+        if ctx.continuous_usage_stats || ctx.first_chunk_tokens > 1 {
+            let mut group_start = 0;
+            let first_group_end = ctx.first_chunk_tokens.min(num);
+            while group_start < num {
+                let group_end = if group_start == 0 {
+                    first_group_end
+                } else {
+                    group_start + 1
+                };
+                for _ in group_start..group_end {
+                    let emit_at = ctx.latency_sim.wait_for_index(idx).await;
+                    if first_emit.is_none() {
+                        first_emit = Some(emit_at);
+                        let ttft = emit_at.duration_since(ctx.start);
+                        state.recorder.record_ttft_fast(&labeled, ttft.as_secs_f64());
+                    } else if let Some(last) = last_emit {
+                        let itl = emit_at.duration_since(last);
+                        state.recorder.record_itl_fast(&labeled, itl.as_secs_f64());
+                    }
+                    last_emit = Some(emit_at);
+                    idx += 1;
+                    state.recorder.record_streamed_token_fast(&labeled);
+                }
+                let content = ctx.tokenized.tokens[group_start..group_end].concat();
+                yield Ok::<Bytes, Infallible>(chat_generated_sse(
+                    &ctx,
                     created,
-                    model: &ctx.model,
-                    choices: [ChatChoiceDelta {
+                    ChatChoiceDelta {
                         index: 0,
-                        finish_reason: finish,
-                        speculative_decoding_stats: None,
+                        finish_reason: (group_end == num && !has_tool_call)
+                            .then_some(ctx.tokenized.finish_reason),
                         delta: ChatDelta {
-                            role,
-                            content: Some(token.as_str()),
+                            role: (group_start == 0 && !has_reasoning).then_some("assistant"),
+                            content: Some(&content),
                             reasoning_content: None,
                             tool_calls: None,
                         },
-                    }],
+                    },
+                    idx,
+                ));
+                group_start = group_end;
+            }
+        } else {
+            // Middle-token frames share a byte-identical envelope. Boundary frames
+            // use full serialization because they carry role or finish metadata.
+            let mid_prefix: Vec<u8> = {
+                let mut p = Vec::with_capacity(96);
+                p.extend_from_slice(b"data: {\"id\":");
+                serde_json::to_writer(&mut p, &ctx.request_id).expect("serialize id");
+                p.extend_from_slice(b",\"object\":\"chat.completion.chunk\",\"created\":");
+                p.extend_from_slice(created.to_string().as_bytes());
+                p.extend_from_slice(b",\"model\":");
+                serde_json::to_writer(&mut p, &ctx.model).expect("serialize model");
+                p.extend_from_slice(b",\"choices\":[{\"index\":0,\"delta\":{\"content\":");
+                p
+            };
+            for (i, token) in ctx.tokenized.tokens.iter().enumerate() {
+                let emit_at = ctx.latency_sim.wait_for_index(idx).await;
+                if first_emit.is_none() {
+                    first_emit = Some(emit_at);
+                    let ttft = emit_at.duration_since(ctx.start);
+                    state.recorder.record_ttft_fast(&labeled, ttft.as_secs_f64());
+                } else if let Some(last) = last_emit {
+                    let itl = emit_at.duration_since(last);
+                    state.recorder.record_itl_fast(&labeled, itl.as_secs_f64());
+                }
+                last_emit = Some(emit_at);
+                idx += 1;
+                state.recorder.record_streamed_token_fast(&labeled);
+                let role = if i == 0 && !has_reasoning { Some("assistant") } else { None };
+                let finish = if i + 1 == num && !has_tool_call {
+                    Some(ctx.tokenized.finish_reason)
+                } else {
+                    None
                 };
-                yield Ok::<Bytes, Infallible>(sse_chunk_ser(&chunk));
+                if role.is_none() && finish.is_none() {
+                    let mut out = Vec::with_capacity(mid_prefix.len() + token.len() + 8);
+                    out.extend_from_slice(&mid_prefix);
+                    serde_json::to_writer(&mut out, token.as_str()).expect("serialize token");
+                    out.extend_from_slice(b"}}]}\n\n");
+                    yield Ok::<Bytes, Infallible>(Bytes::from(out));
+                } else {
+                    let chunk = ChatStreamChunk {
+                        id: &ctx.request_id,
+                        object: "chat.completion.chunk",
+                        created,
+                        model: &ctx.model,
+                        choices: [ChatChoiceDelta {
+                            index: 0,
+                            finish_reason: finish,
+                            delta: ChatDelta {
+                                role,
+                                content: Some(token.as_str()),
+                                reasoning_content: None,
+                                tool_calls: None,
+                            },
+                        }],
+                    };
+                    yield Ok::<Bytes, Infallible>(sse_chunk_ser(&chunk));
+                }
             }
         }
 
@@ -3470,16 +4343,10 @@ fn chat_stream(
                 created,
                 tc,
                 lead_role,
-                !ctx.spec_decode_acceptance,
+                true,
             ) {
                 yield Ok::<Bytes, Infallible>(sse_chunk_ser(&chunk));
             }
-        }
-
-        if ctx.spec_decode_acceptance {
-            yield Ok::<Bytes, Infallible>(sse_chunk_ser(&spec_decode_finish_chunk(
-                &ctx, created,
-            )));
         }
 
         if include_usage {
@@ -3490,6 +4357,7 @@ fn chat_stream(
                 model: &ctx.model,
                 choices: [],
                 usage: &ctx.usage,
+                metrics: spec_decode_metrics(ctx.spec_decode_acceptance),
             };
             yield Ok::<Bytes, Infallible>(sse_chunk_ser(&usage_chunk));
         }
@@ -3674,31 +4542,68 @@ fn text_stream(
         let created = now_secs();
         let mut first_emit: Option<Instant> = None;
         let mut last_emit: Option<Instant> = None;
-        for (i, token) in ctx.tokenized.tokens.iter().enumerate() {
-            let emit_at = ctx.latency_sim.wait_for_index(i).await;
-            if first_emit.is_none() {
-                first_emit = Some(emit_at);
-                let ttft = emit_at.duration_since(ctx.start);
-                state.recorder.record_ttft_fast(&labeled, ttft.as_secs_f64());
-            } else if let Some(last) = last_emit {
-                let itl = emit_at.duration_since(last);
-                state.recorder.record_itl_fast(&labeled, itl.as_secs_f64());
+        if ctx.continuous_usage_stats || ctx.first_chunk_tokens > 1 {
+            let mut group_start = 0;
+            let first_group_end = ctx.first_chunk_tokens.min(num);
+            while group_start < num {
+                let group_end = if group_start == 0 {
+                    first_group_end
+                } else {
+                    group_start + 1
+                };
+                for index in group_start..group_end {
+                    let emit_at = ctx.latency_sim.wait_for_index(index).await;
+                    if first_emit.is_none() {
+                        first_emit = Some(emit_at);
+                        let ttft = emit_at.duration_since(ctx.start);
+                        state.recorder.record_ttft_fast(&labeled, ttft.as_secs_f64());
+                    } else if let Some(last) = last_emit {
+                        let itl = emit_at.duration_since(last);
+                        state.recorder.record_itl_fast(&labeled, itl.as_secs_f64());
+                    }
+                    last_emit = Some(emit_at);
+                    state.recorder.record_streamed_token_fast(&labeled);
+                }
+                let content = ctx.tokenized.tokens[group_start..group_end].concat();
+                yield Ok::<Bytes, Infallible>(text_generated_sse(
+                    &ctx,
+                    created,
+                    TextChoiceDelta {
+                        index: 0,
+                        text: &content,
+                        finish_reason: (group_end == num).then_some(ctx.tokenized.finish_reason),
+                    },
+                    group_end,
+                ));
+                group_start = group_end;
             }
-            last_emit = Some(emit_at);
-            state.recorder.record_streamed_token_fast(&labeled);
-            let finish = if i + 1 == num { Some(ctx.tokenized.finish_reason) } else { None };
-            let chunk = TextStreamChunk {
-                id: &ctx.request_id,
-                object: "text_completion",
-                created,
-                model: &ctx.model,
-                choices: [TextChoiceDelta {
-                    index: 0,
-                    text: token.as_str(),
-                    finish_reason: finish,
-                }],
-            };
-            yield Ok::<Bytes, Infallible>(sse_chunk_ser(&chunk));
+        } else {
+            for (i, token) in ctx.tokenized.tokens.iter().enumerate() {
+                let emit_at = ctx.latency_sim.wait_for_index(i).await;
+                if first_emit.is_none() {
+                    first_emit = Some(emit_at);
+                    let ttft = emit_at.duration_since(ctx.start);
+                    state.recorder.record_ttft_fast(&labeled, ttft.as_secs_f64());
+                } else if let Some(last) = last_emit {
+                    let itl = emit_at.duration_since(last);
+                    state.recorder.record_itl_fast(&labeled, itl.as_secs_f64());
+                }
+                last_emit = Some(emit_at);
+                state.recorder.record_streamed_token_fast(&labeled);
+                let finish = if i + 1 == num { Some(ctx.tokenized.finish_reason) } else { None };
+                let chunk = TextStreamChunk {
+                    id: &ctx.request_id,
+                    object: "text_completion",
+                    created,
+                    model: &ctx.model,
+                    choices: [TextChoiceDelta {
+                        index: 0,
+                        text: token.as_str(),
+                        finish_reason: finish,
+                    }],
+                };
+                yield Ok::<Bytes, Infallible>(sse_chunk_ser(&chunk));
+            }
         }
         if include_usage {
             let usage_chunk = TextStreamUsageChunk {
@@ -3708,6 +4613,7 @@ fn text_stream(
                 model: &ctx.model,
                 choices: [],
                 usage: &ctx.usage,
+                metrics: spec_decode_metrics(ctx.spec_decode_acceptance),
             };
             yield Ok::<Bytes, Infallible>(sse_chunk_ser(&usage_chunk));
         }
@@ -4018,6 +4924,7 @@ pub async fn image_edit(
         min_tokens: None,
         reasoning_effort: None,
         priority: None,
+        mock_first_chunk_tokens: 1,
     };
     let req_gen = GenRequest::Chat(&mock_chat);
     let ctx = RequestCtx::build("img", &req_gen, endpoint, start, &state);
@@ -4251,7 +5158,7 @@ mod sagemaker_tests {
 
         assert_eq!(out.len(), 1);
         let mut decoder = aiperf_runtime::transport::core::EventStreamDecoder::new();
-        decoder.push(&out[0]);
+        decoder.push(&out[0]).expect("frame is accepted");
         let messages = decoder.drain_messages().unwrap();
         assert_eq!(messages.len(), 1);
         assert_eq!(
@@ -4274,7 +5181,6 @@ mod stream_frame_tests {
             choices: [ChatChoiceDelta {
                 index: 0,
                 finish_reason: None,
-                speculative_decoding_stats: None,
                 delta: ChatDelta {
                     role: None,
                     content: Some(token),

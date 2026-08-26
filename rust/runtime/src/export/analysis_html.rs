@@ -45,10 +45,8 @@ pub fn render_analysis_html(a: &DatasetAnalysis) -> String {
 /// Write the rendered HTML report for `a` to `path` via a buffered writer.
 ///
 /// A serialization failure (should never occur for a finite-guarded
-/// [`DatasetAnalysis`]) is surfaced through [`render_analysis_html`], which
-/// falls back to an empty `DATA`; any I/O error is returned. A latent serde
-/// error would be mapped through [`std::io::Error::other`], but the current
-/// path cannot produce one.
+/// [`DatasetAnalysis`]) is absorbed by [`render_analysis_html`], which embeds
+/// `null` as the DATA value; only I/O errors are returned.
 pub fn write_dataset_analysis_html(a: &DatasetAnalysis, path: &Path) -> std::io::Result<()> {
     let html = render_analysis_html(a);
     let file = std::fs::File::create(path)?;
@@ -214,7 +212,7 @@ function pctfmt(x){
   if (x === null || x === undefined || !isFinite(x)) return '—';
   return (x * 100).toFixed(1) + '%';
 }
-// Escape text destined for innerHTML (conversation ids are endpoint-provided).
+// Escape text destined for innerHTML (conversation ids come from the dataset).
 function esc(s){
   return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){
     return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];

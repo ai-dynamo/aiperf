@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Profiling-phase server-profiler sidecar composition.
 
+use std::cell::Cell;
 use std::rc::Rc;
 
 use anyhow::Result;
@@ -9,15 +10,13 @@ use anyhow::Result;
 use crate::cellular::ModuloCellPartition;
 use crate::cellular::transport::CellPhaseSignal;
 use crate::engine::cellular_cell::{await_controller_phase_advance, send_controller_phase_signal};
-use crate::engine::control_hooks::{
-    PreparedServerProfilerHook, start_server_profiler, stop_server_profiler,
-};
+use crate::engine::control_hooks::ServerProfilerCoordinator;
 use crate::phase_runtime::ScheduledPhaseSidecar;
 use crate::timing::LocalPhaseFuture;
 
 /// Build the profiling-phase sidecar for one phase name.
 pub(crate) fn sidecar(
-    hook: PreparedServerProfilerHook,
+    coordinator: Rc<ServerProfilerCoordinator>,
     phase_name: impl Into<String>,
 ) -> Rc<dyn ScheduledPhaseSidecar> {
     let phase_name = phase_name.into();
@@ -27,7 +26,10 @@ pub(crate) fn sidecar(
         })
     } else {
         Rc::new(ServerProfilerSidecar {
-            mode: ServerProfilerMode::Local { hook },
+            mode: ServerProfilerMode::Local {
+                coordinator,
+                has_ownership: Rc::new(Cell::new(false)),
+            },
         })
     }
 }
@@ -37,17 +39,27 @@ struct ServerProfilerSidecar {
 }
 
 enum ServerProfilerMode {
-    Local { hook: PreparedServerProfilerHook },
-    Cellular { phase_name: String },
+    Local {
+        coordinator: Rc<ServerProfilerCoordinator>,
+        has_ownership: Rc<Cell<bool>>,
+    },
+    Cellular {
+        phase_name: String,
+    },
 }
 
 impl ScheduledPhaseSidecar for ServerProfilerSidecar {
     fn start(&self) -> LocalPhaseFuture<Result<()>> {
         match &self.mode {
-            ServerProfilerMode::Local { hook } => {
-                let hook = hook.clone();
+            ServerProfilerMode::Local {
+                coordinator,
+                has_ownership,
+            } => {
+                let coordinator = coordinator.clone();
+                let has_ownership = has_ownership.clone();
                 Box::pin(async move {
-                    start_server_profiler(&hook).await?;
+                    coordinator.acquire().await?;
+                    has_ownership.set(true);
                     Ok(())
                 })
             }
@@ -64,12 +76,19 @@ impl ScheduledPhaseSidecar for ServerProfilerSidecar {
 
     fn finish(&self) -> LocalPhaseFuture<Result<()>> {
         match &self.mode {
-            ServerProfilerMode::Local { hook } => {
-                let hook = hook.clone();
+            ServerProfilerMode::Local {
+                coordinator,
+                has_ownership,
+            } => {
+                let coordinator = coordinator.clone();
+                let has_ownership = has_ownership.clone();
                 Box::pin(async move {
-                    if let Err(error) = stop_server_profiler(&hook).await {
+                    if !has_ownership.replace(false) {
+                        return Ok(());
+                    }
+                    if let Err(error) = coordinator.release().await {
                         tracing::warn!(
-                            error = format!("{error:#}"),
+                            error = %error,
                             "server profiler stop failed after profiling drain"
                         );
                     }

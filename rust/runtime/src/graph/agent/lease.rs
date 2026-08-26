@@ -271,7 +271,7 @@ impl AgentInvocationLeaseFactoryFactory for InMemoryAgentInvocationLeaseFactoryF
     }
 }
 
-/// Deterministic lease that simply retains its injected fake dispatcher.
+/// Deterministic lease that simply retains its injected dispatcher.
 pub struct InMemoryAgentInvocationLease {
     dispatcher: Rc<dyn ToolDispatcher>,
     workspace: AgentInvocationWorkspace,
@@ -321,7 +321,7 @@ impl AgentInvocationLease for InMemoryAgentInvocationLease {
     }
 }
 
-/// Deterministic lifecycle fake used by the future live-driver contract tests.
+/// Deterministic lifecycle owner used by recorded replay and driver contract tests.
 pub struct InMemoryAgentInvocationLeaseFactory {
     next_dispatcher: Cell<u64>,
     root_dispatcher: RefCell<Option<Rc<dyn ToolDispatcher>>>,

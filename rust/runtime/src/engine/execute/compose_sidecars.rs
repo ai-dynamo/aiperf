@@ -234,12 +234,14 @@ pub(crate) async fn execute_native_inner(
     // records. Created before the branch so both arms share the one instance.
     let mut accumulator = MetricsAccumulator::with_config(metrics_config.clone());
     // Exact-fold folds each completed record into the exact accumulator and
-    // drops the heavy per-record data mid-run, but only on the single-thread
-    // `DirectIssuanceAuthority` path with no per-record artifacts. Computed once here
-    // like `sketch_mode`: the single-thread arm reads it to build the capture and
-    // pick the finalize, the sharded arm's gate rejects it (`shardable`), and the
-    // cellular-shipping guard reads it below. Heartbeat presence is probed from the env
-    // rather than the (file-truncating) lane so this stays a pre-branch decision.
+    // drops the heavy per-record data mid-run. Computed once here like
+    // `sketch_mode`: the single-thread arm reads it to build the capture and pick
+    // the finalize, the sharded arm threads it onto `ShardedShared` so each shard
+    // folds into its own store and streams its per-shard artifact lane, and the
+    // cellular-shipping guard reads it below. `shardable` is recorded on
+    // `ExactFoldInputs` for call-site clarity only and does not gate eligibility.
+    // Heartbeat presence is probed from the env rather than the (file-truncating)
+    // lane so this stays a pre-branch decision.
     // inputs.json is ALWAYS generated up front from the resident dataset at finalize,
     // never harvested from dispatched replies — that harvest put every request's
     // canonical body on the reply path, which under `GlobalHop` funnels through the
@@ -286,8 +288,8 @@ pub(crate) async fn execute_native_inner(
         sketch_mode,
         "record retention path selected"
     );
-    // Per-record OTLP folded at completion by the exact-fold capture; the
-    // retain/sharded arms leave this `None` and fold their retained records post-run.
+    // Per-record OTLP folded at completion by the single-thread exact-fold
+    // capture; every other arm leaves this `None` and folds `captured` post-run.
     let mut folded_otel: Option<OtelRecordAccumulator> = None;
     // Static-accuracy terminal captures, collected by whichever arm runs: the
     // single-thread arm drains its one processor; the sharded arm concatenates the
@@ -661,9 +663,9 @@ pub(crate) async fn execute_native_inner(
         // cell-local (not-yet-thread-sliced) phase specs — see `GlobalAdmission`.
         // Only `Global` builds shared cross-thread admission gates, to make its
         // `W` independent scheduling loops jointly exact. `Sharded` slices
-        // per-thread and needs none; `GlobalHop` runs a single coordinator loop
-        // with the full local cap and needs none either (see
-        // `global_hop::run_global_hop` — "one loop, one full-cap local pool").
+        // per-thread and needs none; `GlobalHop`/`GlobalPush` run a single
+        // coordinator loop with the full local cap and need none either (see
+        // `global_hop` — "one loop, one full-cap local `SlotPool`").
         let global_admission = match request.dispatch_mode {
             DispatchMode::Global => Some(Arc::new(GlobalAdmission::build(&request.phases)?)),
             DispatchMode::Sharded | DispatchMode::GlobalHop | DispatchMode::GlobalPush => None,
@@ -945,7 +947,7 @@ pub(crate) async fn execute_native_inner(
         // it forces the retain path via `wants_per_record_artifacts`, so `exact_fold` is
         // disabled and `captured` holds every clean + errored record here. Sketch mode
         // folds and drops records, leaving only the errored subset, so skip it there
-        // (dry-run defaults to exact; T11 gating rejects the sketch combination).
+        // rather than emit an analysis of the errors alone.
         if !sketch_mode && let Some(relative) = &request.artifacts.dataset_analysis_path {
             let base = artifact_path(&request.artifact_dir, relative, "dataset_analysis_path")?;
             let analysis_request = crate::engine::dataset_analysis_writer::DatasetAnalysisRequest {
@@ -1049,9 +1051,11 @@ pub(crate) async fn execute_native_inner(
     // scheduled online path runs one current-thread worker set that already
     // joins its per-worker records into `captured`).
     if request.native_otel_enabled {
-        // Exact-fold already folded each profiling record at completion;
-        // reuse that order-independent accumulator. The retain/sharded arms retain the
-        // full record set, so fold it here. Both produce identical histograms.
+        // The single-thread exact-fold arm already folded each profiling record at
+        // completion; reuse that order-independent accumulator, which produces the
+        // same histograms as folding a retained set. Otherwise fold `captured` —
+        // the full record set on the retain path, and (a known gap) only the
+        // retained errored subset on the sharded exact-fold path.
         let otel_records = match folded_otel.take() {
             Some(folded) => folded,
             None => {

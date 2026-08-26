@@ -1570,11 +1570,11 @@ fn lower_legacy_agentic(
         !convs.is_empty(),
         "legacy weka reconstruction produced no conversations"
     );
-    // Apply the per-lane t\* snapshot slice (Python `AgenticReplayStrategy`): sample
-    // t\* once over each lane's full recorded span, EXCLUDE history (turns before
-    // the profiling resume point), and rebase each retained turn's `timestamp_ms`
-    // to its t\*-relative dispatch offset. The `agentic_replay` workload then owns
-    // only the cross-lane phase-start alignment + dispatch.
+    // Apply the t\* snapshot slice (Python `AgenticReplayStrategy`): sample t\* once
+    // per trace-tree over every member lane's recorded span, EXCLUDE history (turns
+    // before the shared profiling resume point), and rebase each retained turn's
+    // `timestamp_ms` to its t\*-relative dispatch offset. The `agentic_replay`
+    // workload then owns only the cross-lane phase-start alignment + dispatch.
     let convs = crate::agentx::weka_dataset::slice_trajectories_at_tstar(
         convs,
         root_seed,
@@ -1644,7 +1644,7 @@ fn lower_legacy_agentic(
     // authored value from any authored phase and carry it forward so
     // `dataset_build` can populate `AgenticReplayConfig.cache_warmup_duration_s`.
     warmup_common.agentic_cache_warmup_duration = warmup_agentic_cache_duration(&workload.phases);
-    // Warmup barrier grace is independent of profiling `--grace-period`. Explicit
+    // Warmup barrier grace is independent of profiling `--benchmark-grace-period`. Explicit
     // `--agentic-warmup-grace-period` wins; otherwise accelerated cache-warmup
     // gets a bounded default; plain snapshot warmup keeps infinite grace.
     let mut grace_source = profiling_common.clone();

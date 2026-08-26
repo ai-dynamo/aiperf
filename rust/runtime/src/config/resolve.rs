@@ -228,6 +228,7 @@ pub struct Inputs {
     pub timeout_seconds: Option<f64>,
     pub use_legacy_max_tokens: bool,
     pub use_server_token_count: bool,
+    pub per_chunk_usage: bool,
     pub download_video_content: bool,
     /// Extra request-body inputs (endpoint.extra).
     pub extra: serde_json::Map<String, serde_json::Value>,
@@ -376,8 +377,9 @@ pub struct Inputs {
     /// Admission strategy for `workers>1` scheduled execution (`runtime.dispatch`
     /// / `--dispatch`). `None` omits the wire field, decoded as `Global`.
     pub runtime_dispatch: Option<DispatchMode>,
-    /// Explicit `--hop-routing` worker-assignment policy for `global-hop`
-    /// (`workers > 1`). `None` lets resolution derive it from the resolved
+    /// Explicit `--hop-routing` worker-assignment policy for the
+    /// single-coordinator modes `global-hop`/`global-push` (`workers > 1`).
+    /// `None` lets resolution derive it from the resolved
     /// connection-reuse strategy (`sticky` under `sticky-user-sessions`, else
     /// `round-robin`).
     pub runtime_hop_routing: Option<HopRouting>,
@@ -388,6 +390,12 @@ pub struct Inputs {
     pub dataset_random_seed: Option<u64>,
     /// File-backed dataset path (mutually exclusive with the synthetic path).
     pub input_file: Option<PathBuf>,
+    /// Exact inline system-prompt source before startup resolution.
+    #[serde(default)]
+    pub system_prompt: Option<String>,
+    /// File-backed system-prompt source before startup resolution.
+    #[serde(default)]
+    pub system_prompt_file: Option<PathBuf>,
     /// Recorded-agent replay policy for an `agent_recording` file dataset.
     pub recorded_agent_graph: Option<RecordedAgentGraphConfig>,
     /// Free-form endpoint hardware provenance.
@@ -475,6 +483,10 @@ pub struct Inputs {
     pub prefix_reuse_ratio: Option<f64>,
     /// Authored prompt corpus selector for synthesized prompt content.
     pub prompt_corpus: Option<String>,
+    /// Uniform synthetic ISL/OSL window ratio.
+    pub random_range_ratio: Option<crate::dataset::RandomRangeRatioInput>,
+    /// Reference random-corpus behavior.
+    pub random_corpus_style: crate::dataset::RandomCorpusStyle,
     /// Bounded-memory sketch metric retention.
     pub sketch_metrics: bool,
     /// Closed-loop steady-state summary for concurrency-target runs.
@@ -664,7 +676,6 @@ fn validate_baseten_extra_input_collisions(inputs: &Inputs) -> anyhow::Result<()
     anyhow::bail!(message)
 }
 
-/// Build one run from normalized inputs.
 /// Reject baseten_trace-only replay knobs on incompatible datasets.
 ///
 /// Ports Python's `_reject_baseten_only_trace_flags`: these knobs are only
@@ -782,6 +793,10 @@ fn validate_random_pool_batch_sizes(inputs: &Inputs) -> anyhow::Result<()> {
 }
 
 pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
+    let system_prompt = crate::config::system_prompt::resolve_system_prompt(
+        inputs.system_prompt.as_deref(),
+        inputs.system_prompt_file.as_deref(),
+    )?;
     validate_baseten_only_trace_flags(&inputs)?;
     validate_baseten_extra_input_collisions(&inputs)?;
     validate_random_pool_batch_sizes(&inputs)?;
@@ -914,11 +929,11 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
     // Resolve the effective connection-reuse strategy once so the hop-routing
     // default can derive from it (see `resolved_hop_routing`).
     let resolved_connection_reuse = inputs.connection_reuse.unwrap_or(ConnectionReuse::Pooled);
-    // Effective global-hop worker-assignment policy: an explicit
+    // Effective single-coordinator worker-assignment policy: an explicit
     // `--hop-routing`/`runtime.hop_routing` always wins; absent, sticky
     // per-session connection reuse makes `Sticky` the sensible default (one
     // worker per session keeps the sticky pool warm), otherwise `RoundRobin`.
-    // Inert unless the run is `global-hop` with `workers > 1`.
+    // Inert unless the run is `global-hop`/`global-push` with `workers > 1`.
     let resolved_hop_routing =
         resolve_hop_routing(inputs.runtime_hop_routing, resolved_connection_reuse);
     let endpoint = Endpoint {
@@ -927,6 +942,7 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
         streaming: inputs.streaming,
         use_legacy_max_tokens: inputs.use_legacy_max_tokens,
         use_server_token_count: inputs.use_server_token_count,
+        per_chunk_usage: inputs.per_chunk_usage,
         timeout_seconds: inputs.timeout_seconds.unwrap_or(DEFAULT_TIMEOUT_SECONDS),
         connection_reuse: resolved_connection_reuse,
         ssl_verify: inputs.ssl_verify.unwrap_or(true),
@@ -1008,6 +1024,7 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
             source.insert("revision".to_string(), serde_json::json!(rev));
         }
         Dataset::Public(crate::config::model::dataset::PublicDataset {
+            system_prompt: system_prompt.clone(),
             cache_bust,
             name: id.clone(),
             format,
@@ -1040,6 +1057,7 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
             source.insert("subset".to_string(), serde_json::json!(subset));
         }
         Dataset::Public(crate::config::model::dataset::PublicDataset {
+            system_prompt: system_prompt.clone(),
             cache_bust,
             name: "weka_hf".to_string(),
             format: "weka_trace".to_string(),
@@ -1091,6 +1109,7 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
             obj.insert("subset".to_string(), serde_json::json!(subset));
         }
         Dataset::Public(crate::config::model::dataset::PublicDataset {
+            system_prompt: system_prompt.clone(),
             cache_bust,
             name: name.clone(),
             format: meta.format.clone(),
@@ -1108,6 +1127,7 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
             anyhow::bail!("--uuid-and-strip requires endpoint type 'chat'");
         }
         Dataset::File(crate::config::model::dataset::FileDataset {
+            system_prompt: system_prompt.clone(),
             cache_bust,
             // Path-backed inputs are auto-detected; inline records require a format.
             format: inputs.custom_dataset_type.clone().or_else(|| {
@@ -1187,6 +1207,7 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
         })
     } else {
         Dataset::Synthetic(Synthetic {
+            system_prompt,
             prompts: Prompts {
                 cache_bust,
                 batch_size: inputs.batch_size,
@@ -1197,6 +1218,8 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
                 block_size: inputs.isl_block_size,
                 corpus: inputs.prompt_corpus.clone(),
                 sequence_distribution: inputs.sequence_distribution.clone(),
+                random_range_ratio: inputs.random_range_ratio,
+                random_corpus_style: inputs.random_corpus_style,
                 prefix_reuse_fraction: inputs.prefix_reuse_fraction,
                 prefix_reuse_ratio: inputs.prefix_reuse_ratio,
             },
@@ -1754,13 +1777,13 @@ fn resolve_weka_semantics(inputs: &Inputs) -> Option<String> {
     None
 }
 
-/// Resolve the effective global-hop worker-assignment policy.
+/// Resolve the effective single-coordinator worker-assignment policy.
 ///
 /// An explicit `--hop-routing`/`runtime.hop_routing` always wins. Absent, a
 /// [`ConnectionReuse::StickyUserSessions`] run defaults to [`HopRouting::Sticky`]
 /// (one worker per session keeps the sticky connection pool warm); every other
 /// reuse strategy defaults to [`HopRouting::RoundRobin`]. The value is inert
-/// unless the run is `global-hop` with `workers > 1`.
+/// unless the run is `global-hop` or `global-push` with `workers > 1`.
 pub(crate) fn resolve_hop_routing(
     explicit: Option<HopRouting>,
     connection_reuse: ConnectionReuse,

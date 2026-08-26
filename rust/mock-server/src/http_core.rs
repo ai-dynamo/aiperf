@@ -9,10 +9,10 @@
 //! functions here so both the blocking std-thread loop and the io_uring monoio
 //! loop share identical behavior; each engine supplies only its own I/O.
 //!
-//! Only the non-streaming OpenAI chat-completions path is served with full real
-//! behavior (via [`crate::handlers::render_chat_completion_nonstream_fast`]);
-//! these engines imply `--fast` semantics. A few GET routes get minimal
-//! handlers; streaming is not served here.
+//! The OpenAI chat-completions, text-completions, and embeddings paths are served
+//! with full real behavior (via [`crate::handlers::render_chat_completion_fast`]
+//! and its siblings), streaming included; these engines imply `--fast` semantics.
+//! A few GET routes get minimal handlers.
 
 use crate::state::AppState;
 

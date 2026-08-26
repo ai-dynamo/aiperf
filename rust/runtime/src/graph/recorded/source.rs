@@ -182,16 +182,12 @@ fn parse_json_lines_raw(
     parse_json_lines_from(Cursor::new(bytes), label)
 }
 
-/// JSONL line reader deserializing each non-blank line into `T`.
-///
-/// The aiperf-trace path uses `T = Value` (hashes fit in `u64`); the Dynamo
-/// schema uses `T = Box<RawValue>` to capture each record as untouched raw JSON
-/// text so wide `input_sequence_hashes` survive before any `f64` coercion.
 /// Split an in-memory JSONL buffer into one decoded value per non-empty line.
 ///
 /// JSONL escapes interior newlines, so a raw `\n` split is a safe record
 /// boundary. This avoids the second full file read that
-/// [`read_json_lines_raw`] would incur after an in-memory whole-JSON probe.
+/// [`read_json_lines_raw`] would incur after an in-memory whole-JSON probe. The
+/// WEKA JSONL fallback is the only caller, so `T` is always `Box<RawValue>`.
 fn parse_json_lines_from_slice<T: DeserializeOwned>(
     bytes: &[u8],
     label: &str,
@@ -214,6 +210,12 @@ fn parse_json_lines_from_slice<T: DeserializeOwned>(
     Ok(values)
 }
 
+/// Streaming JSONL line reader deserializing each non-blank line into `T`.
+///
+/// The aiperf-trace path uses `T = Value` (its hashes fit in `u64`); the Dynamo
+/// and gzip-WEKA paths use `T = Box<RawValue>` to capture each record as
+/// untouched raw JSON text so wide hash tokens survive before any `f64`
+/// coercion.
 fn parse_json_lines_from<T: DeserializeOwned>(
     mut reader: impl BufRead,
     label: &str,

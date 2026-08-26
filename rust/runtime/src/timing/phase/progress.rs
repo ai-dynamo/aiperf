@@ -95,7 +95,7 @@ pub struct PhaseProgressCounters {
     pub requests_sent: u64,
     /// Root wire requests issued.
     pub root_requests_sent: u64,
-    /// Successfully returned requests.
+    /// Non-cancelled returned requests, successful or errored.
     pub requests_completed: u64,
     /// Cancelled returned requests.
     pub requests_cancelled: u64,

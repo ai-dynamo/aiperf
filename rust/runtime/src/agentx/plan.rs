@@ -6,12 +6,14 @@
 //! `_build_shared_metric_values`.
 //!
 //! `hash_id_scope: "local"` means one namespace per trace file, so a block first
-//! sent by the parent is a cache hit when a subagent child re-sends it (and vice
-//! versa). The shared metric values are computed over ONE per-trace seen-set
-//! consumed in global `(t, outer_idx, stream_idx, k)` order across the parent
-//! and all active child conversations.
+//! sent by the parent is a cache hit when a subagent child or a detected flat
+//! chain re-sends it (and vice versa). The shared metric values are computed over
+//! ONE per-trace seen-set consumed in global `(t, outer_idx, stream_idx, k)`
+//! order across the parent, its detected flat worker chains, and all active
+//! child conversations.
 //!
-//! Flat-chain plans and the idle-gap time-warp are not yet wired here.
+//! The idle-gap time-warp is not applied here; it lives in
+//! [`crate::agentx::idle_gap`].
 
 use std::collections::{HashMap, HashSet};
 
@@ -42,9 +44,10 @@ pub struct FlatChainPlan {
     pub init_tool_tokens: i64,
     /// Turn-0 system-prefix attribution.
     pub init_system_tokens: i64,
-    /// Phase-1 fork parent chain index (log/DAG only in v1).
+    /// Chain index this chain forked from, resolved through the splice alias;
+    /// carried for provenance and not read by reconstruction.
     pub fork_parent_chain: Option<usize>,
-    /// Blocks shared with the fork tail.
+    /// Blocks shared with the fork tail (LCP), likewise provenance-only.
     pub fork_depth: i64,
     /// Trace block size.
     pub block_size: i64,
