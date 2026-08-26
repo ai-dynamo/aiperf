@@ -74,7 +74,7 @@ implementation, test run, or review.
 | 46 | `e659d2a95a` | FFmpeg codec allowlist | pending | shared-product-action | Audit native codec defaults before porting shared Dockerfile policy. |
 | 47 | `9e96b499d1` | aiohttp minimum | pending | already-covered | Bundled Python bound already satisfies it. |
 | 48 | `260d00f5e9` | adaptive error-rate units | pending | applicable | Adaptive SLA differs from exported percentage/cancellation contract; pair with #25. |
-| 49 | `88242293b5` | verbatim system prompts | pending | applicable | Add CLI/file projection to existing composition seam. |
+| 49 | `88242293b5` | verbatim system prompts | complete | applicable | Exact merge `9eeeac98f9`; native one-time file/CLI resolution, BLAKE3 composition identity, OpenAI/Anthropic wire E2E, exact 40-test mapping, and Graham approval recorded. |
 | 50 | `ade1f69eb1` | seamless phase transitions | pending | already-covered | Native lowers incoming flag to predecessor handoff. |
 | 51 | `324bb05773` | per-chunk usage | pending | applicable | No first-chunk token multiplicity or option. |
 | 52 | `810fd8bdd4` | vLLM spec-decode wire | pending | applicable | Root metrics/histogram/trailing usage absent. |
