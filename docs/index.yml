@@ -293,6 +293,8 @@ navigation:
   contents:
   - page: Architecture of AIPerf
     path: architecture.md
+  - page: Rust Runtime Architecture
+    path: rust-architecture.md
   - page: Rust Internals Diagram Atlas
     path: diagrams/rust-internals.md
   - page: Metrics Flow

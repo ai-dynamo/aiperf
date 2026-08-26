@@ -3379,7 +3379,7 @@ composite row or another component.
 - Modify: `docs/specs/endpoints.md`
 - Modify: `docs/specs/exporters.md`
 - Modify: `docs/specs/wheel-packaging.md`
-- Modify: `docs/ARCHITECTURE.md`
+- Modify: `docs/rust-architecture.md`
 - Modify: `docs/module-organization.md`
 - Modify: `llms.txt`
 - Modify: `docs/superpowers/plans/2026-08-26-native-rust-runtime-plugins-execution-tracker.md`
