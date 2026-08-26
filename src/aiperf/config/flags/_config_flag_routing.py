@@ -221,7 +221,9 @@ DATASET_SOURCE_FIELDS: frozenset[str] = frozenset(
 # models.items. build_dataset applies them only when the config file declares
 # type: file; against any other type they raise, because that would be a type
 # switch wearing a different hat.
-DATASET_SOURCE_IN_TYPE_FIELDS: frozenset[str] = frozenset({})
+DATASET_SOURCE_IN_TYPE_FIELDS: frozenset[str] = frozenset(
+    {"input_file", "custom_dataset_type"}
+)
 
 # INPUT_FIELDS members that build_dataset does not carry: they land on the
 # slos block or the profiling phase instead. They ARE routed (see
