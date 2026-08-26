@@ -88,11 +88,10 @@ struct Session {
     rows: Vec<Value>,
 }
 
-#[derive(Clone)]
-struct TimedRound {
+struct TimedRound<'a> {
     submitted: f64,
     api_time: Option<f64>,
-    row: Value,
+    row: &'a Value,
 }
 
 #[derive(Clone)]
@@ -135,9 +134,25 @@ pub async fn compile_tracelab_trace_input(
     let options = TraceLabOptions::parse(&config.load.options)?;
     let rows = load_rows(&config.load).await?;
     let traces = convert_rows(rows, options)?;
+    let trace_order = traces
+        .iter()
+        .enumerate()
+        .filter_map(|(index, trace)| {
+            trace
+                .get("id")
+                .and_then(Value::as_str)
+                .map(|id| (id.to_owned(), index))
+        })
+        .collect::<HashMap<_, _>>();
     config.load.source = DatasetSource::Inline(Value::Array(traces));
     config.load.options.clear();
     let mut bundle = compile_weka_trace_input(config, tokenizer).await?;
+    bundle.programs.sort_by_key(|program| {
+        trace_order
+            .get(&program.profiling.trace.id)
+            .copied()
+            .unwrap_or(usize::MAX)
+    });
     bundle.metadata.format = "tracelab".into();
     Ok(bundle)
 }
@@ -403,14 +418,14 @@ fn round_timing(row: &Value) -> Result<Option<(f64, Option<f64>)>, RecordedTrace
     Ok(Some((submitted, api_time)))
 }
 
-fn ordered_rounds(rows: &[Value]) -> Result<Vec<TimedRound>, RecordedTraceError> {
+fn ordered_rounds(rows: &[Value]) -> Result<Vec<TimedRound<'_>>, RecordedTraceError> {
     let mut timed = Vec::new();
     for row in rows {
         if let Some((submitted, api_time)) = round_timing(row)? {
             timed.push(TimedRound {
                 submitted,
                 api_time,
-                row: row.clone(),
+                row,
             });
         }
     }
@@ -611,7 +626,7 @@ fn build_join_index(
 }
 
 fn hash_chains(
-    rounds: &[TimedRound],
+    rounds: &[TimedRound<'_>],
     block_size: usize,
     minter: &mut HashIdMinter,
 ) -> Result<Vec<Vec<i64>>, RecordedTraceError> {
@@ -653,7 +668,7 @@ fn hash_chains(
 }
 
 fn build_requests(
-    rounds: &[TimedRound],
+    rounds: &[TimedRound<'_>],
     hashes: Vec<Vec<i64>>,
     base: f64,
 ) -> (Vec<Value>, Vec<String>) {
@@ -964,6 +979,19 @@ mod tests {
         assert_eq!(requests[1]["stop"], "tool_use");
         assert_eq!(requests[1]["think_time"], 9.0);
         assert_eq!(requests[1]["api_time"], 1.0);
+        assert_eq!(safe_id("claude:/unsafe id"), "claude_unsafe_id");
+        assert_eq!(safe_id(&"a".repeat(151)).len(), 150);
+
+        let output_only = json!({
+            "timing_events": [event("text", 4)]
+        });
+        let (_, api_time) = round_timing(&output_only).unwrap().unwrap();
+        assert_eq!(api_time, Some(0.0));
+
+        let mut wider_blocks = TraceLabOptions::default();
+        wider_blocks.block_size = 128;
+        let converted = convert_rows(vec![row("claude:wide", 0, 0, 256, 0)], wider_blocks).unwrap();
+        assert_eq!(converted[0]["requests"][0]["hash_ids"], json!([1, 2]));
     }
 
     #[test]
@@ -996,13 +1024,33 @@ mod tests {
         codex_child["provider"] = json!("codex");
         codex_child["project"] = json!("project-codex");
 
-        let rows = parent
+        let rows: Vec<Value> = parent
             .into_iter()
             .chain(child)
             .chain([mid, leaf])
             .chain(codex_parent)
             .chain([codex_child])
             .collect();
+        let mut without_join = TraceLabOptions::default();
+        without_join.is_subagent_join_enabled = false;
+        let standalone = convert_rows(rows.clone(), without_join).unwrap();
+        assert!(standalone.iter().any(|trace| trace["id"] == "claude_child"));
+        assert!(standalone.iter().all(|trace| {
+            trace["requests"]
+                .as_array()
+                .is_some_and(|requests| requests.iter().all(|entry| entry["type"] != "subagent"))
+        }));
+
+        let mut without_codex = TraceLabOptions::default();
+        without_codex.is_codex_join_enabled = false;
+        let claude_only = convert_rows(rows.clone(), without_codex).unwrap();
+        assert!(claude_only.iter().any(|trace| trace["id"] == "codex_child"));
+        assert!(
+            !claude_only
+                .iter()
+                .any(|trace| trace["id"] == "claude_child")
+        );
+
         let converted = convert_rows(rows, TraceLabOptions::default()).unwrap();
         let ids = converted
             .iter()
@@ -1042,8 +1090,9 @@ mod tests {
     async fn compiler_reads_plain_and_gzip_and_reports_source_errors() {
         let directory = tempfile::tempdir().unwrap();
         let rows = [
-            row("claude:s", 0, 0, 128, 0),
-            row("claude:s", 1, 10, 192, 128),
+            row("claude:z", 0, 0, 128, 0),
+            row("claude:z", 1, 10, 192, 128),
+            row("claude:a", 0, 20, 64, 0),
         ];
         let bytes = rows
             .iter()
@@ -1069,9 +1118,17 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(plain_bundle.metadata.format, "tracelab");
-        assert_eq!(plain_bundle.metadata.root_count, 1);
-        assert_eq!(plain_bundle.metadata.node_count, 2);
+        assert_eq!(plain_bundle.metadata.root_count, 2);
+        assert_eq!(plain_bundle.metadata.node_count, 3);
         assert_eq!(plain_bundle.metadata, gzip_bundle.metadata);
+        assert_eq!(
+            plain_bundle
+                .programs
+                .iter()
+                .map(|program| program.profiling.trace.id.as_str())
+                .collect::<Vec<_>>(),
+            ["claude_z", "claude_a"]
+        );
 
         let empty = directory.path().join("empty.jsonl");
         std::fs::write(&empty, "").unwrap();
@@ -1098,5 +1155,47 @@ mod tests {
             Err(error) => error,
         };
         assert!(error.to_string().contains("line 2"));
+
+        let non_utf8 = directory.path().join("non-utf8.jsonl");
+        std::fs::write(&non_utf8, b"{\"session_id\":\"s\"}\n\xff").unwrap();
+        let error = match compile_tracelab_trace_input(
+            config(DatasetSource::Path(non_utf8), Default::default()),
+            &TiktokenTokenizer::builtin(),
+        )
+        .await
+        {
+            Ok(_) => panic!("non-UTF-8 TraceLab source must fail"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("Cannot read TraceLab file"));
+
+        let corrupt_gzip = directory.path().join("corrupt.jsonl.gz");
+        std::fs::write(&corrupt_gzip, [0x1f, 0x8b, 0x08, 0x00]).unwrap();
+        let error = match compile_tracelab_trace_input(
+            config(DatasetSource::Path(corrupt_gzip), Default::default()),
+            &TiktokenTokenizer::builtin(),
+        )
+        .await
+        {
+            Ok(_) => panic!("corrupt TraceLab gzip must fail"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("Cannot read TraceLab file"));
+
+        let mut zero_block_size = Map::new();
+        zero_block_size.insert("block_size".into(), json!(0));
+        let error = match compile_tracelab_trace_input(
+            config(
+                DatasetSource::Inline(row("claude:s", 0, 0, 64, 0)),
+                zero_block_size,
+            ),
+            &TiktokenTokenizer::builtin(),
+        )
+        .await
+        {
+            Ok(_) => panic!("zero TraceLab block size must fail"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("positive integer"));
     }
 }

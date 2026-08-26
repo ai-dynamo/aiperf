@@ -5,10 +5,11 @@
 
 use serde_json::Value;
 
-/// Whether the run targets a graph program (`dag_jsonl` / `weka_trace` /
-/// `dynamo_trace` / `otlp_genai`), as opposed to a scheduled synthetic/linear dataset. Graph
-/// programs partition cleanly by whole trace, so they take the concatenation merge
-/// and bypass the scheduled request-budget guards.
+/// Whether the run targets a graph program (`dag_jsonl`, recorded traces such as
+/// `weka_trace`/`tracelab`, or another registered graph format), as opposed to a
+/// scheduled synthetic/linear dataset. Graph programs partition cleanly by whole
+/// trace, so they take the concatenation merge and bypass scheduled request-budget
+/// guards.
 pub(crate) fn is_graph_dataset(envelope: &Value) -> bool {
     envelope
         .pointer("/run/cfg/datasets")
@@ -38,8 +39,7 @@ pub enum CellularRunKind {
     /// Synthetic/linear scheduled runs: request-bounded phases, pre-tiled global
     /// dispatch ordinals, byte-exact global-order merge.
     Scheduled,
-    /// Graph programs (dag_jsonl/weka_trace/dynamo_trace): trace-partitioned,
-    /// concatenation-merged.
+    /// Graph programs: trace-partitioned, concatenation-merged.
     Graph,
 }
 

@@ -319,9 +319,8 @@ pub enum RecordedTracePathKind {
 ///   files (see `load_weka_documents` / `load_aiperf_documents`);
 /// - `dynamo_trace`: a single file, a directory of `.jsonl`/`.jsonl.gz`, or a
 ///   segmented-prefix stem (see `discover_dynamo_segments`);
-/// - `dag_jsonl` / `tracelab`: a single file ONLY — their loaders
-///   (`load_raw_rows`) read one file via `std::fs::read`, so a directory/prefix is
-///   unreadable and rejected here.
+/// - `dag_jsonl` / `tracelab`: a single file ONLY — their readers consume exactly
+///   one path, so a directory/prefix is unreadable and rejected here.
 ///
 /// Fails closed on a missing path, an empty directory, an unmatched prefix, or an
 /// unsupported format — the same errors the loader would raise, surfaced before
