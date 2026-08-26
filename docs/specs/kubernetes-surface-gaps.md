@@ -60,10 +60,20 @@ operator-clusterrole.yaml` grants `secrets: ["delete","get"]`, and
 `read_namespaced_secret`. Kubernetes returns `.data` on an exact-name `get`, so
 reference-only handling is enforced by code discipline and tests
 (`contract.py:189-203`, `tests/contract/test_contract.py:505`), not by an API-level boundary.
-`docs/kubernetes/rbac-security.md:36-40` states this; the verb table at `:25` does not — it
-lists jobsets as `create, delete, get` while both manifests grant `create, delete, get,
+This grant contradicts the isolation plan's stated constraint and is **authorized**: it was
+requested and granted explicitly during the 2026-08-22 session. Not drift.
+`docs/kubernetes/rbac-security.md:36-40` states the posture; the verb table at `:25` does not
+— it lists jobsets as `create, delete, get` while both manifests grant `create, delete, get,
 list, watch`, under a heading claiming the table holds *"only the permissions exercised by
-current reconciliation."*
+current reconciliation."* That table row is a genuine error.
+
+**There is no application-level authentication on the results plane, by decision.** Uploads
+carry digest and length metadata but no signature; retrieval carries no capability token.
+An Ed25519 signed-upload and read-capability model was built and removed the same day
+(`81a91acb8a`, −2,056/+431). The removal was **directed**, on the standing basis that this is
+a benchmarking tool and a fully locked-down security posture is not a requirement. Access
+control is Kubernetes RBAC on the Service proxy. Treat this section as recording an accepted
+posture, not an open defect.
 
 **The cellular dependency is a personal fork.** `rust/Cargo.lock` pins `velo` to
 `git+https://github.com/ajcasagrande/velo.git?branch=feat%2Fconnect-by-endpoint`, not an
@@ -172,4 +182,24 @@ directories with no operator UI. A duplicate `specs/` tree (40 files) survives a
 repository root, diverged from `docs/specs/` for `architecture.md`, `slurm-native.md`, and
 `cellular.md`, indexed by neither `docs/specs/README.md` nor `llms.txt`. Four
 `typed-factory-runner.md.*.contest.md` files (~227 KB, two recording failed contests) are
-tracked inside `docs/specs/` and referenced by nothing.
+tracked inside `docs/specs/` and referenced by nothing. Those were committed deliberately:
+the agent had excluded them and was instructed to commit all files.
+
+## Decision provenance
+
+Three entries above record authorized decisions rather than drift, recorded here so they are
+not "fixed" by a later reader. Cluster-scoped Secret `get` was explicitly granted. The
+Ed25519 upload-auth removal was explicitly directed. The tracked `.contest.md` files were an
+explicit override of the agent's exclusion.
+
+Hierarchical aggregation's refusal was **not** a user decision; it was an implementation call
+whose rationale was given after the fact and not contested: aggregators lacked
+controller-trusted role credentials, cells could bypass the controller via
+`AIPERF_CELL_SHIP_ADDR` or operator DNS, and the controller could treat a fanout setting as
+flat while cells still selected an aggregator route. It is a deliberate temporary capability
+reduction; re-enabling requires controller-owned aggregator provisioning, authenticated
+admission for every tree edge, and bounded lifecycle ownership.
+
+The refusals of `sweep`, `index`, `dashboard`, `init`, and `generate` have **no user-side
+provenance** in the session record and no recorded design rationale beyond spec text authored
+in the same commit that introduced them.
