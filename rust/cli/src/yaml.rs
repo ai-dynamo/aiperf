@@ -3594,7 +3594,7 @@ benchmark:
             .stack_size(32 * 1024 * 1024)
             .spawn(|| {
                 let yaml = cfg(
-                    "  endpoint: {type: image_retrieval}\n  dataset:\n    type: file\n    path: /tmp/images.jsonl\n    format: random_pool\n    images: {batchSize: 2}\n  phases: {type: concurrency, requests: 1, concurrency: 1}\n",
+                    "  endpoint: {type: image_retrieval, url: http://127.0.0.1:8080}\n  dataset:\n    type: file\n    path: /tmp/images.jsonl\n    format: random_pool\n    images: {batchSize: 2}\n  phases: {type: concurrency, requests: 1, concurrency: 1}\n",
                 );
                 let raw: serde_json::Value = serde_yaml::from_str(&yaml).unwrap();
                 let expanded = crate::expand::expand_config(raw).unwrap();
