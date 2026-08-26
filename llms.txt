@@ -667,6 +667,9 @@ Inputs, endpoints, and graph:
   native Config-v2 `dataset.synthesis` precedence fix: explicit `--synthesis-*`
   flags overlay only their targeted YAML-authored trace-synthesis fields while
   preserving the remaining YAML values and existing `baseten_trace` validation.
+- [`docs/specs/2026-08-25-native-verbatim-system-prompts.md`](docs/specs/2026-08-25-native-verbatim-system-prompts.md) —
+  designed origin #49 native port for startup-owned inline/file system prompts,
+  post-hoist prefix identity, and OpenAI/Anthropic production payloads.
 - [`docs/specs/prompt-corpus.md`](docs/specs/prompt-corpus.md) — the shared `prompts.corpus`
   seam for synthetic, count/hash-based trace, and recorded-graph prompt synthesis over
   the `sonnet`, `coding`, and exact-length `random` corpora.
