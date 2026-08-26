@@ -99,6 +99,23 @@ impl RecordedTraceInputConfig {
     }
 }
 
+/// Build the common all-rejected context-cap diagnostic after a completed
+/// format-specific selection scan.
+pub(crate) fn rejected_peak_context_error(
+    source: &str,
+    scanned: usize,
+    root_limit: Option<usize>,
+    max_context_length: usize,
+    smallest_observed: usize,
+) -> RecordedTraceError {
+    let num_dataset_entries = root_limit
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "None".to_string());
+    RecordedTraceError(format!(
+        "No eligible traces in {source} after filter-then-cap (scanned {scanned}, --max-context-length={max_context_length}, --num-dataset-entries={num_dataset_entries}). Smallest trace requires {smallest_observed} tokens; raise --max-context-length to at least that (e.g. --max-context-length {smallest_observed}) to admit any trace."
+    ))
+}
+
 /// Focused parse, validation, synthesis, or lowering failure.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RecordedTraceError(pub String);

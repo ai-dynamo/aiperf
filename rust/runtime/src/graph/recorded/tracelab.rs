@@ -14,7 +14,8 @@ use serde_json::{Map, Value, json};
 use crate::dataset::{DatasetSource, LoadConfig, TextTokenizer, load_raw_rows};
 use crate::graph::input::GraphInputBundle;
 
-use super::{RecordedTraceError, RecordedTraceInputConfig, compile_weka_trace_input};
+use super::weka::compile_weka_trace_input_with_source;
+use super::{RecordedTraceError, RecordedTraceInputConfig};
 
 const DEFAULT_BLOCK_SIZE: usize = 64;
 const DEFAULT_MIN_SPAWN_MS: u64 = 10_000;
@@ -146,7 +147,8 @@ pub async fn compile_tracelab_trace_input(
         .collect::<HashMap<_, _>>();
     config.load.source = DatasetSource::Inline(Value::Array(traces));
     config.load.options.clear();
-    let mut bundle = compile_weka_trace_input(config, tokenizer).await?;
+    let mut bundle =
+        compile_weka_trace_input_with_source(config, tokenizer, "TraceLab source").await?;
     bundle.programs.sort_by_key(|program| {
         trace_order
             .get(&program.profiling.trace.id)
@@ -1197,5 +1199,35 @@ mod tests {
             Err(error) => error,
         };
         assert!(error.to_string().contains("positive integer"));
+    }
+
+    #[tokio::test]
+    async fn all_context_rejected_sessions_report_the_smallest_tracelab_peak() {
+        let mut input = config(
+            DatasetSource::Inline(Value::Array(vec![
+                row("claude:large", 0, 0, 128, 0),
+                row("claude:small", 0, 1, 64, 0),
+            ])),
+            Default::default(),
+        );
+        input.max_context_length = Some(20);
+
+        let error = match compile_tracelab_trace_input(input, &TiktokenTokenizer::builtin()).await {
+            Ok(_) => panic!("all context-rejected TraceLab sessions must fail"),
+            Err(error) => error,
+        };
+        assert!(
+            error
+                .to_string()
+                .contains("No eligible traces in TraceLab source after filter-then-cap"),
+            "unexpected error: {error}"
+        );
+        assert!(
+            error.to_string().contains(
+                "Smallest trace requires 74 tokens; raise --max-context-length to at least that \
+                 (e.g. --max-context-length 74)"
+            ),
+            "unexpected error: {error}"
+        );
     }
 }

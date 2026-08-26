@@ -861,12 +861,17 @@ pub fn load_hf_traces_from_rows(
         })?;
         traces.push((trace.id.clone(), trace));
     }
-    Ok(hf_select_traces(
-        traces,
-        num_dataset_entries,
-        max_context_length,
-        max_osl,
-    ))
+    let (selected, stats) =
+        hf_select_traces(traces, num_dataset_entries, max_context_length, max_osl);
+    if selected.is_empty() && max_context_length.is_some() && stats.rejected_by_maxctx > 0 {
+        return Err(crate::agentx::selection::no_eligible_traces_error(
+            hf_dataset_name,
+            stats,
+            num_dataset_entries,
+            max_context_length,
+        ));
+    }
+    Ok((selected, stats))
 }
 
 /// Build a [`NormalReq`] from a wire normal request.
@@ -1152,6 +1157,40 @@ mod tests {
         let bad = vec![serde_json::json!({"id": "x", "bogus": 1})];
         let err = load_hf_traces_from_rows(bad, "ds", None, None, None).unwrap_err();
         assert!(err.contains("failed WekaTrace validation"));
+    }
+
+    #[test]
+    fn hf_rows_all_rejected_report_the_smallest_peak_context() {
+        let row = |id: &str, input_tokens: i64, output_tokens: i64| {
+            serde_json::json!({
+                "id": id,
+                "models": ["m"],
+                "block_size": 4,
+                "hash_id_scope": "local",
+                "requests": [{
+                    "t": 0.0,
+                    "type": "n",
+                    "model": "m",
+                    "in": input_tokens,
+                    "out": output_tokens,
+                    "hash_ids": [1]
+                }]
+            })
+        };
+        let error = load_hf_traces_from_rows(
+            vec![row("too-large", 900, 50), row("smaller", 100, 4)],
+            "org/weka",
+            None,
+            Some(100),
+            None,
+        )
+        .expect_err("every trace exceeds the configured context cap");
+
+        assert!(error.contains("No eligible traces in org/weka"), "{error}");
+        assert!(
+            error.contains("Smallest trace requires 104 tokens; raise --max-context-length to at least that (e.g. --max-context-length 104) to admit any trace."),
+            "{error}"
+        );
     }
 
     #[test]
