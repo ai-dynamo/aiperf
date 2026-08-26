@@ -722,6 +722,17 @@ class OperatorDeployer:
         namespaces for the secret and copies it to the operator namespace so
         the operator pod can pull its image.
         """
+        await self.ensure_pull_secret_in_namespace(secret_name, self.OPERATOR_NAMESPACE)
+
+    async def ensure_pull_secret_in_namespace(
+        self, secret_name: str, target_namespace: str
+    ) -> None:
+        """Copy a pull secret from any accessible namespace into ``target_namespace``.
+
+        Searches all accessible namespaces for a secret named ``secret_name``
+        and copies it into ``target_namespace``.  Safe to call when the secret
+        is already present — exits early without modifying anything.
+        """
         import re
 
         existing = await self.kubectl.run(
@@ -729,13 +740,11 @@ class OperatorDeployer:
             "secret",
             secret_name,
             "-n",
-            self.OPERATOR_NAMESPACE,
+            target_namespace,
             check=False,
         )
         if existing.returncode == 0:
-            logger.info(
-                f"Pull secret {secret_name!r} already in {self.OPERATOR_NAMESPACE}"
-            )
+            logger.info(f"Pull secret {secret_name!r} already in {target_namespace}")
             return
 
         ns_list = await self.kubectl.run(
@@ -748,12 +757,12 @@ class OperatorDeployer:
         if ns_list.returncode != 0:
             logger.warning(
                 f"Cannot list namespaces; pull secret {secret_name!r} may be missing "
-                f"in {self.OPERATOR_NAMESPACE}"
+                f"in {target_namespace}"
             )
             return
 
         for ns in ns_list.stdout.strip().split():
-            if ns == self.OPERATOR_NAMESPACE:
+            if ns == target_namespace:
                 continue
             fetch = await self.kubectl.run(
                 "get", "secret", secret_name, "-n", ns, "-o", "yaml", check=False
@@ -767,10 +776,10 @@ class OperatorDeployer:
             raw = re.sub(r"\n\s+uid:.*", "", raw)
             raw = re.sub(r"\n\s+creationTimestamp:.*", "", raw)
             logger.info(
-                f"Copying pull secret {secret_name!r} from {ns!r} → {self.OPERATOR_NAMESPACE!r}"
+                f"Copying pull secret {secret_name!r} from {ns!r} → {target_namespace!r}"
             )
             try:
-                await self.kubectl.apply(raw, namespace=self.OPERATOR_NAMESPACE)
+                await self.kubectl.apply(raw, namespace=target_namespace)
                 return
             except RuntimeError as exc:
                 logger.warning(f"Failed to copy pull secret from {ns!r}: {exc}")

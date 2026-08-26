@@ -1567,6 +1567,12 @@ async def operator_deployer(
     # Ensure per-worker job namespace exists for xdist isolation.
     await kubectl.run("create", "namespace", operator_job_namespace, check=False)
 
+    # Copy pull secret into the job namespace so pods can pull registry images.
+    if k8s_settings.image_pull_secret:
+        await deployer.ensure_pull_secret_in_namespace(
+            k8s_settings.image_pull_secret, operator_job_namespace
+        )
+
     yield deployer
 
     # Cleanup all jobs
