@@ -40,6 +40,10 @@ Expand a sweep config and print the resulting variations.
 
 Validate an AIPerf config file.
 
+### [`dynamo-trace`](#aiperf-dynamo-trace)
+
+Convert a native Dynamo request trace v1 into Weka trace files.
+
 ### [`profile`](#aiperf-profile)
 
 Run the Profile subcommand.
@@ -289,6 +293,20 @@ Loads the config through the same pipeline as `aiperf profile`, surfacing fatal 
 ### `--config-file` `<str>` _(Required)_
 
 Path to an AIPerf YAML config to validate.
+
+<hr/>
+
+## `aiperf dynamo-trace`
+
+Convert a native Dynamo request trace v1 into Weka trace files.
+
+#### `--input-file` `<str>` _(Required)_
+
+Native Dynamo JSONL or JSONL.GZ request trace.
+
+#### `--output` `<str>` _(Required)_
+
+Empty directory for the generated Weka trace files.
 
 <hr/>
 
