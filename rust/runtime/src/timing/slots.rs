@@ -402,7 +402,8 @@ impl GlobalSlotPool {
     /// Acquire one globally-shared slot, waiting if none are free.
     pub async fn acquire(self: &Arc<Self>) -> GlobalSlotGuard {
         loop {
-            let notified = self.notify.notified();
+            let mut notified = std::pin::pin!(self.notify.notified());
+            notified.as_mut().enable();
             if self.debt() > 0 {
                 notified.await;
                 continue;
