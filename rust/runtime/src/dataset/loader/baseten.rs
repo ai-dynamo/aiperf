@@ -872,6 +872,8 @@ struct BasetenBatchIndices {
     input_tokens: usize,
     output_tokens: usize,
     duration_e2e_ms: Option<usize>,
+    duration_ttft_ms: Option<usize>,
+    cached_tokens_reference: Option<usize>,
     total_hashes: Option<usize>,
     block_size: Option<usize>,
 }
@@ -894,6 +896,8 @@ impl BasetenBatchIndices {
             input_tokens: required("input_tokens")?,
             output_tokens: required("output_tokens")?,
             duration_e2e_ms: schema.index_of("duration_e2e_ms").ok(),
+            duration_ttft_ms: schema.index_of("duration_ttft_ms").ok(),
+            cached_tokens_reference: schema.index_of("cached_tokens_reference").ok(),
             total_hashes: schema.index_of("total_hashes").ok(),
             block_size: schema.index_of("block_size").ok(),
         })
@@ -937,6 +941,32 @@ impl BasetenBatchIndices {
             })
             .transpose()?
             .flatten();
+        let duration_ttft_ms = self
+            .duration_ttft_ms
+            .map(|index| {
+                float_value(
+                    batch.column(index).as_ref(),
+                    row,
+                    path,
+                    "duration_ttft_ms",
+                    ordinal,
+                )
+            })
+            .transpose()?
+            .flatten();
+        let cached_tokens_reference = self
+            .cached_tokens_reference
+            .map(|index| {
+                unsigned_value(
+                    batch.column(index).as_ref(),
+                    row,
+                    path,
+                    "cached_tokens_reference",
+                    ordinal,
+                )
+            })
+            .transpose()?
+            .flatten();
         let total_hashes = self
             .total_hashes
             .map(|index| hash_values(batch.column(index).as_ref(), row, path, ordinal))
@@ -969,6 +999,8 @@ impl BasetenBatchIndices {
             provided_session_id: None,
             poor_man_session_id: None,
             duration_e2e_ms,
+            duration_ttft_ms,
+            cached_tokens_reference,
             block_size,
             timestamp: Some(timestamp as f64),
             delay: None,
@@ -1108,6 +1140,11 @@ fn read_columnar_rows(
     let mut columns = required_columns().to_vec();
     if !replay.open_loop && source.has_columns(&["duration_e2e_ms"]) {
         columns.push("duration_e2e_ms");
+    }
+    for column in ["duration_ttft_ms", "cached_tokens_reference"] {
+        if source.has_columns(&[column]) {
+            columns.push(column);
+        }
     }
     if !replay.omit_kv_hints {
         for column in ["total_hashes", "block_size"] {
@@ -1977,6 +2014,8 @@ mod tests {
                 output_tokens: 3,
                 provided_session_id: "shared",
                 duration_e2e_ms: 10,
+                duration_ttft_ms: None,
+                cached_tokens_reference: None,
             },
             FixtureRow {
                 timestamp_start_unix_ms: 1_250,
@@ -1985,6 +2024,8 @@ mod tests {
                 output_tokens: 2,
                 provided_session_id: "shared",
                 duration_e2e_ms: 20,
+                duration_ttft_ms: None,
+                cached_tokens_reference: None,
             },
         ];
         let parquet = write_fixture(directory.path(), &rows);
