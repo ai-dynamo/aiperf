@@ -77,9 +77,7 @@ one `KubeClient`/`KubeTransport` seam with finite request and watch deadlines,
 a bounded response body, and bounded newline-delimited watch records. Watch
 streams reconnect a bounded number of times. Log streaming preserves bytes
 without reframing. `validate` and `profile` require an explicit
-`--image-capabilities` document bound to the envelope's image digest. `sweep`
-and `index` refuse because v1 ships no corresponding custom resources;
-`dashboard` refuses because no dashboard upstream is implemented. No command
+`--image-capabilities` document bound to the envelope's image digest. `sweep` submits an `AIPerfSweep` CR; `index` lists retained result runs; `dashboard` serves the local SPA backed by the operator's results API. No command
 spawns `kubectl`.
 
 ## Results contract

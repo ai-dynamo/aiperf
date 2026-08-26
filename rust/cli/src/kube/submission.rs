@@ -916,7 +916,8 @@ pub fn submit_sweep_transactionally(
     if let Err(e) = std::fs::remove_file(&temp_path) {
         if e.kind() != std::io::ErrorKind::NotFound {
             warn!(
-                detail = %format!("sweep bootstrap temp file cleanup failed: {e}"),
+                error = %e,
+                path = %temp_path.display(),
                 "minted sweep-controller bootstrap material was left on disk"
             );
         }

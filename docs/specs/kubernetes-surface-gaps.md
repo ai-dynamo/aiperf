@@ -100,14 +100,16 @@ produced a binary that failed closed on `cells > 1`.
 
 ## Refused commands
 
-`rust/cli/src/kube/command.rs:24-40` lists fifteen names; five refuse before any cluster
-access, two are pure aliases, eight are distinct live commands.
+`rust/cli/src/kube/command.rs:24-40` lists fifteen names; two refuse before any cluster
+access, two are pure aliases, eleven are distinct live commands.
 
 | Command | Site | Recorded justification |
 |---|---|---|
-| `sweep`, `index` | `command.rs:59-63` | `kubernetes-control-plane-isolation.md:80-83` — v1 ships no corresponding custom resources |
-| `dashboard` | `command.rs:64-68` | assertion only; no record explains why the working loopback forwarder was deleted |
 | `init`, `generate` | `command.rs:54-58` | **none** — no commit body, spec text, code comment, or test |
+
+`sweep`, `index`, and `dashboard` are now live commands. `sweep` submits an `AIPerfSweep`
+CR; `index` lists the operator's retained result runs; `dashboard` serves the local SPA
+backed by the operator's results API.
 
 `debug` is a pure alias of `show` and `attach` of `watch` (`command.rs:79-85`); no record
 addresses whether they were intended to differ. `preflight` is `GET /version`
@@ -157,8 +159,8 @@ Results carry a 24-hour staging and 7-day published TTL
 document mentions either; `llms.txt`, the four agent files, and three `docs/kubernetes/`
 pages all promise retention after producer deletion and operator restart with no expiry.
 
-`CLAUDE.md:93`, `AGENTS.md:93`, and `llms.txt:71-73` list the refusals as sweep/index/
-dashboard, omitting `init` and `generate`.
+The agent files and `llms.txt` previously listed `sweep`, `index`, and `dashboard` as
+refusals, omitting `init` and `generate`. Both errors have been corrected.
 `kubernetes-control-plane-isolation.md:27` says the aggregator role is refused *"before
 argument parsing"* — true of the internal `--aggregator` flag (`rust/cli/src/main.rs:43`
 precedes `:47`) but not of the public subcommand, which requires `--config`, projects an
@@ -200,6 +202,6 @@ flat while cells still selected an aggregator route. It is a deliberate temporar
 reduction; re-enabling requires controller-owned aggregator provisioning, authenticated
 admission for every tree edge, and bounded lifecycle ownership.
 
-The refusals of `sweep`, `index`, `dashboard`, `init`, and `generate` have **no user-side
+The refusals of `init` and `generate` have **no user-side
 provenance** in the session record and no recorded design rationale beyond spec text authored
 in the same commit that introduced them.

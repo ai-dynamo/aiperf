@@ -1146,9 +1146,6 @@ fn sweep_submission_rejects_non_cellular_image() {
 
 #[test]
 fn sweep_command_removed_from_refusal_list() {
-    // After Task 10, `aiperf kube sweep` no longer returns the old
-    // "unavailable: the shipped operator supports only AIPerfJob" refusal.
-    // Without required flags it returns a missing-argument error instead.
     let error = super::command::run(&["sweep".to_string()])
         .expect_err("sweep without required flags must fail");
     let msg = error.to_string();

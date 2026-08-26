@@ -91,8 +91,8 @@ def test_sweep_schema_copies_are_identical() -> None:
         vendored = (VENDORED / name).read_bytes()
         assert canonical == vendored, (
             f"{name}: contracts/ and vendored operator copy differ — "
-            "run `cp contracts/native-k8s/v1/{name} "
-            "aiperf-k8s-operator/src/aiperf_k8s_operator/contracts/v1/{name}` to fix"
+            f"run `cp contracts/native-k8s/v1/{name} "
+            f"aiperf-k8s-operator/src/aiperf_k8s_operator/contracts/v1/{name}` to fix"
         )
 
 

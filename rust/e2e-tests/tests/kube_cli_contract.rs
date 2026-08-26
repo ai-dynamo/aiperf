@@ -102,8 +102,6 @@ fn index_reaches_the_operator_instead_of_refusing() {
 
 #[test]
 fn dashboard_reaches_the_operator_instead_of_refusing() {
-    // `sweep` left the refusal list in Task 10, `index` in Task 12, and
-    // `dashboard` in Task 13; no native command refuses for want of a backend.
     let (code, stdout, stderr) = kube(&["dashboard", "--help"]);
     assert_eq!(code, 0, "dashboard help failed: {stderr}");
     assert!(

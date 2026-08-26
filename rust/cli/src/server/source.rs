@@ -21,7 +21,10 @@ use super::index::{RunEntry, scan_disk};
 /// be `Send + Sync`. Both methods fail soft: a source that cannot reach its
 /// backing store returns an empty list or `None` rather than erroring the
 /// request, so a transient backend outage degrades the run list instead of
-/// breaking the dashboard.
+/// breaking the dashboard. Both methods are called under
+/// `tokio::task::block_in_place` in the server's request handlers;
+/// implementations may perform synchronous I/O or build their own runtimes
+/// without risk of nested-runtime panics.
 pub trait HistoricalSource: Send + Sync {
     /// Every historical run entry this source can currently see.
     fn list(&self) -> Vec<RunEntry>;
