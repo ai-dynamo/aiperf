@@ -12,7 +12,9 @@ use super::client::{
     DEFAULT_REQUEST_DEADLINE, DEFAULT_WATCH_DEADLINE, KubeClient, KubeRequest, KubeTransport,
     KubeWatch,
 };
-use super::contract::{ControllerEnvelope, validate_envelope, validate_image_capabilities};
+use super::contract::{
+    ControllerEnvelope, validate_envelope, validate_image_capabilities, validate_sweep_envelope,
+};
 use super::error::KubeError;
 use super::projection::{BootstrapDigests, build_controller_envelope};
 use super::submission::BootstrapMaterialTarget;
@@ -381,6 +383,45 @@ impl KubeTransport for RecordingTransport {
             "watch is not needed by this recording transport".to_string(),
         ))
     }
+}
+
+// --- sweep envelope tests ---
+
+#[test]
+fn accepts_valid_sweep_envelope() {
+    let envelope =
+        validate_sweep_envelope(fixture("valid-sweep-envelope.json")).expect("valid sweep");
+    assert_eq!(envelope.sweep_id, "sweep-1");
+    assert_eq!(envelope.trials, 1);
+    assert_eq!(envelope.axes.len(), 1);
+    assert_eq!(envelope.axes[0].parameter, "runtime.concurrency");
+    assert_eq!(envelope.sweep_controller.name, "sweep-controller");
+}
+
+#[test]
+fn sweep_envelope_rejects_unknown_field() {
+    assert!(matches!(
+        validate_sweep_envelope(fixture("unknown-field-sweep-envelope.json")),
+        Err(KubeError::ContractValidation(_))
+    ));
+}
+
+#[test]
+fn sweep_envelope_refuses_unsupported_version() {
+    assert!(matches!(
+        validate_sweep_envelope(fixture("invalid-version-sweep-envelope.json")),
+        Err(KubeError::UnsupportedContractVersion(_))
+    ));
+}
+
+#[test]
+fn sweep_envelope_rejects_wrong_role_name() {
+    let mut payload = fixture("valid-sweep-envelope.json");
+    payload["sweepController"]["name"] = Value::String("controller".to_string());
+    assert!(matches!(
+        validate_sweep_envelope(payload),
+        Err(KubeError::ContractValidation(_))
+    ));
 }
 
 // --- kube init scaffold tests ---
