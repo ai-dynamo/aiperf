@@ -6,6 +6,7 @@ from typing import Self
 
 import pytest
 from pydantic import BaseModel, ValidationError
+from pytest import param
 
 from aiperf.common.enums.base_enums import CaseInsensitiveStrEnum, _normalize_name
 
@@ -354,3 +355,80 @@ class TestNormalizationCaching:
             X = 1
 
         assert SampleEnum.ALPHA != IntEnum.X
+
+
+class TestNotEqualMirrorsEqual:
+    """`!=` must remain the exact negation of normalized `==`."""
+
+    @pytest.mark.parametrize(
+        "other",
+        [
+            "alpha",
+            "ALPHA",
+            "Alpha",
+            "aLpHa",
+            "beta",
+            "nonexistent",
+            123,
+            None,
+            [],
+            SampleEnum.ALPHA,
+            SampleEnum.BETA,
+        ],
+    )  # fmt: skip
+    def test_ne_is_negation_of_eq(self: Self, other: object) -> None:
+        assert (SampleEnum.ALPHA != other) is not (SampleEnum.ALPHA == other)  # noqa: SIM300
+
+    @pytest.mark.parametrize(
+        "other",
+        ["foo_bar", "foo-bar", "FOO_BAR", "FOO-BAR", "Foo-Bar", "baz"],
+    )  # fmt: skip
+    def test_ne_is_negation_of_eq_across_dash_forms(self: Self, other: object) -> None:
+        assert (SampleEnum.FOO_BAR != other) is not (SampleEnum.FOO_BAR == other)  # noqa: SIM300
+
+    @pytest.mark.parametrize(
+        "other",
+        ["foo_bar", "foo-bar", "FOO_BAR", "FOO-BAR", "Foo-Bar"],
+    )  # fmt: skip
+    def test_ne_false_for_normalized_match(self: Self, other: str) -> None:
+        assert (SampleEnum.FOO_BAR != other) is False  # noqa: SIM300
+
+    @pytest.mark.parametrize(
+        "other",
+        ["my_value", "my-value", "MY_VALUE", "MY-VALUE"],
+    )  # fmt: skip
+    def test_ne_false_for_dash_valued_enum(self: Self, other: str) -> None:
+        assert (DashValueEnum.MY_VALUE != other) is False  # noqa: SIM300
+
+    @pytest.mark.parametrize(
+        "other",
+        ["foo_bar", "foo-bar", "FOO_BAR", "FOO-BAR", "Foo-Bar"],
+    )  # fmt: skip
+    def test_ne_false_with_string_on_the_left(self: Self, other: str) -> None:
+        assert (other != SampleEnum.FOO_BAR) is False
+
+    def test_ne_true_for_different_member(self: Self) -> None:
+        assert (SampleEnum.ALPHA != SampleEnum.BETA) is True
+
+    def test_ne_false_across_enums_with_same_normalized_value(self: Self) -> None:
+        class EnumA(CaseInsensitiveStrEnum):
+            ITEM = "foo_bar"
+
+        class EnumB(CaseInsensitiveStrEnum):
+            ITEM = "foo-bar"
+
+        assert (EnumA.ITEM != EnumB.ITEM) is False
+
+    def test_ne_true_for_non_string_types(self: Self) -> None:
+        assert (SampleEnum.ALPHA != 123) is True
+        assert (SampleEnum.ALPHA != None) is True  # noqa: E711
+        assert (SampleEnum.ALPHA != []) is True
+
+    @pytest.mark.parametrize(
+        "other",
+        [param(123, id="int"), param(None, id="none"), param([], id="list"), param(4.5, id="float")],
+    )  # fmt: skip
+    def test_ne_forwards_notimplemented_for_unsupported_operands(
+        self: Self, other: object
+    ) -> None:
+        assert SampleEnum.ALPHA.__ne__(other) is NotImplemented

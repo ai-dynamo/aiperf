@@ -16,7 +16,141 @@
 mod common;
 use common::*;
 
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::rc::Rc;
+
+use aiperf_runtime::transport::http::config::ClientConfig;
+use aiperf_runtime::transport::http::models::RequestConfig;
+use aiperf_runtime::transport::http::transport::http_transport::HttpTransport;
+use aiperf_runtime::transport::http::{Clock, RealClock};
 use serde_json::{Value, json};
+
+const PYTHON_ORACLE_COMMIT: &str = "dd3f09b0c34710470444bad17c9e7050c1cd694a";
+
+/// An exact origin/main checkout used as the Python side of #55's A/B proof.
+///
+/// The target tree deliberately predates this Python change, so comparing
+/// against its checked-out `src/` would prove the wrong behavior.
+struct ExactPythonOracle {
+    repository: PathBuf,
+    checkout: PathBuf,
+    _temporary: tempfile::TempDir,
+    is_removed: bool,
+}
+
+impl ExactPythonOracle {
+    fn materialize() -> Self {
+        let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .unwrap_or_else(|| panic!("cannot resolve repository root from CARGO_MANIFEST_DIR"))
+            .to_path_buf();
+        let temporary = tempfile::TempDir::new().expect("create Python oracle parent directory");
+        let checkout = temporary.path().join("origin-main-dd3f09b0c3");
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(&repository)
+            .args(["worktree", "add", "--detach"])
+            .arg(&checkout)
+            .arg(PYTHON_ORACLE_COMMIT)
+            .output()
+            .expect("launch git worktree add for Python oracle");
+        assert!(
+            output.status.success(),
+            "materializing exact Python oracle failed:\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let oracle = Self {
+            repository,
+            checkout,
+            _temporary: temporary,
+            is_removed: false,
+        };
+        oracle.assert_identity();
+        oracle.assert_python_import();
+        oracle
+    }
+
+    fn source_path(&self) -> PathBuf {
+        self.checkout.join("src")
+    }
+
+    fn assert_identity(&self) {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(&self.checkout)
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .expect("launch git rev-parse for Python oracle");
+        assert!(output.status.success(), "cannot resolve Python oracle HEAD");
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout).trim(),
+            PYTHON_ORACLE_COMMIT,
+            "Python oracle checkout has the wrong commit"
+        );
+    }
+
+    fn assert_python_import(&self) {
+        let virtual_env = std::env::var_os("VIRTUAL_ENV")
+            .unwrap_or_else(|| panic!("VIRTUAL_ENV must name the source .venv"));
+        let python = PathBuf::from(virtual_env).join("bin/python");
+        let output = Command::new(&python)
+            .args([
+                "-c",
+                "from pathlib import Path; import aiperf; print(Path(aiperf.__file__).resolve())",
+            ])
+            .env("PYTHONPATH", self.source_path())
+            .output()
+            .unwrap_or_else(|error| panic!("launch exact Python oracle import: {error}"));
+        assert!(
+            output.status.success(),
+            "exact Python oracle import failed:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let imported = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
+        assert!(
+            imported.starts_with(self.source_path()),
+            "Python imported {imported:?}, not the exact oracle at {:?}",
+            self.source_path()
+        );
+    }
+
+    fn remove(mut self) {
+        self.remove_inner(true);
+    }
+
+    fn remove_inner(&mut self, must_succeed: bool) {
+        if self.is_removed {
+            return;
+        }
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(&self.repository)
+            .args(["worktree", "remove", "--force"])
+            .arg(&self.checkout)
+            .output();
+        let succeeded = output.as_ref().is_ok_and(|result| result.status.success());
+        self.is_removed = succeeded;
+        if must_succeed {
+            let output = output.expect("launch git worktree remove for Python oracle");
+            assert!(
+                output.status.success(),
+                "removing exact Python oracle failed:\nstdout:\n{}\nstderr:\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+    }
+}
+
+impl Drop for ExactPythonOracle {
+    fn drop(&mut self) {
+        self.remove_inner(false);
+    }
+}
 
 fn sorted(mut v: Vec<String>) -> Vec<String> {
     v.sort();
@@ -34,14 +168,33 @@ fn header<'a>(record: &'a Value, name: &str) -> Option<&'a str> {
         })
 }
 
+fn artifact_files(dir: &Path) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    let mut pending = vec![dir.to_path_buf()];
+    while let Some(path) = pending.pop() {
+        let entries = std::fs::read_dir(path).unwrap_or_else(|error| {
+            panic!("read artifact directory {:?}: {error}", dir);
+        });
+        for entry in entries {
+            let entry = entry.unwrap_or_else(|error| panic!("read artifact entry: {error}"));
+            let path = entry.path();
+            if path.is_dir() {
+                pending.push(path);
+            } else {
+                files.push(path);
+            }
+        }
+    }
+    files.sort();
+    files
+}
+
 // ---------------------------------------------------------------------------
 // #26 — opt-in session-affinity headers (X-Session-ID / X-SMG-Routing-Key)
 // ---------------------------------------------------------------------------
 
-/// Deterministic per-record projection proving the additive session-affinity
-/// derivation without depending on the per-run correlation-id literal: for each
-/// record, whether X-Session-ID / X-SMG-Routing-Key are present and whether each
-/// equals that record's own `metadata.x_correlation_id`.
+/// Deterministic header-only projection proving session-affinity derivation
+/// without depending on per-run IDs or unrelated scheduler-owned metadata.
 fn affinity_projection(records: &[Value]) -> Vec<String> {
     sorted(
         records
@@ -52,13 +205,14 @@ fn affinity_projection(records: &[Value]) -> Vec<String> {
                     .and_then(|m| m.get("x_correlation_id"))
                     .and_then(Value::as_str);
                 let session = header(r, "X-Session-ID");
+                let affinity = header(r, "X-Session-Affinity");
                 let smg = header(r, "X-SMG-Routing-Key");
                 json!({
-                    "session_num": r["metadata"]["session_num"],
-                    "turn_index": r["metadata"]["turn_index"],
                     "has_session": session.is_some(),
+                    "has_affinity": affinity.is_some(),
                     "has_smg": smg.is_some(),
                     "session_eq_corr": session.is_some() && session == corr,
+                    "affinity_eq_corr": affinity.is_some() && affinity == corr,
                     "smg_eq_corr": smg.is_some() && smg == corr,
                 })
                 .to_string()
@@ -67,9 +221,194 @@ fn affinity_projection(records: &[Value]) -> Vec<String> {
     )
 }
 
+/// #55 makes the additive router-facing header unconditional while preserving
+/// the independent `X-Session-ID` opt-in.  A custom session-header still only
+/// renames the correlation header; it must not suppress the affinity header.
+#[tokio::test]
+async fn port55_default_session_affinity_header_raw_parity() {
+    let oracle = ExactPythonOracle::materialize();
+    let h = AIPerfHarness::new().await;
+    let rust_artifacts = tempfile::tempdir().expect("create Rust parity artifact directory");
+    let python_artifacts = tempfile::tempdir().expect("create Python parity artifact directory");
+    let args = format!(
+        "--model {DEFAULT_MODEL} --url {} --endpoint-type chat --streaming \
+         --concurrency 1 --request-count 4 --workers-max 1 --random-seed 42 \
+         --synthetic-input-tokens-mean 16 --output-tokens-mean 4 \
+         --export-level raw --ui simple --tokenizer builtin --session-header X-Route-Key \
+         --header x-session-affinity:stale-lowercase \
+         --header X-Session-Affinity:stale-canonical",
+        h.mock.url
+    );
+
+    let rust = h.run_in_artifact_dir(&args, rust_artifacts.path());
+    assert!(rust.success(), "rust run failed:\n{}", rust.stderr);
+    let python_path = oracle.source_path().display().to_string();
+    let py = h.run_env_in_artifact_dir(
+        &args,
+        &[
+            ("AIPERF_RUNTIME_ENGINE", "python"),
+            ("AIPERF_E2E_PYTHON_MODULE", "aiperf"),
+            ("PYTHONPATH", python_path.as_str()),
+        ],
+        python_artifacts.path(),
+    );
+    assert!(py.success(), "python run failed:\n{}", py.stderr);
+
+    let rust_raw = rust.artifacts.raw_records();
+    let py_raw = py.artifacts.raw_records();
+    assert_ne!(
+        rust.artifacts.dir, py.artifacts.dir,
+        "raw parity runs must not alias one artifact root"
+    );
+    for (label, records) in [("rust", &rust_raw), ("python", &py_raw)] {
+        assert_eq!(
+            records.len(),
+            4,
+            "{label} did not retain its own records; stdout:\n{}\nstderr:\n{}\nfiles: {:#?}",
+            if label == "rust" {
+                &rust.stdout
+            } else {
+                &py.stdout
+            },
+            if label == "rust" {
+                &rust.stderr
+            } else {
+                &py.stderr
+            },
+            artifact_files(if label == "rust" {
+                &rust.artifacts.dir
+            } else {
+                &py.artifacts.dir
+            })
+        );
+        for (i, record) in records.iter().enumerate() {
+            let corr = record["metadata"]["x_correlation_id"].as_str();
+            assert_eq!(
+                header(record, "X-Route-Key"),
+                corr,
+                "{label} record {i}: renamed correlation header diverged"
+            );
+            assert_eq!(
+                header(record, "X-Session-Affinity"),
+                corr,
+                "{label} record {i}: affinity header diverged"
+            );
+            assert!(
+                header(record, "X-Session-ID").is_none(),
+                "{label} record {i}: opt-in X-Session-ID leaked into default request"
+            );
+        }
+    }
+    assert_eq!(
+        affinity_projection(&rust_raw),
+        affinity_projection(&py_raw),
+        "default session-affinity raw projection diverged between rust and python engines"
+    );
+    oracle.remove();
+}
+
+/// The profile product assigns correlation IDs to every scheduled request, so
+/// exercise the no-correlation boundary through a real native HTTP request and
+/// its raw `RequestRecord` capture against the same loopback mock.
+#[tokio::test]
+async fn port55_transport_raw_record_removes_authored_affinity_without_correlation() {
+    let h = AIPerfHarness::new().await;
+    let local = tokio::task::LocalSet::new();
+    local
+        .run_until(async {
+            let clock: Rc<dyn Clock> = RealClock::new();
+            let transport = HttpTransport::new(clock, ClientConfig::default());
+            let config = RequestConfig::new(format!("{}/v1/chat/completions", h.mock.url))
+                .header("x-session-affinity", "stale-lowercase")
+                .header("X-Session-Affinity", "stale-canonical");
+            let record = transport
+                .send_request(
+                    &config,
+                    json!({
+                        "model": DEFAULT_MODEL,
+                        "stream": false,
+                        "messages": [{"role": "user", "content": "no correlation"}],
+                    }),
+                    false,
+                    |_| {},
+                )
+                .await;
+
+            assert_eq!(
+                record.status,
+                Some(200),
+                "native request failed: {:?}",
+                record.error
+            );
+            assert!(
+                !record
+                    .request_headers
+                    .keys()
+                    .any(|name| name.eq_ignore_ascii_case("X-Session-Affinity")),
+                "a request without a correlation ID must remove authored affinity: {:?}",
+                record.request_headers
+            );
+        })
+        .await;
+}
+
+/// Observe the actual `RequestRecord` header map built immediately before the
+/// Hyper client submission, independently of profile artifact serialization.
+#[tokio::test]
+async fn port55_transport_raw_record_derives_authoritative_affinity() {
+    let h = AIPerfHarness::new().await;
+    let local = tokio::task::LocalSet::new();
+    local
+        .run_until(async {
+            let clock: Rc<dyn Clock> = RealClock::new();
+            let transport = HttpTransport::new(clock, ClientConfig::default());
+            let config = RequestConfig::new(format!("{}/v1/chat/completions", h.mock.url))
+                .correlation_id("direct-session")
+                .header("x-session-affinity", "stale-lowercase")
+                .header("X-Session-Affinity", "stale-canonical");
+            let record = transport
+                .send_request(
+                    &config,
+                    json!({
+                        "model": DEFAULT_MODEL,
+                        "stream": false,
+                        "messages": [{"role": "user", "content": "direct affinity"}],
+                    }),
+                    false,
+                    |_| {},
+                )
+                .await;
+
+            assert_eq!(
+                record.status,
+                Some(200),
+                "native request failed: {:?}",
+                record.error
+            );
+            assert_eq!(
+                record
+                    .request_headers
+                    .get("X-Session-Affinity")
+                    .map(String::as_str),
+                Some("direct-session")
+            );
+            assert!(
+                record
+                    .request_headers
+                    .keys()
+                    .all(|name| !name.eq_ignore_ascii_case("x-session-affinity")
+                        || name == "X-Session-Affinity")
+            );
+        })
+        .await;
+}
+
 #[tokio::test]
 async fn port26_session_affinity_headers_raw_parity() {
+    let oracle = ExactPythonOracle::materialize();
     let h = AIPerfHarness::new().await;
+    let rust_artifacts = tempfile::tempdir().expect("create Rust parity artifact directory");
+    let python_artifacts = tempfile::tempdir().expect("create Python parity artifact directory");
     let args = format!(
         "--model {DEFAULT_MODEL} --url {} --endpoint-type chat --streaming \
          --concurrency 1 --request-count 6 --workers-max 1 --random-seed 42 \
@@ -82,20 +421,27 @@ async fn port26_session_affinity_headers_raw_parity() {
         ("AIPERF_HTTP_X_SMG_ROUTING_KEY_FROM_CORRELATION_ID", "1"),
     ];
 
-    let rust = h.run_env(&args, env);
+    let rust = h.run_env_in_artifact_dir(&args, env, rust_artifacts.path());
     assert!(rust.success(), "rust run failed:\n{}", rust.stderr);
     let mut rust_env = env.to_vec();
     rust_env.push(("AIPERF_RUNTIME_ENGINE", "python"));
-    let py = h.run_env(&args, &rust_env);
+    rust_env.push(("AIPERF_E2E_PYTHON_MODULE", "aiperf"));
+    let python_path = oracle.source_path().display().to_string();
+    rust_env.push(("PYTHONPATH", python_path.as_str()));
+    let py = h.run_env_in_artifact_dir(&args, &rust_env, python_artifacts.path());
     assert!(py.success(), "python run failed:\n{}", py.stderr);
 
     let rust_raw = rust.artifacts.raw_records();
     let py_raw = py.artifacts.raw_records();
-    assert!(!rust_raw.is_empty(), "rust produced no raw records");
-    assert!(!py_raw.is_empty(), "python produced no raw records");
+    assert_ne!(
+        rust.artifacts.dir, py.artifacts.dir,
+        "raw parity runs must not alias one artifact root"
+    );
+    assert_eq!(rust_raw.len(), 6, "rust did not retain its own records");
+    assert_eq!(py_raw.len(), 6, "python did not retain its own records");
 
-    // Invariant the feature guarantees, per engine: both affinity headers are
-    // present on every record and each equals that record's correlation id.
+    // Invariant the combined #26/#55 contract guarantees per engine: all
+    // enabled or default affinity headers equal the correlation id.
     for (label, recs) in [("rust", &rust_raw), ("python", &py_raw)] {
         for (i, r) in recs.iter().enumerate() {
             let corr = r["metadata"]["x_correlation_id"].as_str();
@@ -107,6 +453,11 @@ async fn port26_session_affinity_headers_raw_parity() {
                 header(r, "X-Session-ID"),
                 corr,
                 "{label} record {i}: X-Session-ID != correlation id"
+            );
+            assert_eq!(
+                header(r, "X-Session-Affinity"),
+                corr,
+                "{label} record {i}: X-Session-Affinity != correlation id"
             );
             assert_eq!(
                 header(r, "X-SMG-Routing-Key"),
@@ -122,12 +473,17 @@ async fn port26_session_affinity_headers_raw_parity() {
         affinity_projection(&py_raw),
         "session-affinity raw projection diverged between rust and python engines"
     );
+    oracle.remove();
 }
 
-/// Control: without the opt-in env flags, neither engine emits the headers.
+/// Control: without opt-ins, `X-Session-ID` and the SGLang header remain absent
+/// while #55's default affinity header remains present.
 #[tokio::test]
 async fn port26_session_affinity_headers_absent_by_default_raw_parity() {
+    let oracle = ExactPythonOracle::materialize();
     let h = AIPerfHarness::new().await;
+    let rust_artifacts = tempfile::tempdir().expect("create Rust parity artifact directory");
+    let python_artifacts = tempfile::tempdir().expect("create Python parity artifact directory");
     let args = format!(
         "--model {DEFAULT_MODEL} --url {} --endpoint-type chat --streaming \
          --concurrency 1 --request-count 4 --workers-max 1 --random-seed 42 \
@@ -135,17 +491,31 @@ async fn port26_session_affinity_headers_absent_by_default_raw_parity() {
          --export-level raw --ui simple --tokenizer builtin",
         h.mock.url
     );
-    let rust = h.run(&args);
+    let rust = h.run_in_artifact_dir(&args, rust_artifacts.path());
     assert!(rust.success(), "rust run failed:\n{}", rust.stderr);
-    let py = h.run_env(&args, &[("AIPERF_RUNTIME_ENGINE", "python")]);
+    let python_path = oracle.source_path().display().to_string();
+    let py = h.run_env_in_artifact_dir(
+        &args,
+        &[
+            ("AIPERF_RUNTIME_ENGINE", "python"),
+            ("AIPERF_E2E_PYTHON_MODULE", "aiperf"),
+            ("PYTHONPATH", python_path.as_str()),
+        ],
+        python_artifacts.path(),
+    );
     assert!(py.success(), "python run failed:\n{}", py.stderr);
 
+    assert_ne!(
+        rust.artifacts.dir, py.artifacts.dir,
+        "raw parity runs must not alias one artifact root"
+    );
     for (label, recs) in [
         ("rust", rust.artifacts.raw_records()),
         ("python", py.artifacts.raw_records()),
     ] {
-        assert!(!recs.is_empty(), "{label} produced no raw records");
+        assert_eq!(recs.len(), 4, "{label} did not retain its own records");
         for (i, r) in recs.iter().enumerate() {
+            let corr = r["metadata"]["x_correlation_id"].as_str();
             assert!(
                 header(r, "X-Session-ID").is_none(),
                 "{label} record {i}: unexpected X-Session-ID"
@@ -154,8 +524,14 @@ async fn port26_session_affinity_headers_absent_by_default_raw_parity() {
                 header(r, "X-SMG-Routing-Key").is_none(),
                 "{label} record {i}: unexpected X-SMG-Routing-Key"
             );
+            assert_eq!(
+                header(r, "X-Session-Affinity"),
+                corr,
+                "{label} record {i}: missing or incorrect default X-Session-Affinity"
+            );
         }
     }
+    oracle.remove();
 }
 
 // ---------------------------------------------------------------------------

@@ -137,7 +137,7 @@ impl NativeVideoGenerator {
                 .codec
                 .as_deref()
                 .unwrap_or(match self.config.format {
-                    SyntheticVideoFormat::Mp4 => "aac",
+                    SyntheticVideoFormat::Mp4 => "libopus",
                     SyntheticVideoFormat::WebM => "libvorbis",
                 });
             command.arg("-c:a").arg(codec);

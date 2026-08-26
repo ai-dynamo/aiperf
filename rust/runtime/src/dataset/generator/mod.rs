@@ -355,7 +355,7 @@ pub struct SyntheticVideoAudioConfig {
     pub sample_rate_hz: u32,
     /// PCM source depth: 8, 16, 24, or 32.
     pub bit_depth: u16,
-    /// Optional FFmpeg audio codec; absent selects AAC for MP4 and Vorbis for WebM.
+    /// Optional FFmpeg audio codec; absent selects Opus for MP4 and Vorbis for WebM.
     pub codec: Option<String>,
 }
 
