@@ -14,13 +14,14 @@ use super::client::{KubeClient, KubeWatch, KubeWatchPoll};
 use super::contract::{
     BootstrapReference, CONTRACT_VERSION, CellBootstrapReference, ControllerEnvelope,
     NamedReference, NativeK8sRole, RoleEnvelope, validate_envelope,
+    validate_sweep_envelope,
 };
 use super::error::KubeError;
 use super::render::{OutputFormat, render};
 use super::results::{ArtifactFetcher, MAX_ARTIFACT_BYTES, download, parse_manifest};
 use super::submission::{
     envelope_paths, jobs_path, load_envelope, material_paths, submit_profile_transactionally,
-    validate_image_capability_document,
+    submit_sweep_transactionally, validate_image_capability_document,
 };
 
 /// Maximum bounded reconnects a streaming command performs before failing.
@@ -59,7 +60,7 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
     if !COMMANDS.contains(&command) {
         anyhow::bail!("unknown native Kubernetes command {command}");
     }
-    if matches!(command, "sweep" | "index") {
+    if command == "index" {
         anyhow::bail!(
             "native Kubernetes {command} is unavailable: the shipped operator supports only AIPerfJob"
         );
@@ -74,6 +75,9 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
         anyhow::bail!(
             "native Kubernetes dashboard is unavailable: no dashboard upstream is implemented"
         );
+    }
+    if command == "sweep" {
+        return run_sweep(&args[1..]);
     }
     if matches!(command, "profile" | "validate") {
         return envelope_command(command, &args[1..]);
@@ -679,6 +683,86 @@ fn envelope_command(command: &str, args: &[String]) -> anyhow::Result<i32> {
     let client = KubeClient::from_options(&auth_options(args)?)?;
     let status = submit_profile_transactionally(&client, &envelopes[0], &material)?;
     report_status(command, status)
+}
+
+/// Dispatch `aiperf kube sweep`: validate the sweep envelope and image capabilities,
+/// then submit the sweep transactionally via `submit_sweep_transactionally`.
+fn run_sweep(args: &[String]) -> anyhow::Result<i32> {
+    let envelope_path = flag_value(args, "--envelope").ok_or_else(|| {
+        anyhow::anyhow!("native Kubernetes sweep requires --envelope <sweep-envelope.json>")
+    })?;
+    let capability_path = flag_value(args, "--image-capabilities").ok_or_else(|| {
+        anyhow::anyhow!(
+            "native Kubernetes sweep requires --image-capabilities <native-k8s/v1.json>"
+        )
+    })?;
+
+    // Load and validate the sweep envelope.
+    let envelope_bytes = std::fs::read(&envelope_path).map_err(|e| {
+        anyhow::anyhow!("failed to read sweep envelope {envelope_path}: {e}")
+    })?;
+    let envelope_value: serde_json::Value =
+        serde_json::from_slice(&envelope_bytes).map_err(|e| {
+            anyhow::anyhow!("failed to decode sweep envelope {envelope_path}: {e}")
+        })?;
+    let envelope = validate_sweep_envelope(envelope_value).map_err(anyhow::Error::from)?;
+
+    // Load the image capability document (validation happens inside submit).
+    let cap_bytes = std::fs::read(&capability_path).map_err(|e| {
+        anyhow::anyhow!("failed to read image capability document {capability_path}: {e}")
+    })?;
+    let cap_value: serde_json::Value =
+        serde_json::from_slice(&cap_bytes).map_err(|e| {
+            anyhow::anyhow!("failed to decode image capability document {capability_path}: {e}")
+        })?;
+
+    let client = KubeClient::from_options(&auth_options(args)?)?;
+    let status = submit_sweep_transactionally(&client, &envelope, cap_value)?;
+
+    // Optionally poll sweep phase until terminal.
+    if args.iter().any(|a| a == "--watch") {
+        watch_sweep(&client, &envelope.namespace, &envelope.run_id)?;
+    }
+
+    report_status("sweep", status)
+}
+
+/// Poll the AIPerfSweep CR until its phase reaches `Completed` or `Failed`.
+fn watch_sweep(client: &KubeClient, namespace: &str, run_id: &str) -> anyhow::Result<()> {
+    use super::client::{AIPERF_GROUP, AIPERF_VERSION};
+    use super::sweep_controller::AIPERFSWEEPS_PLURAL;
+
+    let path = format!(
+        "/apis/{AIPERF_GROUP}/{AIPERF_VERSION}/namespaces/{namespace}/{AIPERFSWEEPS_PLURAL}/{run_id}"
+    );
+    loop {
+        let response = client.execute("GET", &path, "", Vec::new())?;
+        if !response.is_success() {
+            anyhow::bail!("sweep status poll returned HTTP {}", response.status);
+        }
+        let cr: serde_json::Value = serde_json::from_slice(&response.body)
+            .map_err(|e| anyhow::anyhow!("sweep status response is invalid: {e}"))?;
+        let phase = cr
+            .pointer("/status/phase")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Pending");
+        let completed = cr
+            .pointer("/status/completedRuns")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let failed = cr
+            .pointer("/status/failedRuns")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        println!(
+            "native Kubernetes sweep: phase={phase} completedRuns={completed} failedRuns={failed}"
+        );
+        if matches!(phase, "Completed" | "Failed") {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_secs(2));
+    }
+    Ok(())
 }
 
 fn auth_options(args: &[String]) -> anyhow::Result<KubeAuthOptions> {
