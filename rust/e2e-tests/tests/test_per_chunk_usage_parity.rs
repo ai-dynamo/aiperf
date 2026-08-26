@@ -416,19 +416,30 @@ async fn native_binary_and_python_match_per_chunk_usage_wire_and_itl() {
         rust_projection, python_projection,
         "feature-relevant raw wire projection must be byte-exact across engines"
     );
-    for (index, (rust_request, python_request)) in
-        rust_requests.iter().zip(&python_requests).enumerate()
-    {
-        assert_eq!(
-            rust_request.method, python_request.method,
-            "request {index}"
-        );
-        assert_eq!(rust_request.route, python_request.route, "request {index}");
-        assert_eq!(
-            rust_request.body, python_request.body,
-            "request {index} outbound body bytes differ"
-        );
+    for (label, requests) in [("native", &rust_requests), ("python", &python_requests)] {
+        for (index, request) in requests.iter().enumerate() {
+            assert_eq!(request.method, "POST", "{label} request {index}");
+            assert_eq!(
+                request.route, "/v1/chat/completions",
+                "{label} request {index}"
+            );
+        }
     }
+    let sorted_bodies = |requests: &[RequestCapture]| {
+        let mut bodies: Vec<Vec<u8>> = requests
+            .iter()
+            .map(|request| request.body.clone())
+            .collect();
+        // Dataset issuance order is outside #51 and differs across the two
+        // schedulers. The complete unmodified body multiset is the wire oracle.
+        bodies.sort();
+        bodies
+    };
+    assert_eq!(
+        sorted_bodies(&rust_requests),
+        sorted_bodies(&python_requests),
+        "outbound body-byte multiset differs"
+    );
     assert!(
         (rust_itl - python_itl).abs() <= 2.0,
         "corrected ITL parity diverged: rust={rust_itl:.3}ms python={python_itl:.3}ms"
