@@ -58,9 +58,12 @@ not a conforming implementation of this design.
 The following invariants apply together. None is optional:
 
 1. **Native Rust boundary.** The loader and plugins exchange the exact Rust
-   traits and Rust values declared by the AIPerf plugin API. There is no C ABI,
-   `abi_stable` facade, serialization layer, generated function table, Python
-   runtime, or process RPC between a factory and its host.
+   traits and Rust values declared by the AIPerf plugin API. No plugin entry,
+   category-trait, or transferred-data boundary uses a C ABI, `abi_stable`
+   facade, serialization layer, generated function table, Python runtime, or
+   process RPC. This does not prohibit ordinary implementation dependencies,
+   including the shared allocator provider, from using their upstream C ABI
+   internally without becoming the plugin contract.
 2. **Exact build compatibility.** A library is callable only when its
    SDK-produced `host_abi_universe_id` equals the host's identity, its unique
    `plugin_artifact_build_id` validates against that universe, and the complete
@@ -127,7 +130,7 @@ decision changes.
 | Decision | Normative resolution | Detailed section |
 |---|---|---|
 | Artifact form | Multiple Rust `cdylib` artifacts named `.so`/`.dylib`/`.dll`, exporting a native-Rust entry function | Library contract; rejected alternatives |
-| Programming model | Native Rust traits and types; no C ABI or ABI-wrapper facade | Invariant 1; rejected alternatives |
+| Programming model | Native Rust traits and types; no C ABI or ABI-wrapper facade at the plugin entry/category/data boundary; implementation dependencies may retain their upstream ABI | Invariant 1; rejected alternatives |
 | Compatibility meaning | Source API is SemVer; binary loading requires an exact common host ABI universe plus a validated package-specific artifact-build record; either identity changing requires the affected rebuild; neither identity is an ABI proof | Compatibility contract |
 | Runtime lifecycle | Eagerly load active packages, register transactionally, freeze once, retain code until process exit | Composition and lifecycle |
 | Initial categories | Endpoint, transport, and exporter only | Runtime category behavior |
@@ -290,6 +293,54 @@ Allowing a plugin to depend directly on today's `aiperf-runtime` monocrate would
 recreate the large compile graph, expose private implementation details, risk
 duplicate global state, and create a dependency cycle between loader and
 loaded code. It was rejected in favor of focused downward API/core/SDK crates.
+
+### Per-library allocators with origin-specific destroy functions
+
+Letting each plugin allocate with its own allocator and returning every owned
+value through an origin-specific `destroy`/`free` callback can be made correct,
+but it changes ordinary Rust ownership into a generated destruction protocol.
+It adds function-table calls and origin metadata to drops, makes `String`,
+`Vec`, `Box`, `Arc`, `Rc`, errors, trait objects, and futures non-native at the
+boundary, and moves work onto request completion and potentially token-heavy
+paths. It was rejected because it violates both the native-trait requirement and
+the zero-added-hot-path-operation invariant.
+
+### Forbid all owned Rust values across the boundary
+
+A borrowed/static-only API would avoid cross-library allocation ownership, but
+endpoint, transport, async, error, and exporter contracts inevitably need owned
+buffers, futures, handles, and results. Requiring plugins to retain every value
+behind bespoke borrowed handles would recreate an ABI facade and complicate
+lifetime management. It is permitted only as the limited feasibility-spike
+stage before allocator conformance, not as the production contract.
+
+### Switch the complete process to `System`
+
+Using Rust's `System` allocator everywhere could reduce provider packaging on
+some Unix systems, but it abandons AIPerf's existing mimalloc performance
+baseline, does not by itself prove one compatible allocator instance across
+every Windows/native dependency topology, and would be a product-wide allocator
+migration unrelated to plugin modularity. It was rejected. The dynamic mimalloc
+provider must instead prove non-inferiority against the current statically linked
+mimalloc baseline.
+
+### AIPerf allocator wrapper or allocation function table
+
+An `aiperf_alloc_v1` Rust wrapper, selector, or generated table would provide an
+obvious stable ownership seam, but every allocation/reallocation/free would add
+another AIPerf-authored call or indirect dispatch and would no longer be the
+existing allocator path. It was rejected. `aiperf_alloc_v1` names and pins the
+shared mimalloc binary; the Rust `GlobalAlloc` shims import upstream `mi_*`
+symbols directly.
+
+### Unwind containment at the plugin boundary
+
+Keeping `panic=unwind` and wrapping every boundary call with `catch_unwind`
+would add containment calls, cannot make all foreign/native unwind interactions
+sound, and conflicts with the zero-additional-call-layer requirement. It was
+rejected in favor of typed recoverable errors and `panic=abort`. This changes the
+current execute-mode panic envelope and therefore requires the explicit product
+migration described below.
 
 ## Compatibility contract
 
@@ -958,7 +1009,9 @@ Registration is manifest-bound. When an extension registers a factory, the
 registry obtains its priority and package provenance from the active package
 context rather than trusting plugin-supplied ad hoc values. The package is
 staged transactionally; an error commits none of its entries. Priority
-resolution then produces one immutable winner per category and name.
+was already fixed before activation; registration verifies the package's actual
+entries against that precomputed winner/shadow/ambiguity map and then commits
+the already-selected entries without rerunning or changing priority resolution.
 
 Required first-party packages and required component keys are separate fields in
 the authenticated AIPerf distribution inventory. A required package need not
@@ -1020,6 +1073,21 @@ recreates the same plan, and compares its digest before constructing its
 `PreparedRun`. A mismatch fails before child effects. Each plan is immutable
 before any effect in its process.
 
+The plan digest never serializes or introspects plugin-owned opaque validated
+state. Every validation method returns that opaque native value together with a
+host-owned `FactoryValidationReceiptV1` containing the selected category and
+canonical factory ID, frozen descriptor digest, BLAKE3 digest of the host's
+canonical normalized authored config bytes, plugin-computed semantic-config
+digest after defaults/normalization, sorted host-resource requirements, and—for
+exporters—the exact canonical capture requirement. The plan digest covers the
+canonical normalized run DTO plus the sorted receipts. The child reruns factory
+validation and requires byte-identical receipts; it constructs a fresh local
+opaque value and never transfers the parent's value. A conforming factory MUST
+produce the same semantic digest and behavior for the same common universe,
+descriptor, and canonical input. Repeatability and default-value mutation
+fixtures enforce that rule; receipts are trusted declarations, not a sandbox
+against malicious native code.
+
 Production composition is process-global. The first platform load creates an
 unsealed process-resident `ActivatingLibrarySet`. Successful registration and
 freeze seal it as `LoadedLibrarySet` with the subsequently derived plugin-lock
@@ -1060,6 +1128,16 @@ Platform dependency loading is constrained as follows:
   map rejects conflicting non-system DLLs before native activation, and every
   successful module is pinned with `Library::pin`.
 
+Before loading, staging constructs one process-wide canonical object map keyed
+by `(loader identity, digest)`. Every byte-identical claimant, regardless of
+package or platform, resolves to the same host-owned staged file and absolute
+load path; the object is mapped once and its retained handle satisfies every
+claimant edge. Package-private logical paths remain provenance only. The map is
+seeded with the verified executable/baseline modules and rejects an identity
+paired with any other digest. This coalescing rule is identical for ELF,
+Mach-O, and case-folded PE identities and eliminates loader-dependent accidental
+reuse of a different package's path.
+
 The SDK statically validates these policies and every dependency edge. Runtime
 validation records actual loaded module identities, paths, and digests. A
 plugin-private module's path and digest MUST equal the staged closure. A shared
@@ -1079,8 +1157,11 @@ The command behavior is explicit:
 - root `--help` and shell-completion generation do not discover or load plugins;
 - `aiperf plugins list` discovers and decodes manifests without executing code;
 - `aiperf plugins validate` performs closure, build-identity, dependency,
-  allocator, panic, entry-symbol, and
-  registration checks and therefore executes trusted plugin initialization;
+  allocator, panic, entry-symbol, and registration checks only for the active
+  intended load set and therefore executes trusted initialization for winners
+  and required packages, never fully shadowed optional packages. Validating one
+  otherwise-shadowed package requires explicit `--plugin-manifest`, which makes
+  it required for that diagnostic invocation;
 - `aiperf config`, profile validation, execution, and native evaluation compose
   before opening artifacts or starting dashboards, control-hook networking,
   Tokio/Velo runtimes, dataset acquisition, or any registered component;
@@ -1091,19 +1172,19 @@ The public parent composes before artifact logging, dashboard creation, control-
 hook networking, or child launch. Ordinary `--execute` gains a dedicated
 inherited private bootstrap authority carrying the canonical lock DTO, expected
 validated-run-plan digest, and
-handles to the parent's already-acquired private staged generations; benchmark
+handles to the parent's complete `LockedCatalogBundle`; benchmark
 stdin remains unchanged. On Unix these are no-follow directory/file descriptors
 with explicit inheritance. On Windows these are explicitly inheritable handles
 named in the child process attribute list; ambient handle inheritance is
 disabled. The channel is distinct from the existing cell-security descriptor.
 The child does not rediscover, reopen an explicit outside-root path, or race an
-installed generation; it rehashes and loads only objects reachable through the
-inherited staged authority, then proves the full lock before reading the
+installed generation; it rehashes all catalog inputs and loads only load-set
+objects reachable through the inherited authority, then proves the full lock before reading the
 benchmark request.
 
 Same-host cells receive the expected lock through their private bootstrap pipe.
 Cross-host Kubernetes/SLURM launch material includes the expected lock digest
-and complete required generation inventory. A cell composes immediately after
+and complete locked-catalog inventory. A cell composes immediately after
 reading bootstrap material and before creating Tokio/Velo runtimes, dialing,
 fetching datasets, opening artifacts, or joining barriers. `CellRegister` gains
 the lock digest; the signed registration transcript binds it, and controller
@@ -1113,7 +1194,7 @@ transfer remains absent.
 
 This requires explicit product-schema migrations, not an assumption that the
 present launch DTOs already carry plugin state. `CellLaunchContext` gains the
-expected canonical lock and required-generation inventory. The native
+expected canonical lock and complete locked-catalog inventory. The native
 Kubernetes envelope, image-capabilities document, operator-owned JobSet pod
 specification, controller/cell bootstrap schema, and results provenance all bind
 the distribution generation, host ABI universe, plugin lock, and immutable
@@ -1122,6 +1203,21 @@ present before cluster effects. Native SLURM `run` and `generate` materialize
 the same fields for every sibling rank before `srun` begins; peer startup order
 is not used as distribution or lock authority. Older envelopes/bootstrap
 schemas that cannot express these fields fail closed for plugin-enabled runs.
+
+`LockedCatalogBundle` is distinct from the intended load set and from
+distribution-required package authority. It contains the acquired raw and
+canonical bytes of every discovered manifest; every successfully acquired
+closure object needed to recompute its digest, including fully shadowed optional
+packages; stable typed acquisition/static-validation receipts for quarantined
+inputs; discovery-policy and authority inputs; the canonical status table; and
+the canonical object map. It never executes a quarantined or fully shadowed
+optional artifact. Parent, re-exec child, same-host cell, and cross-host image
+all receive or preinstall this complete immutable bundle and independently
+recompute the full catalog lock. A required-generation-only or load-set-only
+inventory is non-conforming because it cannot reproduce shadowed, ambiguous, or
+quarantined lock entries. A failure receipt binds the raw manifest digest,
+attempted logical object identity, stable error code, and available acquired
+metadata; it never asks a child to recheck a mutable missing pathname.
 
 The canonical lock binds the full frozen catalog, not only executable winners.
 It contains lock schema and normalization versions; host ABI universe ID;
@@ -1261,8 +1357,9 @@ compatibility decoder remains through the next major Config schema, where its
 removal requires a separate migration record.
 
 The factory receives the raw JSON object once during strict startup validation
-and returns opaque native validated configuration. The host passes that value
-only to the exact factory instance that created it. No host switch on a closed
+and returns opaque native validated configuration plus a
+`FactoryValidationReceiptV1`. The host passes that value only to the exact
+factory instance that created it. No host switch on a closed
 transport enum and no `transport_typed` protocol copy may remain in CLI YAML,
 control hooks, validation, protocol projection, preparation, execution binding,
 capability reporting, or cellular projection.
@@ -1283,6 +1380,7 @@ Exporter plugins register `ExporterFactory` and supported capture vocabulary
 during process composition. Capture requirements are run-specific: after the
 frozen universe exists and the run configuration has been read and normalized,
 each selected factory strictly validates its opaque config and returns an
+opaque value plus `FactoryValidationReceiptV1` whose capture field is an
 `ExporterCaptureRequirementsV1` value from this closed host-owned vocabulary:
 `FinalReport`, `ExactRecordsV1`, and
 `FoldedProjectionV1(GenAiClientHistogramsV1)`. A requirement is a sorted set of
@@ -1471,9 +1569,24 @@ Rust wrapper or dispatch table, and its call path, throughput, CPU, allocation
 count, and allocated bytes are compared against the monolithic allocator
 baseline. Failure blocks the architecture rather than redefining the baseline.
 
-A benchmark with a coefficient of variation above 2% for the primary metric is
-invalid, not a pass; every attempt remains retained and the complete experiment
-is rerun after diagnosing environmental noise. The
+A benchmark inventory entry names exactly one `primary_metric` from
+`successful_requests_per_second`, `output_tokens_per_second`,
+`cpu_nanoseconds_per_successful_request`, or
+`exporter_nanoseconds_per_record`, and names its non-inferiority ratio direction.
+For its 30 retained pairs, the harness computes the sample coefficient of
+variation as Bessel-corrected sample standard deviation divided by the absolute
+arithmetic mean for (a) the 30 static member summaries, (b) the 30 dynamic
+member summaries, and (c) the 30 positive paired ratios in the declared
+direction. If any of those three values exceeds 2%, the complete attempt is
+invalid, not a pass; every sample remains retained.
+
+At most three complete experiment attempts are permitted for one source/
+environment/inventory identity. Only an invalid attempt may be rerun after a
+documented noise diagnosis. The first statistically valid attempt is
+authoritative whether it passes or fails and cannot be replaced by a later run.
+A product error is an immediate valid gate failure, not an invalid attempt.
+Three invalid attempts block migration until the source, environment, or
+inventory identity changes through review. The
 harness records raw samples, environment identity, and confidence intervals as
 CI artifacts. Threshold changes require an explicit design/specification
 change; a migration patch cannot loosen them to obtain a green result.
@@ -1486,7 +1599,8 @@ streaming at concurrency 1 and 64, a four-worker run, OTLP-disabled and OTLP-
 enabled capture runs, and an exporter pass over 100,000 deterministic records.
 Each entry freezes request budget, minimum valid duration, core assignment,
 mock-server placement, response shape, warmup count, estimator, bootstrap seed,
-and measured metrics. Each case performs five unmeasured warmup samples followed
+primary metric and ratio direction, measured metrics, and the infrastructure-
+invalidation classifier. Each case performs five unmeasured warmup samples followed
 by 30 paired samples. Changing any field is a performance-contract change and
 retains the prior result for comparison.
 
@@ -1747,9 +1861,11 @@ The separately built exemplar suite contains at least:
   library handle remains retained and without production unload;
 - same-process same-lock reuse/different-lock rejection, same-host re-exec, and
   remote-cell lock mismatch fixtures;
-- legacy/open transport Config-v2 acceptance, mixed-form rejection, legacy/open
+- absent transport normalization to HTTP, legacy/open transport Config-v2
+  acceptance, mixed-form rejection, neither-exporter acceptance, legacy/open
   exporter mutual exclusion, deterministic legacy exporter order, open-form
-  serialization, CLI projection, and protocol removal of `transport_typed`;
+  serialization/omission, CLI projection, and protocol removal of
+  `transport_typed`;
 - a third-party endpoint overriding a first-party endpoint over gRPC unary and
   streaming, proving the old static binding cannot survive;
 - Dynosim offline and online through the public direct-execution binding with no
