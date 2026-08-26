@@ -59,6 +59,21 @@ pub struct Handle {
     done: Rc<Notify>,
 }
 
+struct InflightTask {
+    inflight: Rc<Cell<usize>>,
+    done: Rc<Notify>,
+}
+
+impl Drop for InflightTask {
+    fn drop(&mut self) {
+        let remaining = self.inflight.get() - 1;
+        self.inflight.set(remaining);
+        if remaining == 0 {
+            self.done.notify_one();
+        }
+    }
+}
+
 impl Handle {
     /// Create a handle bound to `clock`. Each trace gets its own handle (with
     /// its own in-flight counter), so many traces can share one worker's runtime
@@ -83,15 +98,13 @@ impl Handle {
         F: Future<Output = ()> + 'static,
     {
         self.inflight.set(self.inflight.get() + 1);
-        let inflight = self.inflight.clone();
-        let done = self.done.clone();
+        let task = InflightTask {
+            inflight: self.inflight.clone(),
+            done: self.done.clone(),
+        };
         tokio::task::spawn_local(async move {
+            let _task = task;
             fut.await;
-            let remaining = inflight.get() - 1;
-            inflight.set(remaining);
-            if remaining == 0 {
-                done.notify_one();
-            }
         });
     }
 
@@ -652,6 +665,18 @@ mod tests {
         });
         assert!(!outcome.deadlocked);
         assert_eq!(*log.borrow(), vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn panicking_task_releases_idle_accounting() {
+        let clock = Rc::new(SimClock::new());
+        let outcome = drive_sim(clock, move |handle| async move {
+            handle.spawn(async {
+                panic!("test task panic");
+            });
+            handle.wait_idle().await;
+        });
+        assert!(!outcome.deadlocked, "a panicking task must release wait_idle");
     }
 
     #[test]
