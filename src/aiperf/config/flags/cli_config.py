@@ -1701,9 +1701,11 @@ class CLIConfig(BaseConfig):
     video_format: Annotated[
         VideoFormat,
         Field(
-            description="Container format for generated video files. Supports `webm` (VP9, recommended, BSD-licensed) and `mp4` (H.264/H.265, widely compatible). "
+            description="Container format for generated video files. Supports `webm` (VP9, recommended, BSD-licensed) and `mp4` (widely compatible container, VP9 by default). "
             "Format choice affects compatibility, file size, and encoding options. "
-            "Use `webm` for open-source workflows, `mp4` for maximum compatibility.",
+            "`mp4` is the more portable container, but note that the default VP9 "
+            "video and Opus audio are less widely supported by players than "
+            "H.264/AAC would be.",
         ),
         CLIParameter(
             name=("--video-format",),
@@ -1716,11 +1718,12 @@ class CLIConfig(BaseConfig):
         Field(
             description=(
                 "The video codec to use for encoding. Common options: "
-                "libvpx-vp9 (CPU, BSD-licensed, default for WebM), "
-                "libx264 (CPU, GPL-licensed, widely compatible), "
-                "libx265 (CPU, GPL-licensed, smaller files), "
-                "h264_nvenc (NVIDIA GPU), hevc_nvenc (NVIDIA GPU, smaller files). "
-                "Any FFmpeg-supported codec can be used."
+                "libvpx-vp9 (CPU, BSD-licensed, default), "
+                "libvpx (CPU, BSD-licensed, VP8). "
+                "Any codec the local FFmpeg supports can be used, but the AIPerf "
+                "container ships a minimal FFmpeg build limited to VP8/VP9 video "
+                "with Vorbis/Opus audio; codecs such as libx264 or h264_nvenc "
+                "require an FFmpeg build that includes them."
             ),
         ),
         CLIParameter(
@@ -1765,8 +1768,12 @@ class CLIConfig(BaseConfig):
         Field(
             description="Audio codec for the embedded audio track. "
             "If not specified, auto-selects based on video format: "
-            "aac for MP4, libvorbis for WebM. "
-            "Options: aac, libvorbis, libopus.",
+            "libopus for MP4, libvorbis for WebM. "
+            "Options: libvorbis, libopus, aac. The AIPerf container ships only "
+            "libvorbis and libopus; aac requires an FFmpeg build that "
+            "includes an AAC encoder. "
+            "libopus always encodes at 48 kHz, so any "
+            "--video-audio-sample-rate is resampled during muxing.",
         ),
         CLIParameter(
             name=("--video-audio-codec",),

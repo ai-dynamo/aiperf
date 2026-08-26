@@ -16,6 +16,7 @@ struct VideoDetails {
     fps: f64,
     duration: f64,
     is_fragmented: bool,
+    video_codec: Option<String>,
     has_audio: bool,
     audio_codec: Option<String>,
     audio_channels: Option<i64>,
@@ -122,6 +123,10 @@ fn extract_base64_video_details(base64_data: &str) -> VideoDetails {
         .unwrap_or(0.0);
 
     let has_audio = audio_stream.is_some();
+    let video_codec = video_stream
+        .and_then(|s| s.get("codec_name"))
+        .and_then(|c| c.as_str())
+        .map(str::to_owned);
     let audio_codec = audio_stream
         .and_then(|s| s.get("codec_name"))
         .and_then(|c| c.as_str())
@@ -140,6 +145,7 @@ fn extract_base64_video_details(base64_data: &str) -> VideoDetails {
         fps,
         duration,
         is_fragmented: check_mp4_fragmentation(&video_bytes),
+        video_codec,
         has_audio,
         audio_codec,
         audio_channels,
@@ -265,8 +271,9 @@ async fn test_video_generation_parameters_mp4() {
 
 async fn video_with_audio_embeds_correct_stream(
     video_format: &str,
-    video_codec: &str,
+    video_codec: Option<&str>,
     audio_codec: Option<&str>,
+    expected_video_codec: &str,
     expected_audio_codec: &str,
     expected_audio_sample_rate: i64,
 ) {
@@ -274,6 +281,9 @@ async fn video_with_audio_embeds_correct_stream(
         return;
     }
     let (width, height, fps, duration) = (320, 240, 4, 2.0);
+    let video_codec_arg = video_codec
+        .map(|codec| format!(" --video-codec {codec}"))
+        .unwrap_or_default();
     let audio_codec_arg = audio_codec
         .map(|codec| format!(" --video-audio-codec {codec}"))
         .unwrap_or_default();
@@ -282,7 +292,7 @@ async fn video_with_audio_embeds_correct_stream(
     let r = h.run(&format!(
         "--model {DEFAULT_MODEL} --url {} --endpoint-type chat \
          --video-width {width} --video-height {height} --video-duration {duration} \
-         --video-fps {fps} --video-format {video_format} --video-codec {video_codec} \
+         --video-fps {fps} --video-format {video_format}{video_codec_arg} \
          --video-audio-sample-rate 44100 --video-audio-num-channels 1{audio_codec_arg} \
          --prompt-input-tokens-mean 50 --num-dataset-entries 4 \
          --request-rate 2.0 --request-count 4 --workers-max {WORKERS_MAX}",
@@ -299,6 +309,7 @@ async fn video_with_audio_embeds_correct_stream(
         assert_eq!(details.width, width);
         assert_eq!(details.height, height);
         assert!(approx_eq(details.fps, fps as f64));
+        assert_eq!(details.video_codec.as_deref(), Some(expected_video_codec));
         assert!(
             details.has_audio,
             "Expected audio stream in {video_format} video"
@@ -311,20 +322,29 @@ async fn video_with_audio_embeds_correct_stream(
 
 #[tokio::test]
 async fn test_video_with_audio_embeds_correct_stream_webm() {
-    video_with_audio_embeds_correct_stream("webm", "libvpx-vp9", None, "vorbis", 44_100).await;
+    video_with_audio_embeds_correct_stream(
+        "webm",
+        Some("libvpx-vp9"),
+        None,
+        "vp9",
+        "vorbis",
+        44_100,
+    )
+    .await;
 }
 
 #[tokio::test]
 async fn test_video_with_audio_embeds_correct_stream_mp4() {
-    video_with_audio_embeds_correct_stream("mp4", "libvpx-vp9", None, "opus", 48_000).await;
+    video_with_audio_embeds_correct_stream("mp4", None, None, "vp9", "opus", 48_000).await;
 }
 
 #[tokio::test]
 async fn test_video_with_audio_honors_explicit_opus_override() {
     video_with_audio_embeds_correct_stream(
         "webm",
-        "libvpx-vp9",
+        Some("libvpx-vp9"),
         Some("libopus"),
+        "vp9",
         "opus",
         48_000,
     )
@@ -333,24 +353,56 @@ async fn test_video_with_audio_honors_explicit_opus_override() {
 
 #[test]
 fn test_ffmpeg_container_allowlist_contract() {
-    for required in [
-        "libopus-dev",
-        "--disable-autodetect",
-        "--disable-everything",
-        "--enable-ffmpeg",
-        "--enable-ffprobe",
-        "--enable-encoder=libvpx_vp8,libvpx_vp9,libvorbis,libopus",
-        "--enable-decoder=rawvideo,png,pcm_s16le,pcm_s24le,pcm_s32le,pcm_u8",
-        "--enable-demuxer=rawvideo,image2,wav,matroska,mov",
-        "--enable-muxer=webm,matroska,mp4",
-        "--enable-parser=png,vp9,opus,vorbis",
-        "--enable-protocol=file,pipe",
-        "--enable-filter=scale,format,aformat,aresample,anull,null,copy",
-        "--enable-bsf=vp9_superframe",
-        "libopus.so* /opt/ffmpeg/lib/",
-    ] {
-        assert!(DOCKERFILE.contains(required), "missing {required}");
-    }
+    assert!(DOCKERFILE.contains("libopus-dev"));
+    assert!(DOCKERFILE.contains("libopus.so* /opt/ffmpeg/lib/"));
+
+    let configure = DOCKERFILE
+        .split_once("./configure \\\n")
+        .and_then(|(_, tail)| tail.split_once("&& make -j$(nproc)"))
+        .map(|(configure, _)| configure)
+        .expect("Dockerfile must contain the FFmpeg configure stanza");
+    let flags = configure
+        .lines()
+        .map(str::trim)
+        .filter(|line| line.starts_with("--"))
+        .map(|line| line.trim_end_matches('\\').trim_end())
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        flags,
+        [
+            "--prefix=/opt/ffmpeg",
+            "--disable-gpl",
+            "--disable-nonfree",
+            "--enable-shared",
+            "--disable-static",
+            "--disable-autodetect",
+            "--enable-zlib",
+            "--enable-libvorbis",
+            "--enable-libvpx",
+            "--enable-libopus",
+            "--disable-everything",
+            "--disable-v4l2-m2m",
+            "--disable-devices",
+            "--disable-network",
+            "--disable-programs",
+            "--enable-ffmpeg",
+            "--enable-ffprobe",
+            "--enable-encoder=libvpx_vp8,libvpx_vp9,libvorbis,libopus",
+            "--enable-decoder=rawvideo,png,pcm_s16le,pcm_s24le,pcm_s32le,pcm_u8",
+            "--enable-demuxer=rawvideo,image2,wav,matroska,mov",
+            "--enable-muxer=webm,matroska,mp4",
+            "--enable-parser=png,vp9,opus,vorbis",
+            "--enable-protocol=file,pipe",
+            "--enable-filter=scale,format,aformat,aresample,anull,null,copy",
+            "--enable-bsf=vp9_superframe",
+            "--disable-doc",
+            "--disable-htmlpages",
+            "--disable-manpages",
+            "--disable-podpages",
+            "--disable-txtpages",
+        ],
+    );
 }
 
 #[tokio::test]
