@@ -443,7 +443,6 @@ fn init_refuses_to_overwrite_without_force() {
 #[test]
 fn init_never_contacts_the_cluster() {
     let dir = tempfile::tempdir().expect("tempdir");
-    // Write a kubeconfig whose server address is an unroutable TEST-NET address (RFC 5737).
     let kubeconfig_path = dir.path().join("unroutable.yaml");
     std::fs::write(
         &kubeconfig_path,
@@ -455,14 +454,17 @@ fn init_never_contacts_the_cluster() {
         ),
     )
     .expect("kubeconfig write");
-    let exit = super::scaffold::run(&[
+    // Route KUBECONFIG to an RFC 5737 unroutable address. Any cluster contact attempt
+    // from kube init would fail; succeeding here proves none occurred.
+    // kube init reads no kubeconfig.
+    unsafe { std::env::set_var("KUBECONFIG", kubeconfig_path.as_os_str()) };
+    let exit = super::command::run(&[
+        "init".to_string(),
+        "--template".to_string(),
+        "minimal".to_string(),
         "--output-directory".to_string(),
         dir.path().join("output").display().to_string(),
-        // Providing an unroutable kubeconfig must not prevent scaffold from succeeding:
-        // kube init does not contact the cluster on any path.
-        "--kubeconfig".to_string(),
-        kubeconfig_path.display().to_string(),
     ])
-    .expect("scaffold with unroutable kubeconfig must succeed");
+    .expect("kube init with unroutable KUBECONFIG must succeed");
     assert_eq!(exit, 0, "kube init must not contact the cluster");
 }
