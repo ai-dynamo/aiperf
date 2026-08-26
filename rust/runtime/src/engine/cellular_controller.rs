@@ -116,6 +116,112 @@ impl CellularTopologyPlan {
     }
 }
 
+#[cfg(feature = "cellular")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TerminalPartitionKind {
+    Records,
+    Store,
+}
+
+#[cfg(feature = "cellular")]
+impl TerminalPartitionKind {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Records => "records",
+            Self::Store => "store",
+        }
+    }
+}
+
+#[cfg(feature = "cellular")]
+enum TerminalPartition {
+    Records(RecordsShardPartition),
+    Store(ColumnStorePartition),
+}
+
+#[cfg(feature = "cellular")]
+struct TerminalPartitions {
+    partitions: Vec<Option<TerminalPartition>>,
+    kind: Option<TerminalPartitionKind>,
+}
+
+#[cfg(feature = "cellular")]
+impl TerminalPartitions {
+    fn new(cell_count: u32) -> Self {
+        Self {
+            partitions: (0..cell_count).map(|_| None).collect(),
+            kind: None,
+        }
+    }
+
+    fn insert_records(&mut self, partition: RecordsShardPartition) -> Result<()> {
+        self.insert(
+            partition.cell_id(),
+            TerminalPartitionKind::Records,
+            TerminalPartition::Records(partition),
+        )
+    }
+
+    fn insert_store(&mut self, partition: ColumnStorePartition) -> Result<()> {
+        self.insert(
+            partition.cell_id(),
+            TerminalPartitionKind::Store,
+            TerminalPartition::Store(partition),
+        )
+    }
+
+    fn insert(
+        &mut self,
+        cell_id: u32,
+        kind: TerminalPartitionKind,
+        partition: TerminalPartition,
+    ) -> Result<()> {
+        let Some(slot) = self.partitions.get_mut(cell_id as usize) else {
+            bail!(
+                "terminal {} partition reported out-of-range cell {cell_id} (expected cell ids 0..{})",
+                kind.name(),
+                self.partitions.len()
+            );
+        };
+        if let Some(expected) = self.kind {
+            ensure!(
+                expected == kind,
+                "terminal partition kind changed at cell {cell_id}: expected {}, received {}",
+                expected.name(),
+                kind.name()
+            );
+        }
+        ensure!(
+            slot.is_none(),
+            "duplicate terminal {} partition for cell {cell_id}",
+            kind.name()
+        );
+        self.kind = Some(kind);
+        *slot = Some(partition);
+        Ok(())
+    }
+
+    fn is_complete(&self) -> bool {
+        self.partitions.iter().all(Option::is_some)
+    }
+
+    fn received_count(&self) -> usize {
+        self.partitions.iter().flatten().count()
+    }
+
+    fn into_parts(self) -> (Vec<RecordsShardPartition>, Vec<ColumnStorePartition>) {
+        let mut records = Vec::new();
+        let mut stores = Vec::new();
+        for partition in self.partitions.into_iter().flatten() {
+            match partition {
+                TerminalPartition::Records(partition) => records.push(partition),
+                TerminalPartition::Store(partition) => stores.push(partition),
+            }
+        }
+        (records, stores)
+    }
+}
+
 /// Env toggle standing up ONE per-run velo [hub](crate::hub) as the cellular anchor
 /// instead of the separate standalone planes. When enabled, the controller mounts the
 /// cell↔controller plugin (register/heartbeat/partition/store-partition), the
@@ -1344,31 +1450,23 @@ fn run_cellular_with_startup_probe<P: StartupProbe>(
         // ship-then-exit race resolves in the cell's favour when both land together.
         let deadline = tokio::time::sleep(collect_timeout());
         tokio::pin!(deadline);
-        // A cell ships EXACTLY ONE terminal partition, of one of two kinds depending on
-        // the mode it ran (the whole run is uniform — every cell got the same envelope
-        // + env, so they never mix): a `Partition` (retain path: raw records for the
-        // byte-exact global-order/concatenation merge) or a `StorePartition`
-        // (metrics-only exact-fold: the cell's folded exact store, no record Vec). Count
-        // BOTH toward the one-per-cell termination barrier; the merge below dispatches on
-        // which kind arrived.
-        let mut partitions: Vec<RecordsShardPartition> = Vec::with_capacity(cell_count as usize);
-        let mut store_partitions: Vec<ColumnStorePartition> =
-            Vec::with_capacity(cell_count as usize);
+        // A cell ships EXACTLY ONE terminal partition, of one run-wide kind: raw records
+        // for retain mode or a folded store for metrics-only exact folding. Receipt identity
+        // is keyed by cell id so duplicates and out-of-range messages cannot satisfy the
+        // all-cells barrier.
+        let mut terminal_partitions = TerminalPartitions::new(cell_count);
         let mut replay_supplements: Vec<GraphCellSupplement> = Vec::new();
         let mut heartbeats: BTreeMap<u32, MetricsHeartbeat> = BTreeMap::new();
         // The frontend tails this file into AIPerfJob CR status.
         let live_progress_log = std::env::var_os("AIPERF_CELLULAR_HEARTBEAT_LOG")
             .filter(|path| !path.is_empty())
             .map(std::path::PathBuf::from);
-        let collected = |records: &[RecordsShardPartition], stores: &[ColumnStorePartition]| {
-            records.len() + stores.len()
-        };
         // The flat topology receives one terminal partition per cell.
         let mut profiler = endpoint_control_hooks
             .take()
             .and_then(|hooks| hooks.server_profiler)
             .map(CellularProfilerCoordinator::new);
-        while collected(&partitions, &store_partitions) < expected_partitions as usize {
+        while !terminal_partitions.is_complete() {
             tokio::select! {
                 biased;
                 message = transport.recv() => match message.context("receiving from cell")? {
@@ -1376,16 +1474,18 @@ fn run_cellular_with_startup_probe<P: StartupProbe>(
                         "cell {cell_id} sent replay preflight through the terminal stream"
                     ),
                     Some(CellMessage::Partition(partition)) => {
-                        if let Some(supplement) = partition.graph_supplement().cloned() {
+                        let supplement = partition.graph_supplement().cloned();
+                        terminal_partitions.insert_records(partition)?;
+                        if let Some(supplement) = supplement {
                             replay_supplements.push(supplement);
                         }
-                        partitions.push(partition);
                     }
                     Some(CellMessage::StorePartition(partition)) => {
-                        if let Some(supplement) = partition.graph_supplement().cloned() {
+                        let supplement = partition.graph_supplement().cloned();
+                        terminal_partitions.insert_store(*partition)?;
+                        if let Some(supplement) = supplement {
                             replay_supplements.push(supplement);
                         }
-                        store_partitions.push(*partition);
                     }
                     Some(CellMessage::Heartbeat { cell_id, heartbeat }) => {
                         heartbeats.insert(cell_id, *heartbeat);
@@ -1401,16 +1501,17 @@ fn run_cellular_with_startup_probe<P: StartupProbe>(
                     }
                     None => bail!(
                         "transport closed with {} of {expected_partitions} partitions",
-                        collected(&partitions, &store_partitions)
+                        terminal_partitions.received_count()
                     ),
                 },
                 Some(failure) = watchers.recv_failure() => bail!("{failure}"),
                 _ = &mut deadline => bail!(
                     "cellular run timed out with {} of {expected_partitions} partitions",
-                    collected(&partitions, &store_partitions)
+                    terminal_partitions.received_count()
                 ),
             }
         }
+        let (partitions, store_partitions) = terminal_partitions.into_parts();
         if let Some(profiler) = profiler.as_mut()
             && profiler.needs_stop()
         {
@@ -3149,6 +3250,58 @@ mod tests {
     use std::sync::{Mutex, OnceLock};
 
     use super::*;
+
+    #[test]
+    fn terminal_partitions_reject_duplicate_same_kind() {
+        let mut terminal = TerminalPartitions::new(2);
+        terminal
+            .insert_records(RecordsShardPartition::new(0, Vec::new()))
+            .expect("first cell receipt is accepted");
+        assert!(!terminal.is_complete());
+
+        let duplicate = terminal
+            .insert_records(RecordsShardPartition::new(0, Vec::new()))
+            .expect_err("duplicate receipt must be rejected");
+        assert!(duplicate.to_string().contains("cell 0"));
+        assert!(!terminal.is_complete());
+
+        let out_of_range = terminal
+            .insert_records(RecordsShardPartition::new(2, Vec::new()))
+            .expect_err("out-of-range receipt must be rejected");
+        assert!(out_of_range.to_string().contains("cell 2"));
+        assert!(!terminal.is_complete());
+    }
+
+    #[test]
+    fn terminal_partitions_reject_mixed_kinds() {
+        let mut terminal = TerminalPartitions::new(2);
+        terminal
+            .insert_records(RecordsShardPartition::new(0, Vec::new()))
+            .expect("first receipt fixes the terminal kind");
+
+        let mixed = terminal
+            .insert_store(ColumnStorePartition::from_store(
+                1,
+                crate::metrics_core::store::ColumnStore::new(),
+            ))
+            .expect_err("store receipt must not follow a records receipt");
+        let message = mixed.to_string();
+        assert!(message.contains("records"));
+        assert!(message.contains("store"));
+    }
+
+    #[test]
+    fn terminal_partitions_complete_after_each_cell_receipt_once() {
+        let mut terminal = TerminalPartitions::new(2);
+        terminal
+            .insert_records(RecordsShardPartition::new(0, Vec::new()))
+            .expect("first cell receipt is accepted");
+        assert!(!terminal.is_complete());
+        terminal
+            .insert_records(RecordsShardPartition::new(1, Vec::new()))
+            .expect("second cell receipt is accepted");
+        assert!(terminal.is_complete());
+    }
 
     #[tokio::test]
     async fn cellular_profiler_keeps_one_session_across_overlapping_phases() {
