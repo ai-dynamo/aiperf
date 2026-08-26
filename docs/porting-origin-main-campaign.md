@@ -8,9 +8,17 @@ This is the authoritative closure record for the campaign started from
 60 commits (`git rev-list --reverse --topo-order 0b67e08284ef..c2889280a66f`);
 `817a8d84ddb9` is already merged, leaving 59 main-only commits.
 
-`docs/origin-main-findings/` contains supporting source scouts, not closure
-records. A disposition records a source comparison; it never proves a merge,
-implementation, test run, or review.
+`artifacts/archives/origin-main-findings/` contains supporting source scouts,
+not closure records. A disposition records a source comparison; it never proves
+a merge, implementation, test run, or review.
+
+The campaign is closed: all 62 inventory rows below reached `complete`. The
+scouts were therefore archived out of version control, and the `Closure:`
+citations in the table point at that untracked local path. This ledger is
+self-contained and remains the authoritative record; the scouts are working
+notes retained for provenance only. Recover any of them from git history at
+their former `docs/origin-main-findings/` path — they were removed from the
+index, not rewritten out of it.
 
 ## Campaign fields
 
@@ -27,17 +35,17 @@ implementation, test run, or review.
 | # | Upstream commit | Subject | State | Disposition | Evidence / next action |
 | ---: | --- | --- | --- | --- | --- |
 | 1 | `817a8d84ddb9` | LCB out-of-process grading | complete | applicable | Merged in `1c03271dac3e`; native delegation/reaping/detail commits and verification below. Later concurrency parity is tracked by #35. |
-| 2 | `0883bd1aee` | version 0.12.0 | complete | not-applicable | Exact commit is an ancestor; Python metadata/docs only. Closure: `docs/origin-main-findings/commit-002-0883bd1aee.md`; spec/plan record native no-op boundary. |
+| 2 | `0883bd1aee` | version 0.12.0 | complete | not-applicable | Exact commit is an ancestor; Python metadata/docs only. Closure: `artifacts/archives/origin-main-findings/commit-002-0883bd1aee.md`; spec/plan record native no-op boundary. |
 | 3 | `34b2be2ee1` | SGLang speculative metrics | complete | applicable | Merged in `4d076c660f`; native console policy/renderer/mock/E2E commits and verification below. Graham approved. |
-| 4 | `6db948524e` | SageMaker malformed timestamp | complete | already-covered | Exact commit is an ancestor; native `parse_capture` maps malformed/non-string timestamps to `DatasetError::Validation`; focused regression `sagemaker_rejects_malformed_inference_time_with_validation_error` asserts the diagnostic. Closure: `docs/origin-main-findings/commit-004-6db948524e.md`; spec/plan record evidence. |
+| 4 | `6db948524e` | SageMaker malformed timestamp | complete | already-covered | Exact commit is an ancestor; native `parse_capture` maps malformed/non-string timestamps to `DatasetError::Validation`; focused regression `sagemaker_rejects_malformed_inference_time_with_validation_error` asserts the diagnostic. Closure: `artifacts/archives/origin-main-findings/commit-004-6db948524e.md`; spec/plan record evidence. |
 | 5 | `ce715ae849` | agentic think-time idle guard | complete | applicable | Merged in `6e8da730e8`; native scenario default/lock port in `ad4c2a54f4`, `6e78b41d35`, and `729c59f64a`; Graham approved. |
 | 6 | `93b6223373` | telemetry field rename | complete | applicable | Merged in `4ab850c79d`; native artifact migration and custom-prefix closure in `726fcb614b`, `4763b53f0f`, and `978bc93fea`; Graham approved. |
 | 7 | `86ea3f7deb` | detailed JSONL fallback | complete | already-covered | Merged in `f027104364`; native detailed aggregation already reads the canonical JSONL path directly, while the compatibility Python regression passes. Graham approved. |
-| 8 | `5566aae1e1` | ShareGPT batch encoding | complete | applicable | Actual upstream merge `6521729344`; native ordered batch seam and bounded ShareGPT reconstruction in `4e39be3aee` / `67e6f3988d`; independently Graham-approved on current shared HEAD. Closure: `docs/origin-main-findings/commit-008-5566aae1e1.md`. |
+| 8 | `5566aae1e1` | ShareGPT batch encoding | complete | applicable | Actual upstream merge `6521729344`; native ordered batch seam and bounded ShareGPT reconstruction in `4e39be3aee` / `67e6f3988d`; independently Graham-approved on current shared HEAD. Closure: `artifacts/archives/origin-main-findings/commit-008-5566aae1e1.md`. |
 | 9 | `844efe1b36` | full synthesis prefix blocks | complete | applicable | Merged in `cb1d016398`; native implementation preserves whole prefix blocks and both synthesize-to-profile mock-server E2Es are green. |
 | 10 | `ffc943a9fe` | FFmpeg CVE bump | complete | shared-product-action | Merged in `830f579589`; coupled FFmpeg 8.1.2 attribution contract test is green and reviews approved. Test-image build reached FFmpeg then exposed the unrelated missing `COPY contracts` wheel-builder defect; no rebuilt-image claim. |
-| 11 | `d55ae21d34` | ShareGPT tutorial timeout | complete | not-applicable | Exact commit is an ancestor; tutorial retains both 1200-second timeout assignments and ordering guidance. Closure: `docs/origin-main-findings/commit-011-d55ae21d34.md`; spec/plan record native no-op boundary. |
-| 12 | `8148999496` | LCB trust_remote_code | complete | already-covered | Merged in `abd532d4b9`; the Rust-launched evaluator uses its script-free pinned raw-file loader. Upstream has no integration/E2E test to port. Closure: `docs/origin-main-findings/commit-012-8148999496.md`. |
+| 11 | `d55ae21d34` | ShareGPT tutorial timeout | complete | not-applicable | Exact commit is an ancestor; tutorial retains both 1200-second timeout assignments and ordering guidance. Closure: `artifacts/archives/origin-main-findings/commit-011-d55ae21d34.md`; spec/plan record native no-op boundary. |
+| 12 | `8148999496` | LCB trust_remote_code | complete | already-covered | Merged in `abd532d4b9`; the Rust-launched evaluator uses its script-free pinned raw-file loader. Upstream has no integration/E2E test to port. Closure: `artifacts/archives/origin-main-findings/commit-012-8148999496.md`. |
 | 13 | `d32f4bb98e` | canonical spec-decode metrics | complete | applicable | Merged in `ee16a9aa82`; native vLLM metrics, artifacts, mock fixture, Rust E2E, and Graham review approved. |
 | 14 | `4fe3ff7154` | cache-bust enables wrapping | complete | already-covered | Merged in `0cc26e0c82`; native graph wrap policy covers it. |
 | 15 | `2eb04aa2f8` | MMVU docs memory | complete | not-applicable | Merged in `3bfb5271c2`; documentation-only. |
@@ -62,32 +70,32 @@ implementation, test run, or review.
 | 34 | `00ba1c5db3` | audio transcription | complete | applicable | Native multipart endpoint, strict parser/format validation, mock route, and real-binary E2E; final Graham review recorded in the finding. |
 | 35 | `03c9c6ddc5` | LCB grading concurrency | complete | applicable | Merged exactly in `7cd1a5bf29`; native response-id demultiplexing, persistent reader-fault state, shutdown/drop process-group cleanup, and a real Rust-launched batch/reap integration are green and Graham-approved after fixes in `429050fbf0`. |
 | 36 | `6480e5467f` | synthesis YAML overrides | complete | applicable | Merged in `445e2ec4d7`; native CLI-over-YAML overlay, resolver and CLI-path integration tests, exact upstream merge ancestry, and Graham approval recorded. |
-| 37 | `23ed221c3d` | CI speed | complete | not-applicable | Exact upstream merge completed on `ajc/port-origin-037`; Python harness regression passed and no Rust test candidate exists. Closure: `docs/origin-main-findings/commit-037-23ed221c3d.md`. |
-| 38 | `c26fe88bd8` | AgentX FAQ | complete | not-applicable | Merged in `233b71c98b`; closure: `docs/origin-main-findings/commit-038-c26fe88bd8.md`. |
+| 37 | `23ed221c3d` | CI speed | complete | not-applicable | Exact upstream merge completed on `ajc/port-origin-037`; Python harness regression passed and no Rust test candidate exists. Closure: `artifacts/archives/origin-main-findings/commit-037-23ed221c3d.md`. |
+| 38 | `c26fe88bd8` | AgentX FAQ | complete | not-applicable | Merged in `233b71c98b`; closure: `artifacts/archives/origin-main-findings/commit-038-c26fe88bd8.md`. |
 | 39 | `1e32a51318` | Baseten load performance | complete | applicable | Exact merge `da917561fb`; projected typed native loader, 17 focused tests, public adapter parity, measured 19.4% median time / 25.1% median RSS reduction, and independent Graham approval recorded. |
 | 40 | `215be05b6a` | Baseten outcome fidelity | complete | applicable | Merged exactly in `1d20f63c51`; native E2E, TTFT, and cached-token outcomes survive real-Parquet registry composition without dispatch leakage and are Graham-approved. |
-| 41 | `516faa12c8` | CODEOWNERS | complete | not-applicable | Exact merge in `eeb59a96d5`; closure note `docs/origin-main-findings/commit-041-516faa12c8.md`. |
-| 42 | `ce453582c7` | CONTRIBUTING spelling | complete | not-applicable | Exact merge completed on `ajc/port-origin-042`; closure note `docs/origin-main-findings/commit-042-ce453582c7.md`. |
-| 43 | `6ed4823d12` | cache-bust help link | complete | not-applicable | Exact merge completed in `e9767333b6`; closure note `docs/origin-main-findings/commit-043-6ed4823d12.md`. |
+| 41 | `516faa12c8` | CODEOWNERS | complete | not-applicable | Exact merge in `eeb59a96d5`; closure note `artifacts/archives/origin-main-findings/commit-041-516faa12c8.md`. |
+| 42 | `ce453582c7` | CONTRIBUTING spelling | complete | not-applicable | Exact merge completed on `ajc/port-origin-042`; closure note `artifacts/archives/origin-main-findings/commit-042-ce453582c7.md`. |
+| 43 | `6ed4823d12` | cache-bust help link | complete | not-applicable | Exact merge completed in `e9767333b6`; closure note `artifacts/archives/origin-main-findings/commit-043-6ed4823d12.md`. |
 | 44 | `082a51827e` | TraceLab dataset | complete | applicable | Native plain/gzip TraceLab-to-Graph-IR conversion, config/CLI/cellular integration, real-binary coverage, exact target-only merge ancestry, and Graham approval recorded. |
 | 45 | `21f8ad7b3e` | high-resolution pacing | complete | applicable | Exact merge `86a93aaec1`; native bounded local/sharded catch-up, exact 5,000-request real-clock evidence, and Graham approval recorded. |
 | 46 | `e659d2a95a` | FFmpeg codec allowlist | complete | shared-product-action | Exact upstream commit is the second parent of actual merge `d6c2b69a49`; native/Docker closure `5bff243287` restored the strict allowlist and MP4 Opus default, with 19 native video E2E, 55 isolated Python units, and 2 marked integration tests green. Self and independent Graham reviews approved; closure `045b8eef4c`, current-history merge `562a3610ef`. |
-| 47 | `9e96b499d1` | aiohttp minimum | complete | not-applicable | Exact upstream commit is already an ancestor through two-parent merge `52cffc43e2`; current `pyproject.toml` retains `aiohttp>=3.14.3,<4`, while native Cargo manifests use Hyper/Reqwest and have no aiohttp dependency. Closure: `docs/origin-main-findings/commit-047-9e96b499d1.md`; spec/plan record the no-op boundary and future standalone integration method. |
+| 47 | `9e96b499d1` | aiohttp minimum | complete | not-applicable | Exact upstream commit is already an ancestor through two-parent merge `52cffc43e2`; current `pyproject.toml` retains `aiohttp>=3.14.3,<4`, while native Cargo manifests use Hyper/Reqwest and have no aiohttp dependency. Closure: `artifacts/archives/origin-main-findings/commit-047-9e96b499d1.md`; spec/plan record the no-op boundary and future standalone integration method. |
 | 48 | `260d00f5e9` | adaptive error-rate units | complete | applicable | Exact upstream source is ancestral. Native percentage-point/denominator port, bounds warning, unit/E2E coverage, and self-Graham review are integrated; root independently reviewed the #48 range with the Graham rubric and approved it with no findings. |
 | 49 | `88242293b5` | verbatim system prompts | complete | applicable | Exact merge `9eeeac98f9`; native one-time file/CLI resolution, BLAKE3 composition identity, OpenAI/Anthropic wire E2E, exact 40-test mapping, and Graham approval recorded. |
 | 50 | `ade1f69eb1` | seamless phase transitions | complete | applicable | Exact merge `8252633121`; incoming lowering plus local/cellular first-owner-start/last-owner-stop profiler coordination, focused integration coverage, and two Graham approvals recorded. |
-| 51 | `324bb05773` | per-chunk usage | complete | applicable | Exact target-only merge `7520bbefcc`; native authoring, response reduction, corrected primary/adaptive metrics, both OpenAI mock streaming routes, mandatory exact-upstream Python/native E2E, inherited-suite classifications, and independent two-pass Graham approval are recorded in `docs/origin-main-findings/commit-051-324bb05773.md`. |
+| 51 | `324bb05773` | per-chunk usage | complete | applicable | Exact target-only merge `7520bbefcc`; native authoring, response reduction, corrected primary/adaptive metrics, both OpenAI mock streaming routes, mandatory exact-upstream Python/native E2E, inherited-suite classifications, and independent two-pass Graham approval are recorded in `artifacts/archives/origin-main-findings/commit-051-324bb05773.md`. |
 | 52 | `810fd8bdd4` | vLLM spec-decode wire | complete | applicable | Exact target-only merge `9fcd17c62e`; native root metrics, dense histogram normalization, automatic trailing-usage negotiation, four-mode mock/product integration, and 15/15 E2E are complete. Independent Graham review approved `082457b2de`. |
 | 53 | `e5ebe915df` | enum inequality | complete | applicable | The ancestor's semantic tree delta had regressed, so `e5ebe915df` could not be merged again; this restoration reinstates both Python enum bases, the upstream regression matrix, native canonical-ID proof, findings/spec/Sol plan, and self-Graham approval. |
 | 54 | `bfe33151de` | rejected peak diagnostics | complete | applicable | AgentX/HF, WEKA (including TraceLab), and Dynamo selection; target-only merge `352ca1b032`, implementation `4022b433c9`, independent Graham approved. |
-| 55 | `dd3f09b0c3` | session-affinity header | complete | applicable | Native default-on `X-Session-Affinity` port is implemented in `e6d03a92f1` and corrected for no-correlation stale-header removal in `821412a095`; exact target merge `1a11e00297`, 21 raw native/Python-oracle cases, and independent Graham approval are recorded in `docs/origin-main-findings/commit-055-dd3f09b0c3.md`. |
+| 55 | `dd3f09b0c3` | session-affinity header | complete | applicable | Native default-on `X-Session-Affinity` port is implemented in `e6d03a92f1` and corrected for no-correlation stale-header removal in `821412a095`; exact target merge `1a11e00297`, 21 raw native/Python-oracle cases, and independent Graham approval are recorded in `artifacts/archives/origin-main-findings/commit-055-dd3f09b0c3.md`. |
 | 56 | `94fee7338b` | random range ratio | complete | applicable | Exact merge `cd31c0ae5a`; native PCG64/MT19937 stream, config, prefix/special-token semantics, and 48 byte-exact production captures are covered by three audits and independent Graham approval. |
-| 57 | `e10d53b1d3` | version 0.13.0 | complete | shared-product-action | Exact Python-package release metadata/docs restored; no native version or Rust behavior changes. Closure `docs/origin-main-findings/commit-057-e10d53b1d3.md`. |
-| 58 | `9b60a3d479` | FakeTokenizer | complete | applicable | The ancestor's harness method had regressed from the semantic tree; this closure restores the exact zero-returning Python fake method, proves the native trait's existing zero default needs no duplicate API, and records Graham approval in `docs/origin-main-findings/commit-058-9b60a3d479.md`. |
+| 57 | `e10d53b1d3` | version 0.13.0 | complete | shared-product-action | Exact Python-package release metadata/docs restored; no native version or Rust behavior changes. Closure `artifacts/archives/origin-main-findings/commit-057-e10d53b1d3.md`. |
+| 58 | `9b60a3d479` | FakeTokenizer | complete | applicable | The ancestor's harness method had regressed from the semantic tree; this closure restores the exact zero-returning Python fake method, proves the native trait's existing zero default needs no duplicate API, and records Graham approval in `artifacts/archives/origin-main-findings/commit-058-9b60a3d479.md`. |
 | 59 | `c9288da6c1` | mmap conversation cache | complete | not-applicable | Exact upstream object already entered through #60 actual merge `f1d39ad583`; Python-only mmap cursor/prefault/executor fix has no native backend. Findings/spec/Sol plan and Graham closure: `commit-059-c9288da6c1.md`. |
 | 60 | `c2889280a6` | random_pool batch sizes | complete | applicable | Native four-modality CLI/YAML/config projection, safe real-loader batching, and binary integration coverage approved at `5dd2939765`; exact target-only merge `f1d39ad583`. |
-| 61 | `4edbbf39d3` | constrained DSP GP kernel batching | complete | applicable | Native `search-pyo3` uses the in-tree qLogNEI helper. The DSP kernel now receives BoTorch's augmented batch shape at both kernel layers; focused CPU BoTorch and feature-gated Rust CLI tests pass. Closure: `docs/origin-main-findings/commit-061-4edbbf39d3.md`. |
-| 62 | `d8d49e8c2a` | infer benchmark shape from search-space keywords | complete | not-applicable | Python Optuna conversion/planner repair; native has no general `--search-space` parser or planner to infer a shape for. Closure: `docs/origin-main-findings/commit-062-d8d49e8c2a.md`; spec/Sol plan record the boundary and future port prerequisites. |
+| 61 | `4edbbf39d3` | constrained DSP GP kernel batching | complete | applicable | Native `search-pyo3` uses the in-tree qLogNEI helper. The DSP kernel now receives BoTorch's augmented batch shape at both kernel layers; focused CPU BoTorch and feature-gated Rust CLI tests pass. Closure: `artifacts/archives/origin-main-findings/commit-061-4edbbf39d3.md`. |
+| 62 | `d8d49e8c2a` | infer benchmark shape from search-space keywords | complete | not-applicable | Python Optuna conversion/planner repair; native has no general `--search-space` parser or planner to infer a shape for. Closure: `artifacts/archives/origin-main-findings/commit-062-d8d49e8c2a.md`; spec/Sol plan record the boundary and future port prerequisites. |
 
 ## Per-commit record: 817a8d84ddb9
 
@@ -282,7 +290,7 @@ upstream #39's pending Python content was not imported. Native model, loader,
 unit, and real-Parquet public-registry integration work landed in
 `ccb8c27c14`; design and exact-diff findings are in
 `docs/specs/2026-08-25-native-baseten-outcome-fidelity.md` and
-`docs/origin-main-findings/commit-040-215be05b6a.md`.
+`artifacts/archives/origin-main-findings/commit-040-215be05b6a.md`.
 
 ### Verification and review
 

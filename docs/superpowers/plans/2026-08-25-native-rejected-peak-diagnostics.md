@@ -76,7 +76,7 @@ native binary integration tests, sccache.
 **Files:**
 - Modify/Create: focused native CLI or E2E test under `rust/cli/tests/` or
   `rust/e2e-tests/tests/`
-- Modify: `docs/origin-main-findings/commit-054-bfe33151de.md`
+- Modify: `artifacts/archives/origin-main-findings/commit-054-bfe33151de.md`
 - Modify: `docs/porting-origin-main-campaign.md`
 
 **Interfaces:**

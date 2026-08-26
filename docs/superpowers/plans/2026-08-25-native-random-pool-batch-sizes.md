@@ -118,7 +118,7 @@ composer, cargo tests, sccache.
 **Files:**
 - Create: `.superpowers/sdd/2026-08-25-native-random-pool-batch-sizes/graham-review.md`
 - Create: `.superpowers/sdd/2026-08-25-native-random-pool-batch-sizes/graham-rereview.md`
-- Modify: `docs/origin-main-findings/commit-060-c2889280a6.md`
+- Modify: `artifacts/archives/origin-main-findings/commit-060-c2889280a6.md`
 - Modify: `docs/porting-origin-main-campaign.md`
 
 **Interfaces:**

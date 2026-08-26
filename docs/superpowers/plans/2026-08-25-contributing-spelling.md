@@ -9,7 +9,7 @@ not-applicable native disposition.
 commit and keep all native Rust behavior unchanged. Record the closure evidence
 separately so the merge ancestry stays exact and auditable.
 
-**Spec:** `docs/origin-main-findings/commit-042-ce453582c7.md`
+**Spec:** `artifacts/archives/origin-main-findings/commit-042-ce453582c7.md`
 
 ## Tasks
 

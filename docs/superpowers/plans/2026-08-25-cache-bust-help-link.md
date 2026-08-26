@@ -9,7 +9,7 @@ native disposition that the change does not alter Rust runtime behavior.
 documentation/help-text and review-skill delta. Record closure evidence
 separately so the ancestry remains auditable.
 
-**Spec:** `docs/origin-main-findings/commit-043-6ed4823d12.md`
+**Spec:** `artifacts/archives/origin-main-findings/commit-043-6ed4823d12.md`
 
 ## Tasks
 

@@ -83,7 +83,7 @@ sccache.
 
 **Files:**
 
-- Modify: `docs/origin-main-findings/commit-055-dd3f09b0c3.md`
+- Modify: `artifacts/archives/origin-main-findings/commit-055-dd3f09b0c3.md`
 - Modify: `docs/porting-origin-main-campaign.md`
 - Modify: `docs/specs/README.md`
 

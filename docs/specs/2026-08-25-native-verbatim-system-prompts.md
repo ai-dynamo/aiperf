@@ -178,7 +178,7 @@ error context and dataset composition's explicit error types; no production
 ## Test and integration contract
 
 Focused Rust tests cover every applicable upstream behavior listed in
-`docs/origin-main-findings/commit-049-88242293b5.md`. In addition, native tests
+`artifacts/archives/origin-main-findings/commit-049-88242293b5.md`. In addition, native tests
 must prove:
 
 - CLI-over-YAML source replacement in both directions;

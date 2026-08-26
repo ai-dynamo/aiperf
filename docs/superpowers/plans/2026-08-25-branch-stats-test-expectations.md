@@ -8,7 +8,7 @@ BranchStats test correction without inventing a native model port.
 **Architecture:** Keep the native `PhaseBranchStats` observer/report seam
 separate from Python `BranchStats`. No runtime or Rust test changes are needed.
 
-**Spec:** `docs/origin-main-findings/commit-024-f8c8e36533.md`
+**Spec:** `artifacts/archives/origin-main-findings/commit-024-f8c8e36533.md`
 
 ## Tasks
 

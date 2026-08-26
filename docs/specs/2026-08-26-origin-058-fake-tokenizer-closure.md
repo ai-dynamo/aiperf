@@ -27,4 +27,4 @@ a Rust trait default.
 
 - `tests/harness/fake_tokenizer.py`
 - `rust/runtime/src/dataset/tokenizer.rs`
-- `docs/origin-main-findings/commit-058-9b60a3d479.md`
+- `artifacts/archives/origin-main-findings/commit-058-9b60a3d479.md`

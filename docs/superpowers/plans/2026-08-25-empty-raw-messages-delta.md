@@ -8,7 +8,7 @@
 
 **Tech Stack:** Rust 2024, `serde_json::Value`, native `aiperf-runtime` unit tests.
 
-**Spec:** `docs/origin-main-findings/commit-020-446d2cd4b3.md`
+**Spec:** `artifacts/archives/origin-main-findings/commit-020-446d2cd4b3.md`
 
 ## Global Constraints
 

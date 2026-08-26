@@ -110,7 +110,7 @@ git commit -m "test(e2e): cover adaptive error-rate units"
 ### Task 3: Record closure and review
 
 **Files:**
-- Modify: `docs/porting-origin-main-campaign.md`, `docs/specs/README.md`, `docs/origin-main-findings/commit-048-260d00f5e9.md`
+- Modify: `docs/porting-origin-main-campaign.md`, `docs/specs/README.md`, `artifacts/archives/origin-main-findings/commit-048-260d00f5e9.md`
 
 - [ ] **Step 1: Run formatting, targeted runtime, and E2E verification**
 

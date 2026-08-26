@@ -43,7 +43,7 @@ native `Clock`/`SimClock`, Hyper/Axum integration tests, Cargo, sccache.
 ### Task 1: Source audit, design, and exact target ancestry
 
 **Files:**
-- Create: `docs/origin-main-findings/commit-050-ade1f69eb1.md`
+- Create: `artifacts/archives/origin-main-findings/commit-050-ade1f69eb1.md`
 - Create: `docs/specs/2026-08-25-native-incoming-seamless-phase-transitions.md`
 - Create: this Sol implementation plan
 - Modify: `docs/specs/README.md`
@@ -105,7 +105,7 @@ native `Clock`/`SimClock`, Hyper/Axum integration tests, Cargo, sccache.
 **Files:**
 - Create: `.superpowers/sdd/2026-08-25-native-incoming-seamless-phase-transitions/graham-review.md`
 - Create: `.superpowers/sdd/2026-08-25-native-incoming-seamless-phase-transitions/graham-rereview.md`
-- Modify: `docs/origin-main-findings/commit-050-ade1f69eb1.md`
+- Modify: `artifacts/archives/origin-main-findings/commit-050-ade1f69eb1.md`
 - Modify: `docs/porting-origin-main-campaign.md`
 
 **Interfaces:**

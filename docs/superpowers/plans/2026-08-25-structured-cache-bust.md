@@ -10,7 +10,7 @@ registration and runtime target/ledger/wire seams. Do not duplicate Python
 plugin metadata or add a speculative implementation when behavior is already
 represented natively.
 
-**Spec:** `docs/origin-main-findings/commit-022-1d1829540b.md`
+**Spec:** `artifacts/archives/origin-main-findings/commit-022-1d1829540b.md`
 
 ## Tasks
 

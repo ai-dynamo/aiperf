@@ -9,7 +9,7 @@ SPDX-License-Identifier: Apache-2.0
 
 Implemented and independently review-approved port design for origin-main tracker 56,
 upstream `94fee7338b`. Closure evidence is recorded in
-`docs/origin-main-findings/commit-056-94fee7338b.md`.
+`artifacts/archives/origin-main-findings/commit-056-94fee7338b.md`.
 
 ## Public contract
 

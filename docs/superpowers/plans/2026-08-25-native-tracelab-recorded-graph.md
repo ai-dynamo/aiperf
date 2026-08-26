@@ -78,7 +78,7 @@
 **Files:**
 - Create: `.superpowers/sdd/2026-08-25-native-tracelab-recorded-graph/graham-review.md`
 - Create: `.superpowers/sdd/2026-08-25-native-tracelab-recorded-graph/graham-rereview.md`
-- Modify: `docs/origin-main-findings/commit-044-082a51827e.md`
+- Modify: `artifacts/archives/origin-main-findings/commit-044-082a51827e.md`
 - Modify: `docs/porting-origin-main-campaign.md`
 
 **Interfaces:**

@@ -10,7 +10,7 @@ loader as superseded by native graph lowering and execution. Validate behavior
 at branch/join/barrier boundaries without adding a parallel Python-shaped
 model to Rust.
 
-**Spec:** `docs/origin-main-findings/commit-023-fc7bbf3bdd.md`
+**Spec:** `artifacts/archives/origin-main-findings/commit-023-fc7bbf3bdd.md`
 
 ## Tasks
 

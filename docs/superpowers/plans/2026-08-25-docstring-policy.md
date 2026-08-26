@@ -8,7 +8,7 @@ not-applicable native disposition.
 **Architecture:** Preserve upstream contributor guidance in the merge commit;
 do not invent a Rust runtime behavior for a Python-only documentation policy.
 
-**Spec:** `docs/origin-main-findings/commit-021-20eb25626a.md`
+**Spec:** `artifacts/archives/origin-main-findings/commit-021-20eb25626a.md`
 
 ## Tasks
 

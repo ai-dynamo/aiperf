@@ -72,7 +72,7 @@
 
 **Files:**
 - Modify: `docs/porting-origin-main-campaign.md`
-- Modify: `docs/origin-main-findings/commit-035-03c9c6ddc5.md`
+- Modify: `artifacts/archives/origin-main-findings/commit-035-03c9c6ddc5.md`
 - Modify: `docs/specs/accuracy.md`
 - Modify: `llms.txt`
 

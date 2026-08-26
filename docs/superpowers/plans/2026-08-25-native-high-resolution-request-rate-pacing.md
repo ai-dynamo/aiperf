@@ -84,7 +84,7 @@
 ### Task 4: Review, repair, and close tracker #45
 
 **Files:**
-- Modify: `docs/origin-main-findings/commit-045-21f8ad7b3e.md`
+- Modify: `artifacts/archives/origin-main-findings/commit-045-21f8ad7b3e.md`
 - Modify: `docs/porting-origin-main-campaign.md`
 - Create: `.superpowers/sdd/2026-08-25-native-high-resolution-request-rate-pacing/graham-review.md`
 - Create as needed: `.superpowers/sdd/2026-08-25-native-high-resolution-request-rate-pacing/graham-rereview.md`

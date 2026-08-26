@@ -29,7 +29,7 @@
 ### Task 1: Commit semantic finding, design, and executable plan
 
 **Files:**
-- Create: `docs/origin-main-findings/commit-049-88242293b5.md`
+- Create: `artifacts/archives/origin-main-findings/commit-049-88242293b5.md`
 - Create: `docs/specs/2026-08-25-native-verbatim-system-prompts.md`
 - Create: `docs/superpowers/plans/2026-08-25-native-verbatim-system-prompts.md`
 
@@ -52,7 +52,7 @@ Map every spec requirement to Tasks 2-7, scan for placeholders, and verify every
 - [ ] **Step 4: Commit the design slice**
 
 ```bash
-git add docs/origin-main-findings/commit-049-88242293b5.md \
+git add artifacts/archives/origin-main-findings/commit-049-88242293b5.md \
   docs/specs/2026-08-25-native-verbatim-system-prompts.md \
   docs/superpowers/plans/2026-08-25-native-verbatim-system-prompts.md
 git commit -m "docs: design native verbatim system prompts"
@@ -266,7 +266,7 @@ Commit the product test and any narrowly required mock recording fixture separat
 - Modify: `docs/specs/README.md`
 - Modify: user-facing CLI/config documentation generated or owned by native source
 - Modify: `AGENTS.md`, `CLAUDE.md`, `.github/copilot-instructions.md`, `.cursor/rules/python.mdc`, and `llms.txt` only where current-truth synchronization requires it
-- Modify: `docs/origin-main-findings/commit-049-88242293b5.md`
+- Modify: `artifacts/archives/origin-main-findings/commit-049-88242293b5.md`
 - Modify: `docs/porting-origin-main-campaign.md`
 - Create: `.superpowers/sdd/2026-08-25-native-verbatim-system-prompts/graham-review.md`
 - Create as needed: `.superpowers/sdd/2026-08-25-native-verbatim-system-prompts/graham-rereview.md`

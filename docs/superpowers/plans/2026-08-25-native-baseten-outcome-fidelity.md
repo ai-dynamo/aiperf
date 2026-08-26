@@ -71,7 +71,7 @@
 
 **Files:**
 - Modify: `docs/porting-origin-main-campaign.md`
-- Modify: `docs/origin-main-findings/commit-040-215be05b6a.md`
+- Modify: `artifacts/archives/origin-main-findings/commit-040-215be05b6a.md`
 - Create: `.superpowers/sdd/2026-08-25-native-baseten-outcome-fidelity/graham-review.md`
 - Create: `.superpowers/sdd/2026-08-25-native-baseten-outcome-fidelity/graham-rereview.md`
 

@@ -83,7 +83,7 @@
 ### Task 3: Close the source-regression record
 
 **Files:**
-- Create: `docs/origin-main-findings/commit-053-e5ebe915df.md`
+- Create: `artifacts/archives/origin-main-findings/commit-053-e5ebe915df.md`
 - Create: `docs/specs/2026-08-26-origin-053-enum-inequality-restoration.md`
 - Create: `docs/plans/2026-08-26-origin-053-enum-inequality-restoration.md`
 - Modify: `docs/porting-origin-main-campaign.md`

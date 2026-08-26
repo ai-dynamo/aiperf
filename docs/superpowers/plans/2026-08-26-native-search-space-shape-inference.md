@@ -25,7 +25,7 @@
 
 **Files:**
 - Modify: `docs/porting-origin-main-campaign.md`
-- Create: `docs/origin-main-findings/commit-062-d8d49e8c2a.md`
+- Create: `artifacts/archives/origin-main-findings/commit-062-d8d49e8c2a.md`
 - Create: `docs/specs/2026-08-26-native-search-space-shape-inference.md`
 - Create: `docs/superpowers/plans/2026-08-26-native-search-space-shape-inference.md`
 

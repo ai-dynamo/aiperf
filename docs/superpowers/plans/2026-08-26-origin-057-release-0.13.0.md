@@ -44,7 +44,7 @@ ancestry verification.
 ### Task 2: Release boundary and integration evidence
 
 **Files:**
-- Create: `docs/origin-main-findings/commit-057-e10d53b1d3.md`
+- Create: `artifacts/archives/origin-main-findings/commit-057-e10d53b1d3.md`
 - Create: `docs/specs/2026-08-26-origin-057-release-0.13.0-boundary.md`
 - Create: `docs/superpowers/plans/2026-08-26-origin-057-release-0.13.0.md`
 - Modify: `docs/porting-origin-main-campaign.md`

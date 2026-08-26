@@ -123,7 +123,7 @@ E2E harness, cargo, sccache.
 - Modify: `docs/tutorials/spec-decode-metrics.md`
 - Modify: `docs/specs/2026-08-25-native-spec-decode-acceptance-metrics.md`
 - Create: `.superpowers/sdd/2026-08-25-native-vllm-spec-decode-wire/graham-review.md`
-- Modify: `docs/origin-main-findings/commit-052-810fd8bdd4.md`
+- Modify: `artifacts/archives/origin-main-findings/commit-052-810fd8bdd4.md`
 - Modify: `docs/porting-origin-main-campaign.md`
 
 **Interfaces:**
