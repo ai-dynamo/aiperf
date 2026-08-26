@@ -5,5 +5,13 @@
 # Dynamo's runtime-protocol feature exposes Tokio runtime metrics whose public
 # API is intentionally gated by Tokio's `tokio_unstable` cfg. Keep the native
 # AIPerf consumer on the same compile contract as Dynamo's canonical workspace.
-rustflags = ["--cfg", "tokio_unstable"]
+rustflags = ["--cfg", "tokio_unstable", "-C", "link-arg=-fuse-ld=lld"]
 
+[target.x86_64-unknown-linux-gnu]
+linker = "clang"
+
+[profile.test]
+# Keep practical test backtraces while emitting DWARF outside the final test
+# executable, reducing the cost of linking AIPerf's large integration binaries.
+debug = 1
+split-debuginfo = "unpacked"
