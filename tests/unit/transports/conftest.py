@@ -214,11 +214,6 @@ def assert_error_request_record(
     assert isinstance(record, RequestRecord)
     assert record.error is not None
     assert len(record.responses) == 0
-
-    # Error records must span dispatch -> error, never collapse to a single
-    # instant. A None end_perf_ns makes the record processor fall back to
-    # start_perf_ns, which hides the true error latency (e.g. a ~125s
-    # Cloudflare 524 read timeout collapsing to 0s).
     assert record.end_perf_ns is not None
     assert record.end_perf_ns >= record.start_perf_ns
 
