@@ -216,6 +216,19 @@ endpoint:
       supports_cache_bust: true
       metrics_title: LLM Metrics
 
+  vllm_generate:
+    class: aiperf.endpoints.vllm_generate:VllmGenerateEndpoint
+    description: |
+      Non-streaming vLLM token-in/token-out generate endpoint. Accepts exact
+      token_ids and reconstructs usage from request and response token arrays.
+      Override the endpoint path for Dynamo's vLLM-compatible engine API.
+    metadata:
+      endpoint_path: /inference/v1/generate
+      supports_streaming: false
+      produces_tokens: true
+      tokenizes_input: false
+      metrics_title: LLM Metrics
+
   cohere_rankings:
     class: aiperf.endpoints.cohere_rankings:CohereRankingsEndpoint
     description: |
