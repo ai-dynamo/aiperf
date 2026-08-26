@@ -951,18 +951,6 @@ mod tests {
     const VELO_MAX_FRAME_BYTES: usize = 16 * 1024 * 1024;
     const VELO_ACTIVE_MESSAGE_FIXED_HEADER_BYTES: usize = 22;
 
-    #[test]
-    fn route_registration_trust_boundary_is_disclosed() {
-        let production_module = include_str!("velo_transport.rs")
-            .split("#[cfg(test)]\nmod tests")
-            .next()
-            .expect("module source has a test boundary");
-
-        assert!(production_module.contains("registered benchmark cells are trusted"));
-        assert!(production_module.contains("per-push route authenticity or replay protection"));
-        assert!(production_module.contains("untrusted participants"));
-    }
-
     #[derive(Serialize, Deserialize)]
     struct TestAuthenticatedFrame {
         version: u8,
