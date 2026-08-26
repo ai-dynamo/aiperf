@@ -15,6 +15,7 @@ use std::task::{Context, Poll, Wake, Waker};
 use aiperf_runtime::clock::{Clock, sim_clock::SimClock};
 use aiperf_runtime::dispatch::collector::ReplayTerminalStatus;
 use aiperf_runtime::dispatch::sink::RequestObserver;
+use aiperf_runtime::metrics_core::MetricTag;
 use aiperf_runtime::metrics_core::RequestTrace;
 use aiperf_runtime::multiturn::{ConversationSource, IssuedCredit, TurnToSend};
 use aiperf_runtime::phase_runtime::{
@@ -291,6 +292,67 @@ fn prepared_ramps_apply_before_issuance_and_stop_at_sending_handoff() {
     assert_eq!(report.phases[0].final_requests_completed, Some(1));
     assert_eq!(clock.now_ns(), 20);
     assert_eq!(pool.current_limit(), 1);
+}
+
+#[test]
+fn phase_policy_discarded_local_measurement_preserves_timing_without_phase_metrics() {
+    let run = |discard_local_measurement| {
+        let clock = Rc::new(SimClock::new());
+        let dispatcher: Rc<dyn TurnDispatcher> = Rc::new(DelayedDispatcher {
+            clock: clock.clone(),
+            dispatched: Cell::new(1),
+        });
+        let observer: Rc<dyn PhaseObserver> = Rc::new(TimelineObserver {
+            clock: clock.clone(),
+            events: RefCell::new(Vec::new()),
+        });
+        let plan = ScheduledPhasePlan::new(
+            phase_config("profiling", PhaseKind::Profiling, false),
+            one_request_workload(),
+            ScheduledAncillaryPolicies::default(),
+        )
+        .with_discarded_local_measurement(discard_local_measurement);
+        let clock_dyn: Rc<dyn Clock> = clock.clone();
+
+        drive_sim(clock, async move {
+            run_scheduled_phases(vec![plan], clock_dyn, dispatcher, observer).await
+        })
+        .unwrap()
+    };
+
+    let measured = run(false);
+    let discarded = run(true);
+    let measured_report = &measured.reports[0].report;
+    let discarded_report = &discarded.reports[0].report;
+
+    assert_eq!(
+        measured_report
+            .performance
+            .request_counts
+            .completed_requests,
+        1
+    );
+    assert_eq!(
+        measured_report
+            .native_metrics
+            .finite_value(MetricTag::RequestCount),
+        Some(1.0)
+    );
+    assert_eq!(
+        discarded_report
+            .performance
+            .request_counts
+            .completed_requests,
+        0
+    );
+    assert_eq!(
+        discarded_report
+            .native_metrics
+            .finite_value(MetricTag::RequestCount),
+        None
+    );
+    assert_eq!(discarded_report.turns.len(), 1);
+    assert_eq!(discarded_report.schedule_timing.issued_turns, 1);
 }
 
 fn one_request_workload() -> Rc<dyn Workload> {

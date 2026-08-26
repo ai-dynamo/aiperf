@@ -1010,6 +1010,7 @@ impl PhaseExecutionFactory for ScheduledPhaseExecutionFactory {
         );
         runtime.set_parallel_report_reduction(plan.policy.needs_parallel_report_reduction);
         runtime.set_timing_record_capture(plan.policy.needs_timing_records);
+        runtime.set_local_measurement_discarded(plan.policy.is_local_measurement_discarded);
         runtime.set_credit_latency_enabled(plan.workload.has_credit_timestamps());
         runtime.set_turn_lifecycle_observer(tracker.clone());
         for processor in plan.record_processors {

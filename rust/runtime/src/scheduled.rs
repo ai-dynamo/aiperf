@@ -510,6 +510,7 @@ pub struct ScheduledRuntime {
     record_processor_errors: RefCell<Vec<String>>,
     parallel_report_reduction: Cell<bool>,
     credit_dispatch: Cell<bool>,
+    local_measurement_discarded: Cell<bool>,
     outstanding_credits: RefCell<FxHashMap<Uuid, OutstandingCredit>>,
 }
 
@@ -626,6 +627,7 @@ impl ScheduledRuntime {
             record_processor_errors: RefCell::new(Vec::new()),
             parallel_report_reduction: Cell::new(false),
             credit_dispatch: Cell::new(false),
+            local_measurement_discarded: Cell::new(false),
             outstanding_credits: RefCell::new(FxHashMap::default()),
         })
     }
@@ -679,7 +681,13 @@ impl ScheduledRuntime {
     /// computed per request and then thrown away. On a single issuer that waste
     /// lands entirely on the one thread that bounds the run: ~6% of it, measured.
     fn feeds_local_measurement(&self) -> bool {
-        !self.credit_dispatch.get()
+        !self.credit_dispatch.get() && !self.local_measurement_discarded.get()
+    }
+
+    /// Skip this runtime's compatibility and native-metrics planes when an
+    /// owning pipeline collects the authoritative report elsewhere.
+    pub(crate) fn set_local_measurement_discarded(&self, discarded: bool) {
+        self.local_measurement_discarded.set(discarded);
     }
 
     /// Route issued turns as credits instead of resolving one dispatch future
