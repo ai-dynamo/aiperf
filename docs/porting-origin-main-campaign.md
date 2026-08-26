@@ -27,16 +27,16 @@ implementation, test run, or review.
 | # | Upstream commit | Subject | State | Disposition | Evidence / next action |
 | ---: | --- | --- | --- | --- | --- |
 | 1 | `817a8d84ddb9` | LCB out-of-process grading | complete | applicable | Merged in `1c03271dac3e`; native delegation/reaping/detail commits and verification below. Later concurrency parity is tracked by #35. |
-| 2 | `0883bd1aee` | version 0.12.0 | merged | not-applicable | Python metadata/docs only. |
+| 2 | `0883bd1aee` | version 0.12.0 | complete | not-applicable | Exact commit is an ancestor; Python metadata/docs only. Closure: `docs/origin-main-findings/commit-002-0883bd1aee.md`; spec/plan record native no-op boundary. |
 | 3 | `34b2be2ee1` | SGLang speculative metrics | complete | applicable | Merged in `4d076c660f`; native console policy/renderer/mock/E2E commits and verification below. Graham approved. |
-| 4 | `6db948524e` | SageMaker malformed timestamp | merged | already-covered | Native loader returns validation error. |
+| 4 | `6db948524e` | SageMaker malformed timestamp | complete | already-covered | Exact commit is an ancestor; native `parse_capture` maps malformed/non-string timestamps to `DatasetError::Validation`. Closure: `docs/origin-main-findings/commit-004-6db948524e.md`; spec/plan record evidence. |
 | 5 | `ce715ae849` | agentic think-time idle guard | complete | applicable | Merged in `6e8da730e8`; native scenario default/lock port in `ad4c2a54f4`, `6e78b41d35`, and `729c59f64a`; Graham approved. |
 | 6 | `93b6223373` | telemetry field rename | complete | applicable | Merged in `4ab850c79d`; native artifact migration and custom-prefix closure in `726fcb614b`, `4763b53f0f`, and `978bc93fea`; Graham approved. |
 | 7 | `86ea3f7deb` | detailed JSONL fallback | complete | already-covered | Merged in `f027104364`; native detailed aggregation already reads the canonical JSONL path directly, while the compatibility Python regression passes. Graham approved. |
 | 8 | `5566aae1e1` | ShareGPT batch encoding | complete | applicable | Actual upstream merge `6521729344`; native ordered batch seam and bounded ShareGPT reconstruction in `4e39be3aee` / `67e6f3988d`; independently Graham-approved on current shared HEAD. Closure: `docs/origin-main-findings/commit-008-5566aae1e1.md`. |
 | 9 | `844efe1b36` | full synthesis prefix blocks | complete | applicable | Merged in `cb1d016398`; native implementation preserves whole prefix blocks and both synthesize-to-profile mock-server E2Es are green. |
 | 10 | `ffc943a9fe` | FFmpeg CVE bump | complete | shared-product-action | Merged in `830f579589`; coupled FFmpeg 8.1.2 attribution contract test is green and reviews approved. Test-image build reached FFmpeg then exposed the unrelated missing `COPY contracts` wheel-builder defect; no rebuilt-image claim. |
-| 11 | `d55ae21d34` | ShareGPT tutorial timeout | merged | not-applicable | Merged in `4d52f494e3`; documentation-only cold-cache timeout guidance, no native test candidate. Closure: `docs/origin-main-findings/commit-011-d55ae21d34.md`. |
+| 11 | `d55ae21d34` | ShareGPT tutorial timeout | complete | not-applicable | Exact commit is an ancestor; tutorial retains both 1200-second timeout assignments and ordering guidance. Closure: `docs/origin-main-findings/commit-011-d55ae21d34.md`; spec/plan record native no-op boundary. |
 | 12 | `8148999496` | LCB trust_remote_code | complete | already-covered | Merged in `abd532d4b9`; the Rust-launched evaluator uses its script-free pinned raw-file loader. Upstream has no integration/E2E test to port. Closure: `docs/origin-main-findings/commit-012-8148999496.md`. |
 | 13 | `d32f4bb98e` | canonical spec-decode metrics | complete | applicable | Merged in `ee16a9aa82`; native vLLM metrics, artifacts, mock fixture, Rust E2E, and Graham review approved. |
 | 14 | `4fe3ff7154` | cache-bust enables wrapping | complete | already-covered | Merged in `0cc26e0c82`; native graph wrap policy covers it. |
