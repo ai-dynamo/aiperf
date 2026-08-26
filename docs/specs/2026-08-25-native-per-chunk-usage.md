@@ -3,8 +3,8 @@
 ## Status
 
 Implemented design for origin/main tracker #51, exact upstream commit
-`324bb05773b3f99743c6516018f3c30cfe33de0b`; final verification and independent
-review remain the closure gates.
+`324bb05773b3f99743c6516018f3c30cfe33de0b`; independent review is the sole
+remaining closure gate.
 
 ## Purpose
 
