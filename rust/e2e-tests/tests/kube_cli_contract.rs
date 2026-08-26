@@ -92,7 +92,8 @@ fn envelope_commands_require_an_envelope() {
 
 #[test]
 fn commands_without_a_shipped_backend_refuse_before_cluster_access() {
-    for command in ["sweep", "index", "dashboard"] {
+    // `sweep` was removed from the refusal list in Task 10.
+    for command in ["index", "dashboard"] {
         let (code, _, stderr) = kube(&[command]);
         assert_ne!(code, 0, "{command} must refuse without a shipped backend");
         assert!(

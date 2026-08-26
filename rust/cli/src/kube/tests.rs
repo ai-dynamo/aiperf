@@ -932,3 +932,227 @@ fn sweep_controller_patches_sweep_status_on_completion() {
         "at least one PATCH must carry completedRuns or phase"
     );
 }
+
+// --- aiperf kube sweep submission tests ---
+
+/// Minimal sweep envelope for hermetic submission tests.
+fn minimal_sweep_envelope(run_id: &str) -> SweepEnvelope {
+    SweepEnvelope {
+        contract_version: "native-k8s/v1".to_string(),
+        run_id: run_id.to_string(),
+        namespace: "bench".to_string(),
+        sweep_id: "sweep-1".to_string(),
+        image_reference: format!(
+            "registry.example.com/aiperf/runner@sha256:{}",
+            "0".repeat(64)
+        ),
+        base_config: serde_json::json!({}),
+        axes: vec![],
+        trials: 1,
+        max_concurrent_runs: 1,
+        sweep_controller: SweepRoleEnvelope {
+            name: "sweep-controller".to_string(),
+            command: vec!["aiperf".to_string()],
+            argv: vec!["sweep-controller".to_string()],
+            environment: std::collections::BTreeMap::new(),
+            bootstrap: None,
+        },
+    }
+}
+
+/// Image capabilities with `cellular: true` for the envelope's image digest.
+fn cellular_capabilities_value() -> Value {
+    serde_json::json!({
+        "contractVersion": "native-k8s/v1",
+        "imageDigest": format!("sha256:{}", "0".repeat(64)),
+        "cellular": true,
+        "resultsSidecar": true,
+        "hierarchicalAggregation": false,
+    })
+}
+
+/// Credentials for sweep submission tests.
+fn sweep_submit_credentials() -> KubeCredentials {
+    KubeCredentials {
+        host: "127.0.0.1".to_string(),
+        port: 443,
+        server_name: "localhost".to_string(),
+        token: Some("token".to_string()),
+        client_certificate_pem: None,
+        client_key_pem: None,
+        ca_pem: None,
+        insecure_skip_tls_verify: true,
+    }
+}
+
+/// Mock transport that records every request and serves pre-queued responses.
+#[derive(Default)]
+struct SweepSubmitTransport {
+    requests: Mutex<Vec<KubeRequest>>,
+    responses: Mutex<VecDeque<(u16, Vec<u8>)>>,
+}
+
+impl SweepSubmitTransport {
+    fn push_response(&self, status: u16, body: Vec<u8>) {
+        self.responses
+            .lock()
+            .expect("responses")
+            .push_back((status, body));
+    }
+}
+
+impl KubeTransport for SweepSubmitTransport {
+    fn send(
+        &self,
+        _credentials: &KubeCredentials,
+        request: KubeRequest,
+    ) -> Result<KubeResponse, KubeError> {
+        self.requests
+            .lock()
+            .expect("requests")
+            .push(request);
+        let (status, body) = self
+            .responses
+            .lock()
+            .expect("responses")
+            .pop_front()
+            .ok_or_else(|| KubeError::Transport("no response queued for sweep test".to_string()))?;
+        Ok(KubeResponse { status, body })
+    }
+
+    fn watch(
+        &self,
+        _credentials: &KubeCredentials,
+        _request: KubeRequest,
+    ) -> Result<KubeWatch, KubeError> {
+        Err(KubeError::Transport("watch not used in sweep submission tests".to_string()))
+    }
+}
+
+#[test]
+fn sweep_submission_creates_secret_then_cr() {
+    let transport = Arc::new(SweepSubmitTransport::default());
+    let client = KubeClient::with_transport(sweep_submit_credentials(), transport.clone());
+
+    // 201 for Secret POST, then 201 for AIPerfSweep CR POST.
+    transport.push_response(201, Vec::new());
+    transport.push_response(201, Vec::new());
+
+    let envelope = minimal_sweep_envelope("sweep-creates-secret");
+    let caps = cellular_capabilities_value();
+
+    let status = super::submission::submit_sweep_transactionally(&client, &envelope, caps)
+        .expect("sweep submission must succeed");
+    assert_eq!(status, 201);
+
+    let requests = transport.requests.lock().expect("requests");
+    assert!(requests.len() >= 2, "at least Secret POST and CR POST must be issued");
+    // The first POST must target /secrets.
+    let secret_post = requests
+        .iter()
+        .find(|r| r.method == "POST" && r.path.ends_with("/secrets"))
+        .expect("POST to /secrets must be issued");
+    // The CR POST must follow and target /aiperfsweeps.
+    let cr_post = requests
+        .iter()
+        .find(|r| r.method == "POST" && r.path.ends_with("/aiperfsweeps"))
+        .expect("POST to /aiperfsweeps must be issued");
+    let secret_index = requests
+        .iter()
+        .position(|r| std::ptr::eq(r, secret_post))
+        .expect("secret position");
+    let cr_index = requests
+        .iter()
+        .position(|r| std::ptr::eq(r, cr_post))
+        .expect("cr position");
+    assert!(
+        secret_index < cr_index,
+        "Secret must be posted before the AIPerfSweep CR"
+    );
+    // No DELETE on success.
+    assert!(
+        requests.iter().all(|r| r.method != "DELETE"),
+        "successful submission must not issue DELETE requests"
+    );
+}
+
+#[test]
+fn sweep_submission_rolls_back_secret_on_cr_failure() {
+    let transport = Arc::new(SweepSubmitTransport::default());
+    let client = KubeClient::with_transport(sweep_submit_credentials(), transport.clone());
+
+    // 201 for Secret POST, 409 for CR POST, 200 for the rollback Secret DELETE.
+    transport.push_response(201, Vec::new());
+    transport.push_response(409, Vec::new());
+    transport.push_response(200, Vec::new());
+
+    let envelope = minimal_sweep_envelope("sweep-rollback");
+    let caps = cellular_capabilities_value();
+
+    let error = super::submission::submit_sweep_transactionally(&client, &envelope, caps)
+        .expect_err("rejected CR must return an error");
+    let msg = error.to_string();
+    assert!(
+        msg.contains("409") || msg.contains("HTTP"),
+        "error must reference the HTTP failure: {msg}"
+    );
+
+    let requests = transport.requests.lock().expect("requests");
+    let deletes: Vec<_> = requests
+        .iter()
+        .filter(|r| r.method == "DELETE")
+        .collect();
+    assert_eq!(deletes.len(), 1, "exactly one DELETE must be issued for rollback");
+    assert!(
+        deletes[0].path.contains("/secrets/bootstrap-sweep-"),
+        "rollback DELETE must target the bootstrap Secret, got: {}",
+        deletes[0].path
+    );
+}
+
+#[test]
+fn sweep_submission_rejects_non_cellular_image() {
+    let transport = Arc::new(SweepSubmitTransport::default());
+    let client = KubeClient::with_transport(sweep_submit_credentials(), transport.clone());
+
+    let envelope = minimal_sweep_envelope("sweep-non-cellular");
+    let caps = serde_json::json!({
+        "contractVersion": "native-k8s/v1",
+        "imageDigest": format!("sha256:{}", "0".repeat(64)),
+        "cellular": false,
+        "resultsSidecar": true,
+        "hierarchicalAggregation": false,
+    });
+
+    let error = super::submission::submit_sweep_transactionally(&client, &envelope, caps)
+        .expect_err("non-cellular image must be rejected");
+    assert!(
+        error.to_string().contains("cellular"),
+        "error must mention the cellular requirement: {error}"
+    );
+    // No cluster contact must occur before the rejection.
+    let requests = transport.requests.lock().expect("requests");
+    assert!(
+        requests.is_empty(),
+        "non-cellular rejection must not contact the cluster, but {} requests were made",
+        requests.len()
+    );
+}
+
+#[test]
+fn sweep_command_removed_from_refusal_list() {
+    // After Task 10, `aiperf kube sweep` no longer returns the old
+    // "unavailable: the shipped operator supports only AIPerfJob" refusal.
+    // Without required flags it returns a missing-argument error instead.
+    let error = super::command::run(&["sweep".to_string()])
+        .expect_err("sweep without required flags must fail");
+    let msg = error.to_string();
+    assert!(
+        !msg.contains("unavailable"),
+        "sweep must no longer produce the old refusal: {msg}"
+    );
+    assert!(
+        !msg.contains("shipped operator"),
+        "sweep must no longer produce the old refusal: {msg}"
+    );
+}

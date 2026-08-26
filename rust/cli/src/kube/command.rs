@@ -851,7 +851,8 @@ mod tests {
 
     #[test]
     fn commands_without_shipped_custom_resources_refuse_before_cluster_access() {
-        for command in ["sweep", "index"] {
+        // `sweep` has been removed from the refusal list in Task 10.
+        for command in ["index"] {
             let error = run(&[command.to_string()]).expect_err("unsupported command");
             assert_eq!(
                 error.to_string(),
