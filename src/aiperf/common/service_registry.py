@@ -191,15 +191,22 @@ class _ServiceRegistry(AIPerfLoggerMixin):
         Ignores updates for services that haven't formally registered yet.
         StatusUpdate and Heartbeat messages can arrive before Registration
         due to message ordering across ZMQ sockets.
+
+        The ordering guard applies to ``last_seen_ns`` only. Callers stamp
+        ``last_seen_ns`` on receipt from the controller's own clock, so arrival
+        order already is the true order and ``state`` always reflects the most
+        recent message. Gating the state write too would drop transitions that
+        share a clock tick -- ``time.time_ns()`` has ~15.6ms granularity on
+        Windows, easily coarser than a startup state sequence.
         """
         if service_id not in self.services:
             return
 
         info = self.services[service_id]
+        info.state = state
         if info.last_seen_ns is not None and info.last_seen_ns >= last_seen_ns:
             return
         info.last_seen_ns = last_seen_ns
-        info.state = state
 
     def unregister(self, service_id: str) -> None:
         """Unregister a service."""
