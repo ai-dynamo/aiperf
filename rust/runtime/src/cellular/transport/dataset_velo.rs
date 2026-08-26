@@ -26,6 +26,7 @@
 //! ordering remains the delivery invariant, while this codec enforces its independent
 //! resource bound before decoding a payload.
 
+use std::collections::HashMap;
 use std::io::Read;
 
 use bytes::Bytes;
@@ -34,7 +35,9 @@ use tokio::sync::mpsc;
 use velo::{Context, Handler, PeerInfo, Velo};
 
 use crate::cellular::broadcast::{BroadcastEvent, Subscription};
-use crate::cellular::dataset_session::{DatasetChunk, DatasetIndex, DatasetPublisher};
+use crate::cellular::dataset_session::{
+    DatasetChunk, DatasetIndex, DatasetPublisher, DatasetRequest,
+};
 use crate::engine::cellular_registration::{
     AdmissionPurpose, CellRegistrationAuthority, CellRegistrationCredential,
 };
@@ -146,6 +149,104 @@ struct DatasetSubscribeReply {
     replay: Vec<BroadcastEvent<DatasetChunk<WirePayload>>>,
 }
 
+#[derive(Serialize, Deserialize)]
+enum DatasetWireEvent {
+    Item(DatasetChunk<WirePayload>),
+    Finalized,
+    Failed(String),
+}
+
+async fn build_owned_wire_index(
+    replay: Vec<BroadcastEvent<DatasetChunk<WirePayload>>>,
+    mut live: mpsc::UnboundedReceiver<DatasetWireEvent>,
+    owns: impl Fn(u64) -> bool,
+) -> anyhow::Result<DatasetIndex<WirePayload>> {
+    let mut owned = HashMap::new();
+    let mut accept = |event: BroadcastEvent<DatasetChunk<WirePayload>>| {
+        if let BroadcastEvent::Item(chunk) = event {
+            for request in chunk.requests {
+                if owns(request.request_id) {
+                    owned.insert(request.request_id, request.payload);
+                }
+            }
+        }
+    };
+    for event in replay {
+        if matches!(event, BroadcastEvent::Finalized) {
+            return Ok(DatasetIndex::from_owned(owned));
+        }
+        accept(event);
+    }
+    while let Some(event) = live.recv().await {
+        match event {
+            DatasetWireEvent::Item(chunk) => accept(BroadcastEvent::Item(chunk)),
+            DatasetWireEvent::Finalized => return Ok(DatasetIndex::from_owned(owned)),
+            DatasetWireEvent::Failed(error) => anyhow::bail!(error),
+        }
+    }
+    anyhow::bail!("dataset Velo live stream ended before finalization")
+}
+
+/// Controller-owned admission boundary for Velo request fan-out replay.
+pub(crate) struct DatasetWirePublisher {
+    publisher: DatasetPublisher<WirePayload>,
+    replay: Vec<BroadcastEvent<DatasetChunk<WirePayload>>>,
+}
+
+impl DatasetWirePublisher {
+    /// Create an empty checked publisher.
+    pub(crate) fn new() -> Self {
+        Self {
+            publisher: DatasetPublisher::new(),
+            replay: Vec::new(),
+        }
+    }
+
+    /// Clone the publisher for the Velo service.
+    pub(crate) fn publisher(&self) -> DatasetPublisher<WirePayload> {
+        self.publisher.clone()
+    }
+
+    /// Number of accepted chunks.
+    pub(crate) fn chunk_count(&self) -> u64 {
+        self.publisher.chunk_count()
+    }
+
+    /// Admit a live event and its complete candidate replay before mutation.
+    pub(crate) fn add(
+        &mut self,
+        requests: Vec<DatasetRequest<WirePayload>>,
+    ) -> anyhow::Result<u64> {
+        let chunk = DatasetChunk {
+            chunk_id: self.publisher.chunk_count(),
+            requests,
+        };
+        let event = BroadcastEvent::Item(chunk.clone());
+        zpack(&event)?;
+        let mut replay = self.replay.clone();
+        replay.push(event.clone());
+        zpack(&DatasetSubscribeReply { replay })?;
+
+        let chunk_id = self.publisher.add(chunk.requests);
+        self.replay.push(event);
+        Ok(chunk_id)
+    }
+
+    /// Seal only when the terminal replay reply fits too.
+    pub(crate) fn finalize(&self) -> anyhow::Result<()> {
+        let mut replay = self.replay.clone();
+        replay.push(BroadcastEvent::Finalized);
+        zpack(&DatasetSubscribeReply { replay })?;
+        self.publisher.finalize();
+        Ok(())
+    }
+
+    /// Consume this boundary after the controller has sealed it.
+    pub(crate) fn into_publisher(self) -> DatasetPublisher<WirePayload> {
+        self.publisher
+    }
+}
+
 /// Controller-side dataset service. Holds the velo instance so the handler + per-cell
 /// pumps outlive it.
 pub struct DatasetServer {
@@ -193,8 +294,26 @@ impl DatasetServer {
                     tokio::spawn(async move {
                         while let Some(event) = live.recv().await {
                             let terminal = matches!(event, BroadcastEvent::Finalized);
-                            let Ok(body) = zpack(&event) else {
-                                break;
+                            let wire_event = match event {
+                                BroadcastEvent::Item(chunk) => DatasetWireEvent::Item(chunk),
+                                BroadcastEvent::Finalized => DatasetWireEvent::Finalized,
+                            };
+                            let body = match zpack(&wire_event) {
+                                Ok(body) => body,
+                                Err(error) => {
+                                    let failed = DatasetWireEvent::Failed(error.to_string());
+                                    let Ok(body) = zpack(&failed) else {
+                                        break;
+                                    };
+                                    if let Ok(builder) = pump_velo.am_send(HANDLER_DATASET_CHUNK) {
+                                        let _ = builder
+                                            .raw_payload(Bytes::from(body))
+                                            .instance(cell)
+                                            .send()
+                                            .await;
+                                    }
+                                    break;
+                                }
                             };
                             let sent = match pump_velo.am_send(HANDLER_DATASET_CHUNK) {
                                 Ok(builder) => {
@@ -238,12 +357,12 @@ impl DatasetClient {
         credential: &CellRegistrationCredential,
         owns: impl Fn(u64) -> bool,
     ) -> anyhow::Result<DatasetIndex<WirePayload>> {
-        let (tx, live) = mpsc::unbounded_channel::<BroadcastEvent<DatasetChunk<WirePayload>>>();
+        let (tx, live) = mpsc::unbounded_channel::<DatasetWireEvent>();
         velo.register_handler(
             Handler::am_handler_async(HANDLER_DATASET_CHUNK, move |ctx: Context| {
                 let tx = tx.clone();
                 async move {
-                    let event: BroadcastEvent<DatasetChunk<WirePayload>> = zunpack(&ctx.payload)?;
+                    let event: DatasetWireEvent = zunpack(&ctx.payload)?;
                     let _ = tx.send(event);
                     Ok(())
                 }
@@ -274,11 +393,7 @@ impl DatasetClient {
             .map_err(|error| anyhow::anyhow!("dataset subscribe send: {error}"))?;
         let reply: DatasetSubscribeReply = zunpack(&reply_bytes)?;
 
-        let sub = Subscription {
-            replay: reply.replay,
-            live,
-        };
-        Ok(DatasetIndex::build_owned(sub, owns).await)
+        build_owned_wire_index(reply.replay, live, owns).await
     }
 }
 
@@ -376,6 +491,66 @@ mod tests {
         let error = zpack(&BinaryPayload(&value)).expect_err("must reject before publish");
 
         assert!(error.to_string().contains("protocol output limit"));
+    }
+
+    #[test]
+    fn oversized_producer_chunk_does_not_advance_history() {
+        let mut publisher = DatasetWirePublisher::new();
+        let subscription = publisher.publisher().attach_raw();
+        let oversized = vec![DatasetRequest {
+            request_id: 0,
+            payload: vec![u8::MAX; dataset_wire_output_limit().expect("safe limit") / 2],
+        }];
+
+        let error = publisher
+            .add(oversized)
+            .expect_err("must reject oversized chunk");
+
+        assert!(error.to_string().contains("protocol output limit"));
+        assert_eq!(publisher.chunk_count(), 0);
+        assert!(subscription.replay.is_empty());
+        assert!(subscription.live.is_empty());
+    }
+
+    #[test]
+    fn checked_publisher_rejects_replay_growth_without_advancing_history() {
+        let mut publisher = DatasetWirePublisher::new();
+        let payload = vec![u8::MAX; dataset_wire_output_limit().expect("safe limit") / 4];
+
+        publisher
+            .add(vec![DatasetRequest {
+                request_id: 0,
+                payload: payload.clone(),
+            }])
+            .expect("first event fits");
+        let error = publisher
+            .add(vec![DatasetRequest {
+                request_id: 1,
+                payload,
+            }])
+            .expect_err("complete replay must reject");
+
+        assert!(error.to_string().contains("protocol output limit"));
+        assert_eq!(publisher.chunk_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn failed_live_wire_event_returns_promptly() {
+        let (tx, rx) = mpsc::unbounded_channel();
+        tx.send(DatasetWireEvent::Failed("controller encode failed".into()))
+            .expect("test receiver is live");
+
+        let result = tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            build_owned_wire_index(Vec::new(), rx, |_| true),
+        )
+        .await
+        .expect("failed event must not hang");
+        let Err(error) = result else {
+            panic!("failed event must reach the cell");
+        };
+
+        assert!(error.to_string().contains("controller encode failed"));
     }
 
     #[tokio::test]
