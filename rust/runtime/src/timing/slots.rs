@@ -27,7 +27,7 @@ use std::cell::Cell;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use tokio::sync::Semaphore;
+use tokio::sync::{Notify, Semaphore};
 
 /// Instrumentation counters for a [`SlotPool`], for observability and testing.
 ///
@@ -143,6 +143,17 @@ impl SlotPool {
     /// `request_rate::RequestRateWorkload::execute`'s `NoSlot` handling.
     pub fn is_global(&self) -> bool {
         matches!(self.backend, SlotPoolBackend::Global(_))
+    }
+
+    /// Wait until a shared global pool gains capacity.
+    ///
+    /// Local pools use their owning workload's progress signal instead. This
+    /// method is only meaningful for a [`SlotPoolBackend::Global`] pool, whose
+    /// releasing worker may be different from the waiting issuer's worker.
+    pub async fn wait_for_global_capacity(&self) {
+        if let SlotPoolBackend::Global(pool) = &self.backend {
+            pool.wait_for_capacity().await;
+        }
     }
 
     /// The current configured concurrency limit.
@@ -354,6 +365,7 @@ impl ConcurrencyManager {
 /// independent local limits.
 pub struct GlobalSlotPool {
     semaphore: Semaphore,
+    capacity_notify: Notify,
     acquire_count: std::sync::atomic::AtomicU64,
     release_count: std::sync::atomic::AtomicU64,
     wait_count: std::sync::atomic::AtomicU64,
@@ -371,6 +383,7 @@ impl GlobalSlotPool {
     pub fn new(initial_limit: usize) -> Arc<Self> {
         Arc::new(Self {
             semaphore: Semaphore::new(initial_limit),
+            capacity_notify: Notify::new(),
             acquire_count: std::sync::atomic::AtomicU64::new(0),
             release_count: std::sync::atomic::AtomicU64::new(0),
             wait_count: std::sync::atomic::AtomicU64::new(0),
@@ -468,6 +481,7 @@ impl GlobalSlotPool {
             let to_add = diff - cancel;
             if to_add > 0 {
                 self.semaphore.add_permits(to_add);
+                self.capacity_notify.notify_waiters();
             }
         } else if diff < 0 {
             // Decrease: drain available permits now, track the remainder as debt.
@@ -496,6 +510,17 @@ impl GlobalSlotPool {
         self.semaphore
             .available_permits()
             .saturating_sub(self.debt.load(std::sync::atomic::Ordering::Acquire))
+    }
+
+    /// Wait for another worker to release capacity without missing a release
+    /// between observing a full pool and parking the issuer.
+    pub async fn wait_for_capacity(&self) {
+        let notified = self.capacity_notify.notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
+        if self.effective_slots() == 0 {
+            notified.await;
+        }
     }
 
     /// A snapshot of instrumentation counters, in the shared [`ConcurrencyStats`] shape.
@@ -530,6 +555,7 @@ impl GlobalSlotPool {
             if debt == 0 {
                 // No debt: free a real permit for acquirers.
                 self.semaphore.add_permits(1);
+                self.capacity_notify.notify_waiters();
                 return;
             }
             if self
