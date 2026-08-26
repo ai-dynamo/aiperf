@@ -411,7 +411,7 @@ run:
               mode: follow
               poll_interval: 15s
           format:
-            id: dynamo_trace
+            id: streaming_dynamo_trace
             config:
               schema: dynamo.request.trace.v1
           session_program:
