@@ -474,8 +474,9 @@ async fn establish_inner(
     trace: &mut TraceData,
     resolver: &dyn DnsResolver,
 ) -> Result<(Sender, SocketInfo), ErrorDetails> {
-    // Unix-domain socket path: connect over UDS (HTTP/1.1), bypassing the
-    // TCP/IP stack. The request URL still supplies the HTTP path + Host header.
+    // Unix-domain socket path: connect over UDS, bypassing the TCP/IP stack.
+    // Cleartext HTTP/2 is used only for explicit prior knowledge; the request
+    // URL still supplies the HTTP path + Host header.
     #[cfg(unix)]
     if let Some(path) = &cfg.uds_path {
         trace.tcp_connect_start_ns = Some(clock.now_ns());
@@ -483,7 +484,11 @@ async fn establish_inner(
             .await
             .map_err(ErrorDetails::from)?;
         trace.tcp_connect_end_ns = Some(clock.now_ns());
-        let sender = handshake(TokioIo::new(stream), false).await?;
+        let sender = handshake(
+            TokioIo::new(stream),
+            matches!(cfg.http_version, HttpVersion::Http2PriorKnowledge),
+        )
+        .await?;
         let dummy = SocketAddr::from(([127, 0, 0, 1], 0));
         return Ok((
             sender,
@@ -628,7 +633,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::{
-        continue_after_socket_options, establish_with_resolver, rustls_config, with_timeout,
+        Sender, continue_after_socket_options, establish, establish_with_resolver, rustls_config,
+        with_timeout,
     };
     use crate::clock::{Clock, SimClock, drive_sim};
     use crate::transport::core::{ErrorDetails, ErrorKind, TraceData};
@@ -640,6 +646,86 @@ mod tests {
     use std::net::SocketAddr;
     use std::rc::Rc;
     use std::sync::Arc;
+
+    #[cfg(unix)]
+    async fn establish_over_uds(
+        http_version: crate::transport::http::models::HttpVersion,
+        serve_h2: bool,
+    ) -> Sender {
+        use std::convert::Infallible;
+
+        use bytes::Bytes;
+        use http_body_util::Full;
+        use hyper::service::service_fn;
+        use hyper_util::rt::TokioIo;
+        use tokio::net::UnixListener;
+
+        let directory = tempfile::tempdir().expect("temporary UDS directory");
+        let path = directory.path().join("aiperf.sock");
+        let listener = UnixListener::bind(&path).expect("bind UDS listener");
+        tokio::task::spawn_local(async move {
+            let (stream, _) = listener.accept().await.expect("accept UDS client");
+            let service = service_fn(|_| async {
+                Ok::<_, Infallible>(hyper::Response::new(Full::new(Bytes::new())))
+            });
+            let io = TokioIo::new(stream);
+            if serve_h2 {
+                let _ = hyper::server::conn::http2::Builder::new(super::LocalExec)
+                    .serve_connection(io, service)
+                    .await;
+            } else {
+                let _ = hyper::server::conn::http1::Builder::new()
+                    .serve_connection(io, service)
+                    .await;
+            }
+        });
+
+        let cfg = ClientConfig {
+            http_version,
+            uds_path: Some(path.to_string_lossy().into_owned()),
+            ..ClientConfig::default()
+        };
+        let clock: Rc<dyn Clock> = crate::clock::RealClock::new();
+        let url = url::Url::parse("http://localhost/").expect("valid request URL");
+        let mut trace = TraceData::default();
+        let mut sender = establish(&url, &cfg, clock.clone(), &mut trace)
+            .await
+            .expect("UDS connection establishes")
+            .0;
+        let body = super::TimedBody::new(Bytes::new(), clock, Rc::new(Cell::new(None)));
+        sender
+            .send(
+                hyper::Request::builder()
+                    .uri("/")
+                    .body(body)
+                    .expect("build UDS request"),
+            )
+            .await
+            .expect("UDS listener accepts the selected HTTP protocol");
+        sender
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn uds_prior_knowledge_handshakes_http2() {
+        let sender = run_local(establish_over_uds(
+            crate::transport::http::models::HttpVersion::Http2PriorKnowledge,
+            true,
+        ));
+        assert!(matches!(sender, Sender::H2(_)));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn uds_auto_and_http1_only_handshake_http1() {
+        for http_version in [
+            crate::transport::http::models::HttpVersion::Auto,
+            crate::transport::http::models::HttpVersion::Http1Only,
+        ] {
+            let sender = run_local(establish_over_uds(http_version, false));
+            assert!(matches!(sender, Sender::H1(_)));
+        }
+    }
 
     fn run_local<F: std::future::Future>(future: F) -> F::Output {
         let runtime = tokio::runtime::Builder::new_current_thread()

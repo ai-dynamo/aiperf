@@ -1392,12 +1392,7 @@ pub fn validate_endpoint_profiles_v2(
                 &format!("endpoint profile {index}.timeout_seconds"),
             )?,
             ssl_verify: config.ssl_verify,
-            // A Unix-domain socket connection is HTTP/1.1-only (the transport's
-            // UDS branch hard-codes h1), so force Http1Only when a socket path is
-            // set rather than silently downgrading an authored `http2: true`.
-            http_version: if config.uds_path.is_some() {
-                HttpVersion::Http1Only
-            } else if config.http2 {
+            http_version: if config.http2 {
                 HttpVersion::Http2PriorKnowledge
             } else {
                 HttpVersion::Auto
@@ -2056,6 +2051,43 @@ mod tests {
         assert_eq!(client.max_response_body_bytes, Some(4096));
         assert_eq!(client.keepalive_ns, Some(250_000_000));
         assert_eq!(client.total_timeout_ns, Some(500_000_000));
+    }
+
+    #[test]
+    fn endpoint_profile_preserves_http2_prior_knowledge_for_uds_path() {
+        for (http2, expected) in [
+            (None, HttpVersion::Auto),
+            (Some(false), HttpVersion::Auto),
+            (Some(true), HttpVersion::Http2PriorKnowledge),
+        ] {
+            let mut endpoint = serde_json::json!({
+                "id": "default",
+                "type": "chat",
+                "urls": ["http://localhost"],
+                "uds_path": "/tmp/aiperf.sock"
+            });
+            if let Some(http2) = http2 {
+                endpoint
+                    .as_object_mut()
+                    .expect("endpoint fixture is an object")
+                    .insert("http2".into(), Value::Bool(http2));
+            }
+            let run: AuthoredRunSpecV2 = serde_json::from_value(serde_json::json!({
+                "identity": {"benchmark_id": "uds-http-version"},
+                "artifact_target": "/tmp/uds-http-version",
+                "transport": {"type": "http", "config": {}},
+                "workload": {"type": "scheduled", "config": {}},
+                "resources": {
+                    "models": {"items": [{"name": "model"}]},
+                    "endpoints": {"profiles": [endpoint]}
+                }
+            }))
+            .unwrap();
+
+            let profiles =
+                validate_endpoint_profiles_v2(&run, &EndpointRegistry::builtin().unwrap()).unwrap();
+            assert_eq!(profiles[0].client.http_version, expected);
+        }
     }
 
     #[test]
