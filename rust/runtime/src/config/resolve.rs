@@ -731,9 +731,60 @@ fn validate_baseten_only_trace_flags(inputs: &Inputs) -> anyhow::Result<()> {
     );
 }
 
+fn random_pool_batch_sizes(inputs: &Inputs) -> [(&'static str, Option<u32>); 4] {
+    [
+        ("text", inputs.random_pool_text_batch_size),
+        ("image", inputs.random_pool_image_batch_size),
+        ("audio", inputs.random_pool_audio_batch_size),
+        ("video", inputs.random_pool_video_batch_size),
+    ]
+}
+
+/// Reject file-random-pool controls on dataset paths that cannot preserve them.
+fn validate_random_pool_batch_sizes(inputs: &Inputs) -> anyhow::Result<()> {
+    let batch_sizes = random_pool_batch_sizes(inputs);
+    if batch_sizes.iter().all(|(_, size)| size.is_none()) {
+        return Ok(());
+    }
+
+    if inputs.hf_dataset.is_some() || inputs.public_dataset.is_some() {
+        anyhow::bail!(
+            "random_pool batch sizes cannot be used with a public dataset; use a file dataset with format random_pool"
+        );
+    }
+
+    if inputs.input_file.is_none() && inputs.inline_records.is_none() {
+        // The same authoring controls configure generated synthetic modalities.
+        return Ok(());
+    }
+
+    let format = inputs
+        .custom_dataset_type
+        .as_deref()
+        .unwrap_or("single_turn");
+    anyhow::ensure!(
+        format == "random_pool",
+        "random_pool batch sizes require file dataset format random_pool, but the effective format is {format}"
+    );
+
+    if let Some(path) = inputs.input_file.as_ref().filter(|path| path.is_dir())
+        && let Some((modality, size)) = batch_sizes.iter().find_map(|(modality, size)| {
+            size.filter(|size| *size != 1).map(|size| (*modality, size))
+        })
+    {
+        anyhow::bail!(
+            "random_pool directory {} uses named pools, so {modality}_batch_size must be 1; got {size}",
+            path.display()
+        );
+    }
+
+    Ok(())
+}
+
 pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
     validate_baseten_only_trace_flags(&inputs)?;
     validate_baseten_extra_input_collisions(&inputs)?;
+    validate_random_pool_batch_sizes(&inputs)?;
     if let Some(ratio) = inputs.trace_session_sample_ratio {
         anyhow::ensure!(
             ratio.is_finite() && ratio > 0.0 && ratio <= 1.0,

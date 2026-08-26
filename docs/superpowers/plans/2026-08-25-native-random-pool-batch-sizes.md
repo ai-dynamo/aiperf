@@ -65,13 +65,13 @@ composer, cargo tests, sccache.
 - Produces: pre-execution validation errors and accepted unit directory values.
 - Consumes: the optional authored values from Task 1.
 
-- [ ] Write failing tests for public datasets, a non-random-pool file format,
+- [x] Write failing tests for public datasets, a non-random-pool file format,
   each directory non-unit modality, explicit directory units, and synthetic
   YAML non-interference.
-- [ ] Run focused tests and record that invalid configurations currently resolve.
-- [ ] Add the minimal branch-local validation without changing synthetic batch
+- [x] Run focused tests and record that invalid configurations currently resolve.
+- [x] Add the minimal branch-local validation without changing synthetic batch
   semantics.
-- [ ] Rerun focused tests, record GREEN, and commit the slice.
+- [x] Rerun focused tests, record GREEN, and commit the slice.
 
 ### Task 3: Content-aware safe composition
 

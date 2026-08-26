@@ -3709,6 +3709,39 @@ benchmark:
             .expect("worker panicked");
     }
 
+    #[test]
+    fn synthetic_yaml_modality_batch_sizes_remain_valid() {
+        let run = resolve_str(
+            &cfg(
+                "  endpoint: {type: chat, url: http://127.0.0.1:8080}\n  dataset:\n    prompts: {batchSize: 2}\n    images: {batchSize: 3}\n    audio: {batchSize: 4}\n    video: {batchSize: 5}\n  phases: {type: concurrency, requests: 1, concurrency: 1}\n",
+            ),
+            Some("/tmp/x".into()),
+        )
+        .expect("synthetic modality batch sizes resolve");
+        let dataset = run
+            .cfg
+            .datasets
+            .as_ref()
+            .and_then(|datasets| datasets.first())
+            .expect("resolved dataset");
+        let crate::model::dataset::Dataset::Synthetic(synthetic) = dataset else {
+            panic!("expected synthetic dataset, got {dataset:?}");
+        };
+        assert_eq!(synthetic.prompts.batch_size, 2);
+        assert_eq!(
+            synthetic.images.as_ref().map(|spec| spec.batch_size),
+            Some(3)
+        );
+        assert_eq!(
+            synthetic.audio.as_ref().map(|spec| spec.batch_size),
+            Some(4)
+        );
+        assert_eq!(
+            synthetic.video.as_ref().map(|spec| spec.batch_size),
+            Some(5)
+        );
+    }
+
     /// Increment A guard: an explicitly-set operational bool flag (`--streaming`)
     /// now overlays a YAML-authored endpoint, while an unset flag leaves the
     /// config value intact (byte-identical to no overlay).

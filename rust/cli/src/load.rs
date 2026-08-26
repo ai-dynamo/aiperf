@@ -1740,6 +1740,102 @@ mod tests {
     }
 
     #[test]
+    fn random_pool_batch_sizes_reject_incompatible_datasets() {
+        run_on_big_stack(|| {
+            for flag in [
+                "--batch-size",
+                "--image-batch-size",
+                "--audio-batch-size",
+                "--video-batch-size",
+            ] {
+                let public = parse(&[
+                    "-m",
+                    "mock-model",
+                    "--endpoint-type",
+                    "chat",
+                    "--dry-run",
+                    "--public-dataset",
+                    "sharegpt",
+                    flag,
+                    "2",
+                ]);
+                let error = super::resolve(&public).expect_err("public batching must fail");
+                assert!(error.to_string().contains("public dataset"), "{error}");
+                assert!(error.to_string().contains("random_pool"), "{error}");
+            }
+
+            let wrong_format = parse(&[
+                "-m",
+                "mock-model",
+                "--endpoint-type",
+                "chat",
+                "--dry-run",
+                "--input-file",
+                "turns.jsonl",
+                "--custom-dataset-type",
+                "single_turn",
+                "--audio-batch-size",
+                "2",
+            ]);
+            let error = super::resolve(&wrong_format).expect_err("wrong format must fail");
+            assert!(error.to_string().contains("single_turn"), "{error}");
+            assert!(error.to_string().contains("random_pool"), "{error}");
+        });
+    }
+
+    #[test]
+    fn random_pool_directory_requires_unit_batch_sizes() {
+        run_on_big_stack(|| {
+            let directory = tempfile::tempdir().expect("temporary random-pool directory");
+            let path = directory.path().to_string_lossy().into_owned();
+            for (flag, modality) in [
+                ("--batch-size", "text"),
+                ("--image-batch-size", "image"),
+                ("--audio-batch-size", "audio"),
+                ("--video-batch-size", "video"),
+            ] {
+                let invalid = parse(&[
+                    "-m",
+                    "mock-model",
+                    "--endpoint-type",
+                    "chat",
+                    "--dry-run",
+                    "--input-file",
+                    &path,
+                    "--custom-dataset-type",
+                    "random_pool",
+                    flag,
+                    "0",
+                ]);
+                let error = super::resolve(&invalid).expect_err("directory batching must fail");
+                assert!(error.to_string().contains("directory"), "{error}");
+                assert!(error.to_string().contains(modality), "{error}");
+            }
+
+            let unit = parse(&[
+                "-m",
+                "mock-model",
+                "--endpoint-type",
+                "chat",
+                "--dry-run",
+                "--input-file",
+                &path,
+                "--custom-dataset-type",
+                "random_pool",
+                "--batch-size",
+                "1",
+                "--image-batch-size",
+                "1",
+                "--audio-batch-size",
+                "1",
+                "--video-batch-size",
+                "1",
+            ]);
+            super::resolve(&unit).expect("unit directory sizes must remain valid");
+        });
+    }
+
+    #[test]
     fn prompt_corpus_flag_projects_public_dataset_prompts() {
         run_on_big_stack(|| {
             let flags = parse(&[
