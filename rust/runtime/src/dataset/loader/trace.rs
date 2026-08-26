@@ -1598,4 +1598,30 @@ mod tests {
         assert_eq!(turn.max_tokens, Some(9));
         assert!(turn.raw_messages.is_some());
     }
+
+    #[tokio::test]
+    async fn sagemaker_rejects_malformed_inference_time_with_validation_error() {
+        let source = DatasetSource::Inline(json!([{
+            "captureData": {},
+            "eventMetadata": {"eventId":"bad-time", "inferenceTime": 123}
+        }]));
+        let mut registry = LoaderRegistry::new();
+        registry
+            .register(DatasetFormatRegistration::new(
+                Arc::new(SageMakerDataCaptureDatasetLoader),
+                Arc::new(SageMakerDataCaptureComposer),
+            ))
+            .unwrap();
+        let error = registry
+            .build_dataset(
+                Some("sagemaker"),
+                &LoadConfig::new(source),
+                &ComposeConfig::new("model", RngRoot::new(Some(9))),
+                &TiktokenTokenizer::builtin(),
+            )
+            .await
+            .expect_err("non-string inferenceTime must be rejected");
+        assert!(matches!(error, DatasetError::Validation(message) if
+            message.contains("bad-time") && message.contains("invalid inferenceTime")));
+    }
 }
