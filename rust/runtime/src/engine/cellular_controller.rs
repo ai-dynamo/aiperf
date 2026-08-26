@@ -17,10 +17,8 @@
 //! controller exposes cellular execution as one protocol-v2 run.
 
 use std::collections::{BTreeMap, BTreeSet};
-#[cfg(feature = "cellular")]
 use std::future::Future;
 use std::path::{Path, PathBuf};
-#[cfg(feature = "cellular")]
 use std::time::Duration;
 
 #[cfg(unix)]
@@ -41,33 +39,22 @@ use crate::engine::cell_launcher::owned_positions;
 use crate::engine::cellular_kind::CellularRunKind;
 use crate::graph::supplement::GraphCellSupplement;
 
-// The velo transport + launcher wiring is the only part of the controller that
-// needs the `cellular` feature; the validation, budget-slicing, merge, and report
-// assembly below are plain envelope/metric logic reused by the non-cellular build.
-#[cfg(feature = "cellular")]
 use crate::cellular::transport::CellPhaseSignal;
-#[cfg(feature = "cellular")]
 use crate::cellular::transport::connect::{
     BindSpec, build_velo, take_inherited_pipe_reader, take_inherited_tcp_listener,
     wait_for_pipe_eof,
 };
-#[cfg(feature = "cellular")]
 use crate::cellular::transport::velo_transport::{CellRegistrationPlan, PlanRegistration};
-#[cfg(feature = "cellular")]
 use crate::cellular::{CellMessage, ControllerTransport, VeloControllerTransport};
-#[cfg(feature = "cellular")]
 use crate::engine::cell_launcher::{CellHandle, CellLaunchContext, select_launcher};
-#[cfg(feature = "cellular")]
 use crate::engine::cellular_bootstrap::{
     CONTROLLER_BOOTSTRAP_FILE_ENV, CellularRole, ControllerSecuritySource,
     prepare_controller_security,
 };
-#[cfg(feature = "cellular")]
 use crate::engine::control_hooks::{
     PreparedEndpointControlHooks, PreparedServerProfilerHook, ServerProfilerCoordinator,
     prepare_endpoint_control_hooks_from_profile_value, run_reset_kv_cache,
 };
-#[cfg(feature = "cellular")]
 use crate::engine::control_plane_http::{
     ControlPlaneClientPolicy, ControlPlaneHttpProviderFactory,
     NativeControlPlaneHttpProviderFactory,
@@ -88,22 +75,18 @@ pub const CELL_BARRIER_FREE_ENV: &str = "AIPERF_CELL_BARRIER_FREE";
 /// event-based START).
 pub const CELL_PHASER_START_ENV: &str = "AIPERF_CELL_PHASER_START";
 
-#[cfg(feature = "cellular")]
 const CONTROLLER_START_MARKER_ENV: &str = "AIPERF_E2E_CONTROLLER_START_MARKER";
 
-#[cfg(feature = "cellular")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ImportedSessionDelivery {
     Http,
     LocalMaterialized,
 }
 
-#[cfg(feature = "cellular")]
 struct CellularTopologyPlan {
     expected_partitions: u32,
 }
 
-#[cfg(feature = "cellular")]
 impl CellularTopologyPlan {
     fn resolve(cell_count: u32) -> Result<Self> {
         ensure!(
@@ -116,14 +99,12 @@ impl CellularTopologyPlan {
     }
 }
 
-#[cfg(feature = "cellular")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum TerminalPartitionKind {
     Records,
     Store,
 }
 
-#[cfg(feature = "cellular")]
 impl TerminalPartitionKind {
     fn name(self) -> &'static str {
         match self {
@@ -133,19 +114,16 @@ impl TerminalPartitionKind {
     }
 }
 
-#[cfg(feature = "cellular")]
 enum TerminalPartition {
     Records(RecordsShardPartition),
     Store(ColumnStorePartition),
 }
 
-#[cfg(feature = "cellular")]
 struct TerminalPartitions {
     partitions: Vec<Option<TerminalPartition>>,
     kind: Option<TerminalPartitionKind>,
 }
 
-#[cfg(feature = "cellular")]
 impl TerminalPartitions {
     fn new(cell_count: u32) -> Self {
         Self {
@@ -239,7 +217,6 @@ pub const CELLULAR_HUB_ENV: &str = "AIPERF_CELLULAR_HUB";
 /// (per-cell seed regeneration or controller file serving).
 pub const CELL_DATASET_FANOUT_ENV: &str = "AIPERF_CELL_DATASET_FANOUT";
 
-#[cfg(feature = "cellular")]
 trait StartupProbe {
     fn before_import_acquisition(&self) {}
     fn before_scratch_creation(&self) {}
@@ -248,13 +225,10 @@ trait StartupProbe {
     fn before_launcher_execution(&self) {}
 }
 
-#[cfg(feature = "cellular")]
 struct NoopStartupProbe;
 
-#[cfg(feature = "cellular")]
 impl StartupProbe for NoopStartupProbe {}
 
-#[cfg(feature = "cellular")]
 struct InheritedControllerDescriptors {
     artifact_listener: Option<std::net::TcpListener>,
     controller_listener: Option<std::net::TcpListener>,
@@ -262,7 +236,6 @@ struct InheritedControllerDescriptors {
     start_marker: Option<PathBuf>,
 }
 
-#[cfg(feature = "cellular")]
 fn take_controller_inherited_descriptors(
     cross_host: bool,
 ) -> Result<InheritedControllerDescriptors> {
@@ -288,7 +261,6 @@ fn take_controller_inherited_descriptors(
     })
 }
 
-#[cfg(feature = "cellular")]
 fn prepare_controller_runtime<T>(
     cross_host: bool,
     build_runtime: impl FnOnce() -> Result<T>,
@@ -298,7 +270,6 @@ fn prepare_controller_runtime<T>(
     Ok((descriptors, runtime))
 }
 
-#[cfg(feature = "cellular")]
 async fn record_controller_start_marker(path: &Path) -> Result<()> {
     use tokio::io::AsyncWriteExt;
 
@@ -342,18 +313,15 @@ pub struct CellularRunOutcome {
     pub record_count: usize,
 }
 
-#[cfg(feature = "cellular")]
 const CONTROLLER_PROCESS_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
 // Each task owns one local process handle until the terminal cleanup boundary.
 // Dropping the set aborts any task that did not finish within the drain timeout.
-#[cfg(feature = "cellular")]
 #[derive(Default)]
 struct ControllerProcessWatchers {
     tasks: tokio::task::JoinSet<String>,
 }
 
-#[cfg(feature = "cellular")]
 impl ControllerProcessWatchers {
     fn watch<F>(&mut self, watcher: F)
     where
@@ -483,7 +451,6 @@ fn private_controller_scratch_lease() -> Result<ControllerScratchLease> {
     Ok(ControllerScratchLease(scratch))
 }
 
-#[cfg(feature = "cellular")]
 fn retain_controller_sources_after_watcher_timeout(
     scratch: ControllerScratchLease,
     imported: Option<
@@ -548,7 +515,6 @@ impl CellularRunKind {
 /// — no log path (env unset, e.g. a local `--cells` run whose frontend does not set
 /// it) or a transient write error just skips the tick; the authoritative report still
 /// comes from the merged partitions at finalize.
-#[cfg(feature = "cellular")]
 fn emit_live_progress(log_path: Option<&Path>, heartbeats: &BTreeMap<u32, MetricsHeartbeat>) {
     use std::io::Write as _;
     let Some(path) = log_path else {
@@ -579,7 +545,6 @@ fn emit_live_progress(log_path: Option<&Path>, heartbeats: &BTreeMap<u32, Metric
     }
 }
 
-#[cfg(feature = "cellular")]
 fn envelope_requests_control_hooks(envelope: &serde_json::Value) -> bool {
     envelope
         .pointer("/run/cfg/endpoint/reset_kv_cache")
@@ -589,7 +554,6 @@ fn envelope_requests_control_hooks(envelope: &serde_json::Value) -> bool {
             .is_some()
 }
 
-#[cfg(feature = "cellular")]
 fn validate_control_hook_transport(envelope: &serde_json::Value) -> Result<()> {
     if !envelope_requests_control_hooks(envelope) {
         return Ok(());
@@ -614,7 +578,6 @@ fn validate_control_hook_transport(envelope: &serde_json::Value) -> Result<()> {
     }
 }
 
-#[cfg(feature = "cellular")]
 fn prepare_controller_control_hooks(
     envelope: &serde_json::Value,
 ) -> Result<Option<PreparedEndpointControlHooks>> {
@@ -636,13 +599,11 @@ fn prepare_controller_control_hooks(
     Ok(Some(hooks))
 }
 
-#[cfg(feature = "cellular")]
 struct CellularProfilerCoordinator {
     profiler: Rc<ServerProfilerCoordinator>,
     phases: BTreeMap<String, CellularProfilerPhase>,
 }
 
-#[cfg(feature = "cellular")]
 #[derive(Default)]
 struct CellularProfilerPhase {
     is_released: bool,
@@ -650,7 +611,6 @@ struct CellularProfilerPhase {
     complete_cells: BTreeSet<u32>,
 }
 
-#[cfg(feature = "cellular")]
 impl CellularProfilerCoordinator {
     fn new(hook: PreparedServerProfilerHook) -> Self {
         Self {
@@ -744,7 +704,6 @@ impl CellularProfilerCoordinator {
 /// Runs one benchmark across `cell_count` cells and writes the merged report to
 /// `report_path`. Blocks until every cell ships. Requires the `cellular` feature (the
 /// cell transport).
-#[cfg(feature = "cellular")]
 pub fn run_cellular(
     envelope: &serde_json::Value,
     cell_count: u32,
@@ -760,7 +719,6 @@ pub fn run_cellular(
     )
 }
 
-#[cfg(feature = "cellular")]
 fn run_cellular_with_startup_probe<P: StartupProbe>(
     envelope: &serde_json::Value,
     cell_count: u32,
@@ -1780,7 +1738,6 @@ fn run_cellular_with_startup_probe<P: StartupProbe>(
 /// on the controller pod; cells derive the matching authority from their `tcp://`
 /// velo coordinate host + the artifact port. Distinct from the velo messaging bind
 /// (control plane) — this carries bulk artifact bytes, not coordination.
-#[cfg(feature = "cellular")]
 fn controller_artifact_bind() -> std::net::SocketAddr {
     use crate::engine::cellular_cell::DEFAULT_ARTIFACT_PORT;
     std::env::var("AIPERF_CONTROLLER_ARTIFACT_BIND")
@@ -1797,7 +1754,6 @@ fn controller_artifact_bind() -> std::net::SocketAddr {
 /// so the controller and its cells always agree on whether HTTP shipping is active.
 /// An unset/empty coordinate (k8s injects the routable authority into the cells only)
 /// is NOT loopback, so cross-host shipping stays on.
-#[cfg(feature = "cellular")]
 fn controller_coordinate_is_loopback() -> bool {
     let Ok(coordinate) = std::env::var(crate::engine::cellular_cell::CELL_CONTROLLER_ADDR_ENV)
     else {
@@ -1828,7 +1784,6 @@ fn controller_coordinate_is_loopback() -> bool {
 ///   "expect, don't spawn" launchers do not inject it).
 /// - **local**: pre-bind a loopback TCP listener so the actual port is known before
 ///   build; cells connect to `tcp://127.0.0.1:<port>`.
-#[cfg(feature = "cellular")]
 fn controller_bind_and_endpoint(
     cross_host: bool,
     temp_root: &Path,
@@ -1869,7 +1824,6 @@ fn controller_bind_and_endpoint(
 /// dial; its axum surface is a co-bound diagnostic (discovery/allowlist/status). Bound
 /// on an OS-assigned loopback port by default, overridable
 /// (`AIPERF_CELLULAR_HUB_HTTP_BIND`, e.g. `0.0.0.0:9700` for k8s).
-#[cfg(feature = "cellular")]
 fn hub_http_bind() -> std::net::SocketAddr {
     std::env::var("AIPERF_CELLULAR_HUB_HTTP_BIND")
         .ok()
@@ -1886,7 +1840,6 @@ fn hub_http_bind() -> std::net::SocketAddr {
 /// are identical to the standalone planes; only the mount point moves onto the hub. With
 /// the phaser and dataset planes mounted, a hub-mode run is a complete replacement of the
 /// standalone control/data planes on the one anchor.
-#[cfg(feature = "cellular")]
 #[allow(clippy::too_many_arguments)]
 async fn build_cellular_hub(
     velo: std::sync::Arc<velo::Velo>,
@@ -1991,7 +1944,6 @@ async fn build_cellular_hub(
 /// execute the benchmark before shipping), so it is generous and env-overridable
 /// (`AIPERF_CELL_COLLECT_TIMEOUT_SECS`, default 2 hours). Primarily a k8s backstop —
 /// a local run's per-child exit watcher catches a dead cell far sooner.
-#[cfg(feature = "cellular")]
 pub(crate) fn collect_timeout() -> std::time::Duration {
     let secs = std::env::var("AIPERF_CELL_COLLECT_TIMEOUT_SECS")
         .ok()
@@ -2008,7 +1960,6 @@ pub(crate) fn collect_timeout() -> std::time::Duration {
 /// the whole-run `collect_timeout` (default 2h). Env-overridable
 /// (`AIPERF_CELL_ARTIFACT_UPLOAD_TIMEOUT`, seconds; default 5 minutes), so a cell
 /// that dies mid-upload fails the run in minutes rather than hours.
-#[cfg(feature = "cellular")]
 fn artifact_upload_timeout() -> std::time::Duration {
     let secs = std::env::var("AIPERF_CELL_ARTIFACT_UPLOAD_TIMEOUT")
         .ok()
@@ -2021,7 +1972,6 @@ fn artifact_upload_timeout() -> std::time::Duration {
 /// only fetch their envelope here — no benchmark work yet — so this is a short
 /// startup bound (env `AIPERF_CELL_REGISTER_TIMEOUT_SECS`, default 5 minutes),
 /// unlike [`collect_timeout`] which must span the whole run.
-#[cfg(feature = "cellular")]
 fn register_timeout() -> std::time::Duration {
     let secs = std::env::var("AIPERF_CELL_REGISTER_TIMEOUT_SECS")
         .ok()
