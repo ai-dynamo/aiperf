@@ -82,6 +82,10 @@ purpose for each, so an agent knows which file to open for a given question.
   `docs/specs/kubernetes-surface-gaps.md` is the companion ledger of what this
   surface does not do, including the absent cross-host role-material minter that
   currently blocks end-to-end cross-host Kubernetes and SLURM execution.
+  `docs/specs/native-kubernetes-completion.md` is the planned closure: a public
+  deployment minting seam, native `init`/`generate`, an `AIPerfSweep` resource
+  driven by a native sweep-controller role, and native `index`/`dashboard`, with
+  the reconciler staying Python and hierarchical aggregation still refused.
   This trusted namespace-level in-cluster service uses no application token,
   signature, public key, results-read Secret, authority ConfigMap, or external
   ingress. Controller and cell cellular bootstraps are separate from results.
