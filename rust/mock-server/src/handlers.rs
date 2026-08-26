@@ -1040,6 +1040,27 @@ mod spec_decode_acceptance_tests {
             .collect()
     }
 
+    async fn collect_sse_values(
+        stream: impl Stream<Item = Result<Bytes, Infallible>>,
+    ) -> Vec<Value> {
+        let chunks = futures::StreamExt::collect::<Vec<_>>(stream).await;
+        let mut body = Vec::new();
+        for chunk in chunks {
+            body.extend_from_slice(&chunk.unwrap());
+        }
+        sse_values(&body)
+    }
+
+    fn timed_state(fixed_output_tokens: Option<usize>) -> Arc<AppState> {
+        AppState::build(MockServerConfig {
+            no_tokenizer: true,
+            fixed_output_tokens,
+            ttft: 0.01,
+            itl: 0.01,
+            ..Default::default()
+        })
+    }
+
     #[tokio::test]
     async fn nonstream_choice_carries_opt_in_canonical_stats() {
         let state = enabled_state();
@@ -1354,6 +1375,210 @@ mod spec_decode_acceptance_tests {
                 1
             );
         }
+    }
+
+    #[tokio::test]
+    async fn timed_chat_and_text_streams_bundle_first_content_with_cumulative_usage() {
+        let state = timed_state(Some(6));
+        let chat_request: ChatCompletionRequest = serde_json::from_value(json!({
+            "model": "test-model",
+            "messages": [{"role": "user", "content": "hello"}],
+            "stream": true,
+            "stream_options": {
+                "include_usage": true,
+                "continuous_usage_stats": true
+            },
+            "mock_first_chunk_tokens": 3,
+            "max_tokens": 6
+        }))
+        .unwrap();
+        let chat_gen = GenRequest::Chat(&chat_request);
+        let chat_ctx = RequestCtx::build(
+            "chatcmpl",
+            &chat_gen,
+            "/v1/chat/completions",
+            Instant::now(),
+            &state,
+        );
+        let chat_frames = collect_sse_values(chat_stream(
+            state.clone(),
+            chat_ctx,
+            "/v1/chat/completions".to_string(),
+            true,
+            false,
+        ))
+        .await;
+        let chat_usage = chat_frames
+            .iter()
+            .filter(|frame| {
+                frame["choices"][0]["delta"]["content"]
+                    .as_str()
+                    .is_some_and(|content| !content.is_empty())
+            })
+            .map(|frame| frame["usage"]["completion_tokens"].as_u64())
+            .collect::<Vec<_>>();
+        assert_eq!(chat_usage, vec![Some(3), Some(4), Some(5), Some(6)]);
+
+        let text_request: CompletionRequest = serde_json::from_value(json!({
+            "model": "test-model",
+            "prompt": "hello",
+            "stream": true,
+            "stream_options": {
+                "include_usage": true,
+                "continuous_usage_stats": true
+            },
+            "mock_first_chunk_tokens": 3,
+            "max_tokens": 6
+        }))
+        .unwrap();
+        let text_gen = GenRequest::Completion(&text_request);
+        let text_ctx =
+            RequestCtx::build("cmpl", &text_gen, "/v1/completions", Instant::now(), &state);
+        let text_frames = collect_sse_values(text_stream(
+            state,
+            text_ctx,
+            "/v1/completions".to_string(),
+            true,
+        ))
+        .await;
+        let text_usage = text_frames
+            .iter()
+            .filter(|frame| {
+                frame["choices"][0]["text"]
+                    .as_str()
+                    .is_some_and(|content| !content.is_empty())
+            })
+            .map(|frame| frame["usage"]["completion_tokens"].as_u64())
+            .collect::<Vec<_>>();
+        assert_eq!(text_usage, vec![Some(3), Some(4), Some(5), Some(6)]);
+    }
+
+    #[tokio::test]
+    async fn timed_streams_keep_absent_or_false_continuous_usage_terminal_only() {
+        for continuous_usage_stats in [None, Some(false)] {
+            let stream_options = continuous_usage_stats.map_or_else(
+                || json!({"include_usage": true}),
+                |value| {
+                    json!({
+                        "include_usage": true,
+                        "continuous_usage_stats": value
+                    })
+                },
+            );
+            let state = timed_state(Some(3));
+            let chat_request: ChatCompletionRequest = serde_json::from_value(json!({
+                "model": "test-model",
+                "messages": [{"role": "user", "content": "hello"}],
+                "stream": true,
+                "stream_options": stream_options,
+                "max_tokens": 3
+            }))
+            .unwrap();
+            let chat_gen = GenRequest::Chat(&chat_request);
+            let chat_ctx = RequestCtx::build(
+                "chatcmpl",
+                &chat_gen,
+                "/v1/chat/completions",
+                Instant::now(),
+                &state,
+            );
+            let chat_frames = collect_sse_values(chat_stream(
+                state.clone(),
+                chat_ctx,
+                "/v1/chat/completions".to_string(),
+                true,
+                false,
+            ))
+            .await;
+            assert!(chat_frames.iter().all(|frame| {
+                frame["choices"][0]["delta"]["content"]
+                    .as_str()
+                    .is_none_or(|content| content.is_empty() || frame.get("usage").is_none())
+            }));
+            assert_eq!(
+                chat_frames
+                    .iter()
+                    .filter(|frame| frame["choices"] == json!([]) && frame.get("usage").is_some())
+                    .count(),
+                1
+            );
+
+            let text_request: CompletionRequest = serde_json::from_value(json!({
+                "model": "test-model",
+                "prompt": "hello",
+                "stream": true,
+                "stream_options": stream_options,
+                "max_tokens": 3
+            }))
+            .unwrap();
+            let text_gen = GenRequest::Completion(&text_request);
+            let text_ctx =
+                RequestCtx::build("cmpl", &text_gen, "/v1/completions", Instant::now(), &state);
+            let text_frames = collect_sse_values(text_stream(
+                state,
+                text_ctx,
+                "/v1/completions".to_string(),
+                true,
+            ))
+            .await;
+            assert!(text_frames.iter().all(|frame| {
+                frame["choices"][0]["text"]
+                    .as_str()
+                    .is_none_or(|content| content.is_empty() || frame.get("usage").is_none())
+            }));
+            assert_eq!(
+                text_frames
+                    .iter()
+                    .filter(|frame| frame["choices"] == json!([]) && frame.get("usage").is_some())
+                    .count(),
+                1
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn timed_reasoning_stream_emits_cumulative_usage_on_every_chunk() {
+        let state = timed_state(None);
+        let request: ChatCompletionRequest = serde_json::from_value(json!({
+            "model": "qwen-test",
+            "messages": [{"role": "user", "content": "hello world"}],
+            "stream": true,
+            "stream_options": {"continuous_usage_stats": true},
+            "reasoning_effort": "low",
+            "max_tokens": 4
+        }))
+        .unwrap();
+        let req_gen = GenRequest::Chat(&request);
+        let ctx = RequestCtx::build(
+            "chatcmpl",
+            &req_gen,
+            "/v1/chat/completions",
+            Instant::now(),
+            &state,
+        );
+        let frames = collect_sse_values(chat_stream(
+            state,
+            ctx,
+            "/v1/chat/completions".to_string(),
+            false,
+            false,
+        ))
+        .await;
+        let reasoning_usage = frames
+            .iter()
+            .filter(|frame| {
+                frame["choices"][0]["delta"]["reasoning_content"]
+                    .as_str()
+                    .is_some_and(|content| !content.is_empty())
+            })
+            .map(|frame| frame["usage"]["completion_tokens"].as_u64())
+            .collect::<Vec<_>>();
+        assert_eq!(reasoning_usage, vec![Some(1), Some(2), Some(3), Some(4)]);
+        assert!(
+            frames
+                .iter()
+                .all(|frame| frame["choices"] != json!([]) || frame.get("usage").is_none())
+        );
     }
 
     #[tokio::test]
