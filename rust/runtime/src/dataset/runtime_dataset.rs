@@ -1512,7 +1512,7 @@ mod tests {
     }
 
     #[test]
-    fn valid_dag_lineage_and_branch_attachment_are_accepted() {
+    fn dag_valid_lineage_and_branch_attachment_are_accepted() {
         let (message, segments) = dag_message();
         let (root, child) = valid_dag_conversations(message);
 
