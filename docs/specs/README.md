@@ -39,6 +39,7 @@ read the record for the subsystem you are touching.
 | [2026-07-25-hf-generic-datasets-design.md](2026-07-25-hf-generic-datasets-design.md) | Built generic HuggingFace-dataset-by-ID input: a `--hf-dataset <id>` CLI/YAML passthrough that bypasses the hard-coded public catalog, plus a source-agnostic `hf` composer whose `infer_row_layout` auto-detects prompt/completion fields (message-array / flat / `context`+`input`) with explicit overrides and `/info` split-config resolution — the arbitrary-ID + auto-detect UX vLLM's Rust bench has, on top of AIPerf's existing (superior) HF transport. |
 | [2026-08-25-rust-smell-core-remediation.md](2026-08-25-rust-smell-core-remediation.md) | Testable remediation contract for the core runtime code-smell inventory: transport seams, ownership boundaries, queue bounds, graph dispatch, and naming/validation receipts. |
 | [2026-08-25-rust-eval-remediation.md](2026-08-25-rust-eval-remediation.md) | Testable remediation contract for the native evaluation and execution-liveness finding inventory. |
+| [2026-08-26-e10-docker-verifier-transaction.md](2026-08-26-e10-docker-verifier-transaction.md) | E10 Docker verifier lifecycle unification across ordinary, NativeGraph, and multi-step standard task execution. |
 | [2026-08-25-rust-matrix-remediation.md](2026-08-25-rust-matrix-remediation.md) | Testable remediation contract for the active cross-cutting Rust verification matrix, including benchmark-proportional security dispositions. |
 
 ### Execution and scheduling
