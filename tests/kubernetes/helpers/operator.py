@@ -106,6 +106,9 @@ class AIPerfJobConfig:
     image_pull_policy: str = "Never"
     """Image pull policy for benchmark pods."""
 
+    image_pull_secrets: list[str] = field(default_factory=list)
+    """Image pull secret names (K8s LocalObjectReference) for benchmark pods."""
+
     connections_per_worker: int | None = None
     """Override for connections per worker, or None for default."""
 
@@ -219,6 +222,11 @@ class AIPerfJobConfig:
             if self.priority_class is not None:
                 scheduling["priorityClass"] = self.priority_class
             spec["scheduling"] = scheduling
+
+        if self.image_pull_secrets:
+            spec["podTemplate"] = {
+                "imagePullSecrets": [{"name": s} for s in self.image_pull_secrets]
+            }
 
         cr = {
             "apiVersion": "aiperf.nvidia.com/v1alpha1",
@@ -405,7 +413,7 @@ class OperatorJobResult:
 class OperatorDeployer:
     """Manages operator deployment and AIPerfJob lifecycle."""
 
-    OPERATOR_NAMESPACE = "aiperf-system"
+    DEFAULT_OPERATOR_NAMESPACE = "aiperf-system"
     CRD_NAME = "aiperfjobs.aiperf.nvidia.com"
 
     def __init__(
@@ -423,6 +431,7 @@ class OperatorDeployer:
         image_pull_secret: str | None = None,
         operator_node_selector: dict[str, str] | None = None,
         disable_pvc: bool = False,
+        operator_namespace: str = "aiperf-system",
     ) -> None:
         """Initialize operator deployer.
 
@@ -480,6 +489,7 @@ class OperatorDeployer:
         self.image_pull_secret = image_pull_secret
         self.operator_node_selector = operator_node_selector
         self.disable_pvc = disable_pvc
+        self.OPERATOR_NAMESPACE = operator_namespace
         self._deployed_jobs: list[OperatorJobResult] = []
 
     async def install_crd(self) -> None:

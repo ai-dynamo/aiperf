@@ -80,7 +80,7 @@ class K8sTestSettings:
     """Cluster name for identification and context."""
 
     runtime: str = "kind"
-    """Cluster runtime backend (kind or minikube)."""
+    """Cluster runtime backend (kind, minikube, or existing)."""
 
     quick: bool = False
     """Shorthand for reuse + skip build/load/cleanup/preflight."""
@@ -118,6 +118,21 @@ class K8sTestSettings:
     benchmark_timeout: int = 600
     """Benchmark completion timeout in seconds."""
 
+    kube_context: str | None = None
+    """Existing kubectl context for remote cluster mode (implies skip_build, skip_load, reuse_cluster, skip_preflight, existing runtime)."""
+
+    operator_namespace: str = "aiperf-system"
+    """Operator namespace on the cluster."""
+
+    skip_operator_deploy: bool = False
+    """Skip deploying the operator (use existing deployment)."""
+
+    image_pull_secret: str | None = None
+    """imagePullSecret name to inject into benchmark pods."""
+
+    image_pull_policy: str = "Never"
+    """Image pull policy for benchmark and mock-server pods."""
+
     @property
     def cluster_runtime(self) -> ClusterRuntime:
         """Get the cluster runtime enum value."""
@@ -136,7 +151,7 @@ def _get_settings(config: pytest.Config) -> K8sTestSettings:
 # Option definitions: (cli_flag, env_var, default, type, help)
 _OPTIONS: list[tuple[str, str, str | None, str, str]] = [
     ("--k8s-cluster", "K8S_TEST_CLUSTER", None, "str", "Cluster name (default: aiperf-<uuid>)"),
-    ("--k8s-runtime", "K8S_TEST_RUNTIME", "kind", "str", "Cluster runtime: kind or minikube (default: kind)"),
+    ("--k8s-runtime", "K8S_TEST_RUNTIME", "kind", "str", "Cluster runtime: kind, minikube, or existing (default: kind)"),
     ("--k8s-quick", "K8S_TEST_QUICK", None, "bool", "Reuse cluster, skip build/load/cleanup/preflight"),
     ("--k8s-skip-build", "K8S_TEST_SKIP_BUILD", None, "bool", "Skip building Docker images (use existing)"),
     ("--k8s-skip-load", "K8S_TEST_SKIP_LOAD", None, "bool", "Skip loading images into cluster"),
@@ -149,6 +164,11 @@ _OPTIONS: list[tuple[str, str, str | None, str, str]] = [
     ("--k8s-jobset-version", "K8S_TEST_JOBSET_VERSION", JOBSET_VERSION, "str", "JobSet controller version"),
     ("--k8s-kueue-version", "K8S_TEST_KUEUE_VERSION", KUEUE_VERSION, "str", "Kueue controller version"),
     ("--k8s-benchmark-timeout", "K8S_TEST_BENCHMARK_TIMEOUT", "300", "int", "Benchmark timeout in seconds"),
+    ("--k8s-kube-context", "K8S_TEST_CONTEXT", None, "str", "Use an existing kubectl context (remote cluster mode)"),
+    ("--k8s-operator-namespace", "K8S_TEST_OPERATOR_NAMESPACE", "aiperf-system", "str", "Operator namespace on the cluster"),
+    ("--k8s-skip-operator-deploy", "K8S_TEST_SKIP_OPERATOR_DEPLOY", None, "bool", "Skip deploying the operator (use existing deployment)"),
+    ("--k8s-image-pull-secret", "K8S_TEST_IMAGE_PULL_SECRET", None, "str", "imagePullSecret name for benchmark and mock-server pods"),
+    ("--k8s-image-pull-policy", "K8S_TEST_IMAGE_PULL_POLICY", "Never", "str", "Image pull policy for benchmark pods (Never, IfNotPresent, Always)"),
 ]  # fmt: skip
 
 
@@ -219,6 +239,22 @@ def _resolve_settings(config: pytest.Config) -> K8sTestSettings:
             if resolved.get(key) is None:
                 resolved[key] = True
 
+    # --k8s-kube-context implies remote existing-cluster mode
+    if resolved.get("kube_context"):
+        if resolved.get("runtime") is None or resolved.get("runtime") == "kind":
+            resolved["runtime"] = "existing"
+        for key in (
+            "skip_build",
+            "skip_load",
+            "reuse_cluster",
+            "skip_preflight",
+            "skip_operator_deploy",
+        ):
+            if not resolved.get(key):
+                resolved[key] = True
+        if resolved.get("cluster") is None:
+            resolved["cluster"] = resolved["kube_context"]
+
     # Use stable name when reusing, random name otherwise
     if resolved.get("cluster") is None:
         if resolved.get("reuse_cluster"):
@@ -237,6 +273,7 @@ def _resolve_settings(config: pytest.Config) -> K8sTestSettings:
         "reuse_cluster",
         "skip_preflight",
         "stream_logs",
+        "skip_operator_deploy",
     ):
         if resolved.get(key) is None:
             resolved[key] = False
@@ -360,6 +397,10 @@ def _run_preflight_checks(settings: K8sTestSettings) -> None:
     from tests.kubernetes.helpers.preflight import PreflightChecker
 
     runtime = settings.cluster_runtime
+
+    # Remote cluster mode: skip local docker/kind/minikube checks
+    if runtime is ClusterRuntime.EXISTING:
+        return
 
     checker = PreflightChecker(
         title="KUBERNETES E2E TEST",
@@ -648,6 +689,7 @@ def cluster_config(k8s_settings: K8sTestSettings) -> ClusterConfig:
         name=k8s_settings.cluster,
         runtime=k8s_settings.cluster_runtime,
         wait_timeout=120,
+        context_override=k8s_settings.kube_context,
     )
 
 
@@ -670,6 +712,11 @@ async def local_cluster(
 
     s = k8s_settings
     cluster = LocalCluster(config=cluster_config)
+
+    if cluster.runtime == ClusterRuntime.EXISTING:
+        logger.info(f"Using existing remote cluster context: {cluster.context}")
+        yield cluster
+        return
 
     root_tmp = tmp_path_factory.getbasetemp().parent
     lock_path = root_tmp / f".aiperf_cluster_{cluster.name}.lock"
@@ -866,12 +913,17 @@ def image_manager(
 async def built_images(
     image_manager: ImageManager,
     k8s_settings: K8sTestSettings,
+    local_cluster: LocalCluster,
 ) -> ImageManager:
     """Build all required Docker images.
 
     Always rebuilds to ensure the image matches the current source code.
     Use --k8s-skip-build to skip building (use existing images).
     """
+    if local_cluster.runtime == ClusterRuntime.EXISTING:
+        logger.info("Skipping image build (existing remote cluster)")
+        return image_manager
+
     if k8s_settings.skip_build:
         missing = [
             key
@@ -987,7 +1039,13 @@ async def jobset_controller(
     """Install the JobSet controller.
 
     This fixture is package-scoped and installs JobSet once per test package.
+    When targeting a remote cluster (skip_operator_deploy=True), the controller
+    is assumed to already be installed; we only verify it is ready.
     """
+    if k8s_settings.skip_operator_deploy:
+        await _ensure_jobset_controller_ready(kubectl)
+        return
+
     version = k8s_settings.jobset_version
     async with timed_operation(f"Installing JobSet controller {version}"):
         url = JOBSET_CRD_URL_TEMPLATE.format(version=version)
@@ -1030,14 +1088,33 @@ async def _ensure_jobset_controller_ready(kubectl: KubectlClient) -> None:
         raise RuntimeError("JobSet controller did not become available after restart")
 
 
-def _render_mock_server_manifest(template: str, image: str) -> str:
+def _render_mock_server_manifest(
+    template: str,
+    image: str,
+    pull_policy: str = "Never",
+    pull_secret: str | None = None,
+) -> str:
     """Render the configured mock-server image into its static test manifest."""
     if any(character.isspace() for character in image):
         raise ValueError("Mock server image reference must not contain whitespace")
     image_line = "          image: aiperf-mock-server:latest"
     if template.count(image_line) != 1:
         raise RuntimeError("Mock server manifest does not contain its expected image")
-    return template.replace(image_line, f"          image: {image}")
+    manifest = template.replace(image_line, f"          image: {image}")
+    # Also patch the imagePullPolicy line just below the image line
+    manifest = manifest.replace(
+        "          imagePullPolicy: Never",
+        f"          imagePullPolicy: {pull_policy}",
+    )
+    if pull_secret:
+        # Inject imagePullSecrets into the pod spec after the containers block ends
+        secret_block = f"      imagePullSecrets:\n        - name: {pull_secret}\n"
+        manifest = manifest.replace(
+            "      containers:\n",
+            f"{secret_block}      containers:\n",
+            1,
+        )
+    return manifest
 
 
 async def _mock_server_deployment_is_healthy(
@@ -1106,6 +1183,8 @@ async def mock_server(
                 manifest = _render_mock_server_manifest(
                     manifest_template,
                     k8s_settings.mock_server_image,
+                    pull_policy=k8s_settings.image_pull_policy,
+                    pull_secret=k8s_settings.image_pull_secret,
                 )
 
                 await kubectl.apply(manifest)
@@ -1439,11 +1518,15 @@ async def operator_deployer(
         project_root=project_root,
         operator_image=k8s_settings.aiperf_image,
         default_job_namespace=operator_job_namespace,
+        image_pull_policy=k8s_settings.image_pull_policy,
+        image_pull_secret=k8s_settings.image_pull_secret,
+        operator_namespace=k8s_settings.operator_namespace,
     )
 
-    # Install CRD (always needed)
-    async with timed_operation("Installing AIPerfJob CRD"):
-        await deployer.install_crd()
+    # Skip CRD install when using an existing remote cluster (CRDs already present)
+    if not k8s_settings.skip_operator_deploy:
+        async with timed_operation("Installing AIPerfJob CRD"):
+            await deployer.install_crd()
 
     # Ensure per-worker job namespace exists for xdist isolation.
     await kubectl.run("create", "namespace", operator_job_namespace, check=False)
@@ -1491,7 +1574,11 @@ async def operator_ready(
 
     yield operator_deployer
 
-    if not k8s_settings.skip_cleanup and not k8s_settings.reuse_cluster:
+    if (
+        not k8s_settings.skip_cleanup
+        and not k8s_settings.reuse_cluster
+        and not k8s_settings.skip_operator_deploy
+    ):
         async with timed_operation("Uninstalling operator"):
             await operator_deployer.uninstall_operator()
 
@@ -1504,6 +1591,10 @@ def small_operator_config(k8s_settings: K8sTestSettings) -> AIPerfJobConfig:
         request_count=10,
         warmup_request_count=2,
         image=k8s_settings.aiperf_image,
+        image_pull_policy=k8s_settings.image_pull_policy,
+        image_pull_secrets=[k8s_settings.image_pull_secret]
+        if k8s_settings.image_pull_secret
+        else [],
     )
 
 
@@ -1515,6 +1606,10 @@ def large_operator_config(k8s_settings: K8sTestSettings) -> AIPerfJobConfig:
         request_count=100,
         warmup_request_count=10,
         image=k8s_settings.aiperf_image,
+        image_pull_policy=k8s_settings.image_pull_policy,
+        image_pull_secrets=[k8s_settings.image_pull_secret]
+        if k8s_settings.image_pull_secret
+        else [],
     )
 
 
@@ -1547,6 +1642,10 @@ def small_operator_config_module(k8s_settings: K8sTestSettings) -> AIPerfJobConf
         request_count=10,
         warmup_request_count=2,
         image=k8s_settings.aiperf_image,
+        image_pull_policy=k8s_settings.image_pull_policy,
+        image_pull_secrets=[k8s_settings.image_pull_secret]
+        if k8s_settings.image_pull_secret
+        else [],
     )
 
 
