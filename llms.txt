@@ -448,6 +448,10 @@ profiler.
   (thread-per-core lanes, transport::http, UDS).
 - **How are prompts built without re-serializing?** `rust/runtime/src/dataset/segment.rs`
   (blake3 prefix-dependent dense handles) + `materialize.rs` (wire splice).
+  `--system-prompt`/`--system-prompt-file` resolve once into exact owned text;
+  `dataset/compose.rs` installs it after system hoisting and rebases descendants,
+  while Chat parses only a colliding leading lowered wire and Responses/Anthropic
+  use their native top-level system fields.
 - **How are generated media files served?**
   `src/aiperf/{common/environment.py,orchestrator/rust_wire.py}` (public settings
   and strict projection) → `rust/runtime/src/dataset/generator/` (publication seam) →
@@ -668,7 +672,7 @@ Inputs, endpoints, and graph:
   flags overlay only their targeted YAML-authored trace-synthesis fields while
   preserving the remaining YAML values and existing `baseten_trace` validation.
 - [`docs/specs/2026-08-25-native-verbatim-system-prompts.md`](docs/specs/2026-08-25-native-verbatim-system-prompts.md) —
-  designed origin #49 native port for startup-owned inline/file system prompts,
+  implemented origin #49 native port for startup-owned inline/file system prompts,
   post-hoist prefix identity, and OpenAI/Anthropic production payloads.
 - [`docs/specs/prompt-corpus.md`](docs/specs/prompt-corpus.md) — the shared `prompts.corpus`
   seam for synthetic, count/hash-based trace, and recorded-graph prompt synthesis over

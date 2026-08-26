@@ -1,6 +1,6 @@
 # Native Verbatim System Prompts
 
-Status: Designed
+Status: Implemented
 
 Author: Sol
 
@@ -64,11 +64,11 @@ read.
 ## Validation boundary
 
 A resolved prompt is legal only when the selected endpoint descriptor reports
-`consumes_system_message()`. This naturally admits native Chat Completions,
-Responses, Anthropic Messages, and Chat Embeddings and refuses endpoints whose
-wire contract has no system role. Validation uses the descriptor capability so
-new endpoint registrations fail closed unless they explicitly advertise the
-seam.
+`consumes_system_message()`. This admits native Chat Completions, Responses,
+Anthropic Messages, and Chat Embeddings and refuses endpoints whose wire
+contract has no system role. The capability is an explicit closed set of
+canonical descriptor IDs; new endpoint registrations fail closed until that
+set and its wire construction are intentionally extended together.
 
 For synthetic prefix policy, a verbatim prompt conflicts with:
 
@@ -122,8 +122,10 @@ format's composition/turn metrics would be a semantic regression.
 ## OpenAI-shaped request construction
 
 Chat request formatting takes the zero-extra-work path when no conversation
-system exists. When one exists, it renders the first message to a fresh mutable
-`Value` in both warmup and profiling:
+system exists. When one collides with a leading authored system message, warmup
+reuses its already rendered value and profiling parses only the one leading
+lowered wire into a fresh mutable `Value`; all non-colliding lowered wires stay
+splice-only:
 
 - leading system string: `custom + "\n\n" + authored`;
 - leading system content parts: insert one leading text part containing
