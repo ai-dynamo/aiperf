@@ -2,11 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use aiperf_runtime::endpoints::{
-    ChatEndpoint, CompletionsEndpoint, CreditPhase, EmbeddingsEndpoint, Endpoint, EndpointConfig,
-    EndpointType, ImageEditEndpoint, ImageRetrievalEndpoint, Media, ModelEndpoint,
-    RequestContentType, RequestInfo, RequestRecord, ResponseData, ResponsesEndpoint,
-    ServerResponse, Turn, VideoGenerationEndpoint,
+    ChatEmbeddingsEndpoint, ChatEndpoint, CompletionsEndpoint, CreditPhase, EmbeddingsEndpoint,
+    Endpoint, EndpointConfig, EndpointType, ImageEditEndpoint, ImageRetrievalEndpoint, Media,
+    MessagesEndpoint, ModelEndpoint, RealtimeEndpoint, RequestContentType, RequestInfo,
+    RequestRecord, ResponseData, ResponsesEndpoint, ServerResponse, Turn, VideoGenerationEndpoint,
 };
+use bytes::Bytes;
 use serde_json::{Map, Value, json};
 
 fn plan_body(plan: aiperf_runtime::body_plan::BodyPlan) -> Value {
@@ -199,6 +200,20 @@ fn metadata_and_config_validation_cover_registry_rules() {
 }
 
 #[test]
+fn system_message_capability_is_limited_to_upstream_supported_endpoints() {
+    assert!(ChatEndpoint.descriptor().consumes_system_message());
+    assert!(ResponsesEndpoint.descriptor().consumes_system_message());
+    assert!(MessagesEndpoint.descriptor().consumes_system_message());
+    assert!(
+        ChatEmbeddingsEndpoint
+            .descriptor()
+            .consumes_system_message()
+    );
+    assert!(!RealtimeEndpoint.descriptor().consumes_system_message());
+    assert!(!CompletionsEndpoint.descriptor().consumes_system_message());
+}
+
+#[test]
 fn chat_formatting_merges_and_preserves_usage_override() {
     let mut req = request(
         EndpointType::Chat,
@@ -234,6 +249,143 @@ fn chat_formatting_merges_and_preserves_usage_override() {
     assert_eq!(
         body["stream_options"],
         json!({"include_usage": false, "x": 1})
+    );
+}
+
+#[test]
+fn chat_merges_verbatim_prompt_into_authored_system_without_restacking() {
+    for phase in [CreditPhase::Profiling, CreditPhase::Warmup] {
+        let authored = vec![
+            json!({"role":"system","content":"authored system"}),
+            json!({"role":"user","content":"hi"}),
+        ];
+        let mut req = request(
+            EndpointType::Chat,
+            vec![Turn {
+                raw_messages: Some(authored.clone()),
+                ..Turn::default()
+            }],
+        );
+        req.system_message = Some("verbatim system".into());
+        req.credit_phase = phase;
+
+        let first = plan_body(ChatEndpoint.format_payload(&req).unwrap());
+        let second = plan_body(ChatEndpoint.format_payload(&req).unwrap());
+
+        assert_eq!(first, second);
+        assert_eq!(
+            first["messages"],
+            json!([
+                {"role":"system","content":"verbatim system\n\nauthored system"},
+                {"role":"user","content":"hi"}
+            ])
+        );
+        assert_eq!(req.turns[0].raw_messages.as_ref().unwrap(), &authored);
+    }
+}
+
+#[test]
+fn chat_leaves_authored_system_unchanged_without_a_verbatim_prompt() {
+    let authored = vec![
+        json!({"role":"system","content":"authored system"}),
+        json!({"role":"user","content":"hi"}),
+    ];
+    let req = request(
+        EndpointType::Chat,
+        vec![Turn {
+            raw_messages: Some(authored.clone()),
+            ..Turn::default()
+        }],
+    );
+
+    let body = plan_body(ChatEndpoint.format_payload(&req).unwrap());
+
+    assert_eq!(body["messages"], json!(authored));
+}
+
+#[test]
+fn chat_merges_after_an_empty_leading_message_delta() {
+    let mut req = request(
+        EndpointType::Chat,
+        vec![
+            Turn {
+                raw_messages: Some(Vec::new()),
+                ..Turn::default()
+            },
+            Turn {
+                lowered: Some(
+                    [
+                        Bytes::from_static(br#"{"role":"system","content":"authored system"}"#),
+                        Bytes::from_static(br#"{"role":"user","content":"hi"}"#),
+                    ]
+                    .into_iter()
+                    .collect(),
+                ),
+                ..Turn::default()
+            },
+        ],
+    );
+    req.system_message = Some("verbatim system".into());
+
+    let body = plan_body(ChatEndpoint.format_payload(&req).unwrap());
+
+    assert_eq!(
+        body["messages"],
+        json!([
+            {"role":"system","content":"verbatim system\n\nauthored system"},
+            {"role":"user","content":"hi"}
+        ])
+    );
+}
+
+#[test]
+fn chat_prepends_verbatim_prompt_to_list_shaped_system_content() {
+    let mut req = request(
+        EndpointType::Chat,
+        vec![Turn {
+            raw_messages: Some(vec![
+                json!({
+                    "role":"system",
+                    "content":[
+                        {"type":"text","text":"authored"},
+                        {"type":"image_url","image_url":{"url":"https://example/image.png"}}
+                    ]
+                }),
+                json!({"role":"user","content":"hi"}),
+            ]),
+            ..Turn::default()
+        }],
+    );
+    req.system_message = Some("verbatim system".into());
+
+    let body = plan_body(ChatEndpoint.format_payload(&req).unwrap());
+
+    assert_eq!(
+        body["messages"][0]["content"],
+        json!([
+            {"type":"text","text":"verbatim system"},
+            {"type":"text","text":"authored"},
+            {"type":"image_url","image_url":{"url":"https://example/image.png"}}
+        ])
+    );
+}
+
+#[test]
+fn chat_embeddings_carries_the_verbatim_prompt_as_a_system_message() {
+    let mut req = request(
+        EndpointType::ChatEmbeddings,
+        vec![text_turn("embedding input")],
+    );
+    req.system_message = Some("verbatim system".into());
+
+    let body = plan_body(ChatEmbeddingsEndpoint.format_payload(&req).unwrap());
+
+    assert_eq!(
+        body["messages"],
+        json!([
+            {"role":"system","content":"verbatim system"},
+            {"role":"user","content":"embedding input"}
+        ])
     );
 }
 

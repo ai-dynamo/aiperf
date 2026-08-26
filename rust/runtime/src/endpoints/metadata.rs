@@ -194,13 +194,8 @@ impl EndpointDescriptor {
     /// `EndpointMetadata.consumes_system_message`.
     pub fn consumes_system_message(self) -> bool {
         matches!(
-            self.legacy_type(),
-            Some(
-                EndpointType::Chat
-                    | EndpointType::Responses
-                    | EndpointType::Messages
-                    | EndpointType::ChatEmbeddings
-            )
+            self.id,
+            "chat" | "responses" | "messages" | "chat_embeddings"
         )
     }
 

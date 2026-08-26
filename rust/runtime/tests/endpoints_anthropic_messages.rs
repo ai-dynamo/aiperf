@@ -125,7 +125,7 @@ fn full_request_merge_order_and_omitted_false_stream_are_byte_exact() {
     ]));
     let mut request = request(vec![first, last], false);
     request.user_context_message = Some("ctx".into());
-    request.system_message = Some("ignored".into());
+    request.system_message = Some("custom system".into());
     request.model_endpoint.endpoint.extra = Some(Map::from_iter([
         ("temperature".into(), json!(0.8)),
         ("top_p".into(), json!(0.9)),
@@ -138,12 +138,69 @@ fn full_request_merge_order_and_omitted_false_stream_are_byte_exact() {
     let body: Value = serde_json::from_slice(&bytes).unwrap();
     assert!(body.get("stream").is_none());
     assert_eq!(body["temperature"], json!(0.2));
-    assert_eq!(body["system"][0]["cache_control"]["type"], "ephemeral");
+    assert_eq!(body["system"][1]["cache_control"]["type"], "ephemeral");
     assert_eq!(
         &bytes[..],
-        br#"{"model":"claude","messages":[{"role":"user","content":"ctx"},{"role":"user","content":"first"},{"role":"user","content":"second"}],"max_tokens":12,"system":[{"type":"text","text":"system","cache_control":{"type":"ephemeral"}}],"tools":[{"name":"lookup","description":"look up","input_schema":{"type":"object","properties":{"q":{"type":"string"}}}}],"temperature":0.2,"top_p":0.9,"top_k":7}"#
+        br#"{"model":"claude","messages":[{"role":"user","content":"ctx"},{"role":"user","content":"first"},{"role":"user","content":"second"}],"max_tokens":12,"system":[{"type":"text","text":"custom system"},{"type":"text","text":"system","cache_control":{"type":"ephemeral"}}],"tools":[{"name":"lookup","description":"look up","input_schema":{"type":"object","properties":{"q":{"type":"string"}}}}],"temperature":0.2,"top_p":0.9,"top_k":7}"#
             as &[u8]
     );
+}
+
+#[test]
+fn conversation_system_prompt_leads_raw_system_without_losing_authored_blocks() {
+    let authored_system = vec![
+        json!({
+            "type":"text",
+            "text":"authored",
+            "cache_control":{"type":"ephemeral"},
+            "vendor_extension":{"retained":true}
+        }),
+        json!({"type":"text","text":"second"}),
+    ];
+    let mut turn = text_turn("hi");
+    turn.raw_system = Some(authored_system.clone());
+    let mut request = request(vec![turn], false);
+    request.system_message = Some("verbatim system".into());
+
+    let first = plan_body(MessagesEndpoint.format_payload(&request).unwrap());
+    let second = plan_body(MessagesEndpoint.format_payload(&request).unwrap());
+
+    assert_eq!(first, second);
+    assert_eq!(
+        first["system"],
+        json!([
+            {"type":"text","text":"verbatim system"},
+            authored_system[0],
+            authored_system[1]
+        ])
+    );
+    assert_eq!(
+        request.turns[0].raw_system.as_ref().unwrap(),
+        &authored_system
+    );
+}
+
+#[test]
+fn raw_and_conversation_system_fallback_shapes_are_preserved() {
+    let authored_system = vec![json!({
+        "type":"text",
+        "text":"authored",
+        "cache_control":{"type":"ephemeral"}
+    })];
+    let mut raw_turn = text_turn("hi");
+    raw_turn.raw_system = Some(authored_system.clone());
+
+    let raw_only = plan_body(
+        MessagesEndpoint
+            .format_payload(&request(vec![raw_turn], false))
+            .unwrap(),
+    );
+    assert_eq!(raw_only["system"], json!(authored_system));
+
+    let mut conversation_only = request(vec![text_turn("hi")], false);
+    conversation_only.system_message = Some("verbatim system".into());
+    let conversation_only = plan_body(MessagesEndpoint.format_payload(&conversation_only).unwrap());
+    assert_eq!(conversation_only["system"], "verbatim system");
 }
 
 #[test]
