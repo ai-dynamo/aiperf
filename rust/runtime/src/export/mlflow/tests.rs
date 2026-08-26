@@ -174,6 +174,108 @@ fn metric_payload_key_scheme_matches_python() {
 }
 
 #[test]
+fn summary_series_selection_prefers_unique_unlabeled_aggregate() {
+    let mut report = sample_report();
+    report.metrics.insert(
+        "mixed_series".to_string(),
+        MetricEntry {
+            metric_type: "scalar",
+            unit: "ms".to_string(),
+            group: "default",
+            higher_is_better: false,
+            series: vec![
+                MetricSeries {
+                    labels: Some(BTreeMap::from([("model".to_string(), "a".to_string())])),
+                    endpoint_url: None,
+                    stats: ReportStats::Scalar(ReportScalarStats {
+                        value: ReportValue::Finite(1.0),
+                    }),
+                    timeslices: Vec::new(),
+                },
+                MetricSeries {
+                    labels: None,
+                    endpoint_url: None,
+                    stats: ReportStats::Scalar(ReportScalarStats {
+                        value: ReportValue::Finite(2.0),
+                    }),
+                    timeslices: Vec::new(),
+                },
+            ],
+        },
+    );
+
+    let payload = build_metric_payload(&report, &sample_config("http://unused"));
+
+    assert_eq!(payload.get("mixed_series"), Some(&2.0));
+}
+
+#[test]
+fn summary_series_selection_skips_missing_or_ambiguous_aggregates() {
+    let mut report = sample_report();
+    let scalar = |value: &str| MetricSeries {
+        labels: Some(BTreeMap::from([("model".to_string(), value.to_string())])),
+        endpoint_url: None,
+        stats: ReportStats::Scalar(ReportScalarStats {
+            value: ReportValue::Finite(1.0),
+        }),
+        timeslices: Vec::new(),
+    };
+    report.metrics.insert(
+        "labeled_only".to_string(),
+        MetricEntry {
+            metric_type: "scalar",
+            unit: "ms".to_string(),
+            group: "default",
+            higher_is_better: false,
+            series: vec![scalar("a"), scalar("b")],
+        },
+    );
+    report.metrics.insert(
+        "ambiguous".to_string(),
+        MetricEntry {
+            metric_type: "scalar",
+            unit: "ms".to_string(),
+            group: "default",
+            higher_is_better: false,
+            series: vec![
+                MetricSeries {
+                    labels: None,
+                    endpoint_url: None,
+                    stats: ReportStats::Scalar(ReportScalarStats {
+                        value: ReportValue::Finite(1.0),
+                    }),
+                    timeslices: Vec::new(),
+                },
+                MetricSeries {
+                    labels: None,
+                    endpoint_url: None,
+                    stats: ReportStats::Scalar(ReportScalarStats {
+                        value: ReportValue::Finite(2.0),
+                    }),
+                    timeslices: Vec::new(),
+                },
+            ],
+        },
+    );
+    report.metrics.insert(
+        "sole_labeled".to_string(),
+        MetricEntry {
+            metric_type: "scalar",
+            unit: "ms".to_string(),
+            group: "default",
+            higher_is_better: false,
+            series: vec![scalar("only")],
+        },
+    );
+
+    let payload = build_metric_payload(&report, &sample_config("http://unused"));
+
+    assert!(!payload.contains_key("labeled_only"));
+    assert!(!payload.contains_key("ambiguous"));
+    assert_eq!(payload.get("sole_labeled"), Some(&1.0));
+}
+
+#[test]
 fn tag_payload_matches_python() {
     // System tags precede user tags.
     let report = sample_report();

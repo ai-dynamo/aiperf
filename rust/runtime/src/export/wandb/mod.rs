@@ -59,7 +59,7 @@ use std::time::Duration;
 use anyhow::Context;
 use chrono::{Datelike, Timelike, Utc};
 
-use crate::export::{ExportConfig, Exporter};
+use crate::export::{ExportConfig, Exporter, SummarySeries, summary_series};
 use crate::metrics_core::{MetricEntry, NativeReport, ReportStats, ReportValue};
 
 /// Summary table stat columns.
@@ -375,7 +375,26 @@ fn build_metric_rows(report: &NativeReport) -> Vec<MetricRow> {
         .metrics
         .iter()
         .filter_map(|(name, entry)| {
-            let stats = entry.series.first().map(|s| &s.stats)?;
+            let stats = match summary_series(&entry.series) {
+                SummarySeries::Selected(series) => &series.stats,
+                SummarySeries::Empty => return None,
+                SummarySeries::NoAggregate => {
+                    tracing::debug!(
+                        metric = %name,
+                        reason = "no_aggregate",
+                        "skipping exporter metric without a unique summary series"
+                    );
+                    return None;
+                }
+                SummarySeries::Ambiguous => {
+                    tracing::debug!(
+                        metric = %name,
+                        reason = "ambiguous",
+                        "skipping exporter metric without a unique summary series"
+                    );
+                    return None;
+                }
+            };
             let mut cells = [None; STAT_COLUMN_KEYS.len()];
             for (i, key) in STAT_COLUMN_KEYS.iter().enumerate() {
                 cells[i] = stat_value(stats, key).map(round2);
