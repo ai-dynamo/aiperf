@@ -325,7 +325,7 @@ impl AIPerfHarness {
 
     /// Run `aiperf profile <args> --artifact-dir <dir> --tokenizer <model>`.
     pub fn run(&self, profile_args: &str) -> RunResult {
-        self.run_timeout(profile_args, DEFAULT_TIMEOUT_SECS)
+        self.run_in_artifact_dir(profile_args, self.artifact_path())
     }
 
     /// Run a profile into a named child of this harness's artifact directory.
@@ -336,31 +336,60 @@ impl AIPerfHarness {
 
     /// Like [`run`](Self::run) but with an explicit timeout in seconds.
     pub fn run_timeout(&self, profile_args: &str, secs: u64) -> RunResult {
+        self.run_timeout_in_artifact_dir(profile_args, secs, self.artifact_path())
+    }
+
+    /// Run a profile into an explicit artifact directory.
+    ///
+    /// Parity callers use a distinct directory per engine so the second process
+    /// cannot overwrite the first process's raw-record artifact.
+    pub fn run_in_artifact_dir(&self, profile_args: &str, artifact_dir: &Path) -> RunResult {
+        self.run_timeout_in_artifact_dir(profile_args, DEFAULT_TIMEOUT_SECS, artifact_dir)
+    }
+
+    /// Like [`run_in_artifact_dir`](Self::run_in_artifact_dir) with an explicit timeout.
+    pub fn run_timeout_in_artifact_dir(
+        &self,
+        profile_args: &str,
+        secs: u64,
+        artifact_dir: &Path,
+    ) -> RunResult {
         let mut args = vec!["profile".to_string()];
         args.extend(shell_split(profile_args));
         args.push("--artifact-dir".to_string());
-        args.push(self.artifact_path().display().to_string());
+        args.push(artifact_dir.display().to_string());
         // An explicit tokenizer always takes precedence over the harness default.
         if !args.iter().any(|a| a == "--tokenizer") {
             args.push("--tokenizer".to_string());
             args.push(default_tokenizer());
         }
-        self.exec(args, secs)
+        self.exec_into_artifact_dir(args, secs, &[], artifact_dir)
     }
 
     /// Like [`run`](Self::run) but with extra environment variables set on the
     /// `aiperf` subprocess. Applies [`run`](Self::run)'s tokenizer and artifact
     /// arguments.
     pub fn run_env(&self, profile_args: &str, extra_env: &[(&str, &str)]) -> RunResult {
+        self.run_env_in_artifact_dir(profile_args, extra_env, self.artifact_path())
+    }
+
+    /// Like [`run_in_artifact_dir`](Self::run_in_artifact_dir), with extra
+    /// environment variables set on the profile subprocess.
+    pub fn run_env_in_artifact_dir(
+        &self,
+        profile_args: &str,
+        extra_env: &[(&str, &str)],
+        artifact_dir: &Path,
+    ) -> RunResult {
         let mut args = vec!["profile".to_string()];
         args.extend(shell_split(profile_args));
         args.push("--artifact-dir".to_string());
-        args.push(self.artifact_path().display().to_string());
+        args.push(artifact_dir.display().to_string());
         if !args.iter().any(|a| a == "--tokenizer") {
             args.push("--tokenizer".to_string());
             args.push(default_tokenizer());
         }
-        self.exec_env(args, DEFAULT_TIMEOUT_SECS, extra_env)
+        self.exec_into_artifact_dir(args, DEFAULT_TIMEOUT_SECS, extra_env, artifact_dir)
     }
 
     /// Like [`run_in`](Self::run_in) with extra subprocess environment values.
@@ -401,7 +430,18 @@ impl AIPerfHarness {
         timeout_secs: u64,
         extra_env: &[(&str, &str)],
     ) -> RunResult {
-        // The Python frontend owns the `AIPERF_RUNTIME_ENGINE=python` selector.
+        self.exec_into_artifact_dir(args, timeout_secs, extra_env, self.artifact_path())
+    }
+
+    fn exec_into_artifact_dir(
+        &self,
+        args: Vec<String>,
+        timeout_secs: u64,
+        extra_env: &[(&str, &str)],
+        artifact_dir: &Path,
+    ) -> RunResult {
+        // The Python frontend owns the `AIPERF_RUNTIME_ENGINE=python` selector;
+        // exact-upstream oracles may name an older executable module explicitly.
         let python_module = extra_env
             .iter()
             .find(|(key, _)| *key == "AIPERF_E2E_PYTHON_MODULE")
@@ -489,7 +529,7 @@ impl AIPerfHarness {
             stdout,
             stderr,
             artifacts: ArtifactReader {
-                dir: self.artifact_path().to_path_buf(),
+                dir: artifact_dir.to_path_buf(),
             },
         }
     }
