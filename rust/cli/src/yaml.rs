@@ -3742,6 +3742,28 @@ benchmark:
         );
     }
 
+    #[test]
+    fn random_pool_yaml_batch_sizes_reject_the_effective_file_format() {
+        for (dataset, effective_format) in [
+            (
+                "type: file\n      path: /tmp/trace.jsonl\n      format: mooncake_trace",
+                "mooncake_trace",
+            ),
+            ("type: file\n      path: /tmp/turns.jsonl", "single_turn"),
+        ] {
+            let error = resolve_str(
+                &cfg(&format!(
+                    "  endpoint: {{type: chat, url: http://127.0.0.1:8080}}\n  dataset:\n      {dataset}\n      audio: {{batchSize: 2}}\n  phases: {{type: concurrency, requests: 1, concurrency: 1}}\n"
+                )),
+                Some("/tmp/x".into()),
+            )
+            .expect_err("random-pool YAML batch size must reject another file format");
+            let message = error.to_string();
+            assert!(message.contains("random_pool"), "{message}");
+            assert!(message.contains(effective_format), "{message}");
+        }
+    }
+
     /// Increment A guard: an explicitly-set operational bool flag (`--streaming`)
     /// now overlays a YAML-authored endpoint, while an unset flag leaves the
     /// config value intact (byte-identical to no overlay).

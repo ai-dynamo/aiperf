@@ -658,6 +658,59 @@ mod tests {
         }
     }
 
+    #[test]
+    fn zero_batch_suppresses_each_modality_independently() {
+        let entry = PoolEntry::parse(
+            json!({
+                "text": "alpha",
+                "image": "one.png",
+                "audio": "one.wav",
+                "video": "one.mp4"
+            }),
+            &"fixture",
+        )
+        .unwrap();
+        let pools = BTreeMap::from([("<inline>".to_string(), vec![entry])]);
+
+        for disabled in [
+            MediaKind::Text,
+            MediaKind::Image,
+            MediaKind::Audio,
+            MediaKind::Video,
+        ] {
+            let mut batches = BatchSizes {
+                text: 1,
+                image: 1,
+                audio: 1,
+                video: 1,
+            };
+            match disabled {
+                MediaKind::Text => {
+                    batches.text = 0;
+                    batches.image = 2;
+                }
+                MediaKind::Image => {
+                    batches.image = 0;
+                    batches.text = 2;
+                }
+                MediaKind::Audio => {
+                    batches.audio = 0;
+                    batches.text = 2;
+                }
+                MediaKind::Video => {
+                    batches.video = 0;
+                    batches.text = 2;
+                }
+            }
+            let mut rng = RngRoot::new(Some(11)).derive_generator("test");
+            let groups = sample_flattened(&pools, 1, batches, &mut rng).unwrap();
+            assert!(
+                groups[0].iter().all(|group| group.kind != disabled),
+                "{disabled:?} was not suppressed"
+            );
+        }
+    }
+
     #[tokio::test]
     async fn real_jsonl_text_batch_reaches_composed_groups() {
         let directory = tempfile::tempdir().unwrap();
