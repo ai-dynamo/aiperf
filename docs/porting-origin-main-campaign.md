@@ -64,7 +64,7 @@ implementation, test run, or review.
 | 36 | `6480e5467f` | synthesis YAML overrides | complete | applicable | Merged in `445e2ec4d7`; native CLI-over-YAML overlay, resolver and CLI-path integration tests, exact upstream merge ancestry, and Graham approval recorded. |
 | 37 | `23ed221c3d` | CI speed | complete | not-applicable | Exact upstream merge completed on `ajc/port-origin-037`; Python harness regression passed and no Rust test candidate exists. Closure: `docs/origin-main-findings/commit-037-23ed221c3d.md`. |
 | 38 | `c26fe88bd8` | AgentX FAQ | complete | not-applicable | Merged in `233b71c98b`; closure: `docs/origin-main-findings/commit-038-c26fe88bd8.md`. |
-| 39 | `1e32a51318` | Baseten load performance | rust-porting | applicable | Exact merge `da917561fb`; projected typed native loader, 17 focused tests, public adapter parity, and measured 19.4% median time / 25.1% median RSS reduction are green. Fresh Graham review pending. |
+| 39 | `1e32a51318` | Baseten load performance | complete | applicable | Exact merge `da917561fb`; projected typed native loader, 17 focused tests, public adapter parity, measured 19.4% median time / 25.1% median RSS reduction, and independent Graham approval recorded. |
 | 40 | `215be05b6a` | Baseten outcome fidelity | pending | applicable | Only `duration_ttft_ms` and `cached_tokens_reference` remain missing. |
 | 41 | `516faa12c8` | CODEOWNERS | pending | not-applicable | Repository metadata. |
 | 42 | `ce453582c7` | CONTRIBUTING spelling | pending | not-applicable | Documentation only. |

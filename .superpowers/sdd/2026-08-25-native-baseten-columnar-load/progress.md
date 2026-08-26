@@ -102,5 +102,7 @@ formatting for every changed Rust file is clean.
 - `59ae696f21` — narrowed and documented Arrow IPC authored-batch decode bound.
 
 The first independent Graham review returned Important findings. Every finding
-has a RED-to-GREEN repair in the commits above. Fresh independent Graham review
-is required before closure and will be recorded in `graham-review.md`.
+has a RED-to-GREEN repair in the commits above. An independent fresh review then
+made two focused passes over `da917561fb..8e6a45372b` and reported
+`GRAHAM APPROVED` with no findings and no unresolved Critical or Important
+finding. The full review scope and verdict are recorded in `graham-review.md`.
