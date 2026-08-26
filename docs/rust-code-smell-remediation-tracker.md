@@ -81,7 +81,7 @@ Graham review and a commit.
 | C11 | Graph-runtime panic leaks idle accounting | Confirmed; spec needed | Sol implementation plan |
 | C14a | YAML accepts boolean `artifacts.records` outside the contract | Complete — `1999e28b54`, `55ce407c1d` | Independent Graham approved; isolated behavioral RED→GREEN and 42 YAML tests green |
 | C14b | YAML accepts unsupported schema versions | Confirmed; spec needed | Sol implementation plan |
-| C18 | MLflow/W&B mishandle mixed labeled and unlabeled report series | Confirmed; spec needed | Sol implementation plan |
+| C18 | MLflow/W&B mishandle mixed labeled and unlabeled report series | Complete — `b98d0b4b8f` | Independent Graham approved; four-case RED→GREEN and exporter suites green |
 | C19 | Parquet histogram schema drifts across samples | Confirmed; spec needed | Sol implementation plan |
 | C20 | Dataset-analysis writer loses flush failures | Complete — `ed39aac8a4` | Independent Graham approved; dataset-analysis JSON tests green |
 | C24 | Slot release during a decrease can over-admit | Confirmed; spec needed | Sol implementation plan |
@@ -90,6 +90,11 @@ Graham review and a commit.
 | B01 | AgentX integration fixtures omit required cache-bust option | Complete — `91b65b2044` | Independent Graham approved; compile regression green |
 
 ## Progress log
+
+- 2026-08-26: Completed C18. MLflow and W&B now share the same series
+  selection rule: use the unique unlabeled aggregate when labels are mixed,
+  and avoid emitting misleading labeled-only metrics. Independent Graham review
+  passed the MLflow (10) and W&B (12) suites.
 
 - 2026-08-26: Completed C14a. `artifacts.records` now accepts only a format
   list or `false`; `true` is rejected rather than silently disabling records.
