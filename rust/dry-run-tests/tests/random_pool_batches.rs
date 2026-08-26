@@ -13,10 +13,7 @@ fn yaml_text_batch_reaches_the_real_random_pool_loader() {
     let path = files.path().join("pool.jsonl");
     std::fs::write(
         &path,
-        concat!(
-            "{\"text\":\"alpha\"}\n",
-            "{\"text\":\"beta\"}\n",
-        ),
+        concat!("{\"text\":\"alpha\"}\n", "{\"text\":\"beta\"}\n",),
     )
     .expect("write random-pool fixture");
     let yaml = format!(
@@ -67,4 +64,24 @@ benchmark:
     let payload = raw[0]["payload"].to_string();
     let sampled_items = payload.matches("alpha").count() + payload.matches("beta").count();
     assert_eq!(sampled_items, 3, "batched request payload: {payload}");
+}
+
+#[test]
+fn documented_multimodal_pool_contains_images() {
+    let documentation = include_str!("../../../docs/tutorials/custom-dataset.md");
+    let marker = "cat > multimodal_pool.jsonl << 'EOF'\n";
+    let fixture = documentation
+        .split_once(marker)
+        .expect("multimodal random-pool heredoc")
+        .1
+        .split_once("\nEOF")
+        .expect("multimodal random-pool heredoc terminator")
+        .0;
+    let rows = fixture
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).expect("documented JSON row"))
+        .collect::<Vec<_>>();
+    assert!(!rows.is_empty());
+    assert!(rows.iter().all(|row| row["image"].is_string()));
 }
