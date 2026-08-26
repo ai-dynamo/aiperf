@@ -60,7 +60,7 @@ Graham review and a commit.
 | E01 | Velo route registration does not bind signed peer identity | Complete | Integrated `ef7b966238`, `56e35146bb`; independent Graham r2 PASS |
 | E02 | Externally-driven evaluation skips preflight | Complete — `b488309a2c` | Independent Graham approved; RED→GREEN pre-side-effect Docker-capability coverage recorded |
 | E03 | NativeGraph execution ignores agent timeout | Confirmed; spec ready | Sol implementation plan |
-| E04 | Abort still starts ready tool nodes | Confirmed; spec ready | Sol implementation plan |
+| E04 | Abort still starts ready tool nodes | Already fixed — `dfa0043510`, `af44cb48ef` | Duplicate of completed C10; independent Graham approval and behavioral RED→GREEN evidence are recorded in `6bc3f9f988` |
 | E05 | Closed-worker credit return can hang drain | Confirmed; spec ready | Sol implementation plan |
 | E06 | Sidecar setup/finish failures leak siblings | Complete | Integrated `bb5e3fe5ff`, `bb23c66b39`; independent Graham PASS |
 | E07 | Global-push cancellation is misclassified as transport failure | Complete | Integrated `82bf74990c`; independent Graham PASS |
@@ -90,6 +90,12 @@ Graham review and a commit.
 | B01 | AgentX integration fixtures omit required cache-bust option | Complete — `91b65b2044` | Independent Graham approved; compile regression green |
 
 ## Progress log
+
+- 2026-08-26: Reconciled E04 to completed C10. The E04 requirement is the
+  same pre-abort, in-flight-abort, and no-post-abort-publication behavior
+  implemented by `dfa0043510` and `af44cb48ef`; C10 already has independent
+  Graham approval and deterministic execution-level coverage. No duplicate
+  production change is required.
 
 - 2026-08-26: Completed S13. Raw HTTP graph transport benchmarking is now an
   explicit non-default feature, while the transport-neutral graph report type
