@@ -70,13 +70,13 @@ Run: `CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-run
 #[async_trait(?Send)]
 impl StreamingSessionCoordinator for StreamingConversationCoordinator {
     async fn ingest(&mut self, fragment: StreamingSessionFragment, output: &mut dyn DatasetActionSink)
-        -> Result<(), SessionCoordinatorError>;
+        -> Result<(), SessionCoordinatorError> { self.ingest_mutation(fragment, output).await }
     async fn advance_watermark(&mut self, watermark: SessionWatermark, output: &mut dyn DatasetActionSink)
-        -> Result<(), SessionCoordinatorError>;
+        -> Result<(), SessionCoordinatorError> { self.apply_watermark(watermark, output).await }
     async fn observe_execution(&mut self, event: ActionExecutionEvent, output: &mut dyn DatasetActionSink)
-        -> Result<(), SessionCoordinatorError>;
+        -> Result<(), SessionCoordinatorError> { self.apply_execution(event, output).await }
     async fn seal(&mut self, seal: SourceSeal, output: &mut dyn DatasetActionSink)
-        -> Result<SessionSealReceipt, SessionCoordinatorError>;
+        -> Result<SessionSealReceipt, SessionCoordinatorError> { self.seal_explicit(seal, output).await }
 }
 ```
 

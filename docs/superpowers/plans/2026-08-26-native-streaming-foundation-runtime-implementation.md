@@ -337,7 +337,7 @@ In `unit.rs`, define the initial closed host vocabulary:
 #[serde(rename_all = "snake_case")]
 pub enum DatasetActionKind { Request, GraphNode, SessionTerminal }
 
-#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum SessionMutationV1 {
     ConversationTurn(ConversationTurnFragment),
@@ -347,12 +347,18 @@ pub enum SessionMutationV1 {
     SessionClose(SessionCloseFragment),
 }
 
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
 pub struct ConversationTurnFragment { pub role: String, pub content: Vec<u8>, pub turn_ordinal: u64 }
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
 pub struct AgentEventFragment { pub event_kind: String, pub payload: Vec<u8>, pub event_ordinal: u64 }
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
 pub struct GraphNodeFragment { pub node_key: String, pub request: Vec<u8> }
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
 pub struct GraphEdgeFragment { pub from: String, pub to: String }
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
 pub struct SessionCloseFragment { pub reason: String }
 
+#[derive(Debug)]
 pub struct SessionFragmentLease { _private: () }
 
 #[derive(Debug)]

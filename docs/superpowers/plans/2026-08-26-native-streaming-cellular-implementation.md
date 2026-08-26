@@ -393,7 +393,7 @@ pub struct StickySessionPlacement {
 
 impl StreamingPlacementPolicy for StickySessionPlacement {
     fn place(&mut self, action: &OrderedDatasetAction)
-        -> Result<PlacementDecision, PlacementError>;
+        -> Result<PlacementDecision, PlacementError> { self.place_sticky(action) }
 }
 
 pub(crate) async fn release_at_controller_target(
@@ -401,13 +401,17 @@ pub(crate) async fn release_at_controller_target(
     target_ns: i64,
     submitter: &mut CellularPlacementSubmitter,
     handle: PlacementHandleId,
-) -> Result<(), PlacementError>;
+) -> Result<(), PlacementError> {
+    let delay = target_ns.checked_sub(clock.now_ns()).ok_or(PlacementError::TargetOverflow)?;
+    clock.clone().sleep(delay).await;
+    submitter.release(handle).await
+}
 
 impl CellularExecutionEndpoint {
     pub(crate) async fn accept_prepare(&mut self, command: PrepareAction)
-        -> Result<PlacementPreparedReceipt, CellularStreamingError>;
+        -> Result<PlacementPreparedReceipt, CellularStreamingError> { self.stage_without_issue(command).await }
     pub(crate) async fn accept_release(&mut self, command: ReleaseAction)
-        -> Result<PlacementReleasedReceipt, CellularStreamingError>;
+        -> Result<PlacementReleasedReceipt, CellularStreamingError> { self.issue_if_fenced(command).await }
 }
 ```
 
@@ -484,7 +488,9 @@ impl StickySessionPlacement {
         session: StableSessionKey,
         destination: u32,
         checkpoint: &mut StreamingCheckpointCoordinator,
-    ) -> Result<SessionOwnershipEpoch, PlacementError>;
+    ) -> Result<SessionOwnershipEpoch, PlacementError> {
+        self.migrate_through_checkpoint(session, destination, checkpoint).await
+    }
 }
 ```
 
