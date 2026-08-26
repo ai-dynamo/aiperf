@@ -1113,6 +1113,56 @@ def _parse_node_selector(raw: str | None) -> dict[str, str]:
     return result
 
 
+async def _copy_pull_secret_to_namespace(
+    kubectl: KubectlClient, secret_name: str, target_namespace: str
+) -> None:
+    """Copy ``secret_name`` from any accessible namespace into ``target_namespace``."""
+    import re
+
+    existing = await kubectl.run(
+        "get", "secret", secret_name, "-n", target_namespace, check=False
+    )
+    if existing.returncode == 0:
+        logger.info(f"Pull secret {secret_name!r} already in {target_namespace!r}")
+        return
+
+    ns_list = await kubectl.run(
+        "get", "namespaces", "-o", "jsonpath={.items[*].metadata.name}", check=False
+    )
+    if ns_list.returncode != 0:
+        logger.warning(
+            f"Cannot list namespaces; pull secret {secret_name!r} may be missing "
+            f"in {target_namespace!r}"
+        )
+        return
+
+    for ns in ns_list.stdout.strip().split():
+        if ns == target_namespace:
+            continue
+        fetch = await kubectl.run(
+            "get", "secret", secret_name, "-n", ns, "-o", "yaml", check=False
+        )
+        if fetch.returncode != 0:
+            continue
+        raw = fetch.stdout
+        raw = re.sub(r"\n\s+namespace:.*", "", raw)
+        raw = re.sub(r"\n\s+resourceVersion:.*", "", raw)
+        raw = re.sub(r"\n\s+uid:.*", "", raw)
+        raw = re.sub(r"\n\s+creationTimestamp:.*", "", raw)
+        logger.info(
+            f"Copying pull secret {secret_name!r} from {ns!r} → {target_namespace!r}"
+        )
+        try:
+            await kubectl.apply(raw, namespace=target_namespace)
+            return
+        except RuntimeError as exc:
+            logger.warning(f"Failed to copy pull secret from {ns!r}: {exc}")
+
+    logger.warning(
+        f"Pull secret {secret_name!r} not found in any namespace; image pull may fail"
+    )
+
+
 def _render_mock_server_manifest(
     template: str,
     image: str,
@@ -1209,6 +1259,11 @@ async def mock_server(
             flag_path.touch()
         else:
             async with timed_operation("Deploying mock LLM server"):
+                # Ensure pull secret exists in default namespace for mock server pods.
+                if k8s_settings.image_pull_secret:
+                    await _copy_pull_secret_to_namespace(
+                        kubectl, k8s_settings.image_pull_secret, "default"
+                    )
                 manifest_path = project_root / "dev" / "deploy" / "mock-server.yaml"
                 manifest_template = safe_read_template_path(str(manifest_path))
                 if manifest_template is None:
@@ -1569,8 +1624,8 @@ async def operator_deployer(
 
     # Copy pull secret into the job namespace so pods can pull registry images.
     if k8s_settings.image_pull_secret:
-        await deployer.ensure_pull_secret_in_namespace(
-            k8s_settings.image_pull_secret, operator_job_namespace
+        await _copy_pull_secret_to_namespace(
+            kubectl, k8s_settings.image_pull_secret, operator_job_namespace
         )
 
     yield deployer
