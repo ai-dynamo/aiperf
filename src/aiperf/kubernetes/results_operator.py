@@ -132,6 +132,26 @@ def _get_with_request_timeout(
     return session.get(url)
 
 
+async def _read_json_maybe_gzip(resp: aiohttp.ClientResponse) -> object:
+    """Parse a JSON response when the session has ``auto_decompress=False``.
+
+    ``_download_session`` disables aiohttp's transparent decompression so that
+    binary artifact bodies can be streamed and decompressed by us with the
+    correct algorithm.  JSON listing/metadata endpoints on the same session
+    still negotiate ``Content-Encoding: gzip`` (aiohttp always sends
+    ``Accept-Encoding`` regardless of ``auto_decompress``), so the raw bytes
+    can arrive as gzip — ``resp.json()`` would then try to UTF-8 decode the
+    gzip magic bytes and raise ``UnicodeDecodeError``.  This helper reads the
+    raw body, decompresses when necessary, and returns the parsed object.
+    """
+    import gzip as _gzip
+
+    raw = await resp.read()
+    if resp.headers.get("Content-Encoding") == "gzip":
+        raw = _gzip.decompress(raw)
+    return orjson.loads(raw)
+
+
 async def _download_and_decompress(
     response: aiohttp.ClientResponse,
     dest_path: Path,
@@ -345,7 +365,7 @@ async def _list_operator_files(
                 print_error(f"No results stored for {namespace}/{job_id}")
                 return None
             resp.raise_for_status()
-            list_data = await resp.json(loads=orjson.loads)
+            list_data = await _read_json_maybe_gzip(resp)
     except aiohttp.ClientError as e:
         print_error(f"Failed to list results: {e}")
         return None
@@ -393,7 +413,7 @@ async def _resolve_operator_run(
                 print_error(f"No runs found for {namespace}/{job_id}")
                 return None
             resp.raise_for_status()
-            payload = await resp.json(loads=orjson.loads)
+            payload = await _read_json_maybe_gzip(resp)
     except aiohttp.ClientError as e:
         print_error(f"Failed to resolve latest run: {e}")
         return None
@@ -575,7 +595,7 @@ async def _list_sweep_operator_files(
                 )
                 return None
             resp.raise_for_status()
-            list_data = await resp.json(loads=orjson.loads)
+            list_data = await _read_json_maybe_gzip(resp)
     except aiohttp.ClientError as e:
         print_warning(f"Failed to list sweep aggregate artifacts: {e}")
         return None
