@@ -26,6 +26,13 @@ use super::submission::{
 /// Maximum bounded reconnects a streaming command performs before failing.
 const MAX_WATCH_RECONNECTS: u32 = 5;
 
+/// Interval between `aiperf kube sweep --watch` status polls.
+const SWEEP_WATCH_POLL_INTERVAL: Duration = Duration::from_secs(2);
+/// Bound on `--watch` status polls, roughly ten minutes at the interval above.
+const MAX_SWEEP_WATCH_POLLS: u32 = 300;
+/// Emit one progress debug line every this many `--watch` polls.
+const SWEEP_WATCH_LOG_EVERY: u32 = 15;
+
 const RESULTS_API_PORT: u16 = 8080;
 const DEFAULT_OPERATOR_NAMESPACE: &str = "aiperf-system";
 const DEFAULT_OPERATOR_SERVICE: &str = "aiperf-k8s-operator";
@@ -764,6 +771,10 @@ fn run_sweep(args: &[String]) -> anyhow::Result<i32> {
 }
 
 /// Poll the AIPerfSweep CR until its phase reaches `Completed` or `Failed`.
+///
+/// Bounded by `MAX_SWEEP_WATCH_POLLS` at `SWEEP_WATCH_POLL_INTERVAL` so a sweep
+/// that never reaches a terminal phase surfaces an error instead of hanging the
+/// CLI forever.
 fn watch_sweep(client: &KubeClient, namespace: &str, run_id: &str) -> anyhow::Result<()> {
     use super::client::{AIPERF_GROUP, AIPERF_VERSION};
     use super::sweep_controller::AIPERFSWEEPS_PLURAL;
@@ -771,7 +782,7 @@ fn watch_sweep(client: &KubeClient, namespace: &str, run_id: &str) -> anyhow::Re
     let path = format!(
         "/apis/{AIPERF_GROUP}/{AIPERF_VERSION}/namespaces/{namespace}/{AIPERFSWEEPS_PLURAL}/{run_id}"
     );
-    loop {
+    for poll in 0..MAX_SWEEP_WATCH_POLLS {
         let response = client.execute("GET", &path, "", Vec::new())?;
         if !response.is_success() {
             anyhow::bail!("sweep status poll returned HTTP {}", response.status);
@@ -794,11 +805,23 @@ fn watch_sweep(client: &KubeClient, namespace: &str, run_id: &str) -> anyhow::Re
             "native Kubernetes sweep: phase={phase} completedRuns={completed} failedRuns={failed}"
         );
         if matches!(phase, "Completed" | "Failed") {
-            break;
+            return Ok(());
         }
-        std::thread::sleep(std::time::Duration::from_secs(2));
+        if poll % SWEEP_WATCH_LOG_EVERY == 0 {
+            tracing::debug!(
+                phase,
+                poll,
+                elapsed_secs = poll as u64 * SWEEP_WATCH_POLL_INTERVAL.as_secs(),
+                component = "kube-sweep-watch",
+                "sweep has not reached a terminal phase"
+            );
+        }
+        std::thread::sleep(SWEEP_WATCH_POLL_INTERVAL);
     }
-    Ok(())
+    anyhow::bail!(
+        "sweep {run_id} did not reach a terminal phase within {} seconds",
+        MAX_SWEEP_WATCH_POLLS as u64 * SWEEP_WATCH_POLL_INTERVAL.as_secs()
+    )
 }
 
 /// Resolve kubeconfig/context/token selection from the command's arguments.
@@ -950,6 +973,9 @@ fn help() -> anyhow::Result<i32> {
     );
     println!(
         "aiperf kube dashboard [--namespace <namespace>] [--port <port>] [--operator-service <name>] [--operator-namespace <namespace>]"
+    );
+    println!(
+        "aiperf kube sweep --envelope <sweep-envelope.json> --image-capabilities <native-k8s/v1.json> [--watch]"
     );
     Ok(0)
 }

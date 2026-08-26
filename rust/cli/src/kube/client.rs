@@ -110,6 +110,22 @@ impl KubeWatch {
         Self { receiver }
     }
 
+    /// A stream whose first poll yields a transport error, as the real client
+    /// does when the watch deadline expires mid-stream.
+    #[cfg(test)]
+    pub(crate) fn transport_error_for_test(message: &str) -> Self {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let capacity = Arc::new(tokio::sync::Semaphore::new(1));
+        let permit = capacity
+            .try_acquire_owned()
+            .expect("the semaphore was just created with one free permit");
+        sender
+            .send((Err(KubeError::Transport(message.to_string())), permit))
+            .expect("test receiver is open");
+        drop(sender);
+        Self { receiver }
+    }
+
     /// Distinguish a record, local idle timeout, and clean response EOF.
     pub fn poll(&self, timeout: Duration) -> Result<KubeWatchPoll, KubeError> {
         match self.receiver.recv_timeout(timeout) {

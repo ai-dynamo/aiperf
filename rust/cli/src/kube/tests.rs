@@ -689,6 +689,15 @@ impl SweepMockTransport {
             .expect("watches lock")
             .push_back(KubeWatch::events_for_test(events));
     }
+
+    /// Queue a watch whose first poll fails, as the real client's watch
+    /// deadline expiry does.
+    fn push_watch_error(&self, message: &str) {
+        self.watches
+            .lock()
+            .expect("watches lock")
+            .push_back(KubeWatch::transport_error_for_test(message));
+    }
 }
 
 impl KubeTransport for SweepMockTransport {
@@ -755,6 +764,18 @@ fn failed_event(job_id: &str) -> Vec<u8> {
         }
     }))
     .expect("failed event JSON")
+}
+
+/// Non-terminal watch event; forward progress that must refund the reconnect budget.
+fn pending_event(job_id: &str) -> Vec<u8> {
+    serde_json::to_vec(&serde_json::json!({
+        "type": "MODIFIED",
+        "object": {
+            "metadata": {"name": job_id, "namespace": "bench"},
+            "status": {"phase": "Running"}
+        }
+    }))
+    .expect("pending event JSON")
 }
 
 #[test]
@@ -1068,8 +1089,92 @@ fn sweep_controller_fails_the_sweep_when_any_child_fails() {
     assert_eq!(body["status"]["phase"], "Failed");
 }
 
-// --- aiperf kube sweep submission tests ---
+#[test]
+fn child_watch_poll_errors_reconnect_and_forward_progress_refunds_the_budget() {
+    // The watch deadline expiring surfaces as a poll `Err`, not a clean EOF.
+    // It must reconnect, and any delivered event must reset the budget so a
+    // child that outlives many deadline recycles still reaches its terminal
+    // phase. Without the refund the sixth reconnect here would fail the child.
+    let base_config = serde_json::json!({"runtime": {"cells": 1}});
+    let envelope = sweep_envelope(
+        "sweep-run-5",
+        base_config,
+        vec![super::contract::SweepAxis {
+            parameter: "runtime.cells".to_string(),
+            values: vec![serde_json::json!(1)],
+        }],
+        1,
+        1,
+    );
 
+    let transport = Arc::new(SweepMockTransport::default());
+    let client = KubeClient::with_transport(sweep_test_credentials(), transport.clone());
+
+    for _ in 0..4 {
+        transport.push_response(201, Vec::new());
+    }
+    for _ in 0..5 {
+        transport.push_watch_error("watch deadline expired");
+    }
+    transport.push_watch(vec![pending_event("sweep-run-5-0000")]);
+    transport.push_watch(vec![completed_event("sweep-run-5-0000")]);
+    transport.push_response(200, Vec::new()); // final phase PATCH
+
+    let exit = super::sweep_controller::run_sweep(&client, &envelope, "sweep-uid-recycle")
+        .expect("watch poll errors must not abort the sweep");
+    assert_eq!(exit, 0, "a child that completes after reconnects must succeed");
+
+    let requests = transport.requests.lock().expect("requests");
+    let patch = requests
+        .iter()
+        .find(|r| r.method == "PATCH" && r.path.contains("/aiperfsweeps/"))
+        .expect("terminal phase PATCH");
+    let body: Value = serde_json::from_slice(&patch.body).expect("PATCH body JSON");
+    assert_eq!(body["status"]["phase"], "Completed");
+}
+
+#[test]
+fn child_watch_reconnect_budget_exhaustion_fails_the_child() {
+    // An endpoint that only ever errors must exhaust the bounded budget and
+    // report the child as failed rather than spinning forever.
+    let base_config = serde_json::json!({"runtime": {"cells": 1}});
+    let envelope = sweep_envelope(
+        "sweep-run-6",
+        base_config,
+        vec![super::contract::SweepAxis {
+            parameter: "runtime.cells".to_string(),
+            values: vec![serde_json::json!(1)],
+        }],
+        1,
+        1,
+    );
+
+    let transport = Arc::new(SweepMockTransport::default());
+    let client = KubeClient::with_transport(sweep_test_credentials(), transport.clone());
+
+    for _ in 0..4 {
+        transport.push_response(201, Vec::new());
+    }
+    // One more stream than the budget allows, so the last one trips the cap.
+    for _ in 0..6 {
+        transport.push_watch_error("connection reset by peer");
+    }
+    transport.push_response(200, Vec::new()); // final phase PATCH
+
+    let exit = super::sweep_controller::run_sweep(&client, &envelope, "sweep-uid-exhausted")
+        .expect("budget exhaustion must be reported, not propagated");
+    assert_eq!(exit, 1, "an unwatchable child must fail the sweep");
+
+    let requests = transport.requests.lock().expect("requests");
+    let patch = requests
+        .iter()
+        .find(|r| r.method == "PATCH" && r.path.contains("/aiperfsweeps/"))
+        .expect("terminal phase PATCH");
+    let body: Value = serde_json::from_slice(&patch.body).expect("PATCH body JSON");
+    assert_eq!(body["status"]["phase"], "Failed");
+}
+
+// --- aiperf kube sweep submission tests ---
 /// Minimal sweep envelope for hermetic submission tests.
 fn minimal_sweep_envelope(run_id: &str) -> SweepEnvelope {
     SweepEnvelope {

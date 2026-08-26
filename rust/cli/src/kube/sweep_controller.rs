@@ -122,8 +122,8 @@ pub(crate) fn run_sweep(
     for (index, base_config) in child_configs.into_iter().enumerate() {
         // Drain one slot before issuing when the window is full.
         while running.len() >= max_concurrent {
-            // SAFETY: the `len() >= max_concurrent` guard above ensures the
-            // queue is non-empty before we pop.
+            // Invariant: `max_concurrent` is at least 1, so `len() >= max_concurrent`
+            // implies the queue holds at least one entry to pop.
             let waiting = running.pop_front().expect("non-empty running queue");
             let succeeded = wait_for_child_completion(client, namespace, &waiting)?;
             if succeeded {
@@ -463,9 +463,14 @@ fn post_bootstrap_secret(
 /// Poll the child AIPerfJob watch stream until it reaches `Completed` or `Failed`.
 ///
 /// Returns `true` for `Completed` and `false` for `Failed`. Reconnects the
-/// watch on clean EOF so a brief lapse in the API server does not abort the
-/// sweep, bounded by `MAX_CHILD_WATCH_RECONNECTS` with a fixed pause between
-/// attempts. Exhausting the budget treats the child as failed rather than
+/// watch on clean EOF *and* on a poll transport error so neither a brief lapse
+/// in the API server nor the routine watch-deadline expiry (`KubeClient`'s
+/// `DEFAULT_WATCH_DEADLINE`) aborts the sweep. Failing to *start* a watch stays
+/// fatal, mirroring `command::stream_events_to`'s split between opening a watch
+/// and reading one. The budget is `MAX_CHILD_WATCH_RECONNECTS` with a fixed
+/// pause between attempts, and it resets whenever a stream delivered an event,
+/// so a child that outlives many deadline recycles still makes forward
+/// progress. Exhausting the budget treats the child as failed rather than
 /// looping forever against an endpoint that keeps closing.
 fn wait_for_child_completion(
     client: &KubeClient,
@@ -478,9 +483,11 @@ fn wait_for_child_completion(
     let mut reconnects = 0u32;
     loop {
         let watch = client.watch(&watch_path)?;
+        let mut received_event = false;
         loop {
-            match watch.poll(WATCH_POLL_TIMEOUT)? {
-                KubeWatchPoll::Record(bytes) => {
+            match watch.poll(WATCH_POLL_TIMEOUT) {
+                Ok(KubeWatchPoll::Record(bytes)) => {
+                    received_event = true;
                     let event: Value = serde_json::from_slice(&bytes)
                         .map_err(|e| anyhow::anyhow!("invalid watch event for {job_id}: {e}"))?;
                     match event["object"]["status"]["phase"].as_str() {
@@ -489,9 +496,26 @@ fn wait_for_child_completion(
                         _ => continue,
                     }
                 }
-                KubeWatchPoll::Idle => continue,
-                KubeWatchPoll::Closed => break, // reconnect on clean EOF
+                Ok(KubeWatchPoll::Idle) => continue,
+                Ok(KubeWatchPoll::Closed) => break, // reconnect on clean EOF
+                Err(e) => {
+                    // The watch deadline expiring arrives here as a transport
+                    // error, not a clean EOF; it must reconnect, not abort.
+                    debug!(
+                        error = %e,
+                        run_id = %job_id,
+                        reconnects,
+                        component = "sweep-controller",
+                        "watch poll error, reconnecting"
+                    );
+                    break;
+                }
             }
+        }
+        if received_event {
+            // Forward progress refunds the budget so a long child run does not
+            // exhaust it on routine apiserver watch recycling.
+            reconnects = 0;
         }
         reconnects += 1;
         if reconnects > MAX_CHILD_WATCH_RECONNECTS {
