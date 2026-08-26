@@ -84,7 +84,7 @@ Graham review and a commit.
 | C18 | MLflow/W&B mishandle mixed labeled and unlabeled report series | Complete — `b98d0b4b8f` | Independent Graham approved; four-case RED→GREEN and exporter suites green |
 | C19 | Parquet histogram schema drifts across samples | Complete — `d4db61806e` | Independent Graham approved; schema-expansion RED→GREEN and 9 Parquet tests green |
 | C20 | Dataset-analysis writer loses flush failures | Complete — `ed39aac8a4` | Independent Graham approved; dataset-analysis JSON tests green |
-| C24 | Slot release during a decrease can over-admit | Confirmed; spec needed | Sol implementation plan |
+| C24 | Slot release during a decrease can over-admit | Complete | Integrated `47795ff8c0` through `96787c5a15`; independent Graham PASS |
 | C25 | Global request-rate prefill release does not wake issuer | Complete — `bdeb53dda4` | Independent Graham approved; focused wake RED→GREEN plus request-rate and slots suites green |
 | R01 | YAML/CLI config loses `--image-batch-size` | Already fixed | Preserve existing regression test |
 | B01 | AgentX integration fixtures omit required cache-bust option | Complete — `91b65b2044` | Independent Graham approved; compile regression green |
@@ -249,3 +249,9 @@ Graham review and a commit.
   finish failure continues through remaining siblings, and cleanup failures are
   retained as context on the primary error. Its behavioral RED, 7-test focused
   GREEN suite, and independent Graham PASS are recorded.
+- 2026-08-26: C24 completed and integrated as `47795ff8c0` through
+  `96787c5a15`: a decrease reserves debt before draining, every admission
+  rejects reserved debt, and async waiters use a no-missed-wake notification
+  protocol when debt clears through release, increase, or drain. Baseline
+  over-admission RED evidence, the 16-test slots suite GREEN, and independent
+  Graham re-review PASS are recorded.
