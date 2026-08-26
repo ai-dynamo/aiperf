@@ -164,6 +164,12 @@ class AioHttpClient(AIPerfLoggerMixin):
                     # return accepted/created responses without being rejected.
                     if response.status < 200 or response.status >= 300:
                         error_text = await response.text()
+                        # Stamp the end here so the record spans dispatch -> error
+                        # response fully received. Without it, end_perf_ns stays
+                        # None and the record processor collapses request_end_ns
+                        # onto request_start_ns, hiding the true error latency
+                        # (e.g. a ~125s Cloudflare 524 read timeout).
+                        record.end_perf_ns = time.perf_counter_ns()
                         record.error = ErrorDetails(
                             code=response.status,
                             type=response.reason,
