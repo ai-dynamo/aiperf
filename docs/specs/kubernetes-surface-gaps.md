@@ -183,16 +183,19 @@ after `ae6de0c22a` removed them from `pyproject.toml`; the two files are desynce
 directories with no operator UI. A duplicate `specs/` tree (40 files) survives at the
 repository root, diverged from `docs/specs/` for `architecture.md`, `slurm-native.md`, and
 `cellular.md`, indexed by neither `docs/specs/README.md` nor `llms.txt`. Four
-`typed-factory-runner.md.*.contest.md` files (~227 KB, two recording failed contests) are
-tracked inside `docs/specs/` and referenced by nothing. Those were committed deliberately:
-the agent had excluded them and was instructed to commit all files.
+`typed-factory-runner.md.*.contest.md` files (~227 KB, two recording failed contests) were
+tracked inside `docs/specs/` and referenced by nothing. They were committed deliberately —
+the agent had excluded them and was instructed to commit all files — and later untracked,
+also by explicit instruction, once `typed-factory-runner.md` was complete and indexed. The
+working copies are retained under `artifacts/archives/`.
 
 ## Decision provenance
 
 Three entries above record authorized decisions rather than drift, recorded here so they are
 not "fixed" by a later reader. Cluster-scoped Secret `get` was explicitly granted. The
 Ed25519 upload-auth removal was explicitly directed. The tracked `.contest.md` files were an
-explicit override of the agent's exclusion.
+explicit override of the agent's exclusion; their later untracking was equally explicit, so
+neither the commit nor the removal should be reversed as drift.
 
 Hierarchical aggregation's refusal was **not** a user decision; it was an implementation call
 whose rationale was given after the fact and not contested: aggregators lacked
