@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import time
 import uuid
@@ -68,6 +69,8 @@ from aiperf.common.pod_lifecycle_structs import (
     GroupDatasetStateQuery,
     GroupDatasetStateSnapshot,
     GroupManagerToPeerMessage,
+    GroupPeerCommand,
+    GroupPeerCommandAck,
     _send_group_peer_hello_with_retry,
 )
 from aiperf.common.protocols import (
@@ -820,11 +823,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
     async def _on_pod_lifecycle_message(
         self, message: GroupManagerToPeerMessage
     ) -> None:
-        """Handle group-local lifecycle messages from the WorkerGroupManager.
-
-        Only dataset-state messages are handled here; profile-configure and
-        shutdown reach this worker over the message bus (``@on_command``).
-        """
+        """Handle group-local lifecycle messages from the WorkerGroupManager."""
         if isinstance(message, GroupDatasetReady):
             if message.pod_index != self._pod_index or not message.success:
                 return
@@ -843,6 +842,46 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         elif isinstance(message, GroupDatasetStateSnapshot):
             self._latest_pod_dataset_state = message
             await self._complete_group_startup_flow(message)
+        elif isinstance(message, GroupPeerCommand):
+            await self._handle_pod_peer_command(message)
+
+    async def _handle_pod_peer_command(self, message: GroupPeerCommand) -> None:
+        """Run a group-local lifecycle command and acknowledge it.
+
+        Mirrors the pattern in RecordProcessorService._handle_pod_peer_command.
+        The WGM blocks on an ack from every registered peer, so an unanswered
+        command stalls the whole pod for the full PROFILE_CONFIGURE_TIMEOUT.
+        """
+        if self.pod_lifecycle_dealer_client is None:
+            return
+        if message.command == str(CommandType.PROFILE_CONFIGURE):
+            await asyncio.wait_for(
+                self._dataset_configured_event.wait(),
+                timeout=Environment.SERVICE.PROFILE_CONFIGURE_TIMEOUT,
+            )
+        elif message.command == str(CommandType.SHUTDOWN):
+            with contextlib.suppress(Exception):
+                await self.pod_lifecycle_dealer_client.send(
+                    GroupPeerCommandAck(cid=message.cid, service_id=self.service_id)
+                )
+            await self.stop()
+            return
+        elif message.command == str(CommandType.ABORT):
+            self.error(
+                f"Received ABORT from WorkerGroupManager; force-exiting "
+                f"{self.service_id} so kubelet restarts this container"
+            )
+            with contextlib.suppress(Exception):
+                await self.pod_lifecycle_dealer_client.send(
+                    GroupPeerCommandAck(cid=message.cid, service_id=self.service_id)
+                )
+            os._exit(1)
+        else:
+            self.warning(f"Unknown group-local command: {message.command}")
+            return
+        await self.pod_lifecycle_dealer_client.send(
+            GroupPeerCommandAck(cid=message.cid, service_id=self.service_id)
+        )
 
     async def _apply_group_default_context_mode(
         self, message: GroupDatasetReady
