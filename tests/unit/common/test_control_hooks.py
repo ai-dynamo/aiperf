@@ -42,7 +42,7 @@ def test_prepared_control_hooks_timeout_does_not_inherit_large_endpoint_timeout(
     endpoint.timeout defaults to 6 hours (tuned for inference requests). If
     reset_kv_cache/server_profiler fall back to it when their own
     timeout_seconds is unset, a stalled control-hook POST blocks for hours
-    instead of failing fast (nvbugs 6671103).
+    instead of failing fast.
     """
     endpoint = EndpointConfig.model_validate(
         {
