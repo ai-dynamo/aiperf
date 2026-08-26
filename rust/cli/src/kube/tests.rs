@@ -433,8 +433,7 @@ fn init_refuses_to_overwrite_without_force() {
         dir.path().display().to_string(),
     ];
     super::scaffold::run(&args).expect("first scaffold run");
-    let error =
-        super::scaffold::run(&args).expect_err("second scaffold run must refuse overwrite");
+    let error = super::scaffold::run(&args).expect_err("second scaffold run must refuse overwrite");
     assert!(
         error.to_string().contains("already exists"),
         "overwrite refusal must name the existing file: {error}"

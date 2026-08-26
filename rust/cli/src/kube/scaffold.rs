@@ -33,8 +33,8 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
         return Ok(0);
     }
 
-    let template_name = flag_value(args, "--template")
-        .unwrap_or_else(|| DEFAULT_TEMPLATE.to_string());
+    let template_name =
+        flag_value(args, "--template").unwrap_or_else(|| DEFAULT_TEMPLATE.to_string());
     let output_dir = flag_value(args, "--output-directory")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."));
@@ -44,9 +44,7 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
         .iter()
         .find(|t| t.name == template_name)
         .ok_or_else(|| {
-            anyhow::anyhow!(
-                "unknown template {template_name:?}; run 'aiperf kube init --list'"
-            )
+            anyhow::anyhow!("unknown template {template_name:?}; run 'aiperf kube init --list'")
         })?;
 
     let config_content = strip_spdx_header(template.content);
@@ -77,9 +75,7 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
 
     println!("Wrote {}", config_path.display());
     println!("Wrote {}", capabilities_path.display());
-    println!(
-        "Edit imageDigest in {CAPABILITIES_FILENAME} before running 'aiperf kube validate'."
-    );
+    println!("Edit imageDigest in {CAPABILITIES_FILENAME} before running 'aiperf kube validate'.");
 
     Ok(0)
 }
