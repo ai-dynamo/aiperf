@@ -967,7 +967,10 @@ fn sweep_controller_publishes_a_distinct_config_map_per_child() {
 
     for (index, (config_body, cr_body)) in config_bodies.iter().zip(&cr_bodies).enumerate() {
         let expected_name = format!("sweep-run-3-{index:04}");
-        assert_eq!(config_body["metadata"]["name"], Value::String(expected_name));
+        assert_eq!(
+            config_body["metadata"]["name"],
+            Value::String(expected_name)
+        );
         let envelope_value = &cr_body["spec"]["envelope"];
         let config_ref = &envelope_value["configRef"];
         assert_eq!(
@@ -1052,8 +1055,8 @@ fn sweep_controller_fails_the_sweep_when_any_child_fails() {
     transport.push_watch(vec![failed_event("sweep-run-4-0001")]);
     transport.push_response(200, Vec::new()); // final phase PATCH
 
-    let exit =
-        super::sweep_controller::run_sweep(&client, &envelope, "sweep-uid-fail").expect("run_sweep");
+    let exit = super::sweep_controller::run_sweep(&client, &envelope, "sweep-uid-fail")
+        .expect("run_sweep");
     assert_eq!(exit, 1, "a sweep with any failed child must exit 1");
 
     let requests = transport.requests.lock().expect("requests");
