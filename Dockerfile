@@ -234,6 +234,9 @@ RUN WHEEL=$(ls /dist/aiperf-*.whl) \
     && uv pip install --no-deps "aiperf[botorch] @ file://${WHEEL}" \
     && rm -rf /dist /workspace/pyproject.toml
 
+# Remove setuptools as it is not needed for the runtime image
+RUN uv pip uninstall setuptools
+
 # Pre-cache tiktoken o200k_base encoding for --tokenizer builtin (MIT license, see ATTRIBUTIONS.md)
 RUN mkdir -p /opt/tiktoken_cache \
     && TIKTOKEN_CACHE_DIR=/opt/tiktoken_cache python -c "import tiktoken; tiktoken.get_encoding('o200k_base')"
