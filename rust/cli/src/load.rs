@@ -15,7 +15,7 @@ use std::str::FromStr;
 // them so `crate::load::{Inputs, Warmup, DatasetAnalysisInputs}` and `load::build`
 // call sites in the flag and YAML authoring paths resolve unchanged.
 pub use aiperf_runtime::config::resolve::{
-    DatasetAnalysisInputs, Inputs, Warmup, resolve as build,
+    DatasetAnalysisInputs, Inputs, InputsFlat, Warmup, resolve as build,
 };
 
 use crate::flags::ProfileFlags;
@@ -357,7 +357,7 @@ pub fn resolve_inputs(flags: &ProfileFlags) -> anyhow::Result<Inputs> {
         })
     };
 
-    let inputs = Inputs {
+    let inputs = InputsFlat {
         model_names: flags.model_names.clone(),
         urls,
         endpoint_type,
@@ -650,7 +650,7 @@ pub fn resolve_inputs(flags: &ProfileFlags) -> anyhow::Result<Inputs> {
             .clone()
             .unwrap_or_else(|| PathBuf::from("artifacts")),
     };
-    Ok(inputs)
+    Inputs::from_flat(inputs)
 }
 
 pub(crate) fn parse_random_range_ratio(
@@ -2622,7 +2622,7 @@ mod tests {
             ]);
             let inputs = super::resolve_inputs(&flags).expect("inputs");
             assert_eq!(inputs.allow_dataset_wrap, Some(true));
-            let synth = inputs.synthesis.expect("synthesis");
+            let synth = inputs.synthesis.clone().expect("synthesis");
             assert_eq!(synth["allow_dataset_wrap"], true);
         });
     }

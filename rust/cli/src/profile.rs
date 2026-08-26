@@ -1642,6 +1642,45 @@ mod authoring_wire_tests {
         let flags = ProfileFlags::parse_from_args(&args).expect("parse flags");
 
         let inputs = crate::load::resolve_inputs(&flags).expect("normalize inputs");
+        assert_eq!(inputs.endpoint.model_names, ["mock-model"]);
+        let flat_inputs = serde_json::to_value(&inputs).expect("serialize grouped inputs");
+        let object = flat_inputs
+            .as_object()
+            .expect("inputs serialize as the historical flat object");
+        assert_eq!(
+            object.get("model_names"),
+            Some(&serde_json::json!(["mock-model"]))
+        );
+        assert!(
+            !object.contains_key("endpoint"),
+            "group names must not leak into the execute wire"
+        );
+        assert!(
+            serde_json::from_value::<crate::load::Inputs>({
+                let mut with_unknown = flat_inputs.clone();
+                with_unknown
+                    .as_object_mut()
+                    .expect("flat authoring object")
+                    .insert("future_authoring_key".to_string(), serde_json::json!(true));
+                with_unknown
+            })
+            .is_ok(),
+            "grouping must retain the existing unknown-field behavior"
+        );
+        let missing_model = {
+            let mut value = flat_inputs.clone();
+            value
+                .as_object_mut()
+                .expect("flat authoring object")
+                .remove("model_names");
+            serde_json::from_value::<crate::load::Inputs>(value)
+                .expect_err("model_names remains required")
+                .to_string()
+        };
+        assert!(
+            missing_model.contains("model_names"),
+            "missing-field diagnostic must retain the authored key: {missing_model}"
+        );
         // The CLI-side resolved run is the oracle; the authoring wire the runtime
         // decodes originates from the same normalized inputs.
         let resolved = crate::load::build(inputs.clone()).expect("resolve run");

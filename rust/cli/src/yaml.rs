@@ -279,24 +279,17 @@ fn apply_cli_overrides(
     if let Some(v) = flags.max_context_length {
         inputs.max_context_length = Some(v);
     }
-    for (target, batch_size) in [
-        (&mut inputs.random_pool_text_batch_size, flags.batch_size),
-        (
-            &mut inputs.random_pool_image_batch_size,
-            flags.image_batch_size,
-        ),
-        (
-            &mut inputs.random_pool_audio_batch_size,
-            flags.audio_batch_size,
-        ),
-        (
-            &mut inputs.random_pool_video_batch_size,
-            flags.video_batch_size,
-        ),
-    ] {
-        if let Some(batch_size) = batch_size {
-            *target = Some(batch_size);
-        }
+    if let Some(batch_size) = flags.batch_size {
+        inputs.random_pool_text_batch_size = Some(batch_size);
+    }
+    if let Some(batch_size) = flags.image_batch_size {
+        inputs.random_pool_image_batch_size = Some(batch_size);
+    }
+    if let Some(batch_size) = flags.audio_batch_size {
+        inputs.random_pool_audio_batch_size = Some(batch_size);
+    }
+    if let Some(batch_size) = flags.video_batch_size {
+        inputs.random_pool_video_batch_size = Some(batch_size);
     }
     if let Some(v) = flags.trace_idle_gap_cap_seconds {
         inputs.trace_idle_gap_cap_seconds = Some(v);
@@ -2468,7 +2461,7 @@ impl Benchmark {
             .and_then(|metadata| metadata.endpoint_placement.clone())
             .unwrap_or_else(|| "unknown".to_string());
 
-        Ok(Inputs {
+        Inputs::from_flat(load::InputsFlat {
             model_names,
             urls,
             endpoint_type,
@@ -3408,6 +3401,31 @@ mod tests {
         let raw: serde_json::Value = serde_yaml::from_str(&cfg(body)).expect("valid YAML");
         let expanded = crate::expand::expand_config(raw).expect("config expands");
         resolve_expanded_inputs(expanded, Some("/tmp/x".into()), None).expect("inputs resolve")
+    }
+
+    #[test]
+    fn yaml_authoring_inputs_keep_the_flat_execute_wire() {
+        let inputs = resolve_inputs(
+            "  endpoint: {type: chat, url: 127.0.0.1:8000}\n  dataset: {prompts: {isl: 128}}\n  phases: {type: concurrency, requests: 1, concurrency: 1}\n",
+        );
+        let wire = serde_json::to_value(&inputs).expect("serialize grouped YAML inputs");
+        let object = wire.as_object().expect("flat execute authoring object");
+        assert_eq!(object.get("model_names"), Some(&serde_json::json!(["m"])));
+        assert_eq!(
+            object.get("urls"),
+            Some(&serde_json::json!(["127.0.0.1:8000"]))
+        );
+        assert!(
+            !object.contains_key("endpoint"),
+            "the group name is internal and must not alter the authoring wire"
+        );
+        let reparsed: super::Inputs =
+            serde_json::from_value(wire.clone()).expect("decode historical flat authoring wire");
+        assert_eq!(
+            serde_json::to_value(reparsed).expect("re-serialize authoring inputs"),
+            wire,
+            "YAML authoring wire must remain stable across grouped decoding"
+        );
     }
 
     /// The authored inline peak form must reach the wire as the nested

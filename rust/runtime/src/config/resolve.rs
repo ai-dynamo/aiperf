@@ -217,9 +217,414 @@ pub struct Warmup {
     pub grace_period: Option<f64>,
 }
 
-/// Normalized profile inputs.
+/// Normalized profile inputs, grouped by the subsystem that consumes them.
+///
+/// Every group is flattened so the execute wire retains its historical flat
+/// object shape. Group nesting also keeps existing internal field access source
+/// compatible while callers migrate to explicit group names.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Inputs {
+    /// Endpoint connection and request-shaping inputs.
+    #[serde(flatten)]
+    pub endpoint: EndpointInputs,
+}
+
+/// Endpoint connection and request-shaping inputs.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct EndpointInputs {
+    pub model_names: Vec<String>,
+    pub urls: Vec<String>,
+    pub endpoint_type: String,
+    pub transport: crate::config::model::transport::Transport,
+    pub streaming: bool,
+    pub timeout_seconds: Option<f64>,
+    pub use_legacy_max_tokens: bool,
+    pub use_server_token_count: bool,
+    pub per_chunk_usage: bool,
+    pub download_video_content: bool,
+    /// Extra request-body inputs (endpoint.extra).
+    pub extra: serde_json::Map<String, serde_json::Value>,
+    /// Custom server-metrics scrape URLs.
+    pub server_metrics_urls: Vec<String>,
+    pub connection_reuse: Option<ConnectionReuse>,
+    /// Verify TLS peer certificates. Absent leaves the `Endpoint` default (on).
+    pub ssl_verify: Option<bool>,
+    /// Unix-domain socket to dial instead of the URL host.
+    pub uds_path: Option<String>,
+    pub request_content_type: Option<RequestContentType>,
+    pub wait_for_model_timeout: Option<f64>,
+    pub wait_for_model_mode: Option<WaitForModelMode>,
+    pub wait_for_model_interval: Option<f64>,
+    pub apply_chat_template: bool,
+    pub prefill_concurrency: Option<u32>,
+    pub prefill_ramp: Option<f64>,
+    /// The next cohesive input group; flattened to retain the execute wire.
+    #[serde(flatten)]
+    pub telemetry: TelemetryInputs,
+}
+
+/// Telemetry and exporter inputs.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct TelemetryInputs {
+    pub gpu_telemetry_enabled: bool,
+    /// Collector backend id (`dcgm`, `pynvml`, or `amdsmi`). Absent selects the
+    /// `dcgm` default.
+    #[serde(default)]
+    pub gpu_telemetry_collector: Option<String>,
+    /// Custom DCGM URLs.
+    pub gpu_telemetry_urls: Vec<String>,
+    /// Custom DCGM metrics CSV path (`--gpu-telemetry <file>.csv`).
+    pub gpu_telemetry_metrics_file: Option<String>,
+    pub server_metrics_enabled: bool,
+    pub server_metrics_formats: Option<Vec<String>>,
+    /// Goodput SLO thresholds (metric -> threshold ms).
+    pub slos: serde_json::Map<String, serde_json::Value>,
+    /// Fixed mean network RTT, milliseconds.
+    pub network_latency_mean: Option<f64>,
+    /// Automatic RTT probe with an optional ping interval (seconds).
+    pub network_latency_probe: Option<f64>,
+    /// OTLP collector URL (`--otel-url`).
+    pub otel_url: Option<String>,
+    /// GenAI provider label (`--gen-ai-provider`).
+    pub otel_provider: Option<String>,
+    /// Extra OTLP resource attributes (`--otel-resource-attributes`).
+    pub otel_resource_attributes: Vec<(String, String)>,
+    /// MLflow sink params.
+    pub mlflow: crate::config::model::export::MlflowParams,
+    /// W&B sink params.
+    pub wandb: crate::config::model::export::WandbParams,
+    /// The next cohesive input group; flattened to retain the execute wire.
+    #[serde(flatten)]
+    pub dataset: DatasetInputs,
+}
+
+/// Dataset and prompt-materialization inputs.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct DatasetInputs {
+    pub api_key: Option<String>,
+    pub headers: std::collections::BTreeMap<String, String>,
+    pub tokenizer_name: Option<String>,
+    pub tokenizer_revision: Option<String>,
+    pub tokenizer_trust: bool,
+    pub server_tokenizer_url: Option<String>,
+    pub isl: Distribution,
+    pub osl: Option<Distribution>,
+    /// Turns-per-session distribution (multi-turn).
+    pub turns: Option<Distribution>,
+    /// Per-session think-time delay ratio.
+    pub turn_delay_ratio: f64,
+    /// Inter-turn fixed delay distribution, milliseconds.
+    pub turn_delay_ms: Option<Distribution>,
+    /// Per-session affinity header name (`endpoint.session_header`).
+    pub session_header: Option<String>,
+    /// Explicit forward-proxy URL for benchmark traffic (`--proxy`).
+    pub proxy: Option<String>,
+    /// Honor the ambient proxy environment for benchmark traffic
+    /// (`--proxy-from-env`).
+    pub proxy_from_env: bool,
+    /// Custom request path appended to the endpoint URL (`endpoint.path`).
+    pub endpoint_path: Option<String>,
+    /// Optional reset-KV-cache hook policy (`endpoint.reset_kv_cache`).
+    pub reset_kv_cache: Option<ResetKvCacheConfig>,
+    /// Optional server-profiler hook policy (`endpoint.server_profiler`).
+    pub server_profiler: Option<ServerProfilerConfig>,
+    /// Per-record export formats (`artifacts.records`; default `["jsonl"]`,
+    /// empty = summary-only).
+    pub records_formats: Vec<String>,
+    /// Summary-export formats (`artifacts.summary`); empty = unauthored, both
+    /// `json` and `csv` ship.
+    pub summary_formats: Vec<String>,
+    /// Files to materialize into the run directory (`artifacts.user_files`).
+    pub user_files: Vec<crate::config::model::artifacts::UserFile>,
+    /// Emit the raw request/response JSONL (`artifacts.raw`).
+    pub export_raw: bool,
+    /// Emit per-request HTTP trace columns (`artifacts.trace`).
+    pub export_trace: bool,
+    /// Emit the per-request outputs JSON (`artifacts.export_outputs_json`).
+    pub export_outputs_json: bool,
+    /// Show per-request HTTP trace timing in the console (`--show-trace-timing`).
+    pub show_trace_timing: bool,
+    /// Base filename stem for exported artifacts (`--profile-export-prefix`).
+    pub profile_export_prefix: Option<String>,
+    /// Weka: emit turn delays from recorded think_time only (`--use-think-time-only`).
+    pub use_think_time_only: bool,
+    /// Maximum peak prompt+output context length for Weka traces.
+    pub max_context_length: Option<u32>,
+    /// Allow dataset wrap when concurrency exceeds the loaded pool.
+    /// `None` leaves the engine default; `Some(false)` matches Python default.
+    pub allow_dataset_wrap: Option<bool>,
+    /// Cache-bust target snake_case name (`none` / `first_turn_prefix` / …).
+    pub cache_bust: Option<String>,
+    /// AGENTIC_REPLAY synchronized phase-start bursts.
+    pub burst_phase_starts: bool,
+    /// Per-trace idle-gap cap, seconds (`--trace-idle-gap-cap-seconds`).
+    pub trace_idle_gap_cap_seconds: Option<f64>,
+    /// Global system-idle cap, seconds (`--system-idle-gap-cap-seconds`). Legacy Weka only.
+    pub system_idle_gap_cap_seconds: Option<f64>,
+    /// HuggingFace repo for generic Weka loader (`--hf-weka-dataset`).
+    pub hf_weka_dataset: Option<String>,
+    /// Baseten whole-session sample ratio (`--trace-session-sample-ratio`).
+    pub trace_session_sample_ratio: Option<f64>,
+    /// Agentic warmup barrier grace (`--agentic-warmup-grace-period`).
+    pub agentic_warmup_grace_period: Option<f64>,
+    /// Abort-on-failure-ratio threshold (`--failed-request-threshold`).
+    pub failed_request_threshold: Option<f64>,
+    /// Mixed ISL/OSL sequence distribution (`--seq-dist`).
+    pub sequence_distribution: Option<Vec<crate::config::model::dataset::SeqDistEntry>>,
+    pub batch_size: u32,
+    pub sampling: String,
+    pub entries: u32,
+    /// Explicit entry count for file/public datasets (None when defaulted).
+    pub dataset_entries: Option<u32>,
+    /// Profiling-phase session bound (from `num_conversations`).
+    pub sessions: Option<u64>,
+    /// The next cohesive input group; flattened to retain the execute wire.
+    #[serde(flatten)]
+    pub workload: WorkloadInputs,
+}
+
+/// Workload and phase inputs.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct WorkloadInputs {
+    pub concurrency: Option<u32>,
+    pub request_rate: Option<f64>,
+    /// Arrival distribution for `request_rate` (`poisson`/`gamma`/`constant`).
+    pub rate_mode: Option<String>,
+    /// Gamma smoothness shape.
+    pub smoothness: Option<f64>,
+    /// Concurrency-ramp duration, seconds.
+    pub concurrency_ramp: Option<f64>,
+    /// Rate-ramp duration, seconds.
+    pub rate_ramp: Option<f64>,
+    /// Post-send cancellation `(rate, delay)`.
+    pub cancellation: Option<(f64, f64)>,
+    /// User-centric arrival `(rate, users)`.
+    pub user_centric: Option<(f64, u32)>,
+    pub request_count: Option<u64>,
+    pub benchmark_duration: Option<f64>,
+    pub grace_period: Option<f64>,
+    pub warmup: Option<Warmup>,
+    /// The next cohesive input group; flattened to retain the execute wire.
+    #[serde(flatten)]
+    pub runtime: RuntimeInputs,
+}
+
+/// Runtime and cellular execution inputs.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct RuntimeInputs {
+    /// Runtime worker count (`runtime.workers`; `None` = runner auto-selects).
+    pub runtime_workers: Option<u32>,
+    /// Adaptive-scaling minimum worker count (`runtime.workers_min`).
+    pub runtime_workers_min: Option<u32>,
+    /// Cellular (multi-process) cell count (`runtime.cells`; `1` = single).
+    pub runtime_cells: u32,
+    /// Admission strategy for `workers>1` scheduled execution (`runtime.dispatch`
+    /// / `--dispatch`). `None` omits the wire field, decoded as `Global`.
+    pub runtime_dispatch: Option<DispatchMode>,
+    /// Explicit `--hop-routing` worker-assignment policy for the
+    /// single-coordinator modes `global-hop`/`global-push` (`workers > 1`).
+    /// `None` lets resolution derive it from the resolved
+    /// connection-reuse strategy (`sticky` under `sticky-user-sessions`, else
+    /// `round-robin`).
+    pub runtime_hop_routing: Option<HopRouting>,
+    pub random_seed: Option<u64>,
+    /// Per-dataset sampling seed (`dataset.random_seed`). The `--random-seed`
+    /// flag sets both this and `random_seed`; a YAML top-level `randomSeed` sets
+    /// only `random_seed` (the run seed), so the two are tracked separately.
+    pub dataset_random_seed: Option<u64>,
+    /// File-backed dataset path (mutually exclusive with the synthetic path).
+    /// The next cohesive input group; flattened to retain the execute wire.
+    #[serde(flatten)]
+    pub replay: ReplayScenarioInputs,
+}
+
+/// Replay and scenario inputs.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct ReplayScenarioInputs {
+    pub input_file: Option<PathBuf>,
+    /// Exact inline system-prompt source before startup resolution.
+    #[serde(default)]
+    pub system_prompt: Option<String>,
+    /// File-backed system-prompt source before startup resolution.
+    #[serde(default)]
+    pub system_prompt_file: Option<PathBuf>,
+    /// Recorded-agent replay policy for an `agent_recording` file dataset.
+    pub recorded_agent_graph: Option<RecordedAgentGraphConfig>,
+    /// Free-form endpoint hardware provenance.
+    pub hardware_description: Option<String>,
+    /// Endpoint placement relative to tool execution.
+    pub endpoint_placement: String,
+    /// Inline file-dataset records authored directly in the config (mutually
+    /// exclusive with `input_file`; emitted verbatim as `records` on the wire).
+    pub inline_records: Option<serde_json::Value>,
+    /// Named submission scenario (`--scenario`; `cfg.scenario`).
+    pub scenario: Option<String>,
+    /// WEKA reconstruction semantics (`--weka-semantics`; legacy|graph-ir).
+    pub weka_semantics: Option<String>,
+    /// Ignore recorded trace inter-message/inter-request delays for graph-ir runs
+    /// (`--ignore-trace-delays`): fire every node as soon as its inputs are ready.
+    pub ignore_trace_delays: bool,
+    /// Whether `--ignore-trace-delays` was explicitly set (distinguishes user
+    /// intent from the default for the scenario guard).
+    pub ignore_trace_delays_explicit: bool,
+    /// Recorded-graph trajectory-start window lower ratio (`--trajectory-start-min-ratio`).
+    pub trajectory_start_min_ratio: f64,
+    /// Recorded-graph trajectory-start window upper ratio (`--trajectory-start-max-ratio`).
+    pub trajectory_start_max_ratio: f64,
+    /// Relax cross-field validation (`--unsafe-override`; `cfg.unsafe_override`).
+    pub unsafe_override: bool,
+    /// Agentic cache-warmup duration, seconds (auto-creates a warmup phase).
+    pub agentic_cache_warmup_duration: Option<f64>,
+    /// Rankings/rerank query-passage generation (present when a rankings flag is set).
+    pub rankings: Option<crate::config::model::dataset::Rankings>,
+    /// Accuracy-benchmark policy (present when `--accuracy-benchmark` is set).
+    pub accuracy: Option<crate::config::model::config::Accuracy>,
+    /// Recorded-graph synthesis block (present when a `--synthesis-*` flag is set).
+    pub synthesis: Option<serde_json::Value>,
+    /// Parsed public-dataset loader filters (`--dataset-filter key=value`).
+    pub dataset_filters: Option<serde_json::Map<String, serde_json::Value>>,
+    /// File dataset format id (`--custom-dataset-type`).
+    pub custom_dataset_type: Option<String>,
+    /// Named public dataset (mutually exclusive with synthetic/file).
+    pub public_dataset: Option<String>,
+    /// HuggingFace subset override for the public dataset.
+    pub hf_subset: Option<String>,
+    /// Arbitrary Hugging Face dataset repository ID (`--hf-dataset`); bypasses the catalog.
+    pub hf_dataset: Option<String>,
+    /// Hugging Face dataset split (`--hf-split`); auto-resolved if omitted.
+    pub hf_split: Option<String>,
+    /// Hugging Face dataset git revision (`--hf-revision`).
+    pub hf_revision: Option<String>,
+    /// Forced prompt column for `--hf-dataset` (`--hf-text-column`).
+    pub hf_text_column: Option<String>,
+    /// Forced completion/output column for `--hf-dataset` (`--hf-output-column`).
+    pub hf_output_column: Option<String>,
+    /// Fixed output length for `--hf-dataset` (`--hf-output-len`).
+    pub hf_output_len: Option<u32>,
+    /// Forced loader format for `--hf-dataset` (`--hf-format`); default `hf`.
+    pub hf_format: Option<String>,
+    /// Inter-turn delay cap, seconds (file datasets).
+    pub inter_turn_delay_cap_seconds: Option<f64>,
+    /// Fetch remote image URLs and inline them as data URLs at dataset
+    /// generation (`--prefetch-media-urls`); file/public datasets only.
+    pub prefetch_media_urls: bool,
+    /// Strip repeated image content once observed within a session
+    /// (`--uuid-and-strip`), single_turn only.
+    pub uuid_and_strip: bool,
+    /// `baseten_trace` replay-timing knobs.
+    pub replay_speedup: Option<f64>,
+    pub max_idle_gap_cap_seconds: Option<f64>,
+    pub open_loop_replay: bool,
+    pub open_loop_strict: bool,
+    pub omit_kv_hints: bool,
+    pub force_min_tokens: bool,
+    /// Fixed-schedule replay (timestamp-driven); carries the auto-offset flag.
+    pub fixed_schedule: Option<bool>,
+    /// Fixed-schedule start/end offsets.
+    pub fixed_schedule_start_offset: Option<i64>,
+    pub fixed_schedule_end_offset: Option<i64>,
+    /// Model-selection strategy override.
+    pub model_strategy: Option<ModelStrategy>,
+    /// Timeslice window, seconds.
+    pub slice_duration: Option<f64>,
+    /// Synthetic input-token block size.
+    pub isl_block_size: Option<u32>,
+    /// Fraction of synthetic prompts drawing the shared reusable prefix.
+    pub prefix_reuse_fraction: Option<f64>,
+    /// Fraction of a reusing prompt's input length occupied by the shared prefix.
+    pub prefix_reuse_ratio: Option<f64>,
+    /// Authored prompt corpus selector for synthesized prompt content.
+    pub prompt_corpus: Option<String>,
+    /// Uniform synthetic ISL/OSL window ratio.
+    pub random_range_ratio: Option<crate::dataset::RandomRangeRatioInput>,
+    /// Reference random-corpus behavior.
+    pub random_corpus_style: crate::dataset::RandomCorpusStyle,
+    /// Bounded-memory sketch metric retention.
+    /// The next cohesive input group; flattened to retain the execute wire.
+    #[serde(flatten)]
+    pub artifacts: ArtifactInputs,
+}
+
+/// Artifact and metric-retention inputs.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct ArtifactInputs {
+    pub sketch_metrics: bool,
+    /// Closed-loop steady-state summary for concurrency-target runs.
+    pub steady_state: bool,
+    /// Steady-state occupancy fraction of the concurrency target.
+    pub steady_state_fraction: Option<f64>,
+    /// Hybrid steady-state latency mode (full-run latency, windowed throughput).
+    pub steady_state_hybrid: bool,
+    /// Explicit text batch size for file-backed `random_pool` inputs.
+    pub random_pool_text_batch_size: Option<u32>,
+    /// Explicit image batch size for file-backed `random_pool` inputs.
+    pub random_pool_image_batch_size: Option<u32>,
+    /// Explicit audio batch size for file-backed `random_pool` inputs.
+    pub random_pool_audio_batch_size: Option<u32>,
+    /// Explicit video batch size for file-backed `random_pool` inputs.
+    pub random_pool_video_batch_size: Option<u32>,
+    /// Synthetic image spec (present when any image flag is set).
+    pub image_spec: Option<ImageSpec>,
+    /// Synthetic audio spec.
+    pub audio_spec: Option<AudioSpec>,
+    /// Synthetic video spec.
+    pub video_spec: Option<VideoSpec>,
+    /// Adaptive-scale controller (present when --adaptive-scale is set).
+    pub adaptive_scale: Option<AdaptiveScale>,
+    /// Piecewise-linear request-rate schedule (mutually exclusive with scalar rate).
+    pub request_rate_series: Option<RateSeries>,
+    /// Shared-prefix / prefix-pool policy.
+    pub prefix_prompts: Option<PrefixPrompts>,
+    /// Dry-run dataset-analysis emission (present when `--dry-run` is set without
+    /// `--no-dataset-analysis`).
+    pub dataset_analysis: Option<DatasetAnalysisInputs>,
+    /// Explicit ordered phase list from YAML (`phases:`); overrides warmup/profiling axes.
+    pub phases_override: Option<Vec<Phase>>,
+    pub artifact_dir: PathBuf,
+}
+
+impl std::ops::Deref for Inputs {
+    type Target = EndpointInputs;
+
+    fn deref(&self) -> &Self::Target {
+        &self.endpoint
+    }
+}
+
+impl std::ops::DerefMut for Inputs {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.endpoint
+    }
+}
+
+macro_rules! impl_group_deref {
+    ($from:ty, $field:ident, $to:ty) => {
+        impl std::ops::Deref for $from {
+            type Target = $to;
+
+            fn deref(&self) -> &Self::Target {
+                &self.$field
+            }
+        }
+
+        impl std::ops::DerefMut for $from {
+            fn deref_mut(&mut self) -> &mut Self::Target {
+                &mut self.$field
+            }
+        }
+    };
+}
+
+impl_group_deref!(EndpointInputs, telemetry, TelemetryInputs);
+impl_group_deref!(TelemetryInputs, dataset, DatasetInputs);
+impl_group_deref!(DatasetInputs, workload, WorkloadInputs);
+impl_group_deref!(WorkloadInputs, runtime, RuntimeInputs);
+impl_group_deref!(RuntimeInputs, replay, ReplayScenarioInputs);
+impl_group_deref!(ReplayScenarioInputs, artifacts, ArtifactInputs);
+/// Flat compatibility representation used only while CLI and YAML authoring are
+/// assembled. The execute wire and runtime use the cohesive [`Inputs`] groups.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct InputsFlat {
     pub model_names: Vec<String>,
     pub urls: Vec<String>,
     pub endpoint_type: String,
@@ -523,7 +928,48 @@ pub struct Inputs {
     pub artifact_dir: PathBuf,
 }
 
-/// Dry-run dataset-analysis knobs projected from the `--kv-*` /
+impl Inputs {
+    /// Convert a legacy authoring literal into grouped inputs without changing
+    /// the flat execute-wire keys.
+    pub fn from_flat(flat: InputsFlat) -> anyhow::Result<Self> {
+        let value = serde_json::to_value(flat)
+            .map_err(|error| anyhow::anyhow!("failed to encode authoring inputs: {error}"))?;
+        serde_json::from_value(value)
+            .map_err(|error| anyhow::anyhow!("failed to group authoring inputs: {error}"))
+    }
+}
+
+impl DatasetInputs {
+    /// Reject dataset-local policy values before lowering them into a run.
+    fn validate_local(&self) -> anyhow::Result<()> {
+        if let Some(threshold) = self.failed_request_threshold {
+            anyhow::ensure!(
+                threshold.is_finite() && (0.0..=1.0).contains(&threshold),
+                "--failed-request-threshold must be in [0.0, 1.0], got {threshold}"
+            );
+        }
+        if let Some(ratio) = self.trace_session_sample_ratio {
+            anyhow::ensure!(
+                ratio.is_finite() && ratio > 0.0 && ratio <= 1.0,
+                "--trace-session-sample-ratio must be in (0.0, 1.0], got {ratio}"
+            );
+        }
+        if let Some(cap) = self.system_idle_gap_cap_seconds {
+            anyhow::ensure!(
+                cap.is_finite() && cap >= 0.0,
+                "--system-idle-gap-cap-seconds must be finite and non-negative, got {cap}"
+            );
+        }
+        if let Some(grace) = self.agentic_warmup_grace_period {
+            anyhow::ensure!(
+                grace.is_finite() && grace >= 0.0,
+                "--agentic-warmup-grace-period must be finite and non-negative, got {grace}"
+            );
+        }
+        Ok(())
+    }
+}
+
 /// `--dataset-analysis-*` flags into `artifacts.dataset_analysis_*`.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct DatasetAnalysisInputs {
@@ -800,30 +1246,7 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
     validate_baseten_only_trace_flags(&inputs)?;
     validate_baseten_extra_input_collisions(&inputs)?;
     validate_random_pool_batch_sizes(&inputs)?;
-    if let Some(ratio) = inputs.trace_session_sample_ratio {
-        anyhow::ensure!(
-            ratio.is_finite() && ratio > 0.0 && ratio <= 1.0,
-            "--trace-session-sample-ratio must be in (0.0, 1.0], got {ratio}"
-        );
-    }
-    if let Some(threshold) = inputs.failed_request_threshold {
-        anyhow::ensure!(
-            threshold.is_finite() && (0.0..=1.0).contains(&threshold),
-            "--failed-request-threshold must be in [0.0, 1.0], got {threshold}"
-        );
-    }
-    if let Some(cap) = inputs.system_idle_gap_cap_seconds {
-        anyhow::ensure!(
-            cap.is_finite() && cap >= 0.0,
-            "--system-idle-gap-cap-seconds must be finite and non-negative, got {cap}"
-        );
-    }
-    if let Some(grace) = inputs.agentic_warmup_grace_period {
-        anyhow::ensure!(
-            grace.is_finite() && grace >= 0.0,
-            "--agentic-warmup-grace-period must be finite and non-negative, got {grace}"
-        );
-    }
+    inputs.endpoint.telemetry.dataset.validate_local()?;
     // Effective weka semantics, resolved while `inputs` is still whole (needed
     // before scenario-lock materialization so a graph-ir-specific lock targets the
     // right arm).
@@ -938,7 +1361,7 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
         resolve_hop_routing(inputs.runtime_hop_routing, resolved_connection_reuse);
     let endpoint = Endpoint {
         urls: inputs.urls.iter().map(|u| normalize_url(u)).collect(),
-        endpoint_type: EndpointType(inputs.endpoint_type),
+        endpoint_type: EndpointType(inputs.endpoint_type.clone()),
         streaming: inputs.streaming,
         use_legacy_max_tokens: inputs.use_legacy_max_tokens,
         use_server_token_count: inputs.use_server_token_count,
@@ -951,7 +1374,7 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
         keepalive_timeout: DEFAULT_KEEPALIVE_TIMEOUT,
         download_video_content: inputs.download_video_content,
         extra: inputs.extra.clone(),
-        headers: inputs.headers,
+        headers: inputs.headers.clone(),
         http2: false,
         wait_for_model_timeout: inputs.wait_for_model_timeout.unwrap_or(0.0),
         wait_for_model_interval: inputs
@@ -960,15 +1383,15 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
         wait_for_model_mode: inputs
             .wait_for_model_mode
             .unwrap_or(WaitForModelMode::Inference),
-        path: inputs.endpoint_path,
-        api_key: inputs.api_key,
-        session_header: inputs.session_header,
-        request_content_type: inputs.request_content_type,
+        path: inputs.endpoint_path.clone(),
+        api_key: inputs.api_key.clone(),
+        session_header: inputs.session_header.clone(),
+        request_content_type: inputs.request_content_type.clone(),
         template: None,
         response_field: None,
-        reset_kv_cache: inputs.reset_kv_cache,
-        server_profiler: inputs.server_profiler,
-        proxy: inputs.proxy,
+        reset_kv_cache: inputs.reset_kv_cache.clone(),
+        server_profiler: inputs.server_profiler.clone(),
+        proxy: inputs.proxy.clone(),
         proxy_from_env: inputs.proxy_from_env,
     };
 
@@ -984,6 +1407,7 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
         name: tokenizer_name,
         revision: inputs
             .tokenizer_revision
+            .clone()
             .unwrap_or_else(|| "main".to_string()),
         trust_remote_code: inputs.tokenizer_trust,
         apply_chat_template: inputs.apply_chat_template,
@@ -1357,7 +1781,7 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
         Some(authored) => authored,
         None => {
             let mut phases = Vec::new();
-            if let Some(warmup) = inputs.warmup {
+            if let Some(warmup) = inputs.warmup.as_ref() {
                 let concurrency = warmup.concurrency.or(inputs.concurrency);
                 let mut wp = build_phase(
                     "warmup",
@@ -1490,7 +1914,7 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
         models: Some(models),
         endpoint: Some(endpoint),
         tokenizer: Some(tokenizer),
-        transport: Some(inputs.transport),
+        transport: Some(inputs.transport.clone()),
         runtime: Some(Runtime {
             workers: inputs.runtime_workers,
             workers_min: inputs.runtime_workers_min,
@@ -1640,7 +2064,7 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
 
     Ok(BenchmarkRun {
         benchmark_id,
-        artifact_dir: inputs.artifact_dir,
+        artifact_dir: inputs.artifact_dir.clone(),
         cfg,
         cli_command: None,
         label: String::new(),
