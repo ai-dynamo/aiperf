@@ -18,14 +18,22 @@ from kubernetes_asyncio import config as kubernetes_config
 from kubernetes_asyncio.client.exceptions import ApiException
 
 from .api import create_app
-from .contract import ControllerEnvelope, validate_envelope
+from .contract import (
+    ControllerEnvelope,
+    validate_envelope,
+    validate_sweep_envelope,
+)
 from .reconciliation import (
     build_config_snapshot,
     build_jobset,
+    build_sweep_config_snapshot,
+    build_sweep_jobset,
+    build_sweep_workload_identity,
     build_workload_identity,
     config_snapshot_name,
     envelope_sha256,
     submitted_status,
+    sweep_submitted_status,
     validate_jobset_identity,
     validate_references,
     workload_name,
@@ -36,6 +44,7 @@ from .settings import OperatorSettings
 GROUP = "aiperf.nvidia.com"
 VERSION = "v1alpha1"
 PLURAL = "aiperfjobs"
+SWEEP_PLURAL = "aiperfsweeps"
 
 
 @dataclass(frozen=True)
@@ -600,6 +609,214 @@ async def delete_job(
                 namespace=namespace,
                 propagation_policy="Foreground",
             )
+
+
+@kopf.on.create(GROUP, VERSION, SWEEP_PLURAL)
+async def create_sweep(
+    spec: dict[str, Any],
+    name: str,
+    namespace: str,
+    uid: str,
+    **_: Any,
+) -> None:
+    """Validate a submitted sweep envelope and create its sweep-controller JobSet.
+
+    No sweep logic enters the operator.  Axis expansion, child-run scheduling,
+    and result aggregation are entirely the sweep-controller binary's
+    responsibility (Task 9).  The operator's Python delta here is one handler,
+    one RBAC template, and one status initialisation.
+    """
+    envelope = validate_sweep_envelope(spec["sweepEnvelope"])
+    if envelope.run_id != name or envelope.namespace != namespace:
+        raise ValueError("AIPerfSweep metadata does not match envelope identity")
+    async with client.ApiClient() as api_client:
+        core = client.CoreV1Api(api_client)
+        rbac = client.RbacAuthorizationV1Api(api_client)
+        custom_objects = client.CustomObjectsApi(api_client)
+
+        # Set initial Pending status if not already present (idempotent on retry).
+        resource = await custom_objects.get_namespaced_custom_object(
+            group=GROUP,
+            version=VERSION,
+            namespace=namespace,
+            plural=SWEEP_PLURAL,
+            name=name,
+        )
+        if resource.get("status") is None:
+            await custom_objects.patch_namespaced_custom_object_status(
+                group=GROUP,
+                version=VERSION,
+                namespace=namespace,
+                plural=SWEEP_PLURAL,
+                name=name,
+                body={
+                    "metadata": {"uid": uid},
+                    "status": sweep_submitted_status(envelope),
+                },
+            )
+
+        # Provision the sweep envelope as an immutable ConfigMap so the
+        # sweep-controller can mount it at /etc/aiperf/config without reading
+        # the base config (the operator never interprets base_config content).
+        snapshot = build_sweep_config_snapshot(envelope, uid)
+        try:
+            await core.create_namespaced_config_map(namespace=namespace, body=snapshot)
+        except ApiException as error:
+            if error.status != 409:
+                raise
+
+        # Provision per-sweep RBAC.
+        service_account, role, binding = build_sweep_workload_identity(envelope, uid)
+        await _ensure_namespaced_resource(
+            service_account,
+            "ServiceAccount",
+            core.create_namespaced_service_account,
+            core.read_namespaced_service_account,
+            api_client,
+        )
+        await _ensure_namespaced_resource(
+            role,
+            "Role",
+            rbac.create_namespaced_role,
+            rbac.read_namespaced_role,
+            api_client,
+        )
+        await _ensure_namespaced_resource(
+            binding,
+            "RoleBinding",
+            rbac.create_namespaced_role_binding,
+            rbac.read_namespaced_role_binding,
+            api_client,
+        )
+
+        # Materialise the single sweep-controller JobSet.
+        jobset = build_sweep_jobset(envelope, uid)
+        try:
+            await custom_objects.create_namespaced_custom_object(
+                group="jobset.x-k8s.io",
+                version="v1alpha2",
+                namespace=namespace,
+                plural="jobsets",
+                body=jobset,
+            )
+        except ApiException as error:
+            if error.status != 409:
+                raise
+
+
+@kopf.on.event(GROUP, VERSION, PLURAL)
+async def observe_child_run(event: dict[str, Any], **_: Any) -> None:
+    """Roll child AIPerfJob phases into the owning AIPerfSweep status.
+
+    The sweep-controller binary creates child AIPerfJob resources and sets an
+    owner reference pointing to the AIPerfSweep.  This handler detects those
+    owner references, fetches the parent sweep, and updates status.childRuns,
+    status.completedRuns, and status.failedRuns.
+    """
+    if event.get("type") == "DELETED":
+        return
+    body = event.get("object")
+    if not isinstance(body, Mapping):
+        return
+    metadata = body.get("metadata")
+    if not isinstance(metadata, Mapping):
+        return
+    owners = metadata.get("ownerReferences")
+    if not isinstance(owners, list):
+        return
+    sweep_owners = [
+        owner
+        for owner in owners
+        if isinstance(owner, Mapping)
+        and owner.get("apiVersion") == f"{GROUP}/{VERSION}"
+        and owner.get("kind") == "AIPerfSweep"
+        and owner.get("controller") is True
+    ]
+    if not sweep_owners:
+        return
+    sweep_owner = sweep_owners[0]
+    sweep_name = sweep_owner.get("name")
+    sweep_uid = sweep_owner.get("uid")
+    job_namespace = metadata.get("namespace")
+    job_name = metadata.get("name")
+    if (
+        not isinstance(sweep_name, str)
+        or not isinstance(job_namespace, str)
+        or not isinstance(job_name, str)
+    ):
+        return
+
+    job_status = body.get("status")
+    phase = "Unknown"
+    if isinstance(job_status, Mapping):
+        phase = str(job_status.get("phase", "Unknown"))
+
+    async with client.ApiClient() as api_client:
+        custom_objects = client.CustomObjectsApi(api_client)
+        try:
+            sweep = await custom_objects.get_namespaced_custom_object(
+                group=GROUP,
+                version=VERSION,
+                namespace=job_namespace,
+                plural=SWEEP_PLURAL,
+                name=sweep_name,
+            )
+        except ApiException as error:
+            if error.status == 404:
+                return
+            raise
+
+        sweep_meta = sweep.get("metadata") or {}
+        if sweep_meta.get("uid") != sweep_uid:
+            return
+
+        sweep_status = sweep.get("status") or {}
+        child_runs: list[dict[str, Any]] = list(sweep_status.get("childRuns") or [])
+
+        job_ref = f"{job_namespace}/{job_name}"
+        existing_idx = next(
+            (i for i, run in enumerate(child_runs) if run.get("name") == job_name),
+            None,
+        )
+        entry: dict[str, Any] = {
+            "name": job_name,
+            "jobRef": job_ref,
+            "phase": phase,
+        }
+        if existing_idx is not None:
+            child_runs[existing_idx] = entry
+        else:
+            child_runs.append(entry)
+
+        completed_runs = sum(1 for run in child_runs if run.get("phase") == "Completed")
+        failed_runs = sum(1 for run in child_runs if run.get("phase") == "Failed")
+
+        # This is a read-modify-write of the whole childRuns list, so the patch
+        # carries the resourceVersion it was computed from.  The API server then
+        # rejects a write raced by a concurrent invocation with 409 Conflict
+        # instead of silently regressing childRuns to a stale value and tripping
+        # the CRD's monotonic completedRuns/failedRuns guard.  The 409 propagates
+        # so kopf retries the handler against the fresh object.
+        patch_metadata: dict[str, Any] = {"uid": sweep_uid}
+        resource_version = sweep_meta.get("resourceVersion")
+        if isinstance(resource_version, str) and resource_version:
+            patch_metadata["resourceVersion"] = resource_version
+
+        await custom_objects.patch_namespaced_custom_object_status(
+            group=GROUP,
+            version=VERSION,
+            namespace=job_namespace,
+            plural=SWEEP_PLURAL,
+            name=sweep_name,
+            body={
+                "metadata": patch_metadata,
+                "status": {
+                    "childRuns": child_runs,
+                    "completedRuns": completed_runs,
+                    "failedRuns": failed_runs,
+                },
+            },
+        )
 
 
 async def run_services(settings: OperatorSettings) -> None:

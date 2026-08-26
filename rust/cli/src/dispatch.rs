@@ -76,6 +76,7 @@ pub fn run(argv: &[String]) -> anyhow::Result<i32> {
             slurm::generate::run(&argv[2..])
         }
         Some("results-sidecar") => results_sidecar::run(&argv[1..]),
+        Some("sweep-controller") => kube::sweep_controller::run(),
         Some("analyze-trace") => analyze_trace::run(&argv[1..]),
         Some("compare") => compare::run(&argv[1..]),
         Some("chat") => chat::run(&argv[1..]),

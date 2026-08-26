@@ -67,9 +67,9 @@ purpose for each, so an agent knows which file to open for a given question.
   defines the shipped `native-k8s/v1` boundary: Rust owns the public `aiperf kube`
   CLI and native controller/cell/results-sidecar roles; the independently packaged
   `aiperf-k8s-operator` owns reconciliation and the cluster-local durable-results
-  API without importing `aiperf.*`. V1 ships only AIPerfJob; `validate` and
+  API without importing `aiperf.*`. V1 ships the AIPerfJob and AIPerfSweep custom resources; `validate` and
   `profile` require an image-digest-bound capability document, while `init`,
-  `generate`, `sweep`, `index`, and `dashboard` refuse. The immutable CR spec and per-run RBAC bind the
+  `generate` refuse; `sweep` submits an `AIPerfSweep` CR reconciled into a sweep-controller JobSet; `index` lists retained result runs; `dashboard` serves the local SPA backed by the operator's results API. The immutable CR spec and per-run RBAC bind the
   controller to status-only updates. The chart requires an explicit operator image
   repository and tag and installs JobSet, a fixed ClusterIP
   `aiperf-k8s-operator` Service, and a single-owner results PVC. The regular

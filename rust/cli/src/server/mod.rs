@@ -20,6 +20,7 @@ pub mod assets;
 pub mod index;
 pub mod live;
 pub mod routes;
+pub mod source;
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -28,6 +29,7 @@ use std::thread::JoinHandle;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use index::RunEntry;
+pub use source::{DiskSource, HistoricalSource};
 
 /// How deep to walk the results root for historical `native-v2.json` reports.
 const DEFAULT_SCAN_MAX_DEPTH: usize = 8;
@@ -58,6 +60,10 @@ pub struct ServerConfig {
     /// Results root scanned for historical runs (and where the live session's runs
     /// live). `None` serves only the in-memory session.
     pub results_root: Option<PathBuf>,
+    /// Historical results source. `None` browses `results_root` from disk;
+    /// `Some(_)` replaces the disk walk entirely (the operator-backed source
+    /// `aiperf kube dashboard` installs).
+    pub historical: Option<Arc<dyn HistoricalSource>>,
 }
 
 /// State shared with every request handler (cheap to clone: `Arc` + small fields).
@@ -66,6 +72,7 @@ pub struct AppState {
     session: SessionRuns,
     live: LiveSlot,
     results_root: Option<PathBuf>,
+    historical: Option<Arc<dyn HistoricalSource>>,
     started_unix: u64,
     scan_max_depth: usize,
 }
@@ -124,6 +131,7 @@ pub fn start(
         session,
         live,
         results_root: config.results_root.clone(),
+        historical: config.historical.clone(),
         started_unix: now_unix(),
         scan_max_depth: DEFAULT_SCAN_MAX_DEPTH,
     };
@@ -208,5 +216,84 @@ impl RunEntry {
             sweep_id,
             "session",
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::{Read as _, Write as _};
+    use std::net::TcpStream;
+
+    use serde_json::Value;
+
+    use super::*;
+
+    /// A source that drives its own current-thread runtime, exactly as the native
+    /// Kubernetes transport does (`kube::client::send_bounded`). Any handler that
+    /// calls it directly from async context panics with "Cannot start a runtime
+    /// from within a runtime", so this stub structurally reproduces that class of
+    /// bug rather than merely returning data.
+    struct RuntimeDrivingSource;
+
+    impl RuntimeDrivingSource {
+        fn drive<T>(value: T) -> T {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                // A test stub: a runtime that cannot be built fails the test loudly.
+                .expect("stub source runtime");
+            runtime.block_on(async { value })
+        }
+    }
+
+    impl HistoricalSource for RuntimeDrivingSource {
+        fn list(&self) -> Vec<RunEntry> {
+            Self::drive(Vec::new())
+        }
+
+        fn read_report(&self, _run: &RunEntry) -> Option<Value> {
+            Self::drive(None)
+        }
+    }
+
+    /// Issue one bounded HTTP/1.1 GET and return its status line. A handler that
+    /// panicked closes the connection without a response, which surfaces here as
+    /// an empty read rather than a status.
+    fn get_status_line(address: SocketAddr, path: &str) -> String {
+        let mut stream = TcpStream::connect(address).expect("connect to dashboard");
+        write!(
+            stream,
+            "GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
+        )
+        .expect("write request");
+        let mut response = String::new();
+        let _ = stream.read_to_string(&mut response);
+        response.lines().next().unwrap_or_default().to_string()
+    }
+
+    #[test]
+    fn run_list_serves_a_historical_source_that_drives_its_own_runtime() {
+        let handle = start(
+            ServerConfig {
+                bind: "127.0.0.1:0".parse().expect("loopback bind"),
+                results_root: None,
+                historical: Some(Arc::new(RuntimeDrivingSource)),
+            },
+            Arc::new(Mutex::new(Vec::new())),
+            Arc::new(Mutex::new(None)),
+        )
+        .expect("dashboard server");
+        let address = handle.local_addr();
+
+        assert_eq!(
+            get_status_line(address, "/api/runs"),
+            "HTTP/1.1 200 OK",
+            "a blocking historical source must not panic the run-list handler"
+        );
+        assert_eq!(
+            get_status_line(address, "/api/runs/missing"),
+            "HTTP/1.1 404 Not Found",
+            "an unknown run must resolve through the source without panicking"
+        );
     }
 }

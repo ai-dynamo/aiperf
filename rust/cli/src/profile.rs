@@ -62,7 +62,12 @@ fn start_dashboard(flags: &ProfileFlags) -> Option<Dashboard> {
         .clone()
         .or_else(|| std::env::current_dir().ok());
     let handle = match server::start(
-        ServerConfig { bind, results_root },
+        ServerConfig {
+            bind,
+            results_root,
+            // A local profile session browses its own artifact dir from disk.
+            historical: None,
+        },
         session.clone(),
         live.clone(),
     ) {

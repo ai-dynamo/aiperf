@@ -34,7 +34,10 @@ pub(crate) fn resolve_str(
 ) -> anyhow::Result<crate::model::BenchmarkRun> {
     let raw: serde_json::Value =
         serde_yaml::from_str(text).map_err(|e| anyhow::anyhow!("failed to parse config: {e}"))?;
-    validate_schema_version(raw.get("schemaVersion").or_else(|| raw.get("schema_version")))?;
+    validate_schema_version(
+        raw.get("schemaVersion")
+            .or_else(|| raw.get("schema_version")),
+    )?;
     let expanded = crate::expand::expand_config(raw)?;
     resolve_expanded_value(expanded, artifact_dir, None)
 }
@@ -682,7 +685,9 @@ impl<'de> Deserialize<'de> for SchemaVersionValue {
     where
         D: serde::Deserializer<'de>,
     {
-        Ok(Self::Authored(serde_json::Value::deserialize(deserializer)?))
+        Ok(Self::Authored(serde_json::Value::deserialize(
+            deserializer,
+        )?))
     }
 }
 
@@ -3351,8 +3356,7 @@ mod tests {
         for version in ["null", "1", "true", "false", "1.0", "[2.0]"] {
             let error = schema_err_raw(version);
             assert!(
-                error.contains("unsupported schema version")
-                    && error.contains("expected \"2.0\""),
+                error.contains("unsupported schema version") && error.contains("expected \"2.0\""),
                 "{error}"
             );
         }

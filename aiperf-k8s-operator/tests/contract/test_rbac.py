@@ -51,6 +51,16 @@ def test_operator_secret_access_is_limited_to_reconciled_capability_lifecycle(
             "verbs": ["patch"],
         },
         {
+            "apiGroups": ["aiperf.nvidia.com"],
+            "resources": ["aiperfsweeps"],
+            "verbs": ["get", "list", "watch", "patch"],
+        },
+        {
+            "apiGroups": ["aiperf.nvidia.com"],
+            "resources": ["aiperfsweeps/status"],
+            "verbs": ["patch"],
+        },
+        {
             "apiGroups": ["jobset.x-k8s.io"],
             "resources": ["jobsets"],
             "verbs": ["create", "delete", "get", "list", "watch"],
