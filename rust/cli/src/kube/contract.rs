@@ -65,6 +65,7 @@ pub struct RoleEnvelope {
     /// Fixed process environment.
     pub environment: std::collections::BTreeMap<String, String>,
     /// Reference-only bootstrap mount for the controller role.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub bootstrap: Option<BootstrapReference>,
 }
 

@@ -475,8 +475,9 @@ fn init_never_contacts_the_cluster() {
 
 // --- kube generate tests ---
 
-/// Helper: run `kube generate --envelope <fixture> --output <path>` and return the parsed envelope.
-fn run_generate_fixture(fixture_name: &str) -> (ControllerEnvelope, tempfile::TempDir) {
+/// Helper: run `kube generate --envelope <fixture> --output <path>` and return the raw output
+/// bytes alongside the temp directory so its lifetime is caller-managed.
+fn run_generate_fixture(fixture_name: &str) -> (Vec<u8>, tempfile::TempDir) {
     let dir = tempfile::tempdir().expect("tempdir");
     let output_path = dir.path().join("generated.json");
     let exit = super::command::run(&[
@@ -489,22 +490,21 @@ fn run_generate_fixture(fixture_name: &str) -> (ControllerEnvelope, tempfile::Te
     .expect("generate command must succeed");
     assert_eq!(exit, 0, "generate must exit 0");
     let bytes = std::fs::read(&output_path).expect("output file must exist");
-    let value: Value = serde_json::from_slice(&bytes).expect("output must be valid JSON");
-    let envelope = serde_json::from_value::<ControllerEnvelope>(value)
-        .expect("output must deserialize as ControllerEnvelope");
-    (envelope, dir)
+    (bytes, dir)
 }
 
 #[test]
 fn generate_output_validates() {
-    let (generated, _dir) = run_generate_fixture("valid-one-cell-envelope.json");
-    let as_value = serde_json::to_value(&generated).expect("round-trip to Value");
-    validate_envelope(as_value).expect("generated envelope must pass validate_envelope");
+    let (bytes, _dir) = run_generate_fixture("valid-one-cell-envelope.json");
+    let value: Value = serde_json::from_slice(&bytes).expect("output must be valid JSON");
+    validate_envelope(value).expect("generated envelope must pass validate_envelope");
 }
 
 #[test]
 fn generate_matches_profile_projection() {
-    let (generated, _dir) = run_generate_fixture("valid-one-cell-envelope.json");
+    let (bytes, _dir) = run_generate_fixture("valid-one-cell-envelope.json");
+    let generated: ControllerEnvelope =
+        serde_json::from_slice(&bytes).expect("generated output must parse as ControllerEnvelope");
     // Profile calls build_controller_envelope with minted digests; generate calls it with an
     // empty map (no-op). Both must call the same function, so their non-digest fields are
     // identical. With an empty digest map the result equals the base envelope exactly.
