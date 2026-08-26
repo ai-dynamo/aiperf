@@ -49,6 +49,7 @@ from aiperf.common.enums import (
     ImageSourceSamplingStrategy,
     ModelSelectionStrategy,
     PromptCorpus,
+    RandomCorpusStyle,
     RequestContentType,
     ServerMetricsFormat,
     SweepMode,
@@ -1415,6 +1416,54 @@ class CLIConfig(BaseConfig):
             group=Groups.ISL,
         ),
     ] = None
+
+    prompt_random_range_ratio: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="Sample ISL and OSL uniformly from a ratio-defined integer window around the configured means. "
+            "The window is computed from `--random-corpus-style` (defaults to `vllm`): "
+            "vllm style → `[floor(mean*(1-r)), ceil(mean*(1+r))]` (symmetric); "
+            "sglang style → `[max(1, int(mean*r)), mean]` (lower-bounded). "
+            "Accepts a single float applied to both ISL and OSL. The JSON object form "
+            '`{"input": 0.3, "output": 0.5}` for independent values is accepted only under '
+            "vllm style; sglang style applies one ratio to both and requires a plain float. "
+            "Requires both `--isl` and `--osl` to be set explicitly — there is no default "
+            "mean for either. "
+            "Mutually exclusive with `--seq-dist`. "
+            "Under vllm style with a tokenizer configured, the ISL mean is automatically reduced by "
+            "`tokenizer.num_special_tokens_to_add(pair=False)` so `--isl` represents total "
+            "server-side input tokens, matching `vllm bench serve` semantics; sglang style "
+            "applies no such adjustment.",
+        ),
+        CLIParameter(
+            name=("--random-range-ratio",),
+            group=Groups.ISL,
+        ),
+    ] = None
+
+    prompt_random_corpus_style: Annotated[
+        RandomCorpusStyle,
+        Field(
+            default=RandomCorpusStyle.VLLM,
+            description="Benchmark style for RANDOM corpus generation. "
+            "Controls range ratio formula, token pool composition, and other "
+            "per-tool behaviors. "
+            "`vllm` (default) mirrors `vllm bench serve`: symmetric range window, "
+            "non-special token pool (special tokens excluded). "
+            "`sglang` mirrors `sglang.benchmark.serving` run with `--dataset-name random-ids`: "
+            "lower-bounded range window, full `range(vocab_size)` token pool (no exclusion). "
+            "Applies in two independent places: token-pool selection whenever "
+            "`--prompt-corpus random` is set (including with no `--random-range-ratio`, "
+            "where the pool is the only thing the style selects), and the range-window "
+            "formula, special-token accounting and RNG algorithm whenever "
+            "`--random-range-ratio` is set — the latter regardless of corpus.",
+        ),
+        CLIParameter(
+            name=("--random-corpus-style",),
+            group=Groups.ISL,
+        ),
+    ] = RandomCorpusStyle.VLLM
 
     ##############################################################################
     # Output Sequence Length (OSL)

@@ -19,8 +19,9 @@ We split the total wire-token cost into three components, each compensated at a 
 | Component | What it represents | Where AIPerf compensates |
 | --- | --- | --- |
 | **(a) Cache-bust marker** | Hex-string injected into a message to defeat KV cache reuse. | Reduce either the first user turn's bare prompt OR the synthetic shared system prompt by the marker's token cost, depending on where the worker actually places the marker. |
-| **(b) Chat-template wrapping** | Role headers, end-of-turn tokens, BOS, and the assistant-prompt suffix that the model server's tokenizer adds on top of the bare content. | Subtract from every user turn's bare prompt — first turn pays the per-request fixed cost + per-message wrap; later turns pay only the per-message wrap. |
+| **(b) Chat-template wrapping** | Role headers, end-of-turn tokens, and the assistant-prompt suffix that the model server's tokenizer adds on top of the bare content. BOS is handled by (d), not here. | Subtract from every user turn's bare prompt — first turn pays the per-request fixed cost + per-message wrap; later turns pay only the per-message wrap. |
 | **(c) System message length when marker lands on system** | When `--cache-bust system_*` lands the marker on the synthetic shared system prompt, the prompt's wire length grows by the marker token cost. | Reduce the synthetic shared system prompt length by the marker cost so the wire system message still matches `--shared-system-prompt-length`. |
+| **(d) Special tokens (BOS et al.)** | Tokens the server prepends on encode, counted by `tokenizer.num_special_tokens_to_add()`. | Subtracted per ISL path, never via the chat-template terms: `vllm` style folds them into the window bounds; `sglang` style shifts each drawn length (`max(1, drawn - n)`); the non-range-ratio path subtracts in `_get_turn_sequence_lengths`. |
 
 Component (a) only ever has a non-zero value when the user actually has cache-bust enabled. `BenchmarkConfig.validate_cache_bust_compatibility` (in `src/aiperf/config/config.py`) refuses `--cache-bust` when a profiling phase explicitly declares a non-`agentic_replay` `timing_mode`, and refuses it outside `--endpoint-type chat` / `responses` — those checks raise as separate `ValueError`s. It does **not** fire when a `scenario` is set (scenario locks apply post-construction) or when no phase has an explicit `timing_mode` yet (effective mode is resolved later). That validator is what lets the composer assume the worker really will inject the marker once a config has passed — incompatible combinations that would silently no-op are refused when knowable at construction time, and the composer would otherwise over-subtract by `marker_tokens`. Configurations that fail the validator never reach the composer, so component (a) compensation can be unconditional once `target != NONE` and the routing in "Marker placement routing" decides which slot it lands on.
 
@@ -38,7 +39,7 @@ wire_tokens(messages, add_generation_prompt=True)
 
 where:
 
-- `per_request_fixed` is the BOS token plus the assistant-prompt suffix (`<|im_start|>assistant\n`, `[/INST]`, etc.). It is charged **once per request** regardless of the number of messages.
+- `per_request_fixed` is the assistant-prompt suffix (`<|im_start|>assistant\n`, `[/INST]`, etc.). It is charged **once per request** regardless of the number of messages. BOS is deliberately *excluded* (`_estimate_chat_template_overheads` subtracts `bos_tokens` when computing it) because special tokens are compensated separately — see "Special tokens" below.
 - `per_msg_wrap` is the role header plus the end-of-turn marker (`<|im_start|>user\n` and `<|im_end|>\n`, or equivalent). It is charged **once per message**.
 - `content_tokens(m)` is `len(tokenizer.encode(m["content"]))` — the bare content tokens, which we already know how to compute via the same tokenizer.
 
@@ -118,11 +119,11 @@ Once `(per_request_fixed, per_msg_wrap)` are known, the composer subtracts:
 | First user turn | `per_request_fixed + per_msg_wrap + first_turn_marker_tokens` |
 | Subsequent user turns | `per_msg_wrap` |
 
-The first turn pays the per-request fixed cost because that's the turn that "owns" the BOS and generation-prompt tokens — even though those tokens are emitted once per request, they have to be subtracted from one specific turn's bare-prompt budget, and the first turn is the natural choice.
+The first turn pays the per-request fixed cost because that's the turn that "owns" the generation-prompt tokens — even though those tokens are emitted once per request, they have to be subtracted from one specific turn's bare-prompt budget, and the first turn is the natural choice.
 
 The cache-bust marker is also charged to the first turn (when it lands there), for the same reason: it's a request-level cost that needs to come out of one turn's budget.
 
-Subsequent turns only pay the per-message wrap because they don't own any request-level overhead — the BOS and gen-prompt are already accounted for, and the marker (if any) is on the first turn, not them.
+Subsequent turns only pay the per-message wrap because they don't own any request-level overhead — the gen-prompt is already accounted for, and the marker (if any) is on the first turn, not them.
 
 Floor at 1 so prompt generation stays valid for very small `--isl` values: `isl_after = max(1, isl - adjustment)`. The synthetic generator can always produce a one-token prompt; it cannot produce a zero-token prompt.
 
