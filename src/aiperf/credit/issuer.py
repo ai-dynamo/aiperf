@@ -34,7 +34,7 @@ from aiperf.timing.url_samplers import URLSelectionStrategyProtocol
 if TYPE_CHECKING:
     from aiperf.credit.sticky_router import CreditRouterProtocol
     from aiperf.timing.branch_orchestrator import PendingBranchJoin
-    from aiperf.timing.concurrency import ConcurrencyManager
+    from aiperf.timing.concurrency import ConcurrencyManager, PhaseRuntimeKey
     from aiperf.timing.conversation_source import SampledSession
     from aiperf.timing.phase.lifecycle import PhaseLifecycle
     from aiperf.timing.phase.progress_tracker import PhaseProgressTracker
@@ -42,6 +42,10 @@ if TYPE_CHECKING:
     from aiperf.timing.replay_dependencies import ReplayBarrierCoordinator
     from aiperf.timing.request_cancellation import RequestCancellationSimulator
     from aiperf.timing.session_tree import SessionTreeRegistry
+
+    _SlotRelease = Callable[[PhaseRuntimeKey], None]
+    _AsyncSlotSpec = tuple[bool, Callable[[], Awaitable[bool]], _SlotRelease]
+    _SyncSlotSpec = tuple[bool, Callable[[], bool], _SlotRelease]
 
 
 _logger = AIPerfLogger(__name__)
@@ -339,6 +343,51 @@ class CreditIssuer:
         gate = getattr(self, "replay_gate", ReplayIssueGate(None))
         return await gate.submit(turn, lambda: self._issue_credit_ready(turn))
 
+    async def _acquire_slots(
+        self, specs: list[_AsyncSlotSpec]
+    ) -> list[_SlotRelease] | None:
+        """Acquire an ordered slot chain (blocking), rolling back on failure.
+
+        Each spec is ``(needs, acquire, release)``: ``needs`` gates whether the
+        slot applies to this turn, ``await acquire()`` returns True on success,
+        ``release(phase)`` frees it. On failure, or cancellation while waiting
+        on a later slot, the slots already held are released in LIFO order
+        before the failure propagates. Returns the held releases on success so
+        the caller can roll them back if a later gate refuses the turn.
+        """
+        held: list[_SlotRelease] = []
+        for needs, acquire, release in specs:
+            if not needs:
+                continue
+            try:
+                acquired = await acquire()
+            except BaseException:
+                self._release_held(held)
+                raise
+            if not acquired:
+                self._release_held(held)
+                return None
+            held.append(release)
+        return held
+
+    def _try_acquire_slots(
+        self, specs: list[_SyncSlotSpec]
+    ) -> list[_SlotRelease] | None:
+        """Non-blocking twin of :meth:`_acquire_slots` over the ``try_*`` acquires."""
+        held: list[_SlotRelease] = []
+        for needs, acquire, release in specs:
+            if not needs:
+                continue
+            if not acquire():
+                self._release_held(held)
+                return None
+            held.append(release)
+        return held
+
+    def _release_held(self, held: list[_SlotRelease]) -> None:
+        for release in reversed(held):
+            release(self._phase_key)
+
     async def _issue_credit_ready(self, turn: TurnToSend) -> bool:
         """Issue a turn whose recorded predecessor frontier is complete."""
         if self._issuing_stopped:
@@ -367,29 +416,35 @@ class CreditIssuer:
                 else self._stop_checker.can_send_any_turn
             )
 
-        # Session concurrency: one slot per root conversation, acquired on its
-        # first credit in the phase (turn 0, or a mid-trace resume). DAG
-        # children inherit the root's slot and must not acquire their own —
-        # fanout would otherwise consume the user's configured session budget.
+        # Session: one slot per root conversation, acquired on its first credit in
+        # the phase; DAG children inherit it. Request: one slot per wire request
+        # (roots and children), released when the response returns; a no_request
+        # virtual credit fires nothing on the wire and takes none. Prefill: one
+        # slot per request, released at TTFT.
+        cm = self._concurrency_manager
         needs_session_slot = is_session_start and not is_child
-        if needs_session_slot:
-            acquired = await self._concurrency_manager.acquire_session_slot(
-                self._phase_key, self._stop_checker.can_start_new_session
-            )
-            if not acquired:
-                return False
-
-        # Prefill concurrency: one slot per request, released when TTFT arrives.
-        # Limits concurrent prompt processing which is the GPU-intensive phase.
-        acquired = await self._concurrency_manager.acquire_prefill_slot(
-            self._phase_key, can_proceed_fn
+        held = await self._acquire_slots(
+            [
+                (
+                    needs_session_slot,
+                    lambda: cm.acquire_session_slot(
+                        self._phase_key, self._stop_checker.can_start_new_session
+                    ),
+                    cm.release_session_slot,
+                ),
+                (
+                    not turn.no_request,
+                    lambda: cm.acquire_request_slot(self._phase_key, can_proceed_fn),
+                    cm.release_request_slot,
+                ),
+                (
+                    True,
+                    lambda: cm.acquire_prefill_slot(self._phase_key, can_proceed_fn),
+                    cm.release_prefill_slot,
+                ),
+            ]
         )
-        if not acquired:
-            # CRITICAL: Release session slot if we acquired it to maintain symmetry.
-            # Tree is not registered yet (deferred until both slots succeed), so
-            # phase teardown release_all cannot double-release this slot.
-            if needs_session_slot:
-                self._concurrency_manager.release_session_slot(self._phase_key)
+        if held is None:
             return False
 
         # DEFER and REJECT both release slots and return False here - this path
@@ -403,31 +458,15 @@ class CreditIssuer:
         # requeue and no cleanup - contrast with dispatch_child_turn(), which
         # does surface ChildDispatchResult.DEFERRED distinctly.
         if self._turn_admission_result(turn) is not TurnAdmission.ADMIT:
-            self._concurrency_manager.release_prefill_slot(self._phase_key)
-            if needs_session_slot:
-                self._concurrency_manager.release_session_slot(self._phase_key)
+            self._release_held(held)
             return False
 
-        # Both slots held: register the tree before issuing so drain/teardown
-        # own the slot release. Must not run before prefill succeeds.
+        # Register the tree before issuing so drain/teardown own the slot release.
+        # Must not run before prefill succeeds.
         if needs_session_slot:
             self._open_session_tree(turn)
 
-        # Slots acquired - proceed with credit issuance
         return await self._issue_credit_internal(turn)
-
-    def _release_slots_on_reject(
-        self, needs_session_slot: bool, release_prefill: bool
-    ) -> None:
-        """Release slots acquired so far after a non-blocking issuance is rejected.
-
-        Tree is not registered yet (deferred until both slots succeed), so
-        phase teardown release_all cannot double-release these slots.
-        """
-        if release_prefill:
-            self._concurrency_manager.release_prefill_slot(self._phase_key)
-        if needs_session_slot:
-            self._concurrency_manager.release_session_slot(self._phase_key)
 
     async def try_issue_credit(self, turn: TurnToSend) -> bool | None:
         """Try to issue credit without blocking on concurrency slots.
@@ -460,24 +499,39 @@ class CreditIssuer:
         if not can_proceed_fn():
             return False
 
+        cm = self._concurrency_manager
         needs_session_slot = is_session_start and not is_child
-        if needs_session_slot:
-            acquired = self._concurrency_manager.try_acquire_session_slot(
-                self._phase_key, can_proceed_fn
-            )
-            if not acquired:
-                return None  # No slot - credit not issued
-
-        acquired = self._concurrency_manager.try_acquire_prefill_slot(
-            self._phase_key, can_proceed_fn
+        held = self._try_acquire_slots(
+            [
+                (
+                    needs_session_slot,
+                    lambda: cm.try_acquire_session_slot(
+                        self._phase_key, can_proceed_fn
+                    ),
+                    cm.release_session_slot,
+                ),
+                (
+                    not turn.no_request,
+                    lambda: cm.try_acquire_request_slot(
+                        self._phase_key, can_proceed_fn
+                    ),
+                    cm.release_request_slot,
+                ),
+                (
+                    True,
+                    lambda: cm.try_acquire_prefill_slot(
+                        self._phase_key, can_proceed_fn
+                    ),
+                    cm.release_prefill_slot,
+                ),
+            ]
         )
-        if not acquired:
-            self._release_slots_on_reject(needs_session_slot, release_prefill=False)
+        if held is None:
             return None  # No slot - credit not issued
 
         admission = self._turn_admission_result(turn)
         if admission is not TurnAdmission.ADMIT:
-            self._release_slots_on_reject(needs_session_slot, release_prefill=True)
+            self._release_held(held)
             # DEFER means not ready yet - retry later, not a stop condition.
             return None if admission is TurnAdmission.DEFER else False
 
@@ -608,20 +662,42 @@ class CreditIssuer:
             retained_result=ChildDispatchResult.DEFERRED,
         )
 
+    async def _acquire_request_and_prefill(
+        self, turn: TurnToSend, can_proceed_fn: Callable[[], bool]
+    ) -> list[_SlotRelease] | None:
+        """Blocking request-then-prefill acquisition for inherited-session turns.
+
+        Children and joins inherit the root's session slot, so only the request
+        and prefill slots apply. Waiting is backpressure: temporary saturation
+        must not delete sibling branches or a pending join.
+        """
+        cm = self._concurrency_manager
+        return await self._acquire_slots(
+            [
+                (
+                    not turn.no_request,
+                    lambda: cm.acquire_request_slot(self._phase_key, can_proceed_fn),
+                    cm.release_request_slot,
+                ),
+                (
+                    True,
+                    lambda: cm.acquire_prefill_slot(self._phase_key, can_proceed_fn),
+                    cm.release_prefill_slot,
+                ),
+            ]
+        )
+
     async def _dispatch_child_turn_ready(self, turn: TurnToSend) -> ChildDispatchResult:
         """Dispatch a child after its recorded predecessor frontier completes."""
         if not self.can_dispatch_child_turn():
             return ChildDispatchResult.REJECTED
         can_proceed_fn = self._stop_checker.can_send_child_turn
-        # Children inherit the parent's session slot; wait for prefill
-        # capacity so temporary saturation does not delete sibling branches.
-        if not await self._concurrency_manager.acquire_prefill_slot(
-            self._phase_key, can_proceed_fn
-        ):
+        held = await self._acquire_request_and_prefill(turn, can_proceed_fn)
+        if held is None:
             return ChildDispatchResult.REJECTED
         admission = self._turn_admission_result(turn)
         if admission is not TurnAdmission.ADMIT:
-            self._concurrency_manager.release_prefill_slot(self._phase_key)
+            self._release_held(held)
             if admission is TurnAdmission.DEFER:
                 return ChildDispatchResult.DEFERRED
             return ChildDispatchResult.REJECTED
@@ -694,20 +770,19 @@ class CreditIssuer:
         """Issue a parent's gated (join) turn once its frontier is complete.
 
         A join turn is a parent continuation (``turn_index > 0``): it inherits
-        the root's session slot (no session-slot acquisition) and only needs a
-        prefill slot. The final-credit bookkeeping (freeze counts + done event)
-        still runs inside ``_issue_credit_internal``.
+        the root's session slot (no session-slot acquisition) and takes its own
+        request and prefill slots. The final-credit bookkeeping (freeze counts +
+        done event) still runs inside ``_issue_credit_internal``.
         """
         if not self.can_dispatch_join(turn.agent_depth):
             return ChildDispatchResult.REJECTED
         can_proceed_fn = self._join_stop_check(turn.agent_depth)
-        if not await self._concurrency_manager.acquire_prefill_slot(
-            self._phase_key, can_proceed_fn
-        ):
+        held = await self._acquire_request_and_prefill(turn, can_proceed_fn)
+        if held is None:
             return ChildDispatchResult.REJECTED
         admission = self._turn_admission_result(turn)
         if admission is not TurnAdmission.ADMIT:
-            self._concurrency_manager.release_prefill_slot(self._phase_key)
+            self._release_held(held)
             if admission is TurnAdmission.DEFER:
                 return ChildDispatchResult.DEFERRED
             return ChildDispatchResult.REJECTED
