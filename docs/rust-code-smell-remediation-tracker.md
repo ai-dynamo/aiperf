@@ -55,7 +55,7 @@ Graham review and a commit.
 | S11 | `Inputs` is an unguarded god struct | Complete — `de8b24adb6`, `37a78fd0a2`, `2fc4d17c6e` | Independent Graham r2 approved; direct grouped-construction and flat-wire evidence recorded |
 | S12 | Cellular controller feature gates are scattered | Complete — `d1948cd50d` | Independent Graham approved; feature-on controller behavior and parent-gate boundary evidence recorded |
 | S13 | Graph benchmark bypasses the transport seam | Complete — `0e2e3f7aa1` | Independent Graham approved; default API boundary, opt-in transport feature, and DynoSim report evidence recorded |
-| S14 | DAG validation test does not prove rejection | Confirmed; spec ready | Sol implementation plan |
+| S14 | DAG validation test does not prove rejection | Complete — `1bfd9b63cd`, `688b6e1038`, `af3519025a` | Independent Graham r3 approved; public-constructor DAG acceptance/rejection RED→GREEN evidence recorded |
 | S15 | `ScheduledPhasePlan` booleans lack semantic prefixes | Complete — `13fdae4430` | Independent Graham approved; RED→GREEN policy coverage recorded |
 | E01 | Velo route registration does not bind signed peer identity | Complete | Integrated `ef7b966238`, `56e35146bb`; independent Graham r2 PASS |
 | E02 | Externally-driven evaluation skips preflight | Complete — `b488309a2c` | Independent Graham approved; RED→GREEN pre-side-effect Docker-capability coverage recorded |
@@ -90,6 +90,12 @@ Graham review and a commit.
 | B01 | AgentX integration fixtures omit required cache-bust option | Complete — `91b65b2044` | Independent Graham approved; compile regression green |
 
 ## Progress log
+
+- 2026-08-26: Completed S14. Dataset DAG validation now has public-constructor
+  characterization tests for valid acceptance, fork-lineage rejection, and
+  unknown branch attachment rejection. Bypassing the sole validator call made
+  both rejection cases fail; the restored `dag_` filter passes all three
+  characterizations, and independent Graham r3 approved the final series.
 
 - 2026-08-26: Reconciled E04 to completed C10. The E04 requirement is the
   same pre-abort, in-flight-abort, and no-post-abort-publication behavior
