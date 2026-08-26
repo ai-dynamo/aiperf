@@ -5,9 +5,9 @@
 
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::DefaultBodyLimit;
 use axum::routing::{get, post};
+use axum::{Router, middleware};
 
 use crate::config::{MockServerConfig, WebSocketMode};
 use crate::handlers;
@@ -160,6 +160,12 @@ pub fn build_router(state: Arc<AppState>) -> Router {
     }
     if state.config.websocket_enabled() {
         router = router.route("/mock/websocket/captures", get(crate::websocket::captures));
+    }
+    if state.config.request_capture_capacity > 0 {
+        router = router.layer(middleware::from_fn_with_state(
+            state.clone(),
+            crate::request_capture::capture_request,
+        ));
     }
     router.with_state(state)
 }

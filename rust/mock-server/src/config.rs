@@ -574,6 +574,15 @@ pub struct MockServerConfig {
     )]
     pub websocket_capture_capacity: usize,
 
+    /// Maximum raw HTTP request captures retained for integration tests.
+    /// Zero disables capture and keeps the ordinary request path unchanged.
+    #[arg(
+        long,
+        env = "MOCK_SERVER_REQUEST_CAPTURE_CAPACITY",
+        default_value_t = 0
+    )]
+    pub request_capture_capacity: usize,
+
     /// Maximum decoded WebSocket application message size in bytes.
     #[arg(
         long,

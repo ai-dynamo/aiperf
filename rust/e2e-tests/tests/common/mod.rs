@@ -328,6 +328,12 @@ impl AIPerfHarness {
         self.run_timeout(profile_args, DEFAULT_TIMEOUT_SECS)
     }
 
+    /// Run a profile into a named child of this harness's artifact directory.
+    /// This keeps A/B outputs disjoint when both products target the same mock.
+    pub fn run_in(&self, profile_args: &str, artifact_subdir: &str) -> RunResult {
+        self.run_env_in(profile_args, artifact_subdir, &[])
+    }
+
     /// Like [`run`](Self::run) but with an explicit timeout in seconds.
     pub fn run_timeout(&self, profile_args: &str, secs: u64) -> RunResult {
         let mut args = vec!["profile".to_string()];
@@ -357,6 +363,28 @@ impl AIPerfHarness {
         self.exec_env(args, DEFAULT_TIMEOUT_SECS, extra_env)
     }
 
+    /// Like [`run_in`](Self::run_in) with extra subprocess environment values.
+    pub fn run_env_in(
+        &self,
+        profile_args: &str,
+        artifact_subdir: &str,
+        extra_env: &[(&str, &str)],
+    ) -> RunResult {
+        let artifact_dir = self.artifact_path().join(artifact_subdir);
+        std::fs::create_dir_all(&artifact_dir).expect("create named artifact directory");
+        let mut args = vec!["profile".to_string()];
+        args.extend(shell_split(profile_args));
+        args.push("--artifact-dir".to_string());
+        args.push(artifact_dir.display().to_string());
+        if !args.iter().any(|a| a == "--tokenizer") {
+            args.push("--tokenizer".to_string());
+            args.push(default_tokenizer());
+        }
+        let mut result = self.exec_env(args, DEFAULT_TIMEOUT_SECS, extra_env);
+        result.artifacts.dir = artifact_dir;
+        result
+    }
+
     /// Run an arbitrary non-profile subcommand (e.g. `plot ...`). No
     /// `--artifact-dir`/`--tokenizer` are appended and no server is required.
     pub fn run_no_server(&self, args: &str) -> RunResult {
@@ -374,15 +402,21 @@ impl AIPerfHarness {
         extra_env: &[(&str, &str)],
     ) -> RunResult {
         // The Python frontend owns the `AIPERF_RUNTIME_ENGINE=python` selector.
-        let wants_python_engine = extra_env
+        let python_module = extra_env
             .iter()
-            .any(|(k, v)| *k == "AIPERF_RUNTIME_ENGINE" && *v == "python");
+            .find(|(key, _)| *key == "AIPERF_E2E_PYTHON_MODULE")
+            .map(|(_, value)| *value);
+        let wants_python_engine = python_module.is_some()
+            || extra_env
+                .iter()
+                .any(|(k, v)| *k == "AIPERF_RUNTIME_ENGINE" && *v == "python");
 
         let (program, mut cmd) = if wants_python_engine {
             let python = python_binary();
+            let module = python_module.unwrap_or("aiperf.cli");
             let mut c = Command::new(&python);
-            c.arg("-m").arg("aiperf.cli");
-            (format!("{python} -m aiperf.cli"), c)
+            c.arg("-m").arg(module);
+            (format!("{python} -m {module}"), c)
         } else {
             let bin = exec_binary();
             let c = Command::new(&bin);
@@ -397,7 +431,9 @@ impl AIPerfHarness {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         for (key, value) in extra_env {
-            cmd.env(key, value);
+            if *key != "AIPERF_E2E_PYTHON_MODULE" {
+                cmd.env(key, value);
+            }
         }
 
         let mut child = cmd.spawn().unwrap_or_else(|e| {

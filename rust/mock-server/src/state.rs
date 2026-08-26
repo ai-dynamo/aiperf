@@ -16,6 +16,7 @@ use crate::config::MockServerConfig;
 use crate::dcgm::{DcgmFaker, DcgmPool};
 use crate::metrics::MetricRecorder;
 use crate::prefix_cache::PrefixCache;
+use crate::request_capture::{RequestCapture, RequestCaptureStore};
 use crate::scheduler::BatchScheduler;
 use crate::websocket::WebSocketCaptureStore;
 
@@ -53,6 +54,7 @@ pub struct AppState {
     pub content_fetch_client: Option<ContentFetchClient>,
     /// In-memory observability collector state used by integration tests.
     pub observability: crate::observability::ObservabilityState,
+    pub(crate) request_capture_store: RequestCaptureStore,
     /// Monotonic WebSocket connection identities and bounded completed captures.
     pub(crate) websocket_connections: AtomicU64,
     pub(crate) websocket_captures: WebSocketCaptureStore,
@@ -176,6 +178,7 @@ impl AppState {
             accuracy_live: crate::accuracy::AccuracyLive::default(),
             content_fetch_client,
             observability: crate::observability::ObservabilityState::default(),
+            request_capture_store: RequestCaptureStore::new(config.request_capture_capacity),
             websocket_connections: AtomicU64::new(0),
             websocket_captures: WebSocketCaptureStore::new(config.websocket_capture_capacity),
         });
@@ -194,6 +197,16 @@ impl AppState {
         }
 
         state
+    }
+
+    /// Snapshot bounded raw HTTP captures in arrival order.
+    pub fn request_captures(&self) -> Vec<RequestCapture> {
+        self.request_capture_store.snapshot()
+    }
+
+    /// Clear retained raw HTTP captures without restarting the server.
+    pub fn clear_request_captures(&self) {
+        self.request_capture_store.clear();
     }
 
     fn build_dcgm_pool(config: &MockServerConfig) -> DcgmPool {
