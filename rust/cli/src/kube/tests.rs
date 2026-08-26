@@ -418,10 +418,15 @@ fn init_scaffold_fails_validation_until_edited() {
     let cap_text =
         std::fs::read_to_string(dir.path().join("image-capabilities.json")).expect("read");
     let cap: serde_json::Value = serde_json::from_str(&cap_text).expect("json");
-    // Any real digest would fail because the schema rejects the placeholder pattern.
+    // The schema rejects the placeholder via the ^sha256:[0-9a-f]{64}$ pattern.
+    // Passing the placeholder as the expected digest rules out a plain digest-mismatch
+    // error, leaving schema rejection as the only possible cause of Err.
     assert!(
-        validate_image_capabilities(cap, &format!("sha256:{}", "0".repeat(64))).is_err(),
-        "unedited scaffold must fail validate_image_capabilities"
+        matches!(
+            validate_image_capabilities(cap, super::scaffold::PLACEHOLDER_DIGEST),
+            Err(KubeError::ContractValidation(_))
+        ),
+        "unedited scaffold must fail schema validation"
     );
 }
 
@@ -454,8 +459,6 @@ fn init_never_contacts_the_cluster() {
         ),
     )
     .expect("kubeconfig write");
-    // Route KUBECONFIG to an RFC 5737 unroutable address. Any cluster contact attempt
-    // from kube init would fail; succeeding here proves none occurred.
     // kube init reads no kubeconfig.
     unsafe { std::env::set_var("KUBECONFIG", kubeconfig_path.as_os_str()) };
     let exit = super::command::run(&[
