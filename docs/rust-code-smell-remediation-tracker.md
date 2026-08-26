@@ -74,7 +74,7 @@ Graham review and a commit.
 | C04 | Eventstream prelude validation happens after accumulation | Complete — `4067dfc13b`, `7b0d6fce79` | Independent Graham approved; RED→GREEN parser and mock-caller coverage recorded |
 | C05 | Partial final HTTP frame lacks terminal decode error | Complete — `d2c92bae08` | Independent Graham approved; RED→GREEN EOF coverage recorded |
 | C06 | Authored HTTP body cap is not propagated to client config | Complete — `0a9ba67232` | Independent Graham approved; clean-head behavioral RED→GREEN coverage recorded |
-| C07 | H2 prior knowledge is not usable over UDS | Confirmed; spec needed | Sol implementation plan |
+| C07 | H2 prior knowledge is not usable over UDS | Complete — `0ed7e8980d` | Independent Graham approved; UDS H1/H2 RED→GREEN coverage recorded |
 | C08 | Graph successor waits for parent completion instead of first token | Confirmed; spec needed | Sol implementation plan |
 | C09 | Graph firing delay ignores cancellation | Confirmed; spec needed | Sol implementation plan |
 | C10 | Graph cancellation still permits tool successor | Confirmed; spec needed | Sol implementation plan |
@@ -193,3 +193,7 @@ Graham review and a commit.
   tracked incrementally, and live delivery reports controller failures or a
   progress-resetting inactivity timeout. The final 13-test scoped suite and
   independent Graham review passed.
+- 2026-08-26: C07 completed and integrated as `0ed7e8980d`: the endpoint
+  policy preserves explicit H2 prior knowledge over Unix sockets while Auto and
+  H1 retain H1 handshakes. Registry projection and live Unix H1/H2 listener
+  RED→GREEN tests passed; independent Graham review passed.
