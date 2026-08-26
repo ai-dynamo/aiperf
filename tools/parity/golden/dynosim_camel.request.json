@@ -682,7 +682,10 @@
             }
           },
           "title": "NVIDIA AIPerf",
-          "width": 140
+          "width": 140,
+          "model_names": [
+            "meta-llama/Llama-3.1-8B-Instruct"
+          ]
         },
         "genai_perf": {
           "enabled": true,

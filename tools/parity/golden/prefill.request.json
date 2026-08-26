@@ -687,7 +687,10 @@
             }
           },
           "title": "NVIDIA AIPerf | LLM Metrics",
-          "width": 140
+          "width": 140,
+          "model_names": [
+            "Qwen/Qwen3-0.6B"
+          ]
         },
         "genai_perf": {
           "enabled": true,
