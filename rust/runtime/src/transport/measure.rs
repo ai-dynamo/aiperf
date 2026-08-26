@@ -79,8 +79,9 @@ pub(crate) fn live_record(
         .flatten()
 }
 
-/// Register coordinator-known arrival facts on `observer`, drive `dispatch` to
-/// terminal, and record the terminal transport facts.
+/// Register coordinator-known arrival facts on the native worker observer,
+/// drive an observer-polymorphic transport dispatch to terminal, and record the
+/// terminal transport facts.
 ///
 /// The observer accumulates the complete record so the end-of-run drain yields
 /// one authoritative [`RecordIngest`] per request. `phase`, `session_num`, the

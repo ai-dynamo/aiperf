@@ -1598,6 +1598,10 @@ impl WorkerSink for WebSocketTransportSink {
         }
     }
 
+    fn clock(&self) -> &dyn Clock {
+        self.clock.as_ref()
+    }
+
     fn inference_dimensions(&self, turn: &TurnToSend) -> InferenceDimensions {
         InferenceDimensions {
             endpoint_url: self
@@ -1621,21 +1625,14 @@ impl WorkerSink for WebSocketTransportSink {
 
     async fn dispatch_measured(
         &self,
-        observer: &NativeMetricsObserver,
+        observer: &dyn RequestObserver,
         turn: PreparedTurn,
-        context: &MeasuredContext,
+        _context: &MeasuredContext,
         on_first_token: &dyn Fn(i64),
         responses: Option<&dyn TurnResponseObserver>,
     ) -> Result<DispatchResult> {
-        let uuid = turn.request.uuid;
-        measure::measure_dispatch(
-            observer,
-            self.clock.as_ref(),
-            uuid,
-            context,
-            self.dispatch_inner(turn, observer, on_first_token, responses),
-        )
-        .await
+        self.dispatch_inner(turn, observer, on_first_token, responses)
+            .await
     }
 
     async fn shutdown(&self) -> Result<()> {
@@ -1673,9 +1670,21 @@ impl RequestExecutor for WebSocketTransportSink {
     ) -> Result<MeasuredOutcome> {
         let observer = self.measurement_observer()?;
         let uuid = turn.request.uuid;
-        let result = self
-            .dispatch_measured(&observer, turn, &context, on_first_token, None)
-            .await?;
+        let result = measure::measure_dispatch(
+            observer.as_ref(),
+            self.clock.as_ref(),
+            uuid,
+            &context,
+            <Self as WorkerSink>::dispatch_measured(
+                self,
+                observer.as_ref(),
+                turn,
+                &context,
+                on_first_token,
+                None,
+            ),
+        )
+        .await?;
         Ok(MeasuredOutcome {
             live_record: measure::live_record(&observer, uuid, &context),
             result,
@@ -1691,9 +1700,21 @@ impl RequestExecutor for WebSocketTransportSink {
     ) -> Result<MeasuredOutcome> {
         let observer = self.measurement_observer()?;
         let uuid = turn.request.uuid;
-        let result = self
-            .dispatch_measured(&observer, turn, &context, on_first_token, Some(responses))
-            .await?;
+        let result = measure::measure_dispatch(
+            observer.as_ref(),
+            self.clock.as_ref(),
+            uuid,
+            &context,
+            <Self as WorkerSink>::dispatch_measured(
+                self,
+                observer.as_ref(),
+                turn,
+                &context,
+                on_first_token,
+                Some(responses),
+            ),
+        )
+        .await?;
         Ok(MeasuredOutcome {
             live_record: measure::live_record(&observer, uuid, &context),
             result,

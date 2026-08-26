@@ -729,6 +729,11 @@ impl RequestObserver for PrewarmObserver {
 }
 
 impl TransportSink {
+    /// Return the clock shared by this sink's worker-local dispatch path.
+    pub(crate) fn clock(&self) -> &dyn Clock {
+        self.clock.as_ref()
+    }
+
     /// Dispatch one scheduled turn while retaining the exact HTTP exchange.
     ///
     /// This is the raw-artifact counterpart to [`TurnDispatcher::dispatch_turn`]

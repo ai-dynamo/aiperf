@@ -203,6 +203,11 @@ impl GrpcTransportSink {
         self.start_ns.set(start_ns);
     }
 
+    /// Return the clock shared by this sink's worker-local dispatch path.
+    pub(crate) fn clock(&self) -> &dyn Clock {
+        self.clock.as_ref()
+    }
+
     fn ms(&self, ns: i64) -> f64 {
         ns.saturating_sub(self.start_ns.get()) as f64 / 1_000_000.0
     }

@@ -33,6 +33,13 @@ ENV/
 *.log
 .editorconfig
 .DS_Store
+.agents/
+.claude/
+.codex/
+.cursor/
+.hypothesis/
+.sandlot/
+.superpowers/
 
 # CI
 .github/
@@ -50,4 +57,6 @@ dist/
 # Cargo build output: the runner wheel is compiled fresh inside the image, so a
 # host target/ dir would only bloat the build context.
 target/
+**/target/
+**/*-cargo-target/
 *.jsonl

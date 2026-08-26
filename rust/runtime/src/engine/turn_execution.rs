@@ -17,6 +17,7 @@ use std::task::{Context as TaskContext, Poll};
 use std::thread::JoinHandle;
 
 use crate::clock::{Clock, RealClock, RealClockAnchor};
+use crate::dispatch::sink::RequestObserver;
 use crate::endpoints::{ParsedResponse, PreparedEndpointTable};
 use crate::engine::protocol::HopRouting;
 use crate::metrics::NativeMetricsObserver;
@@ -28,6 +29,7 @@ use crate::transport::core::{
     RequestExecutor, WorkerCreditReport,
 };
 use crate::transport::http::{TransportSink, TransportSinkConfig};
+use crate::transport::measure;
 use anyhow::{Context, Result, anyhow, ensure};
 use async_trait::async_trait;
 use tokio::sync::{Notify, mpsc, oneshot};
@@ -123,6 +125,9 @@ pub trait WorkerSink {
     /// worker observer so TTFT/ITL are not offset by setup duration).
     fn set_run_origin(&self, origin_ns: i64);
 
+    /// Return the worker-local clock used by transport dispatch.
+    fn clock(&self) -> &dyn Clock;
+
     /// Report inference dimensions without performing I/O.
     fn inference_dimensions(&self, turn: &TurnToSend) -> InferenceDimensions;
 
@@ -134,7 +139,7 @@ pub trait WorkerSink {
     /// forwarded live; otherwise `responses` is ignored.
     async fn dispatch_measured(
         &self,
-        observer: &NativeMetricsObserver,
+        observer: &dyn RequestObserver,
         turn: PreparedTurn,
         context: &MeasuredContext,
         on_first_token: &dyn Fn(i64),
@@ -159,6 +164,10 @@ impl WorkerSink for TransportSink {
         TransportSink::set_run_origin(self, origin_ns);
     }
 
+    fn clock(&self) -> &dyn Clock {
+        TransportSink::clock(self)
+    }
+
     fn inference_dimensions(&self, turn: &TurnToSend) -> InferenceDimensions {
         <TransportSink as crate::scheduled::TurnDispatcher>::inference_dimensions(self, turn)
     }
@@ -169,13 +178,13 @@ impl WorkerSink for TransportSink {
 
     async fn dispatch_measured(
         &self,
-        observer: &NativeMetricsObserver,
+        observer: &dyn RequestObserver,
         turn: PreparedTurn,
-        context: &MeasuredContext,
+        _context: &MeasuredContext,
         on_first_token: &dyn Fn(i64),
         responses: Option<&dyn TurnResponseObserver>,
     ) -> Result<DispatchResult> {
-        TransportSink::dispatch_measured(self, observer, turn, context, on_first_token, responses)
+        TransportSink::dispatch_collect_streaming(self, turn, observer, on_first_token, responses)
             .await
     }
 
@@ -1417,14 +1426,20 @@ async fn execute_worker_command<S: WorkerSink + 'static>(
     let response_observer = wants_responses.then(|| WorkerResponseObserver::new(events.clone()));
     let reply = match &worker_observer {
         Some(observer) => {
-            let dispatch = sink.dispatch_measured(
+            let dispatch = measure::measure_dispatch(
                 observer,
-                turn,
+                sink.clock(),
+                uuid,
                 &context,
-                &on_first_token,
-                response_observer
-                    .as_ref()
-                    .map(|responses| responses as &dyn TurnResponseObserver),
+                sink.dispatch_measured(
+                    observer.as_ref(),
+                    turn,
+                    &context,
+                    &on_first_token,
+                    response_observer
+                        .as_ref()
+                        .map(|responses| responses as &dyn TurnResponseObserver),
+                ),
             );
             tokio::pin!(dispatch);
             let result = tokio::select! {
@@ -1598,7 +1613,13 @@ async fn execute_worker_credit<S: WorkerSink + 'static>(
             });
         }
     };
-    let dispatch = sink.dispatch_measured(&observer, turn, &context, &on_first_token, None);
+    let dispatch = measure::measure_dispatch(
+        observer.as_ref(),
+        sink.clock(),
+        uuid,
+        &context,
+        sink.dispatch_measured(observer.as_ref(), turn, &context, &on_first_token, None),
+    );
     tokio::pin!(dispatch);
     let result = tokio::select! {
         biased;
@@ -1710,9 +1731,12 @@ mod tests {
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicBool, Ordering};
 
+    use crate::dispatch::collector::ReplayTerminalStatus;
+    use crate::dispatch::sink::RequestObserver;
     use crate::endpoints::{EndpointId, EndpointKey, EndpointRegistry, RawEndpointConfig};
     use crate::metrics::RequestMetricMetadata;
     use crate::multiturn::PreparedEndpointReference;
+    use crate::scheduled::{ModelResponseMetadata, TurnDispatchOutcome};
     use crate::transport::core::{PreparedEndpointBinding, Request};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -2035,6 +2059,107 @@ mod tests {
             wants_http_exchange: false,
             consume_record: false,
         }
+    }
+
+    #[derive(Default)]
+    struct RecordingObserver {
+        events: RefCell<Vec<&'static str>>,
+    }
+
+    impl RequestObserver for RecordingObserver {
+        fn on_arrival(&self, _uuid: Uuid, _at_ms: f64, _input: usize, _output: usize) {
+            self.events.borrow_mut().push("arrival");
+        }
+
+        fn on_admit(&self, _uuid: Uuid, _at_ms: f64, _reused_input_tokens: usize) {
+            self.events.borrow_mut().push("admit");
+        }
+
+        fn on_token(&self, _uuid: Uuid, _at_ms: f64) {
+            self.events.borrow_mut().push("token");
+        }
+
+        fn on_terminal(&self, _uuid: Uuid, _status: ReplayTerminalStatus) {
+            self.events.borrow_mut().push("terminal");
+        }
+    }
+
+    struct TestWorkerSink {
+        clock: Rc<dyn Clock>,
+    }
+
+    #[async_trait(?Send)]
+    impl WorkerSink for TestWorkerSink {
+        fn set_run_origin(&self, _origin_ns: i64) {}
+
+        fn clock(&self) -> &dyn Clock {
+            self.clock.as_ref()
+        }
+
+        fn inference_dimensions(&self, _turn: &TurnToSend) -> InferenceDimensions {
+            InferenceDimensions::default()
+        }
+
+        fn supports_response_streaming(&self) -> bool {
+            false
+        }
+
+        async fn dispatch_measured(
+            &self,
+            observer: &dyn RequestObserver,
+            turn: PreparedTurn,
+            _context: &MeasuredContext,
+            _on_first_token: &dyn Fn(i64),
+            _responses: Option<&dyn TurnResponseObserver>,
+        ) -> Result<DispatchResult> {
+            let uuid = turn.request.uuid;
+            observer.on_arrival(uuid, 0.0, 1, 1);
+            observer.on_admit(uuid, 0.0, 0);
+            observer.on_token(uuid, 0.0);
+            observer.on_terminal(uuid, ReplayTerminalStatus::Completed);
+            Ok(DispatchResult {
+                outcome: TurnDispatchOutcome {
+                    start_ns: 0,
+                    end_ns: 1,
+                    terminal: ReplayTerminalStatus::Completed,
+                    response_text: String::new(),
+                    model_response: ModelResponseMetadata::default(),
+                    prompt_tokens: None,
+                    completion_tokens: None,
+                    http: crate::metrics_core::RequestTrace::default(),
+                },
+                request_payload: bytes::Bytes::new(),
+                record: crate::transport::core::RequestRecord {
+                    status: Some(200),
+                    ..crate::transport::core::RequestRecord::default()
+                },
+            })
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn worker_sink_accepts_non_native_request_observer() {
+        let sink = TestWorkerSink {
+            clock: RealClock::new(),
+        };
+        let observer = RecordingObserver::default();
+
+        let result = sink
+            .dispatch_measured(
+                &observer,
+                streaming_turn(),
+                &measured_context(),
+                &|_| {},
+                None,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            observer.events.borrow().as_slice(),
+            ["arrival", "admit", "token", "terminal"]
+        );
+        assert_eq!(result.record.status, Some(200));
     }
 
     #[derive(Clone)]

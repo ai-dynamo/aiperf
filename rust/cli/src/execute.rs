@@ -173,21 +173,31 @@ fn unblock_signals_in_child(_command: &mut Command) {}
 #[cfg(target_os = "linux")]
 fn set_parent_death_signal(command: &mut Command) {
     use std::os::unix::process::CommandExt;
+    let expected_parent_pid = unsafe { libc::getpid() };
     // SAFETY: `pre_exec` runs in the forked child before `exec`; `prctl` and
     // `getppid`/`raise` are async-signal-safe and touch no shared state.
     unsafe {
-        command.pre_exec(|| {
+        command.pre_exec(move || {
             if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) != 0 {
                 return Err(std::io::Error::last_os_error());
             }
-            // Close the fork/prctl race: if the parent already exited, getppid()
-            // reads 1 (reparented to init) and we self-terminate immediately.
-            if libc::getppid() == 1 {
+            // Close the fork/prctl race. A container's live init is PID 1, so
+            // compare against the pre-fork parent rather than treating PID 1 as
+            // unconditional evidence of reparenting.
+            if !parent_is_still_expected(expected_parent_pid, libc::getppid()) {
                 libc::raise(libc::SIGKILL);
             }
             Ok(())
         });
     }
+}
+
+#[cfg(target_os = "linux")]
+fn parent_is_still_expected(
+    expected_parent_pid: libc::pid_t,
+    observed_parent_pid: libc::pid_t,
+) -> bool {
+    expected_parent_pid == observed_parent_pid
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -291,5 +301,12 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.to_string().contains("exactly one terminal JSON line"));
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn pid_one_can_be_the_live_execution_parent() {
+        assert!(parent_is_still_expected(1, 1));
+        assert!(!parent_is_still_expected(42, 1));
     }
 }

@@ -7,8 +7,8 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::clock::Clock;
+use crate::dispatch::sink::RequestObserver;
 use crate::endpoints::PreparedEndpointTable;
-use crate::metrics::NativeMetricsObserver;
 use crate::metrics_core::InferenceDimensions;
 use crate::multiturn::TurnToSend;
 use crate::scheduled::TurnResponseObserver;
@@ -131,6 +131,10 @@ impl WorkerSink for GrpcTransportSink {
         GrpcTransportSink::set_run_origin(self, origin_ns);
     }
 
+    fn clock(&self) -> &dyn Clock {
+        GrpcTransportSink::clock(self)
+    }
+
     fn inference_dimensions(&self, turn: &TurnToSend) -> InferenceDimensions {
         <GrpcTransportSink as RequestExecutor>::inference_dimensions(self, turn)
     }
@@ -142,13 +146,13 @@ impl WorkerSink for GrpcTransportSink {
 
     async fn dispatch_measured(
         &self,
-        observer: &NativeMetricsObserver,
+        observer: &dyn RequestObserver,
         turn: PreparedTurn,
-        context: &MeasuredContext,
+        _context: &MeasuredContext,
         on_first_token: &dyn Fn(i64),
         _responses: Option<&dyn TurnResponseObserver>,
     ) -> Result<DispatchResult> {
-        GrpcTransportSink::dispatch_measured(self, observer, turn, context, on_first_token).await
+        GrpcTransportSink::dispatch_collect(self, turn, observer, on_first_token).await
     }
 }
 

@@ -111,8 +111,11 @@ ARG AIPERF_RUNNER_PROFILE=offline
 # `include_bytes!`/`include_str!`s a few Python-tree assets via
 # `rust/aiperf/src/...→ src/aiperf/dataset/generator/assets/...`, and hatchling's
 # `packages = ["src/aiperf"]` packages the src-layout frontend.
-COPY pyproject.toml README.md LICENSE ATTRIBUTIONS.md /workspace/
+COPY pyproject.toml uv.lock README.md LICENSE ATTRIBUTIONS.md /workspace/
+COPY aiperf-k8s-operator /workspace/aiperf-k8s-operator
+COPY contracts /workspace/contracts
 COPY src /workspace/src
+COPY tools /workspace/tools
 # .cargo/config.toml sets `--cfg tokio_unstable`, required to compile dynosim's
 # dynamo-runtime dependency (it uses Tokio's unstable runtime-metrics API).
 COPY .cargo /workspace/.cargo
@@ -228,7 +231,7 @@ RUN mkdir -p /app /app/artifacts /app/.cache \
 # Install only the runtime dependencies using uv. --no-default-groups excludes
 # the PEP 735 dev group (hypothesis, pre-commit) so dev-only tooling does not
 # leak into the runtime image; the test/dev extras are not installed here either.
-COPY pyproject.toml .
+COPY pyproject.toml uv.lock .
 RUN uv sync --active --no-install-project --no-default-groups
 
 # Copy the rest of the application. The single interned wheel carries both the
