@@ -3224,11 +3224,20 @@ mod tests {
     #[test]
     fn unsupported_schema_version_is_rejected() {
         for version in ["1.0", "2.1", "bogus"] {
-            let error = err(&format!(
-                "schemaVersion: {version}\n  phases: {{type: concurrency, requests: 1, concurrency: 1}}\n"
-            ));
+            let error = schema_err(version);
             assert!(error.contains("unsupported schema version"), "{error}");
         }
+    }
+
+    fn schema_err(version: &str) -> String {
+        resolve_str(
+            &format!(
+                "schemaVersion: {version}\nbenchmark:\n  model: m\n  endpoint: {{type: chat, url: 127.0.0.1:8000}}\n  phases: {{type: concurrency, requests: 1, concurrency: 1}}\n"
+            ),
+            Some("/tmp/x".into()),
+        )
+        .expect_err("expected a schema-version validation error")
+        .to_string()
     }
 
     #[test]
