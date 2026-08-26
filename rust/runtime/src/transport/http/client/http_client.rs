@@ -92,6 +92,15 @@ where
                     }
                 }
                 Some(Err(error)) => return Some((Err(error), state)),
+                None if state.decoder.has_trailing_bytes() => {
+                    state.is_terminal = true;
+                    return Some((
+                        Err(ErrorDetails::sse(
+                            "truncated eventstream frame at response EOF",
+                        )),
+                        state,
+                    ));
+                }
                 None => return None,
             }
         }
@@ -996,5 +1005,37 @@ mod eventstream_to_sse_tests {
                 .as_ref()
                 .is_err_and(|error| error.message.contains("prelude CRC"))
         );
+    }
+
+    #[tokio::test]
+    async fn trailing_eventstream_bytes_emit_one_terminal_error() {
+        let message = EventStreamMessage::payload_part(Bytes::from_static(br#"{"i":1}"#));
+        let encoded = message.encode().expect("frame encodes");
+        let truncated = Bytes::copy_from_slice(&encoded[..encoded.len() - 1]);
+        let raw = stream::iter(vec![Ok::<Bytes, ErrorDetails>(truncated)]);
+        let sse = eventstream_to_sse(raw);
+        futures::pin_mut!(sse);
+
+        let first = sse.next().await.expect("trailing bytes emit an error");
+        assert!(first.as_ref().is_err_and(|error| {
+            error.message == "truncated eventstream frame at response EOF"
+        }));
+        assert!(sse.next().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn clean_eventstream_boundary_ends_without_error() {
+        let message = EventStreamMessage::payload_part(Bytes::from_static(br#"{"i":1}"#));
+        let raw = stream::iter(vec![Ok::<Bytes, ErrorDetails>(
+            message.encode().expect("frame encodes"),
+        )]);
+        let sse = eventstream_to_sse(raw);
+        futures::pin_mut!(sse);
+
+        assert_eq!(
+            sse.next().await.expect("complete frame emits SSE").unwrap(),
+            Bytes::from_static(b"data: {\"i\":1}\n\n")
+        );
+        assert!(sse.next().await.is_none());
     }
 }
