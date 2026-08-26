@@ -85,11 +85,16 @@ Graham review and a commit.
 | C19 | Parquet histogram schema drifts across samples | Complete — `d4db61806e` | Independent Graham approved; schema-expansion RED→GREEN and 9 Parquet tests green |
 | C20 | Dataset-analysis writer loses flush failures | Complete — `ed39aac8a4` | Independent Graham approved; dataset-analysis JSON tests green |
 | C24 | Slot release during a decrease can over-admit | Confirmed; spec needed | Sol implementation plan |
-| C25 | Global request-rate prefill release does not wake issuer | Confirmed; spec needed | Sol implementation plan |
+| C25 | Global request-rate prefill release does not wake issuer | Complete — `bdeb53dda4` | Independent Graham approved; focused wake RED→GREEN plus request-rate and slots suites green |
 | R01 | YAML/CLI config loses `--image-batch-size` | Already fixed | Preserve existing regression test |
 | B01 | AgentX integration fixtures omit required cache-bust option | Complete — `91b65b2044` | Independent Graham approved; compile regression green |
 
 ## Progress log
+
+- 2026-08-26: Completed C25. A global prefill-capacity release or limit growth
+  now wakes a capacity-saturated issuer through a no-missed-wake protocol,
+  without changing session-capacity behavior. Independent Graham review
+  approved the regression and targeted suites.
 
 - 2026-08-26: Completed C14b. Every authored schema version is now validated
   before expansion and after expanded/sweep normalization: only the exact string
