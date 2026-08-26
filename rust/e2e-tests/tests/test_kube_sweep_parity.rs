@@ -175,12 +175,13 @@ async fn test_local_sweep_parity() {
             4.0,
             "concurrency_{c}: request_count_avg must equal the requested 4"
         );
-        // isl (input sequence length) is produced for every run regardless of
-        // streaming mode and is a reliable presence check for the metrics block.
+        // effective_total_throughput is emitted for every successful run
+        // regardless of tokenizer or streaming configuration.  It is a reliable
+        // indicator that the metrics block was populated.
         let data = jload(&json_file);
         assert!(
-            data.get("isl").is_some(),
-            "concurrency_{c}: profile export must contain isl metric"
+            data.get("effective_total_throughput").is_some(),
+            "concurrency_{c}: profile export must contain effective_total_throughput"
         );
     }
 }
