@@ -291,8 +291,10 @@ impl PreparedHttpEndpointRequest {
             on_response(message.perf_ns, &response)
         };
         transport
-            .send_request_bytes_streaming(
+            .send_prepared_request_bytes_streaming(
                 &self.request_config,
+                &self.url,
+                &self.static_headers,
                 self.wire_body,
                 max_sse_frame_bytes,
                 on_first_token,
@@ -664,6 +666,7 @@ fn seconds_to_ns(seconds: f64, field: &str) -> Result<i64, HttpEndpointBindingEr
 mod tests {
     use super::*;
     use crate::transport::core::SseMessage;
+    use axum::{Router, http::Uri, response::IntoResponse, routing::post};
 
     /// Prepare a builtin endpoint by its open ID for the prepared HTTP binding.
     fn prepared(endpoint_name: &str) -> Box<dyn PreparedEndpoint> {
@@ -894,5 +897,91 @@ mod tests {
 
         let prepared = prepare_request(&binding, request).await.unwrap();
         assert_eq!(prepared.url().query(), Some("dynamic=two&existing=1"));
+    }
+
+    #[tokio::test]
+    async fn bounded_dispatch_uses_prepared_url_and_headers_on_the_wire() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let (captured_tx, mut captured_rx) = tokio::sync::mpsc::unbounded_channel();
+                let app = Router::new().route(
+                    "/v1/chat/completions",
+                    post(move |uri: Uri, headers: HeaderMap| {
+                        let captured_tx = captured_tx.clone();
+                        async move {
+                            let _ = captured_tx.send((uri, headers));
+                            (
+                                [("content-type", "text/event-stream")],
+                                concat!(
+                                    "data: {\"choices\":[{\"delta\":{\"content\":\"x\"}}]}\\n\\n",
+                                    "data: [DONE]\\n\\n",
+                                ),
+                            )
+                                .into_response()
+                        }
+                    }),
+                );
+                let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+                let address = listener.local_addr().unwrap();
+                tokio::task::spawn_local(async move {
+                    axum::serve(listener, app).await.unwrap();
+                });
+
+                let base_urls = vec![format!("http://{address}")];
+                let chat = prepared("chat");
+                let binding =
+                    MetadataHttpEndpointBinding::from_prepared(chat.as_ref(), &base_urls, "m");
+                let mut request =
+                    endpoint_request(Bytes::from_static(br#"{\"model\":\"m\",\"messages\":[]}"#));
+                request.streaming = true;
+                request
+                    .headers
+                    .insert("x-endpoint-sentinel".into(), "typed-header".into());
+                request
+                    .parameters
+                    .insert("dynamic".into(), "query-value".into());
+                let mut prepared = prepare_request(&binding, request).await.unwrap();
+                // The retained `Url` is the endpoint dispatch authority. A
+                // legacy bounded path rebuilding from this compatibility field
+                // would reject it before reaching the server.
+                prepared.request_config.url = "not a URL".into();
+
+                let clock = crate::clock::RealClock::new();
+                let transport = HttpTransport::new(
+                    clock,
+                    crate::transport::http::config::ClientConfig::default(),
+                );
+                let mut first_token = |_| {};
+                let mut response = |_: i64, _: &ServerResponse| Ok(true);
+                assert_eq!(
+                    prepared
+                        .dispatch_bounded_sse(
+                            &transport,
+                            &binding,
+                            1024,
+                            &mut first_token,
+                            &mut response,
+                        )
+                        .await
+                        .unwrap(),
+                    200
+                );
+                let (uri, headers) = captured_rx.recv().await.unwrap();
+                assert_eq!(uri.query(), Some("dynamic=query-value"));
+                assert_eq!(
+                    headers
+                        .get("x-endpoint-sentinel")
+                        .and_then(|value| value.to_str().ok()),
+                    Some("typed-header")
+                );
+                assert_eq!(
+                    headers
+                        .get("x-request-id")
+                        .and_then(|value| value.to_str().ok()),
+                    Some("request-1")
+                );
+            })
+            .await;
     }
 }

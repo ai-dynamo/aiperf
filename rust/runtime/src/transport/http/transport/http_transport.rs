@@ -350,13 +350,6 @@ impl HttpTransport {
         on_first_token: &mut dyn FnMut(i64),
         on_message: &mut dyn FnMut(&SseMessage) -> Result<bool, ErrorDetails>,
     ) -> Result<u16, ErrorDetails> {
-        if cfg.cancel_after_ns.is_some() {
-            return Err(ErrorDetails::cancelled(
-                "bounded decision dispatch does not support post-send cancellation",
-            ));
-        }
-
-        let start_ns = self.clock.now_ns();
         let headers = header_map(build_headers(
             cfg,
             true,
@@ -370,6 +363,43 @@ impl HttpTransport {
             .map_err(|error| ErrorDetails::other(format!("bad url {}: {error}", cfg.url)))?;
         let url = url::Url::parse(&full)
             .map_err(|error| ErrorDetails::other(format!("bad url {full}: {error}")))?;
+        self.send_prepared_request_bytes_streaming(
+            cfg,
+            &url,
+            &headers,
+            body,
+            max_sse_frame_bytes,
+            on_first_token,
+            on_message,
+        )
+        .await
+    }
+
+    /// Send one prepared streaming request without creating a terminal request
+    /// record.
+    ///
+    /// This retains the parsed target and typed static headers produced during
+    /// endpoint preparation. Bounded decision consumers need the same hot-path
+    /// guarantee as ordinary prepared dispatch: neither request URL nor static
+    /// headers are rebuilt from their string compatibility representation.
+    pub async fn send_prepared_request_bytes_streaming(
+        &self,
+        cfg: &RequestConfig,
+        url: &url::Url,
+        static_headers: &HeaderMap,
+        body: Bytes,
+        max_sse_frame_bytes: usize,
+        on_first_token: &mut dyn FnMut(i64),
+        on_message: &mut dyn FnMut(&SseMessage) -> Result<bool, ErrorDetails>,
+    ) -> Result<u16, ErrorDetails> {
+        if cfg.cancel_after_ns.is_some() {
+            return Err(ErrorDetails::cancelled(
+                "bounded decision dispatch does not support post-send cancellation",
+            ));
+        }
+
+        let start_ns = self.clock.now_ns();
+        let headers = self.prepared_headers(cfg, static_headers, true)?;
         let reuse = cfg.reuse;
         let correlation_id = cfg.correlation_id.as_deref();
         let total_timeout_ns = positive_timeout(self.client_cfg.total_timeout_ns);
@@ -389,7 +419,7 @@ impl HttpTransport {
                 self.clock.clone(),
                 acquire_timeout_ns,
                 self.connections.acquire(
-                    &url,
+                    url,
                     &self.client_cfg,
                     self.clock.clone(),
                     reuse,
