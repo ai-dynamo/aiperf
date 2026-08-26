@@ -270,7 +270,7 @@ impl<M: WireMessage> TraceExecutor<M> {
         if result.is_none() {
             return;
         }
-        self.schedule_successors(&node_id, &ctx);
+        self.schedule_terminal_successors(&node_id, &ctx);
     }
 
     async fn run_tool_node(
@@ -546,9 +546,12 @@ impl<M: WireMessage> TraceExecutor<M> {
         let _ = ctx.store.mark_producer_done(output, success);
     }
 
-    fn schedule_successors(self: &Rc<Self>, node_id: &str, ctx: &Rc<TraceContext>) {
+    fn schedule_terminal_successors(self: &Rc<Self>, node_id: &str, ctx: &Rc<TraceContext>) {
         for succ_id in self.scheduler.successors_after(node_id) {
             self.clone().schedule(succ_id, ctx);
+        }
+        if !ctx.node_first_token_wall_us.borrow().contains_key(node_id) {
+            self.schedule_first_token_successors(node_id, ctx);
         }
     }
 

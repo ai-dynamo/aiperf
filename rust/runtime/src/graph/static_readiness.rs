@@ -96,6 +96,15 @@ pub(crate) fn analyze_static_readiness(
                     Trigger::Dispatched(node_id),
                 );
             }
+            for successor in scheduler.first_token_anchored_successors(node_id) {
+                schedule_successor(
+                    graph,
+                    &mut scheduled,
+                    &mut triggers,
+                    successor,
+                    Trigger::FirstToken(node_id),
+                );
+            }
             for successor in scheduler.successors_after(node_id) {
                 schedule_successor(
                     graph,
@@ -204,6 +213,9 @@ fn schedule_successor(
         Trigger::Dispatched(source) => {
             append_source(&mut sources.dispatched, source);
         }
+        Trigger::FirstToken(source) => {
+            append_source(&mut sources.first_token, source);
+        }
         Trigger::Completed(source) => {
             append_source(&mut sources.completed, source);
         }
@@ -220,11 +232,13 @@ fn append_source(sources: &mut Vec<String>, source: &str) {
 struct TriggerSources {
     has_start: bool,
     dispatched: Vec<String>,
+    first_token: Vec<String>,
     completed: Vec<String>,
 }
 
 enum Trigger<'a> {
     Dispatched(&'a str),
+    FirstToken(&'a str),
     Completed(&'a str),
 }
 
@@ -237,6 +251,7 @@ fn wave_trigger(
     writers: &BTreeMap<String, usize>,
 ) -> String {
     let mut completed = Vec::new();
+    let mut first_token = Vec::new();
     let mut dispatched = Vec::new();
     let mut has_start = false;
     for node_id in node_ids {
@@ -246,6 +261,9 @@ fn wave_trigger(
         has_start |= sources.has_start;
         for source in &sources.completed {
             append_source(&mut completed, source);
+        }
+        for source in &sources.first_token {
+            append_source(&mut first_token, source);
         }
         for source in &sources.dispatched {
             append_source(&mut dispatched, source);
@@ -262,6 +280,9 @@ fn wave_trigger(
     }
     if !completed.is_empty() {
         return format!("completed: {}", completed.join(","));
+    }
+    if !first_token.is_empty() {
+        return format!("first-token: {}", first_token.join(","));
     }
     if !dispatched.is_empty() {
         return format!("dispatched: {}", dispatched.join(","));
@@ -370,6 +391,53 @@ mod tests {
                     trigger: "completed: producer".to_string(),
                 },
             ]
+        );
+    }
+
+    #[test]
+    fn first_token_successor_is_not_reported_as_static_readiness_blocked() {
+        let graph = graph(
+            r#"{
+                "state":{"parent_output":{},"child_output":{}},
+                "nodes":{
+                    "parent":{"output":"parent_output"},
+                    "child":{"output":"child_output"}
+                },
+                "edges":[
+                    {"source":"START","target":"parent"},
+                    {"source":"parent","target":"child","delay_after_predecessor_first_token_us":0.0}
+                ]
+            }"#,
+        );
+        let scheduler = Scheduler::new(&graph).expect("constructible scheduler");
+
+        let analysis = analyze_static_readiness(&graph, &scheduler).expect("valid channel counts");
+        assert!(analysis.blocked_node_ids.is_empty());
+        assert_eq!(analysis.waves[1].trigger, "first-token: parent");
+    }
+
+    #[test]
+    fn combined_dispatch_and_first_token_edges_remain_static_readiness_reachable() {
+        let graph = graph(
+            r#"{
+                "state":{"parent_output":{},"child_output":{}},
+                "nodes":{
+                    "parent":{"output":"parent_output"},
+                    "child":{"output":"child_output"}
+                },
+                "edges":[
+                    {"source":"START","target":"parent"},
+                    {"source":"parent","target":"child","delay_after_predecessor_start_us":0.0,"delay_after_predecessor_first_token_us":0.0}
+                ]
+            }"#,
+        );
+        let scheduler = Scheduler::new(&graph).expect("constructible scheduler");
+
+        assert!(
+            analyze_static_readiness(&graph, &scheduler)
+                .expect("valid channel counts")
+                .blocked_node_ids
+                .is_empty()
         );
     }
 }

@@ -128,8 +128,8 @@ impl Scheduler {
         self.entry.iter().map(String::as_str)
     }
 
-    /// Static successors after `node_id` completes (start-anchored excluded; END
-    /// suppressed).
+    /// Static successors after `node_id` completes (start- and first-token-
+    /// anchored edges excluded; END suppressed).
     ///
     /// Borrows the immutable adjacency; hot scheduling path, so no per-call
     /// allocation or id clone.
