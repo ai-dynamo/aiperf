@@ -363,6 +363,11 @@ mod tests {
         calls: Rc<RefCell<Vec<String>>>,
     }
 
+    struct CancellingToolSuccessorSink {
+        tool_calls: Rc<RefCell<usize>>,
+        context: Rc<RefCell<Option<Rc<crate::graph::context::TraceContext>>>>,
+    }
+
     #[async_trait(?Send)]
     impl GraphSink<OpenAiChatMessage> for NoTokenFailureSink {
         async fn dispatch(
@@ -398,6 +403,34 @@ mod tests {
                 self.parent_release.notified().await;
             }
             Ok(GraphReply::from_text(node_id.to_owned()))
+        }
+    }
+
+    #[async_trait(?Send)]
+    impl GraphSink<OpenAiChatMessage> for CancellingToolSuccessorSink {
+        async fn dispatch_tool_node(
+            &self,
+            _node_id: &str,
+            _node: &ToolNode,
+            _context: &crate::graph::sink::GraphDispatchContext,
+        ) -> anyhow::Result<GraphReply<OpenAiChatMessage>> {
+            *self.tool_calls.borrow_mut() += 1;
+            Ok(GraphReply::from_text("tool".into()))
+        }
+
+        async fn dispatch(
+            &self,
+            _node_id: &str,
+            _messages: Vec<bytes::Bytes>,
+            _max_tokens: Option<usize>,
+            _on_first_token: &dyn Fn(),
+        ) -> anyhow::Result<GraphReply<OpenAiChatMessage>> {
+            self.context
+                .borrow()
+                .as_ref()
+                .expect("test context is installed before execution")
+                .set_abort(TraceError::Cancelled("test cancellation".into()));
+            Ok(GraphReply::from_text("parent".into()))
         }
     }
 
@@ -669,6 +702,100 @@ mod tests {
             assert!(matches!(error, TraceError::Cancelled(_)));
             assert_eq!(calls.borrow().as_slice(), ["parent"]);
             assert!(clock.now_ns() < 1_000_000_000);
+        }));
+    }
+
+    #[test]
+    fn cancellation_does_not_dispatch_a_scheduled_tool_successor() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(tokio::task::LocalSet::new().run_until(async {
+            let mut graph = GraphRecord::default();
+            graph.state.insert(
+                "parent_output".into(),
+                ChannelSpec {
+                    channel_type: ChannelType::Messages,
+                    reducer: ReducerName::AddMessages,
+                },
+            );
+            graph.state.insert(
+                "tool_output".into(),
+                ChannelSpec {
+                    channel_type: ChannelType::Messages,
+                    reducer: ReducerName::AddMessages,
+                },
+            );
+            graph.nodes.insert(
+                "parent".into(),
+                ExecutableGraphNode::Llm(LlmNode {
+                    output: "parent_output".into(),
+                    streaming: true,
+                    inputs: Vec::new(),
+                    min_start_delay_us: None,
+                    max_tokens: Some(1),
+                    items: Vec::new(),
+                    request: None,
+                    metadata: BTreeMap::new(),
+                }),
+            );
+            graph.nodes.insert(
+                "tool".into(),
+                ExecutableGraphNode::Tool(ToolNode {
+                    output: "tool_output".into(),
+                    commands: vec!["pwd".into()],
+                    timeout_ns: None,
+                }),
+            );
+            graph.edges = vec![
+                StaticEdge {
+                    source: START_NODE_ID.into(),
+                    target: "parent".into(),
+                    delay_after_predecessor_us: None,
+                    min_start_delay_us: None,
+                    delay_after_predecessor_start_us: None,
+                    delay_after_predecessor_first_token_us: None,
+                },
+                StaticEdge {
+                    source: "parent".into(),
+                    target: "tool".into(),
+                    delay_after_predecessor_us: None,
+                    min_start_delay_us: None,
+                    delay_after_predecessor_start_us: None,
+                    delay_after_predecessor_first_token_us: None,
+                },
+            ];
+            let tool_calls = Rc::new(RefCell::new(0));
+            let context = Rc::new(RefCell::new(None));
+            let sink: Rc<dyn GraphSink<OpenAiChatMessage>> = Rc::new(CancellingToolSuccessorSink {
+                tool_calls: tool_calls.clone(),
+                context: context.clone(),
+            });
+            let handle = crate::graph::runtime::Handle::new(Rc::new(crate::clock::SimClock::new()));
+            let executor = crate::graph::executor::TraceExecutor::new(
+                Rc::new(graph),
+                Rc::new(EmptyMaterializer),
+                sink,
+                handle.clone(),
+                Default::default(),
+            )
+            .unwrap();
+            let trace = TraceRecord {
+                id: "cancel-tool-successor".into(),
+                graph_ref: None,
+                initial_state: BTreeMap::new(),
+            };
+            let trace_context = executor.build_context(trace).unwrap();
+            *context.borrow_mut() = Some(trace_context.clone());
+            executor.schedule_entries(&trace_context);
+            handle.wait_idle().await;
+
+            assert!(matches!(
+                trace_context.abort.borrow().as_ref(),
+                Some(TraceError::Cancelled(_))
+            ));
+            assert_eq!(*tool_calls.borrow(), 0);
         }));
     }
 

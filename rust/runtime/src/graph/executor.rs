@@ -279,6 +279,9 @@ impl<M: WireMessage> TraceExecutor<M> {
         node: &crate::graph::model::ToolNode,
         ctx: &Rc<TraceContext>,
     ) -> Result<Option<NodeExecutionResult>, TraceError> {
+        if ctx.is_aborted() {
+            return Ok(None);
+        }
         let reply = self
             .sink
             .dispatch_tool_node(
