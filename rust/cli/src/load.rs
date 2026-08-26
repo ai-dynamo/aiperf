@@ -15,7 +15,8 @@ use std::str::FromStr;
 // them so `crate::load::{Inputs, Warmup, DatasetAnalysisInputs}` and `load::build`
 // call sites in the flag and YAML authoring paths resolve unchanged.
 pub use aiperf_runtime::config::resolve::{
-    DatasetAnalysisInputs, Inputs, InputsFlat, Warmup, resolve as build,
+    ArtifactInputs, DatasetAnalysisInputs, DatasetInputs, EndpointInputs, Inputs,
+    ReplayScenarioInputs, RuntimeInputs, TelemetryInputs, Warmup, WorkloadInputs, resolve as build,
 };
 
 use crate::flags::ProfileFlags;
@@ -357,300 +358,330 @@ pub fn resolve_inputs(flags: &ProfileFlags) -> anyhow::Result<Inputs> {
         })
     };
 
-    let inputs = InputsFlat {
-        model_names: flags.model_names.clone(),
-        urls,
-        endpoint_type,
-        transport: if flags.dry_run.unwrap_or(false) {
-            Transport::DryRun(crate::model::transport::DryRunConfig {
-                ttft_ms: flags.dry_run_ttft_ms,
-                itl_ms: flags.dry_run_itl_ms,
-                ttft_per_isl_token_ms: flags.dry_run_ttft_per_isl_ms,
-                ttft_concurrency_quad_ms: flags.dry_run_ttft_concurrency_quad_ms,
-                itl_per_osl_token_ms: flags.dry_run_itl_per_osl_ms,
-                itl_concurrency_lin_ms: flags.dry_run_itl_concurrency_lin_ms,
-                ttft_jitter_cv: flags.dry_run_ttft_jitter_cv,
-                itl_jitter_cv: flags.dry_run_itl_jitter_cv,
-                seed: flags.dry_run_seed,
-                latency_model: flags.dry_run_latency_model.clone(),
-                kv_utilization: flags.dry_run_kv_utilization,
-                clock: flags.dry_run_clock.clone(),
-                virtual_workers: None,
-            })
-        } else {
-            Transport::Http
-        },
-        streaming: flags.streaming.unwrap_or(false),
-        timeout_seconds: flags.request_timeout_seconds,
-        use_legacy_max_tokens: flags.use_legacy_max_tokens.unwrap_or(false),
-        use_server_token_count: flags.use_server_token_count.unwrap_or(false),
-        per_chunk_usage: flags.per_chunk_usage.unwrap_or(false),
-        download_video_content: flags.download_video_content.unwrap_or(false),
-        extra: parse_extra_inputs(&flags.extra_inputs)?,
-        // Flag URLs normalize here; YAML values remain authored until sidecar construction.
-        server_metrics_urls: flags
-            .server_metrics
-            .iter()
-            .map(|u| crate::model::telemetry::normalize_metrics_url(u))
-            .collect(),
-        connection_reuse: flags
-            .connection_reuse_strategy
-            .as_deref()
-            .map(parse_connection_reuse)
-            .transpose()?,
-        ssl_verify: flags.ssl_verify,
-        uds_path: flags.uds_path.clone(),
-        request_content_type: flags
-            .request_content_type
-            .as_deref()
-            .map(parse_content_type)
-            .transpose()?,
-        wait_for_model_timeout: flags.wait_for_model_timeout,
-        wait_for_model_mode: flags
-            .wait_for_model_mode
-            .as_deref()
-            .map(parse_wait_mode)
-            .transpose()?,
-        wait_for_model_interval: flags.wait_for_model_interval,
-        apply_chat_template: flags.apply_chat_template.unwrap_or(false),
-        prefill_concurrency: flags.prefill_concurrency,
-        prefill_ramp: flags.prefill_concurrency_ramp_duration,
-        gpu_telemetry_enabled: !flags.no_gpu_telemetry.unwrap_or(false),
-        // No flag selects a collector; YAML is the only authoring surface for it.
-        gpu_telemetry_collector: None,
-        // A `.csv` value selects custom metrics; all other values are scrape URLs.
-        gpu_telemetry_urls: flags
-            .gpu_telemetry
-            .iter()
-            .filter(|item| !item.to_ascii_lowercase().ends_with(".csv"))
-            .cloned()
-            .collect(),
-        gpu_telemetry_metrics_file: flags
-            .gpu_telemetry
-            .iter()
-            .rev()
-            .find(|item| item.to_ascii_lowercase().ends_with(".csv"))
-            .cloned(),
-        server_metrics_enabled: !flags.no_server_metrics.unwrap_or(false),
-        server_metrics_formats: (!flags.server_metrics_formats.is_empty())
-            .then(|| flags.server_metrics_formats.clone()),
-        slos: parse_goodput(flags.goodput.as_deref())?,
-        network_latency_mean: flags.network_latency_mean,
-        network_latency_probe: flags
-            .network_latency_automatic
-            .unwrap_or(false)
-            .then(|| flags.network_latency_ping_interval.unwrap_or(1.0)),
-        otel_url: flags.otel_url.clone(),
-        otel_provider: flags.gen_ai_provider.clone(),
-        otel_resource_attributes: parse_kv(&flags.otel_resource_attributes, '=')?,
-        mlflow: crate::model::export::MlflowParams {
-            tracking_uri: flags.mlflow_tracking_uri.clone(),
-            experiment: flags.mlflow_experiment.clone(),
-            run_name: flags.mlflow_run_name.clone(),
-            parent_run_id: flags.mlflow_parent_run_id.clone(),
-            tags: parse_kv(&flags.mlflow_tag, ':')?,
-            artifact_globs: flags.mlflow_artifact_glob.clone(),
-            // MLflow logs the run's request bound as `total_expected_requests`.
-            total_expected_requests: request_count.map(|n| n as f64),
-        },
-        wandb: crate::model::export::WandbParams {
-            project: flags.wandb_project.clone(),
-            entity: flags.wandb_entity.clone(),
-            run_name: flags.wandb_run_name.clone(),
-            tags: flags.wandb_tag.clone(),
-            sync_url: flags.wandb_sync_url.clone(),
-        },
-        api_key: flags.api_key.clone(),
-        headers: parse_headers(&flags.headers)?,
-        tokenizer_name: flags.tokenizer.clone(),
-        tokenizer_revision: flags.tokenizer_revision.clone(),
-        tokenizer_trust: flags.tokenizer_trust_remote_code.unwrap_or(false),
-        server_tokenizer_url: flags.server_tokenizer_url.clone(),
-        isl: match isl_mean {
-            Some(mean) => Distribution {
-                mean: Some(mean),
-                stddev: Some(flags.isl_stddev.unwrap_or(0.0)),
-                ..Default::default()
+    let inputs = Inputs {
+        endpoint: EndpointInputs {
+            model_names: flags.model_names.clone(),
+            urls,
+            endpoint_type,
+            transport: if flags.dry_run.unwrap_or(false) {
+                Transport::DryRun(crate::model::transport::DryRunConfig {
+                    ttft_ms: flags.dry_run_ttft_ms,
+                    itl_ms: flags.dry_run_itl_ms,
+                    ttft_per_isl_token_ms: flags.dry_run_ttft_per_isl_ms,
+                    ttft_concurrency_quad_ms: flags.dry_run_ttft_concurrency_quad_ms,
+                    itl_per_osl_token_ms: flags.dry_run_itl_per_osl_ms,
+                    itl_concurrency_lin_ms: flags.dry_run_itl_concurrency_lin_ms,
+                    ttft_jitter_cv: flags.dry_run_ttft_jitter_cv,
+                    itl_jitter_cv: flags.dry_run_itl_jitter_cv,
+                    seed: flags.dry_run_seed,
+                    latency_model: flags.dry_run_latency_model.clone(),
+                    kv_utilization: flags.dry_run_kv_utilization,
+                    clock: flags.dry_run_clock.clone(),
+                    virtual_workers: None,
+                })
+            } else {
+                Transport::Http
             },
-            None => default_isl(),
+            streaming: flags.streaming.unwrap_or(false),
+            timeout_seconds: flags.request_timeout_seconds,
+            use_legacy_max_tokens: flags.use_legacy_max_tokens.unwrap_or(false),
+            use_server_token_count: flags.use_server_token_count.unwrap_or(false),
+            per_chunk_usage: flags.per_chunk_usage.unwrap_or(false),
+            download_video_content: flags.download_video_content.unwrap_or(false),
+            extra: parse_extra_inputs(&flags.extra_inputs)?,
+            // Flag URLs normalize here; YAML values remain authored until sidecar construction.
+            server_metrics_urls: flags
+                .server_metrics
+                .iter()
+                .map(|u| crate::model::telemetry::normalize_metrics_url(u))
+                .collect(),
+            connection_reuse: flags
+                .connection_reuse_strategy
+                .as_deref()
+                .map(parse_connection_reuse)
+                .transpose()?,
+            ssl_verify: flags.ssl_verify,
+            uds_path: flags.uds_path.clone(),
+            request_content_type: flags
+                .request_content_type
+                .as_deref()
+                .map(parse_content_type)
+                .transpose()?,
+            wait_for_model_timeout: flags.wait_for_model_timeout,
+            wait_for_model_mode: flags
+                .wait_for_model_mode
+                .as_deref()
+                .map(parse_wait_mode)
+                .transpose()?,
+            wait_for_model_interval: flags.wait_for_model_interval,
+            apply_chat_template: flags.apply_chat_template.unwrap_or(false),
+            prefill_concurrency: flags.prefill_concurrency,
+            prefill_ramp: flags.prefill_concurrency_ramp_duration,
+            telemetry: TelemetryInputs {
+                gpu_telemetry_enabled: !flags.no_gpu_telemetry.unwrap_or(false),
+                // No flag selects a collector; YAML is the only authoring surface for it.
+                gpu_telemetry_collector: None,
+                // A `.csv` value selects custom metrics; all other values are scrape URLs.
+                gpu_telemetry_urls: flags
+                    .gpu_telemetry
+                    .iter()
+                    .filter(|item| !item.to_ascii_lowercase().ends_with(".csv"))
+                    .cloned()
+                    .collect(),
+                gpu_telemetry_metrics_file: flags
+                    .gpu_telemetry
+                    .iter()
+                    .rev()
+                    .find(|item| item.to_ascii_lowercase().ends_with(".csv"))
+                    .cloned(),
+                server_metrics_enabled: !flags.no_server_metrics.unwrap_or(false),
+                server_metrics_formats: (!flags.server_metrics_formats.is_empty())
+                    .then(|| flags.server_metrics_formats.clone()),
+                slos: parse_goodput(flags.goodput.as_deref())?,
+                network_latency_mean: flags.network_latency_mean,
+                network_latency_probe: flags
+                    .network_latency_automatic
+                    .unwrap_or(false)
+                    .then(|| flags.network_latency_ping_interval.unwrap_or(1.0)),
+                otel_url: flags.otel_url.clone(),
+                otel_provider: flags.gen_ai_provider.clone(),
+                otel_resource_attributes: parse_kv(&flags.otel_resource_attributes, '=')?,
+                mlflow: crate::model::export::MlflowParams {
+                    tracking_uri: flags.mlflow_tracking_uri.clone(),
+                    experiment: flags.mlflow_experiment.clone(),
+                    run_name: flags.mlflow_run_name.clone(),
+                    parent_run_id: flags.mlflow_parent_run_id.clone(),
+                    tags: parse_kv(&flags.mlflow_tag, ':')?,
+                    artifact_globs: flags.mlflow_artifact_glob.clone(),
+                    // MLflow logs the run's request bound as `total_expected_requests`.
+                    total_expected_requests: request_count.map(|n| n as f64),
+                },
+                wandb: crate::model::export::WandbParams {
+                    project: flags.wandb_project.clone(),
+                    entity: flags.wandb_entity.clone(),
+                    run_name: flags.wandb_run_name.clone(),
+                    tags: flags.wandb_tag.clone(),
+                    sync_url: flags.wandb_sync_url.clone(),
+                },
+                dataset: DatasetInputs {
+                    api_key: flags.api_key.clone(),
+                    headers: parse_headers(&flags.headers)?,
+                    tokenizer_name: flags.tokenizer.clone(),
+                    tokenizer_revision: flags.tokenizer_revision.clone(),
+                    tokenizer_trust: flags.tokenizer_trust_remote_code.unwrap_or(false),
+                    server_tokenizer_url: flags.server_tokenizer_url.clone(),
+                    isl: match isl_mean {
+                        Some(mean) => Distribution {
+                            mean: Some(mean),
+                            stddev: Some(flags.isl_stddev.unwrap_or(0.0)),
+                            ..Default::default()
+                        },
+                        None => default_isl(),
+                    },
+                    osl: osl_mean.map(|mean| Distribution {
+                        mean: Some(mean),
+                        stddev: Some(flags.osl_stddev.unwrap_or(0.0)),
+                        ..Default::default()
+                    }),
+                    turns,
+                    turn_delay_ratio: flags.session_delay_ratio.unwrap_or(1.0),
+                    turn_delay_ms,
+                    session_header: flags.session_header.clone(),
+                    proxy: flags.proxy.clone(),
+                    proxy_from_env: flags.proxy_from_env.unwrap_or(false),
+                    endpoint_path: flags.custom_endpoint.clone(),
+                    reset_kv_cache: reset_kv_cache_from_flags(flags),
+                    server_profiler: server_profiler_from_flags(flags),
+                    records_formats,
+                    // No flag narrows the summary artifacts; the flag path ships both formats.
+                    summary_formats: Vec::new(),
+                    // User files are authorable only from Config v2; no flag renders them.
+                    user_files: Vec::new(),
+                    export_raw,
+                    export_trace,
+                    export_outputs_json: flags.export_outputs_json.unwrap_or(false),
+                    show_trace_timing,
+                    profile_export_prefix: flags.profile_export_prefix.clone(),
+                    use_think_time_only: flags.use_think_time_only.unwrap_or(false),
+                    max_context_length: flags.max_context_length,
+                    allow_dataset_wrap,
+                    cache_bust,
+                    burst_phase_starts: flags.burst_phase_starts.unwrap_or(false),
+                    trace_idle_gap_cap_seconds: flags.trace_idle_gap_cap_seconds,
+                    system_idle_gap_cap_seconds: flags.system_idle_gap_cap_seconds,
+                    hf_weka_dataset,
+                    trace_session_sample_ratio: flags.trace_session_sample_ratio,
+                    agentic_warmup_grace_period: flags.agentic_warmup_grace_period,
+                    failed_request_threshold: flags.failed_request_threshold,
+                    sequence_distribution: flags
+                        .seq_dist
+                        .as_deref()
+                        .map(parse_seq_dist)
+                        .transpose()?,
+                    batch_size: flags.batch_size.unwrap_or(1),
+                    sampling: flags
+                        .dataset_sampling_strategy
+                        .clone()
+                        .unwrap_or_else(|| "sequential".to_string()),
+                    entries: num_dataset_entries
+                        .or(num_conversations)
+                        .or(num_sessions)
+                        .or(request_count.map(|n| n as u32))
+                        .unwrap_or(DEFAULT_ENTRIES),
+                    dataset_entries: num_dataset_entries
+                        .or(num_conversations)
+                        .or(num_sessions)
+                        .or(request_count.map(|n| n as u32)),
+                    sessions: num_conversations.or(num_sessions).map(u64::from),
+                    workload: WorkloadInputs {
+                        concurrency,
+                        request_rate,
+                        rate_mode: flags
+                            .request_rate_mode
+                            .clone()
+                            .or_else(|| flags.arrival_pattern.clone()),
+                        smoothness: flags.arrival_smoothness.or(flags.vllm_burstiness),
+                        concurrency_ramp: flags.concurrency_ramp_duration,
+                        rate_ramp: flags.request_rate_ramp_duration,
+                        cancellation: match (
+                            flags.request_cancellation_rate,
+                            flags.request_cancellation_delay,
+                        ) {
+                            (Some(rate), delay) => Some((rate, delay.unwrap_or(0.0))),
+                            _ => None,
+                        },
+                        user_centric: user_centric_cli,
+                        request_count,
+                        benchmark_duration,
+                        grace_period: flags.benchmark_grace_period,
+                        warmup,
+                        runtime: RuntimeInputs {
+                            runtime_workers: None,
+                            runtime_workers_min: None,
+                            runtime_cells: flags.cells.unwrap_or(1),
+                            runtime_dispatch: flags
+                                .dispatch
+                                .is_some()
+                                .then(|| flags.dispatch_mode())
+                                .transpose()?,
+                            runtime_hop_routing: flags.hop_routing()?,
+                            random_seed: flags.random_seed,
+                            dataset_random_seed: flags.random_seed,
+                            replay: ReplayScenarioInputs {
+                                input_file: flags.input_file.clone(),
+                                system_prompt: flags.system_prompt.clone(),
+                                system_prompt_file: flags.system_prompt_file.clone(),
+                                recorded_agent_graph,
+                                hardware_description: flags.hardware_description.clone(),
+                                endpoint_placement: flags
+                                    .endpoint_placement
+                                    .clone()
+                                    .unwrap_or_else(|| "unknown".to_string()),
+                                inline_records: None,
+                                scenario: flags.scenario.clone(),
+                                weka_semantics: flags.weka_semantics.clone(),
+                                ignore_trace_delays: flags.ignore_trace_delays.unwrap_or(false),
+                                ignore_trace_delays_explicit: flags.ignore_trace_delays.is_some(),
+                                trajectory_start_min_ratio: flags
+                                    .trajectory_start_min_ratio
+                                    .unwrap_or(0.0),
+                                trajectory_start_max_ratio: flags
+                                    .trajectory_start_max_ratio
+                                    .unwrap_or(0.0),
+                                unsafe_override: flags.unsafe_override.unwrap_or(false),
+                                agentic_cache_warmup_duration: flags.agentic_cache_warmup_duration,
+                                rankings: build_rankings(flags),
+                                accuracy: build_accuracy(flags),
+                                synthesis: build_synthesis(flags)?,
+                                dataset_filters: parse_dataset_filters(flags)?,
+                                custom_dataset_type: flags
+                                    .graph_format
+                                    .clone()
+                                    .or_else(|| flags.custom_dataset_type.clone()),
+                                public_dataset,
+                                hf_subset: flags.hf_subset.clone(),
+                                hf_dataset: flags.hf_dataset.clone(),
+                                hf_split: flags.hf_split.clone(),
+                                hf_revision: flags.hf_revision.clone(),
+                                hf_text_column: flags.hf_text_column.clone(),
+                                hf_output_column: flags.hf_output_column.clone(),
+                                hf_output_len: flags.hf_output_len,
+                                hf_format: flags.hf_format.clone(),
+                                inter_turn_delay_cap_seconds: flags.inter_turn_delay_cap_seconds,
+                                prefetch_media_urls: flags.prefetch_media_urls.unwrap_or(false),
+                                uuid_and_strip: flags.uuid_and_strip.unwrap_or(false),
+                                replay_speedup: flags.replay_speedup,
+                                max_idle_gap_cap_seconds: flags.max_idle_gap_cap_seconds,
+                                open_loop_replay: flags.open_loop_replay.unwrap_or(true)
+                                    && !flags.no_open_loop_replay.unwrap_or(false),
+                                open_loop_strict: flags.open_loop_strict.unwrap_or(false),
+                                omit_kv_hints: flags.omit_kv_hints.unwrap_or(false),
+                                force_min_tokens: flags.force_min_tokens.unwrap_or(true)
+                                    && !flags.no_force_min_tokens.unwrap_or(false),
+                                fixed_schedule,
+                                fixed_schedule_start_offset: flags.fixed_schedule_start_offset,
+                                fixed_schedule_end_offset: flags.fixed_schedule_end_offset,
+                                model_strategy: flags
+                                    .model_selection_strategy
+                                    .as_deref()
+                                    .map(parse_model_strategy)
+                                    .transpose()?,
+                                slice_duration: flags.slice_duration,
+                                isl_block_size: flags.isl_block_size,
+                                prefix_reuse_fraction: flags.prefix_reuse_fraction,
+                                prefix_reuse_ratio: flags.prefix_reuse_ratio,
+                                prompt_corpus: flags.prompt_corpus.clone(),
+                                random_range_ratio: parse_random_range_ratio(
+                                    flags.random_range_ratio.as_deref(),
+                                )?,
+                                random_corpus_style: match flags
+                                    .random_corpus_style
+                                    .as_deref()
+                                    .unwrap_or("vllm")
+                                {
+                                    "vllm" => aiperf_runtime::dataset::RandomCorpusStyle::Vllm,
+                                    "sglang" => aiperf_runtime::dataset::RandomCorpusStyle::Sglang,
+                                    other => anyhow::bail!("unknown random corpus style {other:?}"),
+                                },
+                                artifacts: ArtifactInputs {
+                                    sketch_metrics: flags.sketch_metrics.unwrap_or(false),
+                                    steady_state: flags.steady_state.unwrap_or(false),
+                                    steady_state_fraction: flags.steady_state_fraction,
+                                    steady_state_hybrid: flags.steady_state_hybrid.unwrap_or(false),
+                                    random_pool_text_batch_size: flags.batch_size,
+                                    random_pool_image_batch_size: flags.image_batch_size,
+                                    random_pool_audio_batch_size: flags.audio_batch_size,
+                                    random_pool_video_batch_size: flags.video_batch_size,
+                                    image_spec: build_image_spec(flags),
+                                    audio_spec: build_audio_spec(flags),
+                                    video_spec: build_video_spec(flags),
+                                    adaptive_scale: build_adaptive_scale(flags, concurrency)?,
+                                    request_rate_series,
+                                    prefix_prompts: build_prefix_prompts(flags),
+                                    // Dry-run emits the dataset-analysis artifact family unless suppressed.
+                                    dataset_analysis: (flags.dry_run.unwrap_or(false)
+                                        && !flags.no_dataset_analysis.unwrap_or(false))
+                                    .then(|| DatasetAnalysisInputs {
+                                        block_size: flags.kv_block_size,
+                                        cache_blocks: flags.kv_cache_blocks,
+                                        per_conversation: flags
+                                            .dataset_analysis_per_conversation
+                                            .unwrap_or(false),
+                                    }),
+                                    phases_override: None,
+                                    artifact_dir: flags
+                                        .artifact_dir
+                                        .clone()
+                                        .unwrap_or_else(|| PathBuf::from("artifacts")),
+                                },
+                            },
+                        },
+                    },
+                },
+            },
         },
-        osl: osl_mean.map(|mean| Distribution {
-            mean: Some(mean),
-            stddev: Some(flags.osl_stddev.unwrap_or(0.0)),
-            ..Default::default()
-        }),
-        turns,
-        turn_delay_ratio: flags.session_delay_ratio.unwrap_or(1.0),
-        turn_delay_ms,
-        session_header: flags.session_header.clone(),
-        proxy: flags.proxy.clone(),
-        proxy_from_env: flags.proxy_from_env.unwrap_or(false),
-        endpoint_path: flags.custom_endpoint.clone(),
-        reset_kv_cache: reset_kv_cache_from_flags(flags),
-        server_profiler: server_profiler_from_flags(flags),
-        records_formats,
-        // No flag narrows the summary artifacts; the flag path ships both formats.
-        summary_formats: Vec::new(),
-        // User files are authorable only from Config v2; no flag renders them.
-        user_files: Vec::new(),
-        export_raw,
-        export_trace,
-        export_outputs_json: flags.export_outputs_json.unwrap_or(false),
-        show_trace_timing,
-        profile_export_prefix: flags.profile_export_prefix.clone(),
-        use_think_time_only: flags.use_think_time_only.unwrap_or(false),
-        max_context_length: flags.max_context_length,
-        allow_dataset_wrap,
-        cache_bust,
-        burst_phase_starts: flags.burst_phase_starts.unwrap_or(false),
-        trace_idle_gap_cap_seconds: flags.trace_idle_gap_cap_seconds,
-        system_idle_gap_cap_seconds: flags.system_idle_gap_cap_seconds,
-        hf_weka_dataset,
-        trace_session_sample_ratio: flags.trace_session_sample_ratio,
-        agentic_warmup_grace_period: flags.agentic_warmup_grace_period,
-        failed_request_threshold: flags.failed_request_threshold,
-        sequence_distribution: flags.seq_dist.as_deref().map(parse_seq_dist).transpose()?,
-        batch_size: flags.batch_size.unwrap_or(1),
-        sampling: flags
-            .dataset_sampling_strategy
-            .clone()
-            .unwrap_or_else(|| "sequential".to_string()),
-        entries: num_dataset_entries
-            .or(num_conversations)
-            .or(num_sessions)
-            .or(request_count.map(|n| n as u32))
-            .unwrap_or(DEFAULT_ENTRIES),
-        dataset_entries: num_dataset_entries
-            .or(num_conversations)
-            .or(num_sessions)
-            .or(request_count.map(|n| n as u32)),
-        sessions: num_conversations.or(num_sessions).map(u64::from),
-        concurrency,
-        request_rate,
-        rate_mode: flags
-            .request_rate_mode
-            .clone()
-            .or_else(|| flags.arrival_pattern.clone()),
-        smoothness: flags.arrival_smoothness.or(flags.vllm_burstiness),
-        concurrency_ramp: flags.concurrency_ramp_duration,
-        rate_ramp: flags.request_rate_ramp_duration,
-        cancellation: match (
-            flags.request_cancellation_rate,
-            flags.request_cancellation_delay,
-        ) {
-            (Some(rate), delay) => Some((rate, delay.unwrap_or(0.0))),
-            _ => None,
-        },
-        user_centric: user_centric_cli,
-        request_rate_series,
-        request_count,
-        benchmark_duration,
-        grace_period: flags.benchmark_grace_period,
-        warmup,
-        random_seed: flags.random_seed,
-        dataset_random_seed: flags.random_seed,
-        runtime_workers: None,
-        runtime_workers_min: None,
-        runtime_cells: flags.cells.unwrap_or(1),
-        runtime_dispatch: flags
-            .dispatch
-            .is_some()
-            .then(|| flags.dispatch_mode())
-            .transpose()?,
-        runtime_hop_routing: flags.hop_routing()?,
-        input_file: flags.input_file.clone(),
-        system_prompt: flags.system_prompt.clone(),
-        system_prompt_file: flags.system_prompt_file.clone(),
-        recorded_agent_graph,
-        hardware_description: flags.hardware_description.clone(),
-        endpoint_placement: flags
-            .endpoint_placement
-            .clone()
-            .unwrap_or_else(|| "unknown".to_string()),
-        inline_records: None,
-        custom_dataset_type: flags
-            .graph_format
-            .clone()
-            .or_else(|| flags.custom_dataset_type.clone()),
-        public_dataset,
-        hf_subset: flags.hf_subset.clone(),
-        hf_dataset: flags.hf_dataset.clone(),
-        hf_split: flags.hf_split.clone(),
-        hf_revision: flags.hf_revision.clone(),
-        hf_text_column: flags.hf_text_column.clone(),
-        hf_output_column: flags.hf_output_column.clone(),
-        hf_output_len: flags.hf_output_len,
-        hf_format: flags.hf_format.clone(),
-        inter_turn_delay_cap_seconds: flags.inter_turn_delay_cap_seconds,
-        prefetch_media_urls: flags.prefetch_media_urls.unwrap_or(false),
-        uuid_and_strip: flags.uuid_and_strip.unwrap_or(false),
-        replay_speedup: flags.replay_speedup,
-        max_idle_gap_cap_seconds: flags.max_idle_gap_cap_seconds,
-        open_loop_replay: flags.open_loop_replay.unwrap_or(true)
-            && !flags.no_open_loop_replay.unwrap_or(false),
-        open_loop_strict: flags.open_loop_strict.unwrap_or(false),
-        omit_kv_hints: flags.omit_kv_hints.unwrap_or(false),
-        force_min_tokens: flags.force_min_tokens.unwrap_or(true)
-            && !flags.no_force_min_tokens.unwrap_or(false),
-        fixed_schedule,
-        fixed_schedule_start_offset: flags.fixed_schedule_start_offset,
-        fixed_schedule_end_offset: flags.fixed_schedule_end_offset,
-        model_strategy: flags
-            .model_selection_strategy
-            .as_deref()
-            .map(parse_model_strategy)
-            .transpose()?,
-        slice_duration: flags.slice_duration,
-        isl_block_size: flags.isl_block_size,
-        prefix_reuse_fraction: flags.prefix_reuse_fraction,
-        prefix_reuse_ratio: flags.prefix_reuse_ratio,
-        prompt_corpus: flags.prompt_corpus.clone(),
-        random_range_ratio: parse_random_range_ratio(flags.random_range_ratio.as_deref())?,
-        random_corpus_style: match flags.random_corpus_style.as_deref().unwrap_or("vllm") {
-            "vllm" => aiperf_runtime::dataset::RandomCorpusStyle::Vllm,
-            "sglang" => aiperf_runtime::dataset::RandomCorpusStyle::Sglang,
-            other => anyhow::bail!("unknown random corpus style {other:?}"),
-        },
-        sketch_metrics: flags.sketch_metrics.unwrap_or(false),
-        steady_state: flags.steady_state.unwrap_or(false),
-        steady_state_fraction: flags.steady_state_fraction,
-        steady_state_hybrid: flags.steady_state_hybrid.unwrap_or(false),
-        random_pool_text_batch_size: flags.batch_size,
-        random_pool_image_batch_size: flags.image_batch_size,
-        random_pool_audio_batch_size: flags.audio_batch_size,
-        random_pool_video_batch_size: flags.video_batch_size,
-        image_spec: build_image_spec(flags),
-        audio_spec: build_audio_spec(flags),
-        video_spec: build_video_spec(flags),
-        adaptive_scale: build_adaptive_scale(flags, concurrency)?,
-        prefix_prompts: build_prefix_prompts(flags),
-        scenario: flags.scenario.clone(),
-        weka_semantics: flags.weka_semantics.clone(),
-        ignore_trace_delays: flags.ignore_trace_delays.unwrap_or(false),
-        ignore_trace_delays_explicit: flags.ignore_trace_delays.is_some(),
-        trajectory_start_min_ratio: flags.trajectory_start_min_ratio.unwrap_or(0.0),
-        trajectory_start_max_ratio: flags.trajectory_start_max_ratio.unwrap_or(0.0),
-        unsafe_override: flags.unsafe_override.unwrap_or(false),
-        agentic_cache_warmup_duration: flags.agentic_cache_warmup_duration,
-        rankings: build_rankings(flags),
-        accuracy: build_accuracy(flags),
-        synthesis: build_synthesis(flags)?,
-        dataset_filters: parse_dataset_filters(flags)?,
-        // Dry-run emits the dataset-analysis artifact family unless suppressed.
-        dataset_analysis: (flags.dry_run.unwrap_or(false)
-            && !flags.no_dataset_analysis.unwrap_or(false))
-        .then(|| DatasetAnalysisInputs {
-            block_size: flags.kv_block_size,
-            cache_blocks: flags.kv_cache_blocks,
-            per_conversation: flags.dataset_analysis_per_conversation.unwrap_or(false),
-        }),
-        phases_override: None,
-        artifact_dir: flags
-            .artifact_dir
-            .clone()
-            .unwrap_or_else(|| PathBuf::from("artifacts")),
     };
-    Inputs::from_flat(inputs)
+    Ok(inputs)
 }
 
 pub(crate) fn parse_random_range_ratio(
@@ -1398,6 +1429,50 @@ mod tests {
                 inputs.transport,
                 crate::model::transport::Transport::DryRun(_)
             ));
+        });
+    }
+
+    #[test]
+    fn flag_authoring_populates_each_inputs_group_directly() {
+        run_on_big_stack(|| {
+            let flags = parse(&[
+                "-m",
+                "test-model",
+                "--endpoint-type",
+                "chat",
+                "--dry-run",
+                "--random-seed",
+                "7",
+                "--sketch-metrics",
+            ]);
+            let inputs = super::resolve_inputs(&flags).expect("flag inputs resolve");
+
+            assert_eq!(inputs.endpoint.model_names, ["test-model"]);
+            assert!(matches!(
+                inputs.endpoint.transport,
+                crate::model::transport::Transport::DryRun(_)
+            ));
+            assert_eq!(
+                inputs
+                    .endpoint
+                    .telemetry
+                    .dataset
+                    .workload
+                    .runtime
+                    .random_seed,
+                Some(7)
+            );
+            assert!(
+                inputs
+                    .endpoint
+                    .telemetry
+                    .dataset
+                    .workload
+                    .runtime
+                    .replay
+                    .artifacts
+                    .sketch_metrics
+            );
         });
     }
 

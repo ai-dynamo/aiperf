@@ -2461,272 +2461,290 @@ impl Benchmark {
             .and_then(|metadata| metadata.endpoint_placement.clone())
             .unwrap_or_else(|| "unknown".to_string());
 
-        Inputs::from_flat(load::InputsFlat {
-            model_names,
-            urls,
-            endpoint_type,
-            transport,
-            streaming: self.endpoint.streaming,
-            timeout_seconds: self.endpoint.timeout,
-            use_legacy_max_tokens: self.endpoint.use_legacy_max_tokens.unwrap_or(false),
-            use_server_token_count: self.endpoint.use_server_token_count.unwrap_or(false),
-            per_chunk_usage: self.endpoint.per_chunk_usage.unwrap_or(false),
-            download_video_content: self.endpoint.download_video_content.unwrap_or(false),
-            extra: self.endpoint.extra.unwrap_or_default(),
-            server_metrics_urls: sm_urls,
-            connection_reuse: self
-                .endpoint
-                .connection_reuse
-                .as_deref()
-                .map(load::parse_connection_reuse)
-                .transpose()?,
-            ssl_verify: self.endpoint.ssl_verify,
-            uds_path: self.endpoint.uds_path.clone(),
-            request_content_type: self
-                .endpoint
-                .request_content_type
-                .as_deref()
-                .map(load::parse_content_type)
-                .transpose()?,
-            wait_for_model_timeout: self.endpoint.wait_for_model_timeout,
-            wait_for_model_mode: self
-                .endpoint
-                .wait_for_model_mode
-                .as_deref()
-                .map(load::parse_wait_mode)
-                .transpose()?,
-            wait_for_model_interval: self.endpoint.wait_for_model_interval,
-            apply_chat_template,
-            prefill_concurrency: if multiphase_authored {
-                None
-            } else {
-                phase.prefill_concurrency
+        Ok(Inputs {
+            endpoint: load::EndpointInputs {
+                model_names,
+                urls,
+                endpoint_type,
+                transport,
+                streaming: self.endpoint.streaming,
+                timeout_seconds: self.endpoint.timeout,
+                use_legacy_max_tokens: self.endpoint.use_legacy_max_tokens.unwrap_or(false),
+                use_server_token_count: self.endpoint.use_server_token_count.unwrap_or(false),
+                per_chunk_usage: self.endpoint.per_chunk_usage.unwrap_or(false),
+                download_video_content: self.endpoint.download_video_content.unwrap_or(false),
+                extra: self.endpoint.extra.unwrap_or_default(),
+                server_metrics_urls: sm_urls,
+                connection_reuse: self
+                    .endpoint
+                    .connection_reuse
+                    .as_deref()
+                    .map(load::parse_connection_reuse)
+                    .transpose()?,
+                ssl_verify: self.endpoint.ssl_verify,
+                uds_path: self.endpoint.uds_path.clone(),
+                request_content_type: self
+                    .endpoint
+                    .request_content_type
+                    .as_deref()
+                    .map(load::parse_content_type)
+                    .transpose()?,
+                wait_for_model_timeout: self.endpoint.wait_for_model_timeout,
+                wait_for_model_mode: self
+                    .endpoint
+                    .wait_for_model_mode
+                    .as_deref()
+                    .map(load::parse_wait_mode)
+                    .transpose()?,
+                wait_for_model_interval: self.endpoint.wait_for_model_interval,
+                apply_chat_template,
+                prefill_concurrency: if multiphase_authored {
+                    None
+                } else {
+                    phase.prefill_concurrency
+                },
+                prefill_ramp: if multiphase_authored {
+                    None
+                } else {
+                    phase.prefill_ramp
+                },
+                telemetry: load::TelemetryInputs {
+                    gpu_telemetry_enabled: gpu_enabled,
+                    gpu_telemetry_collector: gpu_collector,
+                    gpu_telemetry_urls: gpu_urls,
+                    gpu_telemetry_metrics_file: gpu_metrics_file,
+                    server_metrics_enabled: sm_enabled,
+                    server_metrics_formats: sm_formats,
+                    slos,
+                    network_latency_mean,
+                    network_latency_probe,
+                    otel_url,
+                    otel_provider: None,
+                    otel_resource_attributes: Vec::new(),
+                    mlflow,
+                    wandb,
+                    dataset: load::DatasetInputs {
+                        api_key: self.endpoint.api_key,
+                        headers: self.endpoint.headers.unwrap_or_default(),
+                        tokenizer_name,
+                        tokenizer_revision,
+                        tokenizer_trust,
+                        server_tokenizer_url,
+                        isl,
+                        osl,
+                        turns,
+                        turn_delay_ratio,
+                        turn_delay_ms,
+                        session_header: self.endpoint.session_header,
+                        proxy: self.endpoint.proxy,
+                        proxy_from_env: self.endpoint.proxy_from_env.unwrap_or(false),
+                        endpoint_path: self.endpoint.path,
+                        reset_kv_cache,
+                        server_profiler,
+                        records_formats,
+                        summary_formats,
+                        user_files,
+                        export_raw,
+                        export_trace,
+                        export_outputs_json,
+                        show_trace_timing,
+                        profile_export_prefix: self
+                            .artifacts
+                            .as_ref()
+                            .and_then(|a| a.prefix.clone()),
+                        use_think_time_only: false,
+                        max_context_length: None,
+                        allow_dataset_wrap: None,
+                        cache_bust: None,
+                        burst_phase_starts: false,
+                        trace_idle_gap_cap_seconds: None,
+                        system_idle_gap_cap_seconds: None,
+                        hf_weka_dataset: None,
+                        trace_session_sample_ratio: None,
+                        agentic_warmup_grace_period: None,
+                        failed_request_threshold: None,
+                        sequence_distribution,
+                        batch_size: batch_size.unwrap_or(1),
+                        sampling,
+                        entries,
+                        // Explicit entries only (file/public); synthetic uses `entries`.
+                        dataset_entries,
+                        sessions: if multiphase_authored {
+                            None
+                        } else {
+                            num_conversations.map(u64::from).or(phase.sessions)
+                        },
+                        workload: load::WorkloadInputs {
+                            concurrency: if multiphase_authored {
+                                None
+                            } else {
+                                phase.concurrency
+                            },
+                            request_rate: if multiphase_authored {
+                                None
+                            } else {
+                                phase_rate
+                            },
+                            rate_mode: if multiphase_authored { None } else { rate_mode },
+                            smoothness: if multiphase_authored {
+                                None
+                            } else {
+                                phase.smoothness
+                            },
+                            concurrency_ramp: if multiphase_authored {
+                                None
+                            } else {
+                                phase.concurrency_ramp
+                            },
+                            rate_ramp: if multiphase_authored {
+                                None
+                            } else {
+                                phase.rate_ramp
+                            },
+                            cancellation: if multiphase_authored {
+                                None
+                            } else {
+                                phase_cancellation
+                            },
+                            user_centric: if multiphase_authored {
+                                None
+                            } else {
+                                user_centric
+                            },
+                            request_count: if multiphase_authored {
+                                None
+                            } else {
+                                phase.requests
+                            },
+                            benchmark_duration: if multiphase_authored {
+                                None
+                            } else {
+                                phase.duration
+                            },
+                            grace_period: if multiphase_authored {
+                                None
+                            } else {
+                                phase.grace_period
+                            },
+                            warmup,
+                            runtime: load::RuntimeInputs {
+                                runtime_workers,
+                                runtime_workers_min,
+                                runtime_cells,
+                                runtime_dispatch,
+                                runtime_hop_routing,
+                                random_seed,
+                                dataset_random_seed,
+                                replay: load::ReplayScenarioInputs {
+                                    input_file,
+                                    system_prompt,
+                                    system_prompt_file,
+                                    recorded_agent_graph,
+                                    hardware_description,
+                                    endpoint_placement,
+                                    inline_records,
+                                    scenario: self.scenario.clone(),
+                                    weka_semantics: None,
+                                    ignore_trace_delays: false,
+                                    ignore_trace_delays_explicit: false,
+                                    trajectory_start_min_ratio: self
+                                        .trajectory_start_min_ratio
+                                        .unwrap_or(0.0),
+                                    trajectory_start_max_ratio: self
+                                        .trajectory_start_max_ratio
+                                        .unwrap_or(0.0),
+                                    unsafe_override: self.unsafe_override.unwrap_or(false),
+                                    agentic_cache_warmup_duration: None,
+                                    rankings: None,
+                                    accuracy: None,
+                                    synthesis,
+                                    dataset_filters: None,
+                                    custom_dataset_type,
+                                    public_dataset,
+                                    hf_subset,
+                                    hf_dataset,
+                                    hf_split,
+                                    hf_revision,
+                                    hf_text_column,
+                                    hf_output_column,
+                                    hf_output_len,
+                                    hf_format,
+                                    inter_turn_delay_cap_seconds,
+                                    prefetch_media_urls,
+                                    uuid_and_strip,
+                                    replay_speedup,
+                                    max_idle_gap_cap_seconds,
+                                    open_loop_replay,
+                                    open_loop_strict,
+                                    omit_kv_hints,
+                                    force_min_tokens,
+                                    fixed_schedule,
+                                    fixed_schedule_start_offset: phase.start_offset,
+                                    fixed_schedule_end_offset: phase.end_offset,
+                                    model_strategy,
+                                    slice_duration,
+                                    isl_block_size,
+                                    prefix_reuse_fraction,
+                                    prefix_reuse_ratio,
+                                    prompt_corpus,
+                                    random_range_ratio,
+                                    random_corpus_style,
+                                    artifacts: load::ArtifactInputs {
+                                        sketch_metrics: false,
+                                        steady_state: false,
+                                        steady_state_fraction: None,
+                                        steady_state_hybrid: false,
+                                        random_pool_text_batch_size: dataset
+                                            .as_ref()
+                                            .and_then(|dataset| dataset.prompts.as_ref())
+                                            .and_then(|prompts| prompts.batch_size),
+                                        random_pool_image_batch_size: dataset
+                                            .as_ref()
+                                            .and_then(|dataset| dataset.images.as_ref())
+                                            .and_then(|images| images.batch_size),
+                                        random_pool_audio_batch_size: dataset
+                                            .as_ref()
+                                            .and_then(|dataset| dataset.audio.as_ref())
+                                            .and_then(|audio| audio.batch_size),
+                                        random_pool_video_batch_size: dataset
+                                            .as_ref()
+                                            .and_then(|dataset| dataset.video.as_ref())
+                                            .and_then(|video| video.batch_size),
+                                        image_spec,
+                                        audio_spec,
+                                        video_spec,
+                                        adaptive_scale,
+                                        prefix_prompts,
+                                        // A `dry_run` config transport emits the dataset-analysis family with
+                                        // default knobs; `apply_cli_overrides` layers `--kv-*` /
+                                        // `--no-dataset-analysis` on top.
+                                        dataset_analysis: is_dry_run.then(|| {
+                                            load::DatasetAnalysisInputs {
+                                                block_size: 16,
+                                                cache_blocks: None,
+                                                per_conversation: false,
+                                            }
+                                        }),
+                                        phases_override,
+                                        request_rate_series: if multiphase_authored {
+                                            None
+                                        } else {
+                                            phase
+                                                .rate_series
+                                                .as_ref()
+                                                .map(parse_yaml_rate_series)
+                                                .transpose()?
+                                        },
+                                        artifact_dir: artifact_dir
+                                            .or_else(|| config_artifact_dir.map(PathBuf::from))
+                                            .unwrap_or_else(|| PathBuf::from("artifacts")),
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
             },
-            prefill_ramp: if multiphase_authored {
-                None
-            } else {
-                phase.prefill_ramp
-            },
-            gpu_telemetry_enabled: gpu_enabled,
-            gpu_telemetry_collector: gpu_collector,
-            gpu_telemetry_urls: gpu_urls,
-            gpu_telemetry_metrics_file: gpu_metrics_file,
-            server_metrics_enabled: sm_enabled,
-            server_metrics_formats: sm_formats,
-            slos,
-            network_latency_mean,
-            network_latency_probe,
-            otel_url,
-            otel_provider: None,
-            otel_resource_attributes: Vec::new(),
-            mlflow,
-            wandb,
-            api_key: self.endpoint.api_key,
-            headers: self.endpoint.headers.unwrap_or_default(),
-            tokenizer_name,
-            tokenizer_revision,
-            tokenizer_trust,
-            server_tokenizer_url,
-            isl,
-            osl,
-            turns,
-            turn_delay_ratio,
-            turn_delay_ms,
-            session_header: self.endpoint.session_header,
-            proxy: self.endpoint.proxy,
-            proxy_from_env: self.endpoint.proxy_from_env.unwrap_or(false),
-            endpoint_path: self.endpoint.path,
-            reset_kv_cache,
-            server_profiler,
-            records_formats,
-            summary_formats,
-            user_files,
-            export_raw,
-            export_trace,
-            export_outputs_json,
-            show_trace_timing,
-            profile_export_prefix: self.artifacts.as_ref().and_then(|a| a.prefix.clone()),
-            use_think_time_only: false,
-            max_context_length: None,
-            allow_dataset_wrap: None,
-            cache_bust: None,
-            burst_phase_starts: false,
-            trace_idle_gap_cap_seconds: None,
-            system_idle_gap_cap_seconds: None,
-            hf_weka_dataset: None,
-            trace_session_sample_ratio: None,
-            agentic_warmup_grace_period: None,
-            failed_request_threshold: None,
-            sequence_distribution,
-            batch_size: batch_size.unwrap_or(1),
-            sampling,
-            entries,
-            // Explicit entries only (file/public); synthetic uses `entries`.
-            dataset_entries,
-            sessions: if multiphase_authored {
-                None
-            } else {
-                num_conversations.map(u64::from).or(phase.sessions)
-            },
-            concurrency: if multiphase_authored {
-                None
-            } else {
-                phase.concurrency
-            },
-            request_rate: if multiphase_authored {
-                None
-            } else {
-                phase_rate
-            },
-            rate_mode: if multiphase_authored { None } else { rate_mode },
-            smoothness: if multiphase_authored {
-                None
-            } else {
-                phase.smoothness
-            },
-            concurrency_ramp: if multiphase_authored {
-                None
-            } else {
-                phase.concurrency_ramp
-            },
-            rate_ramp: if multiphase_authored {
-                None
-            } else {
-                phase.rate_ramp
-            },
-            cancellation: if multiphase_authored {
-                None
-            } else {
-                phase_cancellation
-            },
-            user_centric: if multiphase_authored {
-                None
-            } else {
-                user_centric
-            },
-            request_count: if multiphase_authored {
-                None
-            } else {
-                phase.requests
-            },
-            benchmark_duration: if multiphase_authored {
-                None
-            } else {
-                phase.duration
-            },
-            grace_period: if multiphase_authored {
-                None
-            } else {
-                phase.grace_period
-            },
-            warmup,
-            runtime_workers,
-            runtime_workers_min,
-            runtime_cells,
-            runtime_dispatch,
-            runtime_hop_routing,
-            random_seed,
-            dataset_random_seed,
-            input_file,
-            system_prompt,
-            system_prompt_file,
-            recorded_agent_graph,
-            hardware_description,
-            endpoint_placement,
-            inline_records,
-            custom_dataset_type,
-            public_dataset,
-            hf_subset,
-            hf_dataset,
-            hf_split,
-            hf_revision,
-            hf_text_column,
-            hf_output_column,
-            hf_output_len,
-            hf_format,
-            inter_turn_delay_cap_seconds,
-            prefetch_media_urls,
-            uuid_and_strip,
-            replay_speedup,
-            max_idle_gap_cap_seconds,
-            open_loop_replay,
-            open_loop_strict,
-            omit_kv_hints,
-            force_min_tokens,
-            fixed_schedule,
-            fixed_schedule_start_offset: phase.start_offset,
-            fixed_schedule_end_offset: phase.end_offset,
-            model_strategy,
-            slice_duration,
-            isl_block_size,
-            prefix_reuse_fraction,
-            prefix_reuse_ratio,
-            prompt_corpus,
-            random_range_ratio,
-            random_corpus_style,
-            sketch_metrics: false,
-            steady_state: false,
-            steady_state_fraction: None,
-            steady_state_hybrid: false,
-            random_pool_text_batch_size: dataset
-                .as_ref()
-                .and_then(|dataset| dataset.prompts.as_ref())
-                .and_then(|prompts| prompts.batch_size),
-            random_pool_image_batch_size: dataset
-                .as_ref()
-                .and_then(|dataset| dataset.images.as_ref())
-                .and_then(|images| images.batch_size),
-            random_pool_audio_batch_size: dataset
-                .as_ref()
-                .and_then(|dataset| dataset.audio.as_ref())
-                .and_then(|audio| audio.batch_size),
-            random_pool_video_batch_size: dataset
-                .as_ref()
-                .and_then(|dataset| dataset.video.as_ref())
-                .and_then(|video| video.batch_size),
-            image_spec,
-            audio_spec,
-            video_spec,
-            adaptive_scale,
-            prefix_prompts,
-            // Authored via `benchmark.scenario` / `.trajectoryStart*` / `.unsafeOverride`.
-            scenario: self.scenario.clone(),
-            // The YAML config path selects semantics via the scenario (derived in
-            // `build`); the explicit override is the `--weka-semantics` CLI flag.
-            weka_semantics: None,
-            // No YAML surface yet; the CLI `--ignore-trace-delays` flag is the
-            // only authoring path. Default to honoring recorded trace delays.
-            ignore_trace_delays: false,
-            ignore_trace_delays_explicit: false,
-            trajectory_start_min_ratio: self.trajectory_start_min_ratio.unwrap_or(0.0),
-            trajectory_start_max_ratio: self.trajectory_start_max_ratio.unwrap_or(0.0),
-            unsafe_override: self.unsafe_override.unwrap_or(false),
-            agentic_cache_warmup_duration: None,
-            rankings: None,
-            accuracy: None,
-            synthesis,
-            dataset_filters: None,
-            // A `dry_run` config transport emits the dataset-analysis family with
-            // default knobs; `apply_cli_overrides` layers `--kv-*` /
-            // `--no-dataset-analysis` on top.
-            dataset_analysis: is_dry_run.then(|| load::DatasetAnalysisInputs {
-                block_size: 16,
-                cache_blocks: None,
-                per_conversation: false,
-            }),
-            phases_override,
-            request_rate_series: if multiphase_authored {
-                None
-            } else {
-                phase
-                    .rate_series
-                    .as_ref()
-                    .map(parse_yaml_rate_series)
-                    .transpose()?
-            },
-            artifact_dir: artifact_dir
-                .or_else(|| config_artifact_dir.map(PathBuf::from))
-                .unwrap_or_else(|| PathBuf::from("artifacts")),
         })
     }
 
@@ -3414,6 +3432,12 @@ mod tests {
         assert_eq!(
             object.get("urls"),
             Some(&serde_json::json!(["127.0.0.1:8000"]))
+        );
+        assert_eq!(inputs.endpoint.urls, ["127.0.0.1:8000"]);
+        assert_eq!(inputs.endpoint.telemetry.dataset.isl.mean, Some(128.0));
+        assert_eq!(
+            inputs.endpoint.telemetry.dataset.workload.request_count,
+            Some(1)
         );
         assert!(
             !object.contains_key("endpoint"),
