@@ -33,6 +33,13 @@ const WIRE_JSONL: &str = r#"
 {"endpoint_url":"http://s1/metrics","timestamp_ns":250,"metrics":{"http_requests_total":{"type":"counter","description":"Total requests","samples":[{"labels":{"method":"GET"},"value":50.0}]},"queue_size":{"type":"gauge","description":"Queue depth","samples":[{"value":7.0}]}}}
 "#;
 
+/// Histogram buckets evolve across the warmup reference and profiling samples.
+const EVOLVING_HISTOGRAM_WIRE_JSONL: &str = r#"
+{"endpoint_url":"http://s1/metrics","timestamp_ns":50,"metrics":{"latency_seconds":{"type":"histogram","description":"Request latency","samples":[{"buckets":{"1.0":2.0,"+Inf":2.0},"sum":2.0,"count":2.0}]}}}
+{"endpoint_url":"http://s1/metrics","timestamp_ns":150,"metrics":{"latency_seconds":{"type":"histogram","description":"Request latency","samples":[{"buckets":{"0.5":2.0,"1.0":3.0,"+Inf":3.0},"sum":3.0,"count":3.0}]}}}
+{"endpoint_url":"http://s1/metrics","timestamp_ns":200,"metrics":{"latency_seconds":{"type":"histogram","description":"Request latency","samples":[{"buckets":{"0.5":4.0,"2.0":6.0,"+Inf":6.0},"sum":6.0,"count":6.0}]}}}
+"#;
+
 fn report_with_boundary(start_ns: i64, end_ns: i64) -> NativeReport {
     let summary = AccumulatorSummary::new();
     let mut report = NativeReport::new(&summary, None);
@@ -245,6 +252,48 @@ fn writes_schema_rows_and_metadata() {
             .get("aiperf.label_columns")
             .map(String::as_str),
         Some(r#"["method"]"#)
+    );
+}
+
+#[test]
+fn histogram_bucket_schema_expands() {
+    let dir = tempfile::tempdir().unwrap();
+    write_wire(dir.path(), EVOLVING_HISTOGRAM_WIRE_JSONL);
+
+    ParquetExporter
+        .export(&report_with_boundary(100, 300), dir.path(), &enabled_cfg())
+        .unwrap();
+
+    let (_, batch) = read_back(&dir.path().join(OUTPUT_FILENAME));
+    assert_eq!(
+        ints(&batch, "timestamp_ns"),
+        vec![150, 150, 150, 150, 200, 200, 200, 200]
+    );
+    assert_eq!(
+        strings(&batch, "bucket_le"),
+        vec![
+            Some("0.5".to_string()),
+            Some("1.0".to_string()),
+            Some("2.0".to_string()),
+            Some("+Inf".to_string()),
+            Some("0.5".to_string()),
+            Some("1.0".to_string()),
+            Some("2.0".to_string()),
+            Some("+Inf".to_string()),
+        ]
+    );
+    assert_eq!(
+        floats(&batch, "bucket_count"),
+        vec![
+            Some(2.0),
+            Some(1.0),
+            Some(0.0),
+            Some(1.0),
+            Some(4.0),
+            Some(0.0),
+            Some(6.0),
+            Some(4.0),
+        ]
     );
 }
 

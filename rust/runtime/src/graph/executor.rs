@@ -279,19 +279,29 @@ impl<M: WireMessage> TraceExecutor<M> {
         node: &crate::graph::model::ToolNode,
         ctx: &Rc<TraceContext>,
     ) -> Result<Option<NodeExecutionResult>, TraceError> {
-        let reply = self
-            .sink
-            .dispatch_tool_node(
-                node_id,
-                node,
-                &GraphDispatchContext {
-                    phase: self.dispatch_phase,
-                    trace_subphase: self.trace_subphase,
-                    trace_instance: TraceInstanceId::new(ctx.trace_id.to_string()),
-                },
-            )
-            .await
-            .map_err(|error| TraceError::Other(error.to_string()))?;
+        if ctx.is_aborted() {
+            return Ok(None);
+        }
+        let dispatch_context = GraphDispatchContext {
+            phase: self.dispatch_phase,
+            trace_subphase: self.trace_subphase,
+            trace_instance: TraceInstanceId::new(ctx.trace_id.to_string()),
+        };
+        let dispatch = self.sink.dispatch_tool_node(
+            node_id,
+            node,
+            &dispatch_context,
+        );
+        tokio::pin!(dispatch);
+        let reply = tokio::select! {
+            biased;
+            () = ctx.await_abort() => return Ok(None),
+            result = &mut dispatch => result,
+        }
+        .map_err(|error| TraceError::Other(error.to_string()))?;
+        if ctx.is_aborted() {
+            return Ok(None);
+        }
         let value = self.reply_value_for_output(&node.output, reply);
         self.publish_write(node_id, &node.output, value, ctx)?;
         Ok(Some(NodeExecutionResult))
