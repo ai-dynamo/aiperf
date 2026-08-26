@@ -9,7 +9,7 @@
 
 use std::path::PathBuf;
 
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer, de};
 
 use crate::load::{self, Inputs, Warmup, default_isl};
 use crate::model::dataset::{Distribution, RecordedAgentGraphConfig};
@@ -729,6 +729,7 @@ struct ArtifactsSection {
     #[serde(default, alias = "sliceDuration", deserialize_with = "de_duration_opt")]
     slice_duration: Option<f64>,
     /// Per-record export formats (`[jsonl,csv,parquet]`) or `false` to disable.
+    #[serde(default, deserialize_with = "deserialize_records_formats")]
     records: Option<RecordsFormats>,
     /// Summary export formats (`[json,csv]`). Unauthored ships both.
     #[serde(default)]
@@ -768,13 +769,31 @@ struct UserFileSection {
 }
 
 /// `artifacts.records`: a format list, or `false` to disable per-record export.
-#[derive(Debug, Deserialize)]
-#[serde(untagged)]
+#[derive(Debug)]
 enum RecordsFormats {
     List(Vec<String>),
-    /// `records: false` disables per-record export; the bool is only a
-    /// deserialization discriminant, never read.
-    Disabled(#[allow(dead_code)] bool),
+    /// `records: false` disables per-record export.
+    Disabled,
+}
+
+fn deserialize_records_formats<'de, D>(deserializer: D) -> Result<Option<RecordsFormats>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Input {
+        List(Vec<String>),
+        Bool(bool),
+    }
+
+    match Input::deserialize(deserializer)? {
+        Input::List(formats) => Ok(Some(RecordsFormats::List(formats))),
+        Input::Bool(false) => Ok(Some(RecordsFormats::Disabled)),
+        Input::Bool(true) => Err(de::Error::custom(
+            "artifacts.records accepts a format list or false; true is unsupported",
+        )),
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -2331,7 +2350,7 @@ impl Benchmark {
         // `export_outputs_json`.
         let records_formats = match self.artifacts.as_ref().and_then(|a| a.records.as_ref()) {
             Some(RecordsFormats::List(v)) => v.clone(),
-            Some(RecordsFormats::Disabled(_)) => Vec::new(),
+            Some(RecordsFormats::Disabled) => Vec::new(),
             None => vec!["jsonl".to_string()],
         };
         // `artifacts.summary`: an authored list narrows the summary artifacts, so
@@ -3194,6 +3213,37 @@ mod tests {
         resolve_str(&cfg(body), Some("/tmp/x".into()))
             .expect_err("expected a validation error")
             .to_string()
+    }
+
+    #[test]
+    fn records_true_is_rejected() {
+        let error = err(
+            "  artifacts: {records: true}\n  phases: {type: concurrency, requests: 1, concurrency: 1}\n",
+        );
+        assert!(
+            error.contains("artifacts.records accepts a format list or false; true is unsupported"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn records_false_produces_no_formats() {
+        let run = resolve_str(
+            &cfg("  artifacts: {records: false}\n  phases: {type: concurrency, requests: 1, concurrency: 1}\n"),
+            Some("/tmp/x".into()),
+        )
+        .expect("false disables record export");
+        assert!(run.cfg.records_formats.is_empty());
+    }
+
+    #[test]
+    fn records_list_preserves_formats() {
+        let run = resolve_str(
+            &cfg("  artifacts: {records: [jsonl, csv]}\n  phases: {type: concurrency, requests: 1, concurrency: 1}\n"),
+            Some("/tmp/x".into()),
+        )
+        .expect("record formats resolve");
+        assert_eq!(run.cfg.records_formats, ["jsonl", "csv"]);
     }
 
     /// The authored inline peak form must reach the wire as the nested
