@@ -938,7 +938,11 @@ mod eventstream_to_sse_tests {
     async fn reframes_payload_parts_as_sse_data_lines() {
         let m1 = EventStreamMessage::payload_part(Bytes::from_static(br#"{"i":1}"#));
         let m2 = EventStreamMessage::payload_part(Bytes::from_static(br#"{"i":2}"#));
-        let wire = [m1.encode(), m2.encode()].concat();
+        let wire = [
+            m1.encode().expect("first frame encodes"),
+            m2.encode().expect("second frame encodes"),
+        ]
+        .concat();
 
         let raw = stream::iter(vec![Ok::<Bytes, ErrorDetails>(Bytes::from(wire))]);
         let sse = eventstream_to_sse(raw);
@@ -956,7 +960,7 @@ mod eventstream_to_sse_tests {
     #[tokio::test]
     async fn reframes_messages_split_across_chunk_boundaries() {
         let message = EventStreamMessage::payload_part(Bytes::from_static(br#"{"x":true}"#));
-        let encoded = message.encode();
+        let encoded = message.encode().expect("frame encodes");
         let (left, right) = encoded.split_at(encoded.len() / 2);
 
         let raw = stream::iter(vec![
@@ -977,11 +981,12 @@ mod eventstream_to_sse_tests {
     #[tokio::test]
     async fn emits_one_error_for_an_invalid_eventstream_prelude() {
         let valid = EventStreamMessage::payload_part(Bytes::from_static(br#"{"i":1}"#));
-        let mut invalid = BytesMut::from(&valid.encode()[..]);
+        let encoded = valid.encode().expect("frame encodes");
+        let mut invalid = BytesMut::from(&encoded[..]);
         invalid[11] ^= 0xFF;
         let raw = stream::iter(vec![
             Ok::<Bytes, ErrorDetails>(invalid.freeze()),
-            Ok(valid.encode()),
+            Ok(valid.encode().expect("frame encodes")),
         ]);
         let results: Vec<_> = eventstream_to_sse(raw).collect().await;
 

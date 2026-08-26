@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use aiperf_runtime::rng::RustRandomGenerator;
-use aiperf_runtime::transport::core::EventStreamMessage;
+use aiperf_runtime::transport::core::{EventStreamEncodeError, EventStreamMessage};
 use axum::Json;
 use axum::body::Body;
 use axum::extract::State;
@@ -1579,7 +1579,7 @@ pub async fn sagemaker_invoke(
 /// directly, not the SSE-framed `data: {...}` line, so clients (boto3-based
 /// benchmarkers, AIPerf's SageMaker transport) parse bare JSON out of each
 /// PayloadPart.
-fn sse_to_eventstream<S>(sse: S) -> impl Stream<Item = Result<Bytes, Infallible>>
+fn sse_to_eventstream<S>(sse: S) -> impl Stream<Item = Result<Bytes, EventStreamEncodeError>>
 where
     S: Stream<Item = Result<Bytes, Infallible>>,
 {
@@ -1597,17 +1597,22 @@ where
                 // `EventStreamMessage::payload_part`) — not the SSE-framed
                 // `data: {...}\n` line. Emit the stripped payload so the frame
                 // matches the documented contract and real bare-JSON wire form.
-                let frame =
-                    EventStreamMessage::payload_part(Bytes::copy_from_slice(rest)).encode();
-                yield Ok::<Bytes, Infallible>(frame);
+                match EventStreamMessage::payload_part(Bytes::copy_from_slice(rest)).encode() {
+                    Ok(frame) => yield Ok(frame),
+                    Err(error) => {
+                        yield Err(error);
+                        return;
+                    }
+                }
             }
         }
     }
 }
 
-fn eventstream_response<S>(body: S) -> Response
+fn eventstream_response<S, E>(body: S) -> Response
 where
-    S: Stream<Item = Result<Bytes, Infallible>> + Send + 'static,
+    S: Stream<Item = Result<Bytes, E>> + Send + 'static,
+    E: Into<axum::BoxError> + 'static,
 {
     Response::builder()
         .status(StatusCode::OK)
@@ -4269,7 +4274,7 @@ mod sagemaker_tests {
 
         assert_eq!(out.len(), 1);
         let mut decoder = aiperf_runtime::transport::core::EventStreamDecoder::new();
-        decoder.push(&out[0]);
+        decoder.push(&out[0]).expect("frame is accepted");
         let messages = decoder.drain_messages().unwrap();
         assert_eq!(messages.len(), 1);
         assert_eq!(
