@@ -57,6 +57,7 @@ impl std::error::Error for MixedAnchorFanInError {}
 pub struct Scheduler {
     static_succ: BTreeMap<String, Vec<String>>,
     start_anchored_succ: BTreeMap<String, Vec<String>>,
+    first_token_anchored_succ: BTreeMap<String, Vec<String>>,
     static_pred_edges: BTreeMap<String, Vec<StaticEdge>>,
     entry: Vec<String>,
 }
@@ -65,13 +66,19 @@ impl Scheduler {
     pub fn new(graph: &GraphRecord) -> Result<Self, MixedAnchorFanInError> {
         let mut static_succ: BTreeMap<String, Vec<String>> = BTreeMap::new();
         let mut start_anchored_succ: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        let mut first_token_anchored_succ: BTreeMap<String, Vec<String>> = BTreeMap::new();
         let mut static_pred_edges: BTreeMap<String, Vec<StaticEdge>> = BTreeMap::new();
 
         for edge in &graph.edges {
             if let Some(finding) = non_completion_start_finding(edge) {
                 return Err(MixedAnchorFanInError(finding.message().to_owned()));
             }
-            if edge.delay_after_predecessor_start_us.is_some() {
+            if edge.delay_after_predecessor_first_token_us.is_some() {
+                first_token_anchored_succ
+                    .entry(edge.source.clone())
+                    .or_default()
+                    .push(edge.target.clone());
+            } else if edge.delay_after_predecessor_start_us.is_some() {
                 start_anchored_succ
                     .entry(edge.source.clone())
                     .or_default()
@@ -107,6 +114,7 @@ impl Scheduler {
         Ok(Scheduler {
             static_succ,
             start_anchored_succ,
+            first_token_anchored_succ,
             static_pred_edges,
             entry,
         })
@@ -149,6 +157,20 @@ impl Scheduler {
     /// allocation or id clone.
     pub fn start_anchored_successors(&self, node_id: &str) -> impl Iterator<Item = &str> {
         self.start_anchored_succ
+            .get(node_id)
+            .into_iter()
+            .flatten()
+            .filter(|t| *t != END_NODE_ID)
+            .map(String::as_str)
+    }
+
+    /// Successors wired via first-token-anchored edges; scheduled when
+    /// `node_id` observes its first token, not at completion. END suppressed.
+    ///
+    /// Borrows the immutable adjacency; hot scheduling path, so no per-call
+    /// allocation or id clone.
+    pub fn first_token_anchored_successors(&self, node_id: &str) -> impl Iterator<Item = &str> {
+        self.first_token_anchored_succ
             .get(node_id)
             .into_iter()
             .flatten()
@@ -339,6 +361,28 @@ mod tests {
         assert_eq!(sched.successors_after("a").count(), 0);
         assert_eq!(
             sched.start_anchored_successors("a").collect::<Vec<_>>(),
+            vec!["b"]
+        );
+    }
+
+    #[test]
+    fn first_token_successor_is_routed_before_completion_adjacency() {
+        let g = graph(
+            r#"{
+            "nodes": {"a": {"node_type":"llm","prompt":[],"output":"oa"},
+                      "b": {"node_type":"llm","prompt":[],"output":"ob"}},
+            "edges": [
+                {"edge_type":"static","source":"START","target":"a"},
+                {"edge_type":"static","source":"a","target":"b","delay_after_predecessor_first_token_us":5.0}
+            ]
+        }"#,
+        );
+        let sched = Scheduler::new(&g).unwrap();
+        assert_eq!(sched.successors_after("a").count(), 0);
+        assert_eq!(
+            sched
+                .first_token_anchored_successors("a")
+                .collect::<Vec<_>>(),
             vec!["b"]
         );
     }

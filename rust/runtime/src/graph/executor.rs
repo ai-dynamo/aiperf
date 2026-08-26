@@ -366,6 +366,7 @@ impl<M: WireMessage> TraceExecutor<M> {
             if !first_token_seen.replace(true) {
                 permit.on_first_token();
                 ctx.set_first_token(node_id, self.loop_wall_us());
+                self.schedule_first_token_successors(node_id, ctx);
             }
         };
         // An in-flight dispatch must lose the race against cancellation, exactly as
@@ -522,6 +523,12 @@ impl<M: WireMessage> TraceExecutor<M> {
             .borrow_mut()
             .insert(node_id.to_string(), self.loop_wall_us());
         for successor in self.scheduler.start_anchored_successors(node_id) {
+            self.clone().schedule(successor, ctx);
+        }
+    }
+
+    fn schedule_first_token_successors(self: &Rc<Self>, node_id: &str, ctx: &Rc<TraceContext>) {
+        for successor in self.scheduler.first_token_anchored_successors(node_id) {
             self.clone().schedule(successor, ctx);
         }
     }

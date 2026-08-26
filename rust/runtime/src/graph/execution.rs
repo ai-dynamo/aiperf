@@ -297,7 +297,7 @@ mod tests {
         GraphTraceProgram, LlmNode, ReducerName, START_NODE_ID, StaticEdge, ToolNode, TraceRecord,
     };
     use crate::graph::policy::PrefillSlotNodePolicy;
-    use crate::graph::sink::{EchoSink, GraphSink};
+    use crate::graph::sink::{EchoSink, GraphReply, GraphSink};
     use crate::graph::wire::OpenAiChatMessage;
 
     struct EmptyMaterializer;
@@ -351,6 +351,122 @@ mod tests {
             },
             arrival_offset_ns: None,
         })
+    }
+
+    struct FirstTokenParkingSink {
+        calls: Rc<RefCell<Vec<String>>>,
+        parent_first_token: Rc<tokio::sync::Notify>,
+        parent_release: Rc<tokio::sync::Notify>,
+    }
+
+    #[async_trait(?Send)]
+    impl GraphSink<OpenAiChatMessage> for FirstTokenParkingSink {
+        async fn dispatch(
+            &self,
+            node_id: &str,
+            _messages: Vec<bytes::Bytes>,
+            _max_tokens: Option<usize>,
+            on_first_token: &dyn Fn(),
+        ) -> anyhow::Result<GraphReply<OpenAiChatMessage>> {
+            self.calls.borrow_mut().push(node_id.to_owned());
+            on_first_token();
+            if node_id == "parent" {
+                on_first_token();
+                self.parent_first_token.notify_one();
+                self.parent_release.notified().await;
+            }
+            Ok(GraphReply::from_text(node_id.to_owned()))
+        }
+    }
+
+    #[test]
+    fn first_token_successor_dispatches_once_before_parent_terminal_release() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(tokio::task::LocalSet::new().run_until(async {
+            let mut graph = GraphRecord::default();
+            for node_id in ["parent", "child"] {
+                graph.state.insert(
+                    format!("{node_id}_output"),
+                    ChannelSpec {
+                        channel_type: ChannelType::Messages,
+                        reducer: ReducerName::AddMessages,
+                    },
+                );
+                graph.nodes.insert(
+                    node_id.to_owned(),
+                    ExecutableGraphNode::Llm(LlmNode {
+                        output: format!("{node_id}_output"),
+                        streaming: true,
+                        inputs: Vec::new(),
+                        min_start_delay_us: None,
+                        max_tokens: Some(1),
+                        items: Vec::new(),
+                        request: None,
+                        metadata: BTreeMap::new(),
+                    }),
+                );
+            }
+            graph.edges = vec![
+                StaticEdge {
+                    source: START_NODE_ID.into(),
+                    target: "parent".into(),
+                    delay_after_predecessor_us: None,
+                    min_start_delay_us: None,
+                    delay_after_predecessor_start_us: None,
+                    delay_after_predecessor_first_token_us: None,
+                },
+                StaticEdge {
+                    source: "parent".into(),
+                    target: "child".into(),
+                    delay_after_predecessor_us: None,
+                    min_start_delay_us: None,
+                    delay_after_predecessor_start_us: None,
+                    delay_after_predecessor_first_token_us: Some(0.0),
+                },
+            ];
+            let calls = Rc::new(RefCell::new(Vec::new()));
+            let parent_first_token = Rc::new(tokio::sync::Notify::new());
+            let parent_release = Rc::new(tokio::sync::Notify::new());
+            let sink: Rc<dyn GraphSink<OpenAiChatMessage>> = Rc::new(FirstTokenParkingSink {
+                calls: calls.clone(),
+                parent_first_token: parent_first_token.clone(),
+                parent_release: parent_release.clone(),
+            });
+            let backend = Rc::new(
+                LocalGraphTraceExecutionBackend::new(
+                    Rc::new(crate::clock::SimClock::new()),
+                    Rc::new(EmptyMaterializer),
+                    sink,
+                )
+                .with_force_full(true),
+            );
+            let executing = backend.clone();
+            let task = tokio::task::spawn_local(async move {
+                executing
+                    .execute_static_trace(
+                        GraphTracePlan {
+                            graph,
+                            trace: TraceRecord {
+                                id: "first-token".into(),
+                                graph_ref: None,
+                                initial_state: BTreeMap::new(),
+                            },
+                            arrival_offset_ns: None,
+                        },
+                        Phase::Profiling,
+                        TraceSubphase::Profiling,
+                    )
+                    .await
+            });
+            parent_first_token.notified().await;
+            tokio::task::yield_now().await;
+            assert_eq!(calls.borrow().as_slice(), ["parent", "child"]);
+            parent_release.notify_one();
+            task.await.unwrap().unwrap();
+        }));
     }
 
     #[test]
