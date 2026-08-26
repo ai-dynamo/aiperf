@@ -17,7 +17,7 @@ from __future__ import annotations
 import copy
 import logging
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, get_args
 
 from pydantic.alias_generators import to_camel
 
@@ -134,7 +134,97 @@ def _resolve_config_envelopes(
 
     config = AIPerfConfig.model_validate(merged.envelope)
     config._raw_envelope = raw_merged.envelope
+    _validate_search_space_phase_targets(config, merged.envelope)
     return config
+
+
+def _validate_search_space_phase_targets(
+    config: AIPerfConfig, envelope: dict[str, Any]
+) -> None:
+    """Reject searched dimensions the resolved phase cannot accept.
+
+    ``--search-space`` shape inference only runs when the profiling phase is
+    built from CLI flags (``_converter_profiling.build_profiling``). A config
+    that authors its own ``phases:`` keeps its discriminator, so a dimension
+    such as ``phases.profiling.users`` can target a phase type that has no
+    such field. The path is syntactically valid, so nothing rejects it until
+    the planner writes its first sampled value and Pydantic raises
+    ``extra_forbidden`` -- mid-run, after the benchmark is already underway
+    and the searched dimension has cost real time. Fail at resolution instead.
+    """
+    from aiperf.config.loader.errors import ConfigurationError
+    from aiperf.config.sweep.expand import _find_phase_or_recipe_alias
+
+    dimensions = getattr(config.sweep, "search_space", None)
+    if not dimensions:
+        return
+    benchmark = envelope.get("benchmark")
+    if not isinstance(benchmark, dict):
+        return
+    phases = benchmark.get("phases")
+    if not isinstance(phases, list) or not phases:
+        return
+
+    for dimension in dimensions:
+        path = getattr(dimension, "path", None)
+        if not isinstance(path, str):
+            continue
+        segments = path.split(".")
+        # Only direct ``phases.<selector>.<field>`` scalars are checked; a
+        # deeper path (``phases.profiling.cancellation.rate``) targets a
+        # sub-model whose own validation owns the field.
+        if len(segments) != 3 or segments[0] != "phases":
+            continue
+        selector, field_name = segments[1], segments[2]
+        target = _find_phase_or_recipe_alias(phases, selector, parent_key="phases")
+        if target is None:
+            continue
+        try:
+            resolved = config.benchmark.phases[phases.index(target)]
+        except (ValueError, IndexError):
+            continue
+        if _phase_accepts_field(type(resolved), field_name):
+            continue
+        raise ConfigurationError(
+            f"--search-space dimension {path!r} targets field {field_name!r}, "
+            f"which phase {resolved.name!r} (type {resolved.type}) does not "
+            f"have. {_phase_types_declaring(field_name)} Either search a field "
+            f"the phase declares, or change the phase's 'type:'."
+        )
+
+
+def _phase_accepts_field(phase_cls: type, field_name: str) -> bool:
+    """Whether ``phase_cls`` declares ``field_name`` under either spelling."""
+    fields = phase_cls.model_fields
+    if field_name in fields:
+        return True
+    return any(info.alias == field_name for info in fields.values())
+
+
+def _phase_types_declaring(field_name: str) -> str:
+    """Human-readable hint naming the phase types that do declare a field."""
+    from aiperf.config import phases as phase_models
+
+    declaring: list[str] = []
+    for name in dir(phase_models):
+        candidate = getattr(phase_models, name)
+        if not isinstance(candidate, type) or not hasattr(candidate, "model_fields"):
+            continue
+        type_field = candidate.model_fields.get("type")
+        if type_field is None:
+            continue
+        # Concrete phases pin the discriminator as ``Literal[PhaseType.X]``;
+        # the abstract bases annotate the bare enum, so an empty get_args()
+        # is what filters them out of the hint.
+        members = get_args(type_field.annotation)
+        if len(members) != 1:
+            continue
+        if _phase_accepts_field(candidate, field_name):
+            declaring.append(str(members[0]))
+    unique = sorted(set(declaring))
+    if not unique:
+        return "No phase type declares it."
+    return f"Declared by phase type(s): {', '.join(unique)}."
 
 
 @dataclass(slots=True)
