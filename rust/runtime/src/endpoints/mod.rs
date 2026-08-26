@@ -172,7 +172,10 @@ mod spec_decode_tests {
         rejected["num_spec_steps"] = serde_json::json!(20);
         rejected["num_accepted_draft_tokens"] = serde_json::json!(0);
         rejected["num_draft_tokens"] = serde_json::json!(80);
-        rejected.as_object_mut().unwrap().remove("per_step_accepted");
+        rejected
+            .as_object_mut()
+            .unwrap()
+            .remove("per_step_accepted");
         rejected.as_object_mut().unwrap().remove("per_step_drafted");
         let rejected = parse_vllm_spec_decode_stats(rejected, None).unwrap();
         assert_eq!(rejected.acceptance_histogram, BTreeMap::from([(0, 20)]));

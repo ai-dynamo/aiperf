@@ -349,5 +349,4 @@ mod tests {
         assert_eq!(usage.completion_tokens, 3);
         assert_eq!(usage.cached_tokens(), Some(5));
     }
-
 }
