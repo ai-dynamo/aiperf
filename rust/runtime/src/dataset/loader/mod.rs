@@ -174,6 +174,16 @@ impl LoadConfig {
         }
     }
 
+    /// Set the root randomness used by loaders that sample before composition.
+    ///
+    /// Registry composition injects its [`ComposeConfig`] root automatically;
+    /// direct [`DatasetLoader::load`] callers use this method to select the same
+    /// deterministic stream explicitly.
+    pub fn with_rng_root(mut self, rng_root: crate::rng::RngRoot) -> Self {
+        self.rng_root = rng_root;
+        self
+    }
+
     fn validate(&self) -> Result<()> {
         for (name, value) in [
             ("start_offset_ms", self.start_offset_ms),
