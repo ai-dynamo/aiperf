@@ -411,6 +411,20 @@ set, invalidation classifier, harness/mock digest, firmware, memory topology,
 and canonical inventory digest. TTFT and ITL p50/p90/p99 are mandatory measured
 secondary metrics and are rejected as `primary_metric`. It rejects an omitted
 identity field.
+For every exporter scenario it additionally requires exactly these fields and
+values: `corpus_records: 100000`, `sample_repetitions: 16`,
+`processed_records: 1600000`, and `retained_artifact_records: 100000`.
+It requires 16 sequential per-repetition receipts, each proving exactly 100,000
+processed input records, the scenario's frozen observable class, valid raw and
+comparison observable digests, and the same comparison digest across all
+repetitions. It requires one retained repetition's complete observable evidence,
+active exporter duration equal to the receipt-duration sum, and no
+sleep/padding. The original static-baseline median must be at least 30 seconds
+when 16 is calibrated and frozen; later static and
+dynamic members need only complete all 16 repetitions with positive durations,
+and a faster dynamic member is not invalidated for taking less than 30 seconds.
+Exporter nanoseconds-per-record must divide by `processed_records`, not the retained
+artifact count or wall-clock duration.
 `plugin_task_gate_inventory.rs` parses the script, Task Gate Matrix, and
 Implementation-unit Gate Matrix; it requires exactly one case for every integer
 1 through 40 plus every named implementation unit, and rejects a case missing a
@@ -438,7 +452,16 @@ cache/profile/features. Record canonical commands and BLAKE3 artifact digests.
 Run the spec’s paired runtime scenarios against the in-repo mock server and
 store raw samples under `artifacts/native-plugin-baseline/raw/`. Author
 `rust/benchmarks/plugin-parity.yaml` using schema version `1` and relative
-raw-sample paths.
+raw-sample paths. For the exporter sample, retain one deterministic 100,000-
+input-record observable and 16 sequential receipts for identical 100,000-record
+passes;
+record `processed_records: 1600000` and only the summed active pass duration.
+Write the canonical compact JSON member receipt array using the exact schema and
+rejection rules in the spec. Bind its exact-byte BLAKE3 into the Task-1 sample/
+attempt and final evidence tree, never the pre-run calibration identity. Use
+the reserved `task1-static-calibration` pair ID and produce no dynamic member.
+The calibration identity instead freezes schema/policy versions, workload,
+corpus, harness, source/build inputs, and expected provenance before execution.
 Implement `run-plugin-task-gates.sh` as an exhaustive integer `case` over the
 Task Gate Matrix below. It rejects missing/unknown task IDs, runs with
 `set -eu`, preserves all compiler/cache variables, and propagates the first
@@ -713,6 +736,49 @@ maximum-degradation bootstrap distribution, and invalidation attempts. Tests
 pin AB/BA pairing, same-member-order replacement of only invalid pairs, retained
 members/reason, refusal to replace valid failures, and the five-replacement/
 three-attempt limits.
+Exporter sample construction is fixed: one deterministic 100,000-record corpus
+and exact pass, 16 sequential repetitions per retained member, exactly 100,000
+processed input records per repetition, identical class-specific comparison-
+observable BLAKE3, one retained repetition's complete raw/comparison/provenance
+evidence, and `processed_records = 1600000`. Its duration is the
+sum of active repetition durations; startup, inter-repetition, validation,
+hashing, and retention gaps are excluded and no sleep or padding is permitted.
+The original static-baseline median must reach 30 seconds before 16 is frozen;
+later members have no per-member 30-second minimum and require only positive
+per-repetition durations and completion of the fixed workload.
+`exporter_nanoseconds_per_record` divides by `processed_records`. Fixed-vector
+tests reject changes to `corpus_records`, `sample_repetitions`,
+`processed_records`, or `retained_artifact_records` as performance-contract
+changes; no test or runner may derive any of those values from a duration,
+retained artifact, or wall-clock observation.
+Implement and fixed-vector-test all three spec-defined observable classes:
+canonical artifact-tree manifests for file exporters, exact captured bytes for
+`console_txt`, and canonical receiver transcripts plus retained bodies for
+uploaders. Implement strict `ExporterObservablePolicyV1` provenance slots and
+require every unlisted observable fact to remain equal. The member receipt-array
+fixed vector has exactly the spec's 16 fields per element, ordinals `0..15`
+unique within that member, immutable experiment/attempt/scenario/pair/member
+binding, exact corpus/raw/comparison/provenance/build digests, and positive
+duration. Bind the vector digest into the member/sample/attempt and final
+evidence tree, never the pre-run experiment identity. Negative tests reject
+every missing/extra field, duplicate or reordered ordinal, wrong identity/
+attempt/scenario/pair/member/class, count or corpus mismatch, malformed raw
+evidence, unlisted or invalid provenance variation, comparison mismatch within
+or across the pair, retained-evidence mismatch, build substitution, zero
+duration, duration-sum mismatch, and receipt/evidence digest mismatch as a
+product failure rather than an invalidation. A fixed lifecycle vector proves
+that changing post-run duration or receipt bytes does not change experiment
+identity or grant a new attempt/replacement allowance.
+The observable fixed vectors pin `[]\n` for an empty tree/transcript, zero bytes
+for an empty captured stream, exact-body retention for noncanonical-but-
+decodable JSON, and failure on a one-byte unlisted body mutation. Policy fixed
+vectors pin canonical bytes/digests for both modes and reject unknown/missing
+fields, unsorted/duplicate identities, ambiguous or overlapping selectors,
+malformed RFC 6901 escapes, duplicate JSON keys, out-of-range spans/sequences,
+unused hop-field rules, class mismatches, and mode-incompatible expected-member
+fields. They also pin literal `ComparisonPayloadV1` frame bytes and
+`ProvenanceReceiptV1` JCS bytes plus their BLAKE3 digests for every class,
+selector, locator, and observed-value encoding.
 
 The shell runner sets `CARGO_INCREMENTAL=1`, accepts an explicit target path,
 and records rather than mutates existing wrapper/cache variables.
@@ -2953,8 +3019,12 @@ On the otherwise-idle paper-rig, run the Task-3 paired runner against the exact
 Task-7 authoritative host/provider plus conformance plugins for the four mandatory early cases
 `allocator_owned_values`, `endpoint_factory_dispatch`,
 `transport_factory_dispatch`, and `exporter_capture_projection`, with five
-warmups, exactly 30 retained AB/BA pairs, static median at least 30 seconds,
-simultaneous one-sided 95% lower bounds `>= 0.99`, primary CV `<= 2%`, and zero
+warmups and exactly 30 retained AB/BA pairs. Request-budget cases require a
+current static median of at least 30 seconds. The exporter case instead verifies
+the bound Task-1 calibration median and frozen repetition budget and accepts
+positive-duration paired static or dynamic members below 30 seconds. All cases
+still require simultaneous one-sided 95% lower bounds `>= 0.99`, primary CV
+`<= 2%`, and zero
 allocation-count/byte increase. The allocator case crosses and drops every
 ownership-table family both directions and includes startup, steady-state,
 ordinary/aligned reallocation, and process teardown. Retain raw samples,
@@ -3146,8 +3216,12 @@ the prepared static removals. No pre-removal approximation can satisfy this gate
 - [ ] **Step 1: Write failing statistical/state/structural tests**
 
 Golden-test experiment identity mutation for every required fact, balanced AB/
-BA schedule, five warmups, exactly 30 retained pairs, static median >=30s,
-product-error immediate failure, fixed blinded invalidation/max-five/max-three
+BA schedule, five warmups, and exactly 30 retained pairs. Request-budget cases
+require a current static median >=30s; exporter cases verify the immutable
+Task-1 calibration and accept complete positive-duration paired static or
+dynamic members below 30 seconds. Include a negative regression vector that
+proves such a faster exporter member is accepted. Also pin product-error
+immediate failure, fixed blinded invalidation/max-five/max-three
 attempt rules, Hyndman-Fan type 7, deterministic >=100,000-resample paired
 maximum-degradation bootstrap, simultaneous one-sided 95% bounds, primary-
 metric CV <=2%, allocation no-increase, and forbidden hot-path edge detection.
@@ -3188,7 +3262,20 @@ candidate component:
   Task-33/34 deterministic single-worker and multi-worker applicable cases;
 - `genai_perf_v1`, `server_metrics`, `timeslice`, `accuracy_csv`,
   `server_metrics_parquet`, `console_txt`, `otel`, `mlflow`, and `wandb` each
-  run a 100,000-record exporter case; OTel additionally runs exact/folded/sketch,
+  run an exporter case with `corpus_records: 100000`,
+  `sample_repetitions: 16`, `processed_records: 1600000`, and
+  `retained_artifact_records: 100000`; every retained member performs 16
+  sequential exact passes, processes exactly 100,000 input records per pass,
+  produces the same class-specific comparison-observable digest per pass and
+  across the static/dynamic pair, retains one pass's complete raw observable/
+  comparison/provenance evidence plus each member's 16 receipts, sums active
+  pass duration only, and divides exporter nanoseconds by `processed_records`;
+  file exporters use canonical artifact-tree manifests, `console_txt` uses
+  exact captured bytes, and `otel`/`mlflow`/`wandb` use canonical receiver
+  transcripts with retained bodies, all under the spec's strict frozen
+  provenance-slot policy; the static-baseline calibration that froze 16 has a
+  retained-sample median of at least 30 seconds, while later members have no
+  individual 30-second minimum; OTel additionally runs exact/folded/sketch,
   single-worker/four-worker, same-host/cross-host cellular, and telemetry off/on;
 - allocator startup/steady-state/teardown and endpoint dispatch, transport
   dispatch, response reduction, capture fold, and exporter write microbenchmarks
