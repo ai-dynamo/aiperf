@@ -481,6 +481,45 @@ pub(crate) async fn build_synthetic_dataset(
             .as_deref()
             .map(sequence_length_distribution)
             .transpose()?;
+        if let Some(authored_ratio) = prompts.random_range_ratio {
+            ensure!(
+                prompts.sequence_distribution.is_none(),
+                "random_range_ratio cannot be combined with sequence_distribution"
+            );
+            let input_mean = fixed_range_mean(
+                prompts.isl.as_ref(),
+                "random_range_ratio requires an explicitly authored fixed ISL",
+            )?;
+            let output_mean = fixed_range_mean(
+                prompts.osl.as_ref(),
+                "random_range_ratio requires an explicitly authored fixed OSL",
+            )?;
+            let special_tokens = i64::try_from(tokenizer.num_special_tokens_to_add())?;
+            let policy = crate::dataset::RandomRangePlan::new(
+                prompts.random_corpus_style,
+                input_mean,
+                output_mean,
+                authored_ratio.checked(prompts.random_corpus_style)?,
+                special_tokens,
+            )?;
+            let vocab_size = tokenizer
+                .vocab_size()
+                .filter(|size| *size > 0)
+                .ok_or_else(|| anyhow!("random_range_ratio requires a tokenizer vocabulary"))?;
+            let seed = rng_root
+                .seed()
+                .unwrap_or_else(|| rng_root.derive_seed_or_entropy("dataset.random_range"));
+            let seeded = policy.preseed(spec.entries, seed, vocab_size)?;
+            if prompts.corpus.as_deref() == Some("random") {
+                compose.prompt_generator =
+                    Arc::new(CorpusPromptGeneratorFactory::random_reference(
+                        prompts.random_corpus_style,
+                        Arc::from(seeded.offsets()),
+                    ));
+            }
+            compose.random_range_plan = Some(seeded);
+            compose.sequence_length_distribution = None;
+        }
     }
     compose.synthetic_config = Some(synthetic_config(spec)?);
     let mut load = LoadConfig::new(DatasetSource::Inline(if rankings {
@@ -503,6 +542,22 @@ pub(crate) async fn build_synthetic_dataset(
         )
         .await
         .map_err(Into::into)
+}
+
+fn fixed_range_mean(spec: Option<&DistributionSpec>, missing: &str) -> Result<i64> {
+    let value = match spec.ok_or_else(|| anyhow!(missing.to_string()))? {
+        DistributionSpec::Fixed(value) => value.value,
+        DistributionSpec::Normal(value) if value.stddev == 0.0 => value.mean,
+        DistributionSpec::Normal(_) => {
+            bail!("random_range_ratio cannot be combined with non-zero sequence stddev")
+        }
+        _ => bail!("random_range_ratio requires fixed ISL and OSL distributions"),
+    };
+    ensure!(
+        value.is_finite() && value >= 0.0 && value <= i64::MAX as f64,
+        "random_range_ratio mean must be finite, non-negative, and representable"
+    );
+    Ok(value as i64)
 }
 
 fn prompt_generator_factory(corpus: &str) -> Result<Arc<dyn PromptGeneratorFactory>> {
@@ -1553,6 +1608,52 @@ mod tests {
         };
         assert_eq!(token_ids.len(), 8);
         assert!(!token_ids.contains(&9));
+    }
+
+    #[tokio::test]
+    async fn random_range_ratio_reaches_composed_native_lengths_in_reference_order() {
+        use crate::dataset::tokenizer::NoDecodeTokenizer;
+
+        let spec = synthetic(json!({
+            "entries": 4,
+            "prompts": {
+                "isl": {"value": 100.0},
+                "osl": {"value": 20.0},
+                "corpus": "random",
+                "random_range_ratio": {"input": 0.3, "output": 0.5},
+                "random_corpus_style": "vllm"
+            }
+        }));
+        let registry = AIPerfRegistry::builtin().unwrap();
+        let dataset = build_synthetic_dataset(
+            &spec,
+            SyntheticDatasetBuildContext {
+                registry: &registry,
+                models: &models(),
+                rng_root: RngRoot::new(Some(42)),
+                tokenizer: &NoDecodeTokenizer,
+                rankings: false,
+                media_generator_factory: Arc::new(
+                    crate::dataset::NativeSyntheticMediaGeneratorFactory::default(),
+                ),
+                requires_raw_token_ids: true,
+            },
+        )
+        .await
+        .unwrap();
+
+        let inputs: Vec<_> = dataset
+            .conversations()
+            .iter()
+            .map(|conversation| conversation.turns[0].input_tokens.unwrap())
+            .collect();
+        let outputs: Vec<_> = dataset
+            .conversations()
+            .iter()
+            .map(|conversation| conversation.turns[0].max_tokens.unwrap())
+            .collect();
+        assert_eq!(inputs, [75, 117, 109, 96]);
+        assert_eq!(outputs, [19, 28, 11, 24]);
     }
 
     #[tokio::test]

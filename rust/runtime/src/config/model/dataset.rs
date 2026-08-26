@@ -177,6 +177,8 @@ fn default_prompts() -> Prompts {
         block_size: None,
         corpus: None,
         sequence_distribution: None,
+        random_range_ratio: None,
+        random_corpus_style: Default::default(),
         prefix_reuse_fraction: None,
         prefix_reuse_ratio: None,
         cache_bust: None,
@@ -214,6 +216,12 @@ pub struct Prompts {
     /// Mixed ISL/OSL sequence distribution (`--seq-dist`; present when authored).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sequence_distribution: Option<Vec<SeqDistEntry>>,
+    /// Uniform random ISL/OSL window ratio.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub random_range_ratio: Option<crate::dataset::RandomRangeRatioInput>,
+    /// Reference random-corpus behavior.
+    #[serde(default)]
+    pub random_corpus_style: crate::dataset::RandomCorpusStyle,
     /// Fraction of prompts reusing a shared leading prefix (present when authored).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prefix_reuse_fraction: Option<f64>,
@@ -579,6 +587,8 @@ mod tests {
                 block_size: None,
                 corpus: Some("coding".into()),
                 sequence_distribution: None,
+                random_range_ratio: None,
+                random_corpus_style: Default::default(),
                 prefix_reuse_fraction: None,
                 prefix_reuse_ratio: None,
                 cache_bust: None,

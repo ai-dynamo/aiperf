@@ -485,8 +485,9 @@ impl<'a> RandomPromptGenerator<'a> {
                 tokenizer.name()
             )));
         }
-        let eos_token_id = tokenizer
-            .eos_token_id()
+        let eos_token_id = (style == RandomCorpusStyle::Vllm)
+            .then(|| tokenizer.eos_token_id())
+            .flatten()
             .filter(|eos| vocab_size.is_none_or(|size| *eos < size));
         let replacement_token = allowed_token_ids
             .as_deref()
@@ -1103,6 +1104,15 @@ mod tests {
             generator.generate_token_ids(4, &[], 1).unwrap(),
             vec![3, 4, 5, 6]
         );
+
+        let sglang_eos = CorpusPromptGeneratorFactory::random_reference(
+            RandomCorpusStyle::Sglang,
+            Arc::from([9_usize]),
+        );
+        let mut generator = sglang_eos
+            .create(&tokenizer, RngRoot::new(Some(5)))
+            .unwrap();
+        assert_eq!(generator.generate_token_ids(1, &[], 1).unwrap(), vec![9]);
     }
 
     #[test]

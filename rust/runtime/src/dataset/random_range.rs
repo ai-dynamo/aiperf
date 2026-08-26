@@ -203,11 +203,9 @@ impl RandomRangePlan {
             RandomCorpusStyle::Sglang => {
                 let mut rng = NumpyRandomState::from_seed(fold_seed(seed));
                 for _ in 0..entries {
-                    inputs.push(self.adjust_input(
-                        i64::from(
-                            rng.randint(self.input_bounds.0 as u32, self.input_bounds.1 as u32),
-                        ),
-                    ));
+                    inputs.push(self.adjust_input(i64::from(
+                        rng.randint(self.input_bounds.0 as u32, self.input_bounds.1 as u32),
+                    )));
                 }
                 for _ in 0..entries {
                     outputs.push(i64::from(

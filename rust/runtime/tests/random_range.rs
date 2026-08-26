@@ -30,9 +30,24 @@ fn style_bounds_and_validation_match_reference_contracts() {
     assert_eq!(sglang.output_bounds(), (10, 20));
     assert_eq!(sglang.adjust_input(50), 48);
 
-    assert!(RandomRangeRatio::same(1.0).unwrap().validate(RandomCorpusStyle::Vllm).is_err());
-    assert!(RandomRangeRatio::new(0.2, 0.3).unwrap().validate(RandomCorpusStyle::Sglang).is_err());
-    assert!(RandomRangeRatio::same(1.0).unwrap().validate(RandomCorpusStyle::Sglang).is_ok());
+    assert!(
+        RandomRangeRatio::same(1.0)
+            .unwrap()
+            .validate(RandomCorpusStyle::Vllm)
+            .is_err()
+    );
+    assert!(
+        RandomRangeRatio::new(0.2, 0.3)
+            .unwrap()
+            .validate(RandomCorpusStyle::Sglang)
+            .is_err()
+    );
+    assert!(
+        RandomRangeRatio::same(1.0)
+            .unwrap()
+            .validate(RandomCorpusStyle::Sglang)
+            .is_ok()
+    );
     assert!(RandomRangeRatio::same(f64::NAN).is_err());
 }
 

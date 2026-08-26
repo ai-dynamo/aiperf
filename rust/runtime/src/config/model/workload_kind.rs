@@ -137,6 +137,8 @@ mod tests {
                 block_size: None,
                 corpus: None,
                 sequence_distribution: None,
+                random_range_ratio: None,
+                random_corpus_style: Default::default(),
                 prefix_reuse_fraction: None,
                 prefix_reuse_ratio: None,
                 cache_bust: None,

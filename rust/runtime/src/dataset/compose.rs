@@ -26,6 +26,7 @@ use crate::dataset::loader::RawRow;
 use crate::dataset::media::{InlineMediaResolver, MediaResolver};
 use crate::dataset::model::{Conversation, ConversationContextMode, ModelId, SessionId, Turn};
 use crate::dataset::prompt::{CorpusPromptGeneratorFactory, PromptGeneratorFactory};
+use crate::dataset::random_range::SeededRandomRangePlan;
 use crate::dataset::segment::{Handle, SegmentPool, SegmentStore};
 use crate::dataset::synthesis::TraceSynthesisConfig;
 use crate::dataset::tokenizer::TextTokenizer;
@@ -149,6 +150,8 @@ pub struct ComposeConfig {
     pub max_output_tokens: Option<u32>,
     /// Paired synthetic ISL/OSL distribution.
     pub sequence_length_distribution: Option<SequenceLengthDistribution>,
+    /// Preseeded reference-compatible random-range pairs.
+    pub random_range_plan: Option<SeededRandomRangePlan>,
     /// Full synthetic dataset shape for the `synthetic` and
     /// `synthetic_rankings` composers.
     pub synthetic_config: Option<SyntheticDatasetConfig>,
@@ -198,6 +201,7 @@ impl ComposeConfig {
             output_length_distribution: None,
             max_output_tokens: None,
             sequence_length_distribution: None,
+            random_range_plan: None,
             synthetic_config: None,
             trace_synthesis: None,
             media_generator_factory: Arc::new(NativeSyntheticMediaGeneratorFactory::default()),

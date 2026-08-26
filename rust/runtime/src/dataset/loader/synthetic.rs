@@ -161,6 +161,8 @@ impl Composer for SyntheticComposer {
         let mut length_rng = component_rng(config.rng_root, "composer.turn.sequence_length");
         let mut finalizer = config.finalizer()?;
         let mut conversations = Vec::with_capacity(shape.entries);
+        let mut random_range_ordinal = 0_usize;
+        let mut has_warned_random_range_exhausted = false;
 
         for conversation_index in 0..shape.entries {
             let mut conversation = Conversation::new(ids.next_id());
@@ -225,12 +227,31 @@ impl Composer for SyntheticComposer {
                     turn.delay_ms = Some(delay);
                 }
 
-                let paired_lengths = config
-                    .sequence_length_distribution
-                    .as_ref()
-                    .map(|distribution| distribution.sample(&mut length_rng))
-                    .transpose()
-                    .map_err(|error| DatasetError::Validation(error.to_string()))?;
+                let paired_lengths = if let Some(plan) = &config.random_range_plan {
+                    let pair = if let Some(pair) = plan.pair(random_range_ordinal) {
+                        pair
+                    } else {
+                        if !has_warned_random_range_exhausted {
+                            tracing::warn!(
+                                component = "dataset.random_range",
+                                preseed_size = plan.inputs().len(),
+                                turn_ordinal = random_range_ordinal,
+                                "random range cache exhausted; falling back to deterministic sampling"
+                            );
+                            has_warned_random_range_exhausted = true;
+                        }
+                        plan.fallback_pair(&mut length_rng)?
+                    };
+                    random_range_ordinal = random_range_ordinal.saturating_add(1);
+                    Some(pair)
+                } else {
+                    config
+                        .sequence_length_distribution
+                        .as_ref()
+                        .map(|distribution| distribution.sample(&mut length_rng))
+                        .transpose()
+                        .map_err(|error| DatasetError::Validation(error.to_string()))?
+                };
                 if let Some((_, output)) = paired_lengths {
                     turn.max_tokens = Some(u32::try_from(output).map_err(|_| {
                         DatasetError::Validation(format!("sampled OSL {output} exceeds u32"))
