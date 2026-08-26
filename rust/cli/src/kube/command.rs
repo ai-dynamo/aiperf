@@ -13,18 +13,25 @@ use super::auth::KubeAuthOptions;
 use super::client::{KubeClient, KubeWatch, KubeWatchPoll};
 use super::contract::{
     BootstrapReference, CONTRACT_VERSION, CellBootstrapReference, ControllerEnvelope,
-    NamedReference, NativeK8sRole, RoleEnvelope, validate_envelope,
+    NamedReference, NativeK8sRole, RoleEnvelope, validate_envelope, validate_sweep_envelope,
 };
 use super::error::KubeError;
 use super::render::{OutputFormat, render};
 use super::results::{ArtifactFetcher, MAX_ARTIFACT_BYTES, download, parse_manifest};
 use super::submission::{
     envelope_paths, jobs_path, load_envelope, material_paths, submit_profile_transactionally,
-    validate_image_capability_document,
+    submit_sweep_transactionally, validate_image_capability_document,
 };
 
 /// Maximum bounded reconnects a streaming command performs before failing.
 const MAX_WATCH_RECONNECTS: u32 = 5;
+
+/// Interval between `aiperf kube sweep --watch` status polls.
+const SWEEP_WATCH_POLL_INTERVAL: Duration = Duration::from_secs(2);
+/// Bound on `--watch` status polls, roughly ten minutes at the interval above.
+const MAX_SWEEP_WATCH_POLLS: u32 = 300;
+/// Emit one progress debug line every this many `--watch` polls.
+const SWEEP_WATCH_LOG_EVERY: u32 = 15;
 
 const RESULTS_API_PORT: u16 = 8080;
 const DEFAULT_OPERATOR_NAMESPACE: &str = "aiperf-system";
@@ -59,10 +66,8 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
     if !COMMANDS.contains(&command) {
         anyhow::bail!("unknown native Kubernetes command {command}");
     }
-    if matches!(command, "sweep" | "index") {
-        anyhow::bail!(
-            "native Kubernetes {command} is unavailable: the shipped operator supports only AIPerfJob"
-        );
+    if command == "index" {
+        return run_index(args);
     }
     if command == "generate" {
         return run_generate(&args[1..]);
@@ -71,9 +76,10 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
         return super::scaffold::run(&args[1..]);
     }
     if command == "dashboard" {
-        anyhow::bail!(
-            "native Kubernetes dashboard is unavailable: no dashboard upstream is implemented"
-        );
+        return super::dashboard::run(&args[1..]);
+    }
+    if command == "sweep" {
+        return run_sweep(&args[1..]);
     }
     if matches!(command, "profile" | "validate") {
         return envelope_command(command, &args[1..]);
@@ -112,6 +118,48 @@ fn report_document(
     }
     println!("{}", render(format, &response.body)?);
     Ok(0)
+}
+
+/// List every retained result run the operator holds for one namespace.
+fn run_index(args: &[String]) -> anyhow::Result<i32> {
+    let client = KubeClient::from_options(&auth_options(args)?)?;
+    let namespace = namespace(args)?;
+    let format = OutputFormat::from_args(args)?;
+    let operator_prefix = operator_service_proxy(args)?;
+    println!(
+        "{}",
+        index_report(&client, &operator_prefix, namespace, format)?
+    );
+    Ok(0)
+}
+
+/// Fetch and render the operator's retained result index for one namespace.
+///
+/// The request travels the same authenticated Kubernetes Service proxy the
+/// `results` command uses, so the durable index is reachable without any
+/// additional ingress.
+pub(super) fn index_report(
+    client: &KubeClient,
+    operator_prefix: &str,
+    namespace: &str,
+    format: OutputFormat,
+) -> anyhow::Result<String> {
+    let response = client.execute(
+        "GET",
+        &format!(
+            "{operator_prefix}/api/results/{}",
+            encode_segment(namespace)
+        ),
+        "",
+        Vec::new(),
+    )?;
+    if !response.is_success() {
+        anyhow::bail!(
+            "native Kubernetes index API request returned HTTP {}",
+            response.status
+        );
+    }
+    Ok(render(format, &response.body)?)
 }
 
 /// Bounded artifact transfer through the operator Service proxy after Job completion.
@@ -189,7 +237,8 @@ fn operator_results_location(args: &[String]) -> anyhow::Result<(String, String)
     Ok((service, trusted_run_id))
 }
 
-fn operator_service_proxy(args: &[String]) -> anyhow::Result<String> {
+/// The Kubernetes Service proxy prefix every operator results request travels.
+pub(super) fn operator_service_proxy(args: &[String]) -> anyhow::Result<String> {
     let namespace = flag_value(args, "--operator-namespace")
         .unwrap_or_else(|| DEFAULT_OPERATOR_NAMESPACE.to_string());
     let service = flag_value(args, "--operator-service")
@@ -218,7 +267,8 @@ fn is_dns_label(value: &str) -> bool {
             .is_some_and(u8::is_ascii_alphanumeric)
 }
 
-fn encode_segment(value: &str) -> String {
+/// Encode one URL path segment of an operator results address.
+pub(super) fn encode_segment(value: &str) -> String {
     url::form_urlencoded::byte_serialize(value.as_bytes()).collect()
 }
 
@@ -452,7 +502,8 @@ fn relist_resource_version(client: &KubeClient, collection: &str) -> anyhow::Res
         .ok_or_else(|| anyhow::anyhow!("Kubernetes relist omits metadata.resourceVersion"))
 }
 
-fn flag_value(args: &[String], flag: &str) -> Option<String> {
+/// The value of `--flag value` or `--flag=value`, when present.
+pub(super) fn flag_value(args: &[String], flag: &str) -> Option<String> {
     let mut arguments = args.iter();
     let equals = format!("{flag}=");
     while let Some(argument) = arguments.next() {
@@ -681,7 +732,100 @@ fn envelope_command(command: &str, args: &[String]) -> anyhow::Result<i32> {
     report_status(command, status)
 }
 
-fn auth_options(args: &[String]) -> anyhow::Result<KubeAuthOptions> {
+/// Dispatch `aiperf kube sweep`: validate the sweep envelope and image capabilities,
+/// then submit the sweep transactionally via `submit_sweep_transactionally`.
+fn run_sweep(args: &[String]) -> anyhow::Result<i32> {
+    let envelope_path = flag_value(args, "--envelope").ok_or_else(|| {
+        anyhow::anyhow!("native Kubernetes sweep requires --envelope <sweep-envelope.json>")
+    })?;
+    let capability_path = flag_value(args, "--image-capabilities").ok_or_else(|| {
+        anyhow::anyhow!(
+            "native Kubernetes sweep requires --image-capabilities <native-k8s/v1.json>"
+        )
+    })?;
+
+    // Load and validate the sweep envelope.
+    let envelope_bytes = std::fs::read(&envelope_path)
+        .map_err(|e| anyhow::anyhow!("failed to read sweep envelope {envelope_path}: {e}"))?;
+    let envelope_value: serde_json::Value = serde_json::from_slice(&envelope_bytes)
+        .map_err(|e| anyhow::anyhow!("failed to decode sweep envelope {envelope_path}: {e}"))?;
+    let envelope = validate_sweep_envelope(envelope_value).map_err(anyhow::Error::from)?;
+
+    // Load the image capability document (validation happens inside submit).
+    let cap_bytes = std::fs::read(&capability_path).map_err(|e| {
+        anyhow::anyhow!("failed to read image capability document {capability_path}: {e}")
+    })?;
+    let cap_value: serde_json::Value = serde_json::from_slice(&cap_bytes).map_err(|e| {
+        anyhow::anyhow!("failed to decode image capability document {capability_path}: {e}")
+    })?;
+
+    let client = KubeClient::from_options(&auth_options(args)?)?;
+    let status = submit_sweep_transactionally(&client, &envelope, cap_value)?;
+
+    // Optionally poll sweep phase until terminal.
+    if args.iter().any(|a| a == "--watch") {
+        watch_sweep(&client, &envelope.namespace, &envelope.run_id)?;
+    }
+
+    report_status("sweep", status)
+}
+
+/// Poll the AIPerfSweep CR until its phase reaches `Completed` or `Failed`.
+///
+/// Bounded by `MAX_SWEEP_WATCH_POLLS` at `SWEEP_WATCH_POLL_INTERVAL` so a sweep
+/// that never reaches a terminal phase surfaces an error instead of hanging the
+/// CLI forever.
+fn watch_sweep(client: &KubeClient, namespace: &str, run_id: &str) -> anyhow::Result<()> {
+    use super::client::{AIPERF_GROUP, AIPERF_VERSION};
+    use super::sweep_controller::AIPERFSWEEPS_PLURAL;
+
+    let path = format!(
+        "/apis/{AIPERF_GROUP}/{AIPERF_VERSION}/namespaces/{namespace}/{AIPERFSWEEPS_PLURAL}/{run_id}"
+    );
+    for poll in 0..MAX_SWEEP_WATCH_POLLS {
+        let response = client.execute("GET", &path, "", Vec::new())?;
+        if !response.is_success() {
+            anyhow::bail!("sweep status poll returned HTTP {}", response.status);
+        }
+        let cr: serde_json::Value = serde_json::from_slice(&response.body)
+            .map_err(|e| anyhow::anyhow!("sweep status response is invalid: {e}"))?;
+        let phase = cr
+            .pointer("/status/phase")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Pending");
+        let completed = cr
+            .pointer("/status/completedRuns")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let failed = cr
+            .pointer("/status/failedRuns")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        println!(
+            "native Kubernetes sweep: phase={phase} completedRuns={completed} failedRuns={failed}"
+        );
+        if matches!(phase, "Completed" | "Failed") {
+            return Ok(());
+        }
+        if poll % SWEEP_WATCH_LOG_EVERY == 0 {
+            tracing::debug!(
+                phase,
+                poll,
+                elapsed_secs = poll as u64 * SWEEP_WATCH_POLL_INTERVAL.as_secs(),
+                component = "kube-sweep-watch",
+                "sweep has not reached a terminal phase"
+            );
+        }
+        std::thread::sleep(SWEEP_WATCH_POLL_INTERVAL);
+    }
+    anyhow::bail!(
+        "sweep {run_id} did not reach a terminal phase within {} seconds",
+        MAX_SWEEP_WATCH_POLLS as u64 * SWEEP_WATCH_POLL_INTERVAL.as_secs()
+    )
+}
+
+/// Resolve kubeconfig/context/token selection from the command's arguments.
+pub(super) fn auth_options(args: &[String]) -> anyhow::Result<KubeAuthOptions> {
     let mut options = KubeAuthOptions::default();
     let mut arguments = args.iter();
     while let Some(argument) = arguments.next() {
@@ -710,7 +854,8 @@ fn auth_options(args: &[String]) -> anyhow::Result<KubeAuthOptions> {
     Ok(options)
 }
 
-fn namespace(args: &[String]) -> anyhow::Result<&str> {
+/// The selected `--namespace`, defaulting to `default`. Must be a DNS label.
+pub(super) fn namespace(args: &[String]) -> anyhow::Result<&str> {
     let mut arguments = args.iter();
     while let Some(argument) = arguments.next() {
         if let Some(namespace) = argument.strip_prefix("--namespace=") {
@@ -823,6 +968,15 @@ fn help() -> anyhow::Result<i32> {
     println!(
         "aiperf kube results <job> [--run-id <id>] [--operator-service <name>] [--operator-namespace <namespace>]"
     );
+    println!(
+        "aiperf kube index [--namespace <namespace>] [--operator-service <name>] [--operator-namespace <namespace>]"
+    );
+    println!(
+        "aiperf kube dashboard [--namespace <namespace>] [--port <port>] [--operator-service <name>] [--operator-namespace <namespace>]"
+    );
+    println!(
+        "aiperf kube sweep --envelope <sweep-envelope.json> --image-capabilities <native-k8s/v1.json> [--watch]"
+    );
     Ok(0)
 }
 
@@ -850,16 +1004,16 @@ mod tests {
     }
 
     #[test]
-    fn commands_without_shipped_custom_resources_refuse_before_cluster_access() {
-        for command in ["sweep", "index"] {
-            let error = run(&[command.to_string()]).expect_err("unsupported command");
-            assert_eq!(
-                error.to_string(),
-                format!(
-                    "native Kubernetes {command} is unavailable: the shipped operator supports only AIPerfJob"
-                )
-            );
-        }
+    fn index_no_longer_refuses_before_cluster_access() {
+        // `sweep` left the refusal list in Task 10, `index` in Task 12, and
+        // `dashboard` in Task 13; nothing on the surface refuses for want of a
+        // shipped backend.
+        let error = run(&["index".to_string(), "--kubeconfig=/nonexistent".to_string()])
+            .expect_err("index without a reachable cluster must fail");
+        assert!(
+            !error.to_string().contains("shipped operator supports only"),
+            "index must no longer produce the old refusal: {error:#}"
+        );
     }
 
     #[test]
@@ -879,16 +1033,6 @@ mod tests {
         );
         assert!(
             operator_service_proxy(&["--operator-service=operator.attacker".to_string()]).is_err()
-        );
-    }
-
-    #[test]
-    fn dashboard_refuses_instead_of_accepting_and_dropping_clients() {
-        let error = run(&["dashboard".to_string(), "job-1".to_string()])
-            .expect_err("dashboard has no upstream implementation");
-        assert_eq!(
-            error.to_string(),
-            "native Kubernetes dashboard is unavailable: no dashboard upstream is implemented"
         );
     }
 

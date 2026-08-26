@@ -97,6 +97,8 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
         ServerConfig {
             bind,
             results_root: opts.results_dir.clone(),
+            // Standalone serve browses the local results root from disk.
+            historical: None,
         },
         session,
         live,

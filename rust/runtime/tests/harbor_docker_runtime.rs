@@ -2108,6 +2108,7 @@ PHASE = "verifier"
             "verifier:verifier:/task:none:BASE=baseline,PHASE=verifier",
             "archive-reward",
             "archive-reward",
+            "clear-verifier-files",
             "remove",
         ]
     );
@@ -3086,13 +3087,18 @@ impl DockerRuntime for LifecycleRuntime {
             .any(|argument| argument.contains("rm -rf /tests /logs/verifier"))
         {
             assert_eq!(request.user(), Some("root"));
-            assert!(request.public_arguments().iter().any(|argument| {
+            if request.public_arguments().iter().any(|argument| {
                 argument.contains("mkdir -p /logs/verifier")
                     && argument.contains("chmod 0777 /logs/verifier")
-            }));
-            self.events
-                .borrow_mut()
-                .push("prepare-verifier-files".to_owned());
+            }) {
+                self.events
+                    .borrow_mut()
+                    .push("prepare-verifier-files".to_owned());
+            } else {
+                self.events
+                    .borrow_mut()
+                    .push("clear-verifier-files".to_owned());
+            }
             return Ok(());
         }
         if request
@@ -3287,6 +3293,118 @@ fn multi_step_session_keeps_one_agent_and_injects_only_the_current_instruction()
             .iter()
             .all(|argument| !argument.contains("AIPERF_EVAL_INSTRUCTION")),
         "an instruction captured at container creation would become stale"
+    );
+}
+
+#[test]
+fn e10_single_step_shared_success_cleans_reserved_paths_and_preserves_reward() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = standard_task_root(&temporary, "");
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    let recipe = HarborSandboxRecipe::new(
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "/work",
+    )
+    .unwrap();
+    let runtime = StepRecordingRuntime::default();
+
+    let result = DockerProcessSandbox::new()
+        .execute_with_runtime(
+            &runtime,
+            &recipe,
+            &imported.package,
+            imported.package.execution_plan(),
+            &["agent".to_owned()],
+            &FixedSecret,
+        )
+        .unwrap();
+
+    assert_eq!(result.reward.metrics["reward"], 1.0);
+    assert_eq!(runtime.reset_calls.get(), 2);
+    let events = runtime.events.borrow();
+    let verifier = events
+        .iter()
+        .position(|event| event == "verifier:1")
+        .unwrap();
+    let cleanup = events
+        .iter()
+        .rposition(|event| event.starts_with("reset-tests:"))
+        .unwrap();
+    let remove = events
+        .iter()
+        .position(|event| event.starts_with("remove:"))
+        .unwrap();
+    assert!(verifier < cleanup);
+    assert!(cleanup < remove);
+}
+
+#[test]
+fn e10_single_step_shared_failure_combines_cleanup_failure() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = standard_task_root(&temporary, "");
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    let recipe = HarborSandboxRecipe::new(
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "/work",
+    )
+    .unwrap();
+    let runtime = StepRecordingRuntime::failing_shared_verifier_cleanup();
+
+    let error = DockerProcessSandbox::new()
+        .execute_with_runtime(
+            &runtime,
+            &recipe,
+            &imported.package,
+            imported.package.execution_plan(),
+            &["agent".to_owned()],
+            &FixedSecret,
+        )
+        .expect_err("shared cleanup failure must join the verifier failure");
+
+    assert!(matches!(
+        error,
+        EvalExecutionError::ContainerTeardown { reason, .. }
+            if reason.contains("verifier 1 failed") && reason.contains("reset 2 failed")
+    ));
+    assert_eq!(runtime.reset_calls.get(), 2);
+}
+
+#[test]
+fn e10_single_step_separate_has_no_post_verifier_shared_cleanup() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = standard_task_root(&temporary, "[verifier]\nenvironment_mode = \"separate\"\n");
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    let recipe = HarborSandboxRecipe::new(
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "/work",
+    )
+    .unwrap();
+    let runtime = StepRecordingRuntime::default();
+
+    DockerProcessSandbox::new()
+        .execute_with_runtime(
+            &runtime,
+            &recipe,
+            &imported.package,
+            imported.package.execution_plan(),
+            &["agent".to_owned()],
+            &FixedSecret,
+        )
+        .unwrap();
+
+    assert_eq!(runtime.reset_calls.get(), 1);
+    assert_eq!(runtime.creates.borrow().len(), 2);
+    assert_eq!(runtime.removals.get(), 2);
+    assert_ne!(
+        runtime.creates.borrow()[0].workspace,
+        runtime.creates.borrow()[1].workspace,
+        "separate verification must use a fresh workspace"
     );
 }
 
@@ -4073,6 +4191,7 @@ struct StepRecordingRuntime {
     deadline_clock: Option<Rc<SimClock>>,
     advance_agent_workdir_prepare_to: Option<(Rc<SimClock>, i64)>,
     verifier_create_timeout: Option<(Rc<SimClock>, Duration)>,
+    native_graph_profile: Option<ProviderProfile>,
 }
 
 impl StepRecordingRuntime {
@@ -4124,6 +4243,11 @@ impl StepRecordingRuntime {
         self
     }
 
+    fn with_native_graph_profile(mut self, profile: ProviderProfile) -> Self {
+        self.native_graph_profile = Some(profile);
+        self
+    }
+
     fn record_deadline(&self, event: &str, deadline: Option<Duration>) {
         let Some(deadline) = deadline else {
             return;
@@ -4140,7 +4264,7 @@ impl StepRecordingRuntime {
 impl DockerRuntime for StepRecordingRuntime {
     fn capabilities(&self) -> ProviderCapabilities {
         self.events.borrow_mut().push("preflight".to_owned());
-        ProviderCapabilities::none()
+        let capabilities = ProviderCapabilities::none()
             .with_docker()
             .with_image_source()
             .with_separate_verifier()
@@ -4148,7 +4272,36 @@ impl DockerRuntime for StepRecordingRuntime {
             .with_public_network()
             .with_users()
             .with_workdir()
-            .with_phase_timeouts()
+            .with_phase_timeouts();
+        if self.native_graph_profile.is_some() {
+            capabilities.with_model_endpoint_isolation()
+        } else {
+            capabilities
+        }
+    }
+
+    fn native_graph_provider_profile(
+        &self,
+        _: &NativeGraphPackagePlan,
+    ) -> Result<ProviderProfile, EvalExecutionError> {
+        self.native_graph_profile
+            .clone()
+            .ok_or(EvalExecutionError::UnsupportedEnforcement(
+                "model endpoint isolation",
+            ))
+    }
+
+    fn native_graph_model_secret_environment(
+        &self,
+        _: &NativeGraphPackagePlan,
+    ) -> Result<BTreeMap<ModelSecretId, EnvName>, EvalExecutionError> {
+        if self.native_graph_profile.is_some() {
+            Ok(BTreeMap::new())
+        } else {
+            Err(EvalExecutionError::UnsupportedEnforcement(
+                "native graph model secret environment",
+            ))
+        }
     }
 
     fn build(&self, request: &DockerBuildRequest) -> Result<(), EvalExecutionError> {
@@ -6567,6 +6720,23 @@ struct OrderedNativeGraphCallback<'a> {
     fail: bool,
 }
 
+struct E10NativeGraphCallback<'a> {
+    events: &'a RefCell<Vec<String>>,
+}
+
+#[async_trait(?Send)]
+impl NativeGraphEpisodeCallback for E10NativeGraphCallback<'_> {
+    async fn run(
+        &mut self,
+        lease: &mut dyn NativeGraphEpisodeLease,
+    ) -> Result<(), EvalExecutionError> {
+        assert!(lease.is_authorized());
+        assert!(lease.is_environment_acquired());
+        self.events.borrow_mut().push("native-graph".to_owned());
+        Ok(())
+    }
+}
+
 struct AdapterStartingFailingNativeGraphCallback<'a> {
     events: &'a Rc<RefCell<Vec<String>>>,
 }
@@ -6691,6 +6861,164 @@ async fn native_graph_callback_precedes_verification_and_failure_keeps_reverse_c
             assert!(verifier_index < removal_index);
         }
     }
+}
+
+fn e10_native_graph_profile() -> ProviderProfile {
+    ProviderProfile::new(
+        "runtime-no-egress",
+        vec![ProviderCapability::ModelEndpointIsolation],
+    )
+    .unwrap()
+    .with_model_endpoint_isolation(ModelEndpointIsolationProof::NoAdapterEgress)
+    .unwrap()
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn e10_native_graph_shared_failure_cleans_after_callback() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = native_graph_task_root(&temporary);
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    let runtime = StepRecordingRuntime::failing(StepFailure::Verifier(1), false)
+        .with_native_graph_profile(e10_native_graph_profile());
+    let mut callback = E10NativeGraphCallback {
+        events: &runtime.events,
+    };
+
+    let error = DockerProcessSandbox::new()
+        .execute_native_graph_with_runtime(
+            &runtime,
+            &HarborSandboxRecipe::for_standard_task(
+                "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                None,
+            )
+            .unwrap(),
+            &imported.package,
+            imported.package.execution_plan(),
+            &FixedSecret,
+            &mut callback,
+        )
+        .await
+        .expect_err("verifier failure is terminal");
+
+    assert!(matches!(error, EvalExecutionError::ProcessFailure(_)));
+    assert_eq!(runtime.reset_calls.get(), 2);
+    let events = runtime.events.borrow();
+    let callback = events
+        .iter()
+        .position(|event| event == "native-graph")
+        .unwrap();
+    let verifier = events
+        .iter()
+        .position(|event| event == "verifier:1")
+        .unwrap();
+    let cleanup = events
+        .iter()
+        .rposition(|event| event.starts_with("reset-tests:"))
+        .unwrap();
+    let remove = events
+        .iter()
+        .position(|event| event.starts_with("remove:"))
+        .unwrap();
+    assert!(callback < verifier);
+    assert!(verifier < cleanup);
+    assert!(cleanup < remove);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn e10_native_graph_shared_failure_combines_cleanup_failure() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = native_graph_task_root(&temporary);
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    let runtime = StepRecordingRuntime::failing_shared_verifier_cleanup()
+        .with_native_graph_profile(e10_native_graph_profile());
+    let mut callback = E10NativeGraphCallback {
+        events: &runtime.events,
+    };
+
+    let error = DockerProcessSandbox::new()
+        .execute_native_graph_with_runtime(
+            &runtime,
+            &HarborSandboxRecipe::for_standard_task(
+                "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                None,
+            )
+            .unwrap(),
+            &imported.package,
+            imported.package.execution_plan(),
+            &FixedSecret,
+            &mut callback,
+        )
+        .await
+        .expect_err("shared cleanup failure must join the verifier failure");
+
+    assert!(matches!(
+        error,
+        EvalExecutionError::ContainerTeardown { reason, .. }
+            if reason.contains("verifier 1 failed") && reason.contains("reset 2 failed")
+    ));
+    assert_eq!(runtime.reset_calls.get(), 2);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn e10_native_graph_separate_preserves_order_and_skips_shared_cleanup() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = native_graph_task_root(&temporary);
+    fs::write(
+        task_root.join("task.toml"),
+        format!(
+            "{}\n[verifier]\nenvironment_mode = \"separate\"\n",
+            fs::read_to_string(task_root.join("task.toml")).unwrap()
+        ),
+    )
+    .unwrap();
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    let runtime = StepRecordingRuntime::failing(StepFailure::Verifier(1), false)
+        .with_native_graph_profile(e10_native_graph_profile());
+    let mut callback = E10NativeGraphCallback {
+        events: &runtime.events,
+    };
+
+    let error = DockerProcessSandbox::new()
+        .execute_native_graph_with_runtime(
+            &runtime,
+            &HarborSandboxRecipe::for_standard_task(
+                "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                None,
+            )
+            .unwrap(),
+            &imported.package,
+            imported.package.execution_plan(),
+            &FixedSecret,
+            &mut callback,
+        )
+        .await
+        .expect_err("verifier failure is terminal");
+
+    assert!(matches!(error, EvalExecutionError::ProcessFailure(_)));
+    assert_eq!(runtime.reset_calls.get(), 1);
+    assert_eq!(runtime.creates.borrow().len(), 2);
+    assert_eq!(runtime.removals.get(), 2);
+    let events = runtime.events.borrow();
+    let callback = events
+        .iter()
+        .position(|event| event == "native-graph")
+        .unwrap();
+    let verifier = events
+        .iter()
+        .position(|event| event == "verifier:1")
+        .unwrap();
+    let remove = events
+        .iter()
+        .position(|event| event.starts_with("remove:"))
+        .unwrap();
+    assert!(callback < verifier);
+    assert!(verifier < remove);
 }
 
 #[tokio::test(flavor = "current_thread")]

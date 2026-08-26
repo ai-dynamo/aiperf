@@ -204,6 +204,9 @@ pub trait ScheduledPhaseSidecar {
 
 /// Start every phase sidecar, then mark the phase-start instant on each.
 ///
+/// If setup fails, finish every sidecar that was already started before
+/// returning the setup error.
+///
 /// Shared by the scheduled and graph `PhaseExecution::setup` paths; `label`
 /// selects the workload word in the error context ("scheduled"/"graph").
 pub(crate) async fn start_phase_sidecars(
@@ -211,10 +214,28 @@ pub(crate) async fn start_phase_sidecars(
     clock: &dyn crate::clock::Clock,
     label: &str,
 ) -> Result<(), PhaseExecutionError> {
-    for sidecar in sidecars {
-        sidecar.start().await.map_err(|error| {
-            PhaseExecutionError::new(format!("starting {label} phase sidecar: {error:#}"))
-        })?;
+    for (index, sidecar) in sidecars.iter().enumerate() {
+        if let Err(error) = sidecar.start().await {
+            let mut cleanup_errors = Vec::new();
+            for started_sidecar in sidecars[..index].iter().rev() {
+                if let Err(cleanup_error) = started_sidecar.finish().await {
+                    tracing::warn!(
+                        error = %cleanup_error,
+                        component = "phase_runtime",
+                        "failed to finish sidecar after setup failure"
+                    );
+                    cleanup_errors.push(format!("{cleanup_error:#}"));
+                }
+            }
+            let cleanup_context = if cleanup_errors.is_empty() {
+                String::new()
+            } else {
+                format!("; cleanup: {}", cleanup_errors.join("; "))
+            };
+            return Err(PhaseExecutionError::new(format!(
+                "starting {label} phase sidecar: {error:#}{cleanup_context}"
+            )));
+        }
     }
     let phase_start_ns = clock.now_ns();
     for sidecar in sidecars {
@@ -224,6 +245,9 @@ pub(crate) async fn start_phase_sidecars(
 }
 
 /// Mark the phase-end instant on every sidecar, then finish each.
+///
+/// Every sidecar receives its finish call even when an earlier one fails; the
+/// first finish failure is returned after all siblings have been given cleanup.
 ///
 /// Shared by the scheduled and graph `PhaseExecution::execute` finish paths.
 pub(crate) async fn finish_phase_sidecars(
@@ -235,12 +259,17 @@ pub(crate) async fn finish_phase_sidecars(
     for sidecar in sidecars {
         sidecar.on_phase_end(phase_end_ns);
     }
+    let mut first_error = None;
     for sidecar in sidecars {
-        sidecar.finish().await.map_err(|error| {
-            PhaseExecutionError::new(format!("finishing {label} phase sidecar: {error:#}"))
-        })?;
+        if let Err(error) = sidecar.finish().await
+            && first_error.is_none()
+        {
+            first_error = Some(PhaseExecutionError::new(format!(
+                "finishing {label} phase sidecar: {error:#}"
+            )));
+        }
     }
-    Ok(())
+    first_error.map_or(Ok(()), Err)
 }
 
 /// Resources used by workloads with no shared admission state.
@@ -1402,14 +1431,19 @@ impl PhaseDispatchTracker {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::RefCell;
     use std::rc::Rc;
 
-    use anyhow::Result;
+    use anyhow::{Result, anyhow};
     use async_trait::async_trait;
 
-    use super::{ScheduledPhasePlan, ScheduledRuntime, Workload};
+    use super::{
+        ScheduledPhasePlan, ScheduledPhaseSidecar, ScheduledRuntime, Workload,
+        finish_phase_sidecars, start_phase_sidecars,
+    };
+    use crate::clock::SimClock;
     use crate::scheduled::ScheduledAncillaryPolicies;
-    use crate::timing::{PhaseConfig, PhaseKind, StopConfig};
+    use crate::timing::{LocalPhaseFuture, PhaseConfig, PhaseKind, StopConfig};
 
     struct EmptyWorkload;
 
@@ -1430,6 +1464,137 @@ mod tests {
             Rc::new(EmptyWorkload),
             ScheduledAncillaryPolicies::default(),
         )
+    }
+
+    struct RecordingSidecar {
+        name: &'static str,
+        events: Rc<RefCell<Vec<String>>>,
+        start_error: Option<&'static str>,
+        finish_error: Option<&'static str>,
+    }
+
+    impl RecordingSidecar {
+        fn new(name: &'static str, events: Rc<RefCell<Vec<String>>>) -> Self {
+            Self {
+                name,
+                events,
+                start_error: None,
+                finish_error: None,
+            }
+        }
+
+        fn with_start_error(mut self, error: &'static str) -> Self {
+            self.start_error = Some(error);
+            self
+        }
+
+        fn with_finish_error(mut self, error: &'static str) -> Self {
+            self.finish_error = Some(error);
+            self
+        }
+    }
+
+    impl ScheduledPhaseSidecar for RecordingSidecar {
+        fn start(&self) -> LocalPhaseFuture<Result<()>> {
+            let events = self.events.clone();
+            let name = self.name;
+            let start_error = self.start_error;
+            Box::pin(async move {
+                events.borrow_mut().push(format!("start:{name}"));
+                start_error.map_or(Ok(()), |error| Err(anyhow!(error)))
+            })
+        }
+
+        fn finish(&self) -> LocalPhaseFuture<Result<()>> {
+            let events = self.events.clone();
+            let name = self.name;
+            let finish_error = self.finish_error;
+            Box::pin(async move {
+                events.borrow_mut().push(format!("finish:{name}"));
+                finish_error.map_or(Ok(()), |error| Err(anyhow!(error)))
+            })
+        }
+    }
+
+    #[test]
+    fn sidecar_setup_failure_finishes_already_started_siblings() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let sidecars: Vec<Rc<dyn ScheduledPhaseSidecar>> = vec![
+            Rc::new(RecordingSidecar::new("first", events.clone())),
+            Rc::new(RecordingSidecar::new("second", events.clone()).with_start_error("boom")),
+        ];
+
+        let error = runtime
+            .block_on(start_phase_sidecars(
+                &sidecars,
+                &SimClock::new(),
+                "scheduled",
+            ))
+            .expect_err("setup must fail");
+
+        assert_eq!(error.to_string(), "starting scheduled phase sidecar: boom");
+        assert_eq!(
+            events.borrow().as_slice(),
+            ["start:first", "start:second", "finish:first"]
+        );
+    }
+
+    #[test]
+    fn sidecar_setup_failure_includes_sibling_cleanup_failure() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let sidecars: Vec<Rc<dyn ScheduledPhaseSidecar>> = vec![
+            Rc::new(RecordingSidecar::new("first", events.clone()).with_finish_error("cleanup boom")),
+            Rc::new(RecordingSidecar::new("second", events.clone()).with_start_error("setup boom")),
+        ];
+
+        let error = runtime
+            .block_on(start_phase_sidecars(
+                &sidecars,
+                &SimClock::new(),
+                "scheduled",
+            ))
+            .expect_err("setup must fail");
+
+        assert_eq!(
+            error.to_string(),
+            "starting scheduled phase sidecar: setup boom; cleanup: cleanup boom"
+        );
+        assert_eq!(
+            events.borrow().as_slice(),
+            ["start:first", "start:second", "finish:first"]
+        );
+    }
+
+    #[test]
+    fn sidecar_finish_failure_finishes_remaining_siblings() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let sidecars: Vec<Rc<dyn ScheduledPhaseSidecar>> = vec![
+            Rc::new(RecordingSidecar::new("first", events.clone()).with_finish_error("boom")),
+            Rc::new(RecordingSidecar::new("second", events.clone())),
+        ];
+
+        let error = runtime
+            .block_on(finish_phase_sidecars(
+                &sidecars,
+                &SimClock::new(),
+                "scheduled",
+            ))
+            .expect_err("finish must fail");
+
+        assert_eq!(error.to_string(), "finishing scheduled phase sidecar: boom");
+        assert_eq!(
+            events.borrow().as_slice(),
+            ["finish:first", "finish:second"]
+        );
     }
 
     #[test]

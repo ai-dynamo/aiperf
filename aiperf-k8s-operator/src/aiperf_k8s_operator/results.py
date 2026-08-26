@@ -986,6 +986,37 @@ class ResultsIndex:
             os.close(descriptor)
             raise
 
+    def list_runs(self, namespace: str) -> list[dict[str, Any]]:
+        """Return retained published runs for one namespace, newest first."""
+        listed: list[dict[str, Any]] = []
+        with self._lock:
+            for key in os.listdir(self._published_fd):
+                try:
+                    run_fd = self._open_dir(self._published_fd, key)
+                except OSError:
+                    continue
+                try:
+                    identity, created = self._read_identity(run_fd)
+                except (OSError, UploadConflict, UploadInvalid, UploadTooLarge):
+                    continue
+                finally:
+                    os.close(run_fd)
+                if identity.namespace != namespace or self._key(identity) != key:
+                    continue
+                record = self._runs.get(identity)
+                manifest = record.manifest if record else None
+                listed.append(
+                    {
+                        "jobId": identity.job_id,
+                        "runId": identity.run_id,
+                        "created": created,
+                        "ready": manifest is not None,
+                        "artifactCount": len(manifest["artifacts"]) if manifest else 0,
+                    }
+                )
+        listed.sort(key=lambda entry: entry["created"], reverse=True)
+        return listed
+
     def stats(self) -> dict[str, int | float]:
         """Return bounded storage usage and configured hard limits."""
         with self._lock:

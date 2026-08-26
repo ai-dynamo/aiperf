@@ -82,6 +82,20 @@ fn summarize(item: &Value) -> String {
         .pointer("/metadata/namespace")
         .and_then(Value::as_str)
         .unwrap_or("<none>");
+    // Retained result-index items carry `ready` and `artifactCount` instead of
+    // the `status.phase` a custom resource reports.
+    if let Some(is_ready) = item.get("ready").and_then(Value::as_bool) {
+        let job = item
+            .get("jobId")
+            .and_then(Value::as_str)
+            .unwrap_or("<unknown>");
+        let artifacts = item
+            .get("artifactCount")
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
+        let state = if is_ready { "Ready" } else { "Pending" };
+        return format!("{namespace}/{name}\t{job}\t{state}\t{artifacts} artifact(s)");
+    }
     let phase = item
         .pointer("/status/phase")
         .and_then(Value::as_str)
@@ -118,6 +132,19 @@ mod tests {
         ]}"#;
         let rendered = render(OutputFormat::Text, body).expect("render");
         assert_eq!(rendered, "bench/job-1\tRunning\nbench/job-2\tUnknown");
+    }
+
+    #[test]
+    fn text_rendering_summarizes_retained_result_index_items() {
+        let body = br#"{"items":[
+            {"metadata":{"name":"run-1","namespace":"bench"},"jobId":"job-1","ready":true,"artifactCount":3,"created":1700000000.0},
+            {"metadata":{"name":"run-2","namespace":"bench"},"jobId":"job-2","ready":false,"artifactCount":0,"created":1700000001.0}
+        ]}"#;
+        let rendered = render(OutputFormat::Text, body).expect("render");
+        assert_eq!(
+            rendered,
+            "bench/run-1\tjob-1\tReady\t3 artifact(s)\nbench/run-2\tjob-2\tPending\t0 artifact(s)"
+        );
     }
 
     #[test]

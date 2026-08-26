@@ -149,7 +149,7 @@ New CRD `aiperfsweeps.aiperf.nvidia.com`, `v1alpha1`, `AIPerfSweep`, shortName `
 
 The sweep envelope carries: `contractVersion`, `runId`, `namespace`, `sweepId`,
 `imageReference`, the base Config-v2 document, the axis set, `trials`, and the
-sweep-controller role (`name`, `command`, `argv`, `environment`, `bootstrap`).
+sweep-controller role (`name`, `command`, `argv`, `environment`).
 `additionalProperties: false` throughout. It does **not** carry child envelopes — expansion is
 the controller's job, and pre-expanding would put a plan-sized document in etcd.
 
@@ -168,8 +168,7 @@ phase), `completedRuns`, `failedRuns`. CEL rules keep `sweepId` immutable and fo
    `aiperfsweeps/status` by `resourceNames`.
 3. Materializes one JobSet with one replica running the sweep-controller role verbatim from
    the envelope — same `_container` projection as today, no argv synthesis.
-4. Mounts the sweep-controller's bootstrap Secret by reference, same metadata-only validation.
-5. Watches child AIPerfJobs by owner reference and rolls their phases into
+4. Watches child AIPerfJobs by owner reference and rolls their phases into
    `.status.childRuns`.
 
 That is the whole Python delta: one handler, one RBAC template, one status roll-up. No sweep

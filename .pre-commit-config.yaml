@@ -28,6 +28,7 @@ repos:
         exclude: ^\.devcontainer/devcontainer\.json$
       - id: check-toml
       - id: check-yaml
+        exclude: ^deploy/aiperf-k8s-operator/helm/aiperf-k8s-operator/templates/
       - id: check-shebang-scripts-are-executable
       - id: end-of-file-fixer
         types_or: [cuda, proto, textproto, python]

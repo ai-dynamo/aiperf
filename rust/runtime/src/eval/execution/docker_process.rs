@@ -1261,176 +1261,24 @@ impl DockerProcessSandbox {
                 secrets,
                 remaining(&agent_deadline)?,
             )?;
-            let artifact_collection = tempfile::tempdir()
-                .map_err(|error| EvalExecutionError::ArtifactCollection(error.to_string()))?;
-            let collection_timeout = plan
+            let step = plan
                 .steps()
                 .first()
-                .ok_or(EvalExecutionError::InvalidRecipe("Docker benchmark step"))?
-                .collection_timeout();
-            let collection_deadline =
-                Deadline::from_timeout(self.clock.clone(), collection_timeout);
-            let artifacts = collect_artifacts_bounded(
+                .ok_or(EvalExecutionError::InvalidRecipe("Docker benchmark step"))?;
+            let mut session = DockerStepSession {
+                clock: self.clock.clone(),
                 runtime,
-                &container,
-                plan.artifacts(),
-                artifact_collection.path(),
-                collection_deadline,
-            )?;
-            let verifier_deadline = verifier.phase().timeout().map(|timeout| {
-                Deadline::from_phase_timeout(
-                    self.clock.clone(),
-                    EvalExecutionPhase::Verifier,
-                    timeout,
-                )
-            });
-            let remaining = |deadline: &Option<Deadline>| {
-                deadline.as_ref().map(Deadline::remaining).transpose()
-            };
-
-            let verifier_container = if verifier.mode() == VerifierMode::Separate {
-                let verifier_workspace = tempfile::tempdir()
-                    .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
-                fs::set_permissions(verifier_workspace.path(), fs::Permissions::from_mode(0o755))
-                    .map_err(|error| EvalExecutionError::ArtifactCollection(error.to_string()))?;
-                if let Some(deadline) = verifier_deadline.as_ref() {
-                    transfer_artifacts_bounded(
-                        artifact_collection.path(),
-                        verifier_workspace.path(),
-                        &artifacts,
-                        deadline,
-                    )?;
-                } else {
-                    super::transfer_artifacts(
-                        artifact_collection.path(),
-                        verifier_workspace.path(),
-                        &artifacts,
-                    )?;
-                }
-                let name = format!("{container}-verifier");
-                let verifier_network = network_lease(verifier.environment().network())?;
-                let verifier_workdir = recipe.resolve_workdir(verifier.environment().workdir());
-                if !plan.artifacts().is_empty()
-                    && let Some(workdir) = verifier_workdir
-                {
-                    validate_verifier_artifact_staging(workdir, plan.artifacts())?;
-                }
-                containers.push(name.clone());
-                create_planned_container(
-                    runtime,
-                    &name,
-                    &image,
-                    ContainerWorkspace::at_workdir(verifier_workspace.path(), None),
-                    verifier.environment(),
-                    verifier_network,
-                    None,
-                    remaining(&verifier_deadline)?,
-                )?;
-                let start = match remaining(&verifier_deadline)? {
-                    Some(deadline) => DockerStartRequest::new(&name).with_deadline(deadline),
-                    None => DockerStartRequest::new(&name),
-                };
-                runtime.start(&start)?;
-                if !plan.artifacts().is_empty() {
-                    let effective_verifier_workdir = match verifier_workdir {
-                        Some(workdir) => workdir.to_owned(),
-                        None => match remaining(&verifier_deadline)? {
-                            Some(deadline) => runtime.container_workdir_bounded(&name, deadline)?,
-                            None => runtime.container_workdir(&name)?,
-                        },
-                    };
-                    validate_verifier_artifact_staging(
-                        &effective_verifier_workdir,
-                        plan.artifacts(),
-                    )?;
-                    transfer_verifier_artifacts(
-                        runtime,
-                        &name,
-                        verifier_workspace.path(),
-                        Some(&effective_verifier_workdir),
-                        verifier_network,
-                        verifier_deadline.as_ref(),
-                    )?;
-                }
-                prepare_workdir_with_deadline(
-                    runtime,
-                    &name,
-                    verifier.environment(),
-                    verifier.phase(),
-                    EvalExecutionPhase::Verifier,
-                    verifier_workdir,
-                    verifier_network,
-                    remaining(&verifier_deadline)?,
-                )?;
-                if let Some(healthcheck) = verifier.environment().healthcheck() {
-                    run_healthcheck_with_deadline(
-                        self.clock.clone(),
-                        runtime,
-                        &name,
-                        verifier.environment(),
-                        verifier_workdir,
-                        healthcheck,
-                        verifier_network,
-                        secrets,
-                        verifier_deadline.as_ref(),
-                    )?;
-                }
-                Some((name, verifier_workspace))
-            } else {
-                None
-            };
-            let verifier_name = verifier_container
-                .as_ref()
-                .map_or(container.as_str(), |(name, _)| name.as_str());
-            let verifier_network = network_lease(verifier.phase().network())?;
-            prepare_verifier_files_with_deadline(
-                runtime,
-                verifier_name,
-                verifier_network,
-                remaining(&verifier_deadline)?,
-            )?;
-            let copy = DockerCopyRequest::new([
-                "cp".to_owned(),
-                format!("{}/.", source_root.join("tests").display()),
-                format!("{verifier_name}:/tests"),
-            ]);
-            let copy = match remaining(&verifier_deadline)? {
-                Some(deadline) => copy.with_deadline(deadline),
-                None => copy,
-            };
-            runtime.copy(&copy)?;
-            let verifier_workdir = recipe.resolve_workdir(verifier.environment().workdir());
-            if verifier.mode() == VerifierMode::Shared {
-                prepare_workdir_with_deadline(
-                    runtime,
-                    verifier_name,
-                    verifier.environment(),
-                    verifier.phase(),
-                    EvalExecutionPhase::Verifier,
-                    verifier_workdir,
-                    verifier_network,
-                    remaining(&verifier_deadline)?,
-                )?;
-            }
-            execute_planned_phase_with_deadline(
-                runtime,
-                verifier_name,
-                EvalExecutionPhase::Verifier,
-                &["/bin/sh".to_owned(), "/tests/test.sh".to_owned()],
-                verifier.environment(),
-                verifier.phase(),
-                verifier_workdir,
+                recipe,
+                source_root,
+                environment,
+                image: &image,
+                agent_container: &container,
                 secrets,
-                remaining(&verifier_deadline)?,
-            )?;
-            let reward_workspace = tempfile::tempdir()
-                .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
-            let reward = read_reward_with_runtime(
-                runtime,
-                verifier_name,
-                &reward_workspace,
-                verifier_deadline.as_ref(),
-            )?;
+                containers: &mut containers,
+                artifact_collection: None,
+            };
+            let artifacts = session.collect_artifacts(step)?;
+            let reward = session.run_verifier(step, &artifacts)?;
             Ok(LocalExecutionResult {
                 artifacts,
                 reward,
@@ -1602,187 +1450,29 @@ impl DockerProcessSandbox {
                 environment_adapter_start,
                 _authorization: &authorization,
             };
-            run_native_graph_episode_callback(callback, &mut lease, || {
-                let artifact_collection = tempfile::tempdir()
-                    .map_err(|error| EvalExecutionError::ArtifactCollection(error.to_string()))?;
-                let collection_timeout = plan
-                    .steps()
-                    .first()
-                    .ok_or(EvalExecutionError::InvalidRecipe("Docker benchmark step"))?
-                    .collection_timeout();
-                let collection_deadline =
-                    Deadline::from_timeout(self.clock.clone(), collection_timeout);
-                let artifacts = collect_artifacts_bounded(
-                    runtime,
-                    &container,
-                    plan.artifacts(),
-                    artifact_collection.path(),
-                    collection_deadline,
-                )?;
-                let verifier_deadline = verifier.phase().timeout().map(|timeout| {
-                    Deadline::from_phase_timeout(
-                        self.clock.clone(),
-                        EvalExecutionPhase::Verifier,
-                        timeout,
-                    )
-                });
-                let remaining = |deadline: &Option<Deadline>| {
-                    deadline.as_ref().map(Deadline::remaining).transpose()
-                };
-                let verifier_container = if verifier.mode() == VerifierMode::Separate {
-                    let verifier_workspace = tempfile::tempdir()
-                        .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
-                    fs::set_permissions(
-                        verifier_workspace.path(),
-                        fs::Permissions::from_mode(0o755),
-                    )
-                    .map_err(|error| EvalExecutionError::ArtifactCollection(error.to_string()))?;
-                    if let Some(deadline) = verifier_deadline.as_ref() {
-                        transfer_artifacts_bounded(
-                            artifact_collection.path(),
-                            verifier_workspace.path(),
-                            &artifacts,
-                            deadline,
-                        )?;
-                    } else {
-                        super::transfer_artifacts(
-                            artifact_collection.path(),
-                            verifier_workspace.path(),
-                            &artifacts,
-                        )?;
-                    }
-                    let name = format!("{container}-verifier");
-                    let verifier_network = network_lease(verifier.environment().network())?;
-                    let verifier_workdir = recipe.resolve_workdir(verifier.environment().workdir());
-                    if !plan.artifacts().is_empty()
-                        && let Some(workdir) = verifier_workdir
-                    {
-                        validate_verifier_artifact_staging(workdir, plan.artifacts())?;
-                    }
-                    containers.push(name.clone());
-                    create_planned_container(
-                        runtime,
-                        &name,
-                        &image,
-                        ContainerWorkspace::at_workdir(verifier_workspace.path(), None),
-                        verifier.environment(),
-                        verifier_network,
-                        None,
-                        remaining(&verifier_deadline)?,
-                    )?;
-                    let start = match remaining(&verifier_deadline)? {
-                        Some(deadline) => DockerStartRequest::new(&name).with_deadline(deadline),
-                        None => DockerStartRequest::new(&name),
-                    };
-                    runtime.start(&start)?;
-                    if !plan.artifacts().is_empty() {
-                        let effective_verifier_workdir = match verifier_workdir {
-                            Some(workdir) => workdir.to_owned(),
-                            None => match remaining(&verifier_deadline)? {
-                                Some(deadline) => {
-                                    runtime.container_workdir_bounded(&name, deadline)?
-                                }
-                                None => runtime.container_workdir(&name)?,
-                            },
-                        };
-                        validate_verifier_artifact_staging(
-                            &effective_verifier_workdir,
-                            plan.artifacts(),
-                        )?;
-                        transfer_verifier_artifacts(
-                            runtime,
-                            &name,
-                            verifier_workspace.path(),
-                            Some(&effective_verifier_workdir),
-                            verifier_network,
-                            verifier_deadline.as_ref(),
-                        )?;
-                    }
-                    prepare_workdir_with_deadline(
-                        runtime,
-                        &name,
-                        verifier.environment(),
-                        verifier.phase(),
-                        EvalExecutionPhase::Verifier,
-                        verifier_workdir,
-                        verifier_network,
-                        remaining(&verifier_deadline)?,
-                    )?;
-                    if let Some(healthcheck) = verifier.environment().healthcheck() {
-                        run_healthcheck_with_deadline(
-                            self.clock.clone(),
-                            runtime,
-                            &name,
-                            verifier.environment(),
-                            verifier_workdir,
-                            healthcheck,
-                            verifier_network,
-                            secrets,
-                            verifier_deadline.as_ref(),
-                        )?;
-                    }
-                    Some((name, verifier_workspace))
-                } else {
-                    None
-                };
-                let verifier_name = verifier_container
-                    .as_ref()
-                    .map_or(container.as_str(), |(name, _)| name.as_str());
-                let verifier_network = network_lease(verifier.phase().network())?;
-                prepare_verifier_files_with_deadline(
-                    runtime,
-                    verifier_name,
-                    verifier_network,
-                    remaining(&verifier_deadline)?,
-                )?;
-                let copy = DockerCopyRequest::new([
-                    "cp".to_owned(),
-                    format!("{}/.", source_root.join("tests").display()),
-                    format!("{verifier_name}:/tests"),
-                ]);
-                let copy = match remaining(&verifier_deadline)? {
-                    Some(deadline) => copy.with_deadline(deadline),
-                    None => copy,
-                };
-                runtime.copy(&copy)?;
-                let verifier_workdir = recipe.resolve_workdir(verifier.environment().workdir());
-                if verifier.mode() == VerifierMode::Shared {
-                    prepare_workdir_with_deadline(
-                        runtime,
-                        verifier_name,
-                        verifier.environment(),
-                        verifier.phase(),
-                        EvalExecutionPhase::Verifier,
-                        verifier_workdir,
-                        verifier_network,
-                        remaining(&verifier_deadline)?,
-                    )?;
-                }
-                execute_planned_phase_with_deadline(
-                    runtime,
-                    verifier_name,
-                    EvalExecutionPhase::Verifier,
-                    &["/bin/sh".to_owned(), "/tests/test.sh".to_owned()],
-                    verifier.environment(),
-                    verifier.phase(),
-                    verifier_workdir,
-                    secrets,
-                    remaining(&verifier_deadline)?,
-                )?;
-                let reward_workspace = tempfile::tempdir()
-                    .map_err(|error| EvalExecutionError::Materialization(error.to_string()))?;
-                let reward = read_reward_with_runtime(
-                    runtime,
-                    verifier_name,
-                    &reward_workspace,
-                    verifier_deadline.as_ref(),
-                )?;
-                Ok(LocalExecutionResult {
-                    artifacts,
-                    reward,
-                    verifier: package.source_digest(),
-                })
-            })
+            let step = plan
+                .steps()
+                .first()
+                .ok_or(EvalExecutionError::InvalidRecipe("Docker benchmark step"))?;
+            let session = DockerStepSession {
+                clock: self.clock.clone(),
+                runtime,
+                recipe,
+                source_root,
+                environment,
+                image: &image,
+                agent_container: &container,
+                secrets,
+                containers: &mut containers,
+                artifact_collection: None,
+            };
+            run_native_graph_verifier_transaction(
+                callback,
+                &mut lease,
+                session,
+                step,
+                package.source_digest(),
+            )
             .await
         }
         .await;
@@ -2802,6 +2492,25 @@ struct DockerStepSession<'a> {
     artifact_collection: Option<TempDir>,
 }
 
+async fn run_native_graph_verifier_transaction(
+    callback: &mut dyn NativeGraphEpisodeCallback,
+    lease: &mut impl crate::eval::NativeGraphEpisodeBackendLease,
+    mut session: DockerStepSession<'_>,
+    step: &BenchmarkStepPlan,
+    verifier: ArtifactDigest,
+) -> Result<LocalExecutionResult, EvalExecutionError> {
+    run_native_graph_episode_callback(callback, lease, || {
+        let artifacts = session.collect_artifacts(step)?;
+        let reward = session.run_verifier(step, &artifacts)?;
+        Ok(LocalExecutionResult {
+            artifacts,
+            reward,
+            verifier: verifier.clone(),
+        })
+    })
+    .await
+}
+
 impl BenchmarkStepSession for DockerStepSession<'_> {
     fn run_agent(
         &mut self,
@@ -2933,22 +2642,26 @@ impl BenchmarkStepSession for DockerStepSession<'_> {
                 None => DockerStartRequest::new(&name),
             };
             self.runtime.start(&start)?;
-            let effective_verifier_workdir = match verifier_workdir {
-                Some(workdir) => workdir.to_owned(),
-                None => match remaining(&deadline)? {
-                    Some(deadline) => self.runtime.container_workdir_bounded(&name, deadline)?,
-                    None => self.runtime.container_workdir(&name)?,
-                },
-            };
-            validate_verifier_artifact_staging(&effective_verifier_workdir, step.artifacts())?;
-            transfer_verifier_artifacts(
-                self.runtime,
-                &name,
-                workspace.path(),
-                Some(&effective_verifier_workdir),
-                verifier_network,
-                deadline.as_ref(),
-            )?;
+            if !step.artifacts().is_empty() {
+                let effective_verifier_workdir = match verifier_workdir {
+                    Some(workdir) => workdir.to_owned(),
+                    None => match remaining(&deadline)? {
+                        Some(deadline) => {
+                            self.runtime.container_workdir_bounded(&name, deadline)?
+                        }
+                        None => self.runtime.container_workdir(&name)?,
+                    },
+                };
+                validate_verifier_artifact_staging(&effective_verifier_workdir, step.artifacts())?;
+                transfer_verifier_artifacts(
+                    self.runtime,
+                    &name,
+                    workspace.path(),
+                    Some(&effective_verifier_workdir),
+                    verifier_network,
+                    deadline.as_ref(),
+                )?;
+            }
             prepare_workdir_with_deadline(
                 self.runtime,
                 &name,
@@ -6096,7 +5809,7 @@ fn reports_absent_container(stderr: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use std::{
-        cell::Cell,
+        cell::{Cell, RefCell},
         collections::{BTreeMap, VecDeque},
         fs,
         io::{self, Read},
@@ -6114,23 +5827,26 @@ mod tests {
     use super::{
         DockerBuildRequest, DockerCopyRequest, DockerCreateRequest, DockerExecProcess,
         DockerExecState, DockerNativeGraphEnvironmentAdapterStart, DockerRemoveRequest,
-        DockerRemoveStatus, DockerRuntime, DockerStartRequest, EvalExecutionError,
-        EvalExecutionPhase, adapter_ownership_arguments, classify_bounded_remove_result,
-        compensate_late_create_with, compose_ownership_filters, compose_stop_arguments,
-        copy_archive_stream_bounded, docker_cli_native_graph_no_egress_profile,
-        docker_container_name, docker_image_name, drain_output_bounded, drive_docker_exec,
-        ensure_network_exists, initialize_native_graph_adapter_workspace,
-        parse_owned_adapter_container_id, prepare_native_graph_workdir_arguments,
-        read_optional_reward_archive, read_reward_with_runtime, reap_fenced_docker_client,
-        redact_secret_values, reports_absent_container, run_docker_exec_without_deadline,
+        DockerRemoveStatus, DockerRuntime, DockerStartRequest, DockerStepSession,
+        EvalExecutionError, EvalExecutionPhase, adapter_ownership_arguments,
+        classify_bounded_remove_result, compensate_late_create_with, compose_ownership_filters,
+        compose_stop_arguments, copy_archive_stream_bounded,
+        docker_cli_native_graph_no_egress_profile, docker_container_name, docker_image_name,
+        drain_output_bounded, drive_docker_exec, ensure_network_exists,
+        initialize_native_graph_adapter_workspace, parse_owned_adapter_container_id,
+        prepare_native_graph_workdir_arguments, read_optional_reward_archive,
+        read_reward_with_runtime, reap_fenced_docker_client, redact_secret_values,
+        reports_absent_container, run_docker_exec_without_deadline,
+        run_native_graph_verifier_transaction,
     };
     use crate::{
         clock::SimClock,
         eval::{
             AdapterLifecycleDeadlines, AdapterRole, AdapterSpawnRequest, AdapterSpawnTransaction,
-            AdapterSpawner, AdapterSpec, AdapterSupervisionError, ComposeProjectId,
-            DockerAdapterSpawnerRequest, HarborImporter, HarborSource, ModelEndpointIsolationProof,
-            NativeGraphEnvironmentAdapterStart, NativeSourceAcquirer, ProviderCapabilities,
+            AdapterSpawner, AdapterSpec, AdapterSupervisionError, BenchmarkStepPlan,
+            ComposeProjectId, DockerAdapterSpawnerRequest, HarborImporter, HarborSource,
+            ModelEndpointIsolationProof, NativeGraphEnvironmentAdapterStart, NativeSourceAcquirer,
+            ProviderCapabilities,
         },
     };
 
@@ -6442,6 +6158,164 @@ mod tests {
             .import(&HarborSource::local(task_root.to_string_lossy()).expect("local source"))
             .expect("import task fixture");
         (temporary, imported)
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn native_graph_verifier_transaction_uses_the_selected_test_root() {
+        struct Runtime {
+            copied_tests: RefCell<Vec<String>>,
+        }
+
+        impl DockerRuntime for Runtime {
+            fn capabilities(&self) -> ProviderCapabilities {
+                ProviderCapabilities::none()
+            }
+
+            fn build(&self, _: &DockerBuildRequest) -> Result<(), EvalExecutionError> {
+                unreachable!("transaction fixture begins after environment acquisition")
+            }
+
+            fn create(&self, _: &DockerCreateRequest) -> Result<(), EvalExecutionError> {
+                unreachable!("transaction fixture uses a shared verifier")
+            }
+
+            fn start(&self, _: &DockerStartRequest) -> Result<(), EvalExecutionError> {
+                unreachable!("transaction fixture uses a shared verifier")
+            }
+
+            fn exec(&self, _: &super::DockerExecRequest) -> Result<(), EvalExecutionError> {
+                Ok(())
+            }
+
+            fn copy(&self, request: &DockerCopyRequest) -> Result<(), EvalExecutionError> {
+                let arguments = request.public_arguments();
+                if arguments[2].ends_with(":/tests") {
+                    self.copied_tests.borrow_mut().push(arguments[1].clone());
+                }
+                Ok(())
+            }
+
+            fn copy_archive(
+                &self,
+                _: &str,
+                source: &str,
+            ) -> Result<Box<dyn Read>, EvalExecutionError> {
+                if source.ends_with("reward.json") {
+                    return Err(EvalExecutionError::ProcessFailure(
+                        "reward.json absent".to_owned(),
+                    ));
+                }
+                let mut archive = tar::Builder::new(Vec::new());
+                let mut header = tar::Header::new_gnu();
+                header.set_size(2);
+                header.set_mode(0o644);
+                header.set_cksum();
+                archive
+                    .append_data(&mut header, "reward.txt", &b"1\n"[..])
+                    .map_err(|error| EvalExecutionError::ArtifactCollection(error.to_string()))?;
+                Ok(Box::new(io::Cursor::new(archive.into_inner().map_err(
+                    |error| EvalExecutionError::ArtifactCollection(error.to_string()),
+                )?)))
+            }
+
+            fn remove(&self, _: &DockerRemoveRequest) -> Result<(), EvalExecutionError> {
+                Ok(())
+            }
+        }
+
+        struct Lease;
+
+        impl crate::eval::NativeGraphEpisodeLease for Lease {
+            fn is_authorized(&self) -> bool {
+                true
+            }
+
+            fn is_environment_acquired(&self) -> bool {
+                true
+            }
+
+            fn instruction(&self) -> &str {
+                "native graph instruction"
+            }
+        }
+
+        impl crate::eval::NativeGraphEpisodeBackendLease for Lease {
+            fn reap_environment_adapter<'lease>(
+                &'lease mut self,
+            ) -> std::pin::Pin<
+                Box<dyn std::future::Future<Output = Result<(), EvalExecutionError>> + 'lease>,
+            > {
+                Box::pin(async { Ok(()) })
+            }
+        }
+
+        struct Callback;
+
+        #[async_trait::async_trait(?Send)]
+        impl crate::eval::NativeGraphEpisodeCallback for Callback {
+            async fn run(
+                &mut self,
+                lease: &mut dyn crate::eval::NativeGraphEpisodeLease,
+            ) -> Result<(), EvalExecutionError> {
+                assert!(lease.is_authorized());
+                assert!(lease.is_environment_acquired());
+                Ok(())
+            }
+        }
+
+        let (temporary, imported) = imported_plan_with_network("no-network");
+        let source_root = temporary.path().join("task");
+        fs::create_dir(source_root.join("selected-tests")).expect("create selected test root");
+        fs::write(source_root.join("selected-tests/test.sh"), "exit 0\n")
+            .expect("write selected verifier");
+        let plan = imported.package.execution_plan();
+        let step = BenchmarkStepPlan::new(
+            "selected".to_owned(),
+            plan.steps()[0].instruction().to_owned(),
+            "selected-tests".to_owned(),
+            plan.agent.clone(),
+            plan.verifier.clone(),
+            Vec::new(),
+        );
+        let runtime = Runtime {
+            copied_tests: RefCell::new(Vec::new()),
+        };
+        let mut containers = Vec::new();
+        let recipe = super::HarborSandboxRecipe::for_standard_task(
+            "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+            None,
+        )
+        .expect("standard recipe");
+        let session = DockerStepSession {
+            clock: Rc::new(SimClock::new()),
+            runtime: &runtime,
+            recipe: &recipe,
+            source_root: &source_root,
+            environment: plan.environment(),
+            image: "fixture-image",
+            agent_container: "fixture-agent",
+            secrets: &super::HostSecretProvider,
+            containers: &mut containers,
+            artifact_collection: None,
+        };
+        let mut callback = Callback;
+        run_native_graph_verifier_transaction(
+            &mut callback,
+            &mut Lease,
+            session,
+            &step,
+            crate::eval::ArtifactDigest::from_bytes(b"fixture"),
+        )
+        .await
+        .expect("selected-root transaction succeeds");
+
+        assert_eq!(
+            runtime.copied_tests.borrow().as_slice(),
+            [format!(
+                "{}/.",
+                source_root.join("selected-tests").display()
+            )]
+        );
     }
 
     #[test]

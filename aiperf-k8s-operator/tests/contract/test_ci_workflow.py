@@ -7,6 +7,8 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 WORKFLOW = (REPOSITORY_ROOT / ".github/workflows/aiperf-k8s-operator.yml").read_text()
 NATIVE_CONTRACT = (
     REPOSITORY_ROOT / "rust/e2e-tests/tests/kube_cli_contract.rs"
+).read_text() + (
+    REPOSITORY_ROOT / "rust/e2e-tests/tests/test_kube_sweep_parity.rs"
 ).read_text()
 
 

@@ -16,7 +16,8 @@ use tracing::warn;
 use super::bootstrap::create_bundle;
 use super::client::{AIPERF_GROUP, AIPERF_PLURAL, AIPERF_VERSION, KubeClient};
 use super::contract::{
-    ControllerEnvelope, NativeK8sRole, validate_envelope, validate_image_capabilities,
+    ControllerEnvelope, NativeK8sRole, SweepEnvelope, validate_envelope,
+    validate_image_capabilities,
 };
 use super::error::KubeError;
 use super::manifest;
@@ -765,6 +766,61 @@ fn rollback_bootstrap_secrets(
     } else {
         anyhow::bail!(failures.join("; "))
     }
+}
+
+/// Validate the image capability document, then POST the `AIPerfSweep` CR.
+///
+/// The sweep-controller authenticates to the Kubernetes API with its mounted
+/// service-account token and mints per-child cellular material in-cluster, so
+/// no submission-side bootstrap material exists for this role.
+///
+/// `capabilities` is the raw image-capabilities JSON value; the function validates it and
+/// refuses if the image does not declare `cellular: true`.
+pub fn submit_sweep_transactionally(
+    client: &KubeClient,
+    envelope: &SweepEnvelope,
+    capabilities: serde_json::Value,
+) -> anyhow::Result<u16> {
+    use super::sweep_controller::AIPERFSWEEPS_PLURAL;
+
+    // 1. Validate image capabilities and require cellular support.
+    let image_digest = envelope
+        .image_reference
+        .rsplit_once('@')
+        .map(|(_, d)| d.to_string())
+        .ok_or_else(|| anyhow::anyhow!("sweep imageReference is not digest-qualified"))?;
+    let caps = validate_image_capabilities(capabilities, &image_digest)
+        .map_err(|e| anyhow::anyhow!("image capability document is invalid: {e}"))?;
+    if !caps.cellular {
+        anyhow::bail!("sweep requires cellular: true in the image capability document");
+    }
+
+    // 2. POST the AIPerfSweep CR.
+    let sweep_envelope_value = serde_json::to_value(envelope)
+        .map_err(|e| anyhow::anyhow!("failed to serialize sweep envelope: {e}"))?;
+    let cr_body = json!({
+        "apiVersion": format!("{AIPERF_GROUP}/{AIPERF_VERSION}"),
+        "kind": "AIPerfSweep",
+        "metadata": {
+            "name": envelope.run_id,
+            "namespace": envelope.namespace,
+        },
+        "spec": {
+            "sweepEnvelope": sweep_envelope_value,
+        }
+    });
+    let cr_bytes = serde_json::to_vec(&cr_body)
+        .map_err(|e| anyhow::anyhow!("failed to encode AIPerfSweep CR: {e}"))?;
+    let cr_path = format!(
+        "/apis/{AIPERF_GROUP}/{AIPERF_VERSION}/namespaces/{}/{AIPERFSWEEPS_PLURAL}",
+        envelope.namespace
+    );
+    let cr_status = client.request("POST", &cr_path, "application/json", cr_bytes)?;
+    if !(200..300).contains(&cr_status) {
+        anyhow::bail!("AIPerfSweep CR creation returned HTTP {cr_status}");
+    }
+
+    Ok(cr_status)
 }
 
 /// Extract every repeatable `--envelope <path>` or `--envelope=<path>` argument.

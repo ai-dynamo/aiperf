@@ -62,11 +62,11 @@ Graham review and a commit.
 | E03 | NativeGraph execution ignores agent timeout | Confirmed; spec ready | Sol implementation plan |
 | E04 | Abort still starts ready tool nodes | Confirmed; spec ready | Sol implementation plan |
 | E05 | Closed-worker credit return can hang drain | Confirmed; spec ready | Sol implementation plan |
-| E06 | Sidecar setup/finish failures leak siblings | Confirmed/narrowed; spec ready | Sol implementation plan |
-| E07 | Global-push cancellation is misclassified as transport failure | Confirmed; spec ready | Sol implementation plan |
+| E06 | Sidecar setup/finish failures leak siblings | Complete | Integrated `bb5e3fe5ff`, `bb23c66b39`; independent Graham PASS |
+| E07 | Global-push cancellation is misclassified as transport failure | Complete | Integrated `82bf74990c`; independent Graham PASS |
 | E08 | Declared terminal outputs cannot execute | Confirmed; spec ready | Sol implementation plan |
-| E09 | Multi-dataset requests silently retain only the first | Confirmed; spec ready | Sol implementation plan |
-| E10 | Docker verifier orchestration is duplicated and diverges | Confirmed; spec ready | Sol implementation plan |
+| E09 | Multi-dataset requests silently retain only the first | Complete | Integrated `e8a787f47e`; independent Graham PASS |
+| E10 | Docker verifier orchestration is duplicated and diverges | Complete | Integrated `34ac902468`, `101bf1a3d2`; independent Graham PASS |
 | E11 | CLI Dynosim runs skip process defaults | Confirmed; spec ready | Sol implementation plan |
 | C01 | Phaser Velo subscription accepts forged/replayed event | Complete — `cf09af5034` | Independent Graham approved; explicit benchmark trust-boundary contract |
 | C02 | Dataset Velo subscription accepts forged event or oversized payload | Complete — `c823d9c53e` through `6bb0066d47` | Independent Graham approved; RED→GREEN Velo fan-out bound, replay, and progress coverage recorded |
@@ -76,20 +76,49 @@ Graham review and a commit.
 | C06 | Authored HTTP body cap is not propagated to client config | Complete — `0a9ba67232` | Independent Graham approved; clean-head behavioral RED→GREEN coverage recorded |
 | C07 | H2 prior knowledge is not usable over UDS | Complete — `0ed7e8980d` | Independent Graham approved; UDS H1/H2 RED→GREEN coverage recorded |
 | C08 | Graph successor waits for parent completion instead of first token | Complete — `f363004e9d`, `df6e18adb7` | Independent Graham approved; focused RED→GREEN and 320 graph tests green |
-| C09 | Graph firing delay ignores cancellation | Confirmed; spec needed | Sol implementation plan |
-| C10 | Graph cancellation still permits tool successor | Confirmed; spec needed | Sol implementation plan |
-| C11 | Graph-runtime panic leaks idle accounting | Confirmed; spec needed | Sol implementation plan |
+| C09 | Graph firing delay ignores cancellation | Complete — `77e606b065`, `676025af64` | Independent Graham approved after deterministic post-token delay coverage; 321 graph tests green |
+| C10 | Graph cancellation still permits tool successor | Complete — `dfa0043510`, `af44cb48ef` | Independent Graham approved after deterministic pre-dispatch and in-flight cancellation coverage; 323 graph tests green |
+| C11 | Graph-runtime panic leaks idle accounting | Complete — `adea330ae8` | Independent Graham approved; panic RED→GREEN and 8 graph-runtime tests green |
 | C14a | YAML accepts boolean `artifacts.records` outside the contract | Complete — `1999e28b54`, `55ce407c1d` | Independent Graham approved; isolated behavioral RED→GREEN and 42 YAML tests green |
-| C14b | YAML accepts unsupported schema versions | Confirmed; spec needed | Sol implementation plan |
+| C14b | YAML accepts unsupported schema versions | Complete — `bec9ace814`, `3ffb9be6d7`, `711d4c2e76`, `556611fc3d` | Independent Graham approved after null/non-string hardening; 44 YAML tests green |
 | C18 | MLflow/W&B mishandle mixed labeled and unlabeled report series | Complete — `b98d0b4b8f` | Independent Graham approved; four-case RED→GREEN and exporter suites green |
-| C19 | Parquet histogram schema drifts across samples | Confirmed; spec needed | Sol implementation plan |
+| C19 | Parquet histogram schema drifts across samples | Complete — `d4db61806e` | Independent Graham approved; schema-expansion RED→GREEN and 9 Parquet tests green |
 | C20 | Dataset-analysis writer loses flush failures | Complete — `ed39aac8a4` | Independent Graham approved; dataset-analysis JSON tests green |
-| C24 | Slot release during a decrease can over-admit | Confirmed; spec needed | Sol implementation plan |
-| C25 | Global request-rate prefill release does not wake issuer | Confirmed; spec needed | Sol implementation plan |
+| C24 | Slot release during a decrease can over-admit | Complete | Integrated `47795ff8c0` through `96787c5a15`; independent Graham PASS |
+| C25 | Global request-rate prefill release does not wake issuer | Complete — `bdeb53dda4` | Independent Graham approved; focused wake RED→GREEN plus request-rate and slots suites green |
 | R01 | YAML/CLI config loses `--image-batch-size` | Already fixed | Preserve existing regression test |
 | B01 | AgentX integration fixtures omit required cache-bust option | Complete — `91b65b2044` | Independent Graham approved; compile regression green |
 
 ## Progress log
+
+- 2026-08-26: Completed C11. Graph-runtime in-flight accounting is now an RAII
+  responsibility, so a spawned task panic decrements and notifies idle waiters
+  during unwind. Independent Graham review approved the panic regression.
+
+- 2026-08-26: Completed C25. A global prefill-capacity release or limit growth
+  now wakes a capacity-saturated issuer through a no-missed-wake protocol,
+  without changing session-capacity behavior. Independent Graham review
+  approved the regression and targeted suites.
+
+- 2026-08-26: Completed C14b. Every authored schema version is now validated
+  before expansion and after expanded/sweep normalization: only the exact string
+  `"2.0"` is accepted; null and non-string values receive the same explicit
+  diagnostic. Independent Graham approval followed the P1 hardening.
+
+- 2026-08-26: Completed C10. Tool successors now stop both before dispatch and
+  while dispatch is in flight when their trace is cancelled. The final regression
+  deterministically parks a tool dispatch before cancellation; independent
+  Graham review approved the repair.
+
+- 2026-08-26: Completed C19. Parquet histogram export now retains the
+  deterministic union of observed bounds and remaps prior samples with zeroes
+  for newly introduced buckets. Independent Graham review passed nine Parquet
+  exporter tests.
+
+- 2026-08-26: Completed C09. Cancellation now races both the parent first-token
+  wait and the clock-injected firing delay; the regression waits until the child
+  is demonstrably parked at the post-token simulated deadline before canceling.
+  Independent Graham approval followed the coverage repair.
 
 - 2026-08-26: Completed C18. MLflow and W&B now share the same series
   selection rule: use the unique unlabeled aggregate when labels are mixed,
@@ -108,6 +137,13 @@ Graham review and a commit.
 - 2026-08-26: Completed C20. Dataset-analysis JSON persistence now propagates
   buffered-writer flush failures instead of reporting an artifact that may not
   have reached its sink; independent review passed its focused tests.
+
+- 2026-08-26: Completed E10. Ordinary, multi-step, and NativeGraph Docker
+  verification now share the same verifier transaction, including selected
+  test-root handling, cleanup, deadline, and joined-error behavior. The
+  selected-root behavioral RED passed after repair, the 78-test Harbor suite
+  passed (three Docker tests ignored), and the independent Graham re-review
+  passed before integration as `34ac902468` and `101bf1a3d2`.
 
 - 2026-08-25: Created the inventory and lifecycle criteria. Existing unrelated
   working-tree changes in `.dockerignore` and `artifacts/code-review.md` were
@@ -215,3 +251,25 @@ Graham review and a commit.
   policy preserves explicit H2 prior knowledge over Unix sockets while Auto and
   H1 retain H1 handshakes. Registry projection and live Unix H1/H2 listener
   RED→GREEN tests passed; independent Graham review passed.
+- 2026-08-26: E06 completed and integrated as `bb5e3fe5ff` and `bb23c66b39`:
+  sidecar setup failure finishes all already-started siblings in reverse order,
+  finish failure continues through remaining siblings, and cleanup failures are
+  retained as context on the primary error. Its behavioral RED, 7-test focused
+  GREEN suite, and independent Graham PASS are recorded.
+- 2026-08-26: C24 completed and integrated as `47795ff8c0` through
+  `96787c5a15`: a decrease reserves debt before draining, every admission
+  rejects reserved debt, and async waiters use a no-missed-wake notification
+  protocol when debt clears through release, increase, or drain. Baseline
+  over-admission RED evidence, the 16-test slots suite GREEN, and independent
+  Graham re-review PASS are recorded.
+- 2026-08-26: E07 completed and integrated as `82bf74990c`: a worker-owned
+  global-push cancellation settles its issued credit as `Canceled` with a
+  typed `dispatch_cancelled` result instead of a transport failure, while a
+  real worker transport error remains failed and latches abort-on-failure. Its
+  behavioral RED, two focused GREEN tests, post-commit hook audit, and
+  independent Graham PASS are recorded.
+- 2026-08-26: E09 completed and integrated as `e8a787f47e`: Config-v2 YAML
+  accepts exactly one expanded dataset or one shorthand dataset, rejects
+  explicit empty/multiple and mixed forms before lowering, and preserves the
+  absent-form synthetic default. Its first-entry-loss RED, 47-test YAML GREEN
+  suite, and independent Graham PASS are recorded.

@@ -288,7 +288,7 @@ struct ScalarSeries {
     points: Vec<(i64, f64)>,
 }
 
-/// Histogram time series with its bucket schema locked on first append.
+/// Histogram time series retaining the union of every observed bucket boundary.
 #[derive(Debug, Default)]
 struct HistogramSeries {
     bucket_les: Vec<String>,
@@ -540,20 +540,43 @@ impl ScalarSeries {
 }
 
 impl HistogramSeries {
-    /// Append a histogram sample, locking the first bucket schema and filling
+    /// Append a histogram sample, expanding the bucket schema and filling
     /// missing buckets with zero.
     fn append(&mut self, timestamp_ns: i64, sample: &WireSample) {
         let Some(buckets) = &sample.buckets else {
             return;
         };
-        if self.bucket_les.is_empty() {
-            let mut les: Vec<String> = buckets.keys().cloned().collect();
-            les.sort_by(|a, b| {
-                bucket_sort_key(a)
-                    .partial_cmp(&bucket_sort_key(b))
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            });
-            self.bucket_les = les;
+        let mut bucket_les = self.bucket_les.clone();
+        for le in buckets.keys() {
+            if !bucket_les.contains(le) {
+                bucket_les.push(le.clone());
+            }
+        }
+        bucket_les.sort_by(|a, b| {
+            bucket_sort_key(a)
+                .total_cmp(&bucket_sort_key(b))
+                .then_with(|| a.cmp(b))
+        });
+        if bucket_les != self.bucket_les {
+            let previous_les = std::mem::replace(&mut self.bucket_les, bucket_les);
+            let previous_positions: HashMap<&str, usize> = previous_les
+                .iter()
+                .enumerate()
+                .map(|(index, le)| (le.as_str(), index))
+                .collect();
+            for point in &mut self.points {
+                let previous_counts = std::mem::take(&mut point.3);
+                point.3 = self
+                    .bucket_les
+                    .iter()
+                    .map(|le| {
+                        previous_positions
+                            .get(le.as_str())
+                            .map(|index| previous_counts[*index])
+                            .unwrap_or(0.0)
+                    })
+                    .collect();
+            }
         }
         let row: Vec<f64> = self
             .bucket_les

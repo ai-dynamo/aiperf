@@ -6,7 +6,7 @@
 //! dir, its `native-v2.json` path, and the headline metrics parsed from that report.
 //! Two sources feed the index and merge (session wins on a dir collision):
 //! - the LIVE session — the orchestrator pushes a [`RunEntry`] as each sweep cell
-//!   completes (`profile::run_cells`), so an in-flight sweep is browseable;
+//!   completes (`profile::run_cells`), so an in-flight sweep is browsable;
 //! - HISTORICAL runs on disk — a walk of the results root for `native-v2.json`
 //!   files, so past runs (this or prior sessions) show up with no index/db.
 //!
@@ -165,11 +165,22 @@ pub fn merged(
     results_root: Option<&Path>,
     max_depth: usize,
 ) -> Vec<RunEntry> {
+    let historical = results_root
+        .map(|root| scan_disk(root, max_depth))
+        .unwrap_or_default();
+    merge_session_and_historical(session, historical)
+}
+
+/// The same merge as [`merged`] over an already-resolved `historical` list, so a
+/// non-filesystem source (the operator results API behind
+/// `crate::server::HistoricalSource`) reaches the run list through one policy.
+pub fn merge_session_and_historical(
+    session: &[RunEntry],
+    historical: Vec<RunEntry>,
+) -> Vec<RunEntry> {
     let mut by_dir: BTreeMap<String, RunEntry> = BTreeMap::new();
-    if let Some(root) = results_root {
-        for entry in scan_disk(root, max_depth) {
-            by_dir.insert(entry.artifact_dir.clone(), entry);
-        }
+    for entry in historical {
+        by_dir.insert(entry.artifact_dir.clone(), entry);
     }
     for entry in session {
         by_dir.insert(entry.artifact_dir.clone(), entry.clone());

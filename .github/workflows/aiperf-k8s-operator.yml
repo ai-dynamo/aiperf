@@ -1,9 +1,9 @@
 name: AIPerf Kubernetes Operator
 on:
   pull_request:
-    paths: [".github/workflows/aiperf-k8s-operator.yml", "aiperf-k8s-operator/**", "deploy/aiperf-k8s-operator/**", "contracts/native-k8s/**", "rust/cli/src/kube/**", "rust/cli/src/results_sidecar.rs", "rust/e2e-tests/tests/kube_cli_contract.rs"]
+    paths: [".github/workflows/aiperf-k8s-operator.yml", "aiperf-k8s-operator/**", "deploy/aiperf-k8s-operator/**", "contracts/native-k8s/**", "rust/cli/src/kube/**", "rust/cli/src/results_sidecar.rs", "rust/e2e-tests/tests/kube_cli_contract.rs", "rust/e2e-tests/tests/test_kube_sweep_parity.rs"]
   push:
-    paths: [".github/workflows/aiperf-k8s-operator.yml", "aiperf-k8s-operator/**", "deploy/aiperf-k8s-operator/**", "contracts/native-k8s/**", "rust/cli/src/kube/**", "rust/cli/src/results_sidecar.rs", "rust/e2e-tests/tests/kube_cli_contract.rs"]
+    paths: [".github/workflows/aiperf-k8s-operator.yml", "aiperf-k8s-operator/**", "deploy/aiperf-k8s-operator/**", "contracts/native-k8s/**", "rust/cli/src/kube/**", "rust/cli/src/results_sidecar.rs", "rust/e2e-tests/tests/kube_cli_contract.rs", "rust/e2e-tests/tests/test_kube_sweep_parity.rs"]
 jobs:
   test:
     runs-on: ubuntu-latest

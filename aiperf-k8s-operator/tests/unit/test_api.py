@@ -244,3 +244,35 @@ async def test_identical_replay_is_idempotent_but_corruption_is_not_acked(
         assert (
             await client.post(url, headers=document_headers, content=document)
         ).status_code == 422
+
+
+async def test_namespace_result_index_lists_published_runs(tmp_path: Path) -> None:
+    async with upload_client(tmp_path) as client:
+        assert (await client.get("/api/results/bench")).json() == {"items": []}
+
+        artifact = b'{"ok":true}'
+        assert (
+            await client.put(
+                "/api/uploads/bench/job-1/run-1/artifacts/summary.json",
+                headers=upload_headers(artifact),
+                content=artifact,
+            )
+        ).status_code == 201
+        document = manifest(artifact)
+        assert (
+            await client.post(
+                "/api/uploads/bench/job-1/run-1/manifest",
+                headers=upload_headers(document),
+                content=document,
+            )
+        ).status_code == 201
+
+        response = await client.get("/api/results/bench")
+        assert response.status_code == 200
+        items = response.json()["items"]
+        assert len(items) == 1
+        assert items[0]["metadata"] == {"name": "run-1", "namespace": "bench"}
+        assert items[0]["jobId"] == "job-1"
+        assert items[0]["ready"] is True
+        assert items[0]["artifactCount"] == 1
+        assert isinstance(items[0]["created"], float)

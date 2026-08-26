@@ -98,6 +98,24 @@ def create_app(
     async def stats() -> dict[str, int | float]:
         return await asyncio.to_thread(index.stats)
 
+    @app.get("/api/results/{namespace}")
+    async def list_namespace_results(
+        namespace: str,
+    ) -> dict[str, list[dict[str, object]]]:
+        runs = await asyncio.to_thread(index.list_runs, namespace)
+        return {
+            "items": [
+                {
+                    "metadata": {"name": run["runId"], "namespace": namespace},
+                    "jobId": run["jobId"],
+                    "created": run["created"],
+                    "ready": run["ready"],
+                    "artifactCount": run["artifactCount"],
+                }
+                for run in runs
+            ]
+        }
+
     @app.get("/api/results/{namespace}/{job_id}/{run_id}/manifest")
     async def manifest(
         namespace: str,

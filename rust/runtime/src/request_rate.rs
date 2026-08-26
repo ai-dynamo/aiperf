@@ -470,7 +470,7 @@ impl RequestRateWorkload {
         let session_guard = match &self.session_slots {
             Some(pool) => match pool.try_acquire() {
                 Some(guard) => Some(guard),
-                None => return Ok(NewSessionOutcome::NoSlot),
+                None => return Ok(NewSessionOutcome::NoSessionSlot),
             },
             None => None,
         };
@@ -479,7 +479,7 @@ impl RequestRateWorkload {
                 Some(guard) => Some(guard),
                 None => {
                     drop(session_guard);
-                    return Ok(NewSessionOutcome::NoSlot);
+                    return Ok(NewSessionOutcome::NoPrefillSlot);
                 }
             },
             None => None,
@@ -533,6 +533,12 @@ impl RequestRateWorkload {
         self.state.progress.notified().await;
     }
 
+    async fn wait_for_global_prefill_capacity(&self) {
+        if let Some(prefill_slots) = self.prefill_slots.as_ref() {
+            prefill_slots.wait_for_global_capacity().await;
+        }
+    }
+
     /// Consume one saturated tick without starving a virtual clock.
     ///
     /// Under a real clock a bare yield is correct: wall time advances on its own,
@@ -567,7 +573,8 @@ const VIRTUAL_IDLE_HORIZON_NS: i64 = 1_000_000_000;
 
 enum NewSessionOutcome {
     Issued,
-    NoSlot,
+    NoSessionSlot,
+    NoPrefillSlot,
     Stopped,
 }
 
@@ -676,7 +683,7 @@ impl Workload for RequestRateWorkload {
             if runtime.can_issue(true) {
                 match self.try_issue_new_session(runtime.clone(), scheduled_ns) {
                     Ok(NewSessionOutcome::Issued) => {}
-                    Ok(NewSessionOutcome::NoSlot) => {
+                    Ok(NewSessionOutcome::NoSessionSlot) => {
                         // A `Global`-backed session pool (`global` dispatch)
                         // may next free a slot on a DIFFERENT worker
                         // thread's release, which never fires this thread's own
@@ -704,6 +711,20 @@ impl Workload for RequestRateWorkload {
                             // Paced modes preserve the nonblocking skipped-tick
                             // behavior and retry at the next authored arrival,
                             // which is itself the clock event that advances time.
+                            tokio::task::yield_now().await;
+                        }
+                    }
+                    Ok(NewSessionOutcome::NoPrefillSlot) => {
+                        let prefill_pool_is_global = self
+                            .prefill_slots
+                            .as_ref()
+                            .is_some_and(|pool| pool.is_global());
+                        let is_saturated_now = next_target_ns <= runtime.now_ns();
+                        if is_saturated_now && prefill_pool_is_global {
+                            self.wait_for_global_prefill_capacity().await;
+                        } else if is_saturated_now {
+                            self.wait_for_closed_loop_progress().await;
+                        } else {
                             tokio::task::yield_now().await;
                         }
                     }
@@ -1022,6 +1043,62 @@ mod tests {
             vec![250, 250, 450, 450]
         );
         assert_eq!(admissions_with_catchup_window(0), vec![250, 250, 500, 500]);
+    }
+
+    #[test]
+    fn global_prefill_release_wakes_a_saturated_issuer_before_idle_horizon() {
+        let source = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(synthetic_prepared_source(1, 8, 4, Some(0), "m"));
+        let clock = Rc::new(SimClock::new());
+        let runtime_clock: Rc<dyn Clock> = clock.clone();
+        let admissions = Rc::new(RefCell::new(Vec::new()));
+        let recorded = admissions.clone();
+        let global_prefill = crate::timing::GlobalSlotPool::new(1);
+        let held_prefill = global_prefill.try_acquire().unwrap();
+        let prefill_slots = Rc::new(SlotPool::new_global(global_prefill));
+
+        let outcome = drive_sim(clock.clone(), move |_handle| async move {
+            let workload = RequestRateWorkload::with_components(
+                source,
+                Rc::new(RefCell::new(make_interval_generator(
+                    ArrivalPattern::ConcurrencyBurst,
+                    None,
+                    None,
+                    0,
+                ))),
+                None,
+                Some(prefill_slots),
+            )
+            .unwrap();
+            let runtime = ScheduledRuntime::new(
+                runtime_clock.clone(),
+                0,
+                Rc::new(AdmissionRecordingDispatcher {
+                    clock: runtime_clock.clone(),
+                    admissions: recorded,
+                }),
+                StopConfig {
+                    total_expected_requests: Some(1),
+                    ..StopConfig::default()
+                },
+                true,
+            );
+            let release_clock: Rc<dyn Clock> = clock.clone();
+            tokio::task::spawn_local(async move {
+                release_clock.sleep(1).await;
+                drop(held_prefill);
+            });
+            workload.execute(runtime).await.unwrap();
+        });
+
+        assert!(
+            !outcome.deadlocked,
+            "a global prefill release must wake the issuer"
+        );
+        assert_eq!(admissions.borrow().as_slice(), [1]);
     }
 
     struct DelayedDispatcher {
@@ -1358,6 +1435,134 @@ mod tests {
         assert!(
             result.is_ok(),
             "cancellation is an authored outcome and must not latch abort-on-failure"
+        );
+    }
+
+    enum GlobalPushReport {
+        Cancelled,
+        Failed,
+    }
+
+    struct ScriptedGlobalPushDispatcher {
+        report: GlobalPushReport,
+        credit_uuid: RefCell<Option<uuid::Uuid>>,
+        report_ready: Notify,
+    }
+
+    #[async_trait(?Send)]
+    impl TurnDispatcher for ScriptedGlobalPushDispatcher {
+        async fn dispatch_turn(
+            &self,
+            _turn: TurnToSend,
+            _observer: &dyn RequestObserver,
+            _on_first_token: &dyn Fn(i64),
+        ) -> Result<TurnDispatchOutcome> {
+            unreachable!("global-push must route this test through send_credit")
+        }
+
+        fn supports_credit_dispatch(&self) -> bool {
+            true
+        }
+
+        fn send_credit(&self, turn: TurnToSend) -> Result<()> {
+            assert!(
+                self.credit_uuid.replace(Some(turn.uuid)).is_none(),
+                "test dispatcher received more than one credit"
+            );
+            self.report_ready.notify_one();
+            Ok(())
+        }
+
+        async fn next_credit_report(&self) -> Option<crate::scheduled::TurnCreditReport> {
+            if self.credit_uuid.borrow().is_none() {
+                self.report_ready.notified().await;
+            }
+            let uuid = self.credit_uuid.borrow_mut().take()?;
+            let kind = match self.report {
+                GlobalPushReport::Cancelled => crate::scheduled::TurnCreditReportKind::Cancelled,
+                GlobalPushReport::Failed => crate::scheduled::TurnCreditReportKind::CreditReturn(
+                    Box::new(Err(anyhow!("scripted global-push transport failure"))),
+                ),
+            };
+            Some(crate::scheduled::TurnCreditReport { uuid, kind })
+        }
+    }
+
+    fn run_global_push_with_abort(
+        report: GlobalPushReport,
+    ) -> Result<crate::scheduled::ScheduledRunReport> {
+        let source = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(synthetic_prepared_source(1, 8, 4, Some(0), "m"));
+        let clock = Rc::new(SimClock::new());
+        let runtime_clock: Rc<dyn Clock> = clock.clone();
+        let mut captured = None;
+        let captured_slot = &mut captured;
+        drive_sim(clock, move |_handle| async move {
+            let workload = RequestRateWorkload::new(
+                RequestRateConfig {
+                    arrival_pattern: ArrivalPattern::ConcurrencyBurst,
+                    request_rate: None,
+                    arrival_smoothness: None,
+                    session_concurrency: Some(1),
+                    prefill_concurrency: None,
+                    seed: 0,
+                },
+                source,
+            )
+            .unwrap()
+            .with_failure_policy(OnFailure::Abort);
+            let plan = crate::phase_runtime::ScheduledPhasePlan::new(
+                crate::timing::PhaseConfig::new(
+                    "profiling",
+                    crate::timing::PhaseKind::Profiling,
+                    StopConfig {
+                        total_expected_requests: Some(1),
+                        ..StopConfig::default()
+                    },
+                ),
+                Rc::new(workload),
+                crate::scheduled::ScheduledAncillaryPolicies::default(),
+            )
+            .with_credit_dispatch(true);
+            *captured_slot = Some(
+                crate::phase_runtime::run_scheduled_phases(
+                    vec![plan],
+                    runtime_clock,
+                    Rc::new(ScriptedGlobalPushDispatcher {
+                        report,
+                        credit_uuid: RefCell::new(None),
+                        report_ready: Notify::new(),
+                    }),
+                    Rc::new(crate::timing::NoopPhaseObserver),
+                )
+                .await
+                .map(|mut result| result.reports.pop().expect("one profiling report").report),
+            );
+        });
+        captured.expect("global-push run completed")
+    }
+
+    #[test]
+    fn global_push_cancellation_settles_without_fail_fast_abort() {
+        let report = run_global_push_with_abort(GlobalPushReport::Cancelled)
+            .expect("cancelled global-push credit must not latch abort");
+        assert_eq!(report.turns.len(), 1);
+        assert_eq!(
+            report.turns[0].terminal_status,
+            Some(ReplayTerminalStatus::Canceled)
+        );
+    }
+
+    #[test]
+    fn global_push_sink_error_remains_failed_and_aborts() {
+        let error = run_global_push_with_abort(GlobalPushReport::Failed)
+            .expect_err("transport failure must still latch abort");
+        assert!(
+            error.to_string().contains("failed under abort-on-failure"),
+            "unexpected abort error: {error:#}"
         );
     }
 }

@@ -34,8 +34,22 @@ pub(crate) fn resolve_str(
 ) -> anyhow::Result<crate::model::BenchmarkRun> {
     let raw: serde_json::Value =
         serde_yaml::from_str(text).map_err(|e| anyhow::anyhow!("failed to parse config: {e}"))?;
+    validate_schema_version(
+        raw.get("schemaVersion")
+            .or_else(|| raw.get("schema_version")),
+    )?;
     let expanded = crate::expand::expand_config(raw)?;
     resolve_expanded_value(expanded, artifact_dir, None)
+}
+
+fn validate_schema_version(value: Option<&serde_json::Value>) -> anyhow::Result<()> {
+    if let Some(value) = value {
+        anyhow::ensure!(
+            value.as_str() == Some("2.0"),
+            "unsupported schema version {value:?}; expected \"2.0\""
+        );
+    }
+    Ok(())
 }
 
 /// Resolve an already `${ENV}`+Jinja-expanded config value into one run. Shared
@@ -60,6 +74,12 @@ pub(crate) fn resolve_expanded_inputs(
 ) -> anyhow::Result<Inputs> {
     let mut file: ConfigFile = serde_json::from_value(expanded)
         .map_err(|e| anyhow::anyhow!("failed to parse config: {e}"))?;
+    if let SchemaVersionValue::Authored(value) = &file.schema_version {
+        anyhow::ensure!(
+            value.as_str() == Some("2.0"),
+            "unsupported schema version {value:?}; expected \"2.0\""
+        );
+    }
     let random_seed = file.random_seed;
     warn_unimplemented_keys(&file);
     // A nested runtime block takes precedence over the top-level block.
@@ -622,7 +642,7 @@ struct ConfigFile {
     /// authoring it is not an unknown key; the loader targets one schema.
     #[serde(default, alias = "schemaVersion")]
     #[allow(dead_code)]
-    schema_version: Option<String>,
+    schema_version: SchemaVersionValue,
     /// `sweep:` block, consumed by [`crate::sweep::yaml_sweep::parse`] before this
     /// struct sees the value and stripped per variation. Declared so the key is
     /// legal on the single-run path rather than rejected as unknown.
@@ -651,6 +671,24 @@ struct ConfigFile {
     /// Top-level worker/cell runtime policy (`runtime.cells`).
     #[serde(default)]
     runtime: Option<RuntimeSection>,
+}
+
+#[derive(Debug, Default)]
+enum SchemaVersionValue {
+    #[default]
+    Absent,
+    Authored(serde_json::Value),
+}
+
+impl<'de> Deserialize<'de> for SchemaVersionValue {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Ok(Self::Authored(serde_json::Value::deserialize(
+            deserializer,
+        )?))
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -1865,10 +1903,7 @@ impl Benchmark {
             None => anyhow::bail!("endpoint.url is required"),
         };
 
-        // Single-run: the shorthand `dataset:` or the first `datasets:` entry.
-        let dataset = self
-            .dataset
-            .or_else(|| self.datasets.and_then(|d| d.into_iter().next()));
+        let dataset = resolve_effective_dataset(self.dataset, self.datasets)?;
         let (isl, osl, batch_size, isl_block_size) = extract_prompts(dataset.as_ref());
         let prefix_reuse_fraction = dataset
             .as_ref()
@@ -2791,6 +2826,30 @@ fn extract_prompts(
     (isl, osl, prompts.batch_size, prompts.block_size)
 }
 
+/// Resolve the one dataset that a native single run can lower.
+///
+/// An omitted dataset remains the established synthetic-default path.  Every
+/// explicitly authored `datasets:` list, however, must carry exactly one entry:
+/// lowering only its first entry would silently discard benchmark input.
+fn resolve_effective_dataset(
+    dataset: Option<DatasetSection>,
+    datasets: Option<Vec<DatasetSection>>,
+) -> anyhow::Result<Option<DatasetSection>> {
+    match (dataset, datasets) {
+        (Some(_), Some(_)) => anyhow::bail!(
+            "dataset and datasets cannot both be set; native single-run supports exactly one dataset"
+        ),
+        (Some(dataset), None) => Ok(Some(dataset)),
+        (None, None) => Ok(None),
+        (None, Some(datasets)) => match datasets.len() {
+            1 => Ok(datasets.into_iter().next()),
+            dataset_count => anyhow::bail!(
+                "datasets must contain exactly one dataset for a native single run (got {dataset_count})"
+            ),
+        },
+    }
+}
+
 fn parse_yaml_rate_series(
     value: &serde_json::Value,
 ) -> anyhow::Result<crate::model::rate_series::RateSeries> {
@@ -3216,6 +3275,109 @@ mod tests {
     }
 
     #[test]
+    fn expanded_datasets_require_exactly_one_entry() {
+        for (name, body) in [
+            (
+                "empty",
+                "  datasets: []\n  phases: {type: concurrency, requests: 1, concurrency: 1}\n",
+            ),
+            (
+                "multiple",
+                "  datasets:\n    - {prompts: {isl: 17}}\n    - {prompts: {isl: 29}}\n  phases: {type: concurrency, requests: 1, concurrency: 1}\n",
+            ),
+        ] {
+            let error = resolve_str(&cfg(body), Some("/tmp/x".into()))
+                .expect_err(&format!("{name} datasets must not silently lower"))
+                .to_string();
+            assert!(
+                error.contains("datasets") && error.contains("exactly one"),
+                "{name}: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn shorthand_and_expanded_datasets_are_mutually_exclusive() {
+        let error = resolve_str(
+            &cfg(
+                "  dataset: {prompts: {isl: 17}}\n  datasets:\n    - {prompts: {isl: 29}}\n  phases: {type: concurrency, requests: 1, concurrency: 1}\n",
+            ),
+            Some("/tmp/x".into()),
+        )
+        .expect_err("two dataset authoring forms must not silently choose one")
+        .to_string();
+        assert!(
+            error.contains("dataset") && error.contains("datasets"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn one_expanded_dataset_matches_shorthand_and_absence_keeps_synthetic_default() {
+        let shorthand = resolve_str(
+            &cfg(
+                "  dataset: {prompts: {isl: 17}}\n  phases: {type: concurrency, requests: 1, concurrency: 1}\n",
+            ),
+            Some("/tmp/x".into()),
+        )
+        .expect("shorthand dataset resolves");
+        let expanded = resolve_str(
+            &cfg(
+                "  datasets:\n    - {prompts: {isl: 17}}\n  phases: {type: concurrency, requests: 1, concurrency: 1}\n",
+            ),
+            Some("/tmp/x".into()),
+        )
+        .expect("one expanded dataset resolves");
+        let shorthand = serde_json::to_value(shorthand).expect("shorthand serializes");
+        let expanded = serde_json::to_value(expanded).expect("expanded serializes");
+        assert_eq!(shorthand["cfg"]["datasets"], expanded["cfg"]["datasets"]);
+
+        let omitted = resolve_str(
+            &cfg("  phases: {type: concurrency, requests: 1, concurrency: 1}\n"),
+            Some("/tmp/x".into()),
+        )
+        .expect("omitted dataset retains synthetic default");
+        assert_eq!(
+            serde_json::to_value(omitted).expect("omitted run serializes")["cfg"]["datasets"][0]["type"],
+            serde_json::json!("synthetic")
+        );
+    }
+
+    #[test]
+    fn unsupported_schema_version_is_rejected() {
+        for version in ["1.0", "2.1", "bogus"] {
+            let error = schema_err(version);
+            assert!(error.contains("unsupported schema version"), "{error}");
+        }
+    }
+
+    #[test]
+    fn authored_non_string_schema_versions_are_rejected_explicitly() {
+        for version in ["null", "1", "true", "false", "1.0", "[2.0]"] {
+            let error = schema_err_raw(version);
+            assert!(
+                error.contains("unsupported schema version") && error.contains("expected \"2.0\""),
+                "{error}"
+            );
+        }
+    }
+
+    fn schema_err(version: &str) -> String {
+        schema_err_raw(&format!("\"{version}\""))
+    }
+
+    fn schema_err_raw(version: &str) -> String {
+        resolve_str(
+            &format!(
+                "schemaVersion: {version}\nbenchmark:\n  model: m\n  endpoint: {{type: chat, url: 127.0.0.1:8000}}\n  phases: {{type: concurrency, requests: 1, concurrency: 1}}\n"
+            ),
+            Some("/tmp/x".into()),
+        )
+        .expect_err("expected a schema-version validation error")
+        .to_string()
+    }
+
+    #[test]
     fn records_true_is_rejected() {
         let error = err(
             "  artifacts: {records: true}\n  phases: {type: concurrency, requests: 1, concurrency: 1}\n",
@@ -3245,8 +3407,7 @@ mod tests {
     fn resolve_inputs(body: &str) -> super::Inputs {
         let raw: serde_json::Value = serde_yaml::from_str(&cfg(body)).expect("valid YAML");
         let expanded = crate::expand::expand_config(raw).expect("config expands");
-        resolve_expanded_inputs(expanded, Some("/tmp/x".into()), None)
-            .expect("inputs resolve")
+        resolve_expanded_inputs(expanded, Some("/tmp/x".into()), None).expect("inputs resolve")
     }
 
     /// The authored inline peak form must reach the wire as the nested
