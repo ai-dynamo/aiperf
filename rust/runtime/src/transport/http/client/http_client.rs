@@ -17,7 +17,7 @@ use url::Url;
 use crate::clock::Clock;
 
 use crate::transport::core::SseMessage;
-use crate::transport::core::eventstream::EventStreamDecoder;
+use crate::transport::core::eventstream::{EventStreamDecodeError, EventStreamDecoder};
 use crate::transport::core::{
     ErrorDetails, ErrorKind, RequestRecord, Response, TextResponse, TraceData,
 };
@@ -44,31 +44,35 @@ where
         inner: std::pin::Pin<Box<S>>,
         decoder: EventStreamDecoder,
         pending: std::collections::VecDeque<Bytes>,
+        is_terminal: bool,
     }
 
     let state = State {
         inner: Box::pin(stream),
         decoder: EventStreamDecoder::new(),
         pending: std::collections::VecDeque::new(),
+        is_terminal: false,
     };
 
     futures::stream::unfold(state, |mut state| async move {
         loop {
+            if state.is_terminal {
+                return None;
+            }
             if let Some(frame) = state.pending.pop_front() {
                 return Some((Ok(frame), state));
             }
             match state.inner.next().await {
                 Some(Ok(chunk)) => {
-                    state.decoder.push(&chunk);
+                    if let Err(error) = state.decoder.push(&chunk) {
+                        state.is_terminal = true;
+                        return Some((Err(eventstream_decode_error(error)), state));
+                    }
                     let messages = match state.decoder.drain_messages() {
                         Ok(messages) => messages,
                         Err(error) => {
-                            return Some((
-                                Err(ErrorDetails::sse(format!(
-                                    "eventstream decode error: {error}"
-                                ))),
-                                state,
-                            ));
+                            state.is_terminal = true;
+                            return Some((Err(eventstream_decode_error(error)), state));
                         }
                     };
                     for message in messages {
@@ -92,6 +96,10 @@ where
             }
         }
     })
+}
+
+fn eventstream_decode_error(error: EventStreamDecodeError) -> ErrorDetails {
+    ErrorDetails::sse(format!("eventstream decode error: {error}"))
 }
 
 #[derive(Default)]
@@ -923,6 +931,7 @@ impl HttpClient {
 mod eventstream_to_sse_tests {
     use super::*;
     use crate::transport::core::eventstream::EventStreamMessage;
+    use bytes::BytesMut;
     use futures::stream;
 
     #[tokio::test]
@@ -963,5 +972,24 @@ mod eventstream_to_sse_tests {
         }
         let text = String::from_utf8(collected.concat()).unwrap();
         assert_eq!(text, "data: {\"x\":true}\n\n");
+    }
+
+    #[tokio::test]
+    async fn emits_one_error_for_an_invalid_eventstream_prelude() {
+        let valid = EventStreamMessage::payload_part(Bytes::from_static(br#"{"i":1}"#));
+        let mut invalid = BytesMut::from(&valid.encode()[..]);
+        invalid[11] ^= 0xFF;
+        let raw = stream::iter(vec![
+            Ok::<Bytes, ErrorDetails>(invalid.freeze()),
+            Ok(valid.encode()),
+        ]);
+        let results: Vec<_> = eventstream_to_sse(raw).collect().await;
+
+        assert_eq!(results.len(), 1);
+        assert!(
+            results[0]
+                .as_ref()
+                .is_err_and(|error| error.message.contains("prelude CRC"))
+        );
     }
 }
