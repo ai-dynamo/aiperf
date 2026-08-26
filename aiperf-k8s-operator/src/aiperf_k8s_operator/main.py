@@ -791,6 +791,17 @@ async def observe_child_run(event: dict[str, Any], **_: Any) -> None:
         completed_runs = sum(1 for run in child_runs if run.get("phase") == "Completed")
         failed_runs = sum(1 for run in child_runs if run.get("phase") == "Failed")
 
+        # This is a read-modify-write of the whole childRuns list, so the patch
+        # carries the resourceVersion it was computed from.  The API server then
+        # rejects a write raced by a concurrent invocation with 409 Conflict
+        # instead of silently regressing childRuns to a stale value and tripping
+        # the CRD's monotonic completedRuns/failedRuns guard.  The 409 propagates
+        # so kopf retries the handler against the fresh object.
+        patch_metadata: dict[str, Any] = {"uid": sweep_uid}
+        resource_version = sweep_meta.get("resourceVersion")
+        if isinstance(resource_version, str) and resource_version:
+            patch_metadata["resourceVersion"] = resource_version
+
         await custom_objects.patch_namespaced_custom_object_status(
             group=GROUP,
             version=VERSION,
@@ -798,7 +809,7 @@ async def observe_child_run(event: dict[str, Any], **_: Any) -> None:
             plural=SWEEP_PLURAL,
             name=sweep_name,
             body={
-                "metadata": {"uid": sweep_uid},
+                "metadata": patch_metadata,
                 "status": {
                     "childRuns": child_runs,
                     "completedRuns": completed_runs,

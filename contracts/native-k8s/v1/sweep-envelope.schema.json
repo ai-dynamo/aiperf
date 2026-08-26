@@ -3,7 +3,7 @@
   "$id": "https://aiperf.nvidia.com/contracts/native-k8s/v1/sweep-envelope.schema.json",
   "type": "object",
   "additionalProperties": false,
-  "required": ["contractVersion", "runId", "namespace", "sweepId", "imageReference", "baseConfig", "axes", "trials", "maxConcurrentRuns", "sweepController"],
+  "required": ["contractVersion", "runId", "namespace", "sweepId", "imageReference", "baseConfig", "axes", "trials", "sweepController"],
   "properties": {
     "contractVersion": { "const": "native-k8s/v1" },
     "runId": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$" },
