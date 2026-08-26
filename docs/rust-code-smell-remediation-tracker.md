@@ -62,7 +62,7 @@ Graham review and a commit.
 | E03 | NativeGraph execution ignores agent timeout | Confirmed; spec ready | Sol implementation plan |
 | E04 | Abort still starts ready tool nodes | Confirmed; spec ready | Sol implementation plan |
 | E05 | Closed-worker credit return can hang drain | Confirmed; spec ready | Sol implementation plan |
-| E06 | Sidecar setup/finish failures leak siblings | Confirmed/narrowed; spec ready | Sol implementation plan |
+| E06 | Sidecar setup/finish failures leak siblings | Complete | Integrated `bb5e3fe5ff`, `bb23c66b39`; independent Graham PASS |
 | E07 | Global-push cancellation is misclassified as transport failure | Confirmed; spec ready | Sol implementation plan |
 | E08 | Declared terminal outputs cannot execute | Confirmed; spec ready | Sol implementation plan |
 | E09 | Multi-dataset requests silently retain only the first | Confirmed; spec ready | Sol implementation plan |
@@ -244,3 +244,8 @@ Graham review and a commit.
   policy preserves explicit H2 prior knowledge over Unix sockets while Auto and
   H1 retain H1 handshakes. Registry projection and live Unix H1/H2 listener
   RED→GREEN tests passed; independent Graham review passed.
+- 2026-08-26: E06 completed and integrated as `bb5e3fe5ff` and `bb23c66b39`:
+  sidecar setup failure finishes all already-started siblings in reverse order,
+  finish failure continues through remaining siblings, and cleanup failures are
+  retained as context on the primary error. Its behavioral RED, 7-test focused
+  GREEN suite, and independent Graham PASS are recorded.
