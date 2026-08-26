@@ -46,7 +46,7 @@ Graham review and a commit.
 | S01 | Socket-option failures are silently discarded | Complete — `ec97423efa` | Graham approved; focused tests green |
 | S03 | Transport-neutral dispatch hardwires `NativeMetricsObserver` | Complete — `fae122a100` | Independent Graham approved; RED→GREEN evidence recorded |
 | S04 | HTTP-owned shared transport configuration | Complete | Integrated `164955a757`, `9042df24d3`; independent Graham r2 PASS |
-| S05 | HTTP hot path allocates/reparses unnecessarily | Confirmed/narrowed; spec ready | Sol implementation plan |
+| S05 | HTTP hot path allocates/reparses unnecessarily | Complete — `d226475e39`, `aaa022f4c6`, `ad4eeb4066` | Independent Graham r3 approved; prepared/direct and bounded-dispatch RED→GREEN evidence recorded |
 | S06 | GPU worker mutex spans IPC awaits | Obsolete | Record retraction |
 | S07 | Unbounded graph/media channels | Complete — `9c32b959e3`, `d5136f005e`, `c6e681abd7`, `66eaaf89b5` | Independent Graham r3 approved; RED→GREEN lifecycle and finalization evidence recorded |
 | S08 | Cellular test helper has a vacuous missing-log path | Complete — `860d93510b` | Independent Graham approved; RED→GREEN e2e evidence recorded |
@@ -90,6 +90,12 @@ Graham review and a commit.
 | B01 | AgentX integration fixtures omit required cache-bust option | Complete — `91b65b2044` | Independent Graham approved; compile regression green |
 
 ## Progress log
+
+- 2026-08-26: Completed S05. Prepared HTTP requests now retain their parsed
+  URL and typed static headers through ordinary and bounded SSE dispatch;
+  artifact header maps are only materialized for raw capture, while direct
+  callers retain their `BTreeMap` facade. Behavioral RED→GREEN wire tests and
+  independent Graham r3 approved the complete series.
 
 - 2026-08-26: Completed S11. Profile input ownership now resides in seven
   typed groups constructed directly by both CLI and YAML paths; the flat
