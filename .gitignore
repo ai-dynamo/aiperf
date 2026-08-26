@@ -101,4 +101,8 @@ docs/superpowers/
 plans/
 .superpowers
 
+# Generated contest adjudication ledgers, rewritten in place while a contest
+# runs. The spec they adjudicate is the tracked artifact, not these.
+docs/specs/*.contest.md
+
 **/.vite/
