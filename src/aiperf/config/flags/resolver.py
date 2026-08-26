@@ -465,9 +465,14 @@ def _locate_yaml_dataset(merged: dict[str, Any]) -> dict[str, Any] | None:
     """Return the YAML dataset dict that CLI overrides apply to.
 
     Accepts both the ``benchmark.dataset`` shorthand and the canonical
-    ``benchmark.datasets`` list. With several datasets the override lands on
-    the first, matching the long-standing convention of the dataset-filter and
-    synthesis overlays this function replaces.
+    ``benchmark.datasets`` list. The multi-dataset branch below anticipates a
+    cap that has not been lifted yet, not current behavior: ``AIPerfConfig
+    .datasets`` is ``max_length=1``, and ``resolve_config`` validates before
+    overrides run, so a YAML with more than one dataset entry fails
+    validation before this function is ever reached. Kept as future-proofing
+    -- matching the long-standing convention of the dataset-filter and
+    synthesis overlays this function replaces, from when the cap did not
+    exist -- for whenever the limit lifts.
     """
     benchmark = merged.get("benchmark")
     if not isinstance(benchmark, dict):
@@ -541,8 +546,13 @@ def _inert_dataset_flags(
 
     inert: list[str] = []
     for field in candidates:
+        # Solo construction is deliberately outside the try: a CLIConfig
+        # cross-field validator failing on this single field alone would be
+        # a real bug in this function's premise (the combined CLIConfig
+        # already validated), and must surface rather than be swallowed by
+        # the except below, which exists for build_dataset only.
+        solo = _CLIConfig(**{field: getattr(cli, field)})
         try:
-            solo = _CLIConfig(**{field: getattr(cli, field)})
             emitted = build_dataset(
                 solo, declared_type=declared_type, declared_format=declared_format
             )
@@ -557,7 +567,9 @@ def _inert_dataset_flags(
     return inert
 
 
-def _reject_inert_dataset_flags(cli: CLIConfig, dataset: dict[str, Any]) -> None:
+def _reject_inert_dataset_flags(
+    cli: CLIConfig, dataset: dict[str, Any], declared_type: Any
+) -> None:
     """Raise for dataset flags that resolve cleanly while doing nothing.
 
     Checking only whether the whole override came back empty let any inert
@@ -565,6 +577,12 @@ def _reject_inert_dataset_flags(cli: CLIConfig, dataset: dict[str, Any]) -> None
     never fired, and the inert flag was dropped exactly as before this work.
     Every multi-flag command line touching the dataset escaped the guarantee,
     so the reconciliation is per flag.
+
+    ``declared_type`` is the caller's already-defaulted value (``dataset.get(
+    "type") or DatasetType.SYNTHETIC``), passed in rather than re-derived so
+    the error message reports the same type the check actually ran against
+    -- re-deriving it here previously meant the message rendered the raw,
+    possibly-``None`` YAML value instead.
     """
     from aiperf.config.flags._config_flag_routing import (
         DATASET_FIELDS_OUTSIDE_INPUT,
@@ -581,7 +599,7 @@ def _reject_inert_dataset_flags(cli: CLIConfig, dataset: dict[str, Any]) -> None
 
     inert = _inert_dataset_flags(
         cli,
-        dataset.get("type") or DatasetType.SYNTHETIC,
+        declared_type,
         dataset.get("format"),
         candidates,
     )
@@ -591,7 +609,7 @@ def _reject_inert_dataset_flags(cli: CLIConfig, dataset: dict[str, Any]) -> None
     names = sorted("/".join(flag_names_for(f) or (f,)) for f in inert)
     raise ConfigurationError(
         f"These CLI flags have no effect on a dataset of type "
-        f"{dataset.get('type')!r}: {', '.join(names)}. Remove them, or use a "
+        f"{str(declared_type)!r}: {', '.join(names)}. Remove them, or use a "
         f"dataset type that supports them."
     )
 
@@ -639,7 +657,7 @@ def _apply_dataset_overrides(merged: dict[str, Any], cli: CLIConfig) -> None:
         declared_type=declared_type,
         declared_format=dataset.get("format"),
     )
-    _reject_inert_dataset_flags(cli, dataset)
+    _reject_inert_dataset_flags(cli, dataset, declared_type)
     if not override:
         return
 

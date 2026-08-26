@@ -505,3 +505,35 @@ def test_dataset_flag_is_not_excused_by_a_neighbouring_flag(
             f"Paired with another flag it is silently dropped, even though it "
             f"may error correctly on its own."
         )
+
+
+def test_inert_probe_lets_solo_construction_errors_propagate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A field whose SOLO CLIConfig construction fails must propagate as a
+    real error, not be silently treated as "loud" and skipped by the
+    inert-flag probe.
+
+    ``_inert_dataset_flags`` used to wrap both the solo ``CLIConfig(...)``
+    construction and the ``build_dataset(...)`` call in one ``try``, so a
+    construction failure -- a ``ValueError``, e.g. from a cross-field
+    validator on CLIConfig itself; theoretical today, no current field hits
+    it -- was caught by the same ``except (ValueError, ConfigurationError)``
+    meant only for ``build_dataset``, and the field silently vanished from
+    the inert list instead of the failure surfacing. Simulated via
+    monkeypatch since no real field currently reaches this path.
+    """
+    import aiperf.config.flags as flags_module
+    from aiperf.config.flags.resolver import _inert_dataset_flags
+
+    class _RaisingCLIConfig:
+        def __init__(self, **kwargs: object) -> None:
+            raise ValueError("boom: solo construction failed")
+
+    monkeypatch.setattr(flags_module, "CLIConfig", _RaisingCLIConfig)
+
+    real_cli = cli(synthesis_max_isl=100)
+    with pytest.raises(ValueError, match="boom"):
+        _inert_dataset_flags(
+            real_cli, DatasetType.SYNTHETIC, None, {"synthesis_max_isl"}
+        )
