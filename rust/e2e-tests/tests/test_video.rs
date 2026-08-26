@@ -8,6 +8,7 @@ use std::io::Write;
 use std::process::{Command, Stdio};
 
 const WORKERS_MAX: u32 = 1;
+const DOCKERFILE: &str = include_str!("../../../Dockerfile");
 
 struct VideoDetails {
     width: i64,
@@ -265,19 +266,24 @@ async fn test_video_generation_parameters_mp4() {
 async fn video_with_audio_embeds_correct_stream(
     video_format: &str,
     video_codec: &str,
+    audio_codec: Option<&str>,
     expected_audio_codec: &str,
+    expected_audio_sample_rate: i64,
 ) {
     if cfg!(target_os = "windows") || !ffprobe_available() {
         return;
     }
     let (width, height, fps, duration) = (320, 240, 4, 2.0);
+    let audio_codec_arg = audio_codec
+        .map(|codec| format!(" --video-audio-codec {codec}"))
+        .unwrap_or_default();
 
     let h = AIPerfHarness::new().await;
     let r = h.run(&format!(
         "--model {DEFAULT_MODEL} --url {} --endpoint-type chat \
          --video-width {width} --video-height {height} --video-duration {duration} \
          --video-fps {fps} --video-format {video_format} --video-codec {video_codec} \
-         --video-audio-sample-rate 44100 --video-audio-num-channels 1 \
+         --video-audio-sample-rate 44100 --video-audio-num-channels 1{audio_codec_arg} \
          --prompt-input-tokens-mean 50 --num-dataset-entries 4 \
          --request-rate 2.0 --request-count 4 --workers-max {WORKERS_MAX}",
         h.mock.url
@@ -299,18 +305,52 @@ async fn video_with_audio_embeds_correct_stream(
         );
         assert_eq!(details.audio_codec.as_deref(), Some(expected_audio_codec));
         assert_eq!(details.audio_channels, Some(1));
-        assert_eq!(details.audio_sample_rate, Some(44100));
+        assert_eq!(details.audio_sample_rate, Some(expected_audio_sample_rate));
     }
 }
 
 #[tokio::test]
 async fn test_video_with_audio_embeds_correct_stream_webm() {
-    video_with_audio_embeds_correct_stream("webm", "libvpx-vp9", "vorbis").await;
+    video_with_audio_embeds_correct_stream("webm", "libvpx-vp9", None, "vorbis", 44_100).await;
 }
 
 #[tokio::test]
 async fn test_video_with_audio_embeds_correct_stream_mp4() {
-    video_with_audio_embeds_correct_stream("mp4", "libx264", "aac").await;
+    video_with_audio_embeds_correct_stream("mp4", "libvpx-vp9", None, "opus", 48_000).await;
+}
+
+#[tokio::test]
+async fn test_video_with_audio_honors_explicit_opus_override() {
+    video_with_audio_embeds_correct_stream(
+        "webm",
+        "libvpx-vp9",
+        Some("libopus"),
+        "opus",
+        48_000,
+    )
+    .await;
+}
+
+#[test]
+fn test_ffmpeg_container_allowlist_contract() {
+    for required in [
+        "libopus-dev",
+        "--disable-autodetect",
+        "--disable-everything",
+        "--enable-ffmpeg",
+        "--enable-ffprobe",
+        "--enable-encoder=libvpx_vp8,libvpx_vp9,libvorbis,libopus",
+        "--enable-decoder=rawvideo,png,pcm_s16le,pcm_s24le,pcm_s32le,pcm_u8",
+        "--enable-demuxer=rawvideo,image2,wav,matroska,mov",
+        "--enable-muxer=webm,matroska,mp4",
+        "--enable-parser=png,vp9,opus,vorbis",
+        "--enable-protocol=file,pipe",
+        "--enable-filter=scale,format,aformat,aresample,anull,null,copy",
+        "--enable-bsf=vp9_superframe",
+        "libopus.so* /opt/ffmpeg/lib/",
+    ] {
+        assert!(DOCKERFILE.contains(required), "missing {required}");
+    }
 }
 
 #[tokio::test]
