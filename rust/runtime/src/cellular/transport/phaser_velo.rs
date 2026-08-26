@@ -22,6 +22,13 @@
 //! [`Broadcast::attach`](crate::cellular::broadcast::Broadcast::attach)), so a
 //! generation advanced concurrently with a subscribe lands in exactly one of {reply
 //! snapshot, pushed live}, with no missed transition or double count.
+//!
+//! # Trust boundary
+//!
+//! The local benchmark deployment trusts the controller/cell routing plane: its trusted controller
+//! sends raw live Velo pushes with no per-push authenticity or replay
+//! rejection. The replay/live seam instead preserves generation ordering and no missed
+//! legitimate transitions.
 
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
@@ -210,6 +217,18 @@ mod tests {
     use crate::cellular::phaser::PhaseTransition;
     use crate::cellular::transport::connect::{BindSpec, build_velo};
     use crate::engine::cellular_registration::CellRegistrationAuthority;
+
+    #[test]
+    fn raw_push_trust_boundary_is_disclosed() {
+        let production_module = include_str!("phaser_velo.rs")
+            .split("#[cfg(test)]")
+            .next()
+            .expect("module source has a test boundary");
+
+        assert!(production_module.contains("trusted controller"));
+        assert!(production_module.contains("no per-push authenticity"));
+        assert!(production_module.contains("generation ordering"));
+    }
 
     // End-to-end over two in-process velo instances: the controller advances the phaser
     // and a cell subscribing over velo observes the full generation sequence — replay
