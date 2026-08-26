@@ -186,6 +186,69 @@ def validate_envelope(payload: dict[str, Any]) -> ControllerEnvelope:
     return ControllerEnvelope.model_validate(payload)
 
 
+class SweepAxis(BaseModel):
+    """One parameter axis in a sweep envelope."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    parameter: str = Field(min_length=1)
+    values: list[Any] = Field(min_length=1)
+
+
+class SweepRoleEnvelope(BaseModel):
+    """The sweep-controller role from the sweep envelope."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    name: Literal["sweep-controller"]
+    command: list[str] = Field(min_length=1)
+    argv: list[str]
+    environment: dict[str, str]
+    bootstrap: dict[str, Any] | None = None
+
+
+class SweepEnvelope(BaseModel):
+    """The native-k8s/v1 sweep workload definition."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    contract_version: Literal[CONTRACT_VERSION] = Field(alias="contractVersion")
+    run_id: str = Field(alias="runId", pattern=_DNS_LABEL)
+    namespace: str = Field(pattern=_DNS_LABEL)
+    sweep_id: str = Field(alias="sweepId", pattern=_DNS_LABEL)
+    image_reference: str = Field(
+        alias="imageReference",
+        pattern=(
+            r"^[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]+)?"
+            r"(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)+"
+            r"@sha256:[0-9a-f]{64}$"
+        ),
+    )
+    base_config: dict[str, Any] = Field(alias="baseConfig")
+    axes: list[SweepAxis] = Field(min_length=1)
+    trials: int = Field(ge=1)
+    max_concurrent_runs: int = Field(alias="maxConcurrentRuns", ge=1, default=1)
+    sweep_controller: SweepRoleEnvelope = Field(alias="sweepController")
+
+
+def validate_sweep_envelope(payload: dict[str, Any]) -> SweepEnvelope:
+    """Validate caller JSON against the sweep schema and strict local model."""
+    version = payload.get("contractVersion", "<missing>")
+    if version != CONTRACT_VERSION:
+        raise ValueError(
+            f"unsupported contractVersion {version!r}; expected {CONTRACT_VERSION!r}"
+        )
+    errors = sorted(
+        Draft202012Validator(_schema("sweep-envelope.schema.json")).iter_errors(
+            payload
+        ),
+        key=str,
+    )
+    if errors:
+        raise ValueError(errors[0].message)
+    return SweepEnvelope.model_validate(payload)
+
+
 def validate_bootstrap_metadata(
     reference: BootstrapReference, metadata: dict[str, Any]
 ) -> None:

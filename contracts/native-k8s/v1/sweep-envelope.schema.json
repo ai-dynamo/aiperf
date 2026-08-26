@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aiperf.nvidia.com/contracts/native-k8s/v1/sweep-envelope.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contractVersion", "runId", "namespace", "sweepId", "imageReference", "baseConfig", "axes", "trials", "maxConcurrentRuns", "sweepController"],
+  "properties": {
+    "contractVersion": { "const": "native-k8s/v1" },
+    "runId": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$" },
+    "namespace": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$" },
+    "sweepId": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$" },
+    "imageReference": { "type": "string", "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]+)?(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)+@sha256:[0-9a-f]{64}$" },
+    "baseConfig": { "type": "object" },
+    "axes": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/axis" }
+    },
+    "trials": { "type": "integer", "minimum": 1 },
+    "maxConcurrentRuns": { "type": "integer", "minimum": 1, "default": 1 },
+    "sweepController": { "$ref": "#/$defs/sweepRole" }
+  },
+  "$defs": {
+    "axis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["parameter", "values"],
+      "properties": {
+        "parameter": { "type": "string", "minLength": 1 },
+        "values": { "type": "array", "minItems": 1 }
+      }
+    },
+    "sweepRole": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "command", "argv", "environment"],
+      "properties": {
+        "name": { "const": "sweep-controller" },
+        "command": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+        "argv": { "type": "array", "items": { "type": "string" } },
+        "environment": { "type": "object", "additionalProperties": { "type": "string" } },
+        "bootstrap": { "$ref": "#/$defs/bootstrap" }
+      }
+    },
+    "bootstrap": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["secretName", "role", "mountPath", "sha256"],
+      "properties": {
+        "secretName": { "type": "string", "minLength": 1 },
+        "role": { "const": "sweep-controller" },
+        "mountPath": { "type": "string", "pattern": "^/" },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    }
+  }
+}

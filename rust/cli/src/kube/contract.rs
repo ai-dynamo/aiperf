@@ -132,6 +132,107 @@ pub struct ImageCapabilities {
     pub hierarchical_aggregation: bool,
 }
 
+/// Axis definition for a parameter sweep.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SweepAxis {
+    /// Config-v2 parameter path.
+    pub parameter: String,
+    /// Ordered candidate values for this axis.
+    pub values: Vec<Value>,
+}
+
+/// The only sweep controller role name accepted by the sweep envelope.
+pub const SWEEP_CONTROLLER_ROLE_NAME: &str = "sweep-controller";
+
+/// The sweep-controller role and its process material.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SweepRoleEnvelope {
+    /// Must equal `"sweep-controller"`.
+    pub name: String,
+    /// OCI command vector.
+    pub command: Vec<String>,
+    /// OCI argument vector.
+    pub argv: Vec<String>,
+    /// Fixed process environment.
+    pub environment: std::collections::BTreeMap<String, String>,
+    /// Optional bootstrap material for the sweep controller.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bootstrap: Option<SweepBootstrapReference>,
+}
+
+/// Bootstrap reference for the sweep-controller role.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SweepBootstrapReference {
+    /// Immutable Secret name.
+    pub secret_name: String,
+    /// Must equal `"sweep-controller"`.
+    pub role: String,
+    /// Absolute container mount path.
+    pub mount_path: String,
+    /// SHA-256 digest of the private bootstrap bytes.
+    pub sha256: String,
+}
+
+/// A submitted sweep envelope.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SweepEnvelope {
+    /// Versioned boundary identifier.
+    pub contract_version: String,
+    /// Stable run identity (DNS label).
+    pub run_id: String,
+    /// Target Kubernetes namespace.
+    pub namespace: String,
+    /// Stable sweep identity (DNS label).
+    pub sweep_id: String,
+    /// Pullable immutable registry reference.
+    pub image_reference: String,
+    /// Config-v2 document shared across all child runs.
+    pub base_config: Value,
+    /// Ordered sweep axes; at least one required.
+    pub axes: Vec<SweepAxis>,
+    /// Number of trials per parameter combination.
+    pub trials: u32,
+    /// Maximum number of child runs executing concurrently.
+    #[serde(default = "default_max_concurrent_runs")]
+    pub max_concurrent_runs: u32,
+    /// Sweep controller role and its process material.
+    pub sweep_controller: SweepRoleEnvelope,
+}
+
+fn default_max_concurrent_runs() -> u32 {
+    1
+}
+
+/// Decode and validate a sweep envelope before it can cross the CLI/operator boundary.
+pub fn validate_sweep_envelope(value: Value) -> Result<SweepEnvelope, KubeError> {
+    require_supported_version(&value)?;
+    validate_schema(
+        include_str!("../../../../contracts/native-k8s/v1/sweep-envelope.schema.json"),
+        &value,
+    )?;
+    let envelope = serde_json::from_value::<SweepEnvelope>(value)
+        .map_err(|error| KubeError::Decode(error.to_string()))?;
+    if !is_dns_label(&envelope.run_id)
+        || !is_dns_label(&envelope.namespace)
+        || !is_dns_label(&envelope.sweep_id)
+    {
+        return Err(KubeError::ContractValidation(
+            "runId, namespace, or sweepId is not canonical native-k8s/v1 syntax".to_string(),
+        ));
+    }
+    if envelope.sweep_controller.name != SWEEP_CONTROLLER_ROLE_NAME {
+        return Err(KubeError::ContractValidation(format!(
+            "sweepController.name must be {:?}, got {:?}",
+            SWEEP_CONTROLLER_ROLE_NAME, envelope.sweep_controller.name
+        )));
+    }
+    Ok(envelope)
+}
+
 /// Decode and validate an envelope before it can cross the CLI/operator boundary.
 pub fn validate_envelope(value: Value) -> Result<ControllerEnvelope, KubeError> {
     require_supported_version(&value)?;
