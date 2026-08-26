@@ -505,6 +505,48 @@ mod tests {
     }
 
     #[test]
+    fn completion_requests_read_continuous_usage_and_first_chunk_policy() {
+        let chat: ChatCompletionRequest = serde_json::from_str(
+            r#"{
+                "model": "x",
+                "messages": [],
+                "stream": true,
+                "stream_options": {
+                    "include_usage": true,
+                    "continuous_usage_stats": true
+                },
+                "mock_first_chunk_tokens": 3
+            }"#,
+        )
+        .unwrap();
+        assert!(chat.continuous_usage_stats());
+        assert_eq!(chat.first_chunk_tokens(), 3);
+
+        let text: CompletionRequest = serde_json::from_str(
+            r#"{
+                "model": "x",
+                "prompt": "hello",
+                "stream": true,
+                "stream_options": {"continuous_usage_stats": true},
+                "mock_first_chunk_tokens": 0
+            }"#,
+        )
+        .unwrap();
+        assert!(text.continuous_usage_stats());
+        assert_eq!(text.first_chunk_tokens(), 1);
+
+        let chat_defaults: ChatCompletionRequest =
+            serde_json::from_str(r#"{"model":"x","messages":[]}"#).unwrap();
+        assert!(!chat_defaults.continuous_usage_stats());
+        assert_eq!(chat_defaults.first_chunk_tokens(), 1);
+
+        let text_defaults: CompletionRequest =
+            serde_json::from_str(r#"{"model":"x","prompt":"hello"}"#).unwrap();
+        assert!(!text_defaults.continuous_usage_stats());
+        assert_eq!(text_defaults.first_chunk_tokens(), 1);
+    }
+
+    #[test]
     fn tei_prefers_texts_over_documents() {
         let req: HFTEIRerankRequest =
             serde_json::from_str(r#"{"query": "q", "texts": ["t1"], "documents": ["d1"]}"#)

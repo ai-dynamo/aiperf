@@ -1062,6 +1062,272 @@ mod spec_decode_acceptance_tests {
     }
 
     #[tokio::test]
+    async fn stream_bundles_first_content_and_emits_cumulative_usage() {
+        let state = AppState::build(MockServerConfig {
+            fast: true,
+            no_tokenizer: true,
+            fixed_output_tokens: Some(6),
+            ..Default::default()
+        });
+        let request: ChatCompletionRequest = serde_json::from_value(json!({
+            "model": "test-model",
+            "messages": [{"role": "user", "content": "hello"}],
+            "stream": true,
+            "stream_options": {
+                "include_usage": true,
+                "continuous_usage_stats": true
+            },
+            "mock_first_chunk_tokens": 3,
+            "max_tokens": 6
+        }))
+        .unwrap();
+        let (content_type, body) = render_chat_completion_fast(&state, &request);
+        assert_eq!(content_type, "text/event-stream");
+        let frames = sse_values(&body);
+        let content_frames = frames
+            .iter()
+            .filter(|frame| {
+                frame["choices"][0]["delta"]["content"]
+                    .as_str()
+                    .is_some_and(|content| !content.is_empty())
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(content_frames.len(), 4);
+        assert_eq!(
+            content_frames
+                .iter()
+                .map(|frame| frame["usage"]["completion_tokens"].as_u64())
+                .collect::<Vec<_>>(),
+            vec![Some(3), Some(4), Some(5), Some(6)]
+        );
+        assert_eq!(
+            content_frames[0]["choices"][0]["delta"]["role"],
+            "assistant"
+        );
+        assert_eq!(content_frames[3]["choices"][0]["finish_reason"], "length");
+        assert!(
+            frames
+                .iter()
+                .any(|frame| frame["choices"] == json!([])
+                    && frame["usage"]["completion_tokens"] == 6)
+        );
+    }
+
+    #[tokio::test]
+    async fn stream_keeps_terminal_and_continuous_usage_independent() {
+        let state = AppState::build(MockServerConfig {
+            fast: true,
+            no_tokenizer: true,
+            fixed_output_tokens: Some(3),
+            ..Default::default()
+        });
+
+        for continuous_usage_stats in [None, Some(false)] {
+            let request: ChatCompletionRequest = serde_json::from_value(json!({
+                "model": "test-model",
+                "messages": [{"role": "user", "content": "hello"}],
+                "stream": true,
+                "stream_options": {
+                    "include_usage": true,
+                    "continuous_usage_stats": continuous_usage_stats
+                },
+                "max_tokens": 3
+            }))
+            .unwrap();
+            let (_, body) = render_chat_completion_fast(&state, &request);
+            let frames = sse_values(&body);
+            let content_frames = frames.iter().filter(|frame| {
+                frame["choices"][0]["delta"]["content"]
+                    .as_str()
+                    .is_some_and(|content| !content.is_empty())
+            });
+            assert!(
+                content_frames
+                    .into_iter()
+                    .all(|frame| frame.get("usage").is_none())
+            );
+            assert_eq!(
+                frames
+                    .iter()
+                    .filter(|frame| frame["choices"] == json!([]) && frame.get("usage").is_some())
+                    .count(),
+                1
+            );
+        }
+
+        let continuous_without_terminal: ChatCompletionRequest = serde_json::from_value(json!({
+            "model": "test-model",
+            "messages": [{"role": "user", "content": "hello"}],
+            "stream": true,
+            "stream_options": {
+                "include_usage": false,
+                "continuous_usage_stats": true
+            },
+            "max_tokens": 3
+        }))
+        .unwrap();
+        let (_, body) = render_chat_completion_fast(&state, &continuous_without_terminal);
+        let frames = sse_values(&body);
+        let content_frames = frames
+            .iter()
+            .filter(|frame| {
+                frame["choices"][0]["delta"]["content"]
+                    .as_str()
+                    .is_some_and(|content| !content.is_empty())
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            content_frames
+                .iter()
+                .all(|frame| frame.get("usage").is_some())
+        );
+        assert!(
+            frames
+                .iter()
+                .all(|frame| frame["choices"] != json!([]) || frame.get("usage").is_none())
+        );
+    }
+
+    #[tokio::test]
+    async fn reasoning_stream_emits_cumulative_usage_on_every_generated_chunk() {
+        let state = AppState::build(MockServerConfig {
+            fast: true,
+            no_tokenizer: true,
+            ..Default::default()
+        });
+        let request: ChatCompletionRequest = serde_json::from_value(json!({
+            "model": "qwen-test",
+            "messages": [{"role": "user", "content": "hello world"}],
+            "stream": true,
+            "stream_options": {
+                "include_usage": true,
+                "continuous_usage_stats": true
+            },
+            "reasoning_effort": "low",
+            "max_tokens": 4
+        }))
+        .unwrap();
+        let (_, body) = render_chat_completion_fast(&state, &request);
+        let frames = sse_values(&body);
+        let reasoning_frames = frames
+            .iter()
+            .filter(|frame| {
+                frame["choices"][0]["delta"]["reasoning_content"]
+                    .as_str()
+                    .is_some_and(|content| !content.is_empty())
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(reasoning_frames.len(), 4);
+        assert_eq!(
+            reasoning_frames
+                .iter()
+                .map(|frame| {
+                    (
+                        frame["usage"]["prompt_tokens"].as_u64(),
+                        frame["usage"]["completion_tokens"].as_u64(),
+                        frame["usage"]["total_tokens"].as_u64(),
+                    )
+                })
+                .collect::<Vec<_>>(),
+            vec![
+                (Some(2), Some(1), Some(3)),
+                (Some(2), Some(2), Some(4)),
+                (Some(2), Some(3), Some(5)),
+                (Some(2), Some(4), Some(6)),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn text_stream_bundles_first_content_and_emits_cumulative_usage() {
+        let state = AppState::build(MockServerConfig {
+            fast: true,
+            no_tokenizer: true,
+            fixed_output_tokens: Some(6),
+            ..Default::default()
+        });
+        let request: CompletionRequest = serde_json::from_value(json!({
+            "model": "test-model",
+            "prompt": "hello",
+            "stream": true,
+            "stream_options": {
+                "include_usage": true,
+                "continuous_usage_stats": true
+            },
+            "mock_first_chunk_tokens": 3,
+            "max_tokens": 6
+        }))
+        .unwrap();
+        let (content_type, body) = render_text_completion_fast(&state, &request);
+        assert_eq!(content_type, "text/event-stream");
+        let frames = sse_values(&body);
+        let content_frames = frames
+            .iter()
+            .filter(|frame| {
+                frame["choices"][0]["text"]
+                    .as_str()
+                    .is_some_and(|content| !content.is_empty())
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(content_frames.len(), 4);
+        assert_eq!(
+            content_frames
+                .iter()
+                .map(|frame| frame["usage"]["completion_tokens"].as_u64())
+                .collect::<Vec<_>>(),
+            vec![Some(3), Some(4), Some(5), Some(6)]
+        );
+        assert_eq!(content_frames[3]["choices"][0]["finish_reason"], "length");
+        assert!(
+            frames
+                .iter()
+                .any(|frame| frame["choices"] == json!([])
+                    && frame["usage"]["completion_tokens"] == 6)
+        );
+    }
+
+    #[tokio::test]
+    async fn text_stream_without_continuous_usage_keeps_usage_terminal_only() {
+        let state = AppState::build(MockServerConfig {
+            fast: true,
+            no_tokenizer: true,
+            fixed_output_tokens: Some(3),
+            ..Default::default()
+        });
+
+        for continuous_usage_stats in [None, Some(false)] {
+            let request: CompletionRequest = serde_json::from_value(json!({
+                "model": "test-model",
+                "prompt": "hello",
+                "stream": true,
+                "stream_options": {
+                    "include_usage": true,
+                    "continuous_usage_stats": continuous_usage_stats
+                },
+                "max_tokens": 3
+            }))
+            .unwrap();
+            let (_, body) = render_text_completion_fast(&state, &request);
+            let frames = sse_values(&body);
+            assert!(frames.iter().all(|frame| {
+                frame["choices"][0]["text"]
+                    .as_str()
+                    .is_none_or(|content| content.is_empty() || frame.get("usage").is_none())
+            }));
+            assert_eq!(
+                frames
+                    .iter()
+                    .filter(|frame| frame["choices"] == json!([]) && frame.get("usage").is_some())
+                    .count(),
+                1
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn zero_output_tool_call_defers_finish_to_stats_chunk() {
         let state = AppState::build(MockServerConfig {
             fast: true,
