@@ -133,6 +133,9 @@ pub struct Endpoint {
     /// Trust the server's reported token counts over local tokenization.
     #[serde(default)]
     pub use_server_token_count: bool,
+    /// Request cumulative server usage on every streamed chat content chunk.
+    #[serde(default, alias = "perChunkUsage")]
+    pub per_chunk_usage: bool,
     /// Per-request timeout, in seconds.
     #[serde(default = "default_timeout_seconds")]
     pub timeout_seconds: f64,

@@ -46,6 +46,9 @@ pub struct TokenCounts {
     pub reasoning: Option<u64>,
     /// Requested output sequence length, when known from request parameters.
     pub requested_output: Option<u64>,
+    /// Cumulative completion tokens delivered through the first content chunk.
+    #[serde(default)]
+    pub first_content_chunk_tokens: Option<u64>,
 }
 
 impl TokenCounts {

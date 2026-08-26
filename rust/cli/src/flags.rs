@@ -759,6 +759,11 @@ pub struct ProfileFlags {
     #[arg(long = "use-server-token-count", num_args = 0..=1, default_missing_value = "true")]
     pub use_server_token_count: Option<bool>,
 
+    /// Request cumulative usage on every streaming chat chunk
+    /// (`--per-chunk-usage`). Requires streaming server token counts.
+    #[arg(long = "per-chunk-usage", num_args = 0..=1, default_missing_value = "true")]
+    pub per_chunk_usage: Option<bool>,
+
     /// Connection reuse policy (`--connection-reuse-strategy`):
     /// `pooled` (default), `never`, `sticky-user-sessions`.
     #[arg(long = "connection-reuse-strategy")]
