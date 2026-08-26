@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Native `aiperf config` subcommands.
 
-pub mod templates_data;
+pub(crate) mod templates_data;
 
 use std::path::PathBuf;
 
