@@ -38,9 +38,9 @@ dataset contracts.
 
 1. Add a general streaming dataset lifecycle without weakening the meanings of
    existing finite dataset and Graph-IR contracts.
-2. Select source, format, workload, endpoint, and transport through independent
-   traits and frozen registries.
-3. Bound memory, local disk, queued partitions, decoded units, session state,
+2. Select source, format, session program, workload, endpoint, and transport
+   through independent traits and frozen registries.
+3. Bound memory, local disk, queued partitions, decoded fragments/actions, session state,
    reorder state, scheduled work, and cellular transfer independently of total
    dataset size or stream lifetime.
 4. Support sealed finite streams and indefinitely following streams through one
@@ -59,6 +59,10 @@ dataset contracts.
    uncontrolled source authority or destroying global event order.
 10. Provide a migration path for current finite loaders to reuse bounded
     decoders without requiring them to become streaming APIs.
+11. Preserve one logical session seamlessly across source partitions and
+    checkpoints for multi-turn conversations, recorded agent/tool trajectories,
+    and graph sessions, including causal predecessors that arrive in later
+    chunks.
 
 ## Non-goals
 
@@ -84,14 +88,16 @@ not a conforming implementation of this design.
 
 The following invariants apply together:
 
-1. **Independent composition.** Source, format, replay policy, placement,
-   endpoint, and transport are independently selected or injected. No source
-   adapter constructs endpoint wire requests, and no format adapter lists S3 or
-   resolves HF revisions.
-2. **Frozen implementation universe.** Every source and format factory is
-   registered, selected, and strictly validated before source acquisition,
-   network clients, worker runtimes, cells, or benchmark traffic begin. Live
-   data changes; the factory universe does not.
+1. **Independent composition.** Source, format, session program, replay policy,
+   checkpoint backend, placement, endpoint, and transport are independently
+   selected or injected. No source adapter constructs endpoint wire requests,
+   no format adapter lists S3 or resolves HF revisions, and no result sink owns
+   input progress.
+2. **Frozen implementation universe.** Every source, format, session-program,
+   action-sink, and checkpoint-backend factory is registered, selected, and strictly
+   validated before source acquisition, network clients, worker runtimes,
+   cells, or benchmark traffic begin. Live data and committed generations
+   change; the factory universe does not.
 3. **One lifecycle authority.** Phase execution owns start, stop issuance,
    pending cancellation, in-flight cancellation, drain, and finalization.
    Streaming tasks have no independent signal handler or detached shutdown
@@ -131,22 +137,24 @@ The following invariants apply together:
     scheduling horizon may become `ClockTaskScheduler` tasks. Later records
     remain in a bounded reorder store or backpressure the source.
 13. **Canonical execution boundary.** A streaming format emits canonical AIPerf
-    dataset units. Endpoint-specific materialization occurs just before
-    admission through the existing `RequestMaterializer`; dispatch occurs
-    through the existing `TurnDispatcher` and observer plane.
-14. **Lifetime-safe segments.** Bytes and segments referenced by an admitted
-    request remain alive through terminal dispatch. They are reclaimed after
-    the final owning request/continuation and checkpoint receipt release them;
-    a perpetual source does not retain a perpetual segment arena.
+    session fragments. A selected session program produces causally ready
+    actions. Endpoint-specific materialization occurs just before admission
+    through the existing `RequestMaterializer`; dispatch occurs through the
+    existing `TurnDispatcher` and observer plane.
+14. **Lifetime-safe segments.** Bytes and segments referenced by a fragment,
+    active session, or admitted request remain alive through incorporation or
+    terminal dispatch. They are reclaimed only after the final owning session,
+    request/continuation, and checkpoint receipt release them; a perpetual
+    source does not retain a perpetual segment arena.
 15. **Deterministic ordering.** Equal event-time records are ordered by a stable
     source-derived key and global sequence. Filesystem listing order, request
     completion order, worker wake order, and hash-map iteration never decide
     replay order.
-16. **Explicit session closure.** A format may emit a complete multi-turn unit
-    only from an explicit end marker, a proven key/time watermark, a sealed
-    finite external sort, or an authored bounded-inactivity rule. Otherwise it
-    MUST use strict row replay or fail validation; it cannot retain unbounded
-    sessions while claiming bounded memory.
+16. **Explicit session closure.** A session program may close a multi-turn,
+    agentic, or graph session only from an explicit end marker, a proven
+    key/time watermark, sealed finite validation, or an authored
+    bounded-inactivity rule. Otherwise it MUST keep bounded/spilled active state
+    or fail validation; it cannot equate partition EOF with closure.
 17. **Restart is authored.** Checkpoint policy declares whether restart resumes
     from terminal acknowledgement, admission, decode, or source acquisition.
     The report states the resulting at-least-once/at-most-once window. Exactly
@@ -205,6 +213,28 @@ The following invariants apply together:
     payload digest. Retrying publication cannot duplicate a record or metric
     contribution. Final results are a deterministic compaction of committed
     segments, never an independent best-effort reconstruction.
+31. **Typed atomic participants.** Durable progress advances only after every
+    participant required by the frozen plan has produced a versioned,
+    digest-addressed view at the barrier and the one backend transaction commits
+    those views with the result-index root. Opaque state-store writes are not a
+    checkpoint receipt.
+32. **Bounded durable roots.** A generation record has bounded size and reaches
+    cumulative result/state data through immutable content-addressed indexes.
+    Publication uses compare-and-swap/single-writer fencing and crash-durable
+    pointer installation; rename without expected-generation validation is not
+    a conforming commit.
+33. **Logical action uniqueness.** Logical action identity and physical attempt
+    identity are distinct. Exactly one terminal logical result contributes to
+    authoritative metrics; duplicate submission attempts are either proven
+    idempotent or retained as separately classified, non-contributing telemetry.
+34. **Causality must terminate or be bounded.** A cross-chunk session declares a
+    hard closure/completeness proof or an explicit lossy timeout/drop/fail
+    policy plus finite state/spill bounds. Backpressure alone is not a solution
+    to a predecessor that may appear arbitrarily far in the future.
+35. **Cross-host time is not shared by assumption.** A monotonic deadline from
+    one host is never interpreted on another host. Cellular issue authority uses
+    controller release/fencing or a separately validated synchronization
+    protocol, and early dispatch is forbidden.
 
 ## Decision traceability
 
@@ -215,7 +245,7 @@ The following invariants apply together:
 | First format adapters | Baseten trace and Dynamo/NVCF request trace; ordinary row formats follow | Format contracts |
 | Execution model | Registered `shadow_replay` workload over ordinary native transports | Registry and composition |
 | Finite compatibility | Existing resident dataset and Graph-IR APIs remain unchanged | Invariant 20; migration |
-| Canonical unit | A stream envelope containing a canonical `Conversation` plus source/event metadata | Canonical dataset units |
+| Canonical boundary | Versioned session-addressed fragments plus registered session programs that emit causally ready actions | Canonical session fragments |
 | Pending versus EOF | Async pending is absence; typed seal/limit is terminal | Invariant 6 |
 | Memory model | Bounded queues, batch arenas, spill/cache budgets, near-horizon tasks | Resource model |
 | Event-time order | Watermark-gated stable ordering with explicit hard/estimated quality | Event time and replay |
@@ -227,14 +257,14 @@ The following invariants apply together:
 | HF completeness | Pin commit, enumerate full split inventory, reject silent Viewer partials | HF source |
 | Baseten boundedness | Reuse projected batch decode; remove O(total rows) outer collection | Baseten format |
 | Cross-chunk sessions | Run-scoped keyed session coordinator; chunks never imply close; cellular ownership is sticky | Session continuity |
-| Results durability | Checkpoint-aligned immutable result segments, atomic manifests, deterministic final compaction | Checkpoint-based results |
+| Results durability | Checkpoint-aligned immutable result segments, atomic bounded generation roots, deterministic final compaction | Checkpoint-based results |
 | Plugin relationship | Static registry category now; dynamic plugin category requires new API generation | Registry and composition |
 
 ## Invariant enforcement map
 
 | Invariants | Enforcement | Required evidence |
 |---|---|---|
-| 1, 2, 20 | Independent registry IDs, strict factory config, prepared composition, production search for source/format switches | Cross-product source×format×transport tests; unknown/duplicate ID tests |
+| 1, 2, 20 | Independent registry IDs, strict factory config, prepared composition, production search for source/format/session/action switches | Cross-product source×format×session×action-sink×transport tests; unknown/duplicate ID tests |
 | 3 | Streaming operation implemented through `PhaseExecution`/`PhaseRunner` hooks | Cancellation at every lifecycle boundary; no leaked-task checks |
 | 4, 5, 12 | Count+byte bounded channels/stores, resource permits, high-water metrics, near-horizon scheduler gate | Multi-GB logical fixtures under fixed RSS/disk ceilings; saturation tests |
 | 6, 10 | Typed `SourceEvent`, explicit seal, watermark quality enum | Long quiet follow tests; late-after-estimated-frontier tests |
@@ -245,12 +275,14 @@ The following invariants apply together:
 | 15, 16, 25-28 | Stable total-order key; declared session closure capability; run-scoped keyed coordinator; atomic session-state checkpoint | Shuffled listing, equal timestamp, interleaved cross-chunk multi-turn/agentic/graph sessions, restart and owner-migration tests |
 | 18, 19 | Controller-assigned global sequence; scoped partition/data transfer; no secret fields | Multi-cell skew tests; protocol schema/secret scans |
 | 22, 23, 24 | Host-owned metrics/failure/provenance vocabulary | Golden report/artifact tests; redaction fixtures |
-| 29, 30 | Epoch barrier, content-addressed result segments, compare-and-commit manifest, deterministic compactor | Crash at every publish boundary; retry/dedup; live partial-read; final equivalence tests |
+| 29-33 | Typed checkpoint participants, one epoch transaction, bounded content-addressed result index, compare-and-commit root, logical-action membership/dedup, deterministic compactor | Crash at every publish/restore/GC boundary; retry/dedup; live partial-read; non-growing root; final equivalence tests |
+| 34 | Declared session closure and predecessor-lateness capability plus bounded spill/failure policy | Missing-parent beyond each chunk; indefinite follow quietness; state-budget exhaustion |
+| 35 | Controller release protocol and ownership-epoch receipts | Host clock skew, transfer delay, early-issue refusal, stale-owner receipt tests |
 
 ## Terminology
 
-- **stream resource**: a validated `{source, format}` composition referenced by
-  a workload.
+- **stream resource**: a validated `{source, format, session program}`
+  composition referenced by a workload.
 - **source**: discovers immutable partitions and supplies acquired byte access;
   it does not interpret rows.
 - **partition**: one immutable source object or bounded page with a stable
@@ -275,6 +307,9 @@ The following invariants apply together:
 Frozen AIPerfRegistry
   |-- StreamingDatasetSourceFactory["hf_hub", "s3", "local", ...]
   |-- StreamingDatasetFormatFactory["baseten_trace", "dynamo_trace", ...]
+  |-- StreamingSessionProgramFactory["conversation", "agent_graph", ...]
+  |-- StreamingActionSinkFactory["scheduled_request", "streaming_graph", ...]
+  |-- StreamingCheckpointBackendFactory["local", "object_store", "none"]
   |-- WorkloadFactory["shadow_replay"]
   `-- existing endpoint / transport / exporter / actuator factories
 
@@ -297,7 +332,7 @@ Shadow replay phase execution
                terminal acknowledgement
                          |
                          v
-       checkpoint epoch -> immutable result segments -> atomic manifest
+       checkpoint epoch -> immutable result/index objects -> atomic generation root
 ```
 
 The pipeline MAY fuse adjacent stages on one current-thread `LocalSet` when no
@@ -309,17 +344,30 @@ bounded channels with both item and byte permits.
 
 ### New registry categories
 
-`AIPerfRegistry` gains two transactional, frozen categories:
+`AIPerfRegistry` gains five transactional, frozen categories:
 
 ```rust
 stream_sources: TransactionalRegistry<Arc<dyn StreamingDatasetSourceFactory>>,
 stream_formats: TransactionalRegistry<Arc<dyn StreamingDatasetFormatFactory>>,
+stream_session_programs:
+    TransactionalRegistry<Arc<dyn StreamingSessionProgramFactory>>,
+stream_action_sinks:
+    TransactionalRegistry<Arc<dyn StreamingActionSinkFactory>>,
+stream_checkpoint_backends:
+    TransactionalRegistry<Arc<dyn StreamingCheckpointBackendFactory>>,
 ```
 
 The categories follow existing duplicate rejection, descriptor validation, and
 freeze behavior. `AIPerfExtension` gains registration methods. Built-ins use the
 same registration path as statically linked extensions.
 
+`StreamingSessionProgramFactory` is the semantic bridge between a format's
+fragment schema and a workload's accepted action schema. It owns causal
+readiness and session-state behavior for conversation or agent/graph programs.
+`StreamingActionSinkFactory` binds one action schema to the selected
+transport/endpoint and shared execution services. This prevents the workload
+from acquiring a closed source/session/action `match` while keeping timing,
+phase, and checkpoint policy host-owned.
 `shadow_replay` is a normal `WorkloadFactory`. Its validation resolves stream
 resource identity and performs capability agreement without network or file
 effects. Its preparation returns its own `PreparedRunnerOperation`; it does not
@@ -348,9 +396,13 @@ run:
             id: dynamo_trace
             config:
               schema: dynamo.request.trace.v1
+          session_program:
+            id: agent_graph
+            config:
+              missing_predecessor: wait
           limits:
             acquired_partitions: 4
-            decoded_units: 10000
+            decoded_fragments: 10000
             decoded_bytes: 512MiB
             state_memory: 512MiB
             state_disk: 100GiB
@@ -371,19 +423,34 @@ run:
       checkpoint:
         mode: terminal
         interval: 10s
+        backend:
+          id: local
+          config: {}
+        results:
+          publish_partial: true
+          retention:
+            resume_roots: 2
+            partial_history: 12
+            final_compaction: until_exported
+            source_cache: through_resume_root
+            orphan_ttl: 24h
 ```
 
 Names and exact field spelling remain subject to implementation schema review;
 the ownership is normative. Source config belongs to its factory, format config
-belongs to its factory, and replay config belongs to the workload. Mixed or
-unknown fields fail strict validation.
+belongs to its factory, session/causal config belongs to its session-program
+factory, checkpoint storage config belongs to its checkpoint-backend factory,
+and replay/result policy belongs to the workload. Mixed or unknown fields fail
+strict validation.
 
 `RunResourceV2` and `ResourceRequirementsV2` gain dataset-stream presence.
 Workloads that do not use streams neither validate nor open them.
 
 ### Capability agreement
 
-Source and format descriptors are side-effect-free. Validation intersects:
+Source, format, session-program, workload, action-sink, and checkpoint-backend
+descriptors are
+side-effect-free. Validation intersects:
 
 - source mode: `finite`, `follow`, or both;
 - byte access: sequential chunks, immutable local seekable lease, or range
@@ -392,14 +459,25 @@ Source and format descriptors are side-effect-free. Validation intersects:
 - resumability granularity: partition, byte, row group, or record;
 - format media/schema identifiers;
 - format access requirement and projection support;
-- canonical output schema (`aiperf.session_fragment.v1` initially);
+- canonical fragment output schema (`aiperf.session_fragment.v1` initially);
+- session-program accepted fragment and emitted action schemas;
+- workload accepted action schemas;
+- checkpoint backend atomic-generation, segment, durability, and reader
+  capabilities;
 - event-time and stable-record-ID availability;
 - session-closure requirements;
 - placement support; and
 - virtual-clock compatibility.
 
-An incompatible pair fails before source effects and names both descriptors and
-the missing capability. There is no coordinator switch on a source/format pair.
+An incompatible composition fails before source effects and names every
+participating descriptor plus the missing capability. There is no coordinator
+switch on a source/format/session-program combination.
+
+All five categories are feature-gated and reported through the same frozen
+application capability inventory as workloads and transports. A lean build
+omits both an unavailable descriptor and any workload whose required built-ins
+cannot be composed. Duplicate registration, unknown IDs, and descriptor/build
+feature mismatches fail in the existing transactional bootstrap path.
 
 ## Source contracts
 
@@ -427,14 +505,19 @@ pub trait PreparedStreamingDatasetSource {
     async fn open(
         self: Box<Self>,
         resume: Option<SourceCheckpoint>,
-    ) -> Result<Box<dyn StreamingDatasetSource>, StreamSourceError>;
+        stop: StreamingStopReceiver,
+    ) -> Result<OpenedStreamingDatasetSource, StreamSourceError>;
 }
 
 #[async_trait(?Send)]
 pub trait StreamingDatasetSource {
     fn snapshot(&self) -> &SourceSnapshotReceipt;
     async fn next_event(&mut self) -> Result<SourceEvent, StreamSourceError>;
-    fn request_stop(&self);
+}
+
+pub struct OpenedStreamingDatasetSource {
+    pub source: Box<dyn StreamingDatasetSource>,
+    pub control: StreamingSourceControl,
 }
 
 pub enum SourceEvent {
@@ -445,8 +528,10 @@ pub enum SourceEvent {
 ```
 
 `next_event` remains pending when a follow source has no new object. It does not
-return an `Idle` event that invites polling loops. `request_stop` wakes a pending
-call and causes phase-owned shutdown, not a fabricated source seal.
+return an `Idle` event that invites polling loops. The cloneable, host-owned
+stop receiver/control handle wakes a pending call without borrowing the source;
+phase shutdown therefore works while a `next_event(&mut self)` future is alive.
+Stop is not a fabricated source seal.
 
 ### Partition access
 
@@ -495,8 +580,9 @@ identity. It supports:
 - optional notification hints that accelerate discovery but do not replace
   reconciliation authority;
 - stable lexicographic or manifest-authored partition order;
-- object VersionId when available, otherwise conditional ETag/size plus exact
-  acquired-byte BLAKE3 digest; and
+- VersionId-qualified GET when available, otherwise a provider-supported
+  conditional GET bound to the listed ETag/version token, followed by size and
+  exact acquired-byte BLAKE3 verification; and
 - continuation-token handling without treating a page boundary as a stream
   frontier.
 
@@ -504,6 +590,11 @@ An object is published to the decoder only after its immutable generation is
 bound. A later object with the same key and a different version is either a new
 partition under an explicit versioned policy or a source mutation failure. It
 is never silently substituted.
+
+Precondition failure or identity mutation aborts that acquisition. An
+unversioned endpoint without a conditional-read primitive cannot provide
+lossless/restartable follow mode; it is accepted only under an explicitly
+lossy source policy. Multipart ETags are tokens, never content digests.
 
 Retries use bounded exponential backoff with jitter driven by a source-control
 clock/service, not benchmark request timing. Retry exhaustion, authorization,
@@ -577,29 +668,57 @@ pub trait StreamingDatasetFormatFactory: Debug + Send + Sync {
 
 #[async_trait(?Send)]
 pub trait StreamingDatasetFormat {
-    async fn decode_partition(
+    async fn begin_partition(
         &mut self,
         partition: AcquiredPartition,
-        output: &mut dyn DatasetEventSink,
-    ) -> Result<DecodeReceipt, StreamFormatError>;
+        resume: Option<DecoderCheckpoint>,
+    ) -> Result<Box<dyn StreamingPartitionDecoder>, StreamFormatError>;
 
     async fn advance_source_frontier(
         &mut self,
         frontier: SourceFrontier,
-        output: &mut dyn DatasetEventSink,
+        output: &mut dyn FormatEventSink,
     ) -> Result<(), StreamFormatError>;
 
     async fn seal(
         &mut self,
         seal: SourceSeal,
-        output: &mut dyn DatasetEventSink,
+        output: &mut dyn FormatEventSink,
     ) -> Result<FormatSealReceipt, StreamFormatError>;
+}
+
+#[async_trait(?Send)]
+pub trait StreamingPartitionDecoder {
+    async fn next_batch(
+        &mut self,
+        budget: DecodeBatchBudget,
+    ) -> Result<DecodeStep, StreamFormatError>;
+    fn checkpoint(&self) -> Result<DecoderCheckpoint, StreamFormatError>;
+}
+
+pub enum DecodeStep {
+    Batch(DecodedFragmentBatch),
+    End(DecodeReceipt),
+}
+
+#[async_trait(?Send)]
+pub trait FormatEventSink {
+    async fn send(&mut self, event: FormatEvent) -> Result<(), StreamFormatError>;
+}
+
+pub enum FormatEvent {
+    Fragment(StreamingSessionFragment),
+    SessionFrontier(SessionWatermark),
+    Checkpoint(DecoderCheckpoint),
 }
 ```
 
-`DatasetEventSink::send` is asynchronous and budgeted, so a format cannot
-outpace downstream state. Implementations may expose an equivalent pull stream;
-the semantic requirement is bounded backpressure, not callback style.
+The decoder is pulled one bounded batch at a time. A blocked downstream stage
+simply stops pulling it. `DecoderCheckpoint` binds immutable partition identity,
+byte/row-group/record position, format semantic digest, and any format-private
+restart state; a claimed resumability granularity is valid only when this value
+round-trips after process restart. `Pending` is represented by the future, and
+only `DecodeStep::End` exhausts the partition.
 
 Format-private typed rows stay behind the implementation. The public output is
 a host-owned canonical session fragment, watermark contribution, or checkpoint
@@ -648,11 +767,29 @@ ready. Conversation actions use the existing
 `ConversationSession`/`RequestMaterializer` path; agentic and graph actions use
 their corresponding streaming-capable workload binding.
 
+## Session continuity
+
 ### Run-scoped session coordinator
 
-One coordinator survives every partition and decoder call:
+One selected program factory constructs the coordinator that survives every
+partition and decoder call:
 
 ```rust
+pub trait StreamingSessionProgramFactory: Debug + Send + Sync {
+    fn descriptor(&self) -> &'static StreamingSessionProgramDescriptor;
+    fn validate(
+        &self,
+        authored: &RawValue,
+        format: &StreamingFormatDescriptor,
+        workload: &WorkloadDescriptor,
+    ) -> Result<Box<dyn ValidatedStreamingSessionProgramConfig>>;
+    fn prepare(
+        &self,
+        config: Box<dyn ValidatedStreamingSessionProgramConfig>,
+        context: &StreamingSessionPrepareContext,
+    ) -> Result<Box<dyn StreamingSessionCoordinator>>;
+}
+
 #[async_trait(?Send)]
 pub trait StreamingSessionCoordinator {
     async fn ingest(
@@ -672,11 +809,28 @@ pub trait StreamingSessionCoordinator {
         seal: SourceSeal,
         output: &mut dyn DatasetActionSink,
     ) -> Result<SessionSealReceipt, SessionCoordinatorError>;
+
+    async fn checkpoint_view(
+        &mut self,
+        horizon: GlobalSequence,
+    ) -> Result<PreparedSessionCheckpoint, SessionCoordinatorError>;
+
+    async fn install_committed(
+        &mut self,
+        state: PreparedSessionCheckpoint,
+    ) -> Result<(), SessionCoordinatorError>;
 }
 ```
 
+The stock `conversation` program extends canonical conversation state and emits
+request/continuation actions. The stock `agent_graph` program retains recorded
+agent/tool/graph causal state and emits graph actions without executing source
+tools. A workload must declare the action schemas it accepts. This keeps graph
+session support out of source/format switches and permits a dedicated streaming
+graph executor without mutating the existing frozen `GraphInputBundle` path.
+
 State is keyed by `(stream_identity, stable_session_key)`, never by source
-partition. `decode_partition` returning means only that those bytes are
+partition. `DecodeStep::End` means only that those bytes are
 exhausted. It MUST NOT close the session, flush incomplete state, create roots,
 or discard request/tool/graph history. The next partition may immediately
 extend any active session.
@@ -686,11 +840,27 @@ order. A session action becomes globally reorderable only after its declared
 predecessors are satisfied. A global watermark does not close a session unless
 the format contract proves that it is also a hard session frontier.
 
-A session closes only through an explicit close mutation, a format-defined
-terminal outcome, a session-scoped hard watermark, or sealed-source validation.
-An authored inactivity close is estimated/lossy and reported as such. At seal,
-unresolved predecessors fail with stable identities unless incomplete-session
-drop is explicitly selected.
+A session closes only through an explicit close mutation, an expected monotonic
+per-session sequence proven complete, a session-scoped hard watermark, or
+sealed-source validation. A session program that can span chunks MUST declare
+at least one applicable closure proof during capability agreement. Otherwise it
+must use an authored inactivity close or unresolved-state policy explicitly
+labeled lossy; arbitrary follow-mode retention is refused when no finite state
+bound can be proved. At seal, unresolved predecessors fail with stable
+identities unless incomplete-session drop is explicitly selected.
+
+The generation-1 `agent_graph` program is an append-only per-session state
+machine. Node and edge identities are immutable; an identical duplicate is
+idempotent and a conflicting duplicate fails. A node declares its complete
+predecessor set before it can become ready. Edge addition after either endpoint
+has executed is forbidden. Incremental cycle detection rejects an edge that
+would reach its own source. Tool-result references are inert recorded data and
+must bind a declared predecessor. Retry attempts are children of one stable
+logical action, not new graph roots. A session-close proof freezes the graph;
+remaining missing predecessors then fail or follow the authored incomplete
+policy. The existing batch `dynamo_trace` compiler remains bit-compatible;
+the separately versioned `streaming_dynamo_trace` format owns these stricter
+duplicate, block-size, missing-parent, closure, and watermark semantics.
 
 ### Checkpoint and cellular handoff
 
@@ -713,6 +883,87 @@ freeze session sequence N
 
 Until acknowledgement commits, new fragments remain bounded at the controller;
 concurrent dual ownership is forbidden.
+
+Every session route carries a monotonically increasing ownership epoch/lease,
+and every action, terminal update, and receipt echoes it. Migration fences the
+old epoch, accounts for pending/unadmitted work, and drains or explicitly
+cancels in-flight work before handoff state is prepared. The durable global
+generation binds the old fence, transferred state, new owner, next session
+sequence, and idempotency/attempt identities before the new route releases.
+Late old-owner receipts are rejected by epoch. If either side or the controller
+fails mid-handoff, restore selects the owner named by the last committed global
+generation; an installed but uncommitted new-owner snapshot is unreachable
+prepared state, not ownership authority.
+
+### Executable actions and sinks
+
+The program output is host-owned and versioned:
+
+```rust
+pub struct ExecutableDatasetAction {
+    pub action_id: StableActionId,
+    pub session_key: StableSessionKey,
+    pub predecessors: SmallVec<[StableActionId; 2]>,
+    pub event_time: Option<EventTimeUtc>,
+    pub payload: DatasetActionV1,
+}
+
+pub enum DatasetActionV1 {
+    Request(SessionRequestAction),
+    GraphNode(SessionGraphAction),
+    SessionTerminal(SessionTerminalAction),
+}
+
+#[async_trait(?Send)]
+pub trait StreamingActionSink {
+    fn accepted_schema(&self) -> DatasetActionSchema;
+    async fn submit(
+        &self,
+        action: OrderedDatasetAction,
+    ) -> Result<ActionAdmissionReceipt, ActionExecutionError>;
+    async fn checkpoint_view(
+        &self,
+        horizon: GlobalSequence,
+    ) -> Result<ActionSinkCheckpoint, ActionExecutionError>;
+}
+
+pub trait StreamingActionSinkFactory: Debug + Send + Sync {
+    fn descriptor(&self) -> &'static StreamingActionSinkDescriptor;
+    fn validate_binding(
+        &self,
+        action: &DatasetActionSchema,
+        transport: &TransportDescriptor,
+        endpoint: &EndpointDescriptor,
+    ) -> Result<Box<dyn ValidatedStreamingActionSinkConfig>>;
+    fn prepare(
+        &self,
+        config: Box<dyn ValidatedStreamingActionSinkConfig>,
+        context: &StreamingActionSinkPrepareContext,
+    ) -> Result<Box<dyn StreamingActionSink>>;
+}
+```
+
+The shadow-replay workload prepares the sink set admitted by the selected
+session program:
+
+- `ScheduledRequestActionSink` extends the run-scoped conversation session,
+  lowers the next turn through `RequestMaterializer`, and issues through
+  `ScheduledRuntime`/`TurnDispatcher`.
+- `StreamingGraphActionSink` owns bounded per-session incremental graph
+  execution, reusing `Clock`, `GraphSink`/dispatcher, observation, placement,
+  and failure policy. It does not append to or reinterpret an existing
+  `GraphInputBundle`; the selected session program has already validated causal
+  readiness for each graph action.
+- Recorded tool/agent events update session state and release dependent graph
+  actions. Source tools are never executed merely because their records arrive.
+
+The workload descriptor declares accepted action schemas, and capability
+agreement fails before source effects if a session program can emit an action
+for which no prepared sink exists. This makes multi-turn/agentic/graph support a
+real execution boundary rather than an opaque payload the first implementation
+cannot consume.
+
+## Initial format implementations
 
 ### Baseten format
 
@@ -748,6 +999,7 @@ The initial live format validates the exact NVCF schema during implementation.
 If it is `dynamo.request.trace.v1`, the current native field validation and
 request reconstruction may be extracted and reused. The streaming format does
 not compile a complete `GraphInputBundle` merely because the bytes use a Dynamo
+wire schema. Existing finite `dynamo_trace` behavior is unchanged.
 Request-level shadow replay emits session-addressed turn fragments as soon as
 they decode. The coordinator retains request history and causal state across
 objects and emits executable actions when ordering allows. Missing parents
@@ -774,6 +1026,29 @@ There is no `Idle`. `End` states whether it resulted from source seal, authored
 row/time limit, cancellation, or policy termination. Cancellation end is not a
 source seal and cannot advance a resumable source cursor past unprocessed data.
 
+### Host-owned event processor
+
+`StreamEventProcessor` is composition, not another plugin. It owns the typed
+stage sequence:
+
+```text
+SourceEvent
+  -> incremental decoder / FormatEvent
+  -> session coordinator / causally-ready ExecutableDatasetAction
+  -> event-time policy / OrderedDatasetAction
+  -> near-horizon action sink / terminal receipt
+```
+
+Source frontiers first update the decoder. Decoder-produced session frontiers
+then update the session coordinator. Only causally ready actions enter the
+global event-time reorder policy. A barrier propagates in that same order and
+collects one typed checkpoint participant from the source cursor, active
+decoder, session coordinator, reorder policy, action sinks, placement, and
+results plane. `End` seals each stage in order; it never bypasses unresolved
+session state. This host owner is also the sole allocator of global sequence and
+the sole caller of the atomic checkpoint backend, preventing either function
+from hiding inside an adapter.
+
 ### Stable order
 
 Replay order is:
@@ -782,9 +1057,15 @@ Replay order is:
 (event_time, stable_tie_break, source_partition_identity, source_record_ordinal)
 ```
 
-The host assigns a dense `global_sequence` only after this key is safe behind
-the watermark. The sequence is the placement and checkpoint order but does not
-replace source identity.
+The host assigns a dense `global_sequence` only after an action is causally
+ready and this key is safe behind the watermark. An unresolved fragment
+therefore occupies session/decoder checkpoint state, not a hole in the terminal
+action range. Each dispatching action maps to exactly one terminal receipt;
+`SessionTerminal` maps to one state-only terminal receipt after all declared
+session actions close. The sequence is the placement and checkpoint order but
+does not replace source identity. Authored predecessor-lateness/state budgets
+must eventually spill, fail, or explicitly drop unresolved state; backpressure
+alone cannot resolve a parent that exists only in a later partition.
 
 ### Watermark policies
 
@@ -837,6 +1118,12 @@ anchor_monotonic_ns
 target_monotonic_ns = anchor_monotonic_ns
                     + (event_utc + replay_delay - anchor_utc)
 ```
+
+The real-clock implementation obtains the pair from one clock-authority method
+that brackets one UTC read with monotonic reads and rejects excessive sampling
+uncertainty; tests inject the pair directly. The pair and uncertainty are
+persisted in run provenance and never resampled after a wall-clock adjustment.
+Virtual clocks accept only an explicitly authored UTC epoch.
 
 All arithmetic is checked signed integer nanoseconds. Non-finite, out-of-range,
 or missing required timestamps fail before the unit is scheduled.
@@ -911,8 +1198,8 @@ policy applies.
 
 ### Stateful assembly and spill
 
-Formats receive a process-owned `StreamingStateStore` capability rather than a
-path:
+Session programs/coordinators and formats receive a process-owned
+`StreamingStateStore` capability rather than a path:
 
 ```rust
 pub trait StreamingStateStore {
@@ -923,8 +1210,8 @@ pub trait StreamingStateStore {
 Namespaces provide checked put/get/remove, ordered iteration where required,
 and byte accounting. The initial implementation may use bounded sorted run
 files plus k-way merge; selecting an embedded database is an implementation
-decision only after dependency and performance review. Formats cannot bypass
-the store to create unaccounted scratch trees.
+decision only after dependency and performance review. Implementations cannot
+bypass the store to create unaccounted scratch trees.
 
 Memory-only session assembly is allowed when a hard watermark or explicit end
 marker bounds active keys. Arbitrary finite external sort consumes disk budget
@@ -934,11 +1221,12 @@ and produces an immutable derived-run digest. Exhaustion is a typed
 ### Segment lifetime
 
 Streaming formats create batch-scoped `SegmentStore` arenas or a reclaimable
-streaming segment store. An envelope holds an opaque lease. Admission clones
-that lease into every continuation. Terminal completion releases it only after
-the last request no longer needs materialization or raw capture. Deduplication
-may share segments across live batches through weak/content-addressed entries,
-but unreferenced entries are reclaimable.
+streaming segment store. A fragment holds an opaque lease and transfers it into
+session state or spill. Admission clones the resulting lease into every
+continuation. Terminal completion releases it only after the last session/action
+no longer needs materialization or raw capture. Deduplication may share segments
+across live batches through weak/content-addressed entries, but unreferenced
+entries are reclaimable.
 
 ## Shadow replay workload
 
@@ -946,8 +1234,9 @@ but unreferenced entries are reclaimable.
 maps its event time, materializes it through the transport-selected
 `RequestMaterializer`, and issues through `ScheduledRuntime`. A run-scoped
 session table retains conversation history and affinity across every source
-chunk. Agentic/graph actions select a corresponding streaming-capable consumer;
-`shadow_replay` fails validation rather than flattening them.
+chunk. Agentic/graph actions route to the prepared incremental graph action
+sink. Validation fails only when the selected workload distribution lacks a sink
+for an action schema; it never flattens graph actions into independent requests.
 
 It owns:
 
@@ -977,6 +1266,13 @@ affinity. Open-loop continuation target is the maximum of its recorded target
 and causal availability from the prior terminal/first-token policy, matching the
 selected existing replay semantics. Closed-loop think time is measured through
 `Clock` after prior completion.
+
+Fixed-delay fidelity is therefore best effort subject to declared causal gates,
+not a promise that an impossible child deadline is met. Every action records
+`recorded_target`, `causal_release`, `actual_issue`, prerequisite kind
+(`first_token`, `terminal`, graph/tool result), and one classified miss reason.
+Causal waiting is distinct from source publication lag, reorder lateness,
+scheduler slip, and admission delay.
 
 ### Phase behavior
 
@@ -1009,7 +1305,43 @@ multi-phase support possible without reopening a follow prefix per phase.
 Source acquisition failure propagates through phase execution. It is not a
 best-effort sidecar warning.
 
+Shutdown first fences new admission, then joins source/decode/reorder owners
+before tearing down state leases. If grace expires before a new
+terminal-contiguous generation can commit, the prior committed generation
+remains the resume point and the report declares the resulting at-least-once
+window. Cancelled actions contribute terminal cancellation receipts only when
+their input/session participant state is included in the same generation;
+shutdown never advances a cursor merely to make finalization succeed.
+
 ## Checkpoint and delivery semantics
+
+### Checkpoint participants
+
+Checkpointability is a host contract, not an implied property of a state-store
+namespace. Every stateful stage implements a narrow participant seam:
+
+```rust
+#[async_trait(?Send)]
+pub trait StreamingCheckpointParticipant {
+    fn participant_id(&self) -> CheckpointParticipantId;
+    async fn checkpoint_view(
+        &mut self,
+        barrier: &CheckpointBarrier,
+    ) -> Result<PreparedParticipantState, CheckpointError>;
+    async fn install_committed(
+        &mut self,
+        state: CommittedParticipantState,
+    ) -> Result<(), CheckpointError>;
+}
+```
+
+Prepared participant state is immutable, digest-addressed, schema-versioned,
+and names the greatest horizon it represents. The source/decoder, session
+coordinator, reorder policy, action sinks, and placement implementation expose
+participants; the coordinator verifies the required participant set against
+the frozen plan before commit and restores all of it before polling resumes.
+`StreamingStateStore` is storage beneath these participants, never proof that a
+typed snapshot exists.
 
 ### Typed horizons
 
@@ -1028,27 +1360,55 @@ earlier item.
 The event-time watermark is recorded beside these horizons but never used as a
 source cursor.
 
-### Checkpoint store
+Every resumable generation also declares how its exact immutable input can be
+recovered. It either retains acquired objects/derived decoder state through the
+persisted horizon under accounted source-cache leases, or records identities
+that the source can conditionally reacquire and verify. A transient cache lease
+alone cannot justify advancing a durable cursor. If a pinned HF shard or S3
+version is later unavailable, restore fails as `source_unavailable_on_resume`;
+it never substitutes current bytes or fabricates decoder/session state.
+
+### Checkpoint backend
 
 ```rust
 #[async_trait(?Send)]
-pub trait StreamingCheckpointStore {
+pub trait StreamingCheckpointBackend {
     async fn load_generation(&self, run: &StreamRunIdentity)
         -> Result<Option<CommittedCheckpointGeneration>, CheckpointError>;
-    async fn commit_generation(
+    async fn begin_generation(
         &self,
         expected: Option<CheckpointGeneration>,
+    ) -> Result<Box<dyn StreamingGenerationTransaction>, CheckpointError>;
+    async fn read_segment(
+        &self,
+        descriptor: &ResultSegmentDescriptor,
+    ) -> Result<ResultSegmentReader, CheckpointError>;
+}
+
+#[async_trait(?Send)]
+pub trait StreamingGenerationTransaction {
+    async fn stage_participant(
+        &mut self,
+        state: PreparedParticipantState,
+    ) -> Result<(), CheckpointError>;
+    async fn stage_results(
+        &mut self,
+        partitions: Vec<ResultPartition>,
+    ) -> Result<PreparedResultEpoch, CheckpointError>;
+    async fn commit(
+        self: Box<Self>,
         next: CheckpointGenerationRecord,
     ) -> Result<CommittedCheckpointGeneration, CheckpointError>;
 }
 ```
 
-The committed generation is the single atomic authority for both resume state
-and result inventory. The default local implementation writes canonical bytes
-to a private sibling temporary file, fsyncs according to authored durability,
-and atomically renames. Object-store checkpointing may be added through
-conditional generation writes. A stale or divergent writer fails; it does not
-merge horizons by max.
+One transaction stages typed participant state and result segments, then
+publishes one generation; types do not expose an independent result commit.
+The committed generation is the single authority for resume state and result
+inventory. A stale or divergent writer fails; it does not merge horizons by
+max. The selected backend must prove conditional pointer update and durable
+immutable-object semantics during capability agreement. A backend without that
+primitive is restricted to checkpoint mode `none`.
 
 ## Checkpoint-based results
 
@@ -1067,6 +1427,31 @@ At finalization they receive the deterministic compacted `NativeReport` and any
 host-owned projections requested by the validated capture plan. This preserves
 one authoritative metrics path and prevents an OTLP/MLflow/W&B/file sink from
 defining restart semantics.
+
+Checkpoint state and result bytes are staged through one selected backend
+transaction. A backend cannot combine one checkpoint head with a different
+result namespace and still claim an atomic generation:
+
+```rust
+pub trait StreamingCheckpointBackendFactory: Debug + Send + Sync {
+    fn descriptor(&self) -> &'static StreamingCheckpointBackendDescriptor;
+    fn validate(
+        &self,
+        authored: &RawValue,
+        requirements: &CheckpointBackendRequirements,
+    ) -> Result<Box<dyn ValidatedCheckpointBackendConfig>>;
+    fn prepare(
+        &self,
+        config: Box<dyn ValidatedCheckpointBackendConfig>,
+        context: &CheckpointBackendPrepareContext,
+    ) -> Result<Rc<dyn StreamingCheckpointBackend>>;
+}
+```
+
+The descriptor and conformance suite prove one commit namespace and atomic
+generation mechanism. The `none` backend is valid only with checkpoint mode
+`none` and disables durable partial results; it cannot satisfy a restartable
+run by silently keeping state in memory.
 
 The current `RecordArtifactLane` is useful evidence for per-terminal streaming,
 but its held-open monolithic JSON/CSV/outputs/Parquet files are not themselves a
@@ -1117,55 +1502,46 @@ contiguous terminal global sequence `H` for which:
 4. all result partitions through `H` can be deterministically closed.
 
 Ingestion and decoding MAY continue into a bounded uncommitted overlay while
-the barrier is prepared. `StreamingStateStore` exposes a versioned
-`checkpoint_view(H)`; state after `H` remains in the live overlay and is not
-mistaken for committed resume state. If the implementation cannot provide that
-view, it briefly backpressures source/decode while rotating the epoch.
+the barrier is prepared. Each stateful participant exposes a versioned
+`checkpoint_view(H)` backed by the state store; state after `H` remains in the
+live overlay and is not mistaken for committed resume state. If any participant
+cannot provide that view, the processor briefly backpressures source/decode
+while rotating the epoch.
 
 A long-running earlier request can hold the authoritative horizon. Completed
 results above the hole may feed explicitly provisional dashboards but MUST NOT
 enter a committed result epoch. Cancellation/failure policy eventually closes
 the hole. This favors restart correctness over falsely durable partial totals.
 
-### Sink contract
+### Transaction contract
 
-```rust
-#[async_trait(?Send)]
-pub trait CheckpointResultSink {
-    async fn prepare_epoch(
-        &self,
-        epoch: ResultEpoch,
-        partitions: Vec<ResultPartition>,
-    ) -> Result<PreparedResultEpoch, ResultCheckpointError>;
-
-    async fn read_segment(
-        &self,
-        descriptor: &ResultSegmentDescriptor,
-    ) -> Result<ResultSegmentReader, ResultCheckpointError>;
-}
-```
-
-`prepare_epoch` writes immutable content-addressed segments and returns their
-verified descriptors without changing visible progress. The checkpoint
-coordinator passes those descriptors to
-`StreamingCheckpointStore::commit_generation`, which atomically publishes one
-canonical record containing:
+`StreamingGenerationTransaction::stage_results` writes immutable
+content-addressed segments and returns their verified descriptors without
+changing visible progress. The checkpoint coordinator stages every required
+participant on the same transaction and calls `commit`, which atomically
+publishes one canonical record containing:
 
 - prior generation digest and next epoch number;
 - all typed input/stage horizons and watermark;
 - active-session checkpoint/state-store snapshot digest;
 - pending placement/action state permitted by delivery mode;
-- deterministic result segment descriptors;
+- one bounded content-addressed result-index root;
 - cumulative projection counts and byte totals;
 - metrics/format/policy/placement semantic digests; and
 - terminal/final presence plus reason.
 
-The local implementation writes segment files under a private generation store,
-fsyncs them according to durability policy, writes the complete generation to a
-private sibling temporary file, and atomically renames one `CURRENT` generation
-record. An object-store implementation writes segments first and conditionally
-creates/replaces one generation object using the prior generation token. Readers
-trust only segments reachable from that committed record.
+The result-index root addresses immutable Merkle/LSM-style index blocks. Each
+epoch adds bounded new blocks and structurally shares old ones, so a generation
+record stays bounded while its root reaches every segment required for partial
+and final compaction. It never copies the cumulative descriptor inventory.
+
+The local backend takes a single-writer generation lease, compares the expected
+`CURRENT` digest and epoch under that lease, writes immutable segments/index/
+participant objects and `generation-N`, fsyncs each required file and parent
+directory according to durability policy, atomically replaces the `CURRENT`
+pointer, then fsyncs its parent. An object-store backend writes immutable
+objects first and conditionally replaces one generation pointer using the prior
+provider token. Readers trust only objects reachable from the committed root.
 
 ### Segment identity and ordering
 
@@ -1174,20 +1550,33 @@ One segment descriptor binds:
 ```text
 run_identity + epoch + cell_id + worker_id + projection_id + schema_version
 + first_global_sequence + last_global_sequence + item_count + byte_length
-+ canonical_payload_digest
++ canonical_membership_root + canonical_payload_digest
 ```
 
-Segments contain records sorted by `(global_sequence, stable_record_id)`.
-Metric partitions declare the exact record/action range they summarize. A
+Segments contain records sorted by `(global_sequence, stable_record_id)` and
+bind a canonical membership representation: a disjoint interval set where the
+placement plan proves disjoint intervals, otherwise sorted action IDs in
+content-addressed membership blocks. Metric and record partitions bind the same
+membership root. Min/max/count are diagnostics, not proof of coverage. A
 retry producing the same bytes resolves to the same segment identity. The same
 logical range with different bytes is a checkpoint conflict and fails; it is
 never accepted as a second contribution.
 
+`logical_action_id` is distinct from `attempt_id`. The logical result index has
+one authoritative terminal result per action. With verified target idempotency,
+the receipt is reused. Otherwise terminal-mode restart uses the first terminal
+receipt made durable in a committed generation; later redelivery attempts are
+optional attempt-telemetry records excluded from logical metrics. If no receipt
+was committed before the crash, the first terminal retry becomes authoritative.
+The report records this response-selection policy and its target-side duplicate
+window.
+
 Merge and compaction order is fixed by
 `(epoch, cell_id, worker_id, projection_id, first_global_sequence, digest)`.
 Floating-point accumulator merges use this order so restart/topology iteration
-does not introduce arbitrary reduction order. Counts and range coverage are
-checked before a partition contributes.
+does not introduce arbitrary reduction order. Membership equality,
+disjointness, and expected action coverage are checked before a partition
+contributes; overlapping logical membership is rejected.
 
 ### Restart and crash behavior
 
@@ -1200,8 +1589,25 @@ checked before a partition contributes.
    epoch `N+1`; epoch `N` is not emitted again.
 4. A crash during final compaction does not change committed epochs. Compaction
    restarts from their immutable inventory.
-5. Garbage collection removes only segments unreachable from every retained
-   committed generation and uses generation leases so a live reader is safe.
+5. Private transaction temporaries are not GC candidates. Prepared immutable
+   objects carry a bounded renewable prepare lease; readers, restorers, and
+   compactors lease generation roots. GC marks all committed roots and valid
+   transaction/generation leases, waits an authored grace period, then removes
+   only still-unreachable objects. Lease-renewal failure aborts publication or
+   reading rather than racing deletion.
+
+Generation 1 pins worker count, cell topology, placement digest, projection
+plan, and action membership scheme across restart. A mismatch is refused.
+Topology-independent logical repartitioning requires a later fenced migration
+generation; physical `cell_id`/`worker_id` segment identity is never silently
+reinterpreted.
+
+Retention is four separate validated policies: minimum resumable generation
+roots, partial-result history, final-compaction/index roots and produced final
+artifacts, and source snapshot/cache material. Orphan/prepare TTL is separate.
+Disk/object-store quotas account for index blocks, state spill, source leases,
+prepared objects, committed segments, and compaction outputs. Deleting partial
+history cannot delete the last restart root or final-compaction reachability.
 
 ### Partial and final results
 
@@ -1290,9 +1696,10 @@ For live shadow replay:
 3. controller establishes watermark order and assigns dense global sequence;
 4. stable-session-affinity placement maps each action to its sole owning cell;
 5. controller sends bounded, versioned chunks containing canonical action data,
-   sequence, target timing, lease/content references, count, byte length, and
-   digest;
-6. cell acknowledges receipt/admission/terminal through ordered receipts; and
+   sequence, controller release policy/lookahead, lease/content references,
+   count, byte length, and digest;
+6. cell acknowledges receipt/admission/terminal and returns versioned
+   endpoint-derived session updates through ordered receipts; and
 7. controller advances checkpoint horizons only across contiguous verified
    receipts.
 
@@ -1300,6 +1707,21 @@ Every route has finite unacknowledged chunk/byte windows. Gaps, duplicates,
 wrong cells, digest/length/count mismatch, and plan/policy digest mismatch fail
 before checkpoint advance. Controller and cell use the same host-owned DTO;
 wall-clock estimates are not compared between hosts to establish order.
+
+Generation 1 makes the controller the canonical session-state owner. A cell is
+an execution owner only: its terminal/session-update receipt carries action ID,
+ownership epoch, prior session-state version, deterministic update, and terminal
+facts. The controller linearizes that update before releasing dependent
+actions. Cells cannot independently mutate durable causal state.
+
+A controller monotonic deadline is not meaningful on a cell host. The
+controller therefore holds actions until an authored lookahead, sends an
+authenticated not-before/release sequence, and the cell may issue only after
+that release. Transfer latency is measured separately; insufficient lookahead
+becomes schedule slip, never early dispatch. A later synchronized-clock protocol
+would be a new capability. Source polling, backoff, checkpoints, cell release,
+and shutdown waits all use their owning process's injected `Clock`; UTC appears
+only in the persisted source-to-run anchor.
 
 This protocol may reuse Velo/authenticated route machinery and global-push
 credit concepts, but current fixed startup dataset pushes are not sufficient.
@@ -1326,7 +1748,8 @@ order is globally exact or topology-deterministic.
 
 The run records:
 
-- source and format factory IDs/descriptors/semantic config digests;
+- source, format, session-program, action-sink, and checkpoint-backend factory
+  IDs/descriptors/semantic config digests;
 - finite snapshot identity or follow-source namespace identity;
 - every admitted immutable partition identity and acquired-byte digest;
 - HF commit/subset/split/shard inventory or S3 bucket/prefix/version identities
@@ -1404,12 +1827,14 @@ rust/runtime/src/streaming/
 |-- mod.rs                 # public core vocabulary
 |-- source.rs              # source factory/runtime/access traits
 |-- format.rs              # format factory/decoder traits
-|-- unit.rs                # envelopes, leases, stream events
+|-- session.rs             # program factories, keyed causal state, handoff
+|-- action.rs              # request/graph action vocabulary and sinks
+|-- unit.rs                # fragments, actions, leases, stream events
 |-- budget.rs              # count/byte permits and high-water facts
 |-- state.rs               # bounded state/spill capability
 |-- event_time.rs          # watermarks, stable reorder, time mapping
 |-- checkpoint.rs          # stage horizons and stores
-|-- results.rs             # epoch barriers, result segments, manifests/reader
+|-- results.rs             # epoch barriers, result/index segments, readers
 |-- pipeline.rs            # owned bounded stage composition
 `-- placement.rs           # local and cellular placement seam
 
@@ -1428,20 +1853,30 @@ rust/runtime/src/engine/
 
 Required integration changes:
 
-- `extensions/mod.rs`: source/format registries and registration methods;
+- `extensions/mod.rs`: source/format/session-program/action-sink/checkpoint-
+  backend registries and registration methods;
 - `engine/registry.rs`: dataset-stream resource requirement and frozen lookup;
 - `engine/protocol_v2.rs`: strict named stream resources;
 - CLI/config projection: user-facing source/format/replay options without
   source-format combination switches;
 - `phase_runtime.rs`/timing: streaming phase execution adapter, not lifecycle
-  duplication;
+  duplication; extract the reusable `PhaseExecutionFactory`/`PhaseExecution`
+  orchestration, `NativeMetricsObserver` construction, terminal record capture,
+  and transport executor setup now embedded in scheduled/graph entrypoints;
 - cellular protocol/controller/cell: incremental placement chunks and receipts;
-- report/export: generic streaming provenance and metrics; and
+- report/export: generic streaming provenance and metrics;
 - record/metrics/result plane: epoch rotation, immutable segment schemas,
   atomic checkpoint-generation publication, partial readers, and final
-  compaction; and
+  compaction;
 - Baseten/HF modules: extract projected decoders/acquisition helpers while
   retaining current finite adapters.
+
+`streaming_execution.rs` is a separate `PreparedRunnerOperation` assembled from
+those lower-level services. It does not add a `NativeDatasetPlan` variant, call
+the synchronous `GraphTraceSource`, or copy the closed `NativeRunSpec` dispatch
+stack. Stage 0 first lands the reusable phase/capture construction seams with
+finite-path conformance tests; only then does the streaming operation consume
+them.
 
 No Python module is invoked. The S3 adapter uses a native Rust SDK/client behind
 the source trait. Dependency selection and feature ownership require a separate
@@ -1451,13 +1886,16 @@ implementation review, but do not change this architecture.
 
 ### Stage 0: contracts and executable proof
 
-- Add core stream vocabulary, source/format registries, in-memory fake source,
-  canonical conversation format, budget accounting, and a no-network dry-run
-  consumer.
+- Add core stream vocabulary, source/format/session-program/action-sink/
+  checkpoint-backend registries,
+  in-memory fake source, conversation and agent-graph program fixtures, budget
+  accounting, request/graph action sinks, and no-network dry-run consumers.
 - Add an in-memory checkpoint result sink and prove barrier/range/dedup/final
   compaction equivalence before filesystem durability.
 - Prove pending-versus-seal, backpressure, cancellation, and lease lifetime with
   `SimClock` and current-thread `LocalSet`.
+- Prove one multi-turn/agentic/graph session across several partitions and a
+  checkpoint restore before any real source adapter is added.
 - Establish RSS, disk, and task-count instrumentation before real adapters.
 
 ### Stage 1: large finite HF/Baseten
@@ -1477,10 +1915,12 @@ than only the download mechanism.
 
 - Register `shadow_replay` workload.
 - Add wall-clock-delay mapping, watermark/reorder policies, late/overload
-  behavior, streaming metrics, local checkpoint store, checkpoint result
-  segments, atomic generation manifests, and live partial-result reads.
+  behavior, streaming metrics, local checkpoint backend, checkpoint result
+  segments/indexes, atomic generation roots, and live partial-result reads.
 - Implement a local immutable-object follow source and run against HTTP/gRPC
   mock targets.
+- Exercise both request actions and incremental agent-graph actions through the
+  shadow workload without mutating finite `GraphInputBundle` state.
 - Validate five-minute publication cadence with accelerated deterministic tests
   and wall-clock soak tests.
 
@@ -1509,17 +1949,20 @@ than only the download mechanism.
   consumer if product demand requires it.
 - Evaluate representing finite datasets internally through a sealed stream plus
   explicit collector while retaining public compatibility.
-- Design streaming Graph-IR fragments separately if required.
+- Add further session programs/action sinks through the registered schemas;
+  cross-chunk graph execution remains part of the conformance suite rather than
+  an optional reinterpretation of finite Graph-IR.
 
 ### Indicative effort
 
 This is not a one-loader patch. A production generation including large HF,
-live S3 shadow replay, checkpointing, observability, and single-process
-execution is approximately 3-4 engineers for 12-16 weeks after schema/access
-availability. Cellular streaming placement is a further 2-3 engineers for
-6-10 weeks and should not block a single-process launch. The critical technical
-risks are format closure/watermark guarantees, bounded session fidelity, native
-S3 packaging/auth, and crash semantics—not basic object polling.
+live S3 shadow replay, checkpointed results, multi-turn/agentic/graph continuity,
+observability, and single-process execution is approximately 4-6 engineers for
+16-24 weeks after schema/access availability. Cellular streaming placement is a
+further 3-4 engineers for 8-12 weeks and should not block a single-process
+launch. The critical technical risks are format closure/watermark guarantees,
+bounded causal/session fidelity, incremental graph action execution, native S3
+packaging/auth, and crash/result semantics—not basic object polling.
 
 The stages are independently demonstrable, but no stage may claim general
 streaming support while its outer execution path still collects the complete
@@ -1592,7 +2035,7 @@ Before production launch:
    of total row count.
 2. Follow-mode soak duration MUST not produce monotonic growth in RSS, task
    count, open descriptors, segment entries, dedup state, mutable result state,
-   or checkpoint manifest size. Immutable committed segment growth must match
+   or checkpoint generation-root size. Immutable committed segment growth must match
    authored retention and be garbage-collectable by generation reachability.
 3. Every queue/store high-water mark MUST remain within its configured item and
    byte limit under a target slower than the source.

@@ -17,6 +17,7 @@ Documents:
 - `current-rust-seams.md` inventories the native traits and ownership boundaries
   that the design should reuse or generalize.
 - `architecture-options.md` compares candidate decompositions.
-- `streaming-dataset-shadow-replay-design.md` will hold the recommended design.
+- `streaming-dataset-shadow-replay-design.md` is the normative working design,
+  including cross-chunk sessions and checkpointed result publication.
 
 These are in-process research artifacts, not a committed product contract.

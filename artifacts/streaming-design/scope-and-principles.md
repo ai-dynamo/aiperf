@@ -10,7 +10,8 @@ target frontend at their event-time spacing plus a configured lag.
 
 This is not an S3 downloader attached to the existing finite Dynamo trace
 compiler. It is architectural streaming-dataset support with source, format,
-ordering, replay, placement, and durability policies behind explicit seams.
+session program, action sink, ordering, replay, placement, checkpoint, and
+durability responsibilities behind explicit seams.
 
 ## Architectural rules
 
@@ -40,9 +41,9 @@ ordering, replay, placement, and durability policies behind explicit seams.
     phases, and cellular transfer chunks without reset. A run-scoped session
     coordinator owns multi-turn, agentic, and graph continuity.
 12. Publish results incrementally at checkpoint barriers through immutable,
-    idempotent result segments and an atomic manifest. Input progress, session
-    state, metric state, record results, and result publication share one
-    committed checkpoint epoch.
+    idempotent result segments and a bounded content-addressed index rooted by
+    one atomic generation. Input progress, typed participant state, metric
+    state, record results, and result publication share that committed epoch.
 
 ## First-use-case constraints
 

@@ -8,9 +8,10 @@ SPDX-License-Identifier: Apache-2.0
 ## Decision
 
 Adopt an additive, composable streaming dataset plane selected by a registered
-`shadow_replay` workload. Register source and format factories independently,
-retain current finite dataset and Graph-IR contracts, and reuse the existing
-clock, scheduled runtime, transport, observer, and phase seams at execution.
+workload. Register source, format, session-program, action-sink, and
+checkpoint-backend factories independently, retain current finite dataset and
+Graph-IR contracts, and reuse the existing clock, scheduled runtime, transport,
+observer, and phase seams at execution.
 
 The architecture unifies two input lifecycles:
 
@@ -26,10 +27,10 @@ of every streaming dataset.
 Source partitions are acquisition boundaries only. A run-scoped session
 coordinator routes every fragment by stable session key, so one multi-turn,
 agentic, or graph session may span arbitrarily many partitions without being
-closed or reconstructed at a chunk boundary. Checkpoint barriers also drive a
-checkpointed results sink: immutable result segments and a canonical manifest
-make partial progress queryable and restart-safe without keeping the complete
-run in memory.
+closed or reconstructed at a chunk boundary. Checkpoint barriers also drive one
+atomic backend transaction: immutable result segments and a bounded
+content-addressed generation root make partial progress queryable and
+restart-safe without keeping the complete run in memory.
 
 ## Option A: retrofit `DatasetLoader::load`
 
@@ -94,9 +95,10 @@ until a watermark closes the relevant time/key space. Mutation would invalidate
 inspection and scheduler invariants and is unnecessary for request-level shadow
 replay or ordinary large dataset streaming.
 
-The source/acquisition substrate is intentionally reusable by a future
-`streaming_graph` consumer, but that consumer needs its own explicit graph
-fragment, closure, and incremental-validation design.
+The selected design therefore uses session-addressed graph fragments, a
+registered agent-graph session program, and an incremental graph action sink.
+It reuses graph dispatch/observation seams without mutating the existing finite
+bundle.
 
 ## Option D: general process-external broker
 
@@ -117,8 +119,9 @@ broker is not the AIPerf architecture.
 
 ## Option E: composable native streaming dataset plane
 
-Add registered source and format factory categories, compose them inside a
-registered workload, and connect the output to existing scheduled execution.
+Add registered source, format, session-program, and action-sink factory
+categories, compose them inside a registered workload, and connect their
+actions to existing scheduled and graph execution seams.
 
 ### Advantages
 
@@ -134,7 +137,8 @@ registered workload, and connect the output to existing scheduled execution.
 ### Costs
 
 - Requires new registry categories and protocol-v2 configuration.
-- Requires a new canonical streaming-unit and watermark contract.
+- Requires canonical session-fragment, action, watermark, and checkpoint-
+  participant contracts.
 - Cellular execution needs incremental bounded transfer rather than only fixed
   startup snapshots.
 - Some current format logic must be separated from global collection/grouping.
@@ -153,9 +157,12 @@ a prerequisite for shadow replay.
 
 ## Registry boundary decision
 
-`StreamingDatasetSourceFactory` and `StreamingDatasetFormatFactory` are named
-registry categories because config selects them and independent implementations
-must compose. `EventTimePolicy`, `LateRecordPolicy`, `ReplayAdmissionPolicy`,
+`StreamingDatasetSourceFactory`, `StreamingDatasetFormatFactory`,
+`StreamingSessionProgramFactory`, `StreamingActionSinkFactory`, and
+`StreamingCheckpointBackendFactory` are
+named registry categories because config selects them and independent
+implementations must compose. `EventTimePolicy`,
+`LateRecordPolicy`, `ReplayAdmissionPolicy`,
 checkpoint writers, and placement are initially host-owned validated policies
 or constructor-injected traits. They are seams for testing and future
 replacement, but not every seam needs global name-based discovery.
