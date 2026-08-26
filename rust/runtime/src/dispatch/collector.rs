@@ -36,17 +36,20 @@ pub struct TraceThroughputStats {
     pub input_throughput_tok_s: f64,
     pub output_throughput_tok_s: f64,
     pub total_throughput_tok_s: f64,
-    /// Time-integral of provisioned workers, including startup and drain, in
-    /// worker-seconds.
-    /// Multiply by GPUs-per-worker for GPU-seconds (/3600 for GPU-hours).
-    /// Aggregated replay reports through `decode_worker_seconds`, leaving
-    /// `prefill_worker_seconds` at 0.0.
+    /// Compatibility-only prefill worker-seconds; the current runtime has no
+    /// disaggregated producer, so this is always zero.
     pub prefill_worker_seconds: f64,
+    /// Compatibility-only decode worker-seconds; the current runtime has no
+    /// disaggregated producer, so this is always zero.
     pub decode_worker_seconds: f64,
-    /// GPUs per worker per role; 0 when unavailable.
+    /// Compatibility-only prefill GPU count; always zero without a
+    /// disaggregated producer.
     pub prefill_gpus_per_worker: usize,
+    /// Compatibility-only decode GPU count; always zero without a
+    /// disaggregated producer.
     pub decode_gpus_per_worker: usize,
-    /// Provisioned GPU-hours: Σ_role `worker_seconds × gpus_per_worker / 3600`.
+    /// Compatibility-only GPU-hours; always zero without a disaggregated
+    /// producer.
     pub gpu_hours: f64,
 }
 
@@ -294,29 +297,10 @@ struct TraceRequestStats {
     requested_output_length: usize,
     reused_input_tokens: usize,
     first_admission_reused_input_tokens: usize,
-    /// Prefill worker index. In disaggregated mode, `None` denotes bypass.
-    prefill_worker_idx: Option<usize>,
-    decode_worker_idx: Option<usize>,
     session_id: Option<String>,
     turn_index: Option<usize>,
     // Retained without export detail so partial terminal streams never count as
     // completed.
-    terminal_status: Option<ReplayTerminalStatus>,
-    detail: Option<Box<PerRequestDetail>>,
-}
-
-#[derive(Debug, Default)]
-struct PerRequestDetail {
-    prefill_reused_input_tokens: Option<usize>,
-    prefill_admit_ms: Option<f64>,
-    source_held_ms: Option<f64>,
-    destination_reserved_ms: Option<f64>,
-    destination_activated_ms: Option<f64>,
-    decode_admit_ms: Option<f64>,
-    source_released_ms: Option<f64>,
-    decode_reused_input_tokens: Option<usize>,
-    prefill_route_overlap_tokens: Option<usize>,
-    decode_route_overlap_tokens: Option<usize>,
     terminal_status: Option<ReplayTerminalStatus>,
 }
 
@@ -353,16 +337,29 @@ pub struct PerRequestRecord {
     /// Number of output-token observations recorded for the request.
     pub output_length: usize,
     pub reused_input_tokens: usize,
+    /// Compatibility-only prefill-worker assignment; always absent because
+    /// the current runtime has no disaggregated producer.
     pub prefill_worker_idx: Option<usize>,
+    /// Compatibility-only decode-worker assignment; always absent because
+    /// the current runtime has no disaggregated producer.
     pub decode_worker_idx: Option<usize>,
+    /// Compatibility-only prefill admission time; always absent.
     pub prefill_admit_ms: Option<f64>,
+    /// Compatibility-only source-held time; always absent.
     pub source_held_ms: Option<f64>,
+    /// Compatibility-only destination-reserved time; always absent.
     pub destination_reserved_ms: Option<f64>,
+    /// Compatibility-only destination-activated time; always absent.
     pub destination_activated_ms: Option<f64>,
+    /// Compatibility-only decode admission time; always absent.
     pub decode_admit_ms: Option<f64>,
+    /// Compatibility-only source-released time; always absent.
     pub source_released_ms: Option<f64>,
+    /// Compatibility-only decode reused-input count; always absent.
     pub decode_reused_input_tokens: Option<usize>,
+    /// Compatibility-only prefill route-overlap count; always absent.
     pub prefill_route_overlap_tokens: Option<usize>,
+    /// Compatibility-only decode route-overlap count; always absent.
     pub decode_route_overlap_tokens: Option<usize>,
     pub terminal_status: ReplayTerminalStatus,
 }
@@ -426,13 +423,6 @@ pub struct TraceCollector {
     // Disabled by default to avoid the record pass and allocation.
     capture_per_request: bool,
     sla: SlaThresholds,
-    // Integrated over the simulation clock for variable worker counts.
-    prefill_worker_seconds: f64,
-    decode_worker_seconds: f64,
-    // Fixed counts use `count × duration_s` instead of the accumulator.
-    static_worker_count: Option<(usize, usize)>,
-    prefill_gpus_per_worker: usize,
-    decode_gpus_per_worker: usize,
 }
 
 impl TraceRequestStats {
@@ -485,27 +475,6 @@ impl TraceCollector {
         self.sla = sla;
     }
 
-    /// Add provisioned worker-seconds for an elapsed interval, including
-    /// starting and draining workers. Aggregated replay uses only `decode`.
-    #[allow(dead_code)]
-    pub(crate) fn add_worker_seconds(&mut self, prefill: f64, decode: f64) {
-        self.prefill_worker_seconds += prefill;
-        self.decode_worker_seconds += decode;
-    }
-
-    /// Set fixed provisioned worker counts when no event loop integrates them.
-    #[allow(dead_code)]
-    pub(crate) fn set_static_worker_count(&mut self, prefill: usize, decode: usize) {
-        self.static_worker_count = Some((prefill, decode));
-    }
-
-    /// Set GPUs per worker for GPU-hour accounting.
-    #[allow(dead_code)]
-    pub(crate) fn set_gpus_per_worker(&mut self, prefill: usize, decode: usize) {
-        self.prefill_gpus_per_worker = prefill;
-        self.decode_gpus_per_worker = decode;
-    }
-
     pub fn on_arrival(
         &mut self,
         uuid: Uuid,
@@ -522,42 +491,12 @@ impl TraceCollector {
                 input_length,
                 requested_output_length,
                 reused_input_tokens: 0,
-                prefill_worker_idx: None,
-                decode_worker_idx: None,
                 session_id: None,
                 turn_index: None,
                 first_admission_reused_input_tokens: 0,
                 terminal_status: None,
-                detail: self
-                    .capture_per_request
-                    .then(|| Box::new(PerRequestDetail::default())),
             },
         );
-    }
-
-    /// Record that `uuid` was dispatched to `worker_idx` on the prefill pool
-    /// (offline disagg replay only). Idempotent — subsequent calls are no-ops
-    /// once a value is set, so the first dispatch wins. Aggregated replay does
-    /// not call this; for those requests `prefill_worker_idx` stays `None`.
-    #[allow(dead_code)]
-    pub(crate) fn on_prefill_assigned(&mut self, uuid: Uuid, worker_idx: usize) {
-        if let Some(stats) = self.requests.get_mut(&uuid)
-            && stats.prefill_worker_idx.is_none()
-        {
-            stats.prefill_worker_idx = Some(worker_idx);
-        }
-    }
-
-    /// Record that `uuid` was dispatched to `worker_idx` on the decode pool
-    /// (offline disagg replay), or to the only pool (aggregated replay).
-    /// Idempotent.
-    #[allow(dead_code)]
-    pub(crate) fn on_decode_assigned(&mut self, uuid: Uuid, worker_idx: usize) {
-        if let Some(stats) = self.requests.get_mut(&uuid)
-            && stats.decode_worker_idx.is_none()
-        {
-            stats.decode_worker_idx = Some(worker_idx);
-        }
     }
 
     pub fn on_admit(&mut self, uuid: Uuid, admit_time_ms: f64, reused_input_tokens: usize) {
@@ -570,98 +509,10 @@ impl TraceCollector {
         }
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn on_prefill_admit(
-        &mut self,
-        uuid: Uuid,
-        admit_time_ms: f64,
-        reused_input_tokens: usize,
-    ) {
-        self.on_admit(uuid, admit_time_ms, reused_input_tokens);
-        if let Some(detail) = self.detail_mut(uuid) {
-            record_role_admit(
-                &mut detail.prefill_admit_ms,
-                &mut detail.prefill_reused_input_tokens,
-                admit_time_ms,
-                reused_input_tokens,
-            );
-        }
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn on_decode_admit(
-        &mut self,
-        uuid: Uuid,
-        admit_time_ms: f64,
-        reused_input_tokens: usize,
-    ) {
-        self.on_admit(uuid, admit_time_ms, reused_input_tokens);
-        if let Some(detail) = self.detail_mut(uuid) {
-            record_role_admit(
-                &mut detail.decode_admit_ms,
-                &mut detail.decode_reused_input_tokens,
-                admit_time_ms,
-                reused_input_tokens,
-            );
-        }
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn on_source_held(&mut self, uuid: Uuid, at_ms: f64) {
-        if let Some(detail) = self.detail_mut(uuid) {
-            detail.source_held_ms.get_or_insert(at_ms);
-        }
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn on_destination_reserved(&mut self, uuid: Uuid, at_ms: f64) {
-        if let Some(detail) = self.detail_mut(uuid) {
-            detail.destination_reserved_ms.get_or_insert(at_ms);
-        }
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn on_destination_activated(&mut self, uuid: Uuid, at_ms: f64) {
-        if let Some(detail) = self.detail_mut(uuid) {
-            detail.destination_activated_ms.get_or_insert(at_ms);
-        }
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn on_source_released(&mut self, uuid: Uuid, at_ms: f64) {
-        if let Some(detail) = self.detail_mut(uuid) {
-            detail.source_released_ms.get_or_insert(at_ms);
-        }
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn on_prefill_route_overlap(&mut self, uuid: Uuid, tokens: usize) {
-        if let Some(detail) = self.detail_mut(uuid) {
-            detail.prefill_route_overlap_tokens.get_or_insert(tokens);
-        }
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn on_decode_route_overlap(&mut self, uuid: Uuid, tokens: usize) {
-        if let Some(detail) = self.detail_mut(uuid) {
-            detail.decode_route_overlap_tokens.get_or_insert(tokens);
-        }
-    }
-
     pub fn on_terminal(&mut self, uuid: Uuid, status: ReplayTerminalStatus) {
         if let Some(stats) = self.requests.get_mut(&uuid) {
             stats.terminal_status.get_or_insert(status);
-            if let Some(detail) = stats.detail.as_deref_mut() {
-                detail.terminal_status.get_or_insert(status);
-            }
         }
-    }
-
-    fn detail_mut(&mut self, uuid: Uuid) -> Option<&mut PerRequestDetail> {
-        if !self.capture_per_request {
-            return None;
-        }
-        self.requests.get_mut(&uuid)?.detail.as_deref_mut()
     }
 
     pub fn on_token(&mut self, uuid: Uuid, token_time_ms: f64) {
@@ -681,11 +532,6 @@ impl TraceCollector {
             Vec::new()
         };
         let sla = self.sla;
-        let static_worker_count = self.static_worker_count;
-        let accumulated_prefill_worker_seconds = self.prefill_worker_seconds;
-        let accumulated_decode_worker_seconds = self.decode_worker_seconds;
-        let prefill_gpus_per_worker = self.prefill_gpus_per_worker;
-        let decode_gpus_per_worker = self.decode_gpus_per_worker;
         let requests = self.requests;
         let request_count = requests.len();
 
@@ -693,16 +539,7 @@ impl TraceCollector {
         let agg = accumulate_requests(&requests, sla);
 
         let duration_s = (agg.duration_ms / 1000.0).max(1e-9);
-        let resources = derive_resource_stats(
-            &agg,
-            duration_s,
-            static_worker_count,
-            accumulated_prefill_worker_seconds,
-            accumulated_decode_worker_seconds,
-            prefill_gpus_per_worker,
-            decode_gpus_per_worker,
-            sla,
-        );
+        let goodput = derive_goodput(&agg, duration_s, sla);
 
         let itl_distribution = build_distribution_stats(agg.itls);
         TraceSimulationReport {
@@ -720,11 +557,11 @@ impl TraceCollector {
                 output_throughput_tok_s: agg.total_output_tokens as f64 / duration_s,
                 total_throughput_tok_s: (agg.total_input_tokens + agg.total_output_tokens) as f64
                     / duration_s,
-                prefill_worker_seconds: resources.prefill_worker_seconds,
-                decode_worker_seconds: resources.decode_worker_seconds,
-                prefill_gpus_per_worker,
-                decode_gpus_per_worker,
-                gpu_hours: resources.gpu_hours,
+                prefill_worker_seconds: 0.0,
+                decode_worker_seconds: 0.0,
+                prefill_gpus_per_worker: 0,
+                decode_gpus_per_worker: 0,
+                gpu_hours: 0.0,
             },
             prefix_cache_reused_ratio: if agg.total_input_tokens == 0 {
                 0.0
@@ -749,7 +586,7 @@ impl TraceCollector {
                     agg.output_token_throughput_per_user,
                 ),
             },
-            goodput: resources.goodput,
+            goodput,
             per_request,
         }
     }
@@ -759,11 +596,11 @@ impl TraceCollector {
     /// Only requests with a terminal outcome are emitted. Requests truncated
     /// by a simulation-time cap have no terminal outcome and remain omitted.
     pub fn per_request_records(&self) -> Vec<PerRequestRecord> {
+        if !self.capture_per_request {
+            return Vec::new();
+        }
         let mut records = Vec::with_capacity(self.requests.len());
         for (uuid, stats) in &self.requests {
-            let Some(detail) = stats.detail.as_deref() else {
-                continue;
-            };
             let Some(terminal_status) = stats.terminal_status else {
                 continue;
             };
@@ -784,20 +621,18 @@ impl TraceCollector {
                 input_length: stats.input_length,
                 requested_output_length: stats.requested_output_length,
                 output_length: stats.actual_output_length(),
-                reused_input_tokens: detail
-                    .prefill_reused_input_tokens
-                    .unwrap_or(stats.reused_input_tokens),
-                prefill_worker_idx: stats.prefill_worker_idx,
-                decode_worker_idx: stats.decode_worker_idx,
-                prefill_admit_ms: detail.prefill_admit_ms,
-                source_held_ms: detail.source_held_ms,
-                destination_reserved_ms: detail.destination_reserved_ms,
-                destination_activated_ms: detail.destination_activated_ms,
-                decode_admit_ms: detail.decode_admit_ms,
-                source_released_ms: detail.source_released_ms,
-                decode_reused_input_tokens: detail.decode_reused_input_tokens,
-                prefill_route_overlap_tokens: detail.prefill_route_overlap_tokens,
-                decode_route_overlap_tokens: detail.decode_route_overlap_tokens,
+                reused_input_tokens: stats.reused_input_tokens,
+                prefill_worker_idx: None,
+                decode_worker_idx: None,
+                prefill_admit_ms: None,
+                source_held_ms: None,
+                destination_reserved_ms: None,
+                destination_activated_ms: None,
+                decode_admit_ms: None,
+                source_released_ms: None,
+                decode_reused_input_tokens: None,
+                prefill_route_overlap_tokens: None,
+                decode_route_overlap_tokens: None,
                 terminal_status,
             });
         }
@@ -915,59 +750,16 @@ fn accumulate_requests(
     }
 }
 
-struct ResourceStats {
-    prefill_worker_seconds: f64,
-    decode_worker_seconds: f64,
-    gpu_hours: f64,
-    goodput: Option<TraceGoodputStats>,
-}
-
-#[allow(clippy::too_many_arguments)]
-fn derive_resource_stats(
+fn derive_goodput(
     agg: &RequestAggregate,
     duration_s: f64,
-    static_worker_count: Option<(usize, usize)>,
-    accumulated_prefill_worker_seconds: f64,
-    accumulated_decode_worker_seconds: f64,
-    prefill_gpus_per_worker: usize,
-    decode_gpus_per_worker: usize,
     sla: SlaThresholds,
-) -> ResourceStats {
-    let (prefill_worker_seconds, decode_worker_seconds) = match static_worker_count {
-        Some((prefill, decode)) => (prefill as f64 * duration_s, decode as f64 * duration_s),
-        None => (
-            accumulated_prefill_worker_seconds,
-            accumulated_decode_worker_seconds,
-        ),
-    };
-    let gpu_hours = (prefill_worker_seconds * prefill_gpus_per_worker as f64
-        + decode_worker_seconds * decode_gpus_per_worker as f64)
-        / 3600.0;
-    let goodput = sla.is_set().then(|| TraceGoodputStats {
+) -> Option<TraceGoodputStats> {
+    sla.is_set().then(|| TraceGoodputStats {
         completed_requests: agg.goodput_requests,
         request_throughput_rps: agg.goodput_requests as f64 / duration_s,
         output_throughput_tok_s: agg.goodput_output_tokens as f64 / duration_s,
-    });
-    ResourceStats {
-        prefill_worker_seconds,
-        decode_worker_seconds,
-        gpu_hours,
-        goodput,
-    }
-}
-
-fn record_role_admit(
-    admit_ms: &mut Option<f64>,
-    reused_input_tokens_slot: &mut Option<usize>,
-    admit_time_ms: f64,
-    reused_input_tokens: usize,
-) {
-    admit_ms.get_or_insert(admit_time_ms);
-    *reused_input_tokens_slot = Some(
-        reused_input_tokens_slot
-            .unwrap_or_default()
-            .max(reused_input_tokens),
-    );
+    })
 }
 
 fn mean(values: &[f64]) -> f64 {
@@ -1083,90 +875,14 @@ mod tests {
     }
 
     #[test]
-    fn per_request_disagg_record_populates_all_fields() {
-        let mut collector = TraceCollector::default();
-        collector.set_capture_per_request(true);
-        let uuid = Uuid::from_u128(1);
-        collector.on_arrival(uuid, 0.0, 100, 4);
-        collector.on_prefill_route_overlap(uuid, 64);
-        collector.on_prefill_admit(uuid, 5.0, 30);
-        collector.on_source_held(uuid, 10.0);
-        collector.on_destination_reserved(uuid, 12.0);
-        collector.on_destination_activated(uuid, 20.0);
-        collector.on_source_released(uuid, 21.0);
-        collector.on_decode_route_overlap(uuid, 32);
-        collector.on_decode_admit(uuid, 25.0, 40);
-        collector.on_prefill_assigned(uuid, 2);
-        collector.on_decode_assigned(uuid, 7);
-        collector.on_token(uuid, 50.0);
-        collector.on_token(uuid, 60.0);
-        collector.on_token(uuid, 75.0);
-        collector.on_token(uuid, 95.0);
-        collector.on_terminal(uuid, ReplayTerminalStatus::Completed);
-
-        let report = collector.finish();
-        assert_eq!(report.per_request.len(), 1);
-        let rec = &report.per_request[0];
-        assert_eq!(rec.uuid, uuid.to_string());
-        assert_eq!(rec.arrival_time_ms, 0.0);
-        assert_eq!(rec.first_admit_ms, Some(5.0));
-        assert_eq!(rec.first_token_ms, Some(50.0));
-        assert_eq!(rec.last_token_ms, Some(95.0));
-        assert_eq!(rec.ttft_ms, Some(50.0));
-        assert_eq!(rec.ttst_ms, Some(10.0));
-        assert_eq!(rec.e2e_latency_ms, Some(95.0));
-        assert_eq!(rec.itl_ms, Some(15.0));
-        assert_eq!(rec.input_length, 100);
-        assert_eq!(rec.output_length, 4);
-        assert_eq!(rec.reused_input_tokens, 30);
-        assert_eq!(rec.prefill_worker_idx, Some(2));
-        assert_eq!(rec.decode_worker_idx, Some(7));
-        assert_eq!(rec.prefill_admit_ms, Some(5.0));
-        assert_eq!(rec.source_held_ms, Some(10.0));
-        assert_eq!(rec.destination_reserved_ms, Some(12.0));
-        assert_eq!(rec.destination_activated_ms, Some(20.0));
-        assert_eq!(rec.source_released_ms, Some(21.0));
-        assert_eq!(rec.decode_admit_ms, Some(25.0));
-        assert_eq!(rec.decode_reused_input_tokens, Some(40));
-        assert_eq!(rec.prefill_route_overlap_tokens, Some(64));
-        assert_eq!(rec.decode_route_overlap_tokens, Some(32));
-        assert_eq!(rec.terminal_status, ReplayTerminalStatus::Completed);
-    }
-
-    #[test]
-    fn per_request_bypass_leaves_prefill_worker_idx_none() {
-        let mut collector = TraceCollector::default();
-        collector.set_capture_per_request(true);
-        let uuid = Uuid::from_u128(42);
-        collector.on_arrival(uuid, 0.0, 100, 2);
-        collector.on_admit(uuid, 5.0, 0);
-        collector.on_decode_assigned(uuid, 1);
-        collector.on_token(uuid, 30.0);
-        collector.on_token(uuid, 45.0);
-        collector.on_terminal(uuid, ReplayTerminalStatus::Completed);
-
-        let report = collector.finish();
-        assert_eq!(report.per_request.len(), 1);
-        let rec = &report.per_request[0];
-        assert!(
-            rec.prefill_worker_idx.is_none(),
-            "bypassed request must have prefill_worker_idx = None"
-        );
-        assert_eq!(rec.decode_worker_idx, Some(1));
-    }
-
-    #[test]
     fn per_request_default_off() {
         let mut collector = TraceCollector::default();
         let uuid = Uuid::from_u128(1);
         collector.on_arrival(uuid, 0.0, 100, 2);
         collector.on_admit(uuid, 5.0, 0);
-        collector.on_decode_assigned(uuid, 0);
         collector.on_token(uuid, 50.0);
         collector.on_token(uuid, 60.0);
         collector.on_terminal(uuid, ReplayTerminalStatus::Completed);
-
-        assert!(collector.requests[&uuid].detail.is_none());
 
         let report = collector.finish();
         assert!(report.per_request.is_empty());
@@ -1183,7 +899,6 @@ mod tests {
         let uuid = Uuid::from_u128(uuid_n);
         collector.on_arrival(uuid, arrival_ms, 100, output_length);
         collector.on_admit(uuid, arrival_ms, 0);
-        collector.on_decode_assigned(uuid, 0);
         for &t in token_times_ms {
             collector.on_token(uuid, t);
         }
@@ -1249,36 +964,6 @@ mod tests {
     }
 
     #[test]
-    fn worker_seconds_accumulated_and_static() {
-        let mut accumulated = TraceCollector::default();
-        add_completed(&mut accumulated, 1, 0.0, 2, &[10.0, 20.0]);
-        accumulated.add_worker_seconds(1.5, 4.0);
-        accumulated.add_worker_seconds(0.5, 1.0);
-        let report = accumulated.finish();
-        assert!((report.throughput.prefill_worker_seconds - 2.0).abs() < 1e-9);
-        assert!((report.throughput.decode_worker_seconds - 5.0).abs() < 1e-9);
-
-        let mut static_single = TraceCollector::default();
-        static_single.set_static_worker_count(0, 1);
-        add_completed(&mut static_single, 1, 0.0, 2, &[100.0, 200.0]);
-        let report = static_single.finish();
-        assert!(report.throughput.prefill_worker_seconds.abs() < 1e-9);
-        assert!((report.throughput.decode_worker_seconds - 0.2).abs() < 1e-9);
-    }
-
-    #[test]
-    fn gpu_hours_from_worker_seconds_and_gpus_per_worker() {
-        let mut collector = TraceCollector::default();
-        collector.set_gpus_per_worker(2, 4);
-        add_completed(&mut collector, 1, 0.0, 2, &[100.0, 200.0]);
-        collector.add_worker_seconds(10.0, 5.0);
-        let report = collector.finish();
-        assert_eq!(report.throughput.prefill_gpus_per_worker, 2);
-        assert_eq!(report.throughput.decode_gpus_per_worker, 4);
-        assert!((report.throughput.gpu_hours - 40.0 / 3600.0).abs() < 1e-9);
-    }
-
-    #[test]
     fn per_request_records_are_sorted_by_arrival_time() {
         let mut collector = TraceCollector::default();
         collector.set_capture_per_request(true);
@@ -1286,7 +971,6 @@ mod tests {
             let uuid = Uuid::from_u128(uuid_n);
             collector.on_arrival(uuid, arrival, 100, 1);
             collector.on_admit(uuid, arrival + 1.0, 0);
-            collector.on_decode_assigned(uuid, 0);
             collector.on_token(uuid, arrival + 5.0);
             collector.on_terminal(uuid, ReplayTerminalStatus::Completed);
         }
@@ -1306,8 +990,6 @@ mod tests {
         let uuid = Uuid::from_u128(123);
         collector.on_arrival(uuid, 0.0, 50, 2);
         collector.on_admit(uuid, 1.0, 10);
-        collector.on_prefill_assigned(uuid, 0);
-        collector.on_decode_assigned(uuid, 1);
         collector.on_token(uuid, 20.0);
         collector.on_token(uuid, 25.0);
         collector.on_terminal(uuid, ReplayTerminalStatus::Completed);
@@ -1321,8 +1003,8 @@ mod tests {
         assert_eq!(parsed["uuid"], uuid.to_string());
         assert_eq!(parsed["input_length"], 50);
         assert_eq!(parsed["output_length"], 2);
-        assert_eq!(parsed["prefill_worker_idx"], 0);
-        assert_eq!(parsed["decode_worker_idx"], 1);
+        assert!(parsed["prefill_worker_idx"].is_null());
+        assert!(parsed["decode_worker_idx"].is_null());
         assert!(parsed["itl_ms"].is_number());
         assert_eq!(parsed["terminal_status"], "completed");
     }

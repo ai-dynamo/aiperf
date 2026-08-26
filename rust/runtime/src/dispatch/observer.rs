@@ -62,3 +62,47 @@ impl RequestObserver for CollectorObserver {
         self.inner.borrow_mut().on_terminal(u, s);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn live_observer_emits_supported_fields_and_compatibility_defaults() {
+        let observer = CollectorObserver::new(true);
+        let request = Uuid::from_u128(1);
+        let observer_api: &dyn RequestObserver = &observer;
+
+        observer_api.on_arrival(request, 10.0, 8, 2);
+        observer_api.on_admit(request, 12.0, 3);
+        observer_api.on_token(request, 15.0);
+        observer_api.on_token(request, 20.0);
+        observer_api.on_terminal(request, ReplayTerminalStatus::Completed);
+
+        let report = observer.finish(25.0);
+        let summary = serde_json::to_value(&report).expect("report must serialize");
+        let record = serde_json::to_value(&report.per_request[0]).expect("record must serialize");
+
+        assert_eq!(summary["completed_requests"], 1);
+        assert_eq!(summary["total_input_tokens"], 8);
+        assert_eq!(summary["total_output_tokens"], 2);
+        assert_eq!(summary["prefill_worker_seconds"], 0.0);
+        assert_eq!(summary["decode_worker_seconds"], 0.0);
+        assert_eq!(summary["prefill_gpus_per_worker"], 0);
+        assert_eq!(summary["decode_gpus_per_worker"], 0);
+        assert_eq!(summary["gpu_hours"], 0.0);
+        assert_eq!(record["first_admit_ms"], 12.0);
+        assert_eq!(record["reused_input_tokens"], 3);
+        assert!(record["prefill_worker_idx"].is_null());
+        assert!(record["decode_worker_idx"].is_null());
+        assert!(record["prefill_admit_ms"].is_null());
+        assert!(record["source_held_ms"].is_null());
+        assert!(record["destination_reserved_ms"].is_null());
+        assert!(record["destination_activated_ms"].is_null());
+        assert!(record["decode_admit_ms"].is_null());
+        assert!(record["source_released_ms"].is_null());
+        assert!(record["decode_reused_input_tokens"].is_null());
+        assert!(record["prefill_route_overlap_tokens"].is_null());
+        assert!(record["decode_route_overlap_tokens"].is_null());
+    }
+}
