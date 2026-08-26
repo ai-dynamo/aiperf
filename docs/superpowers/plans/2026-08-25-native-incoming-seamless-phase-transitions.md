@@ -10,12 +10,13 @@
 across every native execution path, with exact upstream merge ancestry and full
 Graham approval.
 
-**Architecture:** Keep the existing two-level model: public `PhaseSpec.seamless`
-is incoming, internal `PhaseConfig.seamless` is the current phase's outbound
-handoff. Centralize their relationship in the existing
-`phase_seamless_to_next` adapter and strengthen authored-phase tests. Reuse the
-shared orchestrator's real-HTTP overlap, final barrier, sidecar finalization,
-and detached-failure machinery rather than duplicating lifecycle code.
+**Architecture:** Keep the existing two-level phase model: public
+`PhaseSpec.seamless` is incoming, while internal `PhaseConfig.seamless` is the
+current phase's outbound handoff. Preserve their existing adapter and add a
+worker-local server-profiler ownership coordinator shared by every phase
+sidecar in one run. Cellular readiness remains controller-owned but tracks each
+overlapping phase separately and acquires the same first-start/last-stop
+ownership contract.
 
 **Tech stack:** Rust 2024, serde protocol v2, Tokio current-thread `LocalSet`,
 native `Clock`/`SimClock`, Hyper/Axum integration tests, Cargo, sccache.
@@ -54,9 +55,9 @@ native `Clock`/`SimClock`, Hyper/Axum integration tests, Cargo, sccache.
 - [x] Inspect the upstream runner, orchestrator, and all five changed tests.
 - [x] Inspect native protocol, lowering, scheduled, sharded, offline, graph,
   orchestrator, runner, sidecar, and existing test seams.
-- [x] Record why the native behavior is implemented but incompletely evidenced.
-- [ ] Commit the finding, specification, plan, and spec index.
-- [ ] Create and verify a target-specific two-parent tree-preserving merge.
+- [x] Record the correct timing behavior and the missing profiler ownership.
+- [x] Commit the finding, specification, plan, and spec index.
+- [x] Create and verify a target-specific two-parent tree-preserving merge.
 
 ### Task 2: TDD the authored transition direction
 
@@ -67,16 +68,16 @@ native `Clock`/`SimClock`, Hyper/Axum integration tests, Cargo, sccache.
 - Consumes authored `Vec<PhaseSpec>` values.
 - Produces the exact outbound handoff vector passed to native `PhaseConfig`.
 
-- [ ] Add a RED inverse test proving a phase's own incoming flag cannot make it
+- [x] Add an inverse test proving a phase's own incoming flag cannot make it
   hand off to a non-seamless successor.
-- [ ] Add a RED three-phase test proving only immediate predecessors of incoming
+- [x] Add a workflow test proving only immediate predecessors of incoming
   seamless phases hand off.
-- [ ] Add a RED final-phase assertion proving authored seamless never creates an
+- [x] Add a final-phase assertion proving authored seamless never creates an
   outbound transition past the end of the phase list.
-- [ ] Implement only if a test exposes a production gap; otherwise retain the
+- [x] Retain the existing helper because the mapping assertions are already green;
   existing helper and record that the RED phase was an assertion-tightening
   failure against the old incomplete test contract.
-- [ ] Run focused engine tests to GREEN and commit the slice.
+- [x] Run focused engine tests to GREEN and commit the slice.
 
 ### Task 3: Port applicable lifecycle tests and integration evidence
 
@@ -90,12 +91,13 @@ native `Clock`/`SimClock`, Hyper/Axum integration tests, Cargo, sccache.
 - Produces proof of overlap, non-overlap, final barrier, background failure,
   and sidecar/drain behavior.
 
-- [ ] Map every changed upstream test assertion to native evidence.
-- [ ] Run the real-HTTP overlap test and inspect phase start/end ordering.
-- [ ] Run simulated seamless and non-seamless transition tests.
-- [ ] Run detached predecessor-failure cancellation coverage.
-- [ ] Add a native regression only if an upstream assertion lacks equivalent
-  behavioral evidence; begin it RED.
+- [x] Map every changed upstream test assertion to native evidence.
+- [x] Run the real-HTTP overlap test and inspect phase start/end ordering.
+- [x] Run simulated seamless and non-seamless transition tests.
+- [x] Run detached predecessor-failure cancellation coverage.
+- [x] Add a failing ownership test proving overlapping profiling phases emit one
+  start and one last-owner stop.
+- [x] Add native phase-sidecar return-drain and cellular overlap regressions.
 - [ ] Commit any required integration coverage separately.
 
 ### Task 4: Full verification and Graham review

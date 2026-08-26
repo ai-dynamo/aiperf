@@ -43,7 +43,17 @@ by `SeamlessFailureSignal`; an active successor is cancelled before another
 phase can advance, and the run reports the predecessor's phase id and error.
 Low-rate sidecars remain phase-owned. Their `finish` hooks execute from phase
 finalization after return drain, so a profiling server is not stopped merely
-because issuance hands off.
+because issuance hands off. Server-profiler sidecars acquire one run-local
+ownership coordinator: the first active profiling phase sends the start hook,
+overlapping phases share that session, and only the last drained owner sends
+the stop hook. Terminal run cleanup force-stops any owner left by an aborted
+setup or execution path.
+
+Cellular server-profiler gates apply the same contract after aggregating each
+phase's cell signals. Readiness and completion are tracked per phase, allowing
+the successor gate to open while the predecessor is still draining. The
+controller holds one profiler owner for each released phase, then stops only
+after every released phase has completed on every cell.
 
 The incoming flag never grants a final phase an outbound handoff. Likewise, a
 phase carrying `seamless: true` does not by itself alter the transition to a
@@ -55,14 +65,19 @@ letting the timing runtime keep its explicit current-to-next ownership model.
 Authored-phase lowering tests prove positive, inverse, middle-of-workflow, and
 final-phase direction. Runtime tests separately prove real-HTTP overlap,
 non-seamless drain ordering, shared-capacity debt drainage, final barriers, and
-detached-failure cancellation. Together those tests cover both sides of the
-adapter rather than relying on direct internal `PhaseConfig` construction as
-evidence for public behavior.
+detached-failure cancellation. Sidecar tests prove post-return finish ordering,
+one start/last-owner stop for overlapping profilers, and overlapping cellular
+phase-gate acceptance. Together those tests cover both sides of the adapter
+rather than relying on direct internal `PhaseConfig` construction as evidence
+for public behavior.
 
 ## Source anchors
 
 - `rust/runtime/src/engine/execute/dataset_build.rs`
 - `rust/runtime/src/engine/execute/compose_sidecars.rs`
+- `rust/runtime/src/engine/control_hooks.rs`
+- `rust/runtime/src/engine/server_profiler.rs`
+- `rust/runtime/src/engine/cellular_controller.rs`
 - `rust/runtime/src/engine/execute/sharding.rs`
 - `rust/runtime/src/engine/offline_execution.rs`
 - `rust/runtime/src/engine/graph_phase_runtime.rs`

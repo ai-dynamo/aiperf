@@ -14,7 +14,7 @@ detached return waiting, active-runner cleanup, fatal-error callback wiring,
 and deferred server-profiler stop. A final phase never hands off, even if its
 incoming flag is true.
 
-## Native applicability and current gap
+## Native applicability and gap
 
 The native public protocol has the same incoming authored meaning:
 `PhaseCommonSpec.seamless` belongs to the phase carrying it. The internal timing
@@ -25,20 +25,32 @@ All native product execution families call that helper before constructing a
 phase plan: unsharded scheduled execution, worker sharding, offline Dynamo
 execution, and Graph-IR execution.
 
-The runtime already supplies the rest of the upstream behavior. A non-final
+The timing runtime already supplies most of the upstream behavior. A non-final
 outbound handoff starts a background return wait, retains the runner in the
 active set, propagates detached terminal failure through
 `SeamlessFailureSignal`, and waits at the final barrier. Phase sidecars,
 including the server profiler, finish during phase finalization after returns
 drain rather than at the issuance handoff.
 
-The behavior is therefore already implemented, but the evidence is incomplete.
-The existing adapter unit test proves only the positive two-phase case, while
-the runtime overlap tests construct internal `PhaseConfig` values directly and
-do not prove the public authored direction. This port adds explicit negative,
-middle-transition, and final-phase mapping tests and keeps the real HTTP overlap
-and detached-failure tests as composed runtime evidence. No production refactor
-is justified because it would only move the already-correct adapter contract.
+The deeper profiler audit found a production gap despite the correct timing
+handoff. Each native profiling phase owned an independent profiler sidecar, so
+two overlapping profiling phases emitted `start, start, stop, stop`. The first
+phase to drain could therefore stop server profiling while its overlapping
+peer was still active. The cellular controller additionally rejected the
+successor's `Ready` signal while the predecessor remained active.
+
+This port adds one run-local, worker-local profiler ownership coordinator. The
+first active profiling phase sends start; overlapping phases acquire ownership
+without another control request; the last drained phase sends stop. Cellular
+coordination now tracks cell readiness/completion per phase and uses that same
+ownership policy, while terminal run cleanup force-stops an outstanding owner.
+The implementation adds no lock, thread, channel, or public wire change.
+
+The evidence gap is also closed. Authored lowering now covers positive,
+inverse, middle-transition, and final behavior. Native runtime tests cover
+return-drain sidecar ordering, local profiler ownership, and overlapping
+cellular phase gates in addition to the existing real-HTTP overlap and detached
+failure coverage.
 
 ## Upstream-to-native test map
 
@@ -51,7 +63,9 @@ is justified because it would only move the already-correct adapter contract.
 | Handoff overlaps real in-flight HTTP work | Existing `phase_runtime_online::seamless_phases_overlap_over_the_real_http_dispatcher`. |
 | Non-seamless transitions wait for predecessor drain | Existing simulated orchestrator/runtime transition tests. |
 | Detached fatal failure cancels the active successor and fails the run | Existing `seamless_predecessor_failure_cancels_active_phase_before_advancing`. |
-| Server-profiler stop follows return drain | Phase sidecar lifecycle tests plus the shared runner finalization boundary. |
+| Server-profiler stop follows return drain | New simulated phase-sidecar integration test records successor finish at 5 ns and predecessor finish at 20 ns. |
+| Overlapping profiling phases share one profiler session | New control-hook test proves exactly one start and one last-owner stop. |
+| Cellular profiling accepts overlapping phase gates | New controller test releases both phases and retains profiler ownership until the predecessor drains. |
 
 ## Ancestry constraint
 

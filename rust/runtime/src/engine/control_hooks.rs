@@ -3,6 +3,7 @@
 
 //! Prepared endpoint-local control hooks over profile-bound control-plane HTTP.
 
+use std::cell::Cell;
 use std::fmt::{self, Debug, Formatter};
 use std::rc::Rc;
 
@@ -100,6 +101,19 @@ impl PreparedServerProfilerHook {
     pub fn stop_path(&self) -> &str {
         &self.stop_path
     }
+
+    /// Build a request-free hook for ownership-state tests.
+    #[cfg(test)]
+    pub(crate) fn empty_for_test(clock: Rc<dyn Clock>) -> Self {
+        Self {
+            timeout_ns: DEFAULT_CONTROL_HOOK_TIMEOUT_NS,
+            start_path: DEFAULT_SERVER_PROFILER_START_PATH.to_owned(),
+            stop_path: DEFAULT_SERVER_PROFILER_STOP_PATH.to_owned(),
+            handles: Vec::new(),
+            clock,
+            target_urls: Vec::new(),
+        }
+    }
 }
 
 impl Debug for PreparedServerProfilerHook {
@@ -112,6 +126,75 @@ impl Debug for PreparedServerProfilerHook {
             .field("handle_count", &self.handles.len())
             .field("target_urls", &self.target_urls)
             .finish()
+    }
+}
+
+/// Run-local ownership of one server-profiler session across overlapping phases.
+///
+/// Phase setup is serialized by the phase orchestrator, so the worker-local
+/// ownership count needs no synchronization. The first owner starts the remote
+/// profiler and the last owner to drain stops it.
+pub(crate) struct ServerProfilerCoordinator {
+    hook: PreparedServerProfilerHook,
+    owners: Cell<usize>,
+}
+
+impl ServerProfilerCoordinator {
+    /// Bind one prepared hook to a fresh run-local ownership set.
+    pub(crate) fn new(hook: PreparedServerProfilerHook) -> Self {
+        Self {
+            hook,
+            owners: Cell::new(0),
+        }
+    }
+
+    /// Acquire profiler ownership for one phase after its setup gate opens.
+    pub(crate) fn acquire(self: &Rc<Self>) -> LocalPhaseFuture<Result<()>> {
+        let coordinator = self.clone();
+        Box::pin(async move {
+            let owner_count = coordinator.owners.get();
+            if owner_count == 0 {
+                start_server_profiler(&coordinator.hook).await?;
+            }
+            let next_count = owner_count
+                .checked_add(1)
+                .ok_or_else(|| anyhow!("server profiler ownership count overflow"))?;
+            coordinator.owners.set(next_count);
+            Ok(())
+        })
+    }
+
+    /// Release one drained phase and stop the profiler after the last owner.
+    pub(crate) fn release(self: &Rc<Self>) -> LocalPhaseFuture<Result<()>> {
+        let coordinator = self.clone();
+        Box::pin(async move {
+            let owner_count = coordinator.owners.get();
+            ensure!(
+                owner_count > 0,
+                "server profiler ownership released without an active owner"
+            );
+            coordinator.owners.set(owner_count - 1);
+            if owner_count == 1 {
+                stop_server_profiler(&coordinator.hook).await?;
+            }
+            Ok(())
+        })
+    }
+
+    /// Stop one still-owned profiler at a terminal run barrier.
+    pub(crate) fn force_stop(self: &Rc<Self>) -> LocalPhaseFuture<Result<()>> {
+        let coordinator = self.clone();
+        Box::pin(async move {
+            if coordinator.owners.replace(0) > 0 {
+                stop_server_profiler(&coordinator.hook).await?;
+            }
+            Ok(())
+        })
+    }
+
+    /// Whether at least one phase currently owns the profiler.
+    pub(crate) fn has_owners(&self) -> bool {
+        self.owners.get() > 0
     }
 }
 
@@ -704,6 +787,49 @@ mod tests {
                     absolute_deadline_ns: 6_000_000_000,
                 },
             ]
+        );
+    }
+
+    #[tokio::test]
+    async fn overlapping_profiler_owners_share_one_control_session() {
+        let clock: Rc<dyn Clock> = Rc::new(SimClock::new());
+        let provider = RecordingProvider::new();
+        let hooks = prepare_endpoint_control_hooks(
+            clock,
+            &provider,
+            &validated_profile_with_paths("http://127.0.0.1:8000"),
+        )
+        .expect("hooks prepare");
+        let profiler = Rc::new(ServerProfilerCoordinator::new(
+            hooks.server_profiler.expect("profiler hook"),
+        ));
+
+        profiler
+            .acquire()
+            .await
+            .expect("first phase starts profiler");
+        profiler
+            .acquire()
+            .await
+            .expect("overlapping phase shares profiler");
+        profiler
+            .release()
+            .await
+            .expect("successor releases ownership");
+        profiler
+            .release()
+            .await
+            .expect("predecessor stops profiler after drain");
+
+        assert_eq!(
+            provider
+                .state
+                .requests
+                .borrow()
+                .iter()
+                .map(|request| request.path.as_str())
+                .collect::<Vec<_>>(),
+            ["/start_profile", "/stop_profile"]
         );
     }
 
