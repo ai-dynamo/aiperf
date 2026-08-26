@@ -60,6 +60,12 @@ pub(crate) fn resolve_expanded_inputs(
 ) -> anyhow::Result<Inputs> {
     let mut file: ConfigFile = serde_json::from_value(expanded)
         .map_err(|e| anyhow::anyhow!("failed to parse config: {e}"))?;
+    if let Some(version) = file.schema_version.as_deref() {
+        anyhow::ensure!(
+            version == "2.0",
+            "unsupported schema version {version:?}; expected \"2.0\""
+        );
+    }
     let random_seed = file.random_seed;
     warn_unimplemented_keys(&file);
     // A nested runtime block takes precedence over the top-level block.
@@ -3216,6 +3222,16 @@ mod tests {
     }
 
     #[test]
+    fn unsupported_schema_version_is_rejected() {
+        for version in ["1.0", "2.1", "bogus"] {
+            let error = err(&format!(
+                "schemaVersion: {version}\n  phases: {{type: concurrency, requests: 1, concurrency: 1}}\n"
+            ));
+            assert!(error.contains("unsupported schema version"), "{error}");
+        }
+    }
+
+    #[test]
     fn records_true_is_rejected() {
         let error = err(
             "  artifacts: {records: true}\n  phases: {type: concurrency, requests: 1, concurrency: 1}\n",
@@ -3245,8 +3261,7 @@ mod tests {
     fn resolve_inputs(body: &str) -> super::Inputs {
         let raw: serde_json::Value = serde_yaml::from_str(&cfg(body)).expect("valid YAML");
         let expanded = crate::expand::expand_config(raw).expect("config expands");
-        resolve_expanded_inputs(expanded, Some("/tmp/x".into()), None)
-            .expect("inputs resolve")
+        resolve_expanded_inputs(expanded, Some("/tmp/x".into()), None).expect("inputs resolve")
     }
 
     /// The authored inline peak form must reach the wire as the nested
