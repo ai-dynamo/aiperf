@@ -81,7 +81,7 @@ implementation, test run, or review.
 | 53 | `e5ebe915df` | enum inequality | pending | not-applicable | Python enum behavior only. |
 | 54 | `bfe33151de` | rejected peak diagnostics | pending | applicable | Actual target is WEKA/Dynamo selection, not Baseten. |
 | 55 | `dd3f09b0c3` | session-affinity header | pending | applicable | Add default-on `X-Session-Affinity`, not opt-in `X-Session-ID`. |
-| 56 | `94fee7338b` | random range ratio | pending | applicable | Random corpus exists; ratio surface/sampling is absent. |
+| 56 | `94fee7338b` | random range ratio | implementing | applicable | Native random corpus exists, but ratio/style config and reference PCG64/MT19937 ISL→OSL→offset stream are absent; see the dedicated finding/spec/plan. |
 | 57 | `e10d53b1d3` | version 0.13.0 | pending | shared-product-action | Coordinated release decision, not standalone Rust port. |
 | 58 | `9b60a3d479` | FakeTokenizer | pending | not-applicable | Python test harness only. |
 | 59 | `c9288da6c1` | mmap conversation cache | pending | not-applicable | No equivalent native mmap backend. |

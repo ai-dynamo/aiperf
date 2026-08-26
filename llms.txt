@@ -651,6 +651,9 @@ Inputs, endpoints, and graph:
   approved native Baseten performance port: measured wide-Parquet gap, bounded
   projected Parquet decode and projected Arrow IPC scans, metadata-first session
   sampling, configured schema fallback, and single intermediate construction.
+- [`docs/specs/2026-08-25-native-random-range-ratio.md`](docs/specs/2026-08-25-native-random-range-ratio.md) —
+  native vLLM/SGLang-compatible random-range ISL/OSL sampling and seeded random-corpus
+  draw order over the existing exact-length and raw-token composition paths.
 - [`docs/specs/2026-08-25-native-sharegpt-batch-encoding.md`](docs/specs/2026-08-25-native-sharegpt-batch-encoding.md) —
   approved native ShareGPT configuration performance port: an ordered tokenizer
   batch seam, bounded 4096-text composition batches, and exact preservation of
