@@ -43,7 +43,8 @@ native runtime.
 
 ## Graham review outcome
 
-Two passes over the exact metadata delta and closure records found no findings.
-The changed production surface is metadata only; no hot path, async, allocation,
+The implementer's root-independent Graham review made two passes over the exact
+metadata delta and the final merged closure and found no findings. The changed
+production surface is metadata only; no hot path, async, allocation,
 synchronization, tracing, or Rust API behavior is in scope. The diff remains
 limited to the four upstream release surfaces and the required closure records.

@@ -1135,15 +1135,15 @@ fn run_cellular_with_startup_probe<P: StartupProbe>(
         // plugin can serve it. Empty in the standalone path.
         let mut dataset_publisher_for_hub = None;
         let _dataset_server = if dataset_fanout {
-            let publisher =
-                crate::cellular::dataset_session::DatasetPublisher::<Vec<u8>>::new();
+            let mut publisher =
+                crate::cellular::transport::dataset_velo::DatasetWirePublisher::new();
             let server = if hub_mode {
                 None
             } else {
                 Some(
                     crate::cellular::transport::dataset_velo::DatasetServer::bind(
                         velo.clone(),
-                        publisher.clone(),
+                        publisher.publisher(),
                         registration_authority.clone(),
                     )
                     .context("binding dataset fan-out plane")?,
@@ -1187,13 +1187,17 @@ fn run_cellular_with_startup_probe<P: StartupProbe>(
                         }
                     })
                     .collect();
-                let chunk_id = publisher.add(requests);
+                let chunk_id = publisher
+                    .add(requests)
+                    .context("dataset fan-out: admitting request chunk")?;
                 phaser.advance(crate::cellular::phaser::PhaseTransition::ShardsAvailable(
                     chunk_id + 1,
                 ));
                 start = end;
             }
-            publisher.finalize();
+            publisher
+                .finalize()
+                .context("dataset fan-out: sealing request replay")?;
             tracing::info!(
                 total,
                 chunks = publisher.chunk_count(),
@@ -1201,7 +1205,7 @@ fn run_cellular_with_startup_probe<P: StartupProbe>(
                 "dataset fan-out: broadcast the endpoint-ready request bodies to the cells"
             );
             if hub_mode {
-                dataset_publisher_for_hub = Some(publisher);
+                dataset_publisher_for_hub = Some(publisher.into_publisher());
             }
             server
         } else {

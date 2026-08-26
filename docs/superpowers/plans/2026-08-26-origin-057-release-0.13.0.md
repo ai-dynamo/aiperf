@@ -51,5 +51,5 @@ ancestry verification.
 
 - [x] Record the Python-package/native-Rust boundary and no-native-test ruling.
 - [x] Add Graham review evidence.
-- [ ] Commit the implementation closure, then await the root-provided current
-  head before creating the final two-parent integration merge.
+- [x] Commit the implementation closure, await the root-provided current head,
+  and create the final two-parent integration merge.

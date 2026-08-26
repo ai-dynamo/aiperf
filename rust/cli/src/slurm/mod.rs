@@ -21,6 +21,11 @@
 //! The `AIPERF_CELL_*` environment every downstream stage reads is set here from the
 //! allocation, exactly where the k8s operator would inject it.
 //!
+//! Private role material is per-rank, but `srun` exports one environment to every
+//! task: rank 0 reads `AIPERF_CONTROLLER_BOOTSTRAP_FILE`, while each cell resolves
+//! `<AIPERF_ROLE_BOOTSTRAP_DIR>/cell-<id>.bin` from its own rank. An
+//! operator-provisioned `AIPERF_ROLE_BOOTSTRAP_FILE` still takes precedence.
+//!
 //! `aiperf slurm generate` ([`generate`]) emits the sbatch script that submits
 //! such an allocation.
 //!
@@ -35,6 +40,8 @@ use aiperf_runtime::engine::slurm_topology::{
     CONTROLLER_PORT_ENV, SlurmTopology, controller_port_from_env,
 };
 use anyhow::{Context, Result};
+use std::ffi::OsString;
+use std::path::{Path, PathBuf};
 
 /// The `slurm run` subcommand token: the per-task rank dispatch.
 ///
@@ -43,6 +50,7 @@ pub const RUN_SUBCOMMAND: &str = "run";
 
 const CONTROLLER_BOOTSTRAP_FILE_ENV: &str = "AIPERF_CONTROLLER_BOOTSTRAP_FILE";
 const ROLE_BOOTSTRAP_FILE_ENV: &str = "AIPERF_ROLE_BOOTSTRAP_FILE";
+const ROLE_BOOTSTRAP_DIR_ENV: &str = "AIPERF_ROLE_BOOTSTRAP_DIR";
 
 /// Require the deployment-owned bootstrap mount for this SLURM role.
 ///
@@ -54,6 +62,32 @@ fn require_bootstrap_mount(env: &str, role: &str) -> Result<()> {
         .filter(|path| !path.is_empty())
         .with_context(|| format!("SLURM {role} has no deployment-provisioned {env}"))?;
     validate_bootstrap_mount(std::path::Path::new(&path), role)
+}
+
+/// Resolve this cell task's bootstrap bundle.
+///
+/// `srun` exports one environment to every task, so a per-rank path cannot come from
+/// the generated script. An operator-provisioned `AIPERF_ROLE_BOOTSTRAP_FILE` still
+/// wins when present; otherwise the bundle is `<AIPERF_ROLE_BOOTSTRAP_DIR>/cell-<id>.bin`,
+/// with `cell_id` derived from `SLURM_PROCID` by the same rank dispatch that selects
+/// this branch.
+fn resolve_role_bootstrap_path(
+    file: Option<OsString>,
+    directory: Option<OsString>,
+    cell_id: u32,
+) -> Result<PathBuf> {
+    if let Some(file) = file.filter(|value| !value.is_empty()) {
+        return Ok(PathBuf::from(file));
+    }
+    let directory = directory
+        .filter(|value| !value.is_empty())
+        .with_context(|| {
+            format!(
+                "SLURM cell {cell_id} has no deployment-provisioned {ROLE_BOOTSTRAP_FILE_ENV} \
+             or {ROLE_BOOTSTRAP_DIR_ENV} (generate the job script with `aiperf slurm generate`)"
+            )
+        })?;
+    Ok(Path::new(&directory).join(format!("cell-{cell_id}.bin")))
 }
 
 fn validate_bootstrap_mount(path: &std::path::Path, role: &str) -> Result<()> {
@@ -104,8 +138,22 @@ pub fn run(args: &[String]) -> Result<i32> {
         require_bootstrap_mount(CONTROLLER_BOOTSTRAP_FILE_ENV, "controller")?;
         run_controller(args, &topology, &coordinate)
     } else {
-        require_bootstrap_mount(ROLE_BOOTSTRAP_FILE_ENV, "cell")?;
-        run_cell(&topology, &coordinate)
+        let cell_id = topology
+            .cell_id()
+            .context("a non-controller SLURM rank must map to a cell id")?;
+        let bootstrap = resolve_role_bootstrap_path(
+            std::env::var_os(ROLE_BOOTSTRAP_FILE_ENV),
+            std::env::var_os(ROLE_BOOTSTRAP_DIR_ENV),
+            cell_id,
+        )?;
+        validate_bootstrap_mount(&bootstrap, "cell")?;
+        // The runtime's one-shot role acquisition reads only the file variable, so a
+        // directory-derived path is published here before any cellular stage runs.
+        // SAFETY: same single-threaded process-entry invariant as above.
+        unsafe {
+            std::env::set_var(ROLE_BOOTSTRAP_FILE_ENV, &bootstrap);
+        }
+        run_cell(&topology, &coordinate, cell_id)
     }
 }
 
@@ -137,10 +185,7 @@ fn run_controller(args: &[String], topology: &SlurmTopology, coordinate: &str) -
 
 /// Run a cell task: inject this cell's identity and fetch/execute its slice over
 /// velo. Diverges into the execute path.
-fn run_cell(topology: &SlurmTopology, coordinate: &str) -> Result<i32> {
-    let cell_id = topology
-        .cell_id()
-        .expect("a non-controller task always has a cell id");
+fn run_cell(topology: &SlurmTopology, coordinate: &str, cell_id: u32) -> Result<i32> {
     // SAFETY: same single-threaded process-entry invariant as `run`.
     unsafe {
         std::env::set_var(CELL_ID_ENV, cell_id.to_string());
@@ -176,5 +221,29 @@ mod tests {
         std::fs::set_permissions(file.path(), std::fs::Permissions::from_mode(0o600))
             .expect("permissions");
         assert!(validate_bootstrap_mount(file.path(), "test role").is_ok());
+    }
+
+    #[test]
+    fn slurm_run_derives_its_role_file_from_procid() {
+        let directory = std::ffi::OsString::from("/run/aiperf/bootstrap");
+        let topology = SlurmTopology::new(2, 4, "node0").expect("rank-2 topology");
+        let cell_id = topology.cell_id().expect("rank 2 is a cell");
+
+        assert_eq!(
+            resolve_role_bootstrap_path(None, Some(directory.clone()), cell_id)
+                .expect("directory-derived path"),
+            std::path::Path::new("/run/aiperf/bootstrap/cell-1.bin")
+        );
+        assert_eq!(
+            resolve_role_bootstrap_path(
+                Some(std::ffi::OsString::from("/mnt/operator/role.bin")),
+                Some(directory),
+                cell_id,
+            )
+            .expect("operator-mounted path"),
+            std::path::Path::new("/mnt/operator/role.bin"),
+            "an explicit AIPERF_ROLE_BOOTSTRAP_FILE outranks the directory"
+        );
+        assert!(resolve_role_bootstrap_path(None, None, cell_id).is_err());
     }
 }

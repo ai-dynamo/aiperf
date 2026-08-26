@@ -60,12 +60,16 @@ fn plot_delegates_to_the_python_utility_entry_point() {
 }
 
 #[test]
-fn slurm_generate_is_native_and_never_starts_python() {
+fn generated_script_exports_the_bootstrap_contract() {
     let directory = tempfile::tempdir().expect("create fixture directory");
     let record = directory.path().join("argv");
     let config = directory.path().join("benchmark.yaml");
     fs::write(&config, "benchmark: {}\n").expect("write config fixture");
     let absolute = fs::canonicalize(&config).expect("canonical config path");
+    let run_dir = absolute
+        .parent()
+        .expect("config parent")
+        .join("aiperf-slurm-run");
 
     let output = run(
         &[
@@ -94,11 +98,27 @@ fn slurm_generate_is_native_and_never_starts_python() {
              \n\
              export AIPERF_CELL_LAUNCHER=slurm\n\
              export AIPERF_CONTROLLER_PORT=9500\n\
+             export AIPERF_CONTROLLER_BOOTSTRAP_FILE={run}/bootstrap/controller.bin\n\
+             export AIPERF_ROLE_BOOTSTRAP_DIR={run}/bootstrap\n\
              \n\
-             srun aiperf slurm run --config {}\n",
-            absolute.display()
+             srun aiperf slurm run --config {config}\n",
+            run = run_dir.display(),
+            config = absolute.display()
         )
     );
+    // The exported paths exist because generation minted them.
+    let bootstrap = run_dir.join("bootstrap");
+    for bundle in ["controller.bin", "cell-0.bin", "cell-1.bin"] {
+        let path = bootstrap.join(bundle);
+        assert_eq!(
+            fs::metadata(&path)
+                .unwrap_or_else(|error| panic!("{} is unavailable: {error}", path.display()))
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+    }
 }
 
 #[test]

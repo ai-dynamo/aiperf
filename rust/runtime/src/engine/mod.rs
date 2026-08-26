@@ -15,7 +15,7 @@ pub mod artifact_stream_velo;
 pub mod cell_launcher;
 #[cfg(feature = "cellular")]
 pub mod cellular_aggregator;
-pub(crate) mod cellular_bootstrap;
+pub mod cellular_bootstrap;
 pub mod cellular_cell;
 pub(crate) mod cellular_registration;
 // Barrier-synchronized cross-cell timing origin (opt-in, feature-agnostic): a

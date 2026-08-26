@@ -1050,10 +1050,12 @@ fn parse_capture(value: &Value, origin: &impl std::fmt::Display) -> Result<Parse
         .ok_or_else(|| {
             DatasetError::Validation(format!("{origin}: missing eventMetadata object"))
         })?;
-    let timestamp = event
+    let timestamp_value = event
         .get("inferenceTime")
-        .and_then(Value::as_str)
         .ok_or_else(|| DatasetError::Validation(format!("{origin}: missing inferenceTime")))?;
+    let timestamp = timestamp_value.as_str().ok_or_else(|| {
+        DatasetError::Validation(format!("{origin}: invalid inferenceTime: expected string"))
+    })?;
     let timestamp_ms = parse_iso8601_ms(timestamp).map_err(|message| {
         DatasetError::Validation(format!("{origin}: invalid inferenceTime: {message}"))
     })?;
@@ -1597,5 +1599,31 @@ mod tests {
         assert_eq!(turn.input_tokens, Some(4));
         assert_eq!(turn.max_tokens, Some(9));
         assert!(turn.raw_messages.is_some());
+    }
+
+    #[tokio::test]
+    async fn sagemaker_rejects_malformed_inference_time_with_validation_error() {
+        let source = DatasetSource::Inline(json!([{
+            "captureData": {},
+            "eventMetadata": {"eventId":"bad-time", "inferenceTime": 123}
+        }]));
+        let mut registry = LoaderRegistry::new();
+        registry
+            .register(DatasetFormatRegistration::new(
+                Arc::new(SageMakerDataCaptureDatasetLoader),
+                Arc::new(SageMakerDataCaptureComposer),
+            ))
+            .unwrap();
+        let error = registry
+            .build_dataset(
+                Some("sagemaker_data_capture"),
+                &LoadConfig::new(source),
+                &ComposeConfig::new("model", RngRoot::new(Some(9))),
+                &TiktokenTokenizer::builtin(),
+            )
+            .await
+            .expect_err("non-string inferenceTime must be rejected");
+        let message = error.to_string();
+        assert!(message.contains("invalid inferenceTime"), "unexpected error: {message}");
     }
 }
