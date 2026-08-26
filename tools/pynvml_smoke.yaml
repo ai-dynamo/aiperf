@@ -10,13 +10,13 @@
 #   - NVIDIA driver with runtime-loadable NVML (`libnvidia-ml.so`)
 #   - a running OpenAI-compatible inference server (edit url/model below)
 #
-# Fail-fast: `aiperf config validate pynvml_smoke.yaml` validates the strict
-# URL-less native collector selection. Library/device availability is checked
-# when the profile starts.
+# Fail-fast: `aiperf config validate tools/pynvml_smoke.yaml` validates the
+# strict URL-less native collector selection. Library/device availability is
+# checked when the profile starts.
 #
-# Run:
-#   aiperf config validate pynvml_smoke.yaml
-#   aiperf profile --config pynvml_smoke.yaml
+# Run (from the repository root):
+#   aiperf config validate tools/pynvml_smoke.yaml
+#   aiperf profile --config tools/pynvml_smoke.yaml
 # Then check:
 #   ls artifacts/pynvml_smoke/*_gpu_telemetry.jsonl
 #   grep -o 'pynvml://localhost' artifacts/pynvml_smoke/*_gpu_telemetry.jsonl | head

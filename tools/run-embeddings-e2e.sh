@@ -15,10 +15,10 @@
 #   --local   run the host-installed `aiperf` (pip) instead of Docker.
 #
 # Usage:
-#   ./run-embeddings-e2e.sh                          # mock + image
-#   ./run-embeddings-e2e.sh --local                  # mock + host aiperf
-#   ./run-embeddings-e2e.sh --duration 60s --concurrency 64
-#   ./run-embeddings-e2e.sh --target grpc://1.2.3.4:8001 --model clip-l14 \
+#   tools/run-embeddings-e2e.sh                          # mock + image
+#   tools/run-embeddings-e2e.sh --local                  # mock + host aiperf
+#   tools/run-embeddings-e2e.sh --duration 60s --concurrency 64
+#   tools/run-embeddings-e2e.sh --target grpc://1.2.3.4:8001 --model clip-l14 \
 #       --input query --output text_embeddings --duration 2m --concurrency 64
 #
 # Time-based by default: --duration (30, 30s, 2m) --grace (drain window)
@@ -27,6 +27,10 @@
 #   prompts, recycled). --full = all metrics.
 # Env overrides: IMAGE, DIM, TOKENIZER, ARTIFACT_DIR.
 set -euo pipefail
+
+# Resolve the repository root from this script's own location so the mock-server
+# binary and Cargo workspace resolve regardless of the caller's cwd.
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # ---- defaults -------------------------------------------------------------
 IMAGE="${IMAGE:-nvcr.io/nvidian/dynamo-dev/aiperf:rust-emb-20260715-214809-10b4b4056}"
@@ -76,12 +80,12 @@ trap cleanup EXIT
 # ---- mock (only when no external --target given) --------------------------
 if [[ -z "$TARGET" ]]; then
   TARGET="grpc://127.0.0.1:8001"
-  MOCK_BIN="./rust/target/release/aiperf-mock-server"
+  MOCK_BIN="$REPO_ROOT/rust/target/release/aiperf-mock-server"
   echo ">> starting FP32 embedding mock on gRPC :8001 (dim=$DIM)"
   if [[ -x "$MOCK_BIN" ]]; then
     "$MOCK_BIN" --fast --grpc-port 8001 --grpc-embedding-dim "$DIM" >/tmp/aiperf-emb-mock.log 2>&1 &
   else
-    cargo run --release -p aiperf-mock-server -- \
+    cargo run --release --manifest-path "$REPO_ROOT/rust/Cargo.toml" -p aiperf-mock-server -- \
       --fast --grpc-port 8001 --grpc-embedding-dim "$DIM" >/tmp/aiperf-emb-mock.log 2>&1 &
   fi
   MOCK_PID=$!
