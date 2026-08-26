@@ -1,8 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from collections.abc import Iterable
-
 from aiperf.common.enums import MessageType, WorkerStatus
 from aiperf.common.hooks import AIPerfHook, on_message, provides_hooks
 from aiperf.common.messages import (
@@ -17,6 +15,7 @@ from aiperf.common.models import (
     WorkerStats,
     WorkerTaskStats,
 )
+from aiperf.common.worker_status_rank import worst_status
 
 LOCAL_GROUP_ID = "local"
 """Synthetic group id used when no WorkerGroupManager exists.
@@ -25,35 +24,6 @@ Exposed (rather than module-private) so API routers and dashboard renderers can
 reference the same constant when distinguishing the synthetic in-process group
 from real WGM-keyed groups.
 """
-
-STATUS_RANK: dict[WorkerStatus, int] = {
-    WorkerStatus.IDLE: 0,
-    WorkerStatus.HEALTHY: 1,
-    WorkerStatus.HIGH_LOAD: 2,
-    WorkerStatus.STALE: 3,
-    WorkerStatus.ERROR: 4,
-}
-"""Precedence used to roll child statuses up into a group status.
-
-Higher rank wins. ``STALE`` outranks ``HIGH_LOAD`` because a missing heartbeat
-means the worker's real state is unknown, which is worse than a known-saturated
-but still-reporting worker.
-"""
-
-
-def worst_status(statuses: Iterable[WorkerStatus]) -> WorkerStatus:
-    """Return the highest-precedence status from ``statuses`` per ``STATUS_RANK``.
-
-    Empty input returns ``WorkerStatus.IDLE`` (no workers, no concern).
-
-    Example:
-        >>> worst_status([WorkerStatus.HEALTHY, WorkerStatus.ERROR])
-        WorkerStatus.ERROR
-    """
-    materialized = list(statuses)
-    if not materialized:
-        return WorkerStatus.IDLE
-    return max(materialized, key=lambda s: STATUS_RANK.get(s, 0))
 
 
 class WorkerTracker:
