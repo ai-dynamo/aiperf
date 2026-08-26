@@ -117,6 +117,73 @@ class TestComputeCacheKey:
         assert base is not None
         assert len({base, speedup, out_mult, prefix_mult}) == 4
 
+    def test_key_changes_with_system_prompt(self, tmp_path: Path) -> None:
+        # The composer bakes the verbatim system prompt into
+        # Conversation.system_message, which round-trips through the stored mmap.
+        # A cache HIT skips the composer entirely, so two runs differing only in
+        # --system-prompt must NOT share an entry -- otherwise the second run
+        # silently replays the first one's prompt.
+        from aiperf.plugin.enums import CustomDatasetType
+
+        trace = _write_input_file(
+            tmp_path,
+            b'{"session_id": "s1", "timestamp": 0, "input_length": 8}\n',
+        )
+        prompt_a = tmp_path / "a.txt"
+        prompt_a.write_text("Prompt A.")
+        prompt_b = tmp_path / "b.txt"
+        prompt_b.write_text("Prompt B, different content.")
+
+        def _key(**system_kw: str) -> str | None:
+            run = make_run_from_cli(
+                CLIConfig(
+                    model_names=["test-model"],
+                    input_file=str(trace),
+                    custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
+                    **system_kw,
+                )
+            )
+            return mmap_cache.compute_cache_key_from_run(run)
+
+        none_key = _key()
+        a_key = _key(system_prompt_file=str(prompt_a))
+        b_key = _key(system_prompt_file=str(prompt_b))
+        assert none_key is not None
+        assert len({none_key, a_key, b_key}) == 3
+
+        # Identical text through either source composes identical bytes, so the
+        # two spellings must collapse onto one entry.
+        assert a_key == _key(system_prompt="Prompt A.")
+
+    def test_key_omits_system_prompt_field_when_unset(self, tmp_path: Path) -> None:
+        # Emitting an explicit None would serialize as ``null`` through
+        # orjson.dumps and shift every pre-existing key, needlessly cold-starting
+        # warm caches for runs that never touch the feature.
+        from aiperf.plugin.enums import CustomDatasetType
+
+        trace = _write_input_file(
+            tmp_path,
+            b'{"session_id": "s1", "timestamp": 0, "input_length": 8}\n',
+        )
+
+        def _payload(**system_kw: str) -> dict:
+            run = make_run_from_cli(
+                CLIConfig(
+                    model_names=["test-model"],
+                    input_file=str(trace),
+                    custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
+                    **system_kw,
+                )
+            )
+            return mmap_cache._settings_payload_from_run(run)
+
+        unset = _payload()
+        configured = _payload(system_prompt="Prompt A.")
+        assert "system_prompt_sha256" not in unset
+        assert "system_prompt_sha256" in configured
+        # Every other key is untouched by the addition.
+        assert set(unset) == set(configured) - {"system_prompt_sha256"}
+
     def test_key_changes_with_preformat_payloads(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

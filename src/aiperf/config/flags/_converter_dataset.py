@@ -261,6 +261,10 @@ _VERBATIM_DATASET_FIELDS = (
     ("open_loop_strict", "open_loop_strict", False),
     ("omit_kv_hints", "omit_kv_hints", False),
     ("force_min_tokens", "force_min_tokens", False),
+    # SystemPromptMixin fields live on all three dataset variants, so unlike the
+    # synthetic-only subtables below they must NOT be popped per-type.
+    ("system_prompt", "system_prompt", False),
+    ("system_prompt_file", "system_prompt_file", False),
 )
 
 

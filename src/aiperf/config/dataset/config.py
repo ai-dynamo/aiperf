@@ -29,7 +29,6 @@ from aiperf.common.enums import (
     DatasetFormat,
     DatasetType,
 )
-from aiperf.config.base import BaseConfig
 from aiperf.config.dataset.content import (
     AudioConfig,
     CacheBustConfig,
@@ -39,6 +38,7 @@ from aiperf.config.dataset.content import (
     PromptSelectionConfig,
     RankingsConfig,
 )
+from aiperf.config.dataset.system_prompt import SystemPromptMixin
 from aiperf.config.dataset.trace import (
     SynthesisConfig,
 )
@@ -85,7 +85,7 @@ _DatasetName = Annotated[
 
 
 # Dataset type variants using discriminated unions
-class SyntheticDataset(BaseConfig):
+class SyntheticDataset(SystemPromptMixin):
     """
     Synthetic dataset configuration.
 
@@ -281,7 +281,7 @@ class SyntheticDataset(BaseConfig):
         return self
 
 
-class FileDataset(BaseConfig):
+class FileDataset(SystemPromptMixin):
     """
     File-based dataset configuration.
 
@@ -692,7 +692,7 @@ class FileDataset(BaseConfig):
         return self
 
 
-class PublicDataset(BaseConfig):
+class PublicDataset(SystemPromptMixin):
     """
     Public dataset configuration.
 
