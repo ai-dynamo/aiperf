@@ -541,7 +541,7 @@ Execution and scheduling:
   user-centric, and fixed-schedule workloads over one `Clock`-backed runtime, and
   how each partitions across sub-cells.
 - [`docs/specs/2026-08-25-native-high-resolution-request-rate-pacing.md`](docs/specs/2026-08-25-native-high-resolution-request-rate-pacing.md)
-  — approved origin #45 port: the existing native Linux timerfd supplies
+  — built origin #45 port: the existing native Linux timerfd supplies
   high-resolution waits, while a bounded local/sharded late-slot policy preserves
   offered rate through ordinary jitter without weakening global dense-slot and
   corpus ordering.

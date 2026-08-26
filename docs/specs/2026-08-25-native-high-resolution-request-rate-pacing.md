@@ -1,5 +1,7 @@
 # Native High-Resolution Request-Rate Pacing
 
+Status: Built
+
 ## Purpose
 
 Port the user-visible timing semantics of origin/main commit
@@ -21,7 +23,7 @@ The missing semantic is schedule retention. The local/sharded
 below ordinary scheduling jitter, each small oversleep therefore resets the
 grid and permanently forfeits offered load.
 
-## Approved design
+## Built design
 
 ### Bounded local catch-up
 
@@ -95,10 +97,21 @@ shared-host scheduling. A release-mode benchmark receipt records exact count,
 elapsed time, and achieved requests/second; it is evidence, not a flaky
 microsecond wakeup assertion.
 
+The deterministic workload test uses a clock that wakes every positive issuer
+sleep 150 ns late. With a 100 ns interval, the bounded policy issues at
+`[250, 250, 450, 450]` ns, while the zero-window compatibility policy issues at
+`[250, 250, 500, 500]` ns. This proves the real issuer loop consumes the pure
+policy without involving phase-progress timers.
+
+On Linux, `request_rate_real` requests exactly 5,000 single-turn completions at
+5,000 requests/second through `RealClock` and an immediate in-process
+dispatcher. The debug receipt was `exact_count=5000`,
+`elapsed_ns=1052579898`, `achieved_rate=4750.233`; the release receipt was
+`exact_count=5000`, `elapsed_ns=1008803639`, `achieved_rate=4956.366`.
+
 ## Source anchors
 
 - `rust/runtime/src/clock/real_clock.rs`
 - `rust/runtime/src/timing/arrival.rs`
 - `rust/runtime/src/request_rate.rs`
-- `rust/runtime/tests/request_rate_sim.rs`
 - `rust/runtime/tests/request_rate_real.rs`

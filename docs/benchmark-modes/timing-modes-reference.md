@@ -31,32 +31,34 @@ When multiple options are specified, AIPerf uses this priority:
 
 ## High-Resolution Rate Pacing
 
-At high request rates (≥ 500 req/s), event-loop timers quantize sub-millisecond
-sleeps to ~1ms intervals, causing AIPerf to silently under-deliver the target QPS.
-High-resolution pacing bypasses the timer wheel with a platform-specific mechanism:
+The native scheduler routes every request-rate deadline through its injected
+`Clock`. On Linux, `RealClock` uses `timerfd_create(CLOCK_MONOTONIC)` and Tokio
+`AsyncFd`; syscall or reactor failures fall back to a Tokio sleep for only the
+remaining duration. `SimClock` uses the same request-rate loop with exact virtual
+nanosecond deadlines.
 
-| Platform | Pacer | Precision |
-|----------|-------|-----------|
-| Linux | `TimerFdPacer` — `timerfd_create(CLOCK_MONOTONIC)` kernel hrtimer | ~50µs |
-| macOS / Windows / other | `ThreadPacer` — dedicated sleep thread with `clock_nanosleep` / waitable timer | ~100µs (POSIX), ~500µs (Windows) |
-
-High-res pacing is **enabled by default** when `--request-rate` is used. The
-selection is automatic: timerfd on Linux, thread-based elsewhere.
+Local and `sharded` request-rate scheduling preserves an absolute target while
+wake-up lag remains within a bounded catch-up window. Only a larger lag
+re-anchors to the current clock time, so ordinary sub-millisecond jitter does
+not permanently forfeit offered load and a genuine stall cannot create an
+unbounded burst. `global`, `global-hop`, and `global-push` retain their existing
+dense shared slots and corpus-position ordering instead of applying this local
+re-anchor policy.
 
 ### Pacing env vars
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `AIPERF_TIMING_HIGH_RES_TIMER` | `true` | Set to `false` to force event-loop timer pacing (useful for isolating scheduling behaviour). |
-| `AIPERF_TIMING_MAX_CATCHUP_SECONDS` | `0.01` | Maximum schedule backlog (seconds) the rate loop may catch up on before re-anchoring to the current time. Without a catch-up window, every oversleep permanently forfeits one schedule slot — at 5,000 req/s the loop falls behind on each tick. Increase if you see a schedule-backlog warning; decrease toward `0` for strict no-burst behaviour (at the cost of some under-delivery). |
+| `AIPERF_TIMING_HIGH_RES_TIMER` | `true` | Legacy Python timing-stack selector. The native scheduler does not bypass its injected `Clock`; Linux real-clock runs always use the timerfd path with fallback. |
+| `AIPERF_TIMING_MAX_CATCHUP_SECONDS` | `0.01` | Maximum local/sharded schedule backlog in seconds retained for catch-up before re-anchoring. Must be finite in `0..=10`; `0` restores strict no-burst behavior. Captured once when the workload is constructed. |
 
 ### Diagnosing under-delivery at high QPS
 
 If measured QPS is consistently lower than `--request-rate`:
 
-1. **Confirm the pacer is active.** Check the startup log for `"Using TimerFdPacer"` or `"Using ThreadPacer"`. If absent, `AIPERF_TIMING_HIGH_RES_TIMER` may be `false`.
-2. **Check for schedule-backlog warnings.** If present, the pacer is waking on time but the event loop is stalling between wake and dispatch. Try `uvloop` (`pip install uvloop`) or reduce `--concurrency`.
-3. **Widen the catch-up window.** At very high rates (≥ 5,000 req/s), increase `AIPERF_TIMING_MAX_CATCHUP_SECONDS` (e.g. `0.05`) to let the loop absorb brief stalls without re-anchoring too eagerly.
+1. **Check endpoint capacity.** An endpoint or authored concurrency limit can be the bottleneck even when the issuer preserves its schedule.
+2. **Inspect issue lateness.** Sustained lateness beyond the catch-up window indicates the local worker cannot service the requested rate.
+3. **Widen the local window cautiously.** At very high rates, increasing `AIPERF_TIMING_MAX_CATCHUP_SECONDS` (for example, to `0.05`) absorbs longer stalls but permits a larger bounded catch-up burst.
 
 ---
 
