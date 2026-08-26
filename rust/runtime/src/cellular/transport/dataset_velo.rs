@@ -45,22 +45,44 @@ pub type WirePayload = Vec<u8>;
 /// zstd level for the fan-out wire (matches the artifact-shipping plane's `ZSTD_LEVEL`).
 const ZSTD_LEVEL: i32 = 3;
 
-// The controller currently emits 16 requests per fan-out chunk. Velo's TCP framing
-// defaults to a 16 MiB maximum frame; use that as this benchmark protocol's logical
-// codec cap, not as a claim that every transport enforces it. The codec applies the
-// same cap before compression and after bounded decompression.
-const MAX_DATASET_CHUNK_REQUESTS: u64 = 16;
-const MAX_VELO_FRAME_BYTES: u64 = 16 * 1024 * 1024;
-const MAX_DATASET_REQUEST_PAYLOAD_BYTES: u64 = MAX_VELO_FRAME_BYTES / MAX_DATASET_CHUNK_REQUESTS;
+// The controller currently emits 16 requests per fan-out chunk. Velo TCP
+// limits the header plus payload to 16 MiB; reserve its 11-byte preamble, the
+// 22-byte ActiveMessage header, and the longest dataset handler name. This is a
+// benchmark codec resource bound, not a transport-security guarantee.
+const MAX_VELO_FRAME_BYTES: usize = 16 * 1024 * 1024;
+const VELO_TCP_PREAMBLE_BYTES: usize = 11;
+const VELO_ACTIVE_MESSAGE_FIXED_HEADER_BYTES: usize = 22;
+const MAX_DATASET_HANDLER_BYTES: usize = "aiperf.dataset.subscribe".len();
 
-// Largest MessagePack dataset wire value accepted by this fan-out protocol.
-const MAX_DATASET_WIRE_OUTPUT_BYTES: u64 =
-    MAX_DATASET_REQUEST_PAYLOAD_BYTES * MAX_DATASET_CHUNK_REQUESTS;
+fn dataset_compressed_limit() -> anyhow::Result<usize> {
+    MAX_VELO_FRAME_BYTES
+        .checked_sub(VELO_TCP_PREAMBLE_BYTES)
+        .and_then(|limit| limit.checked_sub(VELO_ACTIVE_MESSAGE_FIXED_HEADER_BYTES))
+        .and_then(|limit| limit.checked_sub(MAX_DATASET_HANDLER_BYTES))
+        .ok_or_else(|| anyhow::anyhow!("dataset Velo payload limit underflow"))
+}
 
-fn dataset_wire_output_limit() -> anyhow::Result<u64> {
-    MAX_DATASET_REQUEST_PAYLOAD_BYTES
-        .checked_mul(MAX_DATASET_CHUNK_REQUESTS)
-        .ok_or_else(|| anyhow::anyhow!("dataset wire output limit overflow"))
+fn dataset_wire_output_limit() -> anyhow::Result<usize> {
+    let compressed_limit = dataset_compressed_limit()?;
+    let mut lower = 0;
+    let mut upper = compressed_limit;
+    while lower < upper {
+        let span = upper
+            .checked_sub(lower)
+            .ok_or_else(|| anyhow::anyhow!("dataset wire output limit overflow"))?;
+        let midpoint = lower
+            .checked_add(span / 2)
+            .and_then(|midpoint| midpoint.checked_add(span % 2))
+            .ok_or_else(|| anyhow::anyhow!("dataset wire output limit overflow"))?;
+        if zstd::zstd_safe::compress_bound(midpoint) <= compressed_limit {
+            lower = midpoint;
+        } else {
+            upper = midpoint
+                .checked_sub(1)
+                .ok_or_else(|| anyhow::anyhow!("dataset wire output limit underflow"))?;
+        }
+    }
+    Ok(lower)
 }
 
 /// Serialize `value` as MessagePack then zstd-compress it — the fan-out wire form. The
@@ -70,39 +92,39 @@ fn dataset_wire_output_limit() -> anyhow::Result<u64> {
 fn zpack<T: Serialize>(value: &T) -> anyhow::Result<Vec<u8>> {
     let packed = rmp_serde::to_vec(value)
         .map_err(|error| anyhow::anyhow!("encode dataset wire value: {error}"))?;
-    let packed_len = u64::try_from(packed.len())
-        .map_err(|_| anyhow::anyhow!("dataset wire value length does not fit u64"))?;
-    if packed_len > dataset_wire_output_limit()? {
+    if packed.len() > dataset_wire_output_limit()? {
         anyhow::bail!("dataset wire value exceeds the protocol output limit");
     }
-    zstd::encode_all(packed.as_slice(), ZSTD_LEVEL)
-        .map_err(|error| anyhow::anyhow!("zstd-compress dataset wire value: {error}"))
+    let compressed = zstd::encode_all(packed.as_slice(), ZSTD_LEVEL)
+        .map_err(|error| anyhow::anyhow!("zstd-compress dataset wire value: {error}"))?;
+    if compressed.len() > dataset_compressed_limit()? {
+        anyhow::bail!("dataset wire value exceeds Velo payload capacity");
+    }
+    Ok(compressed)
 }
 
 /// Inverse of [`zpack`]: zstd-decompress then MessagePack-decode.
 fn zunpack<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> anyhow::Result<T> {
-    zunpack_with_limit(bytes, MAX_DATASET_WIRE_OUTPUT_BYTES)
+    zunpack_with_limit(bytes, dataset_wire_output_limit()?)
 }
 
 fn zunpack_with_limit<T: serde::de::DeserializeOwned>(
     bytes: &[u8],
-    max_output_bytes: u64,
+    max_output_bytes: usize,
 ) -> anyhow::Result<T> {
     let decoder = zstd::stream::read::Decoder::new(bytes)
         .map_err(|error| anyhow::anyhow!("zstd-decompress dataset wire value: {error}"))?;
-    let read_limit = max_output_bytes
+    let read_limit = u64::try_from(max_output_bytes)
+        .map_err(|_| anyhow::anyhow!("dataset wire output limit does not fit u64"))?
         .checked_add(1)
         .ok_or_else(|| anyhow::anyhow!("dataset wire output limit overflow"))?;
-    let initial_capacity = usize::try_from(max_output_bytes.min(64 * 1024))
-        .map_err(|_| anyhow::anyhow!("dataset wire output limit does not fit usize"))?;
+    let initial_capacity = max_output_bytes.min(64 * 1024);
     let mut packed = Vec::with_capacity(initial_capacity);
     decoder
         .take(read_limit)
         .read_to_end(&mut packed)
         .map_err(|error| anyhow::anyhow!("zstd-decompress dataset wire value: {error}"))?;
-    let packed_len = u64::try_from(packed.len())
-        .map_err(|_| anyhow::anyhow!("dataset wire value length does not fit u64"))?;
-    if packed_len > max_output_bytes {
+    if packed.len() > max_output_bytes {
         anyhow::bail!("dataset wire value exceeds the protocol output limit");
     }
     rmp_serde::from_slice(&packed)
@@ -295,14 +317,65 @@ mod tests {
         );
     }
 
+    fn deterministic_incompressible_bytes(len: usize) -> Vec<u8> {
+        let mut state = 0x4d59_5df4_d0f3_3173_u64;
+        (0..len)
+            .map(|_| {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                state as u8
+            })
+            .collect()
+    }
+
+    struct BinaryPayload<'a>(&'a [u8]);
+
+    impl Serialize for BinaryPayload<'_> {
+        fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: serde::Serializer,
+        {
+            serializer.serialize_bytes(self.0)
+        }
+    }
+
     #[test]
-    fn zpack_rejects_wire_value_beyond_protocol_cap() {
-        let bytes =
-            vec![0_u8; usize::try_from(MAX_DATASET_WIRE_OUTPUT_BYTES).expect("cap fits usize")];
+    fn zpack_rejects_incompressible_value_at_old_logical_limit() {
+        let old_limit = MAX_VELO_FRAME_BYTES;
+        let value = deterministic_incompressible_bytes(old_limit - 5);
+        assert_eq!(
+            rmp_serde::to_vec(&BinaryPayload(&value))
+                .expect("encode exact old-limit fixture")
+                .len(),
+            old_limit
+        );
 
-        let error = zpack(&bytes).expect_err("must reject");
+        let error = zpack(&BinaryPayload(&value)).expect_err("must reject before publish");
 
-        assert!(error.to_string().contains("dataset wire value exceeds"));
+        assert!(error.to_string().contains("protocol output limit"));
+    }
+
+    #[test]
+    fn zpack_round_trips_incompressible_value_at_safe_logical_limit() {
+        let value = deterministic_incompressible_bytes(
+            dataset_wire_output_limit().expect("safe limit") - 5,
+        );
+
+        let compressed = zpack(&BinaryPayload(&value)).expect("safe value must publish");
+
+        assert_eq!(zunpack::<Vec<u8>>(&compressed).expect("round trip"), value);
+    }
+
+    #[test]
+    fn zpack_rejects_incompressible_value_beyond_safe_logical_limit() {
+        let value = deterministic_incompressible_bytes(
+            dataset_wire_output_limit().expect("safe limit") - 4,
+        );
+
+        let error = zpack(&BinaryPayload(&value)).expect_err("must reject before publish");
+
+        assert!(error.to_string().contains("protocol output limit"));
     }
 
     #[tokio::test]
