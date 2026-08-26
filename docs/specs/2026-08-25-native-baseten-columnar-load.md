@@ -38,7 +38,8 @@ source-only resemblance.
 
 ## Goals
 
-1. Decode local Baseten Parquet and Arrow IPC files in bounded record batches.
+1. Decode local Baseten Parquet in bounded record batches and Arrow IPC through
+   projected authored batches processed in bounded row slices.
 2. Project only columns needed by the selected replay mode.
 3. Select and sample sessions from metadata columns before allocating prompts.
 4. Retain all existing native replay timing, filtering, KV-hint, grouping, and
@@ -84,10 +85,14 @@ makes loader grouping agree with the merged Python resolver/count path.
 ## Columnar scan design
 
 A private source object opens the file once and retains the schema. Each scan
-uses a cloned descriptor and yields record batches of at most 128 rows, matching
-the upstream batch bound. Parquet uses
-`ParquetRecordBatchReaderBuilder` plus `ProjectionMask`; Arrow IPC uses
-`arrow::ipc::reader::FileReader` with projected column indices.
+uses a cloned descriptor. Parquet uses `ParquetRecordBatchReaderBuilder` plus
+`ProjectionMask` and decodes batches of at most 128 rows, matching the upstream
+batch bound. Arrow IPC uses `arrow::ipc::reader::FileReader` with projected
+column indices; that API decodes one authored record batch at a time, after
+which the loader visits zero-copy slices of at most 128 rows. Accordingly, IPC
+decode memory is bounded by the largest projected record batch authored in the
+file, not by 128 rows. This port does not claim a stronger Arrow IPC decode
+bound than the dependency provides.
 
 The metadata scan projects the timestamp and selected session column. It
 computes the minimum timestamp, per-session first timestamp, and null-session
@@ -117,10 +122,12 @@ failures become `DatasetError::Validation` values containing the source path,
 column, and stable row ordinal. Production code does not panic or silently
 coerce malformed required fields.
 
-Record-batch decode memory is bounded by 128 projected rows. Total memory is
-still O(retained rows + selected session ids), as required by the public loader
-and resident dataset contracts, but it is not O(all source columns) and no
-second whole-file generic JSON vector exists.
+Parquet record-batch decode memory is bounded by 128 projected rows. Arrow IPC
+decode memory is bounded by its largest authored projected record batch and
+downstream processing is sliced to 128 rows. Total memory is still O(retained
+rows + selected session ids), as required by the public loader and resident
+dataset contracts, but it is not O(all source columns) and no second whole-file
+generic JSON vector exists.
 
 ## Upstream test mapping
 
@@ -128,7 +135,7 @@ second whole-file generic JSON vector exists.
 | --- | --- |
 | Arrow `.arrow` / `.ipc` parity with Parquet | Rust loader test builds both formats and compares composed conversations/turns |
 | Arrow/Parquet schema detection | Rust `can_load` tests for all suffixes and missing required columns |
-| Bounded projected batches | Rust integration fixture includes large unused columns; a scan observer test pins projected names and maximum batch size |
+| Projected decode and bounded processing | Rust integration fixture includes large unused columns; a scan observer test pins projected names and 128-row processing slices, while this spec records the authored-batch IPC decode bound |
 | Configured session column with fallback | Rust grouping tests cover preferred, fallback, and absent columns |
 | Sampling metadata uses bounded scans and grouping reuses its key | Rust deterministic whole-session sampling test asserts no session shredding |
 | Malformed required field after the initial rows still errors | Rust batch fixture places a null/negative required value after row 10 |

@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Replace native Baseten's full-row, whole-file JSON staging with projected bounded Parquet/Arrow IPC scans while preserving replay behavior and proving the improvement with the real Rust adapter.
+**Goal:** Replace native Baseten's full-row, whole-file JSON staging with bounded projected Parquet decode and projected Arrow IPC scans while preserving replay behavior and proving the improvement with the real Rust adapter.
 
 **Architecture:** A private columnar source in the existing Baseten loader owns schema inspection and projected batch readers. A metadata pass resolves minimum time and deterministic session selection; a projected trace pass directly constructs retained `BasetenRow`s and passes the chosen grouping key through `RawRow::group_key` to the existing composer.
 
@@ -18,7 +18,9 @@
 - Do not stage the pre-existing unstaged generated-file residuals in `docs/environment-variables.md` or `src/aiperf/config/schema/aiperf-config.schema.json`.
 - Do not port outcome/fidelity columns owned by tracker #40.
 - No `unwrap()`/`expect()` in production code; no new synchronization or dependency.
-- Keep record batches at 128 rows and project only mode-required columns.
+- Keep Parquet decode batches and downstream processing slices at 128 rows and
+  project only mode-required columns. Arrow IPC decode retains its dependency's
+  authored-record-batch bound.
 
 ---
 
@@ -57,8 +59,9 @@ Expected: Arrow detection/parity assertions fail because native accepts only
 Enable only Arrow's existing `ipc` feature. Add a source kind enum, one retained
 file descriptor, schema lookup, and `read_batches(&[&str])`. Parquet builds a
 128-row `ParquetRecordBatchReader` with `ProjectionMask::columns`; IPC maps
-column names to indices and creates `FileReader` with that projection. Convert
-all reader errors to path-qualified `DatasetError::Validation`.
+column names to indices and creates `FileReader` with that projection, then
+visits zero-copy 128-row slices of each authored batch. Convert all reader
+errors to path-qualified `DatasetError::Validation`.
 
 - [ ] **Step 4: Run the focused suite and verify GREEN**
 
