@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Sweep expansion parity: controller-conversion path vs direct construction.
 //!
-//! Three tests:
+//! Two tests:
 //!
 //! 1. `test_sweep_expansion_is_identical_between_local_and_controller_paths` —
 //!    pure logic, no binary, no cluster.  Verifies that the
@@ -14,9 +14,6 @@
 //! 2. `test_local_sweep_parity` — full-stack: mock server + subprocess.
 //!    Verifies per-run artifact directory structure and `request_count_avg`
 //!    correctness for a two-value concurrency sweep.
-//!
-//! 3. `test_kube_sweep_parity_kind` — `#[ignore]`d kind cluster stub.
-//!    Runs with `-- --ignored --test-threads=1` in CI after kind provisioning.
 mod common;
 use common::*;
 
@@ -184,16 +181,4 @@ async fn test_local_sweep_parity() {
             "concurrency_{c}: profile export must contain effective_total_throughput"
         );
     }
-}
-
-// ---------------------------------------------------------------------------
-// Test 3: kind cluster stub (ignored; wired by native-cli-kind CI job)
-// ---------------------------------------------------------------------------
-
-#[ignore]
-#[tokio::test]
-async fn test_kube_sweep_parity_kind() {
-    // Requires: a workflow-provisioned kind cluster and KUBECONFIG.
-    // Wired in CI by the `native-cli-kind` job.
-    todo!("kind sweep e2e not yet implemented")
 }

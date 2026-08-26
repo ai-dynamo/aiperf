@@ -196,7 +196,12 @@ class SweepAxis(BaseModel):
 
 
 class SweepRoleEnvelope(BaseModel):
-    """The sweep-controller role from the sweep envelope."""
+    """The sweep-controller role from the sweep envelope.
+
+    The sweep-controller carries no bootstrap material: it authenticates to the
+    Kubernetes API with its mounted service-account token and mints per-child
+    cellular material in-cluster.
+    """
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
@@ -204,7 +209,6 @@ class SweepRoleEnvelope(BaseModel):
     command: list[str] = Field(min_length=1)
     argv: list[str]
     environment: dict[str, str]
-    bootstrap: dict[str, Any] | None = None
 
 
 class SweepEnvelope(BaseModel):

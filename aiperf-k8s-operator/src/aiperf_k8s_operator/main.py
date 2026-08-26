@@ -634,11 +634,6 @@ async def create_sweep(
         rbac = client.RbacAuthorizationV1Api(api_client)
         custom_objects = client.CustomObjectsApi(api_client)
 
-        # Validate bootstrap secret exists — metadata-only; contents are not read.
-        if envelope.sweep_controller.bootstrap is not None:
-            secret_name = envelope.sweep_controller.bootstrap.get("secretName", "")
-            await core.read_namespaced_secret(name=secret_name, namespace=namespace)
-
         # Set initial Pending status if not already present (idempotent on retry).
         resource = await custom_objects.get_namespaced_custom_object(
             group=GROUP,

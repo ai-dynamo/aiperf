@@ -634,6 +634,10 @@ def build_sweep_workload_identity(
     The sweep-controller needs broader RBAC than a regular job controller:
     - create/get/list/watch/delete on aiperfjobs so it can manage child runs
     - patch on aiperfsweeps/status to report progress back to the operator
+    - create/delete on secrets for the per-child cellular bootstrap material
+      it mints in-cluster
+    - create on configmaps for the per-child Config-v2 snapshot each child
+      AIPerfJob references through its configRef
     """
     name = sweep_workload_name(envelope)
     metadata = _sweep_workload_metadata(envelope, object_uid)
@@ -657,6 +661,16 @@ def build_sweep_workload_identity(
                 "resources": ["aiperfsweeps/status"],
                 "resourceNames": [envelope.run_id],
                 "verbs": ["patch"],
+            },
+            {
+                "apiGroups": [""],
+                "resources": ["secrets"],
+                "verbs": ["create", "delete"],
+            },
+            {
+                "apiGroups": [""],
+                "resources": ["configmaps"],
+                "verbs": ["create"],
             },
         ],
     }
@@ -704,31 +718,6 @@ def build_sweep_jobset(envelope: SweepEnvelope, object_uid: str) -> dict[str, An
             "configMap": {"name": sweep_config_snapshot_name(envelope, object_uid)},
         }
     ]
-
-    if sweep_controller.bootstrap is not None:
-        bootstrap = sweep_controller.bootstrap
-        secret_name = bootstrap.get("secretName", "")
-        mount_path = str(bootstrap.get("mountPath", "/etc/aiperf/bootstrap"))
-        environment["AIPERF_ROLE_BOOTSTRAP_FILE"] = mount_path
-        volume_mounts.insert(
-            0,
-            {
-                "name": "bootstrap-sweep-controller",
-                "mountPath": mount_path,
-                "subPath": "bootstrap",
-                "readOnly": True,
-            },
-        )
-        volumes.insert(
-            0,
-            {
-                "name": "bootstrap-sweep-controller",
-                "secret": {
-                    "secretName": secret_name,
-                    "defaultMode": 0o600,
-                },
-            },
-        )
 
     container = {
         "name": "sweep-controller",

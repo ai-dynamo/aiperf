@@ -70,7 +70,7 @@ def test_native_kind_job_runs_the_serial_durable_results_acceptance() -> None:
         assert "--namespace aiperf-system --create-namespace" in job
 
     ignored_attribute = "\n#[ignore]\n"
-    assert NATIVE_CONTRACT.count(ignored_attribute) == 3
+    assert NATIVE_CONTRACT.count(ignored_attribute) == 2
     assert "-- --ignored --test-threads=1" in native_job
     assert "AIPERF_E2E_OPERATOR_IMAGE: aiperf-k8s-operator:ci" in native_job
     live_contract = NATIVE_CONTRACT.split(ignored_attribute, 1)[1]

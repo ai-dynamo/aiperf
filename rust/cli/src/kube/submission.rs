@@ -16,8 +16,8 @@ use tracing::warn;
 use super::bootstrap::create_bundle;
 use super::client::{AIPERF_GROUP, AIPERF_PLURAL, AIPERF_VERSION, KubeClient};
 use super::contract::{
-    ControllerEnvelope, NativeK8sRole, SWEEP_CONTROLLER_ROLE_NAME, SweepBootstrapReference,
-    SweepEnvelope, validate_envelope, validate_image_capabilities,
+    ControllerEnvelope, NativeK8sRole, SweepEnvelope, validate_envelope,
+    validate_image_capabilities,
 };
 use super::error::KubeError;
 use super::manifest;
@@ -768,8 +768,11 @@ fn rollback_bootstrap_secrets(
     }
 }
 
-/// Mint bootstrap material for the sweep-controller, POST a bootstrap Secret, then POST
-/// the `AIPerfSweep` CR. On CR failure the Secret is deleted (compensating transaction).
+/// Validate the image capability document, then POST the `AIPerfSweep` CR.
+///
+/// The sweep-controller authenticates to the Kubernetes API with its mounted
+/// service-account token and mints per-child cellular material in-cluster, so
+/// no submission-side bootstrap material exists for this role.
 ///
 /// `capabilities` is the raw image-capabilities JSON value; the function validates it and
 /// refuses if the image does not declare `cellular: true`.
@@ -778,9 +781,6 @@ pub fn submit_sweep_transactionally(
     envelope: &SweepEnvelope,
     capabilities: serde_json::Value,
 ) -> anyhow::Result<u16> {
-    use std::io::Write as _;
-    use std::os::unix::fs::OpenOptionsExt as _;
-
     use super::sweep_controller::AIPERFSWEEPS_PLURAL;
 
     // 1. Validate image capabilities and require cellular support.
@@ -795,87 +795,8 @@ pub fn submit_sweep_transactionally(
         anyhow::bail!("sweep requires cellular: true in the image capability document");
     }
 
-    // 2. Mint sweep-controller bootstrap material.
-    // Cell(0) satisfies the non-empty roster requirement; only material.controller is used.
-    let material = mint_deployment_material(&[CellularRole::Cell(0)])
-        .map_err(|e| anyhow::anyhow!("failed to mint sweep-controller bootstrap material: {e}"))?;
-    let controller_bytes = &material.controller;
-
-    // 3. Write to a private per-run 0600 temp file (mirrors prepare_material pattern).
-    let temp_dir = std::env::temp_dir().join(format!(
-        "aiperf-sweep-bootstrap-{}-{}",
-        envelope.namespace, envelope.run_id
-    ));
-    std::fs::DirBuilder::new()
-        .mode(0o700)
-        .create(&temp_dir)
-        .map_err(|e| {
-            anyhow::anyhow!(
-                "failed to create sweep bootstrap directory {}: {e}",
-                temp_dir.display()
-            )
-        })?;
-    let temp_path = temp_dir.join("sweep-controller");
-    if let Err(e) = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(&temp_path)
-        .and_then(|mut f| f.write_all(controller_bytes))
-    {
-        let _ = std::fs::remove_dir(&temp_dir);
-        anyhow::bail!(
-            "failed to write sweep-controller bootstrap material {}: {e}",
-            temp_path.display()
-        );
-    }
-
-    // 4. Compute SHA-256 digest of the bootstrap bytes.
-    let sha256_hex = format!("{:x}", Sha256::digest(controller_bytes));
-
-    // 5. Build the updated sweep envelope carrying the bootstrap reference.
-    let secret_name = format!("bootstrap-sweep-{}", envelope.run_id);
-    let mut updated = envelope.clone();
-    updated.sweep_controller.bootstrap = Some(SweepBootstrapReference {
-        secret_name: secret_name.clone(),
-        role: SWEEP_CONTROLLER_ROLE_NAME.to_string(),
-        mount_path: "/etc/aiperf/bootstrap/sweep-controller".to_string(),
-        sha256: sha256_hex.clone(),
-    });
-
-    // 6. POST the bootstrap Secret.
-    let secret_body = json!({
-        "apiVersion": "v1",
-        "kind": "Secret",
-        "type": "Opaque",
-        "immutable": true,
-        "metadata": {
-            "name": secret_name,
-            "namespace": envelope.namespace,
-            "labels": {
-                "aiperf.nvidia.com/run-id": envelope.run_id,
-                "aiperf.nvidia.com/role": SWEEP_CONTROLLER_ROLE_NAME,
-            },
-            "annotations": {"aiperf.nvidia.com/sha256": sha256_hex},
-        },
-        "data": {"bootstrap": BASE64.encode(controller_bytes)},
-    });
-    let secret_bytes = serde_json::to_vec(&secret_body)
-        .map_err(|e| anyhow::anyhow!("failed to encode sweep bootstrap Secret: {e}"))?;
-    let secret_status = client.request(
-        "POST",
-        &format!("/api/v1/namespaces/{}/secrets", envelope.namespace),
-        "application/json",
-        secret_bytes,
-    )?;
-    if !(200..300).contains(&secret_status) {
-        let _ = std::fs::remove_file(&temp_path);
-        let _ = std::fs::remove_dir(&temp_dir);
-        anyhow::bail!("sweep bootstrap Secret creation returned HTTP {secret_status}");
-    }
-
-    // 7. POST the AIPerfSweep CR. On failure, DELETE the bootstrap Secret.
-    let sweep_envelope_value = serde_json::to_value(&updated)
+    // 2. POST the AIPerfSweep CR.
+    let sweep_envelope_value = serde_json::to_value(envelope)
         .map_err(|e| anyhow::anyhow!("failed to serialize sweep envelope: {e}"))?;
     let cr_body = json!({
         "apiVersion": format!("{AIPERF_GROUP}/{AIPERF_VERSION}"),
@@ -896,32 +817,8 @@ pub fn submit_sweep_transactionally(
     );
     let cr_status = client.request("POST", &cr_path, "application/json", cr_bytes)?;
     if !(200..300).contains(&cr_status) {
-        // Compensating delete: best-effort; ignore errors to surface the primary failure.
-        let _ = client.execute(
-            "DELETE",
-            &format!(
-                "/api/v1/namespaces/{}/secrets/{secret_name}",
-                envelope.namespace
-            ),
-            "application/json",
-            Vec::new(),
-        );
-        let _ = std::fs::remove_file(&temp_path);
-        let _ = std::fs::remove_dir(&temp_dir);
         anyhow::bail!("AIPerfSweep CR creation returned HTTP {cr_status}");
     }
-
-    // 8. Cleanup the temp file on success.
-    if let Err(e) = std::fs::remove_file(&temp_path) {
-        if e.kind() != std::io::ErrorKind::NotFound {
-            warn!(
-                error = %e,
-                path = %temp_path.display(),
-                "minted sweep-controller bootstrap material was left on disk"
-            );
-        }
-    }
-    let _ = std::fs::remove_dir(&temp_dir);
 
     Ok(cr_status)
 }

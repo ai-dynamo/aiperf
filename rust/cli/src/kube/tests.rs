@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 
 use super::auth::{KubeAuthOptions, KubeCredentials};
 use super::client::{
@@ -661,7 +662,6 @@ fn sweep_envelope(
             command: vec!["aiperf".to_string()],
             argv: vec!["sweep-controller".to_string()],
             environment: std::collections::BTreeMap::new(),
-            bootstrap: None,
         },
     }
 }
@@ -745,6 +745,18 @@ fn completed_event(job_id: &str) -> Vec<u8> {
     .expect("completed event JSON")
 }
 
+/// Failed-phase watch event for the named AIPerfJob.
+fn failed_event(job_id: &str) -> Vec<u8> {
+    serde_json::to_vec(&serde_json::json!({
+        "type": "MODIFIED",
+        "object": {
+            "metadata": {"name": job_id, "namespace": "bench"},
+            "status": {"phase": "Failed"}
+        }
+    }))
+    .expect("failed event JSON")
+}
+
 #[test]
 fn sweep_controller_expands_axes_to_correct_plan_count() {
     // A 2-axis grid (2 × 3 values) with 2 trials must produce 12 child specs.
@@ -799,17 +811,17 @@ fn sweep_controller_child_run_id_is_deterministic() {
 }
 
 #[test]
-fn sweep_controller_submits_secrets_and_cr_per_child() {
-    // For a 2-run sweep (1 axis × 2 values × 1 trial), run_sweep must POST
-    // bootstrap Secrets and one AIPerfJob CR per child run.
+fn sweep_controller_submits_config_secrets_and_cr_per_child() {
+    // For a 2-run sweep (1 axis × 2 values × 1 trial), run_sweep must publish
+    // one config ConfigMap, the bootstrap Secrets, and one AIPerfJob CR per child.
     //
     // Each child run with 1 cell requires:
+    //   - 1 POST to /configmaps (expanded Config v2)
     //   - 1 POST to /secrets (controller bootstrap)
     //   - 1 POST to /secrets (cell-0 bootstrap)
     //   - 1 POST to /aiperfjobs
-    //   - 1 PATCH to /aiperfsweeps/.../status (completedRuns updated)
-    // Plus 1 final PATCH for the sweep phase.
-    // Total sends = 2 × 4 + 1 = 9; watches = 2 (one per child).
+    // Plus 1 final PATCH for the sweep phase. Run counts are the operator's to
+    // write, so the sweep-controller issues no count PATCH.
     let base_config = serde_json::json!({"runtime": {"cells": 1}});
     let envelope = sweep_envelope(
         "sweep-run-1",
@@ -825,21 +837,17 @@ fn sweep_controller_submits_secrets_and_cr_per_child() {
     let transport = Arc::new(SweepMockTransport::default());
     let client = KubeClient::with_transport(sweep_test_credentials(), transport.clone());
 
-    // Child 0: 2 secret POSTs, 1 CR POST; watch → Completed; 1 completedRuns PATCH
-    for _ in 0..2 {
+    // Child 0: 1 ConfigMap POST, 2 secret POSTs, 1 CR POST; watch → Completed.
+    for _ in 0..4 {
         transport.push_response(201, Vec::new());
     }
-    transport.push_response(201, Vec::new()); // CR
     transport.push_watch(vec![completed_event("sweep-run-1-0000")]);
-    transport.push_response(200, Vec::new()); // PATCH completedRuns
 
-    // Child 1: same pattern
-    for _ in 0..2 {
+    // Child 1: same pattern.
+    for _ in 0..4 {
         transport.push_response(201, Vec::new());
     }
-    transport.push_response(201, Vec::new()); // CR
     transport.push_watch(vec![completed_event("sweep-run-1-0001")]);
-    transport.push_response(200, Vec::new()); // PATCH completedRuns
 
     // Final sweep phase PATCH
     transport.push_response(200, Vec::new());
@@ -849,6 +857,10 @@ fn sweep_controller_submits_secrets_and_cr_per_child() {
     assert_eq!(exit, 0, "successful sweep must exit 0");
 
     let requests = transport.requests.lock().expect("requests");
+    let config_posts: Vec<_> = requests
+        .iter()
+        .filter(|r| r.method == "POST" && r.path.ends_with("/configmaps"))
+        .collect();
     let secret_posts: Vec<_> = requests
         .iter()
         .filter(|r| r.method == "POST" && r.path.ends_with("/secrets"))
@@ -857,6 +869,7 @@ fn sweep_controller_submits_secrets_and_cr_per_child() {
         .iter()
         .filter(|r| r.method == "POST" && r.path.ends_with("/aiperfjobs"))
         .collect();
+    assert_eq!(config_posts.len(), 2, "one config ConfigMap per child");
     // 2 children × 2 bootstrap secrets each = 4 secret POSTs
     assert_eq!(
         secret_posts.len(),
@@ -864,6 +877,15 @@ fn sweep_controller_submits_secrets_and_cr_per_child() {
         "2 children × 2 secrets each = 4 secret POSTs"
     );
     assert_eq!(cr_posts.len(), 2, "one AIPerfJob CR per child");
+
+    // The operator owns completedRuns/failedRuns; only the phase is patched here.
+    for patch in requests.iter().filter(|r| r.method == "PATCH") {
+        let body: Value = serde_json::from_slice(&patch.body).expect("PATCH body JSON");
+        assert!(
+            body["status"]["completedRuns"].is_null() && body["status"]["failedRuns"].is_null(),
+            "sweep-controller must not write run counts: {body}"
+        );
+    }
 
     // Every CR body must carry an ownerReference to the sweep CR.
     for post in &cr_posts {
@@ -877,10 +899,92 @@ fn sweep_controller_submits_secrets_and_cr_per_child() {
     }
 }
 
+/// SHA-256 over the operator's canonical ConfigMap content projection:
+/// compact, key-sorted JSON of `{"binaryData": {}, "data": {...}}`.
+fn canonical_config_map_digest(config_yaml: &str) -> String {
+    let encoded = serde_json::to_string(config_yaml).expect("encode config.yaml value");
+    let canonical = format!(r#"{{"binaryData":{{}},"data":{{"config.yaml":{encoded}}}}}"#);
+    format!("{:x}", Sha256::digest(canonical.as_bytes()))
+}
+
 #[test]
-fn sweep_controller_patches_sweep_status_on_completion() {
-    // After a child run reaches Completed, run_sweep must PATCH the sweep status
-    // with updated completedRuns/failedRuns counts.
+fn sweep_controller_publishes_a_distinct_config_map_per_child() {
+    // Two children swept on distinct axis values must publish two different
+    // config documents, each named for its child run and referenced by a
+    // configRef digest the operator can recompute.
+    let base_config = serde_json::json!({"runtime": {"cells": 1, "workers": 1}});
+    let envelope = sweep_envelope(
+        "sweep-run-3",
+        base_config,
+        vec![super::contract::SweepAxis {
+            parameter: "runtime.workers".to_string(),
+            values: vec![serde_json::json!(1), serde_json::json!(2)],
+        }],
+        1,
+        1,
+    );
+
+    let transport = Arc::new(SweepMockTransport::default());
+    let client = KubeClient::with_transport(sweep_test_credentials(), transport.clone());
+
+    for child in 0..2u32 {
+        for _ in 0..4 {
+            transport.push_response(201, Vec::new());
+        }
+        transport.push_watch(vec![completed_event(&format!("sweep-run-3-{child:04}"))]);
+    }
+    transport.push_response(200, Vec::new()); // final phase PATCH
+
+    super::sweep_controller::run_sweep(&client, &envelope, "sweep-uid-cfg").expect("run_sweep");
+
+    let requests = transport.requests.lock().expect("requests");
+    let config_bodies: Vec<Value> = requests
+        .iter()
+        .filter(|r| r.method == "POST" && r.path.ends_with("/configmaps"))
+        .map(|r| serde_json::from_slice(&r.body).expect("ConfigMap body JSON"))
+        .collect();
+    assert_eq!(config_bodies.len(), 2, "one ConfigMap per child run");
+
+    let documents: Vec<&str> = config_bodies
+        .iter()
+        .map(|body| {
+            body["data"]["config.yaml"]
+                .as_str()
+                .expect("config.yaml must be a string")
+        })
+        .collect();
+    assert_ne!(
+        documents[0], documents[1],
+        "children on different axis values must carry different configs"
+    );
+
+    let cr_bodies: Vec<Value> = requests
+        .iter()
+        .filter(|r| r.method == "POST" && r.path.ends_with("/aiperfjobs"))
+        .map(|r| serde_json::from_slice(&r.body).expect("CR body JSON"))
+        .collect();
+    assert_eq!(cr_bodies.len(), 2);
+
+    for (index, (config_body, cr_body)) in config_bodies.iter().zip(&cr_bodies).enumerate() {
+        let expected_name = format!("sweep-run-3-{index:04}");
+        assert_eq!(config_body["metadata"]["name"], Value::String(expected_name));
+        let envelope_value = &cr_body["spec"]["envelope"];
+        let config_ref = &envelope_value["configRef"];
+        assert_eq!(
+            config_ref["name"], config_body["metadata"]["name"],
+            "configRef must name this child's ConfigMap"
+        );
+        assert_eq!(
+            config_ref["sha256"],
+            Value::String(canonical_config_map_digest(documents[index])),
+            "configRef digest must match the operator's canonical projection"
+        );
+    }
+}
+
+#[test]
+fn sweep_controller_patches_only_the_phase_on_completion() {
+    // After every child run terminates, run_sweep must PATCH the sweep phase.
     let base_config = serde_json::json!({"runtime": {"cells": 1}});
     let envelope = sweep_envelope(
         "sweep-run-2",
@@ -896,13 +1000,11 @@ fn sweep_controller_patches_sweep_status_on_completion() {
     let transport = Arc::new(SweepMockTransport::default());
     let client = KubeClient::with_transport(sweep_test_credentials(), transport.clone());
 
-    // 2 secret POSTs, 1 CR POST; watch → Completed; 1 completedRuns PATCH; 1 final phase PATCH
-    for _ in 0..2 {
+    // 1 ConfigMap POST, 2 secret POSTs, 1 CR POST; watch → Completed; 1 phase PATCH.
+    for _ in 0..4 {
         transport.push_response(201, Vec::new());
     }
-    transport.push_response(201, Vec::new()); // CR
     transport.push_watch(vec![completed_event("sweep-run-2-0000")]);
-    transport.push_response(200, Vec::new()); // PATCH completedRuns
     transport.push_response(200, Vec::new()); // PATCH final phase
 
     super::sweep_controller::run_sweep(&client, &envelope, "sweep-uid-xyz").expect("run_sweep");
@@ -912,24 +1014,55 @@ fn sweep_controller_patches_sweep_status_on_completion() {
         .iter()
         .filter(|r| r.method == "PATCH" && r.path.contains("/aiperfsweeps/"))
         .collect();
-    assert!(
-        !status_patches.is_empty(),
-        "at least one sweep status PATCH must be issued after child completion"
+    assert_eq!(
+        status_patches.len(),
+        1,
+        "exactly one terminal sweep status PATCH must be issued"
+    );
+    let body: Value = serde_json::from_slice(&status_patches[0].body).expect("PATCH body JSON");
+    assert_eq!(body["status"]["phase"], "Completed");
+}
+
+#[test]
+fn sweep_controller_fails_the_sweep_when_any_child_fails() {
+    // A partial failure must report Failed and exit nonzero; reporting
+    // Completed would hide 1-of-N child failures from the caller.
+    let base_config = serde_json::json!({"runtime": {"cells": 1}});
+    let envelope = sweep_envelope(
+        "sweep-run-4",
+        base_config,
+        vec![super::contract::SweepAxis {
+            parameter: "runtime.cells".to_string(),
+            values: vec![serde_json::json!(1), serde_json::json!(1)],
+        }],
+        1,
+        1,
     );
 
-    // One of the patches must carry completedRuns or phase information.
-    let has_completion_patch = status_patches.iter().any(|req| {
-        if let Ok(body) = serde_json::from_slice::<Value>(&req.body) {
-            body["status"]["completedRuns"].as_u64().is_some()
-                || body["status"]["phase"].as_str().is_some()
-        } else {
-            false
-        }
-    });
-    assert!(
-        has_completion_patch,
-        "at least one PATCH must carry completedRuns or phase"
-    );
+    let transport = Arc::new(SweepMockTransport::default());
+    let client = KubeClient::with_transport(sweep_test_credentials(), transport.clone());
+
+    for _ in 0..4 {
+        transport.push_response(201, Vec::new());
+    }
+    transport.push_watch(vec![completed_event("sweep-run-4-0000")]);
+    for _ in 0..4 {
+        transport.push_response(201, Vec::new());
+    }
+    transport.push_watch(vec![failed_event("sweep-run-4-0001")]);
+    transport.push_response(200, Vec::new()); // final phase PATCH
+
+    let exit =
+        super::sweep_controller::run_sweep(&client, &envelope, "sweep-uid-fail").expect("run_sweep");
+    assert_eq!(exit, 1, "a sweep with any failed child must exit 1");
+
+    let requests = transport.requests.lock().expect("requests");
+    let patch = requests
+        .iter()
+        .find(|r| r.method == "PATCH" && r.path.contains("/aiperfsweeps/"))
+        .expect("terminal phase PATCH");
+    let body: Value = serde_json::from_slice(&patch.body).expect("PATCH body JSON");
+    assert_eq!(body["status"]["phase"], "Failed");
 }
 
 // --- aiperf kube sweep submission tests ---
@@ -954,7 +1087,6 @@ fn minimal_sweep_envelope(run_id: &str) -> SweepEnvelope {
             command: vec!["aiperf".to_string()],
             argv: vec!["sweep-controller".to_string()],
             environment: std::collections::BTreeMap::new(),
-            bootstrap: None,
         },
     }
 }
@@ -1028,15 +1160,14 @@ impl KubeTransport for SweepSubmitTransport {
 }
 
 #[test]
-fn sweep_submission_creates_secret_then_cr() {
+fn sweep_submission_creates_only_the_sweep_cr() {
     let transport = Arc::new(SweepSubmitTransport::default());
     let client = KubeClient::with_transport(sweep_submit_credentials(), transport.clone());
 
-    // 201 for Secret POST, then 201 for AIPerfSweep CR POST.
-    transport.push_response(201, Vec::new());
+    // 201 for the AIPerfSweep CR POST; nothing else is issued.
     transport.push_response(201, Vec::new());
 
-    let envelope = minimal_sweep_envelope("sweep-creates-secret");
+    let envelope = minimal_sweep_envelope("sweep-creates-cr");
     let caps = cellular_capabilities_value();
 
     let status = super::submission::submit_sweep_transactionally(&client, &envelope, caps)
@@ -1044,71 +1175,18 @@ fn sweep_submission_creates_secret_then_cr() {
     assert_eq!(status, 201);
 
     let requests = transport.requests.lock().expect("requests");
+    assert_eq!(requests.len(), 1, "exactly one request must be issued");
+    assert_eq!(requests[0].method, "POST");
     assert!(
-        requests.len() >= 2,
-        "at least Secret POST and CR POST must be issued"
+        requests[0].path.ends_with("/aiperfsweeps"),
+        "the only request must target /aiperfsweeps, got: {}",
+        requests[0].path
     );
-    // The first POST must target /secrets.
-    let secret_post = requests
-        .iter()
-        .find(|r| r.method == "POST" && r.path.ends_with("/secrets"))
-        .expect("POST to /secrets must be issued");
-    // The CR POST must follow and target /aiperfsweeps.
-    let cr_post = requests
-        .iter()
-        .find(|r| r.method == "POST" && r.path.ends_with("/aiperfsweeps"))
-        .expect("POST to /aiperfsweeps must be issued");
-    let secret_index = requests
-        .iter()
-        .position(|r| std::ptr::eq(r, secret_post))
-        .expect("secret position");
-    let cr_index = requests
-        .iter()
-        .position(|r| std::ptr::eq(r, cr_post))
-        .expect("cr position");
+    // The sweep-controller authenticates with its service-account token, so
+    // submission mints no bootstrap material and creates no Secret.
     assert!(
-        secret_index < cr_index,
-        "Secret must be posted before the AIPerfSweep CR"
-    );
-    // No DELETE on success.
-    assert!(
-        requests.iter().all(|r| r.method != "DELETE"),
-        "successful submission must not issue DELETE requests"
-    );
-}
-
-#[test]
-fn sweep_submission_rolls_back_secret_on_cr_failure() {
-    let transport = Arc::new(SweepSubmitTransport::default());
-    let client = KubeClient::with_transport(sweep_submit_credentials(), transport.clone());
-
-    // 201 for Secret POST, 409 for CR POST, 200 for the rollback Secret DELETE.
-    transport.push_response(201, Vec::new());
-    transport.push_response(409, Vec::new());
-    transport.push_response(200, Vec::new());
-
-    let envelope = minimal_sweep_envelope("sweep-rollback");
-    let caps = cellular_capabilities_value();
-
-    let error = super::submission::submit_sweep_transactionally(&client, &envelope, caps)
-        .expect_err("rejected CR must return an error");
-    let msg = error.to_string();
-    assert!(
-        msg.contains("409") || msg.contains("HTTP"),
-        "error must reference the HTTP failure: {msg}"
-    );
-
-    let requests = transport.requests.lock().expect("requests");
-    let deletes: Vec<_> = requests.iter().filter(|r| r.method == "DELETE").collect();
-    assert_eq!(
-        deletes.len(),
-        1,
-        "exactly one DELETE must be issued for rollback"
-    );
-    assert!(
-        deletes[0].path.contains("/secrets/bootstrap-sweep-"),
-        "rollback DELETE must target the bootstrap Secret, got: {}",
-        deletes[0].path
+        !requests.iter().any(|r| r.path.contains("/secrets")),
+        "sweep submission must not touch Secrets"
     );
 }
 

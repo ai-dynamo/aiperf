@@ -146,6 +146,10 @@ pub struct SweepAxis {
 pub const SWEEP_CONTROLLER_ROLE_NAME: &str = "sweep-controller";
 
 /// The sweep-controller role and its process material.
+///
+/// The sweep-controller carries no bootstrap material: it authenticates to the
+/// Kubernetes API with its mounted service-account token and mints per-child
+/// cellular material in-cluster.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SweepRoleEnvelope {
@@ -157,23 +161,6 @@ pub struct SweepRoleEnvelope {
     pub argv: Vec<String>,
     /// Fixed process environment.
     pub environment: std::collections::BTreeMap<String, String>,
-    /// Optional bootstrap material for the sweep controller.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub bootstrap: Option<SweepBootstrapReference>,
-}
-
-/// Bootstrap reference for the sweep-controller role.
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct SweepBootstrapReference {
-    /// Immutable Secret name.
-    pub secret_name: String,
-    /// Must equal `"sweep-controller"`.
-    pub role: String,
-    /// Absolute container mount path.
-    pub mount_path: String,
-    /// SHA-256 digest of the private bootstrap bytes.
-    pub sha256: String,
 }
 
 /// A submitted sweep envelope.

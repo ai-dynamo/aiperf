@@ -196,6 +196,18 @@ async def test_create_sweep_provisions_rbac(monkeypatch: pytest.MonkeyPatch) -> 
     )
     assert "patch" in sweep_status_rule["verbs"]
     assert sweep_status_rule.get("resourceNames") == ["sweep-run-1"]
+    # The sweep-controller mints per-child bootstrap Secrets and publishes a
+    # per-child config ConfigMap; without these verbs every child fails at 403.
+    assert {
+        "apiGroups": [""],
+        "resources": ["secrets"],
+        "verbs": ["create", "delete"],
+    } in rules
+    assert {
+        "apiGroups": [""],
+        "resources": ["configmaps"],
+        "verbs": ["create"],
+    } in rules
 
 
 @pytest.mark.asyncio

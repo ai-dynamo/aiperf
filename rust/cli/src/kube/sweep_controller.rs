@@ -7,6 +7,7 @@
 //! child `AIPerfJob` lifecycle until all runs reach a terminal state.
 
 use std::path::Path;
+use std::thread::sleep;
 use std::time::Duration;
 
 use aiperf_runtime::engine::cellular_bootstrap::{CellularRole, mint_deployment_material};
@@ -34,6 +35,12 @@ const SA_CA_PATH: &str = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt";
 /// API plural for AIPerfSweep custom resources.
 pub(crate) const AIPERFSWEEPS_PLURAL: &str = "aiperfsweeps";
 const WATCH_POLL_TIMEOUT: Duration = Duration::from_secs(5);
+/// Reconnect budget for one child's watch stream; mirrors `command::MAX_WATCH_RECONNECTS`.
+const MAX_CHILD_WATCH_RECONNECTS: u32 = 5;
+/// Pause between child-watch reconnects so an EOF storm cannot spin-loop.
+const CHILD_WATCH_RECONNECT_DELAY: Duration = Duration::from_secs(1);
+/// Key under which each child's expanded Config-v2 document is published.
+const CHILD_CONFIG_KEY: &str = "config.yaml";
 
 /// Entry point dispatched from `dispatch.rs` for the `sweep-controller` command.
 pub fn run() -> anyhow::Result<i32> {
@@ -103,6 +110,11 @@ pub(crate) fn run_sweep(
 
     // Sliding-window execution: issue up to `max_concurrent` children, drain one
     // before issuing the next when the window is full.
+    //
+    // The counts below are local bookkeeping only. `status.completedRuns` and
+    // `status.failedRuns` have a single writer — the operator's child-run
+    // roll-up — because the CRD guards them with a monotonic CEL rule that an
+    // out-of-order second writer would trip.
     let mut running: std::collections::VecDeque<String> = std::collections::VecDeque::new();
     let mut completed_count = 0u32;
     let mut failed_count = 0u32;
@@ -119,7 +131,6 @@ pub(crate) fn run_sweep(
             } else {
                 failed_count += 1;
             }
-            patch_sweep_run_counts(client, namespace, sweep_name, completed_count, failed_count)?;
         }
 
         let run_id = format!("{}-{:04}", envelope.run_id, index);
@@ -143,12 +154,12 @@ pub(crate) fn run_sweep(
         } else {
             failed_count += 1;
         }
-        patch_sweep_run_counts(client, namespace, sweep_name, completed_count, failed_count)?;
     }
 
-    // Patch the final sweep phase.
-    let is_all_failed = total > 0 && failed_count == total as u32;
-    let final_phase = if is_all_failed { "Failed" } else { "Completed" };
+    // Patch the final sweep phase. Any failed child fails the sweep: a partial
+    // failure must not be reported as a clean completion.
+    let has_failure = failed_count > 0;
+    let final_phase = if has_failure { "Failed" } else { "Completed" };
     patch_sweep_phase(client, namespace, sweep_name, final_phase)?;
 
     info!(
@@ -159,7 +170,7 @@ pub(crate) fn run_sweep(
         "sweep-controller done"
     );
 
-    Ok(if is_all_failed { 1 } else { 0 })
+    Ok(if has_failure { 1 } else { 0 })
 }
 
 /// Convert contract-layer sweep axes to the plan layer's typed form.
@@ -210,8 +221,9 @@ pub(crate) fn build_child_specs(envelope: &SweepEnvelope) -> anyhow::Result<Vec<
     Ok(specs)
 }
 
-/// Mint bootstrap material, create Secrets, build a child `ControllerEnvelope`,
-/// and POST the child `AIPerfJob` CR with an owner reference to the sweep CR.
+/// Publish the child's Config-v2 document, mint bootstrap material, create Secrets,
+/// build a child `ControllerEnvelope`, and POST the child `AIPerfJob` CR with an owner
+/// reference to the sweep CR.
 fn submit_child_run(
     client: &KubeClient,
     sweep_envelope: &SweepEnvelope,
@@ -222,6 +234,10 @@ fn submit_child_run(
 ) -> anyhow::Result<()> {
     let namespace = &sweep_envelope.namespace;
     let cells = base_config.runtime.as_ref().map(|r| r.cells).unwrap_or(1);
+
+    // Publish this child's expanded configuration; the operator resolves the
+    // resulting ConfigMap by name and verifies its digest against `configRef`.
+    let config_digest = post_child_config_map(client, namespace, run_id, base_config)?;
 
     // Mint fresh bootstrap material for this child run.
     let roles: Vec<CellularRole> = (0..cells).map(CellularRole::Cell).collect();
@@ -290,7 +306,7 @@ fn submit_child_run(
         artifact_root: "/results".to_string(),
         config_ref: NamedReference {
             name: run_id.to_string(),
-            sha256: "0".repeat(64),
+            sha256: config_digest,
         },
         controller_address: "tcp://aiperf-controller-svc:9500".to_string(),
         roles: vec![
@@ -351,6 +367,59 @@ fn submit_child_run(
     Ok(())
 }
 
+/// POST one child's expanded Config-v2 document as a ConfigMap and return the
+/// canonical content digest the operator will recompute.
+fn post_child_config_map(
+    client: &KubeClient,
+    namespace: &str,
+    run_id: &str,
+    config: &BenchmarkConfig,
+) -> anyhow::Result<String> {
+    let config_yaml = serde_yaml::to_string(config).map_err(|e| {
+        anyhow::anyhow!("failed to serialize the expanded config for {run_id}: {e}")
+    })?;
+    let digest = config_map_content_digest(&config_yaml)?;
+    let body = json!({
+        "apiVersion": "v1",
+        "kind": "ConfigMap",
+        "metadata": {
+            "name": run_id,
+            "namespace": namespace,
+            "labels": {"aiperf.nvidia.com/run-id": run_id},
+            "annotations": {"aiperf.nvidia.com/content-sha256": digest},
+        },
+        "data": {CHILD_CONFIG_KEY: config_yaml},
+    });
+    let body_bytes = serde_json::to_vec(&body)
+        .map_err(|e| anyhow::anyhow!("failed to serialize child ConfigMap {run_id}: {e}"))?;
+    let status = client.request(
+        "POST",
+        &format!("/api/v1/namespaces/{namespace}/configmaps"),
+        "application/json",
+        body_bytes,
+    )?;
+    if !(200..300).contains(&status) {
+        anyhow::bail!("child ConfigMap {run_id} creation returned HTTP {status}");
+    }
+    Ok(digest)
+}
+
+/// Compute the canonical ConfigMap content digest the operator verifies.
+///
+/// This must stay byte-identical to the operator's `build_config_snapshot`:
+/// SHA-256 over compact, key-sorted JSON of `{"binaryData":{},"data":{...}}`.
+/// `serde_json` is built with `preserve_order` in this workspace, so map key
+/// order is insertion order rather than sorted; the two top-level keys are
+/// therefore emitted explicitly in sorted order instead of via a map.
+fn config_map_content_digest(config_yaml: &str) -> anyhow::Result<String> {
+    let encoded_value = serde_json::to_string(config_yaml)
+        .map_err(|e| anyhow::anyhow!("failed to encode the child config value: {e}"))?;
+    let encoded_key = serde_json::to_string(CHILD_CONFIG_KEY)
+        .map_err(|e| anyhow::anyhow!("failed to encode the child config key: {e}"))?;
+    let canonical = format!(r#"{{"binaryData":{{}},"data":{{{encoded_key}:{encoded_value}}}}}"#);
+    Ok(format!("{:x}", Sha256::digest(canonical.as_bytes())))
+}
+
 /// POST one immutable bootstrap Secret and return the SHA-256 hex digest of its bytes.
 fn post_bootstrap_secret(
     client: &KubeClient,
@@ -394,7 +463,10 @@ fn post_bootstrap_secret(
 /// Poll the child AIPerfJob watch stream until it reaches `Completed` or `Failed`.
 ///
 /// Returns `true` for `Completed` and `false` for `Failed`. Reconnects the
-/// watch on clean EOF so a brief lapse in the API server does not abort the sweep.
+/// watch on clean EOF so a brief lapse in the API server does not abort the
+/// sweep, bounded by `MAX_CHILD_WATCH_RECONNECTS` with a fixed pause between
+/// attempts. Exhausting the budget treats the child as failed rather than
+/// looping forever against an endpoint that keeps closing.
 fn wait_for_child_completion(
     client: &KubeClient,
     namespace: &str,
@@ -403,6 +475,7 @@ fn wait_for_child_completion(
     let watch_path = format!(
         "/apis/{AIPERF_GROUP}/{AIPERF_VERSION}/namespaces/{namespace}/aiperfjobs?watch=true&fieldSelector=metadata.name={job_id}"
     );
+    let mut reconnects = 0u32;
     loop {
         let watch = client.watch(&watch_path)?;
         loop {
@@ -420,36 +493,17 @@ fn wait_for_child_completion(
                 KubeWatchPoll::Closed => break, // reconnect on clean EOF
             }
         }
+        reconnects += 1;
+        if reconnects > MAX_CHILD_WATCH_RECONNECTS {
+            warn!(
+                run_id = %job_id,
+                reconnects,
+                "child watch exceeded its reconnect budget; treating the run as failed"
+            );
+            return Ok(false);
+        }
+        sleep(CHILD_WATCH_RECONNECT_DELAY);
     }
-}
-
-/// Patch the sweep `.status` with updated `completedRuns` / `failedRuns` counts.
-fn patch_sweep_run_counts(
-    client: &KubeClient,
-    namespace: &str,
-    sweep_name: &str,
-    completed: u32,
-    failed: u32,
-) -> anyhow::Result<()> {
-    let path = sweep_status_path(namespace, sweep_name);
-    let status = client.merge_patch(
-        &path,
-        &json!({
-            "status": {
-                "completedRuns": completed,
-                "failedRuns": failed,
-            }
-        }),
-    )?;
-    if !(200..300).contains(&status) {
-        warn!(
-            completed,
-            failed,
-            http_status = status,
-            "sweep run-count status patch did not succeed"
-        );
-    }
-    Ok(())
 }
 
 /// Patch the sweep `.status.phase` to the terminal value.
