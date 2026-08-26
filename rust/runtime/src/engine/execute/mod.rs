@@ -85,7 +85,6 @@ use crate::timing::{
 };
 use crate::transport::core::{CreditReportKind, MeasuredContext, MeasuredOutcome};
 use crate::transport::core::{PreparedTurn, RequestExecutor};
-use crate::transport::http::TransportSinkConfig;
 use crate::user_centric::{UserCentricConfig, UserCentricWorkload};
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use async_trait::async_trait;
@@ -205,7 +204,7 @@ pub(crate) fn execute_prepared_native_plan_uncommitted_selected(
 
 pub(crate) type NativeEndpointExecutionParts<'a> = (
     Vec<String>,
-    TransportSinkConfig,
+    crate::engine::turn_execution::ExecutionTransportPolicy,
     Option<Arc<dyn PreparedEndpointTableFactory>>,
     Box<dyn NativeConversationSourceFactory + 'a>,
 );

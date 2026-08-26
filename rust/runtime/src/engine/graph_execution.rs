@@ -56,7 +56,7 @@ use crate::transport::core::{
     BoundedDecisionMode, BoundedDecisionReader, Dispatcher, PreparedEndpointBinding, PreparedTurn,
     Request,
 };
-use crate::transport::http::{PreparedEndpointReference, TransportSinkConfig};
+use crate::transport::http::PreparedEndpointReference;
 use anyhow::{Context, Result, anyhow, ensure};
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -456,14 +456,14 @@ impl GraphEndpointRuntimeFactory for PreparedRunnerGraphEndpointRuntimeFactory {
                 endpoint_id: profile.endpoint_id.clone(),
                 keys,
                 urls: profile.config.urls.clone(),
-                transport_config: TransportSinkConfig {
-                    client: profile.client.clone(),
+                transport_policy: crate::engine::turn_execution::ExecutionTransportPolicy {
+                    total_timeout_ns: profile.client.total_timeout_ns,
+                    ssl_verify: profile.client.ssl_verify,
+                    max_connect_retries: profile.client.max_connect_retries,
+                    connect_retry_backoff_ns: profile.client.connect_retry_backoff_ns,
                     connection_reuse: profile.connection_reuse,
                     session_header: profile.session_header.clone(),
-                    content_server_base: self.content_server_base.clone(),
-                    // `build_graph_dispatcher` stamps the request-payload
-                    // capture flag from this run's raw-artifact selection.
-                    ..TransportSinkConfig::default()
+                    raw_capture: self.raw_enabled,
                 },
                 url_count: profile.config.urls.len(),
                 input_token_counter,
@@ -482,9 +482,9 @@ impl GraphEndpointRuntimeFactory for PreparedRunnerGraphEndpointRuntimeFactory {
                     run_origin_ns,
                     &profile.urls,
                     model,
-                    profile.transport_config,
+                    profile.transport_policy,
+                    self.content_server_base.clone(),
                     table.clone(),
-                    self.raw_enabled,
                 )?;
                 Ok((
                     profile.profile_id,
@@ -532,7 +532,7 @@ struct StagedGraphProfile {
     endpoint_id: EndpointId,
     keys: [EndpointKey; 2],
     urls: Vec<String>,
-    transport_config: TransportSinkConfig,
+    transport_policy: crate::engine::turn_execution::ExecutionTransportPolicy,
     url_count: usize,
     input_token_counter: Arc<dyn InputTokenCounter>,
     transport: Arc<dyn NativeTransportExecution>,

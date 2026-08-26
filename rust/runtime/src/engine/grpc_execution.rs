@@ -46,9 +46,9 @@ impl NativeTransportExecution for GrpcNativeExecution {
         run_origin_ns: i64,
         urls: &[String],
         model: &str,
-        transport_config: crate::transport::http::TransportSinkConfig,
+        transport_policy: crate::engine::turn_execution::ExecutionTransportPolicy,
+        _content_server_base: Option<std::sync::Arc<str>>,
         endpoints: Rc<crate::endpoints::PreparedEndpointTable>,
-        capture_raw: bool,
     ) -> Result<Rc<dyn crate::transport::core::Dispatcher>> {
         Ok(Rc::new(
             crate::engine::grpc_turn_execution::grpc_sink_with_endpoints(
@@ -56,12 +56,9 @@ impl NativeTransportExecution for GrpcNativeExecution {
                 run_origin_ns,
                 urls,
                 model.to_string(),
-                transport_config,
+                transport_policy,
                 GrpcBindingRegistry::builtin()?,
                 endpoints,
-                // Graph execution retains the request payload only for raw
-                // artifacts (`EngineGraphSink` gates it on `raw_enabled`).
-                capture_raw,
             )?,
         ))
     }

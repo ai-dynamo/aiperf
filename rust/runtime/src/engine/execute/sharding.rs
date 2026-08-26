@@ -111,7 +111,7 @@ pub(crate) struct ShardedShared {
     /// Ordered inference endpoint URLs.
     pub(crate) endpoint_urls: Vec<String>,
     /// Fully resolved transport policy.
-    pub(crate) transport_config: TransportSinkConfig,
+    pub(crate) transport_config: crate::engine::turn_execution::ExecutionTransportPolicy,
     /// Transport-selected lowering used by every per-thread conversation source.
     pub(crate) request_materializer: Arc<dyn crate::dataset::RequestMaterializer>,
     /// Dataset default output-token bound.
@@ -316,7 +316,6 @@ pub(crate) async fn execute_scheduled_shard(
         base_urls: shared.endpoint_urls.clone(),
         model: shared.primary_model.clone(),
         transport: shared.transport_config.clone(),
-        raw_enabled: shared.raw_enabled,
         prepared_endpoints: Some(prepared_endpoints),
         credit_materializer: None,
         // `workers == 1` co-located sink: no hop, so routing is inert.

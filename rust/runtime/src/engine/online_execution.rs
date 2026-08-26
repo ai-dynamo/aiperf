@@ -69,6 +69,22 @@ impl NativeTransportExecution for HttpNativeExecution {
         self.executor.clone()
     }
 
+    fn executor_factory_for_endpoint(
+        &self,
+        profile: Option<&crate::engine::registry::ValidatedEndpointProfileV2>,
+    ) -> Arc<dyn RequestExecutorFactory> {
+        profile.map_or_else(
+            || self.executor_factory(),
+            |profile| {
+                Arc::new(
+                    crate::engine::turn_execution::ConfiguredHttpExecutionFactory::new(
+                        profile.client.clone(),
+                    ),
+                )
+            },
+        )
+    }
+
     fn readiness_enabled(&self) -> bool {
         true
     }
@@ -80,13 +96,15 @@ impl NativeTransportExecution for HttpNativeExecution {
         run_origin_ns: i64,
         urls: &[String],
         model: &str,
-        mut transport_config: crate::transport::http::TransportSinkConfig,
+        transport_policy: crate::engine::turn_execution::ExecutionTransportPolicy,
+        content_server_base: Option<std::sync::Arc<str>>,
         endpoints: Rc<crate::endpoints::PreparedEndpointTable>,
-        capture_raw: bool,
     ) -> Result<Rc<dyn crate::transport::core::Dispatcher>> {
         // The request payload's only consumer is the raw artifact
         // (`CapturedHttpExchange`), so the handle is taken only under raw capture.
-        transport_config.capture_raw = capture_raw;
+        let mut transport_config =
+            crate::engine::turn_execution::http_sink_config(&transport_policy);
+        transport_config.content_server_base = content_server_base;
         Ok(Rc::new(
             crate::transport::http::TransportSink::new_multi_configured(
                 clock,
@@ -558,7 +576,12 @@ fn prepare_native_operation(
     plan.virtual_worker_width = binding.virtual_worker_width(plan.workers);
     plan.transport = Some(binding.clone());
     let report_facts = native_plan_report_facts(&plan)?;
-    let request_executor = binding.executor_factory();
+    let endpoint_profile = match &plan.endpoint {
+        crate::engine::execute::NativeEndpointPlan::Prepared(profiles) => Some(
+            crate::engine::execute::default_prepared_endpoint_profile(profiles)?,
+        ),
+    };
+    let request_executor = binding.executor_factory_for_endpoint(endpoint_profile);
     let readiness = if binding.readiness_enabled() {
         Some(prepare_online_readiness(run, context)?)
     } else {

@@ -250,6 +250,15 @@ pub trait NativeTransportExecution: Send + Sync {
     /// Turn-placement factory this transport drives below the shared dispatcher.
     fn executor_factory(&self) -> Arc<dyn crate::engine::turn_execution::RequestExecutorFactory>;
 
+    /// Bind a resolved endpoint profile's transport-local settings at the
+    /// protocol boundary. The shared executor config remains transport-neutral.
+    fn executor_factory_for_endpoint(
+        &self,
+        _profile: Option<&ValidatedEndpointProfileV2>,
+    ) -> Arc<dyn crate::engine::turn_execution::RequestExecutorFactory> {
+        self.executor_factory()
+    }
+
     /// Transport-selected lowering while the dataset segment store is available.
     fn request_materializer(&self) -> Arc<dyn crate::dataset::RequestMaterializer> {
         Arc::new(crate::dataset::EndpointRequestMaterializer)
@@ -282,9 +291,9 @@ pub trait NativeTransportExecution: Send + Sync {
         run_origin_ns: i64,
         urls: &[String],
         model: &str,
-        transport_config: crate::transport::http::TransportSinkConfig,
+        transport_policy: crate::engine::turn_execution::ExecutionTransportPolicy,
+        content_server_base: Option<std::sync::Arc<str>>,
         endpoints: std::rc::Rc<crate::endpoints::PreparedEndpointTable>,
-        capture_raw: bool,
     ) -> Result<std::rc::Rc<dyn crate::transport::core::Dispatcher>>;
 
     /// Human-readable transport label used in graph tracing/diagnostics.

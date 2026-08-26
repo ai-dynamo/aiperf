@@ -115,17 +115,14 @@ pub(crate) async fn execute_native_inner(
         let endpoint_resolver = table_factory.coordinator_resolver()?;
         (
             profile.config.urls.clone(),
-            TransportSinkConfig {
-                client: profile.client.clone(),
+            crate::engine::turn_execution::ExecutionTransportPolicy {
+                total_timeout_ns: profile.client.total_timeout_ns,
+                ssl_verify: profile.client.ssl_verify,
+                max_connect_retries: profile.client.max_connect_retries,
+                connect_retry_backoff_ns: profile.client.connect_retry_backoff_ns,
                 connection_reuse: profile.connection_reuse,
                 session_header: profile.session_header.clone(),
-                // Tag content-server media URLs so served fetches correlate back
-                // to the request; only when the server publishes files.
-                content_server_base: content_server_media_base(&request)?,
-                // The request-payload capture flag is stamped per execution
-                // backend from `ExecutionBackendConfig`, which knows this run's
-                // raw-artifact selection; the default here captures.
-                ..TransportSinkConfig::default()
+                raw_capture: request.artifacts.raw_path.is_some(),
             },
             Some(table_factory),
             Box::new(PreparedNativeConversationSourceFactory {
@@ -309,7 +306,6 @@ pub(crate) async fn execute_native_inner(
             base_urls: endpoint_urls.clone(),
             model: primary_model.clone(),
             transport: transport_config,
-            raw_enabled: request.artifacts.raw_path.is_some(),
             prepared_endpoints,
             // The unsharded path materializes on its single co-located sink.
             credit_materializer: None,

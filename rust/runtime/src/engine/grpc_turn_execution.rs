@@ -19,7 +19,6 @@ use crate::transport::grpc::{
     ConnectionReuseStrategy as GrpcConnectionReuseStrategy, GrpcBindingRegistry, GrpcClientConfig,
 };
 use crate::transport::grpc::{GrpcTransportSink, GrpcTransportSinkConfig};
-use crate::transport::http::TransportSinkConfig;
 use anyhow::{Result, anyhow, ensure};
 use async_trait::async_trait;
 
@@ -85,10 +84,9 @@ impl RequestExecutorFactory for GrpcExecutionFactory {
 pub struct GrpcSinkBuilder {
     base_urls: Vec<String>,
     model: String,
-    transport: TransportSinkConfig,
+    transport: crate::engine::turn_execution::ExecutionTransportPolicy,
     prepared_endpoints: Option<Arc<dyn PreparedEndpointTableFactory>>,
     bindings: GrpcBindingRegistry,
-    raw_enabled: bool,
 }
 
 impl GrpcSinkBuilder {
@@ -99,7 +97,6 @@ impl GrpcSinkBuilder {
             transport: config.transport.clone(),
             prepared_endpoints: config.prepared_endpoints.clone(),
             bindings,
-            raw_enabled: config.raw_enabled,
         }
     }
 }
@@ -120,7 +117,6 @@ impl ExecutionSinkBuilder for GrpcSinkBuilder {
             self.transport.clone(),
             self.prepared_endpoints.as_deref(),
             self.bindings.clone(),
-            self.raw_enabled,
         )
     }
 }
@@ -162,10 +158,9 @@ fn prepare_grpc_sink(
     start_ns: i64,
     base_urls: &[String],
     model: String,
-    transport: crate::transport::http::TransportSinkConfig,
+    transport: crate::engine::turn_execution::ExecutionTransportPolicy,
     prepared_endpoints: Option<&dyn PreparedEndpointTableFactory>,
     bindings: GrpcBindingRegistry,
-    capture_raw: bool,
 ) -> Result<GrpcTransportSink> {
     let endpoints = prepared_endpoints
         .ok_or_else(|| anyhow!("gRPC execution requires a prepared endpoint table factory"))?
@@ -178,7 +173,6 @@ fn prepare_grpc_sink(
         transport,
         bindings,
         Rc::new(endpoints),
-        capture_raw,
     )
 }
 
@@ -187,43 +181,73 @@ fn prepare_grpc_sink(
 /// `capture_raw` is the request payload's only consumer; with it off the sink
 /// skips building the canonical payload entirely.
 ///
-/// [`TransportSinkConfig`]: crate::transport::http::TransportSinkConfig
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn grpc_sink_with_endpoints(
     clock: Rc<dyn Clock>,
     start_ns: i64,
     base_urls: &[String],
     model: String,
-    transport: crate::transport::http::TransportSinkConfig,
+    transport: crate::engine::turn_execution::ExecutionTransportPolicy,
     bindings: GrpcBindingRegistry,
     endpoints: Rc<PreparedEndpointTable>,
-    capture_raw: bool,
 ) -> Result<GrpcTransportSink> {
     GrpcTransportSink::new(
         clock,
         start_ns,
         base_urls,
         model,
-        GrpcTransportSinkConfig {
-            client: GrpcClientConfig {
-                total_timeout_ns: transport.client.total_timeout_ns,
-                trace_chunks: transport.client.collect_trace_chunks,
-                // This policy must reach the gRPC TLS builder for self-signed
-                // `grpcs://` endpoints.
-                ssl_verify: transport.client.ssl_verify,
-                // Reuse the authored Config-v2 connect-retry knobs verbatim so
-                // gRPC establishment retries exactly like the HTTP transport.
-                max_connect_retries: transport.client.max_connect_retries,
-                connect_retry_backoff_ns: transport.client.connect_retry_backoff_ns,
-                ..GrpcClientConfig::default()
-            },
-            connection_reuse: grpc_reuse(transport.connection_reuse),
-            session_header: transport.session_header,
-            capture_raw,
-        },
+        grpc_sink_config(transport),
         bindings,
     )?
     .with_prepared_endpoints(endpoints)
+}
+
+fn grpc_sink_config(
+    transport: crate::engine::turn_execution::ExecutionTransportPolicy,
+) -> GrpcTransportSinkConfig {
+    GrpcTransportSinkConfig {
+        client: GrpcClientConfig {
+            total_timeout_ns: transport.total_timeout_ns,
+            trace_chunks: false,
+            ssl_verify: transport.ssl_verify,
+            max_connect_retries: transport.max_connect_retries,
+            connect_retry_backoff_ns: transport.connect_retry_backoff_ns,
+            ..GrpcClientConfig::default()
+        },
+        connection_reuse: grpc_reuse(transport.connection_reuse),
+        session_header: transport.session_header,
+        capture_raw: transport.raw_capture,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::engine::turn_execution::ExecutionTransportPolicy;
+
+    #[test]
+    fn grpc_binds_all_neutral_execution_policy_fields() {
+        let config = grpc_sink_config(ExecutionTransportPolicy {
+            total_timeout_ns: Some(19),
+            ssl_verify: false,
+            max_connect_retries: 4,
+            connect_retry_backoff_ns: 23,
+            connection_reuse: ConnectionReuseStrategy::StickyUserSessions,
+            session_header: Some("x-session".into()),
+            raw_capture: true,
+        });
+
+        assert_eq!(config.client.total_timeout_ns, Some(19));
+        assert!(!config.client.ssl_verify);
+        assert_eq!(config.client.max_connect_retries, 4);
+        assert_eq!(config.client.connect_retry_backoff_ns, 23);
+        assert_eq!(
+            config.connection_reuse,
+            GrpcConnectionReuseStrategy::StickyUserSessions
+        );
+        assert_eq!(config.session_header.as_deref(), Some("x-session"));
+        assert!(config.capture_raw);
+    }
 }
 
 fn grpc_reuse(reuse: ConnectionReuseStrategy) -> GrpcConnectionReuseStrategy {

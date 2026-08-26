@@ -153,7 +153,6 @@ pub(crate) async fn run_single_coordinator(
         base_urls: shared.endpoint_urls.clone(),
         model: shared.primary_model.clone(),
         transport: shared.transport_config.clone(),
-        raw_enabled: shared.raw_enabled,
         prepared_endpoints: Some(prepared_endpoints),
         credit_materializer,
         hop_routing: shared.hop_routing,

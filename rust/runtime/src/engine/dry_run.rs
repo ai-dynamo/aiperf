@@ -535,9 +535,9 @@ impl NativeTransportExecution for DryRunNativeExecution {
         run_origin_ns: i64,
         _urls: &[String],
         model: &str,
-        _transport_config: crate::transport::http::TransportSinkConfig,
+        _transport_policy: crate::engine::turn_execution::ExecutionTransportPolicy,
+        _content_server_base: Option<std::sync::Arc<str>>,
         _endpoints: Rc<crate::endpoints::PreparedEndpointTable>,
-        _capture_raw: bool,
     ) -> Result<Rc<dyn crate::transport::core::Dispatcher>> {
         Ok(Rc::new(FakeDispatcher::new(FakeFabricator::new(
             clock,
@@ -1202,10 +1202,10 @@ mod tests {
     use super::*;
     use crate::clock::{RealClock, RealClockAnchor};
     use crate::endpoints::{EndpointId, EndpointKey};
+    use crate::engine::turn_execution::ExecutionTransportPolicy;
     use crate::multiturn::{PreparedEndpointReference, TurnDataPolicy};
     use crate::transport::core::PreparedEndpointBinding;
     use crate::transport::core::Request;
-    use crate::transport::http::TransportSinkConfig;
 
     /// All-zero analytic params (no base latency, no scaling, no jitter) to build
     /// on with struct-update syntax.
@@ -1236,8 +1236,7 @@ mod tests {
                 real_clock_anchor: anchor,
                 base_urls: vec!["http://dry-run.invalid".to_string()],
                 model: "fixture-model".to_string(),
-                transport: TransportSinkConfig::default(),
-                raw_enabled: false,
+                transport: ExecutionTransportPolicy::default(),
                 prepared_endpoints: None,
                 credit_materializer: None,
                 hop_routing: crate::engine::protocol::HopRouting::RoundRobin,

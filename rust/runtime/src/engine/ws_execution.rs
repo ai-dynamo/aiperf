@@ -137,9 +137,9 @@ impl NativeTransportExecution for WebSocketNativeExecution {
         _run_origin_ns: i64,
         _urls: &[String],
         _model: &str,
-        _transport_config: crate::transport::http::TransportSinkConfig,
+        _transport_policy: crate::engine::turn_execution::ExecutionTransportPolicy,
+        _content_server_base: Option<std::sync::Arc<str>>,
         _endpoints: Rc<crate::endpoints::PreparedEndpointTable>,
-        _capture_raw: bool,
     ) -> Result<Rc<dyn crate::transport::core::Dispatcher>> {
         anyhow::bail!("websocket transport does not support graph execution")
     }
@@ -254,13 +254,13 @@ impl WebSocketSinkBuilder {
         Ok(Self {
             base_urls: config.base_urls.clone(),
             model: config.model.clone(),
-            transport: config.transport.clone(),
+            transport: crate::engine::turn_execution::http_sink_config(&config.transport),
             endpoints: config
                 .prepared_endpoints
                 .clone()
                 .ok_or_else(|| anyhow!("native websocket execution requires prepared endpoints"))?,
             config: websocket,
-            capture_raw: config.raw_enabled,
+            capture_raw: config.transport.raw_capture,
         })
     }
 }

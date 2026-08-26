@@ -25,9 +25,10 @@ use crate::metrics_core::{InferenceDimensions, MetricsConfig, RecordIngest};
 use crate::multiturn::{TurnToSend, WorkerMaterializer};
 use crate::scheduled::TurnResponseObserver;
 use crate::transport::core::{
-    CreditReportKind, DispatchResult, MeasuredContext, MeasuredOutcome, PreparedTurn,
-    RequestExecutor, WorkerCreditReport,
+    ConnectionReuseStrategy, CreditReportKind, DispatchResult, MeasuredContext, MeasuredOutcome,
+    PreparedTurn, RequestExecutor, WorkerCreditReport,
 };
+use crate::transport::http::config::ClientConfig;
 use crate::transport::http::{TransportSink, TransportSinkConfig};
 use crate::transport::measure;
 use anyhow::{Context, Result, anyhow, ensure};
@@ -51,6 +52,56 @@ const CREDIT_RETURN_CAPACITY: usize = 8192;
 
 type PendingDrain = (i64, std::sync::mpsc::SyncSender<Vec<(Uuid, RecordIngest)>>);
 
+/// Transport-neutral execution policy resolved once for a benchmark run.
+///
+/// Protocol bindings translate these shared values into their local clients;
+/// HTTP-only controls stay in the HTTP transport instead of leaking through
+/// the scheduled and graph execution seams.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExecutionTransportPolicy {
+    /// End-to-end request deadline.
+    pub total_timeout_ns: Option<i64>,
+    /// Whether TLS peer and hostname verification is required.
+    pub ssl_verify: bool,
+    /// Additional pre-send connection attempts.
+    pub max_connect_retries: u32,
+    /// Clock-driven linear connect retry backoff.
+    pub connect_retry_backoff_ns: i64,
+    /// Shared connection reuse strategy.
+    pub connection_reuse: ConnectionReuseStrategy,
+    /// Optional correlation/session header name.
+    pub session_header: Option<String>,
+    /// Whether raw request/response artifacts consume per-dispatch payloads.
+    pub raw_capture: bool,
+}
+
+impl Default for ExecutionTransportPolicy {
+    fn default() -> Self {
+        Self {
+            total_timeout_ns: None,
+            ssl_verify: true,
+            max_connect_retries: 0,
+            connect_retry_backoff_ns: 0,
+            connection_reuse: ConnectionReuseStrategy::default(),
+            session_header: None,
+            raw_capture: false,
+        }
+    }
+}
+
+/// Bind shared execution policy to the HTTP sink's protocol-local defaults.
+pub(crate) fn http_sink_config(policy: &ExecutionTransportPolicy) -> TransportSinkConfig {
+    let mut config = TransportSinkConfig::default();
+    config.client.total_timeout_ns = policy.total_timeout_ns;
+    config.client.ssl_verify = policy.ssl_verify;
+    config.client.max_connect_retries = policy.max_connect_retries;
+    config.client.connect_retry_backoff_ns = policy.connect_retry_backoff_ns;
+    config.connection_reuse = policy.connection_reuse;
+    config.session_header = policy.session_header.clone();
+    config.capture_raw = policy.raw_capture;
+    config
+}
+
 /// Inputs for one execution backend.
 pub struct ExecutionBackendConfig {
     /// Number of requested execution workers.
@@ -63,12 +114,8 @@ pub struct ExecutionBackendConfig {
     pub base_urls: Vec<String>,
     /// Effective primary model.
     pub model: String,
-    /// Fully resolved transport policy.
-    pub transport: TransportSinkConfig,
-    /// Whether the run retains raw HTTP-exchange artifacts. The gRPC sink uses
-    /// this to skip building the per-request HTTP-compatibility record when no
-    /// raw artifact will consume it.
-    pub raw_enabled: bool,
+    /// Fully resolved transport-neutral policy.
+    pub transport: ExecutionTransportPolicy,
     /// Optional worker-local endpoint preparation.
     ///
     /// Each worker receives an independent dense-key table.
@@ -223,18 +270,31 @@ pub struct HttpSinkBuilder {
 
 impl HttpSinkBuilder {
     pub fn from_config(config: &ExecutionBackendConfig) -> Self {
+        Self::from_config_with_client(config, ClientConfig::default())
+    }
+
+    fn from_config_with_client(config: &ExecutionBackendConfig, mut client: ClientConfig) -> Self {
         // The run's only request-payload consumer reaches the sink here, the
         // same way `GrpcSinkBuilder` carries it: with it off the HTTP sink skips
         // taking a second handle on the assembled body entirely.
-        let mut transport = config.transport.clone();
-        transport.capture_raw = config.raw_enabled;
+        client.total_timeout_ns = config.transport.total_timeout_ns;
+        client.ssl_verify = config.transport.ssl_verify;
+        client.max_connect_retries = config.transport.max_connect_retries;
+        client.connect_retry_backoff_ns = config.transport.connect_retry_backoff_ns;
+        let transport = TransportSinkConfig {
+            client,
+            connection_reuse: config.transport.connection_reuse,
+            session_header: config.transport.session_header.clone(),
+            content_server_base: None,
+            capture_raw: config.transport.raw_capture,
+        };
         Self {
             base_urls: config.base_urls.clone(),
             model: config.model.clone(),
             transport,
             prepared_endpoints: config.prepared_endpoints.clone(),
             credit_materializer: config.credit_materializer.clone(),
-            raw_enabled: config.raw_enabled,
+            raw_enabled: config.transport.raw_capture,
         }
     }
 }
@@ -332,6 +392,37 @@ impl RequestExecutorFactory for HttpExecutionFactory {
         let worker_labels = config.worker_labels.clone();
         build_native(
             HttpSinkBuilder::from_config(&config),
+            workers,
+            coordinator_clock,
+            anchor,
+            hop_routing,
+            worker_labels,
+        )
+    }
+}
+
+/// HTTP executor factory carrying only the profile's HTTP-local client policy.
+#[derive(Clone, Debug)]
+pub struct ConfiguredHttpExecutionFactory {
+    client: ClientConfig,
+}
+
+impl ConfiguredHttpExecutionFactory {
+    /// Retain the resolved HTTP-local policy until worker sinks are built.
+    pub fn new(client: ClientConfig) -> Self {
+        Self { client }
+    }
+}
+
+impl RequestExecutorFactory for ConfiguredHttpExecutionFactory {
+    fn build(&self, config: ExecutionBackendConfig) -> Result<Rc<dyn RequestExecutor>> {
+        let workers = config.workers;
+        let coordinator_clock = config.coordinator_clock.clone();
+        let anchor = config.real_clock_anchor;
+        let hop_routing = config.hop_routing;
+        let worker_labels = config.worker_labels.clone();
+        build_native(
+            HttpSinkBuilder::from_config_with_client(&config, self.client.clone()),
             workers,
             coordinator_clock,
             anchor,
@@ -1701,6 +1792,28 @@ mod raw_retention_tests {
     use super::*;
     use crate::clock::RealClock;
 
+    #[test]
+    fn execution_transport_policy_carries_raw_capture_explicitly() {
+        let policy = ExecutionTransportPolicy {
+            total_timeout_ns: Some(42),
+            ssl_verify: false,
+            max_connect_retries: 3,
+            connect_retry_backoff_ns: 7,
+            session_header: Some("X-Session".into()),
+            raw_capture: true,
+            ..ExecutionTransportPolicy::default()
+        };
+
+        assert!(policy.raw_capture);
+        let http = http_sink_config(&policy);
+        assert_eq!(http.client.total_timeout_ns, Some(42));
+        assert!(!http.client.ssl_verify);
+        assert_eq!(http.client.max_connect_retries, 3);
+        assert_eq!(http.client.connect_retry_backoff_ns, 7);
+        assert_eq!(http.session_header.as_deref(), Some("X-Session"));
+        assert!(http.capture_raw);
+    }
+
     fn builder(raw_enabled: bool) -> HttpSinkBuilder {
         HttpSinkBuilder {
             base_urls: vec!["http://127.0.0.1:1".to_string()],
@@ -2230,8 +2343,7 @@ mod tests {
                 real_clock_anchor: anchor,
                 base_urls: vec![url],
                 model: "fixture-model".to_string(),
-                transport: TransportSinkConfig::default(),
-                raw_enabled: false,
+                transport: ExecutionTransportPolicy::default(),
                 prepared_endpoints: Some(table_factory),
                 credit_materializer: None,
                 hop_routing: HopRouting::RoundRobin,
