@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Native `aiperf kube` command surface.
 
+use sha2::{Digest as _, Sha256};
 use std::io::Write;
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -479,7 +480,7 @@ struct GenerateArgs {
     #[arg(long)]
     image: String,
     /// Number of cellular workers.
-    #[arg(long)]
+    #[arg(long, value_parser = clap::value_parser!(u32).range(1..))]
     cells: u32,
     /// Target Kubernetes namespace (default: `aiperf`).
     #[arg(long, default_value = "aiperf")]
@@ -519,6 +520,12 @@ fn run_generate(args: &[String]) -> anyhow::Result<i32> {
             )
         })?;
 
+    let config_bytes =
+        std::fs::read(&parsed.config).with_context(|| {
+            format!("failed to read config file {}", parsed.config.display())
+        })?;
+    let config_sha256 = format!("{:x}", Sha256::digest(&config_bytes));
+
     let config_stem = parsed
         .config
         .file_stem()
@@ -553,7 +560,7 @@ fn run_generate(args: &[String]) -> anyhow::Result<i32> {
         artifact_root: "/results".to_string(),
         config_ref: NamedReference {
             name: config_name,
-            sha256: "0".repeat(64),
+            sha256: config_sha256,
         },
         controller_address: "tcp://aiperf-controller-svc:9500".to_string(),
         roles: vec![
