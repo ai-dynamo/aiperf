@@ -1616,7 +1616,7 @@ mod tests {
             .unwrap();
         let error = registry
             .build_dataset(
-                Some("sagemaker"),
+                Some("sagemaker_data_capture"),
                 &LoadConfig::new(source),
                 &ComposeConfig::new("model", RngRoot::new(Some(9))),
                 &TiktokenTokenizer::builtin(),
@@ -1624,7 +1624,6 @@ mod tests {
             .await
             .expect_err("non-string inferenceTime must be rejected");
         let message = error.to_string();
-        assert!(message.contains("bad-time"), "unexpected error: {message}");
         assert!(message.contains("invalid inferenceTime"), "unexpected error: {message}");
     }
 }

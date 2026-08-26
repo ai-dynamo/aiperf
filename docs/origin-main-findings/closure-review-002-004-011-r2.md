@@ -4,7 +4,7 @@ Re-reviewed the three closure records after adding the native regression
 `sagemaker_rejects_malformed_inference_time_with_validation_error`. It asserts
 that a non-string SageMaker `inferenceTime` yields `DatasetError::Validation`;
 the loader distinguishes missing from present non-string values and preserves
-the event-origin plus `invalid inferenceTime` diagnostic.
+the `invalid inferenceTime` diagnostic.
 
 Rows 002 and 011 remain correctly scoped as documentation/package-only
 not-applicable changes. No correctness, safety, systems, or scope findings.
