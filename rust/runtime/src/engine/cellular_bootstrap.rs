@@ -45,7 +45,7 @@ const MAX_MATERIAL_BYTES: usize = FIXED_MATERIAL_BYTES + MAX_ROLE_COUNT * ROSTER
 #[derive(
     Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, serde::Serialize, serde::Deserialize,
 )]
-pub(crate) enum CellularRole {
+pub enum CellularRole {
     /// A benchmark-executing cell.
     Cell(u32),
     /// A fold-only reduction-tree aggregator.
@@ -148,16 +148,7 @@ pub(crate) fn prepare_controller_security(
     source: ControllerSecuritySource,
     roles: &[CellularRole],
 ) -> Result<PreparedControllerSecurity> {
-    ensure!(!roles.is_empty(), "controller security roster is empty");
-    ensure!(
-        roles.len() <= MAX_ROLE_COUNT,
-        "controller security roster is oversized"
-    );
-    let unique = roles.iter().copied().collect::<BTreeSet<_>>();
-    ensure!(
-        unique.len() == roles.len(),
-        "controller security roster has duplicate roles"
-    );
+    ensure_mintable_roster(roles)?;
 
     match source {
         ControllerSecuritySource::LocalMint => mint_local_security(roles),
@@ -184,7 +175,35 @@ pub(crate) fn prepare_controller_security(
     }
 }
 
-fn mint_local_security(roles: &[CellularRole]) -> Result<PreparedControllerSecurity> {
+/// Refuse a roster that `decode_material` would only reject later, at process start.
+fn ensure_mintable_roster(roles: &[CellularRole]) -> Result<()> {
+    ensure!(!roles.is_empty(), "controller security roster is empty");
+    ensure!(
+        roles.len() <= MAX_ROLE_COUNT,
+        "controller security roster is oversized"
+    );
+    let unique = roles.iter().copied().collect::<BTreeSet<_>>();
+    ensure!(
+        unique.len() == roles.len(),
+        "controller security roster has duplicate roles"
+    );
+    Ok(())
+}
+
+/// One run's freshly minted private material and the public roster naming it.
+struct MintedRun {
+    run_nonce: [u8; 32],
+    controller_signer: SigningKey,
+    roster: Box<[RoleVerifyingKey]>,
+    role_materials: BTreeMap<CellularRole, Vec<u8>>,
+}
+
+/// Mint one run nonce, the controller key, and one key per role, in caller order.
+///
+/// Every minting path routes through this single block. A second copy of the
+/// key-generation sequence could drift into reusing a nonce or a key across runs,
+/// so same-host and out-of-band deployment provisioning share exactly this one.
+fn mint_run_material(roles: &[CellularRole]) -> Result<MintedRun> {
     let run_nonce = random_bytes("run nonce")?;
     let controller_signer = SigningKey::from_bytes(&random_bytes("controller key")?);
     let controller_verifier = controller_signer.verifying_key();
@@ -199,20 +218,66 @@ fn mint_local_security(roles: &[CellularRole]) -> Result<PreparedControllerSecur
         role_signers.push((role, signer));
     }
     let roster = roster.into_boxed_slice();
-    let mut materials = BTreeMap::new();
+    let mut role_materials = BTreeMap::new();
     for (role, signer) in role_signers {
-        materials.insert(
+        role_materials.insert(
             role,
             encode_material(Some(role), run_nonce, &signer, controller_verifier, &roster)?,
         );
     }
+    Ok(MintedRun {
+        run_nonce,
+        controller_signer,
+        roster,
+        role_materials,
+    })
+}
+
+/// One run's complete deployment material: the controller bundle plus one bundle per role.
+///
+/// Every bundle shares one run nonce and one roster; the controller bundle carries the
+/// signing key whose verifier the roster names. The bytes are opaque outside this module —
+/// no private-key type crosses this boundary.
+#[derive(Debug)]
+pub struct DeploymentMaterial {
+    /// Controller bundle, role field absent.
+    pub controller: Vec<u8>,
+    /// One bundle per requested role, keyed by role.
+    pub roles: BTreeMap<CellularRole, Vec<u8>>,
+}
+
+/// Mint one run's material for a deployment that provisions every process out of band.
+///
+/// Unlike the same-host path, no context is installed in this process: the caller
+/// receives opaque bytes to place in each process's private mount. The roster is
+/// refused up front when it is empty, oversized, or has duplicate roles.
+pub fn mint_deployment_material(roles: &[CellularRole]) -> Result<DeploymentMaterial> {
+    ensure_mintable_roster(roles)?;
+    let minted = mint_run_material(roles)?;
+    let controller = encode_material(
+        None,
+        minted.run_nonce,
+        &minted.controller_signer,
+        minted.controller_signer.verifying_key(),
+        &minted.roster,
+    )?;
+    Ok(DeploymentMaterial {
+        controller,
+        roles: minted.role_materials,
+    })
+}
+
+fn mint_local_security(roles: &[CellularRole]) -> Result<PreparedControllerSecurity> {
+    let minted = mint_run_material(roles)?;
     Ok(PreparedControllerSecurity {
         context: Arc::new(CellSecurityContext::controller(
-            run_nonce,
-            controller_signer,
-            roster,
+            minted.run_nonce,
+            minted.controller_signer,
+            minted.roster,
         )?),
-        local_roles: Some(LocalRoleProvisioner { materials }),
+        local_roles: Some(LocalRoleProvisioner {
+            materials: minted.role_materials,
+        }),
     })
 }
 
