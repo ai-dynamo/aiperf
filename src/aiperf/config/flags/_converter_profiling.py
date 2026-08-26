@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -80,24 +81,153 @@ def _apply_agentic_replay_fields(phase: dict[str, Any], cli: CLIConfig) -> None:
         phase["agentic_warmup_grace_period"] = cli.warmup_grace_period
 
 
-def _profiling_phase_type(cli: CLIConfig) -> Any:
+_RATE_SHAPE_SEARCH_FIELDS: frozenset[str] = frozenset(
+    {"rate", "rate_ramp", "smoothness"}
+)
+
+
+def _search_space_dimensions(cli: CLIConfig) -> dict[str, tuple[float, str]]:
+    """Field name -> (lower bound, kind) for every dimension in ``--search-space``.
+
+    A lightweight companion to ``parse_search_space()`` (which runs later,
+    in ``_build_adaptive_search``): only extracts each dimension's final
+    path segment (resolving bare-name aliases the same way the real parser
+    does), its lower bound, and its declared ``kind`` (``int``/``real``,
+    default ``real`` when omitted -- matches ``SearchSpaceDimension``'s own
+    default), so ``_profiling_phase_type``/``build_profiling`` can pick a
+    compatible phase shape -- and seed a self-supplying field's initial
+    value from its own search range -- before search-space bounds/kind are
+    even validated by the real parser. Malformed entries are skipped here;
+    the real parser reports the actual grammar error. Only dimensions that
+    target a direct ``phases.profiling.<field>`` scalar are considered
+    (bare aliases always resolve there); a fully-qualified path targeting a
+    different phase (e.g. ``phases.warmup.*``) OR a nested sub-field one
+    level deeper (e.g. ``phases.profiling.cancellation.rate``, the request-
+    cancellation rate -- an unrelated field that merely happens to share
+    the ``rate`` leaf name) is ignored by this shape-inference helper --
+    the real search-space parser still processes it normally later, just
+    not for the purpose of phase-shape inference.
+
+    ``rate_series`` is rejected outright, regardless of any companion CLI
+    flag: it's a piecewise-linear schedule (``RateSeriesConfig``), not a
+    scalar the planner can sample between two bounds. Letting it through
+    would set a phase's ``rate_series`` field to a bare Optuna-sampled
+    float on the first trial and crash there -- reject it immediately and
+    clearly instead.
+    """
+    if not cli.search_space:
+        return {}
+
+    dims: dict[str, tuple[float, str]] = {}
+    for raw in cli.search_space:
+        parsed = _parse_shape_dimension(raw)
+        if parsed is not None:
+            field, lo, kind = parsed
+            dims[field] = (lo, kind)
+    return dims
+
+
+def _parse_shape_dimension(raw: str) -> tuple[str, float, str] | None:
+    """Parse one ``--search-space`` entry into ``(field, lo, kind)``, or
+    ``None`` if it isn't a shape-bearing ``phases.profiling.<field>`` scalar.
+
+    Raises for ``rate_series`` specifically (see ``_search_space_dimensions``
+    docstring); every other malformed or out-of-scope entry is skipped so
+    the real parser (``parse_search_space``) is what reports the actual
+    grammar error, rather than this lightweight helper guessing wrong.
+    """
+    from aiperf.config.loader.dotted_path import _resolve_path_alias
+
+    path_part, _, rest = raw.partition(":")
+    path = path_part
+    if not path:
+        return None
+    if "." not in path:
+        path = _resolve_path_alias(path)
+    if not path.startswith("phases.profiling."):
+        return None
+    remainder = path[len("phases.profiling.") :]
+    if "." in remainder:
+        # A nested sub-field (e.g. "phases.profiling.cancellation.rate") is
+        # not the phase's own scalar field -- matching it by leaf name alone
+        # would misclassify e.g. a cancellation-rate sweep as the phase's
+        # request rate. Not a shape-bearing dimension.
+        return None
+    field = remainder
+    if field == "rate_series":
+        raise ValueError(
+            "--search-space 'rate_series' is not a valid adaptive-search "
+            "dimension: it's a piecewise-linear rate schedule (a list of "
+            "time/rate points), not a single number the planner can "
+            "sample between two bounds. Pass --request-rate-series as a "
+            "fixed companion instead of searching over it, or search "
+            "'rate'/'rate_ramp' for a scalar rate to sweep."
+        )
+    bounds_part, _, kind_part = rest.partition(":")
+    if ":" in kind_part:
+        # More than three ':'-separated segments (e.g. "users:1,50:int:log")
+        # -- malformed grammar. Skip rather than guess a kind from it.
+        return None
+    kind = kind_part or "real"
+    if kind not in ("int", "real"):
+        # Not one of the real parser's _VALID_KINDS (parsing.py) -- skip so
+        # the real parser's own grammar error is what the user sees. This is
+        # also what makes _seed_users_dimension's "not ':real'" message
+        # always accurate: by the time kind reaches there, it can only ever
+        # be "int" or "real".
+        return None
+    lo_str = bounds_part.split(",", 1)[0]
+    try:
+        return field, float(lo_str), kind
+    except ValueError:
+        return None
+
+
+def _profiling_phase_type(
+    cli: CLIConfig, search_dims: dict[str, tuple[float, str]]
+) -> Any:
     from aiperf.config.phases import PhaseType
     from aiperf.plugin.enums import ArrivalPattern
 
     if cli.fixed_schedule:
         return PhaseType.FIXED_SCHEDULE
-    if cli.user_centric_rate is not None:
+
+    user_centric_needed = "users" in search_dims
+    user_centric_selected = cli.user_centric_rate is not None or user_centric_needed
+    rate_shape_needed = bool(set(search_dims) & _RATE_SHAPE_SEARCH_FIELDS)
+
+    # UserCentricPhase has no 'smoothness' field and GammaPhase has no
+    # 'users' field -- no phase type can satisfy both, unlike users+rate
+    # (UserCentricPhase legitimately has rate/rate_ramp/rate_series too,
+    # inherited from RatePhaseConfig). Gated on user_centric_selected (not
+    # just user_centric_needed) so an explicit --user-centric-rate without
+    # a 'users' dimension is caught too: it still resolves to USER_CENTRIC,
+    # which still has no 'smoothness' field for a searched 'smoothness'
+    # dimension to land on.
+    if user_centric_selected and "smoothness" in search_dims:
+        raise ValueError(
+            "--search-space targets 'smoothness' (a gamma-shaped benchmark), "
+            "but --user-centric-rate (or a 'users' dimension) selects a "
+            "user-centric-shaped benchmark. A benchmark can only have one "
+            "shape at a time -- search these in separate runs."
+        )
+
+    if user_centric_selected:
         return PhaseType.USER_CENTRIC
-    if cli.request_rate is not None or cli.request_rate_series is not None:
+    if (
+        cli.request_rate is not None
+        or cli.request_rate_series is not None
+        or rate_shape_needed
+    ):
         # v1 parity (user_config.py auto-promote): --arrival-smoothness /
         # --vllm-burstiness without an explicit --arrival-pattern resolves to
         # gamma, since smoothness is a gamma-distribution knob. Without this the
         # flag fell through to POISSON and then _apply_phase_specific_routes
         # hard-rejected it ("only supported with gamma") -- a cutover regression
-        # that made --vllm-burstiness unusable on its own.
-        if (
-            "arrival_pattern" not in cli.model_fields_set
-            and cli.arrival_smoothness is not None
+        # that made --vllm-burstiness unusable on its own. A 'smoothness'
+        # search-space dimension is the same knob, so it auto-promotes too.
+        if "arrival_pattern" not in cli.model_fields_set and (
+            cli.arrival_smoothness is not None or "smoothness" in search_dims
         ):
             return PhaseType.GAMMA
         match cli.arrival_pattern:
@@ -108,6 +238,151 @@ def _profiling_phase_type(cli: CLIConfig) -> Any:
             case _:
                 return PhaseType.POISSON
     return PhaseType.CONCURRENCY
+
+
+def _apply_search_space_shape_seeds(
+    prof: dict[str, Any], search_dims: dict[str, tuple[float, str]]
+) -> None:
+    """Seed the required scalar(s) a search-space-inferred shape still needs.
+
+    ``_profiling_phase_type`` can auto-switch the phase *type* from
+    ``--search-space`` alone, but rate-controlled/user-centric phases also
+    require a *value* for their defining scalar (``rate``, and for
+    user-centric also ``users``) before Pydantic will accept the base
+    config -- the search planner only supplies that value once trials
+    start. When the searched field is the scalar itself, its own lower
+    bound is a natural seed (the planner immediately overrides it on trial
+    0 anyway). When it isn't -- e.g. searching 'smoothness' or 'rate_ramp'
+    without ever searching or explicitly setting 'rate' -- there's no value
+    to seed from; raise a clear error instead of letting Pydantic's
+    "rate-controlled phases require rate or rate_series" surface as an
+    unexplained crash on the very first config build.
+
+    Both the 'users' and 'rate' validation below run whenever the
+    respective field is in search_dims, regardless of whether an explicit
+    CLI flag (--num-users, --request-rate, --request-rate-series, or
+    --user-centric-rate) already populated prof["users"]/prof["rate"]/
+    prof["rate_series"] via _PROF_FIELD_ROUTES / _apply_profiling_rate_series
+    before this runs -- only the *assignment* is gated on absence.
+    Otherwise `--request-rate 10 --search-space "rate:-5,100"` would
+    silently skip bound validation on a dimension the planner still samples
+    from every trial (crashing mid-search once a negative value is drawn,
+    not at config-build time), the same class of bug as skipping 'users'
+    validation whenever --num-users was also explicit.
+    """
+    from aiperf.config.phases import PhaseType
+
+    # 'smoothness' (GammaPhase.smoothness, gt=0) and 'rate_ramp'
+    # (RampConfig.duration, gt=0.0) aren't seeded into prof here -- both are
+    # optional fields the planner only ever writes once trials start -- but
+    # they share the same "validate the bound now, not at sample time" need
+    # as 'rate'/'users': a negative lower bound otherwise builds a valid
+    # base config and only fails once the planner happens to sample a
+    # negative value mid-search.
+    _reject_non_positive_bound(
+        search_dims, "smoothness", "the gamma distribution's shape parameter"
+    )
+    _reject_non_positive_bound(search_dims, "rate_ramp", "the ramp duration (seconds)")
+
+    phase_type = prof["type"]
+
+    # 'smoothness' only auto-promotes the phase to GAMMA when --arrival-pattern
+    # is unset (see the v1-parity comment in _profiling_phase_type); an
+    # EXPLICIT non-gamma --arrival-pattern silently wins instead, leaving a
+    # searched 'smoothness' dimension with nowhere to land (GammaPhase is the
+    # only phase with that field). Mirrors the equivalent gate for the
+    # --arrival-smoothness *flag* in _apply_phase_specific_routes below.
+    if "smoothness" in search_dims and phase_type != PhaseType.GAMMA:
+        raise ValueError(
+            "--search-space 'smoothness' is only supported with --arrival-pattern "
+            "gamma. Pass --arrival-pattern gamma (or omit --arrival-pattern so "
+            "'smoothness' can auto-select it), or drop the 'smoothness' dimension."
+        )
+
+    if phase_type == PhaseType.USER_CENTRIC and "users" in search_dims:
+        _seed_users_dimension(prof, search_dims)
+
+    if phase_type in (
+        PhaseType.POISSON,
+        PhaseType.GAMMA,
+        PhaseType.CONSTANT,
+        PhaseType.USER_CENTRIC,
+    ):
+        _seed_rate_dimension(prof, search_dims, phase_type)
+
+
+def _reject_non_positive_bound(
+    search_dims: dict[str, tuple[float, str]], field: str, subject: str
+) -> None:
+    """Raise a clear error if `field`'s search-space lower bound isn't > 0."""
+    if field not in search_dims:
+        return
+    lo, _kind = search_dims[field]
+    if not math.isfinite(lo) or lo <= 0:
+        raise ValueError(
+            f"--search-space '{field}' lower bound must be > 0 (got {lo!r}); "
+            f"{subject} must be positive."
+        )
+
+
+def _seed_users_dimension(
+    prof: dict[str, Any], search_dims: dict[str, tuple[float, str]]
+) -> None:
+    """Validate and (if absent) seed prof["users"] from a 'users' dimension."""
+    users_lo, users_kind = search_dims["users"]
+    if users_kind != "int":
+        raise ValueError(
+            "--search-space 'users' must use ':int' kind (e.g. "
+            "'users:1,50:int'), not ':real' -- the number of simulated "
+            "users must be a whole number."
+        )
+    if not math.isfinite(users_lo) or users_lo < 1:
+        raise ValueError(
+            f"--search-space 'users' lower bound must be >= 1 (got "
+            f"{users_lo!r}); the number of simulated users can't be "
+            "less than one."
+        )
+    if "users" not in prof:
+        prof["users"] = int(users_lo)
+
+
+def _seed_rate_dimension(
+    prof: dict[str, Any], search_dims: dict[str, tuple[float, str]], phase_type: Any
+) -> None:
+    """Validate and (if absent) seed prof["rate"] from a 'rate' dimension.
+
+    Raises when the phase needs a base rate that neither an explicit CLI
+    flag nor a 'rate' search-space dimension can supply.
+    """
+    has_base_rate = "rate" in prof or "rate_series" in prof
+    if "rate" not in search_dims:
+        if not has_base_rate:
+            raise ValueError(
+                f"--search-space selects a rate-shaped benchmark (phase type "
+                f"{phase_type}), which also requires a base rate. Pass "
+                "--request-rate <value> (or --user-centric-rate for a "
+                "user-shaped benchmark), or add a 'rate' dimension to "
+                "--search-space."
+            )
+        return
+
+    if "rate_series" in prof:
+        raise ValueError(
+            "--search-space targets 'rate', but --request-rate-series "
+            "already supplies a fixed rate schedule for this phase -- "
+            "'rate' and 'rate_series' are mutually exclusive on a "
+            "rate-controlled phase. Drop --request-rate-series to "
+            "search 'rate', or drop the 'rate' dimension to keep the "
+            "fixed schedule."
+        )
+    rate_lo, _rate_kind = search_dims["rate"]
+    if not math.isfinite(rate_lo) or rate_lo <= 0:
+        raise ValueError(
+            f"--search-space 'rate' lower bound must be > 0 (got "
+            f"{rate_lo!r}); rate must be positive."
+        )
+    if not has_base_rate:
+        prof["rate"] = rate_lo
 
 
 def _apply_profiling_ramps(prof: dict[str, Any], cli: CLIConfig) -> None:
@@ -349,16 +624,21 @@ def _maybe_auto_promote_trace(
     # FixedSchedulePhase doesn't accept rate/users/smoothness. If the user
     # explicitly opted into a rate-controlled mode against a timestamped
     # trace, refuse the combo loudly rather than silently dropping their
-    # flag — they almost certainly want one or the other, not both.
+    # flag — they almost certainly want one or the other, not both. `prof`
+    # may hold these because of an explicit CLI flag OR because
+    # _apply_search_space_shape_seeds seeded them from a --search-space
+    # dimension -- "flags" alone would be unactionable in the latter case
+    # (there's no flag to drop), so name both sources.
     conflicts = [k for k in ("rate", "users", "smoothness") if k in prof]
     if conflicts:
         raise ValueError(
             "Trace dataset has per-record timestamps and would be "
-            "auto-promoted to fixed_schedule, but the following flags "
-            f"are incompatible with fixed_schedule mode: {conflicts}. "
-            "Either drop the conflicting flags to enable auto-fixed-"
-            "schedule, or pass --no-fixed-schedule to keep your "
-            "user-selected timing mode and ignore trace timestamps."
+            "auto-promoted to fixed_schedule, but the following flags or "
+            f"--search-space dimensions are incompatible with "
+            f"fixed_schedule mode: {conflicts}. Either drop the "
+            "conflicting flags/dimensions to enable auto-fixed-schedule, "
+            "or pass --no-fixed-schedule to keep your user-selected timing "
+            "mode and ignore trace timestamps."
         )
     prof["type"] = PhaseType.FIXED_SCHEDULE
 
@@ -485,7 +765,9 @@ def build_profiling(cli: CLIConfig) -> dict[str, Any]:
     _apply_agentic_replay_fields(prof, cli)
     _apply_profiling_rate_series(prof, cli)
 
-    prof["type"] = _profiling_phase_type(cli)
+    search_dims = _search_space_dimensions(cli)
+    prof["type"] = _profiling_phase_type(cli, search_dims)
+    _apply_search_space_shape_seeds(prof, search_dims)
     _reject_orphan_load_generator_flags(prof, cli)
     _apply_phase_specific_routes(prof, cli)
 
