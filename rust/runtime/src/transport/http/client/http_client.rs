@@ -4,12 +4,13 @@
 //! HTTP request dispatch, response collection, and timing.
 
 use std::cell::RefCell;
+use std::collections::BTreeMap;
 use std::rc::Rc;
 use std::task::{Context, Poll};
 
 use bytes::Bytes;
 use futures::{Stream, StreamExt};
-use http::{HeaderMap, Method};
+use http::{HeaderMap, HeaderName, HeaderValue, Method};
 use http_body_util::BodyExt;
 use url::Url;
 
@@ -353,6 +354,21 @@ pub struct HttpClient {
     cfg: ClientConfig,
 }
 
+fn typed_headers(headers: &BTreeMap<String, String>) -> Result<HeaderMap, ErrorDetails> {
+    headers
+        .iter()
+        .map(|(name, value)| {
+            let name = HeaderName::try_from(name.as_str()).map_err(|error| {
+                ErrorDetails::other(format!("invalid request header name {name:?}: {error}"))
+            })?;
+            let value = HeaderValue::try_from(value.as_str()).map_err(|error| {
+                ErrorDetails::other(format!("invalid request header value for {name}: {error}"))
+            })?;
+            Ok((name, value))
+        })
+        .collect()
+}
+
 impl HttpClient {
     pub fn new(clock: Rc<dyn Clock>, cfg: ClientConfig) -> Self {
         Self { clock, cfg }
@@ -362,7 +378,7 @@ impl HttpClient {
     pub async fn request(
         &self,
         url: &Url,
-        headers: &HeaderMap,
+        headers: &BTreeMap<String, String>,
         body: Bytes,
         streaming: bool,
         on_first_token: impl FnMut(i64),
@@ -376,16 +392,26 @@ impl HttpClient {
         &self,
         method: Method,
         url: &Url,
-        headers: &HeaderMap,
+        headers: &BTreeMap<String, String>,
         body: Bytes,
         streaming: bool,
         on_first_token: impl FnMut(i64),
     ) -> RequestRecord {
+        let headers = match typed_headers(headers) {
+            Ok(headers) => headers,
+            Err(error) => {
+                let start_ns = self.clock.now_ns();
+                let mut record = RequestRecord::started(start_ns);
+                record.error = Some(error);
+                record.end_ns = Some(self.clock.now_ns());
+                return record;
+            }
+        };
         let completion = Rc::new(SendCompletion::new());
         self.request_with_method_and_completion(
             method,
             url,
-            headers,
+            &headers,
             body,
             streaming,
             on_first_token,
@@ -820,6 +846,20 @@ impl HttpClient {
         &self,
         sender: &mut Sender,
         url: &Url,
+        headers: &BTreeMap<String, String>,
+        body: Bytes,
+        on_first_token: &mut dyn FnMut(i64),
+        on_message: &mut dyn FnMut(&SseMessage),
+    ) -> Result<u16, ErrorDetails> {
+        let headers = typed_headers(headers)?;
+        self.dispatch_streaming_typed(sender, url, &headers, body, on_first_token, on_message)
+            .await
+    }
+
+    async fn dispatch_streaming_typed(
+        &self,
+        sender: &mut Sender,
+        url: &Url,
         headers: &HeaderMap,
         body: Bytes,
         on_first_token: &mut dyn FnMut(i64),
@@ -870,6 +910,29 @@ impl HttpClient {
     /// to drop the connection lease, which is required for bounded decision
     /// admission failures.
     pub async fn dispatch_bounded_streaming_with_handler(
+        &self,
+        sender: &mut Sender,
+        url: &Url,
+        headers: &BTreeMap<String, String>,
+        body: Bytes,
+        max_sse_frame_bytes: usize,
+        on_first_token: &mut dyn FnMut(i64),
+        on_message: &mut dyn FnMut(&SseMessage) -> Result<bool, ErrorDetails>,
+    ) -> Result<u16, ErrorDetails> {
+        let headers = typed_headers(headers)?;
+        self.dispatch_bounded_streaming_with_handler_typed(
+            sender,
+            url,
+            &headers,
+            body,
+            max_sse_frame_bytes,
+            on_first_token,
+            on_message,
+        )
+        .await
+    }
+
+    pub(crate) async fn dispatch_bounded_streaming_with_handler_typed(
         &self,
         sender: &mut Sender,
         url: &Url,

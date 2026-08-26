@@ -937,7 +937,12 @@ mod tests {
     use crate::transport::core::SseMessage;
     use crate::transport::http::transport::endpoint_binding::decode_sse_response;
     use crate::transport::reduce::absorb_usage;
-    use axum::{Router, http::header, response::IntoResponse, routing::post};
+    use axum::{
+        Router,
+        http::{HeaderMap, header},
+        response::IntoResponse,
+        routing::post,
+    };
     use std::cell::{Cell, RefCell};
     use std::io::Read;
     use std::rc::Rc;
@@ -1051,6 +1056,27 @@ mod tests {
         format!("http://{address}")
     }
 
+    async fn spawn_header_capture_chat_mock()
+    -> (String, tokio::sync::mpsc::UnboundedReceiver<HeaderMap>) {
+        let (headers_tx, headers_rx) = tokio::sync::mpsc::unbounded_channel();
+        let app = Router::new().route(
+            "/v1/chat/completions",
+            post(move |headers: HeaderMap| {
+                let headers_tx = headers_tx.clone();
+                async move {
+                    let _ = headers_tx.send(headers);
+                    spec_decode_chat_handler().await
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        (format!("http://{address}"), headers_rx)
+    }
+
     #[tokio::test]
     async fn trailing_usage_spec_decode_metrics_reach_the_terminal_record() {
         let local = tokio::task::LocalSet::new();
@@ -1106,6 +1132,61 @@ mod tests {
                 assert_eq!(acceptance.num_accepted_draft_tokens, 18);
                 assert_eq!(acceptance.num_draft_tokens, 32);
                 assert_eq!(acceptance.completion_tokens, Some(2));
+            })
+            .await;
+    }
+
+    #[tokio::test]
+    async fn capture_off_omits_artifact_headers_without_omitting_wire_headers() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let (base, mut received_headers) = spawn_header_capture_chat_mock().await;
+                let clock = crate::clock::RealClock::new();
+                let sink = TransportSink::new_multi_configured(
+                    clock.clone(),
+                    clock.now_ns(),
+                    std::slice::from_ref(&base),
+                    "m",
+                    crate::transport::http::TransportSinkConfig {
+                        capture_raw: false,
+                        ..crate::transport::http::TransportSinkConfig::default()
+                    },
+                )
+                .unwrap();
+                let endpoint = prepared_streaming("chat");
+                let mut request = bounded_request(None, None);
+                request.headers.insert(
+                    "x-wire-sentinel".to_string(),
+                    "configured-header".to_string(),
+                );
+                let observer = SilentObserver;
+                let on_first_token = |_: i64| {};
+
+                let dispatch = sink
+                    .dispatch_prepared_endpoint_collect_record_with_hooks(
+                        request,
+                        endpoint.as_ref(),
+                        "m",
+                        EndpointDispatchHooks::new(
+                            &observer,
+                            &on_first_token,
+                            None,
+                            TurnDataPolicy::ordinary(),
+                        ),
+                    )
+                    .await
+                    .unwrap();
+
+                assert_eq!(dispatch.record.status, Some(200));
+                assert!(dispatch.record.request_headers.is_empty());
+                let headers = received_headers.recv().await.unwrap();
+                assert_eq!(
+                    headers
+                        .get("x-wire-sentinel")
+                        .and_then(|value| value.to_str().ok()),
+                    Some("configured-header")
+                );
             })
             .await;
     }

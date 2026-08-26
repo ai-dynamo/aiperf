@@ -412,7 +412,7 @@ impl HttpTransport {
             let code = with_timeout(
                 self.clock.clone(),
                 dispatch_timeout_ns,
-                self.client.dispatch_bounded_streaming_with_handler(
+                self.client.dispatch_bounded_streaming_with_handler_typed(
                     lease.sender_mut(),
                     &url,
                     &headers,
