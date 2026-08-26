@@ -1,0 +1,126 @@
+{
+  "schema_version": 1,
+  "host_commit": "caa3ff6fcf20ffe36a7704abe16274bedadbb9fb",
+  "rustc": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
+  "target": "x86_64-unknown-linux-gnu",
+  "measurement": {
+    "commands": [
+      "cargo metadata --locked --format-version 1",
+      "cargo tree --workspace --edges normal,build --prefix depth",
+      "cargo tree -p aiperf-cli --edges normal,build --prefix depth"
+    ],
+    "cargo_lock_blake3": "cd6d2eeff8002bc6d1e49ad38a2bbaeb68a94b87b23b99d1a4c67ffac3713626",
+    "cargo_metadata_blake3": "0a2b545dbe70f93a9cbd8890ccfa643d8c367346f69707dc1e80e97248a3ed6e",
+    "cargo_tree_blake3": "d218f4465426eaf1c3b62e117187c3f7edf4ac863545b74e536f32c3b1ad4275",
+    "raw_metadata": "artifacts/native-plugin-baseline/raw/cargo-metadata.json",
+    "raw_tree": "artifacts/native-plugin-baseline/raw/cargo-tree.txt",
+    "raw_cli_tree": "artifacts/native-plugin-baseline/raw/cargo-tree-cli.txt"
+  },
+  "workspace_packages": [
+    {
+      "name": "aiperf-runtime",
+      "version": "0.12.0",
+      "direct_dependency_count": 83,
+      "direct_workspace_dependencies": [],
+      "features": [
+        "cellular",
+        "default",
+        "dynamo-aic-forward-pass",
+        "dynamo-full",
+        "dynamo-kvbm-offload",
+        "dynamo-parity",
+        "dynamo-profile",
+        "dynamo-router-runtime",
+        "dynamo-zmq-events",
+        "dynosim",
+        "engine",
+        "grpc",
+        "parquet",
+        "websocket"
+      ]
+    },
+    {
+      "name": "aiperf-cli",
+      "version": "0.12.0",
+      "direct_dependency_count": 45,
+      "direct_workspace_dependencies": ["aiperf-runtime"],
+      "features": [
+        "cellular",
+        "default",
+        "dynamo-aic-forward-pass",
+        "dynamo-full",
+        "dynamo-kvbm-offload",
+        "dynamo-parity",
+        "dynamo-profile",
+        "dynamo-router-runtime",
+        "dynamo-zmq-events",
+        "dynosim",
+        "full",
+        "grpc",
+        "parquet",
+        "pyo3-embed",
+        "search-pyo3",
+        "websocket"
+      ]
+    },
+    {
+      "name": "aiperf-mock-server",
+      "version": "0.12.0",
+      "direct_dependency_count": 43,
+      "direct_workspace_dependencies": ["aiperf-runtime"],
+      "features": ["uring"]
+    },
+    {
+      "name": "aiperf-e2e-tests",
+      "version": "0.12.0",
+      "direct_dependency_count": 21,
+      "direct_workspace_dependencies": [
+        "aiperf-cli",
+        "aiperf-mock-server",
+        "aiperf-runtime"
+      ],
+      "features": []
+    },
+    {
+      "name": "aiperf-dry-run-tests",
+      "version": "0.12.0",
+      "direct_dependency_count": 3,
+      "direct_workspace_dependencies": [],
+      "features": []
+    },
+    {
+      "name": "aiperf-bench-tools",
+      "version": "0.12.0",
+      "direct_dependency_count": 9,
+      "direct_workspace_dependencies": [],
+      "features": []
+    }
+  ],
+  "coupling_facts": [
+    {
+      "owner": "aiperf-cli",
+      "fact": "the default feature set activates grpc, cellular, parquet, and websocket together",
+      "evidence": "aiperf-cli default features resolved by cargo metadata"
+    },
+    {
+      "owner": "aiperf-runtime",
+      "fact": "engine is a runtime feature while the CLI enables it unconditionally through its dependency declaration",
+      "evidence": "aiperf-cli dependency on aiperf-runtime and runtime feature inventory"
+    },
+    {
+      "owner": "aiperf-runtime",
+      "fact": "all endpoint, transport, exporter, cellular, graph, metrics, and engine implementation dependencies currently converge in one 83-direct-dependency package",
+      "evidence": "cargo metadata direct dependency census"
+    },
+    {
+      "owner": "aiperf-cli",
+      "fact": "grpc and parquet named builds are byte-identical to default because both features are already in the default set",
+      "evidence": "BLAKE3 c07ef62e194baf324eec19ac5b795dc4c3a91acceecb98ae576d717634299ba3 for all three release binaries"
+    },
+    {
+      "owner": "aiperf-cli",
+      "fact": "dynosim changes the release artifact and full changes it again",
+      "evidence": "distinct Dynosim and full BLAKE3 artifact identities"
+    }
+  ]
+}

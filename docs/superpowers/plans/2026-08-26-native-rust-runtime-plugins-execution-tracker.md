@@ -143,7 +143,7 @@ feature.
 
 | Feature/task/unit | Base | Implementer model/effort | Graham pass-1 model/effort | Graham pass-2 model/effort | Branch | Local worktree | Paper-rig worktree | RED command/output digest | Minimal GREEN commit/focused-output digest | Refactor object/diff decision/focused-output digest | Complete-suite command/output digest | fmt command/output digest | Clippy command/output digest | Paper-rig env/tini/Python/cache evidence | Graham pass-1 range/report/verdict | Review-fix commits | Graham pass-2 range/report/verdict | Post-review gate/output digest | Commit→bundle→local-object map | Integration or private-candidate state | Status |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| _none dispatched before baseline and plan gates_ | | | | | | | | | | | | | | | | | | | | | PENDING |
+| 1 | `caa3ff6fcf20ffe36a7704abe16274bedadbb9fb` | `gpt-5.6-terra` / `medium` | PENDING | PENDING | `ajc/native-plugin-task-1` | `/home/anthony/nvidia/projects/aiperf/ajc/native-plugin-worktrees/task-1` | `/work-pvc/paper-rig/aiperf-native-plugin-worktrees/task-1` | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | `ISOLATED_NOT_INTEGRATED` | ACTIVE |
 
 Required independently tracked unit names are Tasks `1`–`40`, plus
 `12-core`, `12-elf`, `12-macho`, `12-pe`, `33-websocket`, `33-dry-run`,

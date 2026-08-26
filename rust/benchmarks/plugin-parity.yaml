@@ -1,0 +1,361 @@
+schema_version: 1
+host_commit: caa3ff6fcf20ffe36a7704abe16274bedadbb9fb
+source_tree_blake3: blake3:94e5ec4baff53f41425a15550775bc256edbb2c5bbf873ecdf054a5a11ddb8a6
+cargo_lock_blake3: blake3:cd6d2eeff8002bc6d1e49ad38a2bbaeb68a94b87b23b99d1a4c67ffac3713626
+rustc: "rustc 1.98.0 (88d9e12ae 2026-08-18); LLVM 22.1.8"
+target: x86_64-unknown-linux-gnu
+cargo_profile: release
+feature_sets:
+  - {name: default, package: aiperf-cli, features: [default]}
+  - {name: engine, package: aiperf-runtime, features: [engine]}
+  - {name: grpc, package: aiperf-cli, features: [default, grpc]}
+  - {name: parquet, package: aiperf-cli, features: [default, parquet]}
+  - {name: dynosim, package: aiperf-cli, features: [default, dynosim]}
+  - {name: full, package: aiperf-cli, features: [full]}
+build_commands:
+  default:
+    command: cargo build -p aiperf-cli --release
+    first_build_kind: clean_release_artifact_absent
+    first_build_nanoseconds: 115634504721
+    second_build_nanoseconds: 5500848784
+    artifact_path: artifacts/native-plugin-baseline/raw/aiperf-default
+    artifact_digest: blake3:c07ef62e194baf324eec19ac5b795dc4c3a91acceecb98ae576d717634299ba3
+    artifact_bytes: 114879024
+    first_log: artifacts/native-plugin-baseline/raw/build-default-clean.log
+    second_log: artifacts/native-plugin-baseline/raw/build-default-second.log
+  engine:
+    command: cargo build -p aiperf-runtime --release --features engine
+    first_build_kind: first_named_feature_build_with_preserved_cache
+    first_build_nanoseconds: 93623660772
+    second_build_nanoseconds: 5803737854
+    artifact_path: /cargo-target/release/libaiperf_runtime.rlib
+    artifact_digest: blake3:514f484124ee332a6e57264c4b35a40a8b88f9b3e9a6b3106090c4aea58915b6
+    artifact_bytes: 230810066
+    first_log: artifacts/native-plugin-baseline/raw/build-engine-first.log
+    second_log: artifacts/native-plugin-baseline/raw/build-engine-second.log
+  grpc:
+    command: cargo build -p aiperf-cli --release --features grpc
+    first_build_kind: first_named_feature_build_with_preserved_cache
+    first_build_nanoseconds: 6154177410
+    second_build_nanoseconds: 3347756499
+    artifact_path: artifacts/native-plugin-baseline/raw/aiperf-grpc
+    artifact_digest: blake3:c07ef62e194baf324eec19ac5b795dc4c3a91acceecb98ae576d717634299ba3
+    artifact_bytes: 114879024
+    first_log: artifacts/native-plugin-baseline/raw/build-grpc-first.log
+    second_log: artifacts/native-plugin-baseline/raw/build-grpc-second.log
+  parquet:
+    command: cargo build -p aiperf-cli --release --features parquet
+    first_build_kind: first_named_feature_build_with_preserved_cache
+    first_build_nanoseconds: 3321383624
+    second_build_nanoseconds: 3317574822
+    artifact_path: artifacts/native-plugin-baseline/raw/aiperf-parquet
+    artifact_digest: blake3:c07ef62e194baf324eec19ac5b795dc4c3a91acceecb98ae576d717634299ba3
+    artifact_bytes: 114879024
+    first_log: artifacts/native-plugin-baseline/raw/build-parquet-first.log
+    second_log: artifacts/native-plugin-baseline/raw/build-parquet-second.log
+  dynosim:
+    command: cargo build -p aiperf-cli --release --features dynosim
+    first_build_kind: first_named_feature_build_with_preserved_cache
+    first_build_nanoseconds: 241822690397
+    second_build_nanoseconds: 6300021765
+    artifact_path: artifacts/native-plugin-baseline/raw/aiperf-dynosim
+    artifact_digest: blake3:0409bb469673ea5bb8d60971421b2a5475b3774e24f7c7a1c58801a9e0e1f915
+    artifact_bytes: 121390544
+    first_log: artifacts/native-plugin-baseline/raw/build-dynosim-first.log
+    second_log: artifacts/native-plugin-baseline/raw/build-dynosim-second.log
+  full:
+    command: cargo build -p aiperf-cli --release --features full
+    first_build_kind: first_named_feature_build_with_preserved_cache
+    first_build_nanoseconds: 26174152687
+    second_build_nanoseconds: 3518711384
+    artifact_path: artifacts/native-plugin-baseline/raw/aiperf-full
+    artifact_digest: blake3:408e7d47dfbe10450106637e3ddb614947d8111a393e7a4d72a2a38695e89e56
+    artifact_bytes: 121380008
+    first_log: artifacts/native-plugin-baseline/raw/build-full-first.log
+    second_log: artifacts/native-plugin-baseline/raw/build-full-second.log
+runtime_scenarios:
+  - name: http_non_streaming_c1
+    command: taskset -c 4-7 aiperf profile --model mock-model --url http://127.0.0.1:18080 --endpoint-type chat --streaming false --isl 32 --osl 32 --request-count 1000 --concurrency 1 --export-level summary
+    request_budget: 1000
+    minimum_duration_seconds: 30
+    core_assignment: "mock=0-3; client=4-7"
+    mock_placement: co-located paper-rig process on disjoint physical-core set
+    artifact_digest: blake3:581895f0e475e3816a3c847cedf65f20cf9394c19a4bf9c04a9ca9ca4cd27538
+    response_shape: HTTP JSON chat completion with one terminal content record
+    warmups: 5
+    retained_pairs: 30
+    estimator: paired_hyndman_fan_type_7_max_degradation_bootstrap
+    bootstrap_seed: 20260826
+    primary_metric: successful_requests_per_second
+    ratio_direction: dynamic_over_static
+    measured_metrics: [successful_requests_per_second, output_tokens_per_second, cpu_nanoseconds_per_successful_request, ttft_p50, ttft_p90, ttft_p99, itl_p50, itl_p90, itl_p99]
+    invalidation_classifier: "host_reboot|affinity_loss|mock_death_unrelated_to_member; max_replacement_pairs=5"
+    harness_mock_digest: blake3:3628302df80b7f7cb7a65261e3a51fe034650b224f2e0f93f9ef4249108454f0
+    firmware: "Google BIOS Google 06/05/2025; microcode 0xffffffff; Linux 6.12.85+"
+    memory_topology: "3 NUMA nodes; node0=0-23,72-95; node1=24-47,96-119; node2=48-71,120-143"
+    canonical_inventory_digest: blake3:be5e1a15a2f3d9593a65d83a2bfa2e3e213bb20192ac907bf91c85ed3b6b371a
+    baseline_observation: {duration_seconds: 34.137428595, successful_requests_per_second: 29.2933604304, output_tokens_per_second: 29.2933604304, cpu_nanoseconds_per_successful_request: 130150000, ttft_p50: 34.2520405, ttft_p90: 37.2116581, ttft_p99: 37.33309003, itl_p50: null, itl_p90: null, itl_p99: null}
+  - name: http_non_streaming_c64
+    command: taskset -c 4-71 aiperf profile --model mock-model --url http://127.0.0.1:18080 --endpoint-type chat --streaming false --isl 32 --osl 32 --request-count 64000 --concurrency 64 --export-level summary
+    request_budget: 64000
+    minimum_duration_seconds: 30
+    core_assignment: "mock=0-3; client=4-71"
+    mock_placement: co-located paper-rig process on disjoint physical-core set
+    artifact_digest: blake3:c0d43d143606edc5f8e679e7419304141f73ab61f3d087dad5ab072f1e950fc7
+    response_shape: HTTP JSON chat completion with one terminal content record
+    warmups: 5
+    retained_pairs: 30
+    estimator: paired_hyndman_fan_type_7_max_degradation_bootstrap
+    bootstrap_seed: 20260826
+    primary_metric: successful_requests_per_second
+    ratio_direction: dynamic_over_static
+    measured_metrics: [successful_requests_per_second, output_tokens_per_second, cpu_nanoseconds_per_successful_request, ttft_p50, ttft_p90, ttft_p99, itl_p50, itl_p90, itl_p99]
+    invalidation_classifier: "host_reboot|affinity_loss|mock_death_unrelated_to_member; max_replacement_pairs=5"
+    harness_mock_digest: blake3:3628302df80b7f7cb7a65261e3a51fe034650b224f2e0f93f9ef4249108454f0
+    firmware: "Google BIOS Google 06/05/2025; microcode 0xffffffff; Linux 6.12.85+"
+    memory_topology: "3 NUMA nodes; node0=0-23,72-95; node1=24-47,96-119; node2=48-71,120-143"
+    canonical_inventory_digest: blake3:be5e1a15a2f3d9593a65d83a2bfa2e3e213bb20192ac907bf91c85ed3b6b371a
+    baseline_observation: {duration_seconds: 34.46657832, successful_requests_per_second: 1856.8712973421, output_tokens_per_second: 1856.8712973421, cpu_nanoseconds_per_successful_request: 35574500, ttft_p50: 34.2442405, ttft_p90: 37.1857031, ttft_p99: 37.38901567, itl_p50: null, itl_p90: null, itl_p99: null}
+  - name: http_streaming_c1
+    command: taskset -c 4-7 aiperf profile --model mock-model --url http://127.0.0.1:18080 --endpoint-type chat --streaming true --isl 32 --osl 32 --request-count 1000 --concurrency 1 --export-level summary
+    request_budget: 1000
+    minimum_duration_seconds: 30
+    core_assignment: "mock=0-3; client=4-7"
+    mock_placement: co-located paper-rig process on disjoint physical-core set
+    artifact_digest: blake3:86c2a86e204f2dde57ecae6d83d6e18257d22b388b1f5a3089b6319aff6a7eeb
+    response_shape: HTTP SSE with 32 deterministic response chunks
+    warmups: 5
+    retained_pairs: 30
+    estimator: paired_hyndman_fan_type_7_max_degradation_bootstrap
+    bootstrap_seed: 20260826
+    primary_metric: output_tokens_per_second
+    ratio_direction: dynamic_over_static
+    measured_metrics: [successful_requests_per_second, output_tokens_per_second, cpu_nanoseconds_per_successful_request, ttft_p50, ttft_p90, ttft_p99, itl_p50, itl_p90, itl_p99]
+    invalidation_classifier: "host_reboot|affinity_loss|mock_death_unrelated_to_member; max_replacement_pairs=5"
+    harness_mock_digest: blake3:3628302df80b7f7cb7a65261e3a51fe034650b224f2e0f93f9ef4249108454f0
+    firmware: "Google BIOS Google 06/05/2025; microcode 0xffffffff; Linux 6.12.85+"
+    memory_topology: "3 NUMA nodes; node0=0-23,72-95; node1=24-47,96-119; node2=48-71,120-143"
+    canonical_inventory_digest: blake3:be5e1a15a2f3d9593a65d83a2bfa2e3e213bb20192ac907bf91c85ed3b6b371a
+    baseline_observation: {duration_seconds: 33.342407568, successful_requests_per_second: 29.9918354114, output_tokens_per_second: 870.9928921831, cpu_nanoseconds_per_successful_request: 129697000, ttft_p50: 5.188692, ttft_p90: 5.2508079, ttft_p99: 5.46533871, itl_p50: 1.0002501185, itl_p90: 1.0009299521, itl_p99: 1.0041805631}
+  - name: http_streaming_c64
+    command: taskset -c 4-71 aiperf profile --model mock-model --url http://127.0.0.1:18080 --endpoint-type chat --streaming true --isl 32 --osl 32 --request-count 64000 --concurrency 64 --export-level summary
+    request_budget: 64000
+    minimum_duration_seconds: 30
+    core_assignment: "mock=0-3; client=4-71"
+    mock_placement: co-located paper-rig process on disjoint physical-core set
+    artifact_digest: blake3:2b5ec20af0c52f94a4e0bf6f5b96e282e5a5a42a83efd559192baef2bfc43566
+    response_shape: HTTP SSE with 32 deterministic response chunks
+    warmups: 5
+    retained_pairs: 30
+    estimator: paired_hyndman_fan_type_7_max_degradation_bootstrap
+    bootstrap_seed: 20260826
+    primary_metric: output_tokens_per_second
+    ratio_direction: dynamic_over_static
+    measured_metrics: [successful_requests_per_second, output_tokens_per_second, cpu_nanoseconds_per_successful_request, ttft_p50, ttft_p90, ttft_p99, itl_p50, itl_p90, itl_p99]
+    invalidation_classifier: "host_reboot|affinity_loss|mock_death_unrelated_to_member; max_replacement_pairs=5"
+    harness_mock_digest: blake3:3628302df80b7f7cb7a65261e3a51fe034650b224f2e0f93f9ef4249108454f0
+    firmware: "Google BIOS Google 06/05/2025; microcode 0xffffffff; Linux 6.12.85+"
+    memory_topology: "3 NUMA nodes; node0=0-23,72-95; node1=24-47,96-119; node2=48-71,120-143"
+    canonical_inventory_digest: blake3:be5e1a15a2f3d9593a65d83a2bfa2e3e213bb20192ac907bf91c85ed3b6b371a
+    baseline_observation: {duration_seconds: 33.326993953, successful_requests_per_second: 1920.3652177648, output_tokens_per_second: 55512.9875382433, cpu_nanoseconds_per_successful_request: 34559500, ttft_p50: 5.210381, ttft_p90: 5.3565498, ttft_p99: 6.89281438, itl_p50: 1.00043816, itl_p90: 1.0026760709, itl_p99: 1.037297875}
+  - name: grpc_unary_c1
+    command: taskset -c 4-7 aiperf profile --config artifacts/native-plugin-baseline/raw/grpc-unary-c1.yaml --export-level raw
+    request_budget: 6000
+    minimum_duration_seconds: 30
+    core_assignment: "mock=0-3; client=4-7"
+    mock_placement: co-located paper-rig process on disjoint physical-core set
+    artifact_digest: blake3:8b5a8e0d918dfa0160612be0d28605778a7c6ce951f64cbb7c5e1938aaa28ef8
+    response_shape: KServe ModelInfer unary text_output tensor
+    warmups: 5
+    retained_pairs: 30
+    estimator: paired_hyndman_fan_type_7_max_degradation_bootstrap
+    bootstrap_seed: 20260826
+    primary_metric: successful_requests_per_second
+    ratio_direction: dynamic_over_static
+    measured_metrics: [successful_requests_per_second, output_tokens_per_second, cpu_nanoseconds_per_successful_request, ttft_p50, ttft_p90, ttft_p99, itl_p50, itl_p90, itl_p99]
+    invalidation_classifier: "host_reboot|affinity_loss|mock_death_unrelated_to_member; max_replacement_pairs=5"
+    harness_mock_digest: blake3:3628302df80b7f7cb7a65261e3a51fe034650b224f2e0f93f9ef4249108454f0
+    firmware: "Google BIOS Google 06/05/2025; microcode 0xffffffff; Linux 6.12.85+"
+    memory_topology: "3 NUMA nodes; node0=0-23,72-95; node1=24-47,96-119; node2=48-71,120-143"
+    canonical_inventory_digest: blake3:be5e1a15a2f3d9593a65d83a2bfa2e3e213bb20192ac907bf91c85ed3b6b371a
+    baseline_observation: {duration_seconds: 205.660387935, successful_requests_per_second: 29.1743104263, output_tokens_per_second: 29.1743104263, cpu_nanoseconds_per_successful_request: 133211667, ttft_p50: 34.3717025, ttft_p90: 37.3190428, ttft_p99: 37.4691153, itl_p50: null, itl_p90: null, itl_p99: null}
+  - name: grpc_unary_c64
+    command: taskset -c 4-71 aiperf profile --config artifacts/native-plugin-baseline/raw/grpc-unary-c64.yaml --export-level summary
+    request_budget: 64000
+    minimum_duration_seconds: 30
+    core_assignment: "mock=0-3; client=4-71"
+    mock_placement: co-located paper-rig process on disjoint physical-core set
+    artifact_digest: blake3:ab540fd95ff674d3acaa487834155ba7b403813c5b1c91bbc9a5e984637e8cdc
+    response_shape: KServe ModelInfer unary text_output tensor
+    warmups: 5
+    retained_pairs: 30
+    estimator: paired_hyndman_fan_type_7_max_degradation_bootstrap
+    bootstrap_seed: 20260826
+    primary_metric: successful_requests_per_second
+    ratio_direction: dynamic_over_static
+    measured_metrics: [successful_requests_per_second, output_tokens_per_second, cpu_nanoseconds_per_successful_request, ttft_p50, ttft_p90, ttft_p99, itl_p50, itl_p90, itl_p99]
+    invalidation_classifier: "host_reboot|affinity_loss|mock_death_unrelated_to_member; max_replacement_pairs=5"
+    harness_mock_digest: blake3:3628302df80b7f7cb7a65261e3a51fe034650b224f2e0f93f9ef4249108454f0
+    firmware: "Google BIOS Google 06/05/2025; microcode 0xffffffff; Linux 6.12.85+"
+    memory_topology: "3 NUMA nodes; node0=0-23,72-95; node1=24-47,96-119; node2=48-71,120-143"
+    canonical_inventory_digest: blake3:be5e1a15a2f3d9593a65d83a2bfa2e3e213bb20192ac907bf91c85ed3b6b371a
+    baseline_observation: {duration_seconds: 34.385621519, successful_requests_per_second: 1861.2430769831, output_tokens_per_second: 1861.2430769831, cpu_nanoseconds_per_successful_request: 34555484, ttft_p50: 34.3430515, ttft_p90: 37.2436723, ttft_p99: 37.48883266, itl_p50: null, itl_p90: null, itl_p99: null}
+  - name: grpc_streaming_c1
+    command: taskset -c 4-7 aiperf profile --config artifacts/native-plugin-baseline/raw/grpc-streaming-c1.yaml --export-level summary
+    request_budget: 2000
+    minimum_duration_seconds: 30
+    core_assignment: "mock=0-3; client=4-7"
+    mock_placement: co-located paper-rig process on disjoint physical-core set
+    artifact_digest: blake3:64a7848755d4b8b8fa3cc30b979936e454e25db3b69f3b33932eac996c743a02
+    response_shape: KServe ModelStreamInfer with 12 deterministic text_output chunks and one 64x64 image input
+    warmups: 5
+    retained_pairs: 30
+    estimator: paired_hyndman_fan_type_7_max_degradation_bootstrap
+    bootstrap_seed: 20260826
+    primary_metric: output_tokens_per_second
+    ratio_direction: dynamic_over_static
+    measured_metrics: [successful_requests_per_second, output_tokens_per_second, cpu_nanoseconds_per_successful_request, ttft_p50, ttft_p90, ttft_p99, itl_p50, itl_p90, itl_p99]
+    invalidation_classifier: "host_reboot|affinity_loss|mock_death_unrelated_to_member; max_replacement_pairs=5"
+    harness_mock_digest: blake3:3628302df80b7f7cb7a65261e3a51fe034650b224f2e0f93f9ef4249108454f0
+    firmware: "Google BIOS Google 06/05/2025; microcode 0xffffffff; Linux 6.12.85+"
+    memory_topology: "3 NUMA nodes; node0=0-23,72-95; node1=24-47,96-119; node2=48-71,120-143"
+    canonical_inventory_digest: blake3:be5e1a15a2f3d9593a65d83a2bfa2e3e213bb20192ac907bf91c85ed3b6b371a
+    baseline_observation: {duration_seconds: 32.565716073, successful_requests_per_second: 61.414279837, output_tokens_per_second: 736.9713580442, cpu_nanoseconds_per_successful_request: 63245500, ttft_p50: 5.2107415, ttft_p90: 5.294178, ttft_p99: 5.5437215, itl_p50: 1.000123, itl_p90: 1.0018484545, itl_p99: 1.0092669836}
+  - name: grpc_streaming_c64
+    command: taskset -c 4-71 aiperf profile --config artifacts/native-plugin-baseline/raw/grpc-streaming-c64.yaml --export-level summary
+    request_budget: 128000
+    minimum_duration_seconds: 30
+    core_assignment: "mock=0-3; client=4-71"
+    mock_placement: co-located paper-rig process on disjoint physical-core set
+    artifact_digest: blake3:73db037b1ac02fe9816b12a7b317d766a45ba7104a33fce8a2fafc4fcba94df5
+    response_shape: KServe ModelStreamInfer with 12 deterministic text_output chunks and one 64x64 image input
+    warmups: 5
+    retained_pairs: 30
+    estimator: paired_hyndman_fan_type_7_max_degradation_bootstrap
+    bootstrap_seed: 20260826
+    primary_metric: output_tokens_per_second
+    ratio_direction: dynamic_over_static
+    measured_metrics: [successful_requests_per_second, output_tokens_per_second, cpu_nanoseconds_per_successful_request, ttft_p50, ttft_p90, ttft_p99, itl_p50, itl_p90, itl_p99]
+    invalidation_classifier: "host_reboot|affinity_loss|mock_death_unrelated_to_member; max_replacement_pairs=5"
+    harness_mock_digest: blake3:3628302df80b7f7cb7a65261e3a51fe034650b224f2e0f93f9ef4249108454f0
+    firmware: "Google BIOS Google 06/05/2025; microcode 0xffffffff; Linux 6.12.85+"
+    memory_topology: "3 NUMA nodes; node0=0-23,72-95; node1=24-47,96-119; node2=48-71,120-143"
+    canonical_inventory_digest: blake3:be5e1a15a2f3d9593a65d83a2bfa2e3e213bb20192ac907bf91c85ed3b6b371a
+    baseline_observation: {duration_seconds: 33.028362898, successful_requests_per_second: 3875.4569941991, output_tokens_per_second: 46505.4839303891, cpu_nanoseconds_per_successful_request: 16926500, ttft_p50: 5.253685, ttft_p90: 5.4256129, ttft_p99: 7.1852691, itl_p50: 1.0020728182, itl_p90: 1.0112206818, itl_p99: 1.1084546245}
+  - name: http_streaming_workers4
+    command: taskset -c 4-71 aiperf profile --config artifacts/native-plugin-baseline/raw/http-streaming-workers4.yaml --export-level summary
+    request_budget: 64000
+    minimum_duration_seconds: 30
+    core_assignment: "mock=0-3; four client workers=4-71"
+    mock_placement: co-located paper-rig process on disjoint physical-core set
+    artifact_digest: blake3:fab4bad1141871a86c80f767b0a07d91caf44ccd1434c19a47fd61df6c600dcb
+    response_shape: HTTP SSE with 32 deterministic response chunks across four global-dispatch workers
+    warmups: 5
+    retained_pairs: 30
+    estimator: paired_hyndman_fan_type_7_max_degradation_bootstrap
+    bootstrap_seed: 20260826
+    primary_metric: output_tokens_per_second
+    ratio_direction: dynamic_over_static
+    measured_metrics: [successful_requests_per_second, output_tokens_per_second, cpu_nanoseconds_per_successful_request, ttft_p50, ttft_p90, ttft_p99, itl_p50, itl_p90, itl_p99]
+    invalidation_classifier: "host_reboot|affinity_loss|mock_death_unrelated_to_member; max_replacement_pairs=5"
+    harness_mock_digest: blake3:3628302df80b7f7cb7a65261e3a51fe034650b224f2e0f93f9ef4249108454f0
+    firmware: "Google BIOS Google 06/05/2025; microcode 0xffffffff; Linux 6.12.85+"
+    memory_topology: "3 NUMA nodes; node0=0-23,72-95; node1=24-47,96-119; node2=48-71,120-143"
+    canonical_inventory_digest: blake3:be5e1a15a2f3d9593a65d83a2bfa2e3e213bb20192ac907bf91c85ed3b6b371a
+    baseline_observation: {duration_seconds: 33.129459483, successful_requests_per_second: 1931.8153993077, output_tokens_per_second: 55773.6235011064, cpu_nanoseconds_per_successful_request: 2065375, ttft_p50: 5.128014, ttft_p90: 5.1718073, ttft_p99: 6.07032337, itl_p50: 1.0002044134, itl_p90: 1.0014443548, itl_p99: 1.0153529671}
+  - name: otlp_disabled_capture
+    command: taskset -c 4-71 aiperf profile --model mock-model --url http://127.0.0.1:18080 --endpoint-type chat --streaming true --isl 32 --osl 32 --request-count 64000 --concurrency 64 --export-level summary
+    request_budget: 64000
+    minimum_duration_seconds: 30
+    core_assignment: "mock=0-3; client=4-71"
+    mock_placement: co-located paper-rig process on disjoint physical-core set
+    artifact_digest: blake3:80f82adf09e2bc874d23429d2c9b6cd05f0d51ab72480dde70bf8bb852b1cee5
+    response_shape: HTTP SSE with OTLP exporter disabled
+    warmups: 5
+    retained_pairs: 30
+    estimator: paired_hyndman_fan_type_7_max_degradation_bootstrap
+    bootstrap_seed: 20260826
+    primary_metric: cpu_nanoseconds_per_successful_request
+    ratio_direction: static_over_dynamic
+    measured_metrics: [successful_requests_per_second, output_tokens_per_second, cpu_nanoseconds_per_successful_request, exporter_nanoseconds_per_record, ttft_p50, ttft_p90, ttft_p99, itl_p50, itl_p90, itl_p99]
+    invalidation_classifier: "host_reboot|affinity_loss|mock_death_unrelated_to_member; max_replacement_pairs=5"
+    harness_mock_digest: blake3:3628302df80b7f7cb7a65261e3a51fe034650b224f2e0f93f9ef4249108454f0
+    firmware: "Google BIOS Google 06/05/2025; microcode 0xffffffff; Linux 6.12.85+"
+    memory_topology: "3 NUMA nodes; node0=0-23,72-95; node1=24-47,96-119; node2=48-71,120-143"
+    canonical_inventory_digest: blake3:be5e1a15a2f3d9593a65d83a2bfa2e3e213bb20192ac907bf91c85ed3b6b371a
+    baseline_observation: {duration_seconds: 33.421850147, successful_requests_per_second: 1914.9149349455, output_tokens_per_second: 55370.932245237, cpu_nanoseconds_per_successful_request: 34745375, exporter_nanoseconds_per_record: 0, ttft_p50: 5.206207, ttft_p90: 5.4016063, ttft_p99: 7.10751031, itl_p50: 1.0004322107, itl_p90: 1.002748257, itl_p99: 1.0415358292}
+  - name: otlp_enabled_capture
+    command: taskset -c 4-71 aiperf profile --model mock-model --url http://127.0.0.1:18080 --endpoint-type chat --streaming true --isl 32 --osl 32 --request-count 64000 --concurrency 64 --export-level summary --otel-url http://127.0.0.1:18080/v1/metrics --otel-resource-attributes benchmark.scenario=plugin-baseline
+    request_budget: 64000
+    minimum_duration_seconds: 30
+    core_assignment: "mock+OTLP collector=0-3; client=4-71"
+    mock_placement: co-located paper-rig process on disjoint physical-core set
+    artifact_digest: blake3:e8165e9399e72bcb570cce9073fcc58305f078dd4e2f5177ed1b969755ba4879
+    response_shape: HTTP SSE plus one terminal OTLP metrics export to the mock receiver
+    warmups: 5
+    retained_pairs: 30
+    estimator: paired_hyndman_fan_type_7_max_degradation_bootstrap
+    bootstrap_seed: 20260826
+    primary_metric: cpu_nanoseconds_per_successful_request
+    ratio_direction: static_over_dynamic
+    measured_metrics: [successful_requests_per_second, output_tokens_per_second, cpu_nanoseconds_per_successful_request, exporter_nanoseconds_per_record, ttft_p50, ttft_p90, ttft_p99, itl_p50, itl_p90, itl_p99]
+    invalidation_classifier: "host_reboot|affinity_loss|mock_death_unrelated_to_member; max_replacement_pairs=5"
+    harness_mock_digest: blake3:3628302df80b7f7cb7a65261e3a51fe034650b224f2e0f93f9ef4249108454f0
+    firmware: "Google BIOS Google 06/05/2025; microcode 0xffffffff; Linux 6.12.85+"
+    memory_topology: "3 NUMA nodes; node0=0-23,72-95; node1=24-47,96-119; node2=48-71,120-143"
+    canonical_inventory_digest: blake3:be5e1a15a2f3d9593a65d83a2bfa2e3e213bb20192ac907bf91c85ed3b6b371a
+    baseline_observation: {duration_seconds: 33.34723201, successful_requests_per_second: 1919.1997698882, output_tokens_per_second: 55509.5847069077, cpu_nanoseconds_per_successful_request: 34590156, exporter_nanoseconds_per_record: 1167, ttft_p50: 5.208937, ttft_p90: 5.3656162, ttft_p99: 6.86058087, itl_p50: 1.000434, itl_p90: 1.0026681559, itl_p99: 1.0372555711}
+  - name: exporter_100k
+    command: MIMALLOC_SHOW_STATS=1 taskset -c 4-71 aiperf profile --model mock-model --url http://127.0.0.1:18080 --endpoint-type chat --streaming true --isl 32 --osl 32 --request-count 100000 --concurrency 64 --export-level records
+    request_budget: 100000
+    minimum_duration_seconds: 30
+    core_assignment: "mock=0-3; client+exporter=4-71"
+    mock_placement: co-located paper-rig fast-mode process on disjoint physical-core set
+    artifact_digest: blake3:5157af3156118623337e3ff45fa4cba8a1202188f49e4d0dbadd4b3d65223332
+    response_shape: HTTP SSE with deterministic JSONL export of exactly 100000 records
+    warmups: 5
+    retained_pairs: 30
+    estimator: paired_hyndman_fan_type_7_max_degradation_bootstrap
+    bootstrap_seed: 20260826
+    primary_metric: exporter_nanoseconds_per_record
+    ratio_direction: static_over_dynamic
+    measured_metrics: [successful_requests_per_second, output_tokens_per_second, cpu_nanoseconds_per_successful_request, exporter_nanoseconds_per_record, allocated_bytes_per_successful_request, allocation_count_per_successful_request, ttft_p50, ttft_p90, ttft_p99, itl_p50, itl_p90, itl_p99]
+    invalidation_classifier: "host_reboot|affinity_loss|mock_death_unrelated_to_member; max_replacement_pairs=5"
+    harness_mock_digest: blake3:3628302df80b7f7cb7a65261e3a51fe034650b224f2e0f93f9ef4249108454f0
+    firmware: "Google BIOS Google 06/05/2025; microcode 0xffffffff; Linux 6.12.85+"
+    memory_topology: "3 NUMA nodes; node0=0-23,72-95; node1=24-47,96-119; node2=48-71,120-143"
+    canonical_inventory_digest: blake3:be5e1a15a2f3d9593a65d83a2bfa2e3e213bb20192ac907bf91c85ed3b6b371a
+    baseline_observation: {duration_seconds: 1.1440929, end_to_end_seconds: 7.462, successful_requests_per_second: 87405.4895367326, output_tokens_per_second: 2527811.334201969, cpu_nanoseconds_per_successful_request: 1407200, exporter_nanoseconds_per_record: 74620, exported_record_bytes: 232295392, ttft_p50: 0.541596, ttft_p90: 0.8179817, ttft_p99: 1.22258975, itl_p50: 0.0006518629, itl_p90: 0.0013080036, itl_p99: 0.0030940471}
+artifacts:
+  cli_default: {path: artifacts/native-plugin-baseline/raw/aiperf-default, digest: blake3:c07ef62e194baf324eec19ac5b795dc4c3a91acceecb98ae576d717634299ba3, bytes: 114879024}
+  cli_dynosim: {path: artifacts/native-plugin-baseline/raw/aiperf-dynosim, digest: blake3:0409bb469673ea5bb8d60971421b2a5475b3774e24f7c7a1c58801a9e0e1f915, bytes: 121390544}
+  cli_full: {path: artifacts/native-plugin-baseline/raw/aiperf-full, digest: blake3:408e7d47dfbe10450106637e3ddb614947d8111a393e7a4d72a2a38695e89e56, bytes: 121380008}
+  runtime_engine: {path: /cargo-target/release/libaiperf_runtime.rlib, digest: blake3:514f484124ee332a6e57264c4b35a40a8b88f9b3e9a6b3106090c4aea58915b6, bytes: 230810066}
+  mock_server: {path: artifacts/native-plugin-baseline/raw/aiperf-mock-server, digest: blake3:f4092e7e1a9c7cb8aaa556ab047d81b3f735834f1ef315f86abff6921de44d56, bytes: 22327760}
+  package_topology: {path: artifacts/native-plugin-baseline/package-topology.json, digest: blake3:434da81951b3c245667c4eb6fd5a6834f4fbbda7db8baa4ac602c3f95be2d4a5}
+allocation_probe:
+  path: artifacts/native-plugin-baseline/allocation-probe.json
+  digest: blake3:2c87c939367b4c285804c53d4e2b6917d30cecc5fcfbd8815e465072631725da
+  source: mimalloc_process_statistics
+raw_samples:
+  - artifacts/native-plugin-baseline/raw/runtime/http-nonstream-c1/profile_export_aiperf.json
+  - artifacts/native-plugin-baseline/raw/runtime/http-nonstream-c64/profile_export_aiperf.json
+  - artifacts/native-plugin-baseline/raw/runtime/http-streaming-c1/profile_export_aiperf.json
+  - artifacts/native-plugin-baseline/raw/runtime/http-streaming-c64/profile_export_aiperf.json
+  - artifacts/native-plugin-baseline/raw/runtime/grpc-unary-c1/profile_export_aiperf.json
+  - artifacts/native-plugin-baseline/raw/runtime/grpc-unary-c64/profile_export_aiperf.json
+  - artifacts/native-plugin-baseline/raw/runtime/grpc-streaming-c1/profile_export_aiperf.json
+  - artifacts/native-plugin-baseline/raw/runtime/grpc-streaming-c64/profile_export_aiperf.json
+  - artifacts/native-plugin-baseline/raw/runtime/http-streaming-workers4/profile_export_aiperf.json
+  - artifacts/native-plugin-baseline/raw/runtime/otlp-disabled-capture/profile_export_aiperf.json
+  - artifacts/native-plugin-baseline/raw/runtime/otlp-enabled-capture/profile_export_aiperf.json
+  - artifacts/native-plugin-baseline/raw/runtime/exporter-100k/profile_export_aiperf.json
+  - artifacts/native-plugin-baseline/raw/runtime/exporter-100k/process.log
+  - artifacts/native-plugin-baseline/raw/paper-rig-environment.txt
+canonical_inventory_digest: blake3:be5e1a15a2f3d9593a65d83a2bfa2e3e213bb20192ac907bf91c85ed3b6b371a
+canonical_inventory_digest_rule: BLAKE3 of this UTF-8 file after replacing every canonical_inventory_digest value with blake3 followed by 64 zeroes
+discarded_probes:
+  - path: artifacts/native-plugin-baseline/raw/build-grpc-isolated-unsupported-first.log
+    reason: "unsupported --no-default-features probe exposed baseline cellular/Velo compile coupling; not part of the frozen matrix"
+  - path: artifacts/native-plugin-baseline/raw/runtime/grpc-unary-c1/process-tokenizer-failure.log
+    reason: "gpt-4 triggered an external Hugging Face lookup; corrected to the offline-safe in-repo mock-model identity"

@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "scenario": "exporter-100k",
+  "command": "MIMALLOC_SHOW_STATS=1 taskset -c 4-71 aiperf profile --model mock-model --url http://127.0.0.1:18080 --endpoint-type chat --streaming true --isl 32 --osl 32 --request-count 100000 --concurrency 64 --export-level records",
+  "allocator": "mimalloc 0.1.52 / libmimalloc-sys 0.1.49",
+  "successful_requests": 100000,
+  "exported_record_bytes": 232295392,
+  "elapsed_seconds": 7.462,
+  "user_seconds": 60.321,
+  "system_seconds": 80.399,
+  "allocator_observation": {
+    "peak_pages": 33,
+    "total_pages": 53,
+    "current_pages": 9,
+    "reserved_bytes": 1073741824,
+    "committed_bytes": 16777216,
+    "purged_bytes": 11324621,
+    "peak_rss_bytes": 14260634,
+    "peak_commit_bytes": 16777216,
+    "mmaps": 3,
+    "commits": 33,
+    "purges": 12,
+    "heap_waits": 0
+  },
+  "raw_log": "artifacts/native-plugin-baseline/raw/runtime/exporter-100k/process.log",
+  "raw_log_blake3": "33341853c4b8374e9e3a66c739fedfa9c31972d5a526ab768448f656e63ae2da"
+}
