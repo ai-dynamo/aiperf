@@ -22,6 +22,23 @@ def _controller_coordinate(address: str) -> str:
     return address if address.startswith("tcp://") else f"tcp://{address}"
 
 
+def _controller_port(address: str) -> str:
+    """Extract the port from a validated controller coordinate.
+
+    Accepts the same forms as the envelope validator: HOST:PORT,
+    tcp://HOST:PORT, and tcp://[IPv6]:PORT.  The caller must supply a
+    coordinate that has already passed ``_is_valid_controller_coordinate``;
+    this helper trusts that an explicit port is present.
+    """
+    coordinate = address.removeprefix("tcp://")
+    if coordinate.startswith("["):
+        # [IPv6]:PORT — port follows the closing bracket-colon
+        _, _, port = coordinate[1:].partition("]:")
+        return port
+    # HOST:PORT — port is after the rightmost colon
+    return coordinate.rpartition(":")[2]
+
+
 def _container(
     role: RoleEnvelope,
     envelope: ControllerEnvelope,
@@ -44,6 +61,9 @@ def _container(
         environment["AIPERF_RUN_ID"] = envelope.run_id
         environment["AIPERF_CELL_COUNT"] = str(envelope.cells)
         environment["AIPERF_CONTROLLER_BOOTSTRAP_FILE"] = bootstrap.mount_path
+        environment["AIPERF_CONTROLLER_PORT"] = _controller_port(
+            envelope.controller_address
+        )
     elif role.name == "cell":
         if cell_id is None or bootstrap is None:
             raise ValueError("cell projection requires an id and bootstrap")

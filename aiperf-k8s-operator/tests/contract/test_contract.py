@@ -584,6 +584,29 @@ def test_envelope_requires_an_unambiguous_controller_coordinate() -> None:
     assert environment["AIPERF_CELL_CONTROLLER_ADDR"] == "tcp://[2001:db8::1]:443"
 
 
+def test_controller_container_receives_the_envelope_controller_port() -> None:
+    # valid-one-cell-envelope.json has controllerAddress "controller:443"
+    envelope = validate_envelope(fixture("valid-one-cell-envelope.json"))
+    jobset = build_jobset(envelope, RESULTS_UPLOAD_URL, OBJECT_UID)
+    jobs = jobset["spec"]["replicatedJobs"]
+    controller_pod = jobs[0]["template"]["spec"]["template"]["spec"]
+    controller_env = {
+        entry["name"]: entry["value"]
+        for entry in controller_pod["containers"][0]["env"]
+    }
+    assert controller_env["AIPERF_CONTROLLER_PORT"] == "443"
+
+    # No cell container carries AIPERF_CONTROLLER_PORT
+    for job in jobs[1:]:
+        cell_env = {
+            entry["name"]: entry.get("value")
+            for entry in job["template"]["spec"]["template"]["spec"]["containers"][0][
+                "env"
+            ]
+        }
+        assert "AIPERF_CONTROLLER_PORT" not in cell_env
+
+
 @pytest.mark.asyncio
 async def test_reconcile_creates_projected_jobset() -> None:
     class FakeJobSets:
