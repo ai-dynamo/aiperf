@@ -34,8 +34,19 @@ pub(crate) fn resolve_str(
 ) -> anyhow::Result<crate::model::BenchmarkRun> {
     let raw: serde_json::Value =
         serde_yaml::from_str(text).map_err(|e| anyhow::anyhow!("failed to parse config: {e}"))?;
+    validate_schema_version(raw.get("schemaVersion").or_else(|| raw.get("schema_version")))?;
     let expanded = crate::expand::expand_config(raw)?;
     resolve_expanded_value(expanded, artifact_dir, None)
+}
+
+fn validate_schema_version(value: Option<&serde_json::Value>) -> anyhow::Result<()> {
+    if let Some(value) = value {
+        anyhow::ensure!(
+            value.as_str() == Some("2.0"),
+            "unsupported schema version {value:?}; expected \"2.0\""
+        );
+    }
+    Ok(())
 }
 
 /// Resolve an already `${ENV}`+Jinja-expanded config value into one run. Shared
@@ -60,10 +71,10 @@ pub(crate) fn resolve_expanded_inputs(
 ) -> anyhow::Result<Inputs> {
     let mut file: ConfigFile = serde_json::from_value(expanded)
         .map_err(|e| anyhow::anyhow!("failed to parse config: {e}"))?;
-    if let Some(version) = file.schema_version.as_deref() {
+    if let SchemaVersionValue::Authored(value) = &file.schema_version {
         anyhow::ensure!(
-            version == "2.0",
-            "unsupported schema version {version:?}; expected \"2.0\""
+            value.as_str() == Some("2.0"),
+            "unsupported schema version {value:?}; expected \"2.0\""
         );
     }
     let random_seed = file.random_seed;
@@ -628,7 +639,7 @@ struct ConfigFile {
     /// authoring it is not an unknown key; the loader targets one schema.
     #[serde(default, alias = "schemaVersion")]
     #[allow(dead_code)]
-    schema_version: Option<String>,
+    schema_version: SchemaVersionValue,
     /// `sweep:` block, consumed by [`crate::sweep::yaml_sweep::parse`] before this
     /// struct sees the value and stripped per variation. Declared so the key is
     /// legal on the single-run path rather than rejected as unknown.
@@ -657,6 +668,22 @@ struct ConfigFile {
     /// Top-level worker/cell runtime policy (`runtime.cells`).
     #[serde(default)]
     runtime: Option<RuntimeSection>,
+}
+
+#[derive(Debug, Default)]
+enum SchemaVersionValue {
+    #[default]
+    Absent,
+    Authored(serde_json::Value),
+}
+
+impl<'de> Deserialize<'de> for SchemaVersionValue {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Ok(Self::Authored(serde_json::Value::deserialize(deserializer)?))
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -3229,10 +3256,26 @@ mod tests {
         }
     }
 
+    #[test]
+    fn authored_non_string_schema_versions_are_rejected_explicitly() {
+        for version in ["null", "1", "true", "false", "1.0", "[2.0]"] {
+            let error = schema_err_raw(version);
+            assert!(
+                error.contains("unsupported schema version")
+                    && error.contains("expected \"2.0\""),
+                "{error}"
+            );
+        }
+    }
+
     fn schema_err(version: &str) -> String {
+        schema_err_raw(&format!("\"{version}\""))
+    }
+
+    fn schema_err_raw(version: &str) -> String {
         resolve_str(
             &format!(
-                "schemaVersion: \"{version}\"\nbenchmark:\n  model: m\n  endpoint: {{type: chat, url: 127.0.0.1:8000}}\n  phases: {{type: concurrency, requests: 1, concurrency: 1}}\n"
+                "schemaVersion: {version}\nbenchmark:\n  model: m\n  endpoint: {{type: chat, url: 127.0.0.1:8000}}\n  phases: {{type: concurrency, requests: 1, concurrency: 1}}\n"
             ),
             Some("/tmp/x".into()),
         )
