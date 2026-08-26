@@ -418,6 +418,46 @@
               "group": "default",
               "header": "Inverse Real-Time Factor (RTFx)"
             },
+            "spec_decode_acceptance_length": {
+              "display_order": 5000,
+              "group": "spec_decode",
+              "header": "Acceptance Length"
+            },
+            "spec_decode_accepted_draft_tokens": {
+              "display_order": 5050,
+              "group": "none",
+              "header": "Accepted Draft Tokens"
+            },
+            "spec_decode_accepted_per_verified": {
+              "display_order": 5030,
+              "group": "spec_decode",
+              "header": "Accepted per Verified"
+            },
+            "spec_decode_draft_acceptance_rate": {
+              "display_order": 5020,
+              "group": "spec_decode",
+              "header": "Draft Acceptance Rate"
+            },
+            "spec_decode_draft_tokens": {
+              "display_order": 5060,
+              "group": "none",
+              "header": "Draft Tokens"
+            },
+            "spec_decode_overall_draft_acceptance_rate": {
+              "display_order": 5025,
+              "group": "spec_decode",
+              "header": "Overall Draft Acceptance Rate"
+            },
+            "spec_decode_steps": {
+              "display_order": 5040,
+              "group": "spec_decode",
+              "header": "Spec Decode Steps"
+            },
+            "spec_decode_token_weighted_acceptance_length": {
+              "display_order": 5010,
+              "group": "spec_decode",
+              "header": "Token-Weighted Acceptance Length"
+            },
             "stream_prefill_latency": {
               "experimental": true,
               "group": "default",
@@ -453,6 +493,16 @@
               "group": "effective",
               "header": "Tokens In Flight"
             },
+            "total_accepted_draft_tokens": {
+              "display_order": 5150,
+              "group": "none",
+              "header": "Total Accepted Draft Tokens"
+            },
+            "total_draft_tokens": {
+              "display_order": 5160,
+              "group": "none",
+              "header": "Total Draft Tokens"
+            },
             "total_error_isl": {
               "error_only": true,
               "group": "none",
@@ -483,6 +533,11 @@
             "total_reasoning_tokens": {
               "group": "none",
               "header": "Total Reasoning Tokens"
+            },
+            "total_spec_decode_steps": {
+              "display_order": 5140,
+              "group": "none",
+              "header": "Total Spec Decode Steps"
             },
             "total_token_throughput": {
               "group": "none",
@@ -799,12 +854,22 @@
             "request_throughput": "Request Throughput",
             "requested_osl": "Requested OSL",
             "rtfx": "Inverse Real-Time Factor (RTFx)",
+            "spec_decode_acceptance_length": "Acceptance Length",
+            "spec_decode_accepted_draft_tokens": "Accepted Draft Tokens",
+            "spec_decode_accepted_per_verified": "Accepted per Verified",
+            "spec_decode_draft_acceptance_rate": "Draft Acceptance Rate",
+            "spec_decode_draft_tokens": "Draft Tokens",
+            "spec_decode_overall_draft_acceptance_rate": "Overall Draft Acceptance Rate",
+            "spec_decode_steps": "Spec Decode Steps",
+            "spec_decode_token_weighted_acceptance_length": "Token-Weighted Acceptance Length",
             "stream_prefill_latency": "Stream Prefill Latency",
             "stream_setup_latency": "Stream Setup Latency",
             "thinking_efficiency": "Thinking Efficiency",
             "time_to_first_output_token": "Time to First Output Token",
             "time_to_first_token": "Time to First Token",
             "time_to_second_token": "Time to Second Token",
+            "total_accepted_draft_tokens": "Total Accepted Draft Tokens",
+            "total_draft_tokens": "Total Draft Tokens",
             "total_error_isl": "Total Error Input Sequence Length",
             "total_gpu_energy": "Total GPU Energy",
             "total_gpu_power": "Total GPU Power",
@@ -812,6 +877,7 @@
             "total_osl": "Total Output Sequence Length",
             "total_output_tokens": "Total Output Tokens",
             "total_reasoning_tokens": "Total Reasoning Tokens",
+            "total_spec_decode_steps": "Total Spec Decode Steps",
             "total_token_throughput": "Total Token Throughput",
             "total_usage_accepted_prediction_tokens": "Total Usage Accepted Prediction Tokens",
             "total_usage_completion_audio_tokens": "Total Usage Completion Audio Tokens",
@@ -871,6 +937,10 @@
             "request_count",
             "request_error_rate",
             "request_throughput",
+            "spec_decode_overall_draft_acceptance_rate",
+            "spec_decode_token_weighted_acceptance_length",
+            "total_accepted_draft_tokens",
+            "total_draft_tokens",
             "total_error_isl",
             "total_gpu_energy",
             "total_gpu_power",
@@ -878,6 +948,7 @@
             "total_osl",
             "total_output_tokens",
             "total_reasoning_tokens",
+            "total_spec_decode_steps",
             "total_token_throughput",
             "total_usage_accepted_prediction_tokens",
             "total_usage_completion_audio_tokens",
