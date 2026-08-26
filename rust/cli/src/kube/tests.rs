@@ -380,3 +380,90 @@ impl KubeTransport for RecordingTransport {
         ))
     }
 }
+
+// --- kube init scaffold tests ---
+
+#[test]
+fn init_writes_a_config_and_capability_pair() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let exit = super::scaffold::run(&[
+        "--output-directory".to_string(),
+        dir.path().display().to_string(),
+    ])
+    .expect("scaffold run");
+    assert_eq!(exit, 0);
+    assert!(
+        dir.path().join("benchmark.yaml").exists(),
+        "benchmark.yaml must be written"
+    );
+    let cap_path = dir.path().join("image-capabilities.json");
+    assert!(cap_path.exists(), "image-capabilities.json must be written");
+    let cap_text = std::fs::read_to_string(&cap_path).expect("read capabilities");
+    let cap: serde_json::Value = serde_json::from_str(&cap_text).expect("capabilities JSON");
+    assert_eq!(
+        cap["imageDigest"].as_str().expect("imageDigest field"),
+        super::scaffold::PLACEHOLDER_DIGEST,
+        "capability doc must carry the placeholder digest"
+    );
+}
+
+#[test]
+fn init_scaffold_fails_validation_until_edited() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    super::scaffold::run(&[
+        "--output-directory".to_string(),
+        dir.path().display().to_string(),
+    ])
+    .expect("scaffold run");
+    let cap_text =
+        std::fs::read_to_string(dir.path().join("image-capabilities.json")).expect("read");
+    let cap: serde_json::Value = serde_json::from_str(&cap_text).expect("json");
+    // Any real digest would fail because the schema rejects the placeholder pattern.
+    assert!(
+        validate_image_capabilities(cap, &format!("sha256:{}", "0".repeat(64))).is_err(),
+        "unedited scaffold must fail validate_image_capabilities"
+    );
+}
+
+#[test]
+fn init_refuses_to_overwrite_without_force() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let args = vec![
+        "--output-directory".to_string(),
+        dir.path().display().to_string(),
+    ];
+    super::scaffold::run(&args).expect("first scaffold run");
+    let error =
+        super::scaffold::run(&args).expect_err("second scaffold run must refuse overwrite");
+    assert!(
+        error.to_string().contains("already exists"),
+        "overwrite refusal must name the existing file: {error}"
+    );
+}
+
+#[test]
+fn init_never_contacts_the_cluster() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    // Write a kubeconfig whose server address is an unroutable TEST-NET address (RFC 5737).
+    let kubeconfig_path = dir.path().join("unroutable.yaml");
+    std::fs::write(
+        &kubeconfig_path,
+        concat!(
+            "apiVersion: v1\ncurrent-context: test\n",
+            "clusters:\n- name: cluster\n  cluster:\n    server: https://192.0.2.1:6443\n",
+            "contexts:\n- name: test\n  context:\n    cluster: cluster\n    user: user\n",
+            "users:\n- name: user\n  user:\n    token: notoken\n",
+        ),
+    )
+    .expect("kubeconfig write");
+    let exit = super::scaffold::run(&[
+        "--output-directory".to_string(),
+        dir.path().join("output").display().to_string(),
+        // Providing an unroutable kubeconfig must not prevent scaffold from succeeding:
+        // kube init does not contact the cluster on any path.
+        "--kubeconfig".to_string(),
+        kubeconfig_path.display().to_string(),
+    ])
+    .expect("scaffold with unroutable kubeconfig must succeed");
+    assert_eq!(exit, 0, "kube init must not contact the cluster");
+}
