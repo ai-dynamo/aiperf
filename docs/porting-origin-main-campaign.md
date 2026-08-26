@@ -76,7 +76,7 @@ implementation, test run, or review.
 | 48 | `260d00f5e9` | adaptive error-rate units | pending | applicable | Adaptive SLA differs from exported percentage/cancellation contract; pair with #25. |
 | 49 | `88242293b5` | verbatim system prompts | pending | applicable | Add CLI/file projection to existing composition seam. |
 | 50 | `ade1f69eb1` | seamless phase transitions | pending | already-covered | Native lowers incoming flag to predecessor handoff. |
-| 51 | `324bb05773` | per-chunk usage | pending | applicable | No first-chunk token multiplicity or option. |
+| 51 | `324bb05773` | per-chunk usage | active | applicable | Full native authoring, response-reduction, metric, adaptive, mock, and E2E scope recorded in `docs/origin-main-findings/commit-051-324bb05773.md`; source-grounded spec and separately labeled Sol plan in `docs/specs/2026-08-25-native-per-chunk-usage.md`. |
 | 52 | `810fd8bdd4` | vLLM spec-decode wire | pending | applicable | Root metrics/histogram/trailing usage absent. |
 | 53 | `e5ebe915df` | enum inequality | pending | not-applicable | Python enum behavior only. |
 | 54 | `bfe33151de` | rejected peak diagnostics | pending | applicable | Actual target is WEKA/Dynamo selection, not Baseten. |
