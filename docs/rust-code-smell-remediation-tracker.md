@@ -64,10 +64,10 @@ Graham review and a commit.
 | E05 | Closed-worker credit return can hang drain | Confirmed; spec ready | Sol implementation plan |
 | E06 | Sidecar setup/finish failures leak siblings | Complete | Integrated `bb5e3fe5ff`, `bb23c66b39`; independent Graham PASS |
 | E07 | Global-push cancellation is misclassified as transport failure | Complete | Integrated `82bf74990c`; independent Graham PASS |
-| E08 | Declared terminal outputs cannot execute | Confirmed; spec ready | Sol implementation plan |
+| E08 | Declared terminal outputs cannot execute | Complete | Integrated `dcf1454576`, `caa260e9dc`, `405e54c2b1`; independent Graham PASS |
 | E09 | Multi-dataset requests silently retain only the first | Complete | Integrated `e8a787f47e`; independent Graham PASS |
 | E10 | Docker verifier orchestration is duplicated and diverges | Complete | Integrated `34ac902468`, `101bf1a3d2`; independent Graham PASS |
-| E11 | CLI Dynosim runs skip process defaults | Confirmed; spec ready | Sol implementation plan |
+| E11 | CLI Dynosim runs skip process defaults | Complete | Integrated `50973a484a`; independent Graham PASS |
 | C01 | Phaser Velo subscription accepts forged/replayed event | Complete — `cf09af5034` | Independent Graham approved; explicit benchmark trust-boundary contract |
 | C02 | Dataset Velo subscription accepts forged event or oversized payload | Complete — `c823d9c53e` through `6bb0066d47` | Independent Graham approved; RED→GREEN Velo fan-out bound, replay, and progress coverage recorded |
 | C03 | Duplicate cellular partition can satisfy completion barrier | Complete — `1053327b41` | Independent Graham approved; RED→GREEN identity coverage recorded |
@@ -273,3 +273,15 @@ Graham review and a commit.
   explicit empty/multiple and mixed forms before lowering, and preserves the
   absent-form synthetic default. Its first-entry-loss RED, 47-test YAML GREEN
   suite, and independent Graham PASS are recorded.
+
+- 2026-08-26: E08 completed and integrated as `dcf1454576`, `caa260e9dc`, and
+  `405e54c2b1`: executor-owned terminal catalogs now freeze declared staged
+  outputs, preserve earlier dynamic handles, and publish the selected final
+  handle through the actual `execute_trace` terminal event. A pre-fix terminal
+  handle RED, clean focused GREEN, and independent Graham PASS are recorded.
+
+- 2026-08-26: E11 completed and integrated as `50973a484a`: the CLI resolves
+  execute input once before cellular selection, Dynosim default selection, and
+  execution; the cell path consumes the resolved run as well. The six-test CLI
+  and seven-test cellular Dynosim suites are green, with independent Graham
+  PASS.
