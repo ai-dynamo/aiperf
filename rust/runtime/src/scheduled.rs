@@ -257,6 +257,8 @@ pub enum TurnCreditReportKind {
     FirstToken(i64),
     /// The credit is returned with its terminal result. Always last for a uuid.
     CreditReturn(Box<Result<TurnDispatchOutcome>>),
+    /// The worker cancelled the credit before a terminal transport result.
+    Cancelled,
 }
 
 /// Post-dispatch record-processing seam shared by ordinary workloads.
@@ -767,6 +769,22 @@ impl ScheduledRuntime {
                     )
                     .await;
                 }
+                TurnCreditReportKind::Cancelled => {
+                    let Some(outstanding) =
+                        self.outstanding_credits.borrow_mut().remove(&report.uuid)
+                    else {
+                        tracing::debug!(uuid = %report.uuid, "cancelled credit returned with no outstanding entry");
+                        continue;
+                    };
+                    let outcome = self.credit_cancelled_outcome(&outstanding.credit);
+                    self.settle_turn(
+                        outstanding.credit,
+                        outstanding.record_index,
+                        outcome,
+                        outstanding.on_complete,
+                    )
+                    .await;
+                }
             }
         }
     }
@@ -819,6 +837,26 @@ impl ScheduledRuntime {
                     http: RequestTrace::default(),
                 }
             }
+        }
+    }
+
+    fn credit_cancelled_outcome(&self, credit: &IssuedCredit) -> TurnDispatchOutcome {
+        self.observer
+            .on_terminal(credit.turn.uuid, ReplayTerminalStatus::Canceled);
+        let now = self.clock.now_ns();
+        TurnDispatchOutcome {
+            start_ns: credit.issued_ns,
+            end_ns: now,
+            terminal: ReplayTerminalStatus::Canceled,
+            response_text: String::new(),
+            model_response: ModelResponseMetadata {
+                error_kind: Some("dispatch_cancelled".to_string()),
+                error_message: Some("dispatch cancelled by the owning workload".to_string()),
+                ..ModelResponseMetadata::default()
+            },
+            prompt_tokens: None,
+            completion_tokens: None,
+            http: RequestTrace::default(),
         }
     }
 

@@ -1437,4 +1437,132 @@ mod tests {
             "cancellation is an authored outcome and must not latch abort-on-failure"
         );
     }
+
+    enum GlobalPushReport {
+        Cancelled,
+        Failed,
+    }
+
+    struct ScriptedGlobalPushDispatcher {
+        report: GlobalPushReport,
+        credit_uuid: RefCell<Option<uuid::Uuid>>,
+        report_ready: Notify,
+    }
+
+    #[async_trait(?Send)]
+    impl TurnDispatcher for ScriptedGlobalPushDispatcher {
+        async fn dispatch_turn(
+            &self,
+            _turn: TurnToSend,
+            _observer: &dyn RequestObserver,
+            _on_first_token: &dyn Fn(i64),
+        ) -> Result<TurnDispatchOutcome> {
+            unreachable!("global-push must route this test through send_credit")
+        }
+
+        fn supports_credit_dispatch(&self) -> bool {
+            true
+        }
+
+        fn send_credit(&self, turn: TurnToSend) -> Result<()> {
+            assert!(
+                self.credit_uuid.replace(Some(turn.uuid)).is_none(),
+                "test dispatcher received more than one credit"
+            );
+            self.report_ready.notify_one();
+            Ok(())
+        }
+
+        async fn next_credit_report(&self) -> Option<crate::scheduled::TurnCreditReport> {
+            if self.credit_uuid.borrow().is_none() {
+                self.report_ready.notified().await;
+            }
+            let uuid = self.credit_uuid.borrow_mut().take()?;
+            let kind = match self.report {
+                GlobalPushReport::Cancelled => crate::scheduled::TurnCreditReportKind::Cancelled,
+                GlobalPushReport::Failed => crate::scheduled::TurnCreditReportKind::CreditReturn(
+                    Box::new(Err(anyhow!("scripted global-push transport failure"))),
+                ),
+            };
+            Some(crate::scheduled::TurnCreditReport { uuid, kind })
+        }
+    }
+
+    fn run_global_push_with_abort(
+        report: GlobalPushReport,
+    ) -> Result<crate::scheduled::ScheduledRunReport> {
+        let source = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(synthetic_prepared_source(1, 8, 4, Some(0), "m"));
+        let clock = Rc::new(SimClock::new());
+        let runtime_clock: Rc<dyn Clock> = clock.clone();
+        let mut captured = None;
+        let captured_slot = &mut captured;
+        drive_sim(clock, move |_handle| async move {
+            let workload = RequestRateWorkload::new(
+                RequestRateConfig {
+                    arrival_pattern: ArrivalPattern::ConcurrencyBurst,
+                    request_rate: None,
+                    arrival_smoothness: None,
+                    session_concurrency: Some(1),
+                    prefill_concurrency: None,
+                    seed: 0,
+                },
+                source,
+            )
+            .unwrap()
+            .with_failure_policy(OnFailure::Abort);
+            let plan = crate::phase_runtime::ScheduledPhasePlan::new(
+                crate::timing::PhaseConfig::new(
+                    "profiling",
+                    crate::timing::PhaseKind::Profiling,
+                    StopConfig {
+                        total_expected_requests: Some(1),
+                        ..StopConfig::default()
+                    },
+                ),
+                Rc::new(workload),
+                crate::scheduled::ScheduledAncillaryPolicies::default(),
+            )
+            .with_credit_dispatch(true);
+            *captured_slot = Some(
+                crate::phase_runtime::run_scheduled_phases(
+                    vec![plan],
+                    runtime_clock,
+                    Rc::new(ScriptedGlobalPushDispatcher {
+                        report,
+                        credit_uuid: RefCell::new(None),
+                        report_ready: Notify::new(),
+                    }),
+                    Rc::new(crate::timing::NoopPhaseObserver),
+                )
+                .await
+                .map(|mut result| result.reports.pop().expect("one profiling report").report),
+            );
+        });
+        captured.expect("global-push run completed")
+    }
+
+    #[test]
+    fn global_push_cancellation_settles_without_fail_fast_abort() {
+        let report = run_global_push_with_abort(GlobalPushReport::Cancelled)
+            .expect("cancelled global-push credit must not latch abort");
+        assert_eq!(report.turns.len(), 1);
+        assert_eq!(
+            report.turns[0].terminal_status,
+            Some(ReplayTerminalStatus::Canceled)
+        );
+    }
+
+    #[test]
+    fn global_push_sink_error_remains_failed_and_aborts() {
+        let error = run_global_push_with_abort(GlobalPushReport::Failed)
+            .expect_err("transport failure must still latch abort");
+        assert!(
+            error.to_string().contains("failed under abort-on-failure"),
+            "unexpected abort error: {error:#}"
+        );
+    }
 }

@@ -1049,7 +1049,10 @@ impl<B: ExecutionSinkBuilder> RequestExecutor for ThreadPerCoreExecutor<B> {
         // flush below (and any other executor call) can never hit a live borrow.
         let report =
             poll_fn(|context| self.credit_returns.receiver.borrow_mut().poll_recv(context)).await?;
-        if let CreditReportKind::CreditReturn(_) = &report.kind {
+        if matches!(
+            &report.kind,
+            CreditReportKind::CreditReturn(_) | CreditReportKind::Cancelled
+        ) {
             // The returned credit releases its worker's depth — the one
             // deliberate difference from the hop, which releases at reply.
             if let Some(load) = self.inflight.get(report.worker) {
@@ -1626,7 +1629,12 @@ async fn execute_worker_credit<S: WorkerSink + 'static>(
     let result = tokio::select! {
         biased;
         () = cancellation.cancelled() => {
-            Err(anyhow!("execution command cancelled by its coordinator"))
+            let _ = events.send(WorkerCreditReport {
+                uuid,
+                worker,
+                kind: CreditReportKind::Cancelled,
+            }).await;
+            return;
         }
         result = &mut dispatch => result,
     };
