@@ -103,6 +103,7 @@ struct ScriptRequest<'a> {
 }
 
 /// The generated script text plus the run directory its exports name.
+#[derive(Debug)]
 struct GeneratedScript {
     text: String,
     run_dir: PathBuf,
