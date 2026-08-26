@@ -130,6 +130,10 @@ pub(crate) struct RequestCtx {
     pub(crate) tool_call: Option<ToolCallSpec>,
     /// Emits the canonical speculative-decoding fixture on this chat response.
     pub(crate) spec_decode_acceptance: bool,
+    /// Emits cumulative usage on each streamed reasoning/content frame.
+    pub(crate) continuous_usage_stats: bool,
+    /// Number of output tokens carried by the first streamed content frame.
+    pub(crate) first_chunk_tokens: usize,
 }
 
 /// Deterministic OpenAI-compatible function call. `arguments` is a
@@ -231,6 +235,17 @@ impl RequestCtx {
             &request_id,
             latency_cached,
         );
+        let (continuous_usage_stats, first_chunk_tokens) = match req_gen {
+            GenRequest::Chat(request) => (
+                request.continuous_usage_stats(),
+                request.first_chunk_tokens(),
+            ),
+            GenRequest::Completion(request) => (
+                request.continuous_usage_stats(),
+                request.first_chunk_tokens(),
+            ),
+            _ => (false, 1),
+        };
         Self {
             request_id,
             latency_sim,
@@ -241,6 +256,8 @@ impl RequestCtx {
             null_object_chunk,
             tool_call: None,
             spec_decode_acceptance: state.config.spec_decode_acceptance,
+            continuous_usage_stats,
+            first_chunk_tokens,
         }
     }
 }
@@ -1124,14 +1141,20 @@ mod spec_decode_acceptance_tests {
         });
 
         for continuous_usage_stats in [None, Some(false)] {
+            let stream_options = continuous_usage_stats.map_or_else(
+                || json!({"include_usage": true}),
+                |value| {
+                    json!({
+                        "include_usage": true,
+                        "continuous_usage_stats": value
+                    })
+                },
+            );
             let request: ChatCompletionRequest = serde_json::from_value(json!({
                 "model": "test-model",
                 "messages": [{"role": "user", "content": "hello"}],
                 "stream": true,
-                "stream_options": {
-                    "include_usage": true,
-                    "continuous_usage_stats": continuous_usage_stats
-                },
+                "stream_options": stream_options,
                 "max_tokens": 3
             }))
             .unwrap();
@@ -1232,10 +1255,10 @@ mod spec_decode_acceptance_tests {
                 })
                 .collect::<Vec<_>>(),
             vec![
-                (Some(2), Some(1), Some(3)),
-                (Some(2), Some(2), Some(4)),
-                (Some(2), Some(3), Some(5)),
-                (Some(2), Some(4), Some(6)),
+                (Some(3), Some(1), Some(4)),
+                (Some(3), Some(2), Some(5)),
+                (Some(3), Some(3), Some(6)),
+                (Some(3), Some(4), Some(7)),
             ]
         );
     }
@@ -1299,14 +1322,20 @@ mod spec_decode_acceptance_tests {
         });
 
         for continuous_usage_stats in [None, Some(false)] {
+            let stream_options = continuous_usage_stats.map_or_else(
+                || json!({"include_usage": true}),
+                |value| {
+                    json!({
+                        "include_usage": true,
+                        "continuous_usage_stats": value
+                    })
+                },
+            );
             let request: CompletionRequest = serde_json::from_value(json!({
                 "model": "test-model",
                 "prompt": "hello",
                 "stream": true,
-                "stream_options": {
-                    "include_usage": true,
-                    "continuous_usage_stats": continuous_usage_stats
-                },
+                "stream_options": stream_options,
                 "max_tokens": 3
             }))
             .unwrap();
@@ -1716,6 +1745,7 @@ fn sagemaker_request_to_chat(
             min_tokens,
             reasoning_effort: None,
             priority: None,
+            mock_first_chunk_tokens: 1,
         })
     } else {
         Err(AppError {
@@ -1878,6 +1908,7 @@ fn responses_as_chat(req: &ResponsesRequest) -> ChatCompletionRequest {
         min_tokens: None,
         reasoning_effort: req.reasoning_effort.clone(),
         priority: None,
+        mock_first_chunk_tokens: 1,
     }
 }
 
@@ -2655,6 +2686,7 @@ pub async fn kserve_v2_infer(
                 min_tokens: None,
                 reasoning_effort: None,
                 priority: None,
+                mock_first_chunk_tokens: 1,
             };
             let req_gen = GenRequest::Chat(&mock_chat);
             let ctx = RequestCtx::build("kserve", &req_gen, endpoint, start, &state);
@@ -2741,6 +2773,7 @@ pub async fn kserve_v1_predict(
         min_tokens: None,
         reasoning_effort: None,
         priority: None,
+        mock_first_chunk_tokens: 1,
     };
     let req_gen = GenRequest::Chat(&mock_chat);
     let ctx = RequestCtx::build("kserve-v1", &req_gen, endpoint, start, &state);
@@ -2842,6 +2875,7 @@ pub async fn custom_multimodal(
         min_tokens: None,
         reasoning_effort: None,
         priority: None,
+        mock_first_chunk_tokens: 1,
     };
     let req_gen = GenRequest::Chat(&mock_req);
     let ctx = RequestCtx::build("chatcmpl", &req_gen, endpoint, start, &state);
@@ -2985,6 +3019,7 @@ pub async fn image_generation(
         min_tokens: None,
         reasoning_effort: None,
         priority: None,
+        mock_first_chunk_tokens: 1,
     };
     let req_gen = GenRequest::Chat(&mock_chat);
     let ctx = RequestCtx::build("img", &req_gen, endpoint, start, &state);
@@ -3068,6 +3103,7 @@ pub async fn solido_rag(
         min_tokens: None,
         reasoning_effort: None,
         priority: None,
+        mock_first_chunk_tokens: 1,
     };
     let req_gen = GenRequest::Chat(&mock_chat);
     let ctx = RequestCtx::build("rag", &req_gen, endpoint, start, &state);
@@ -3202,6 +3238,33 @@ struct ChatStreamChunk<'a> {
 }
 
 #[derive(serde::Serialize)]
+struct PartialUsage {
+    prompt_tokens: usize,
+    completion_tokens: usize,
+    total_tokens: usize,
+}
+
+impl PartialUsage {
+    fn cumulative(ctx: &RequestCtx, completion_tokens: usize) -> Self {
+        Self {
+            prompt_tokens: ctx.usage.prompt_tokens,
+            completion_tokens,
+            total_tokens: ctx.usage.prompt_tokens + completion_tokens,
+        }
+    }
+}
+
+#[derive(serde::Serialize)]
+struct ChatStreamContinuousChunk<'a> {
+    id: &'a str,
+    object: &'static str,
+    created: i64,
+    model: &'a str,
+    choices: [ChatChoiceDelta<'a>; 1],
+    usage: PartialUsage,
+}
+
+#[derive(serde::Serialize)]
 struct ChatStreamUsageChunk<'a> {
     id: &'a str,
     object: &'static str,
@@ -3226,6 +3289,16 @@ struct TextStreamChunk<'a> {
     created: i64,
     model: &'a str,
     choices: [TextChoiceDelta<'a>; 1],
+}
+
+#[derive(serde::Serialize)]
+struct TextStreamContinuousChunk<'a> {
+    id: &'a str,
+    object: &'static str,
+    created: i64,
+    model: &'a str,
+    choices: [TextChoiceDelta<'a>; 1],
+    usage: PartialUsage,
 }
 
 #[derive(serde::Serialize)]
@@ -3298,8 +3371,195 @@ where
         .expect("body ok")
 }
 
+fn chat_generated_sse(
+    ctx: &RequestCtx,
+    created: i64,
+    choice: ChatChoiceDelta<'_>,
+    completion_tokens: usize,
+) -> Bytes {
+    if ctx.continuous_usage_stats {
+        return sse_chunk_ser(&ChatStreamContinuousChunk {
+            id: &ctx.request_id,
+            object: "chat.completion.chunk",
+            created,
+            model: &ctx.model,
+            choices: [choice],
+            usage: PartialUsage::cumulative(ctx, completion_tokens),
+        });
+    }
+    sse_chunk_ser(&ChatStreamChunk {
+        id: &ctx.request_id,
+        object: "chat.completion.chunk",
+        created,
+        model: &ctx.model,
+        choices: [choice],
+    })
+}
+
+fn text_generated_sse(
+    ctx: &RequestCtx,
+    created: i64,
+    choice: TextChoiceDelta<'_>,
+    completion_tokens: usize,
+) -> Bytes {
+    if ctx.continuous_usage_stats {
+        return sse_chunk_ser(&TextStreamContinuousChunk {
+            id: &ctx.request_id,
+            object: "text_completion",
+            created,
+            model: &ctx.model,
+            choices: [choice],
+            usage: PartialUsage::cumulative(ctx, completion_tokens),
+        });
+    }
+    sse_chunk_ser(&TextStreamChunk {
+        id: &ctx.request_id,
+        object: "text_completion",
+        created,
+        model: &ctx.model,
+        choices: [choice],
+    })
+}
+
+fn render_chat_usage_body(ctx: &RequestCtx, include_usage: bool) -> Bytes {
+    let created = now_secs();
+    let has_reasoning = !ctx.tokenized.reasoning_content_tokens.is_empty();
+    let mut buf = Vec::with_capacity(128 * (ctx.tokenized.count() + include_usage as usize + 1));
+    let mut completion_tokens = 0;
+
+    for token in &ctx.tokenized.reasoning_content_tokens {
+        completion_tokens += 1;
+        buf.extend_from_slice(&chat_generated_sse(
+            ctx,
+            created,
+            ChatChoiceDelta {
+                index: 0,
+                finish_reason: None,
+                speculative_decoding_stats: None,
+                delta: ChatDelta {
+                    role: Some("assistant"),
+                    content: None,
+                    reasoning_content: Some(token.as_str()),
+                    tool_calls: None,
+                },
+            },
+            completion_tokens,
+        ));
+    }
+
+    let has_tool_call = ctx.tool_call.is_some();
+    let num_tokens = ctx.tokenized.tokens.len();
+    let first_group_end = ctx.first_chunk_tokens.min(num_tokens);
+    let mut group_start = 0;
+    while group_start < num_tokens {
+        let group_end = if group_start == 0 {
+            first_group_end
+        } else {
+            group_start + 1
+        };
+        let content = ctx.tokenized.tokens[group_start..group_end].concat();
+        completion_tokens += group_end - group_start;
+        buf.extend_from_slice(&chat_generated_sse(
+            ctx,
+            created,
+            ChatChoiceDelta {
+                index: 0,
+                finish_reason: (group_end == num_tokens
+                    && !has_tool_call
+                    && !ctx.spec_decode_acceptance)
+                    .then_some(ctx.tokenized.finish_reason),
+                speculative_decoding_stats: None,
+                delta: ChatDelta {
+                    role: (group_start == 0 && !has_reasoning).then_some("assistant"),
+                    content: Some(&content),
+                    reasoning_content: None,
+                    tool_calls: None,
+                },
+            },
+            completion_tokens,
+        ));
+        group_start = group_end;
+    }
+
+    if let Some(tool_call) = &ctx.tool_call {
+        let lead_role = !has_reasoning && num_tokens == 0;
+        for chunk in tool_call_frames(
+            ctx,
+            created,
+            tool_call,
+            lead_role,
+            !ctx.spec_decode_acceptance,
+        ) {
+            write_sse_into(&mut buf, &chunk);
+        }
+    }
+    if ctx.spec_decode_acceptance {
+        write_sse_into(&mut buf, &spec_decode_finish_chunk(ctx, created));
+    }
+    if include_usage {
+        write_sse_into(
+            &mut buf,
+            &ChatStreamUsageChunk {
+                id: &ctx.request_id,
+                object: "chat.completion.chunk",
+                created,
+                model: &ctx.model,
+                choices: [],
+                usage: &ctx.usage,
+            },
+        );
+    }
+    buf.extend_from_slice(b"data: [DONE]\n\n");
+    Bytes::from(buf)
+}
+
+fn render_text_usage_body(ctx: &RequestCtx, include_usage: bool) -> Bytes {
+    let created = now_secs();
+    let mut buf = Vec::with_capacity(128 * (ctx.tokenized.tokens.len() + 2));
+    let num_tokens = ctx.tokenized.tokens.len();
+    let first_group_end = ctx.first_chunk_tokens.min(num_tokens);
+    let mut group_start = 0;
+    while group_start < num_tokens {
+        let group_end = if group_start == 0 {
+            first_group_end
+        } else {
+            group_start + 1
+        };
+        let content = ctx.tokenized.tokens[group_start..group_end].concat();
+        buf.extend_from_slice(&text_generated_sse(
+            ctx,
+            created,
+            TextChoiceDelta {
+                index: 0,
+                text: &content,
+                finish_reason: (group_end == num_tokens).then_some(ctx.tokenized.finish_reason),
+            },
+            group_end,
+        ));
+        group_start = group_end;
+    }
+    if include_usage {
+        write_sse_into(
+            &mut buf,
+            &TextStreamUsageChunk {
+                id: &ctx.request_id,
+                object: "text_completion",
+                created,
+                model: &ctx.model,
+                choices: [],
+                usage: &ctx.usage,
+            },
+        );
+    }
+    buf.extend_from_slice(b"data: [DONE]\n\n");
+    Bytes::from(buf)
+}
+
 /// Renders the complete fast-mode chat stream into one allocation.
 fn render_chat_fast_body(ctx: &RequestCtx, include_usage: bool) -> Bytes {
+    if ctx.continuous_usage_stats || ctx.first_chunk_tokens > 1 {
+        return render_chat_usage_body(ctx, include_usage);
+    }
     let created = now_secs();
     let has_reasoning = !ctx.tokenized.reasoning_content_tokens.is_empty();
     let est = 128
@@ -3392,6 +3652,9 @@ fn render_chat_fast_body(ctx: &RequestCtx, include_usage: bool) -> Bytes {
 }
 
 fn render_text_fast_body(ctx: &RequestCtx, include_usage: bool) -> Bytes {
+    if ctx.continuous_usage_stats || ctx.first_chunk_tokens > 1 {
+        return render_text_usage_body(ctx, include_usage);
+    }
     let created = now_secs();
     let est = 128 * (ctx.tokenized.tokens.len() + include_usage as usize + 1);
     let mut buf: Vec<u8> = Vec::with_capacity(est);
@@ -4284,6 +4547,7 @@ pub async fn image_edit(
         min_tokens: None,
         reasoning_effort: None,
         priority: None,
+        mock_first_chunk_tokens: 1,
     };
     let req_gen = GenRequest::Chat(&mock_chat);
     let ctx = RequestCtx::build("img", &req_gen, endpoint, start, &state);

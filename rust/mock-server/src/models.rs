@@ -34,6 +34,11 @@ impl ReasoningEffort {
 #[serde(default)]
 pub struct StreamOptions {
     pub include_usage: bool,
+    pub continuous_usage_stats: bool,
+}
+
+fn default_first_chunk_tokens() -> usize {
+    1
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -54,6 +59,10 @@ pub struct ChatCompletionRequest {
     /// absent => 0 (so the policy behaves as LRU).
     #[serde(default)]
     pub priority: Option<i64>,
+    /// Test seam for servers that bundle several output tokens in their first
+    /// streamed content chunk.
+    #[serde(default = "default_first_chunk_tokens")]
+    pub mock_first_chunk_tokens: usize,
 }
 
 impl ChatCompletionRequest {
@@ -66,6 +75,16 @@ impl ChatCompletionRequest {
 
     pub fn max_output_tokens(&self) -> Option<usize> {
         self.max_completion_tokens.or(self.max_tokens)
+    }
+
+    pub fn continuous_usage_stats(&self) -> bool {
+        self.stream_options
+            .as_ref()
+            .is_some_and(|options| options.continuous_usage_stats)
+    }
+
+    pub fn first_chunk_tokens(&self) -> usize {
+        self.mock_first_chunk_tokens.max(1)
     }
 }
 
@@ -153,6 +172,10 @@ pub struct MessagesRequest {
     /// Request priority for the `priority` KV-cache eviction policy.
     #[serde(default)]
     pub priority: Option<i64>,
+    /// Test seam for servers that bundle several output tokens in their first
+    /// streamed content chunk.
+    #[serde(default = "default_first_chunk_tokens")]
+    pub mock_first_chunk_tokens: usize,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -200,6 +223,10 @@ pub struct CompletionRequest {
     /// absent => 0 (so the policy behaves as LRU).
     #[serde(default)]
     pub priority: Option<i64>,
+    /// Test seam for servers that bundle several output tokens in their first
+    /// streamed content chunk.
+    #[serde(default = "default_first_chunk_tokens")]
+    pub mock_first_chunk_tokens: usize,
 }
 
 impl CompletionRequest {
@@ -212,6 +239,16 @@ impl CompletionRequest {
 
     pub fn prompt_text(&self) -> String {
         self.prompt.joined("\n")
+    }
+
+    pub fn continuous_usage_stats(&self) -> bool {
+        self.stream_options
+            .as_ref()
+            .is_some_and(|options| options.continuous_usage_stats)
+    }
+
+    pub fn first_chunk_tokens(&self) -> usize {
+        self.mock_first_chunk_tokens.max(1)
     }
 }
 
