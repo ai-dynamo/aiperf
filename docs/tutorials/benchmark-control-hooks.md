@@ -100,7 +100,7 @@ Setting any path/timeout override also enables the corresponding hook
 | Reset path | `/reset_prefix_cache` |
 | Profiler start path | `/start_profile` |
 | Profiler stop path | `/stop_profile` |
-| Timeouts | `endpoint.timeout` when unset |
+| Timeouts | 30s when unset (independent of `endpoint.timeout`) |
 
 Paths must be **relative** (start with `/`) and must not contain `://`.
 AIPerf joins each path to every endpoint URL origin. Absolute URLs in

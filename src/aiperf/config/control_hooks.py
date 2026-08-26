@@ -14,6 +14,13 @@ from aiperf.config.base import BaseConfig
 DEFAULT_RESET_KV_CACHE_PATH = "/reset_prefix_cache"
 DEFAULT_SERVER_PROFILER_START_PATH = "/start_profile"
 DEFAULT_SERVER_PROFILER_STOP_PATH = "/stop_profile"
+DEFAULT_CONTROL_HOOK_TIMEOUT_SECONDS = 30.0
+"""Default timeout for reset_kv_cache/server_profiler POSTs.
+
+Deliberately independent of ``endpoint.timeout`` (tuned for inference
+requests and defaults to 6 hours) so a stalled control-plane POST fails
+fast instead of appearing to hang indefinitely.
+"""
 
 
 class ResetKvCacheConfig(BaseConfig):
@@ -25,7 +32,7 @@ class ResetKvCacheConfig(BaseConfig):
             default=None,
             gt=0,
             description="Timeout in seconds for the reset_kv_cache POST. "
-            "When unset, uses endpoint.timeout.",
+            f"When unset, uses {DEFAULT_CONTROL_HOOK_TIMEOUT_SECONDS}s.",
         ),
     ] = None
     path: Annotated[
@@ -47,7 +54,7 @@ class ServerProfilerConfig(BaseConfig):
             default=None,
             gt=0,
             description="Timeout in seconds for profiler start/stop POSTs. "
-            "When unset, uses endpoint.timeout.",
+            f"When unset, uses {DEFAULT_CONTROL_HOOK_TIMEOUT_SECONDS}s.",
         ),
     ] = None
     start_path: Annotated[

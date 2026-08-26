@@ -13,6 +13,7 @@ from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.control_plane_http import ControlPlaneHttpError, control_plane_post
 from aiperf.common.redact import redact_url
 from aiperf.config.control_hooks import (
+    DEFAULT_CONTROL_HOOK_TIMEOUT_SECONDS,
     DEFAULT_RESET_KV_CACHE_PATH,
     DEFAULT_SERVER_PROFILER_START_PATH,
     DEFAULT_SERVER_PROFILER_STOP_PATH,
@@ -85,12 +86,12 @@ def prepare_endpoint_control_hooks(
     reset_timeout = (
         endpoint.reset_kv_cache.timeout_seconds
         if endpoint.reset_kv_cache and endpoint.reset_kv_cache.timeout_seconds
-        else endpoint.timeout
+        else DEFAULT_CONTROL_HOOK_TIMEOUT_SECONDS
     )
     profiler_timeout = (
         endpoint.server_profiler.timeout_seconds
         if endpoint.server_profiler and endpoint.server_profiler.timeout_seconds
-        else endpoint.timeout
+        else DEFAULT_CONTROL_HOOK_TIMEOUT_SECONDS
     )
     return PreparedEndpointControlHooks(
         timeout_s=float(reset_timeout),

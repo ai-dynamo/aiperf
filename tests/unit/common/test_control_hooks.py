@@ -33,6 +33,29 @@ def test_prepared_control_hooks_join_relative_paths_against_endpoint_origins() -
     assert hooks.profiler_stop_urls == ["http://127.0.0.1:8000/stop_profile"]
 
 
+def test_prepared_control_hooks_timeout_does_not_inherit_large_endpoint_timeout() -> (
+    None
+):
+    """reset_kv_cache/server_profiler timeouts must not inherit endpoint.timeout.
+
+    endpoint.timeout defaults to 6 hours (tuned for inference requests). If
+    reset_kv_cache/server_profiler fall back to it when their own
+    timeout_seconds is unset, a stalled control-hook POST blocks for hours
+    instead of failing fast (nvbugs 6671103).
+    """
+    endpoint = EndpointConfig.model_validate(
+        {
+            "urls": ["http://127.0.0.1:8000/v1/chat/completions"],
+            "timeout": 6 * 60 * 60,
+            "reset_kv_cache": True,
+            "server_profiler": True,
+        }
+    )
+    hooks = prepare_endpoint_control_hooks(endpoint)
+    assert hooks.timeout_s < 60
+    assert hooks.profiler_timeout_s < 60
+
+
 def test_prepared_control_hooks_dedupe_same_origin_across_url_paths() -> None:
     endpoint = EndpointConfig.model_validate(
         {
