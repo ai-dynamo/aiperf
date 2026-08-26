@@ -16,6 +16,7 @@ from aiperf.common.control_hooks import (
     stop_server_profiler,
 )
 from aiperf.common.control_plane_http import ControlPlaneHttpError
+from aiperf.config.control_hooks import DEFAULT_CONTROL_HOOK_TIMEOUT_SECONDS
 from aiperf.config.endpoint import EndpointConfig
 
 
@@ -52,8 +53,8 @@ def test_prepared_control_hooks_timeout_does_not_inherit_large_endpoint_timeout(
         }
     )
     hooks = prepare_endpoint_control_hooks(endpoint)
-    assert hooks.timeout_s < 60
-    assert hooks.profiler_timeout_s < 60
+    assert hooks.timeout_s == DEFAULT_CONTROL_HOOK_TIMEOUT_SECONDS
+    assert hooks.profiler_timeout_s == DEFAULT_CONTROL_HOOK_TIMEOUT_SECONDS
 
 
 def test_prepared_control_hooks_dedupe_same_origin_across_url_paths() -> None:
