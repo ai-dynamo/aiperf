@@ -526,6 +526,11 @@ Whole system:
   `hf` composer whose `infer_row_layout` auto-detects prompt/completion fields
   (message-array / flat / `context`+`input`) with explicit overrides and `/info`
   split-config resolution, on top of AIPerf's existing HF transport.
+- [`docs/specs/2026-08-25-native-random-pool-batch-sizes.md`](docs/specs/2026-08-25-native-random-pool-batch-sizes.md)
+  — planned four-modality file-backed random-pool batch sizing across native
+  CLI/YAML projection, content-aware associated/flattened composition, and
+  explicit refusal when batching would erase pool/group/cache identity or emit
+  an empty turn.
 
 Execution and scheduling:
 
