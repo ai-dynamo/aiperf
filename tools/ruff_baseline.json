@@ -46,6 +46,41 @@
     ],
     [
       "ANN201",
+      "src/aiperf/common/rng_parity/derive.py",
+      "RngRoot.derive"
+    ],
+    [
+      "ANN201",
+      "src/aiperf/common/rng_parity/dist.py",
+      "SamplingDistribution.inner"
+    ],
+    [
+      "ANN201",
+      "src/aiperf/common/rng_parity/generator.py",
+      "ParityRandomGenerator.choice"
+    ],
+    [
+      "ANN201",
+      "src/aiperf/common/rng_parity/generator.py",
+      "ParityRandomGenerator.integers"
+    ],
+    [
+      "ANN201",
+      "src/aiperf/common/rng_parity/generator.py",
+      "ParityRandomGenerator.normal"
+    ],
+    [
+      "ANN201",
+      "src/aiperf/common/rng_parity/generator.py",
+      "ParityRandomGenerator.numpy_choice"
+    ],
+    [
+      "ANN201",
+      "src/aiperf/common/rng_parity/generator.py",
+      "ParityRandomGenerator.weighted_choice"
+    ],
+    [
+      "ANN201",
       "src/aiperf/common/session_id_generator.py",
       "SessionIDGenerator.reset"
     ],
@@ -231,6 +266,16 @@
     ],
     [
       "C901",
+      "src/aiperf/accuracy/worker.py",
+      "AccuracyWorker._grade_lcb_batch"
+    ],
+    [
+      "C901",
+      "src/aiperf/accuracy/worker.py",
+      "AccuracyWorker._load_inherited"
+    ],
+    [
+      "C901",
       "src/aiperf/analysis/swim_lane.py",
       "plot_swim_lane"
     ],
@@ -246,8 +291,18 @@
     ],
     [
       "C901",
+      "src/aiperf/common/rng_parity/generator.py",
+      "ParityRandomGenerator.numpy_choice"
+    ],
+    [
+      "C901",
       "src/aiperf/common/tokenizer_validator.py",
       "preload_tokenizers"
+    ],
+    [
+      "C901",
+      "src/aiperf/config/config.py",
+      "AIPerfConfig._reject_unknown_envelope_keys"
     ],
     [
       "C901",
@@ -258,6 +313,11 @@
       "C901",
       "src/aiperf/config/flags/_converter_dataset.py",
       "_build_prompts"
+    ],
+    [
+      "C901",
+      "src/aiperf/config/flags/_converter_warmup.py",
+      "build_warmup"
     ],
     [
       "C901",
@@ -343,6 +403,11 @@
       "C901",
       "src/aiperf/gpu_telemetry/dcgm_collector.py",
       "DCGMTelemetryCollector._parse_metrics_to_records"
+    ],
+    [
+      "C901",
+      "src/aiperf/gpu_telemetry/worker.py",
+      "TelemetryWorker.configure"
     ],
     [
       "C901",
@@ -521,6 +586,11 @@
     ],
     [
       "C901",
+      "src/aiperf/rust_shims/live_streaming_worker.py",
+      "_serve"
+    ],
+    [
+      "C901",
       "src/aiperf/search_recipes/_itl_surface_fit.py",
       "_extract_2d_points"
     ],
@@ -606,6 +676,11 @@
     ],
     [
       "D103",
+      "src/aiperf/accuracy/worker.py",
+      "main"
+    ],
+    [
+      "D103",
       "src/aiperf/common/optional_dependencies.py",
       "install_optional_dependency_hint"
     ],
@@ -683,6 +758,26 @@
       "S110",
       "src/aiperf/plot/core/plot_generator.py",
       "PlotGenerator._get_metric_direction"
+    ],
+    [
+      "TID251",
+      "src/aiperf/accuracy/worker.py",
+      "serve::json.dumps"
+    ],
+    [
+      "TID251",
+      "src/aiperf/accuracy/worker.py",
+      "serve::json.loads"
+    ],
+    [
+      "TID251",
+      "src/aiperf/gpu_telemetry/worker.py",
+      "_main::json.dumps"
+    ],
+    [
+      "TID251",
+      "src/aiperf/gpu_telemetry/worker.py",
+      "_main::json.loads"
     ]
   ]
 }
