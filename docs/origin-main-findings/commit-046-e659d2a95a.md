@@ -34,3 +34,32 @@ user-owned FFmpeg installation.
   including stream codec/sample-rate inspection.
 - Add an executable Dockerfile contract that prevents an unrestricted codec
   build or stale H.264/AAC default from returning.
+
+## Closure evidence
+
+Implementation range: `f55276752c..5bff243287`.
+
+The port exercised a RED/GREEN Docker-policy regression test: it failed before
+the allowlist was restored and passes by parsing the complete FFmpeg
+`./configure` stanza, so an added enable flag is a regression as well as a
+missing one. A second RED/GREEN pass added a no-codec MP4 native E2E that
+probes VP9 video, Opus audio, and the Opus-mandated 48 kHz sample rate; the
+unchanged explicit audio-codec override is separately exercised.
+
+Fresh verification at the implementation tip:
+
+- `cargo fmt --manifest-path rust/Cargo.toml --all --check` and
+  `git diff --check f55276752c..HEAD` passed.
+- `cargo test --manifest-path rust/Cargo.toml -p aiperf-e2e-tests --test
+  test_video` with the isolated native binary passed: 19 passed, 0 failed.
+- `PYTHONPATH=/mnt/4tb/aiperf-origin-port-046/src ... pytest -q
+  tests/unit/dataset/generator/test_video_generator.py` passed: 55 passed.
+- The self-contained marked Python MP4/WebM container metadata integration
+  coverage passed: 2 passed.
+
+Self-Graham reviewed the changed runtime, Docker, and E2E hunks in two passes:
+no findings. Root independently performed a Graham review of
+`f55276752c..5bff243287` and approved it with no blocking, important, or style
+findings. Both reviews confirmed that explicit authored codecs remain
+unconstrained, the native MP4 default is libopus, and the E2E probes the
+wire-level codec results.
