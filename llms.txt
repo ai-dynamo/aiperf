@@ -68,8 +68,8 @@ purpose for each, so an agent knows which file to open for a given question.
   CLI and native controller/cell/results-sidecar roles; the independently packaged
   `aiperf-k8s-operator` owns reconciliation and the cluster-local durable-results
   API without importing `aiperf.*`. V1 ships only AIPerfJob; `validate` and
-  `profile` require an image-digest-bound capability document, while `sweep`,
-  `index`, and `dashboard` refuse. The immutable CR spec and per-run RBAC bind the
+  `profile` require an image-digest-bound capability document, while `init`,
+  `generate`, `sweep`, `index`, and `dashboard` refuse. The immutable CR spec and per-run RBAC bind the
   controller to status-only updates. The chart requires an explicit operator image
   repository and tag and installs JobSet, a fixed ClusterIP
   `aiperf-k8s-operator` Service, and a single-owner results PVC. The regular
@@ -77,7 +77,11 @@ purpose for each, so an agent knows which file to open for a given question.
   digest/length-checked artifacts, publishes the manifest last, and exits after
   durable acknowledgement. The service atomically publishes results under the
   namespace/job/run identity; `aiperf kube results` retrieves them through the
-  fixed Kubernetes Service proxy after producer deletion or operator restart.
+  fixed Kubernetes Service proxy after producer deletion or operator restart,
+  bounded by a 24-hour staging and 7-day published retention TTL.
+  `docs/specs/kubernetes-surface-gaps.md` is the companion ledger of what this
+  surface does not do, including the absent cross-host role-material minter that
+  currently blocks end-to-end cross-host Kubernetes and SLURM execution.
   This trusted namespace-level in-cluster service uses no application token,
   signature, public key, results-read Secret, authority ConfigMap, or external
   ingress. Controller and cell cellular bootstraps are separate from results.
