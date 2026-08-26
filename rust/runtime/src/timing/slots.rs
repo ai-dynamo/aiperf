@@ -885,6 +885,18 @@ mod tests {
     }
 
     #[test]
+    fn global_acquires_refuse_reserved_debt_until_drain_completes() {
+        let pool = GlobalSlotPool::new(1);
+        let held = pool.try_acquire().unwrap();
+        pool.debt.fetch_add(1, std::sync::atomic::Ordering::Release);
+        assert!(pool.try_acquire().is_none());
+        assert!(pool.try_acquire().is_none());
+        pool.debt.fetch_sub(1, std::sync::atomic::Ordering::Release);
+        drop(held);
+        assert!(pool.try_acquire().is_some());
+    }
+
+    #[test]
     fn global_increase_cancels_debt_before_adding_slots() {
         let pool = GlobalSlotPool::new(4);
         let mut guards: Vec<GlobalSlotGuard> =
