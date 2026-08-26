@@ -2205,6 +2205,90 @@ mod lowering_tests {
         }
     }
 
+    fn chat_payload(endpoint: &RawEndpointConfig) -> Value {
+        let turns = [text_turn()];
+        let request = PreparedRequest::new(
+            "gpt-test",
+            &turns,
+            None,
+            None,
+            CreditPhase::Profiling,
+            None,
+            None,
+            None,
+        );
+        let body = ChatEndpoint
+            .format_prepared_payload(&request, endpoint)
+            .expect("format chat payload");
+        let store = SegmentPool::new().freeze();
+        let bytes = JsonBodyMaterializer::materialize(&body, &store, &Overrides::new())
+            .expect("materialize chat payload");
+        serde_json::from_slice(&bytes).expect("decode chat payload")
+    }
+
+    #[test]
+    fn chat_per_chunk_usage_injects_only_when_opted_in() {
+        let mut endpoint = RawEndpointConfig {
+            streaming: true,
+            use_server_token_count: true,
+            per_chunk_usage: true,
+            ..RawEndpointConfig::default()
+        };
+        let enabled = chat_payload(&endpoint);
+        assert_eq!(
+            enabled["stream_options"],
+            json!({"include_usage": true, "continuous_usage_stats": true})
+        );
+
+        endpoint.per_chunk_usage = false;
+        let disabled = chat_payload(&endpoint);
+        assert_eq!(disabled["stream_options"], json!({"include_usage": true}));
+    }
+
+    #[test]
+    fn chat_per_chunk_usage_preserves_authored_stream_options() {
+        let endpoint = RawEndpointConfig {
+            streaming: true,
+            use_server_token_count: true,
+            per_chunk_usage: true,
+            extra: Some(Map::from_iter([(
+                "stream_options".to_owned(),
+                json!({
+                    "include_usage": false,
+                    "continuous_usage_stats": false,
+                    "unrelated": "retained"
+                }),
+            )])),
+            ..RawEndpointConfig::default()
+        };
+        assert_eq!(
+            chat_payload(&endpoint)["stream_options"],
+            json!({
+                "include_usage": false,
+                "continuous_usage_stats": false,
+                "unrelated": "retained"
+            })
+        );
+    }
+
+    #[test]
+    fn chat_per_chunk_usage_leaves_non_object_stream_options_unchanged() {
+        let endpoint = RawEndpointConfig {
+            streaming: true,
+            use_server_token_count: true,
+            per_chunk_usage: true,
+            extra: Some(Map::from_iter([(
+                "stream_options".to_owned(),
+                Value::String("authored-invalid-shape".to_owned()),
+            )])),
+            ..RawEndpointConfig::default()
+        };
+        assert_eq!(
+            chat_payload(&endpoint)["stream_options"],
+            "authored-invalid-shape"
+        );
+    }
+
     #[test]
     fn lowered_wire_matches_rendered_dispatch_wire_text_only() {
         let turn = text_turn();
