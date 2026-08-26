@@ -74,9 +74,9 @@ native `Clock`/`SimClock`, Hyper/Axum integration tests, Cargo, sccache.
   seamless phases hand off.
 - [x] Add a final-phase assertion proving authored seamless never creates an
   outbound transition past the end of the phase list.
-- [x] Retain the existing helper because the mapping assertions are already green;
-  existing helper and record that the RED phase was an assertion-tightening
-  failure against the old incomplete test contract.
+- [x] Retain the existing helper because the mapping assertions are already
+  green; record that the mapping slice tightened the old incomplete test
+  contract while the profiler slice exposed the production RED.
 - [x] Run focused engine tests to GREEN and commit the slice.
 
 ### Task 3: Port applicable lifecycle tests and integration evidence
@@ -98,7 +98,7 @@ native `Clock`/`SimClock`, Hyper/Axum integration tests, Cargo, sccache.
 - [x] Add a failing ownership test proving overlapping profiling phases emit one
   start and one last-owner stop.
 - [x] Add native phase-sidecar return-drain and cellular overlap regressions.
-- [ ] Commit any required integration coverage separately.
+- [x] Commit the integration coverage and profiler ownership implementation.
 
 ### Task 4: Full verification and Graham review
 
@@ -112,14 +112,14 @@ native `Clock`/`SimClock`, Hyper/Axum integration tests, Cargo, sccache.
 - Produces zero unresolved Critical/Important findings, fresh test receipts,
   exact ancestry/tree proof, and tracker closure.
 
-- [ ] Run formatting, focused tests, runtime library tests with and without
+- [x] Run formatting, focused tests, runtime library tests with and without
   `engine`, changed-scope Clippy, and range whitespace checks using sccache and
   the dedicated `/mnt/4tb` target.
-- [ ] Perform a fresh full Graham review over the exact base-to-tip range.
-- [ ] Repair every Critical/Important finding with a regression test first and
-  repeat review until approved.
-- [ ] Request a separate independent Graham review from the parent agent and
+- [x] Perform a fresh full Graham review over the exact base-to-tip range.
+- [x] Confirm both reviews report no Critical/Important finding requiring a
+  repair cycle.
+- [x] Request a separate independent Graham review from the parent agent and
   obtain explicit approval before closure.
-- [ ] Commit review receipts and closure evidence only after both approvals.
-- [ ] Verify exact merge parents, first-parent tree equality, clean status, and
+- [x] Commit review receipts and closure evidence only after both approvals.
+- [x] Verify exact merge parents, first-parent tree equality, clean status, and
   absence of imported upstream Python changes.

@@ -80,4 +80,30 @@ not a cherry-pick or Python-tree import.
 
 ## Closure evidence
 
-Pending implementation, verification, and two Graham approvals.
+Complete.
+
+- Design/finding: `36645b8b441a73e0b56f05960d4be56ef60838bb`.
+- Exact target-specific merge: `82526331217f6cc85f621994dc56413d8698aede`.
+  Its parents are native first parent
+  `36645b8b441a73e0b56f05960d4be56ef60838bb` and exact upstream second parent
+  `ade1f69eb13dfa0e87e49b2c027f6fe29c03d402`; merge tree and first-parent tree
+  are both `c93040d69c790985db48bc04fa5edfe3d3a15bd7`.
+- Authored-direction characterization: `009f3a749c`.
+- Profiler ownership implementation and integration coverage: `3099426314`.
+- Focused results: authored direction `1/1`, local profiler ownership `1/1`,
+  cellular profiler overlap `1/1`, real-HTTP phase runtime `1/1`, simulated
+  phase runtime `5/5`, orchestrator `6/6`, and runner `8/8`.
+- Default runtime suite: `1804 passed`, `1 failed`, `7 ignored`. The only
+  failure is the unchanged `aiperf_version` snapshot drift (`0.12.0` actual vs
+  `0.0.0` expected).
+- Engine library suite: `2364 passed`, `5 failed`, `7 ignored`. The failures are
+  unchanged base-tree issues: two absent recorded-agent fixtures, one transport
+  registry setup panic, one stale custom-transport decode fixture, and the same
+  version snapshot drift.
+- Changed-scope Clippy, Rust formatting, docs-current, and range whitespace
+  checks pass. Full `--tests` Clippy reaches unrelated existing compile errors
+  in `agentx_online_e2e` because two initializers omit
+  `cache_bust_first_user_turn`.
+- Self Graham review: APPROVED in `c3111b19fc`, with no Critical/Important
+  findings. Independent parent Graham review of `482f859241..c3111b19fc`:
+  APPROVED after two passes, with no Critical/Important findings.
