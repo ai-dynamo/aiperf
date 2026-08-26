@@ -61,9 +61,7 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
         anyhow::bail!("unknown native Kubernetes command {command}");
     }
     if command == "index" {
-        anyhow::bail!(
-            "native Kubernetes {command} is unavailable: the shipped operator supports only AIPerfJob"
-        );
+        return run_index(args);
     }
     if command == "generate" {
         return run_generate(&args[1..]);
@@ -116,6 +114,45 @@ fn report_document(
     }
     println!("{}", render(format, &response.body)?);
     Ok(0)
+}
+
+/// List every retained result run the operator holds for one namespace.
+fn run_index(args: &[String]) -> anyhow::Result<i32> {
+    let client = KubeClient::from_options(&auth_options(args)?)?;
+    let namespace = namespace(args)?;
+    let format = OutputFormat::from_args(args)?;
+    let operator_prefix = operator_service_proxy(args)?;
+    println!(
+        "{}",
+        index_report(&client, &operator_prefix, namespace, format)?
+    );
+    Ok(0)
+}
+
+/// Fetch and render the operator's retained result index for one namespace.
+///
+/// The request travels the same authenticated Kubernetes Service proxy the
+/// `results` command uses, so the durable index is reachable without any
+/// additional ingress.
+pub(super) fn index_report(
+    client: &KubeClient,
+    operator_prefix: &str,
+    namespace: &str,
+    format: OutputFormat,
+) -> anyhow::Result<String> {
+    let response = client.execute(
+        "GET",
+        &format!("{operator_prefix}/api/results/{}", encode_segment(namespace)),
+        "",
+        Vec::new(),
+    )?;
+    if !response.is_success() {
+        anyhow::bail!(
+            "native Kubernetes index API request returned HTTP {}",
+            response.status
+        );
+    }
+    Ok(render(format, &response.body)?)
 }
 
 /// Bounded artifact transfer through the operator Service proxy after Job completion.
@@ -906,6 +943,9 @@ fn help() -> anyhow::Result<i32> {
     println!("aiperf kube <{}>", COMMANDS.join("|"));
     println!(
         "aiperf kube results <job> [--run-id <id>] [--operator-service <name>] [--operator-namespace <namespace>]"
+    );
+    println!(
+        "aiperf kube index [--namespace <namespace>] [--operator-service <name>] [--operator-namespace <namespace>]"
     );
     Ok(0)
 }

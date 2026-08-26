@@ -82,6 +82,20 @@ fn summarize(item: &Value) -> String {
         .pointer("/metadata/namespace")
         .and_then(Value::as_str)
         .unwrap_or("<none>");
+    // Retained result-index items carry `ready` and `artifactCount` instead of
+    // the `status.phase` a custom resource reports.
+    if let Some(is_ready) = item.get("ready").and_then(Value::as_bool) {
+        let job = item
+            .get("jobId")
+            .and_then(Value::as_str)
+            .unwrap_or("<unknown>");
+        let artifacts = item
+            .get("artifactCount")
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
+        let state = if is_ready { "Ready" } else { "Pending" };
+        return format!("{namespace}/{name}\t{job}\t{state}\t{artifacts} artifact(s)");
+    }
     let phase = item
         .pointer("/status/phase")
         .and_then(Value::as_str)
