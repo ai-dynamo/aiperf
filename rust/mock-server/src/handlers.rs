@@ -251,7 +251,7 @@ fn spec_decode_acceptance_fixture() -> &'static Value {
         json!({
             "mean_acceptance_length": 3.25,
             "draft_acceptance_rate": 0.5625,
-            "acceptance_histogram": {"0": 1, "1": 1, "2": 2, "3": 3, "4": 1},
+            "acceptance_histogram": [1, 1, 2, 3, 1],
             "num_accepted_draft_tokens": 18,
             "num_draft_tokens": 32,
             "num_spec_steps": 8,
@@ -670,9 +670,18 @@ struct ChatResponseMessage<'a> {
 struct ChatResponseChoice<'a> {
     index: u32,
     finish_reason: &'a str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    speculative_decoding_stats: Option<&'a Value>,
     message: ChatResponseMessage<'a>,
+}
+
+#[derive(Serialize)]
+struct SpecDecodeMetrics<'a> {
+    speculative_decoding: &'a Value,
+}
+
+fn spec_decode_metrics(is_enabled: bool) -> Option<SpecDecodeMetrics<'static>> {
+    is_enabled.then(|| SpecDecodeMetrics {
+        speculative_decoding: spec_decode_acceptance_fixture(),
+    })
 }
 
 #[derive(Serialize)]
@@ -683,6 +692,8 @@ struct ChatResponse<'a> {
     model: &'a str,
     choices: [ChatResponseChoice<'a>; 1],
     usage: &'a Usage,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    metrics: Option<SpecDecodeMetrics<'static>>,
 }
 
 /// Serializes as a single JSON string equal to the concatenation of `tokens`,
@@ -756,10 +767,6 @@ fn write_chat_response_bytes(
     serde_json::to_writer(&mut buf, model).unwrap();
     buf.extend_from_slice(br#","choices":[{"index":0,"finish_reason":"#);
     serde_json::to_writer(&mut buf, finish_reason).unwrap();
-    if spec_decode_acceptance {
-        buf.extend_from_slice(br#","speculative_decoding_stats":"#);
-        serde_json::to_writer(&mut buf, spec_decode_acceptance_fixture()).unwrap();
-    }
     buf.extend_from_slice(br#","message":{"role":"assistant","content":"#);
     serde_json::to_writer(&mut buf, &TokenJoin(content_tokens)).unwrap();
     if !reasoning_tokens.is_empty() {
@@ -777,6 +784,11 @@ fn write_chat_response_bytes(
     }
     buf.extend_from_slice(br#"}}],"usage":"#);
     serde_json::to_writer(&mut buf, usage).unwrap();
+    if spec_decode_acceptance {
+        buf.extend_from_slice(br#","metrics":{"speculative_decoding":"#);
+        serde_json::to_writer(&mut buf, spec_decode_acceptance_fixture()).unwrap();
+        buf.push(b'}');
+    }
     buf.push(b'}');
     buf
 }
@@ -844,8 +856,6 @@ mod chat_response_serialize_tests {
             choices: [ChatResponseChoice {
                 index: 0,
                 finish_reason,
-                speculative_decoding_stats: spec_decode_acceptance
-                    .then_some(spec_decode_acceptance_fixture()),
                 message: ChatResponseMessage {
                     role: "assistant",
                     content: content_tokens.concat(),
@@ -854,6 +864,7 @@ mod chat_response_serialize_tests {
                 },
             }],
             usage,
+            metrics: spec_decode_metrics(spec_decode_acceptance),
         };
         serde_json::to_vec(&resp).unwrap()
     }
@@ -865,16 +876,19 @@ mod chat_response_serialize_tests {
         // in every user-influenced field, so escaping parity is exercised.
         let content = vec![" he\"llo".to_string(), " wo\\rld\n".to_string()];
         let reasoning = vec!["think ".to_string(), "hard".to_string()];
-        let cases: Vec<(&str, Option<ToolCallSpec>, &[String])> =
-            vec![("plain", None, &[]), ("reasoning", None, &reasoning)];
-        for (label, tc, rsn) in cases {
+        let cases: Vec<(&str, bool, Option<ToolCallSpec>, &[String])> = vec![
+            ("plain", false, None, &[]),
+            ("reasoning", false, None, &reasoning),
+            ("spec_decode", true, None, &[]),
+        ];
+        for (label, spec_decode, tc, rsn) in cases {
             let got = write_chat_response_bytes(
                 "chatcmpl-x\"1",
                 "mo\"del",
                 1234567890,
                 "stop",
                 tc.as_ref(),
-                false,
+                spec_decode,
                 &content,
                 rsn,
                 &usage,
@@ -885,7 +899,7 @@ mod chat_response_serialize_tests {
                 1234567890,
                 "stop",
                 tc.as_ref(),
-                false,
+                spec_decode,
                 &content,
                 rsn,
                 &usage,
@@ -960,9 +974,6 @@ fn build_chat_response(ctx: &RequestCtx) -> ChatResponse<'_> {
         choices: [ChatResponseChoice {
             index: 0,
             finish_reason,
-            speculative_decoding_stats: ctx
-                .spec_decode_acceptance
-                .then_some(spec_decode_acceptance_fixture()),
             message: ChatResponseMessage {
                 role: "assistant",
                 content: ctx.tokenized.content(),
@@ -971,6 +982,7 @@ fn build_chat_response(ctx: &RequestCtx) -> ChatResponse<'_> {
             },
         }],
         usage: &ctx.usage,
+        metrics: spec_decode_metrics(ctx.spec_decode_acceptance),
     }
 }
 
@@ -983,7 +995,7 @@ mod spec_decode_acceptance_tests {
         json!({
             "mean_acceptance_length": 3.25,
             "draft_acceptance_rate": 0.5625,
-            "acceptance_histogram": {"0": 1, "1": 1, "2": 2, "3": 3, "4": 1},
+            "acceptance_histogram": [1, 1, 2, 3, 1],
             "num_accepted_draft_tokens": 18,
             "num_draft_tokens": 32,
             "num_spec_steps": 8,
@@ -1014,6 +1026,17 @@ mod spec_decode_acceptance_tests {
         })
     }
 
+    fn completion_request(stream: bool, include_usage: bool) -> CompletionRequest {
+        serde_json::from_value(json!({
+            "model": "test-model",
+            "prompt": ["hello"],
+            "stream": stream,
+            "stream_options": {"include_usage": include_usage},
+            "max_tokens": 2
+        }))
+        .unwrap()
+    }
+
     fn sse_values(body: &[u8]) -> Vec<Value> {
         String::from_utf8_lossy(body)
             .split("\n\n")
@@ -1024,45 +1047,49 @@ mod spec_decode_acceptance_tests {
     }
 
     #[tokio::test]
-    async fn nonstream_choice_carries_opt_in_canonical_stats() {
+    async fn nonstream_chat_carries_root_metrics() {
         let state = enabled_state();
         let (content_type, body) = render_chat_completion_fast(&state, &request(false));
         assert_eq!(content_type, "application/json");
         let response: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(
-            response["choices"][0]["speculative_decoding_stats"],
+            response["metrics"]["speculative_decoding"],
             expected_stats()
+        );
+        assert!(
+            response["choices"][0]
+                .get("speculative_decoding_stats")
+                .is_none()
         );
     }
 
     #[tokio::test]
-    async fn stream_emits_finish_only_stats_before_usage_only_chunk() {
+    async fn streaming_chat_carries_metrics_on_the_usage_chunk() {
         let state = enabled_state();
         let (content_type, body) = render_chat_completion_fast(&state, &request(true));
         assert_eq!(content_type, "text/event-stream");
         let frames = sse_values(&body);
 
-        let (finish_index, finish) = frames
+        let finish = frames
             .iter()
-            .enumerate()
-            .find(|(_, frame)| frame["choices"][0]["finish_reason"] == "length")
+            .find(|frame| frame["choices"][0]["finish_reason"] == "length")
             .expect("finish-reason frame");
-        assert_eq!(finish["choices"][0]["delta"], json!({}));
-        assert_eq!(
-            finish["choices"][0]["speculative_decoding_stats"],
-            expected_stats()
+        assert!(
+            finish["choices"][0]
+                .get("speculative_decoding_stats")
+                .is_none()
         );
         assert!(finish.get("usage").is_none());
 
-        let usage_index = frames
+        let usage = frames
             .iter()
-            .position(|frame| frame["choices"] == json!([]) && frame.get("usage").is_some())
+            .find(|frame| frame["choices"] == json!([]) && frame.get("usage").is_some())
             .expect("usage-only frame");
-        assert!(finish_index < usage_index);
+        assert_eq!(usage["metrics"]["speculative_decoding"], expected_stats());
     }
 
     #[tokio::test]
-    async fn zero_output_tool_call_defers_finish_to_stats_chunk() {
+    async fn zero_output_tool_call_finishes_before_root_metrics() {
         let state = AppState::build(MockServerConfig {
             fast: true,
             no_tokenizer: true,
@@ -1080,27 +1107,46 @@ mod spec_decode_acceptance_tests {
             .filter(|frame| frame["choices"][0]["delta"].get("tool_calls").is_some())
             .collect();
         assert_eq!(tool_frames.len(), 2);
-        assert!(
-            tool_frames
-                .iter()
-                .all(|frame| frame["choices"][0]["finish_reason"].is_null())
-        );
-
-        let (finish_index, finish) = frames
+        assert_eq!(tool_frames[1]["choices"][0]["finish_reason"], "tool_calls");
+        let usage = frames
             .iter()
-            .enumerate()
-            .find(|(_, frame)| frame["choices"][0]["finish_reason"] == "tool_calls")
-            .expect("finish-only stats frame");
-        assert_eq!(finish["choices"][0]["delta"], json!({}));
+            .find(|frame| frame["choices"] == json!([]) && frame.get("usage").is_some())
+            .expect("usage-only frame");
+        assert_eq!(usage["metrics"]["speculative_decoding"], expected_stats());
+    }
+
+    #[tokio::test]
+    async fn completions_emit_the_same_root_wire_in_both_modes() {
+        let state = enabled_state();
+        let (content_type, body) =
+            render_text_completion_fast(&state, &completion_request(false, true));
+        assert_eq!(content_type, "application/json");
+        let response: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(
-            finish["choices"][0]["speculative_decoding_stats"],
+            response["metrics"]["speculative_decoding"],
             expected_stats()
         );
-        let usage_index = frames
+
+        let (content_type, body) =
+            render_text_completion_fast(&state, &completion_request(true, true));
+        assert_eq!(content_type, "text/event-stream");
+        let frames = sse_values(&body);
+        let usage = frames
             .iter()
-            .position(|frame| frame["choices"] == json!([]) && frame.get("usage").is_some())
+            .find(|frame| frame["choices"] == json!([]) && frame.get("usage").is_some())
             .expect("usage-only frame");
-        assert!(finish_index < usage_index);
+        assert_eq!(usage["metrics"]["speculative_decoding"], expected_stats());
+    }
+
+    #[tokio::test]
+    async fn streaming_metrics_require_the_usage_chunk() {
+        let state = enabled_state();
+        let (_, body) = render_text_completion_fast(&state, &completion_request(true, false));
+        assert!(
+            sse_values(&body)
+                .iter()
+                .all(|frame| frame.get("metrics").is_none())
+        );
     }
 }
 
@@ -1284,7 +1330,7 @@ pub async fn text_completions(
 }
 
 fn build_completion_response(ctx: &RequestCtx) -> Value {
-    json!({
+    let mut response = json!({
         "id": ctx.request_id,
         "object": "text_completion",
         "created": now_secs(),
@@ -1295,7 +1341,16 @@ fn build_completion_response(ctx: &RequestCtx) -> Value {
             "text": ctx.tokenized.content(),
         }],
         "usage": ctx.usage,
-    })
+    });
+    if ctx.spec_decode_acceptance
+        && let Value::Object(object) = &mut response
+    {
+        object.insert(
+            "metrics".to_owned(),
+            json!({"speculative_decoding": spec_decode_acceptance_fixture()}),
+        );
+    }
+    response
 }
 
 /// Token-native usage has no reasoning split.
@@ -2883,8 +2938,6 @@ struct ChatChoiceDelta<'a> {
     index: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     finish_reason: Option<&'static str>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    speculative_decoding_stats: Option<&'a Value>,
     delta: ChatDelta<'a>,
 }
 
@@ -2941,6 +2994,8 @@ struct ChatStreamUsageChunk<'a> {
     model: &'a str,
     choices: [(); 0],
     usage: &'a crate::models::Usage,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    metrics: Option<SpecDecodeMetrics<'static>>,
 }
 
 #[derive(serde::Serialize)]
@@ -2968,6 +3023,8 @@ struct TextStreamUsageChunk<'a> {
     model: &'a str,
     choices: [(); 0],
     usage: &'a crate::models::Usage,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    metrics: Option<SpecDecodeMetrics<'static>>,
 }
 
 #[derive(serde::Serialize)]
@@ -3050,7 +3107,6 @@ fn render_chat_fast_body(ctx: &RequestCtx, include_usage: bool) -> Bytes {
             choices: [ChatChoiceDelta {
                 index: 0,
                 finish_reason: None,
-                speculative_decoding_stats: None,
                 delta: ChatDelta {
                     role: Some("assistant"),
                     content: None,
@@ -3071,7 +3127,7 @@ fn render_chat_fast_body(ctx: &RequestCtx, include_usage: bool) -> Bytes {
         } else {
             None
         };
-        let finish = if i + 1 == num && !has_tool_call && !ctx.spec_decode_acceptance {
+        let finish = if i + 1 == num && !has_tool_call {
             Some(ctx.tokenized.finish_reason)
         } else {
             None
@@ -3084,7 +3140,6 @@ fn render_chat_fast_body(ctx: &RequestCtx, include_usage: bool) -> Bytes {
             choices: [ChatChoiceDelta {
                 index: 0,
                 finish_reason: finish,
-                speculative_decoding_stats: None,
                 delta: ChatDelta {
                     role,
                     content: Some(token.as_str()),
@@ -3098,13 +3153,9 @@ fn render_chat_fast_body(ctx: &RequestCtx, include_usage: bool) -> Bytes {
 
     if let Some(tc) = &ctx.tool_call {
         let lead_role = !has_reasoning && num == 0;
-        for chunk in tool_call_frames(ctx, created, tc, lead_role, !ctx.spec_decode_acceptance) {
+        for chunk in tool_call_frames(ctx, created, tc, lead_role, true) {
             write_sse_into(&mut buf, &chunk);
         }
-    }
-
-    if ctx.spec_decode_acceptance {
-        write_sse_into(&mut buf, &spec_decode_finish_chunk(ctx, created));
     }
 
     if include_usage {
@@ -3115,6 +3166,7 @@ fn render_chat_fast_body(ctx: &RequestCtx, include_usage: bool) -> Bytes {
             model: &ctx.model,
             choices: [],
             usage: &ctx.usage,
+            metrics: spec_decode_metrics(ctx.spec_decode_acceptance),
         };
         write_sse_into(&mut buf, &usage_chunk);
     }
@@ -3155,6 +3207,7 @@ fn render_text_fast_body(ctx: &RequestCtx, include_usage: bool) -> Bytes {
             model: &ctx.model,
             choices: [],
             usage: &ctx.usage,
+            metrics: spec_decode_metrics(ctx.spec_decode_acceptance),
         };
         write_sse_into(&mut buf, &usage_chunk);
     }
@@ -3207,7 +3260,6 @@ fn tool_call_frames<'a>(
         choices: [ChatChoiceDelta {
             index: 0,
             finish_reason: None,
-            speculative_decoding_stats: None,
             delta: ChatDelta {
                 role: if lead_role { Some("assistant") } else { None },
                 content: None,
@@ -3232,7 +3284,6 @@ fn tool_call_frames<'a>(
         choices: [ChatChoiceDelta {
             index: 0,
             finish_reason: emit_finish_reason.then_some("tool_calls"),
-            speculative_decoding_stats: None,
             delta: ChatDelta {
                 role: None,
                 content: None,
@@ -3250,30 +3301,6 @@ fn tool_call_frames<'a>(
         }],
     };
     [open, close]
-}
-
-fn spec_decode_finish_chunk(ctx: &RequestCtx, created: i64) -> ChatStreamChunk<'_> {
-    ChatStreamChunk {
-        id: &ctx.request_id,
-        object: "chat.completion.chunk",
-        created,
-        model: &ctx.model,
-        choices: [ChatChoiceDelta {
-            index: 0,
-            finish_reason: Some(if ctx.tool_call.is_some() {
-                "tool_calls"
-            } else {
-                ctx.tokenized.finish_reason
-            }),
-            speculative_decoding_stats: Some(spec_decode_acceptance_fixture()),
-            delta: ChatDelta {
-                role: None,
-                content: None,
-                reasoning_content: None,
-                tool_calls: None,
-            },
-        }],
-    }
 }
 
 fn chat_stream(
@@ -3308,7 +3335,6 @@ fn chat_stream(
                     choices: [ChatChoiceDelta {
                         index: 0,
                         finish_reason: None,
-                        speculative_decoding_stats: None,
                         delta: ChatDelta {
                             role,
                             content: Some(token.as_str()),
@@ -3386,7 +3412,6 @@ fn chat_stream(
                 choices: [ChatChoiceDelta {
                     index: 0,
                     finish_reason: None,
-                    speculative_decoding_stats: None,
                     delta: ChatDelta {
                         role: Some("assistant"),
                         content: None,
@@ -3428,7 +3453,7 @@ fn chat_stream(
             idx += 1;
             state.recorder.record_streamed_token_fast(&labeled);
             let role = if i == 0 && !has_reasoning { Some("assistant") } else { None };
-            let finish = if i + 1 == num && !has_tool_call && !ctx.spec_decode_acceptance {
+            let finish = if i + 1 == num && !has_tool_call {
                 Some(ctx.tokenized.finish_reason)
             } else {
                 None
@@ -3448,7 +3473,6 @@ fn chat_stream(
                     choices: [ChatChoiceDelta {
                         index: 0,
                         finish_reason: finish,
-                        speculative_decoding_stats: None,
                         delta: ChatDelta {
                             role,
                             content: Some(token.as_str()),
@@ -3468,16 +3492,10 @@ fn chat_stream(
                 created,
                 tc,
                 lead_role,
-                !ctx.spec_decode_acceptance,
+                true,
             ) {
                 yield Ok::<Bytes, Infallible>(sse_chunk_ser(&chunk));
             }
-        }
-
-        if ctx.spec_decode_acceptance {
-            yield Ok::<Bytes, Infallible>(sse_chunk_ser(&spec_decode_finish_chunk(
-                &ctx, created,
-            )));
         }
 
         if include_usage {
@@ -3488,6 +3506,7 @@ fn chat_stream(
                 model: &ctx.model,
                 choices: [],
                 usage: &ctx.usage,
+                metrics: spec_decode_metrics(ctx.spec_decode_acceptance),
             };
             yield Ok::<Bytes, Infallible>(sse_chunk_ser(&usage_chunk));
         }
@@ -3706,6 +3725,7 @@ fn text_stream(
                 model: &ctx.model,
                 choices: [],
                 usage: &ctx.usage,
+                metrics: spec_decode_metrics(ctx.spec_decode_acceptance),
             };
             yield Ok::<Bytes, Infallible>(sse_chunk_ser(&usage_chunk));
         }
@@ -4272,7 +4292,6 @@ mod stream_frame_tests {
             choices: [ChatChoiceDelta {
                 index: 0,
                 finish_reason: None,
-                speculative_decoding_stats: None,
                 delta: ChatDelta {
                     role: None,
                     content: Some(token),

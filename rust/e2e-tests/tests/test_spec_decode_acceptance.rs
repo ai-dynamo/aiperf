@@ -45,10 +45,19 @@ async fn harness(is_enabled: bool) -> AIPerfHarness {
 }
 
 fn run_case(h: &AIPerfHarness) -> RunResult {
+    run_endpoint_case(h, "chat", true, REQUESTS)
+}
+
+fn run_endpoint_case(
+    h: &AIPerfHarness,
+    endpoint_type: &str,
+    is_streaming: bool,
+    request_count: usize,
+) -> RunResult {
+    let streaming = if is_streaming { "--streaming" } else { "" };
     h.run(&format!(
-        "--model test-model --url {} --endpoint-type chat --streaming \
-         --extra-inputs '{{\"stream_options\":{{\"include_usage\":true}}}}' \
-         --use-server-token-count --request-count {REQUESTS} --concurrency 1 \
+        "--model test-model --url {} --endpoint-type {endpoint_type} {streaming} \
+         --request-count {request_count} --concurrency 1 \
          --workers-max 1 --export-level raw --ui simple --tokenizer builtin",
         h.mock.url
     ))
@@ -155,6 +164,27 @@ async fn canonical_stats_flow_through_real_profile_console_and_artifacts() {
     assert_eq!(records.len(), REQUESTS);
     for record in &records {
         assert_per_record_stats(record);
+    }
+}
+
+#[tokio::test]
+async fn root_metrics_flow_through_remaining_endpoint_and_stream_modes() {
+    let h = harness(true).await;
+    for (endpoint_type, is_streaming) in [
+        ("chat", false),
+        ("completions", false),
+        ("completions", true),
+    ] {
+        let result = run_endpoint_case(&h, endpoint_type, is_streaming, 1);
+        assert!(
+            result.success(),
+            "{endpoint_type} streaming={is_streaming} profile failed:\nstdout:\n{}\nstderr:\n{}",
+            result.stdout,
+            result.stderr
+        );
+        let records = result.artifacts.jsonl();
+        assert_eq!(records.len(), 1);
+        assert_per_record_stats(&records[0]);
     }
 }
 
