@@ -3228,22 +3228,25 @@ mod tests {
 
     #[test]
     fn records_false_produces_no_formats() {
-        let run = resolve_str(
-            &cfg("  artifacts: {records: false}\n  phases: {type: concurrency, requests: 1, concurrency: 1}\n"),
-            Some("/tmp/x".into()),
-        )
-        .expect("false disables record export");
-        assert!(run.cfg.records_formats.is_empty());
+        let inputs = resolve_inputs(
+            "  artifacts: {records: false}\n  phases: {type: concurrency, requests: 1, concurrency: 1}\n",
+        );
+        assert!(inputs.records_formats.is_empty());
     }
 
     #[test]
     fn records_list_preserves_formats() {
-        let run = resolve_str(
-            &cfg("  artifacts: {records: [jsonl, csv]}\n  phases: {type: concurrency, requests: 1, concurrency: 1}\n"),
-            Some("/tmp/x".into()),
-        )
-        .expect("record formats resolve");
-        assert_eq!(run.cfg.records_formats, ["jsonl", "csv"]);
+        let inputs = resolve_inputs(
+            "  artifacts: {records: [jsonl, csv]}\n  phases: {type: concurrency, requests: 1, concurrency: 1}\n",
+        );
+        assert_eq!(inputs.records_formats, ["jsonl", "csv"]);
+    }
+
+    fn resolve_inputs(body: &str) -> super::Inputs {
+        let raw: serde_json::Value = serde_yaml::from_str(&cfg(body)).expect("valid YAML");
+        let expanded = crate::expand::expand_config(raw).expect("config expands");
+        resolve_expanded_inputs(expanded, Some("/tmp/x".into()), None)
+            .expect("inputs resolve")
     }
 
     /// The authored inline peak form must reach the wire as the nested
