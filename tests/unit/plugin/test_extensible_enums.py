@@ -6,6 +6,7 @@ from typing import Self
 
 import pytest
 from pydantic import BaseModel, ValidationError
+from pytest import param
 
 from aiperf.plugin.extensible_enums import (
     ExtensibleStrEnum,
@@ -248,6 +249,19 @@ class TestExtensibleStrEnum:
         assert ext.__dict__.get("_norm_value_cache") == "ext"
         assert hash(ext) == hash("ext")
         assert ext.__dict__.get("_norm_hash_cache") == hash("ext")
+
+    def test_norm_value_populated_on_never_used_extension(self: Self) -> None:
+        class TestEnum(ExtensibleStrEnum):
+            BASE = "base"
+
+        TestEnum.register("FOO_BAR", "foo_bar")
+        ext = TestEnum.FOO_BAR
+        assert "_norm_value_cache" not in ext.__dict__
+        assert "_norm_hash_cache" not in ext.__dict__
+
+        assert ext == "FOO-BAR"
+        assert hash(ext) == hash("foo_bar")
+        assert ext.__dict__.get("_norm_value_cache") == "foo_bar"
 
 
 # =============================================================================
@@ -712,3 +726,90 @@ class TestDashUnderscoreNormalization:
         assert EnumA.ITEM == "foo_bar"
         assert EnumB.ITEM == "foo-bar"
         assert EnumB.ITEM == "foo_bar"
+
+
+class TestNotEqualMirrorsEqual:
+    """`!=` must remain the exact negation of normalized `==`."""
+
+    @pytest.fixture
+    def enum_with_underscores(self) -> type[ExtensibleStrEnum]:
+        class UnderscoreEnum(ExtensibleStrEnum):
+            FOO_BAR = "foo_bar"
+            BAZ_QUX = "baz_qux"
+
+        return UnderscoreEnum
+
+    @pytest.mark.parametrize(
+        "other",
+        [
+            "alpha",
+            "ALPHA",
+            "Alpha",
+            "aLpHa",
+            "beta",
+            "nonexistent",
+            123,
+            None,
+            [],
+            SampleEnum.ALPHA,
+            SampleEnum.BETA,
+        ],
+    )  # fmt: skip
+    def test_ne_is_negation_of_eq(self: Self, other: object) -> None:
+        assert (SampleEnum.ALPHA != other) is not (SampleEnum.ALPHA == other)  # noqa: SIM300
+
+    @pytest.mark.parametrize(
+        "other",
+        ["foo_bar", "foo-bar", "FOO_BAR", "FOO-BAR", "Foo-Bar"],
+    )  # fmt: skip
+    def test_ne_false_for_normalized_match(
+        self: Self, enum_with_underscores: type[ExtensibleStrEnum], other: str
+    ) -> None:
+        assert (enum_with_underscores.FOO_BAR != other) is False  # noqa: SIM300
+
+    @pytest.mark.parametrize(
+        "other",
+        ["foo_bar", "foo-bar", "FOO_BAR", "FOO-BAR", "Foo-Bar"],
+    )  # fmt: skip
+    def test_ne_false_with_string_on_the_left(
+        self: Self, enum_with_underscores: type[ExtensibleStrEnum], other: str
+    ) -> None:
+        assert (other != enum_with_underscores.FOO_BAR) is False
+
+    def test_ne_true_for_different_member(
+        self: Self, enum_with_underscores: type[ExtensibleStrEnum]
+    ) -> None:
+        assert (enum_with_underscores.FOO_BAR != enum_with_underscores.BAZ_QUX) is True
+
+    def test_ne_false_for_registered_extension_spellings(self: Self) -> None:
+        class TestEnum(ExtensibleStrEnum):
+            BASE = "base"
+
+        TestEnum.register("FOO_BAR", "foo_bar")
+
+        assert (TestEnum.FOO_BAR != "foo-bar") is False
+        assert (TestEnum.FOO_BAR != "FOO-BAR") is False
+        assert (TestEnum.FOO_BAR != "base") is True
+
+    def test_ne_false_across_enums_with_same_normalized_value(self: Self) -> None:
+        class EnumA(ExtensibleStrEnum):
+            ITEM = "foo_bar"
+
+        class EnumB(ExtensibleStrEnum):
+            ITEM = "foo-bar"
+
+        assert (EnumA.ITEM != EnumB.ITEM) is False
+
+    def test_ne_true_for_non_string_types(self: Self) -> None:
+        assert (SampleEnum.ALPHA != 123) is True
+        assert (SampleEnum.ALPHA != None) is True  # noqa: E711
+        assert (SampleEnum.ALPHA != []) is True
+
+    @pytest.mark.parametrize(
+        "other",
+        [param(123, id="int"), param(None, id="none"), param([], id="list"), param(4.5, id="float")],
+    )  # fmt: skip
+    def test_ne_forwards_notimplemented_for_unsupported_operands(
+        self: Self, other: object
+    ) -> None:
+        assert SampleEnum.ALPHA.__ne__(other) is NotImplemented

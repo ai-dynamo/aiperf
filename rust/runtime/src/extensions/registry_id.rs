@@ -131,6 +131,17 @@ mod tests {
     }
 
     #[test]
+    fn normalized_ids_keep_equality_and_inequality_complementary() {
+        let canonical = RegistryId::new("foo-bar").unwrap();
+        let equivalent = RegistryId::new("FOO_BAR").unwrap();
+        let different = RegistryId::new("other").unwrap();
+
+        assert_eq!(canonical, equivalent);
+        assert!(!(canonical != equivalent));
+        assert_ne!(canonical, different);
+    }
+
+    #[test]
     fn rejects_empty() {
         assert!(RegistryId::new("   ").is_err());
     }
