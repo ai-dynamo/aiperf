@@ -24,6 +24,8 @@ Documents:
 - `architecture-options.md` compares candidate decompositions.
 - `streaming-dataset-shadow-replay-design.md` is the normative design,
   including cross-chunk sessions and checkpointed result publication.
+- `spec-review-record.md` records the immutable reviewed commit and approval
+  gates.
 
 Implementation and review records remain in this directory while the normative
 design is implemented through the linked durable plan.
