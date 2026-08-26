@@ -278,6 +278,31 @@ def test_every_unrouted_field_has_a_real_flag_name() -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_dataset_source_in_type_fields_names_input_file_and_custom_dataset_type() -> (
+    None
+):
+    """``DATASET_SOURCE_IN_TYPE_FIELDS`` must actually name the two flags its
+    own docstring describes ("the trace file and the loader that reads it"),
+    not sit empty.
+
+    Regression: `14e94535f` moved ``input_file``/``custom_dataset_type`` out
+    of ``DATASET_SOURCE_FIELDS`` and introduced this set as their documented
+    new home, but never populated it -- routing was (and is) still correct,
+    since both land in ``ROUTED_UNDER_CONFIG`` via the ``INPUT_FIELDS -
+    DATASET_SOURCE_FIELDS`` subtraction regardless of this set's contents,
+    which made the emptiness easy to miss. An empty set under a docstring
+    describing exactly this behavior misleads anyone auditing routing for
+    these flags into concluding the opposite of what actually happens.
+    """
+    from aiperf.config.flags._config_flag_routing import (
+        DATASET_SOURCE_IN_TYPE_FIELDS,
+        ROUTED_UNDER_CONFIG,
+    )
+
+    assert {"input_file", "custom_dataset_type"} == DATASET_SOURCE_IN_TYPE_FIELDS
+    assert DATASET_SOURCE_IN_TYPE_FIELDS <= ROUTED_UNDER_CONFIG
+
+
 def test_error_lists_every_spelling_of_a_multi_alias_flag(base_yaml: Path) -> None:
     """Naming only the first declared spelling sends users looking for a flag
     they never typed.
