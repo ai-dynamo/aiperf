@@ -1138,10 +1138,11 @@ fn read_columnar_rows(
     )?;
 
     let mut columns = required_columns().to_vec();
-    if !replay.open_loop && source.has_columns(&["duration_e2e_ms"]) {
-        columns.push("duration_e2e_ms");
-    }
-    for column in ["duration_ttft_ms", "cached_tokens_reference"] {
+    for column in [
+        "duration_e2e_ms",
+        "duration_ttft_ms",
+        "cached_tokens_reference",
+    ] {
         if source.has_columns(&[column]) {
             columns.push(column);
         }
