@@ -470,7 +470,7 @@ impl RequestRateWorkload {
         let session_guard = match &self.session_slots {
             Some(pool) => match pool.try_acquire() {
                 Some(guard) => Some(guard),
-                None => return Ok(NewSessionOutcome::NoSlot),
+                None => return Ok(NewSessionOutcome::NoSessionSlot),
             },
             None => None,
         };
@@ -479,7 +479,7 @@ impl RequestRateWorkload {
                 Some(guard) => Some(guard),
                 None => {
                     drop(session_guard);
-                    return Ok(NewSessionOutcome::NoSlot);
+                    return Ok(NewSessionOutcome::NoPrefillSlot);
                 }
             },
             None => None,
@@ -533,6 +533,12 @@ impl RequestRateWorkload {
         self.state.progress.notified().await;
     }
 
+    async fn wait_for_global_prefill_capacity(&self) {
+        if let Some(prefill_slots) = self.prefill_slots.as_ref() {
+            prefill_slots.wait_for_global_capacity().await;
+        }
+    }
+
     /// Consume one saturated tick without starving a virtual clock.
     ///
     /// Under a real clock a bare yield is correct: wall time advances on its own,
@@ -567,7 +573,8 @@ const VIRTUAL_IDLE_HORIZON_NS: i64 = 1_000_000_000;
 
 enum NewSessionOutcome {
     Issued,
-    NoSlot,
+    NoSessionSlot,
+    NoPrefillSlot,
     Stopped,
 }
 
@@ -676,7 +683,7 @@ impl Workload for RequestRateWorkload {
             if runtime.can_issue(true) {
                 match self.try_issue_new_session(runtime.clone(), scheduled_ns) {
                     Ok(NewSessionOutcome::Issued) => {}
-                    Ok(NewSessionOutcome::NoSlot) => {
+                    Ok(NewSessionOutcome::NoSessionSlot) => {
                         // A `Global`-backed session pool (`global` dispatch)
                         // may next free a slot on a DIFFERENT worker
                         // thread's release, which never fires this thread's own
@@ -704,6 +711,20 @@ impl Workload for RequestRateWorkload {
                             // Paced modes preserve the nonblocking skipped-tick
                             // behavior and retry at the next authored arrival,
                             // which is itself the clock event that advances time.
+                            tokio::task::yield_now().await;
+                        }
+                    }
+                    Ok(NewSessionOutcome::NoPrefillSlot) => {
+                        let prefill_pool_is_global = self
+                            .prefill_slots
+                            .as_ref()
+                            .is_some_and(|pool| pool.is_global());
+                        let is_saturated_now = next_target_ns <= runtime.now_ns();
+                        if is_saturated_now && prefill_pool_is_global {
+                            self.wait_for_global_prefill_capacity().await;
+                        } else if is_saturated_now {
+                            self.wait_for_closed_loop_progress().await;
+                        } else {
                             tokio::task::yield_now().await;
                         }
                     }
@@ -1022,6 +1043,62 @@ mod tests {
             vec![250, 250, 450, 450]
         );
         assert_eq!(admissions_with_catchup_window(0), vec![250, 250, 500, 500]);
+    }
+
+    #[test]
+    fn global_prefill_release_wakes_a_saturated_issuer_before_idle_horizon() {
+        let source = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(synthetic_prepared_source(1, 8, 4, Some(0), "m"));
+        let clock = Rc::new(SimClock::new());
+        let runtime_clock: Rc<dyn Clock> = clock.clone();
+        let admissions = Rc::new(RefCell::new(Vec::new()));
+        let recorded = admissions.clone();
+        let global_prefill = crate::timing::GlobalSlotPool::new(1);
+        let held_prefill = global_prefill.try_acquire().unwrap();
+        let prefill_slots = Rc::new(SlotPool::new_global(global_prefill));
+
+        let outcome = drive_sim(clock.clone(), move |_handle| async move {
+            let workload = RequestRateWorkload::with_components(
+                source,
+                Rc::new(RefCell::new(make_interval_generator(
+                    ArrivalPattern::ConcurrencyBurst,
+                    None,
+                    None,
+                    0,
+                ))),
+                None,
+                Some(prefill_slots),
+            )
+            .unwrap();
+            let runtime = ScheduledRuntime::new(
+                runtime_clock.clone(),
+                0,
+                Rc::new(AdmissionRecordingDispatcher {
+                    clock: runtime_clock.clone(),
+                    admissions: recorded,
+                }),
+                StopConfig {
+                    total_expected_requests: Some(1),
+                    ..StopConfig::default()
+                },
+                true,
+            );
+            let release_clock: Rc<dyn Clock> = clock.clone();
+            tokio::task::spawn_local(async move {
+                release_clock.sleep(1).await;
+                drop(held_prefill);
+            });
+            workload.execute(runtime).await.unwrap();
+        });
+
+        assert!(
+            !outcome.deadlocked,
+            "a global prefill release must wake the issuer"
+        );
+        assert_eq!(admissions.borrow().as_slice(), [1]);
     }
 
     struct DelayedDispatcher {
