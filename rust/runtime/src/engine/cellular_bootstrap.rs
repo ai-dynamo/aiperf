@@ -513,6 +513,108 @@ pub(crate) async fn connect_authenticated_controller(
 mod tests {
     use super::*;
 
+    /// Serialize a roster exactly as `encode_material` writes it, so tests compare
+    /// wire bytes rather than a structural equality the roster type does not define.
+    fn roster_bytes(roster: &[RoleVerifyingKey]) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        for entry in roster {
+            bytes.extend_from_slice(&encode_role(Some(entry.role)));
+            bytes.extend_from_slice(entry.verifier.as_bytes());
+        }
+        bytes
+    }
+
+    #[test]
+    fn deployment_material_shares_one_nonce_and_roster() {
+        let roles = [
+            CellularRole::Cell(0),
+            CellularRole::Cell(1),
+            CellularRole::Cell(2),
+        ];
+        let material = mint_deployment_material(&roles).expect("mint deployment material");
+        let controller = decode_material(&material.controller, None).expect("controller bundle");
+        let expected_roster = roster_bytes(&controller.roster);
+
+        assert!(
+            controller
+                .roster
+                .iter()
+                .map(|entry| entry.role)
+                .eq(roles.iter().copied()),
+            "roster must keep the caller's role order"
+        );
+        assert_eq!(material.roles.len(), roles.len());
+        for role in roles {
+            let bundle = material.roles.get(&role).expect("role bundle");
+            let decoded = decode_material(bundle, Some(role)).expect("role bundle decodes");
+            assert_eq!(decoded.run_nonce, controller.run_nonce);
+            assert_eq!(roster_bytes(&decoded.roster), expected_roster);
+        }
+    }
+
+    #[test]
+    fn deployment_controller_bundle_holds_the_roster_authority() {
+        let roles = [CellularRole::Cell(0), CellularRole::Cell(1)];
+        let material = mint_deployment_material(&roles).expect("mint deployment material");
+        let controller = decode_material(&material.controller, None).expect("controller bundle");
+        let cell = decode_material(
+            material
+                .roles
+                .get(&CellularRole::Cell(0))
+                .expect("role bundle"),
+            Some(CellularRole::Cell(0)),
+        )
+        .expect("role bundle decodes");
+
+        assert_eq!(
+            controller.signing_key.verifying_key(),
+            controller.controller_verifier
+        );
+        assert_eq!(
+            controller.signing_key.verifying_key(),
+            cell.controller_verifier,
+            "every role bundle must name the controller bundle's own key"
+        );
+        assert!(
+            decode_material(&material.controller, Some(CellularRole::Cell(0))).is_err(),
+            "the controller bundle carries no role"
+        );
+    }
+
+    #[test]
+    fn deployment_role_bundle_matches_its_roster_entry() {
+        let roles = [
+            CellularRole::Cell(0),
+            CellularRole::Aggregator { tier: 1, id: 0 },
+        ];
+        let material = mint_deployment_material(&roles).expect("mint deployment material");
+        for role in roles {
+            let bundle = material.roles.get(&role).expect("role bundle");
+            let decoded = decode_material(bundle, Some(role)).expect("role bundle decodes");
+            let entry = decoded
+                .roster
+                .iter()
+                .find(|entry| entry.role == role)
+                .expect("roster entry");
+            assert_eq!(entry.verifier, decoded.signing_key.verifying_key());
+            for other in roles.iter().copied().filter(|other| *other != role) {
+                assert!(
+                    decode_material(bundle, Some(other)).is_err(),
+                    "a role bundle must not authorize {other:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn deployment_material_rejects_empty_and_duplicate_roles() {
+        assert!(mint_deployment_material(&[]).is_err());
+        assert!(
+            mint_deployment_material(&[CellularRole::Cell(0), CellularRole::Cell(0)]).is_err(),
+            "duplicate roles must fail before any key is minted"
+        );
+    }
+
     fn prepared_one_cell() -> PreparedControllerSecurity {
         prepare_controller_security(
             ControllerSecuritySource::LocalMint,
