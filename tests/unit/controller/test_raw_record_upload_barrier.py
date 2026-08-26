@@ -27,6 +27,8 @@ def controller():
     ctrl.service_id = "system_controller"
     ctrl._exit_errors = []
     ctrl._export_failed = False
+    ctrl._raw_artifacts_finalized = False
+    ctrl._raw_artifacts_finalize_succeeded = False
     ctrl._reaped_service_ids = set()
     ctrl.info = MagicMock()
     ctrl.warning = MagicMock()
@@ -136,6 +138,8 @@ class TestRecordProcessorArtifactBarrier:
         }
         ctrl._reaped_service_ids = set()
         ctrl._exit_errors = []
+        ctrl._raw_artifacts_finalized = False
+        ctrl._raw_artifacts_finalize_succeeded = False
         ctrl.error = MagicMock()
         return ctrl
 

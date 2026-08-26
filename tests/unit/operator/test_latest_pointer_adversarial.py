@@ -148,9 +148,13 @@ def test_write_latest_replace_failure_preserves_existing_job_pointer(
         results_layout.write_latest(base, _NAMESPACE, _JOB_ID, _EPOCH_NEW)
 
     assert results_layout.resolve_latest(base, _NAMESPACE, _JOB_ID) == _EPOCH_OLD
-    assert (
-        results_layout.job_dir(base, _NAMESPACE, _JOB_ID) / f"{LATEST_POINTER}.tmp"
-    ).read_text() == _EPOCH_NEW
+    # The staged file is uuid-suffixed and unlinked on failure, so a failed
+    # replace leaves no orphan temp behind to accumulate on the PVC.
+    assert not list(
+        results_layout.job_dir(base, _NAMESPACE, _JOB_ID).glob(
+            f"*{LATEST_POINTER}*.tmp"
+        )
+    )
 
 
 def test_write_sweep_latest_replace_failure_preserves_existing_pointer(
@@ -183,9 +187,9 @@ def test_write_sweep_latest_replace_failure_preserves_existing_pointer(
     assert (
         results_layout.resolve_sweep_latest(base, _NAMESPACE, _SWEEP_NAME) == _EPOCH_OLD
     )
-    assert (
-        base / _NAMESPACE / "sweeps" / _SWEEP_NAME / f"{LATEST_POINTER}.tmp"
-    ).read_text() == _EPOCH_NEW
+    assert not list(
+        (base / _NAMESPACE / "sweeps" / _SWEEP_NAME).glob(f"*{LATEST_POINTER}*.tmp")
+    )
 
 
 def test_sweep_pointer_writer_validates_and_refuses_rollback(tmp_path: Path) -> None:
