@@ -321,7 +321,7 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
         for endpoint_url, collector in self._collectors.items():
             try:
                 await collector.initialize()
-                await collector.collect_and_process_metrics()
+                await self._collect_and_process_metrics_for_phase(collector, None)
                 self.debug(
                     lambda url=endpoint_url: (
                         f"Server Metrics: Captured baseline from {url}"
