@@ -530,3 +530,24 @@ fn sweep_status_path(namespace: &str, sweep_name: &str) -> String {
         "/apis/{AIPERF_GROUP}/{AIPERF_VERSION}/namespaces/{namespace}/{AIPERFSWEEPS_PLURAL}/{sweep_name}/status"
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::config_map_content_digest;
+
+    #[test]
+    fn config_digest_matches_the_operator_canonicalization() {
+        // Pinned against the operator's `build_config_snapshot`, computed with
+        // CPython as sha256 of
+        //   json.dumps({"data": {"config.yaml": SAMPLE}, "binaryData": {}},
+        //              ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+        // The sample carries a quote, a doubled backslash, a tab, and a
+        // non-ASCII code point because those are where JSON string escaping
+        // between the two implementations could otherwise diverge.
+        let sample = "endpoint:\n  urls:\n  - \"http://x/\\\\y\"\n  note: \"café\ttab\"\n";
+        assert_eq!(
+            config_map_content_digest(sample).expect("digest"),
+            "b19e1ef0f2aee1c09ff422db9b3619bf6876e27f8f260624c05aeb4466763a30"
+        );
+    }
+}
