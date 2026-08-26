@@ -11,8 +11,8 @@ use clap::Parser;
 use super::auth::KubeAuthOptions;
 use super::client::{KubeClient, KubeWatch, KubeWatchPoll};
 use super::contract::{
-    BootstrapReference, CellBootstrapReference, CONTRACT_VERSION, ControllerEnvelope, NamedReference,
-    NativeK8sRole, RoleEnvelope, validate_envelope,
+    BootstrapReference, CONTRACT_VERSION, CellBootstrapReference, ControllerEnvelope,
+    NamedReference, NativeK8sRole, RoleEnvelope, validate_envelope,
 };
 use super::error::KubeError;
 use super::render::{OutputFormat, render};
@@ -601,8 +601,9 @@ fn run_generate(args: &[String]) -> anyhow::Result<i32> {
     validate_envelope(as_value)
         .map_err(|error| anyhow::anyhow!("generated envelope is invalid: {error}"))?;
 
-    let body = serde_json::to_string_pretty(&envelope)
-        .map_err(|error| anyhow::anyhow!("failed to serialize native Kubernetes generate output: {error}"))?;
+    let body = serde_json::to_string_pretty(&envelope).map_err(|error| {
+        anyhow::anyhow!("failed to serialize native Kubernetes generate output: {error}")
+    })?;
 
     match parsed.output {
         Some(path) => std::fs::write(&path, body.as_bytes()).map_err(|error| {
@@ -634,7 +635,11 @@ fn to_dns_label(input: &str) -> String {
         })
         .collect();
     let trimmed = normalized.trim_matches('-');
-    let label = if trimmed.is_empty() { "config" } else { trimmed };
+    let label = if trimmed.is_empty() {
+        "config"
+    } else {
+        trimmed
+    };
     let truncated: String = label.chars().take(63).collect();
     truncated.trim_end_matches('-').to_string()
 }
