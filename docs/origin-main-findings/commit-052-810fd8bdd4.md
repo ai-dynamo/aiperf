@@ -100,3 +100,25 @@ descendant for root to integrate. No cherry-pick is used.
 
 The source-grounded native contract is in
 [`../specs/2026-08-25-native-vllm-spec-decode-wire.md`](../specs/2026-08-25-native-vllm-spec-decode-wire.md).
+
+## Implementation and verification receipt
+
+The isolated native implementation is split into reviewable commits:
+
+- `138ab2e2f9`: root extraction, dense normalization, and typed fast-path cleanup;
+- `0a0387009b`: post-merge streaming usage negotiation;
+- `02f8abceca`: reviewed mock wire and serializer parity;
+- `cbc37b999c`: real native product E2E matrix;
+- `cf41b9776a` and `6bc724e921`: formatting and review-driven test cleanup; and
+- `08c43bef3c`: public documentation and historical-wire supersession.
+
+Focused runtime, formatter, transport, mock-server, serializer, and real-process
+E2E suites pass; the E2E result is 15/15. Formatting, diff checks, changed-scope
+Clippy, CLI build, and commit hooks pass. The broader runtime+engine suite passes
+2,370 tests, with six unrelated failures recorded in the Graham receipt rather
+than modified during this port. The complete pass-by-pass review and exact test
+receipts are in
+`.superpowers/sdd/2026-08-25-native-vllm-spec-decode-wire/graham-review.md`.
+
+Status: self-review approved; awaiting root's independent Graham approval before
+campaign tracker closure.

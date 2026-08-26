@@ -132,9 +132,9 @@ E2E harness, cargo, sccache.
 
 - [x] Update public docs and the historical #13 supersession marker; run
   documentation link/text checks in the repository's normal verification.
-- [ ] Run formatting, diff checks, focused runtime/mock/E2E suites, full
+- [x] Run formatting, diff checks, focused runtime/mock/E2E suites, full
   runtime with and without `engine`, CLI, mock-server, and changed-scope Clippy.
-- [ ] Perform the complete Graham review and second pass over the exact
+- [x] Perform the complete Graham review and second pass over the exact
   base-to-tip diff; repair every finding with TDD and rerun affected tests.
 - [ ] Commit the self-review receipt and send the exact range to root for an
   independent full Graham review. Repair and re-review until explicitly
