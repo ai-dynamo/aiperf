@@ -133,10 +133,11 @@ async fn test_graph_cellular_single_file_dataset_shipping() {
         "1-cell graph baseline failed: {}",
         baseline.stderr
     );
+    let baseline_observables = dataset_serve_observables(&baseline)
+        .unwrap_or_else(|error| panic!("single-cell baseline log artifact: {error}"));
     assert!(
-        dataset_serve_observables(&baseline).is_empty(),
-        "single-cell baseline must not serve a dataset over HTTP: {:?}",
-        dataset_serve_observables(&baseline)
+        baseline_observables.is_empty(),
+        "single-cell baseline must not serve a dataset over HTTP: {baseline_observables:?}"
     );
 
     // Forced multi-process HTTP shipping: 3 cell subprocesses GET the single-file
@@ -176,12 +177,14 @@ async fn test_graph_cellular_single_file_dataset_shipping() {
         "graph --cells 3 must go through the controller (cellular-heartbeat.json sidecar)"
     );
 
-    let observables = dataset_serve_observables(&cellular);
+    let observables = dataset_serve_observables(&cellular)
+        .unwrap_or_else(|error| panic!("forced-HTTP cellular log artifact: {error}"));
     assert!(
         !observables.is_empty(),
         "no dataset-serve observable in logs/aiperf.log — the single-file graph trace did \
          not go over HTTP (or the force seam did not engage). Log tail:\n{}",
         aiperf_log(&cellular)
+            .unwrap_or_else(|error| panic!("forced-HTTP cellular log artifact: {error}"))
             .lines()
             .rev()
             .take(40)
@@ -1068,10 +1071,11 @@ async fn test_graph_cellular_directory_multi_file_dataset_shipping() {
         baseline.stdout,
         baseline.stderr
     );
+    let baseline_observables = dataset_serve_observables(&baseline)
+        .unwrap_or_else(|error| panic!("single-cell baseline log artifact: {error}"));
     assert!(
-        dataset_serve_observables(&baseline).is_empty(),
-        "single-cell baseline must not serve any dataset over HTTP: {:?}",
-        dataset_serve_observables(&baseline)
+        baseline_observables.is_empty(),
+        "single-cell baseline must not serve any dataset over HTTP: {baseline_observables:?}"
     );
     assert!(
         baseline.artifacts.request_count() > 0.0,
@@ -1116,11 +1120,13 @@ async fn test_graph_cellular_directory_multi_file_dataset_shipping() {
     // Every shard must be served over HTTP+zstd, and enough serves must cover the whole
     // shard set across cells (3 cells x 6 shards, minus any empty-slice cells). Assert
     // at least one serve per distinct shard name so no shard was under-shipped.
-    let observables = dataset_serve_observables(&cellular);
+    let observables = dataset_serve_observables(&cellular)
+        .unwrap_or_else(|error| panic!("forced-HTTP cellular log artifact: {error}"));
     assert!(
         !observables.is_empty(),
         "no dataset-serve observable — the directory trace did not go over HTTP. Log tail:\n{}",
         aiperf_log(&cellular)
+            .unwrap_or_else(|error| panic!("forced-HTTP cellular log artifact: {error}"))
             .lines()
             .rev()
             .take(40)
@@ -1172,20 +1178,58 @@ async fn test_graph_cellular_directory_multi_file_dataset_shipping() {
     );
 }
 
-/// The full text of the run's `logs/aiperf.log` (empty if absent).
-fn aiperf_log(r: &RunResult) -> String {
-    match r.artifacts.find_file("**/aiperf.log") {
-        Some(path) => std::fs::read_to_string(&path).unwrap_or_default(),
-        None => String::new(),
-    }
+#[test]
+fn missing_cellular_log_cannot_satisfy_negative_assertion() {
+    let temporary = tempfile::tempdir().expect("cellular log test directory");
+    let missing = temporary.path().join("aiperf.log");
+
+    let error = dataset_serve_observables_from_path(&missing).unwrap_err();
+    assert!(error.contains(missing.to_string_lossy().as_ref()));
+
+    let empty = temporary.path().join("empty-aiperf.log");
+    std::fs::write(&empty, "").expect("empty cellular log");
+    assert_eq!(
+        dataset_serve_observables_from_path(&empty).expect("read empty cellular log"),
+        Vec::<String>::new()
+    );
+}
+
+/// The full text of the run's required `logs/aiperf.log` artifact.
+fn aiperf_log(r: &RunResult) -> Result<String, String> {
+    let path = cellular_log_path(r)?;
+    std::fs::read_to_string(&path).map_err(|error| {
+        format!(
+            "cannot read required cellular log {}: {error}",
+            path.display()
+        )
+    })
 }
 
 /// The HTTP+zstd dataset-serve observable lines: one per served source, naming the
 /// dataset and encoding.
-fn dataset_serve_observables(r: &RunResult) -> Vec<String> {
-    aiperf_log(r)
-        .lines()
-        .filter(|l| l.contains("served dataset source over TLS/authenticated transfer"))
-        .map(str::to_string)
-        .collect()
+fn dataset_serve_observables(r: &RunResult) -> Result<Vec<String>, String> {
+    let path = cellular_log_path(r)?;
+    dataset_serve_observables_from_path(&path)
+}
+
+fn cellular_log_path(r: &RunResult) -> Result<std::path::PathBuf, String> {
+    r.artifacts
+        .find_file("**/aiperf.log")
+        .ok_or_else(|| "missing required cellular log artifact: **/aiperf.log".to_string())
+}
+
+fn dataset_serve_observables_from_path(path: &std::path::Path) -> Result<Vec<String>, String> {
+    std::fs::read_to_string(path)
+        .map_err(|error| {
+            format!(
+                "cannot read required cellular log {}: {error}",
+                path.display()
+            )
+        })
+        .map(|log| {
+            log.lines()
+                .filter(|l| l.contains("served dataset source over TLS/authenticated transfer"))
+                .map(str::to_string)
+                .collect()
+        })
 }
