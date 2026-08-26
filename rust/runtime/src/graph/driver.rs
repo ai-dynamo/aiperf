@@ -543,6 +543,12 @@ pub trait TraceProgramDriver {
         None
     }
 
+    /// Return the validated terminal channels whose completed values placement
+    /// must freeze before this driver observes a stage.
+    fn terminal_output_channels(&self) -> &[String] {
+        &[]
+    }
+
     /// Select the next complete Graph-IR stage after any prior observation.
     async fn next_stage(
         &mut self,

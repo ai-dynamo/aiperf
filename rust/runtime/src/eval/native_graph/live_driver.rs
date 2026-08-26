@@ -12,7 +12,7 @@ use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::dataset::{Handle, InMemorySegmentStore, SegmentPool};
+use crate::dataset::Handle;
 use crate::eval::ArtifactDigest;
 use crate::graph::driver::{
     LifecycleLeaseGuard, LifecycleOpeningGuard, TraceDriverCapabilities, TraceDriverContext,
@@ -125,7 +125,6 @@ impl TraceProgramDriverFactory for NativeGraphLiveTraceProgramDriverFactory {
             agent_loop: self.agent_loop.clone(),
             opening_session: None,
             session: None,
-            terminal_output_pool: None,
             state: LiveDriverState::Unopened,
         }))
     }
@@ -143,7 +142,6 @@ struct NativeGraphLiveTraceProgramDriver {
     agent_loop: Arc<NativeGraphLiveAgentLoopFactories>,
     opening_session: Option<NativeGraphLiveTraceOpeningSession>,
     session: Option<NativeGraphLiveTraceSession>,
-    terminal_output_pool: Option<SegmentPool>,
     state: LiveDriverState,
 }
 
@@ -239,7 +237,6 @@ enum LiveDriverState {
     },
     ReadyToComplete {
         outputs: BTreeMap<String, Handle>,
-        output_store: Option<Arc<InMemorySegmentStore>>,
         receipts: Vec<DynamicControlReceipt>,
     },
     Finished,
@@ -251,6 +248,7 @@ struct DynamicCursor {
     completed: BTreeSet<String>,
     disabled: BTreeSet<String>,
     channels: BTreeMap<String, Value>,
+    output_handles: BTreeMap<String, Handle>,
     branch_choices: BTreeMap<String, String>,
     workspace_candidates: BTreeMap<BranchWorkspaceKey, agent::AgentInvocationWorkspaceCandidate>,
     requires_workspace_candidates: bool,
@@ -333,6 +331,7 @@ impl TraceProgramDriver for NativeGraphLiveTraceProgramDriver {
             }
             self.state = LiveDriverState::DynamicReady(DynamicCursor {
                 channels: program.profiling.trace.initial_state.clone(),
+                output_handles: BTreeMap::new(),
                 source: program.profiling.clone(),
                 completed: BTreeSet::new(),
                 disabled: BTreeSet::new(),
@@ -354,6 +353,10 @@ impl TraceProgramDriver for NativeGraphLiveTraceProgramDriver {
 
     fn stage_bound(&self) -> Option<NonZeroU32> {
         Some(self.stage_bound)
+    }
+
+    fn terminal_output_channels(&self) -> &[String] {
+        &self.terminal_outputs
     }
 
     fn tool_dispatcher(&self) -> Option<Rc<dyn tools::ToolDispatcher>> {
@@ -389,7 +392,7 @@ impl TraceProgramDriver for NativeGraphLiveTraceProgramDriver {
                 if ready.is_empty() {
                     self.state = LiveDriverState::Finished;
                     return Ok(Some(TraceStageDirective::Complete(
-                        self.terminal_supplement(BTreeMap::new(), None, cursor.receipts),
+                        self.terminal_supplement(BTreeMap::new(), cursor.receipts),
                     )));
                 }
                 let plan = dynamic_stage_projection(&cursor, &ready)?;
@@ -403,14 +406,10 @@ impl TraceProgramDriver for NativeGraphLiveTraceProgramDriver {
                 };
                 Ok(Some(TraceStageDirective::Execute(plan)))
             }
-            LiveDriverState::ReadyToComplete {
-                outputs,
-                output_store,
-                receipts,
-            } => {
+            LiveDriverState::ReadyToComplete { outputs, receipts } => {
                 self.state = LiveDriverState::Finished;
                 Ok(Some(TraceStageDirective::Complete(
-                    self.terminal_supplement(outputs, output_store, receipts),
+                    self.terminal_supplement(outputs, receipts),
                 )))
             }
             LiveDriverState::AwaitingObservation { plan_identity } => {
@@ -454,10 +453,9 @@ impl TraceProgramDriver for NativeGraphLiveTraceProgramDriver {
                     )));
                 }
                 ensure_completed_stage(&result)?;
-                let (outputs, output_store) = self.freeze_terminal_outputs(&result.channels)?;
+                let outputs = self.select_terminal_outputs(&result.output_handles)?;
                 self.state = LiveDriverState::ReadyToComplete {
                     outputs,
-                    output_store,
                     receipts: Vec::new(),
                 };
                 Ok(())
@@ -479,6 +477,11 @@ impl TraceProgramDriver for NativeGraphLiveTraceProgramDriver {
                 }
                 ensure_completed_stage(&result)?;
                 cursor.channels.extend(result.channels);
+                for (channel, handle) in result.output_handles {
+                    if self.terminal_outputs.binary_search(&channel).is_ok() {
+                        cursor.output_handles.insert(channel, handle);
+                    }
+                }
                 cursor.completed.extend(executed_nodes.iter().cloned());
                 apply_model_decisions(&mut cursor, &executed_nodes, &self.control_flow)?;
                 self.open_selected_branch_leases(&cursor).await?;
@@ -491,10 +494,9 @@ impl TraceProgramDriver for NativeGraphLiveTraceProgramDriver {
                     TraceDriverError::new("native graph dynamic stage counter overflow")
                 })?;
                 if dynamic_ready_nodes(&cursor, &self.control_flow)?.is_empty() {
-                    let (outputs, output_store) = self.freeze_terminal_outputs(&cursor.channels)?;
+                    let outputs = self.select_terminal_outputs(&cursor.output_handles)?;
                     self.state = LiveDriverState::ReadyToComplete {
                         outputs,
-                        output_store,
                         receipts: cursor.receipts,
                     };
                 } else {
@@ -808,10 +810,9 @@ impl NativeGraphLiveTraceProgramDriver {
     fn terminal_supplement(
         &self,
         outputs: BTreeMap<String, Handle>,
-        output_store: Option<Arc<InMemorySegmentStore>>,
         receipts: Vec<DynamicControlReceipt>,
     ) -> TraceTerminalSupplement {
-        let supplement = TraceTerminalSupplement::new(
+        TraceTerminalSupplement::new(
             self.trace.run_id.clone(),
             self.trace.trajectory_id.clone(),
             self.trace.trace_id.clone(),
@@ -819,42 +820,24 @@ impl NativeGraphLiveTraceProgramDriver {
             NATIVE_GRAPH_LIVE_DRIVER_KIND,
         )
         .with_terminal_outputs(outputs)
-        .with_dynamic_control_receipts(receipts);
-        match output_store {
-            Some(store) => supplement.with_terminal_output_store(store),
-            None => supplement,
-        }
+        .with_dynamic_control_receipts(receipts)
     }
 
-    fn freeze_terminal_outputs(
-        &mut self,
-        channels: &BTreeMap<String, Value>,
-    ) -> Result<(BTreeMap<String, Handle>, Option<Arc<InMemorySegmentStore>>), TraceDriverError>
-    {
-        if self.terminal_outputs.is_empty() {
-            return Ok((BTreeMap::new(), None));
-        }
-        let mut pool = self.terminal_output_pool.take().unwrap_or_default();
-        let outputs = self
+    fn select_terminal_outputs(
+        &self,
+        output_handles: &BTreeMap<String, Handle>,
+    ) -> Result<BTreeMap<String, Handle>, TraceDriverError> {
+        self
             .terminal_outputs
             .iter()
             .map(|channel| {
-                let value = channels.get(channel).ok_or_else(|| {
+                output_handles.get(channel).copied().ok_or_else(|| {
                     TraceDriverError::new(format!(
                         "native graph live driver did not receive declared terminal output {channel:?}"
                     ))
-                })?;
-                let wire = serde_json::to_vec(value).map_err(|error| {
-                    TraceDriverError::new(format!(
-                        "native graph live driver could not freeze declared terminal output {channel:?}: {error}"
-                    ))
-                })?;
-                pool.intern_raw(None, wire)
-                    .map(|handle| (channel.clone(), handle))
-                    .map_err(|error| TraceDriverError::new(error.to_string()))
+                }).map(|handle| (channel.clone(), handle))
             })
-            .collect::<Result<BTreeMap<_, _>, _>>()?;
-        Ok((outputs, Some(Arc::new(pool.freeze()))))
+            .collect()
     }
 }
 

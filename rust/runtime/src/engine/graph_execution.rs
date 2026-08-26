@@ -13,7 +13,7 @@ use std::sync::Arc;
 use crate::body_plan::RequestBody;
 use crate::cellular::{CellPartition, ModuloCellPartition};
 use crate::clock::{Clock, RealClock, RealClockAnchor};
-use crate::dataset::{Handle, InMemorySegmentStore, Payload, SegmentStore};
+use crate::dataset::{Handle, InMemorySegmentStore, Payload, SegmentPool, SegmentStore};
 use crate::dispatch::collector::ReplayTerminalStatus;
 use crate::dispatch::sink::RequestObserver;
 use crate::endpoints::{
@@ -38,6 +38,7 @@ use crate::graph::policy::{
     AbortTraceNodeFailurePolicy, CancellationNodePolicy, CompositeNodeDispatchPolicy,
     NodeDispatchPolicy, NodeFailurePolicy, PrefillSlotNodePolicy, ResilientNodeFailurePolicy,
 };
+use crate::graph::reducers::ChanVal;
 use crate::graph::replay::{ReplayCallMeasurement, ToolCallMeasurement};
 use crate::graph::sink::{
     GraphDispatchContext, GraphDispatchOptions, GraphReply, GraphReplyStatus, GraphSink,
@@ -1722,6 +1723,58 @@ fn should_emit_replay_supplement(phase: Phase, is_recorded_program: bool, succee
     phase == Phase::Profiling && is_recorded_program && succeeded
 }
 
+struct FrozenStageOutputs {
+    handles: BTreeMap<String, Handle>,
+    store: Option<Arc<InMemorySegmentStore>>,
+}
+
+fn freeze_terminal_outputs(
+    channels: &BTreeMap<String, ChanVal>,
+    selected: &[String],
+    base: &dyn SegmentStore,
+) -> Result<FrozenStageOutputs, TraceError> {
+    let concrete = selected
+        .iter()
+        .filter_map(|channel| {
+            channels
+                .get(channel)
+                .and_then(ChanVal::as_value)
+                .map(|value| (channel, value))
+        })
+        .collect::<Vec<_>>();
+    if concrete.is_empty() {
+        return Ok(FrozenStageOutputs {
+            handles: BTreeMap::new(),
+            store: None,
+        });
+    }
+
+    let mut pool = SegmentPool::thaw(base);
+    let handles = concrete
+        .into_iter()
+        .map(|(channel, value)| {
+            serde_json::to_vec(value)
+                .map_err(|error| {
+                    TraceError::Other(format!(
+                        "serializing declared terminal output {channel:?}: {error}"
+                    ))
+                })
+                .and_then(|wire| {
+                    pool.intern_raw(None, wire).map_err(|error| {
+                        TraceError::Other(format!(
+                            "freezing declared terminal output {channel:?}: {error}"
+                        ))
+                    })
+                })
+                .map(|handle| (channel.clone(), handle))
+        })
+        .collect::<Result<BTreeMap<_, _>, _>>()?;
+    Ok(FrozenStageOutputs {
+        handles,
+        store: Some(Arc::new(pool.freeze())),
+    })
+}
+
 impl GraphWorkerBackend {
     /// Drive one finite sequence of driver-authored graph stages.
     ///
@@ -1757,6 +1810,7 @@ impl GraphWorkerBackend {
             },
         );
         let mut executed_stages = 0;
+        let mut terminal_output_store = None;
         loop {
             let (abort, registration) = AbortHandle::new_pair();
             self.active
@@ -1776,7 +1830,12 @@ impl GraphWorkerBackend {
                     )
                 })?;
             match directive {
-                TraceStageDirective::Complete(supplement) => return Ok(supplement),
+                TraceStageDirective::Complete(supplement) => {
+                    return Ok(match terminal_output_store {
+                        Some(store) => supplement.with_terminal_output_store(store),
+                        None => supplement,
+                    });
+                }
                 TraceStageDirective::Execute(plan) => {
                     if executed_stages >= bound.get() {
                         return Err(TraceError::Other(format!(
@@ -1790,6 +1849,17 @@ impl GraphWorkerBackend {
                     let result = local
                         .execute_static_trace_result(plan, self.phase, TraceSubphase::Profiling)
                         .await?;
+                    let base = terminal_output_store
+                        .as_deref()
+                        .map_or(self.segments.as_ref(), |store| store as &dyn SegmentStore);
+                    let frozen_outputs = freeze_terminal_outputs(
+                        &result.channels,
+                        driver.terminal_output_channels(),
+                        base,
+                    )?;
+                    if let Some(store) = frozen_outputs.store {
+                        terminal_output_store = Some(store);
+                    }
                     let channels = result
                         .channels
                         .into_iter()
@@ -1812,7 +1882,7 @@ impl GraphWorkerBackend {
                             plan_identity: format!("{}::stage-{executed_stages}", trace.trace_id),
                             terminal_status: GraphReplyStatus::Completed,
                             channels,
-                            output_handles: BTreeMap::new(),
+                            output_handles: frozen_outputs.handles,
                         }),
                         registration,
                     )
@@ -3789,6 +3859,61 @@ executable = "tools/adapter.sh"
             replay_calls: Rc::new(RefCell::new(Vec::new())),
             replay_tools: Rc::new(RefCell::new(Vec::new())),
         }
+    }
+
+    #[test]
+    fn staged_terminal_outputs_freeze_only_selected_static_channels() {
+        let channels = BTreeMap::from([
+            (
+                "output".into(),
+                ChanVal::Val(serde_json::json!({"answer": 7})),
+            ),
+            (
+                "undeclared".into(),
+                ChanVal::Val(serde_json::json!("ignored")),
+            ),
+        ]);
+        let base = InMemorySegmentStore::default();
+
+        let frozen = freeze_terminal_outputs(&channels, &["output".into()], &base)
+            .expect("selected static output freezes");
+        assert_eq!(frozen.handles.len(), 1);
+        let handle = frozen.handles["output"];
+        let store = frozen.store.expect("concrete output owns a frozen catalog");
+        assert!(matches!(
+            store.get(handle).expect("frozen handle resolves"),
+            Payload::Raw { wire } if wire.as_ref() == br#"{"answer":7}"#
+        ));
+    }
+
+    #[test]
+    fn staged_terminal_outputs_extend_the_prior_dynamic_catalog() {
+        let base = InMemorySegmentStore::default();
+        let first = freeze_terminal_outputs(
+            &BTreeMap::from([("output".into(), ChanVal::Val(serde_json::json!(1)))]),
+            &["output".into()],
+            &base,
+        )
+        .expect("first dynamic stage freezes its selected output");
+        let first_handle = first.handles["output"];
+        let first_store = first.store.expect("first stage has a catalog");
+
+        let second = freeze_terminal_outputs(
+            &BTreeMap::from([("output".into(), ChanVal::Val(serde_json::json!(2)))]),
+            &["output".into()],
+            first_store.as_ref(),
+        )
+        .expect("later dynamic stage extends the catalog");
+        let second_handle = second.handles["output"];
+        let second_store = second.store.expect("second stage has an extended catalog");
+        assert!(matches!(
+            second_store.get(first_handle).expect("prior handle remains resolvable"),
+            Payload::Raw { wire } if wire.as_ref() == b"1"
+        ));
+        assert!(matches!(
+            second_store.get(second_handle).expect("latest handle resolves"),
+            Payload::Raw { wire } if wire.as_ref() == b"2"
+        ));
     }
 
     #[tokio::test(flavor = "current_thread")]

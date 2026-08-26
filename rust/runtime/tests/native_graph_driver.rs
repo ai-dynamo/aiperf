@@ -73,7 +73,7 @@ fn registered_live_driver_progresses_through_a_bounded_graph_stage() {
                     && supplement.terminal_outputs
                         == BTreeMap::from([(
                             "output".into(),
-                            aiperf_runtime::dataset::Handle::new(0),
+                            aiperf_runtime::dataset::Handle::new(7),
                         )])
         ));
         assert!(
