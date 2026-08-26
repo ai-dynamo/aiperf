@@ -2014,6 +2014,8 @@ mod tests {
                 output_tokens: 3,
                 provided_session_id: "shared",
                 duration_e2e_ms: 10,
+                duration_ttft_ms: None,
+                cached_tokens_reference: None,
             },
             FixtureRow {
                 timestamp_start_unix_ms: 1_250,
@@ -2022,6 +2024,8 @@ mod tests {
                 output_tokens: 2,
                 provided_session_id: "shared",
                 duration_e2e_ms: 20,
+                duration_ttft_ms: None,
+                cached_tokens_reference: None,
             },
         ];
         let parquet = write_fixture(directory.path(), &rows);

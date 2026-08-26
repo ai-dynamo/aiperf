@@ -131,6 +131,7 @@ fn legacy_plan_fires_through_runtime_hyper_client_into_export_records() {
                 streaming: true,
                 ignore_eos: true,
                 cache_bust_marker: None,
+                cache_bust_first_user_turn: false,
             },
         );
         plan.sort_by_key(|i| i.dispatch_ns);
