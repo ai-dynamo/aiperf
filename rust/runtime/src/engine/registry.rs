@@ -1032,6 +1032,8 @@ struct EndpointProfileConfigV2 {
     /// `0` (the default) preserves fail-fast behavior.
     #[serde(default)]
     max_connect_retries: u32,
+    #[serde(default)]
+    max_response_body_bytes: Option<u64>,
     /// Base linear backoff, in seconds, slept between connect retries. Attempt
     /// `n` (1-based) waits `connect_retry_backoff_seconds * n`. `0` (the
     /// default) retries with no wait.
@@ -1311,6 +1313,12 @@ pub fn validate_endpoint_profiles_v2(
             config.connection_limit > 0,
             "endpoint profile {index}.connection_limit must be positive"
         );
+        if let Some(max_response_body_bytes) = config.max_response_body_bytes {
+            ensure!(
+                max_response_body_bytes > 0,
+                "endpoint profile {index}.max_response_body_bytes must be positive"
+            );
+        }
         ensure!(
             matches!(
                 config.wait_for_model_mode.as_str(),
@@ -1401,6 +1409,7 @@ pub fn validate_endpoint_profiles_v2(
             )?),
             max_connections_per_origin: config.connection_limit,
             max_connect_retries: config.max_connect_retries,
+            max_response_body_bytes: config.max_response_body_bytes,
             connect_retry_backoff_ns: seconds_to_ns(
                 config.connect_retry_backoff_seconds,
                 &format!("endpoint profile {index}.connect_retry_backoff_seconds"),
@@ -2031,6 +2040,7 @@ mod tests {
                     "http2": true,
                     "ssl_verify": false,
                     "connection_limit": 7,
+                    "max_response_body_bytes": 4096,
                     "keepalive_timeout": 0.25
                 }]}
             }
@@ -2043,6 +2053,7 @@ mod tests {
         assert_eq!(client.http_version, HttpVersion::Http2PriorKnowledge);
         assert!(!client.ssl_verify);
         assert_eq!(client.max_connections_per_origin, 7);
+        assert_eq!(client.max_response_body_bytes, Some(4096));
         assert_eq!(client.keepalive_ns, Some(250_000_000));
         assert_eq!(client.total_timeout_ns, Some(500_000_000));
     }
@@ -2071,6 +2082,34 @@ mod tests {
             .to_string();
         assert!(
             error.contains("connection_limit must be positive"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn endpoint_profile_rejects_zero_response_body_cap() {
+        let run: AuthoredRunSpecV2 = serde_json::from_value(serde_json::json!({
+            "identity": {"benchmark_id": "http-policy-invalid-body-cap"},
+            "artifact_target": "/tmp/http-policy-invalid-body-cap",
+            "transport": {"type": "http", "config": {}},
+            "workload": {"type": "scheduled", "config": {}},
+            "resources": {
+                "models": {"items": [{"name": "model"}]},
+                "endpoints": {"profiles": [{
+                    "id": "default",
+                    "type": "chat",
+                    "urls": ["http://example.test"],
+                    "max_response_body_bytes": 0
+                }]}
+            }
+        }))
+        .unwrap();
+
+        let error = validate_endpoint_profiles_v2(&run, &EndpointRegistry::builtin().unwrap())
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("endpoint profile 0.max_response_body_bytes must be positive"),
             "{error}"
         );
     }

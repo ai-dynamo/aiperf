@@ -72,8 +72,8 @@ Graham review and a commit.
 | C02 | Dataset Velo subscription accepts forged event or oversized payload | Confirmed/narrowed; spec needed | Sol implementation plan |
 | C03 | Duplicate cellular partition can satisfy completion barrier | Complete — `1053327b41` | Independent Graham approved; RED→GREEN identity coverage recorded |
 | C04 | Eventstream prelude validation happens after accumulation | Complete — `4067dfc13b`, `7b0d6fce79` | Independent Graham approved; RED→GREEN parser and mock-caller coverage recorded |
-| C05 | Partial final HTTP frame lacks terminal decode error | Confirmed; spec needed | Sol implementation plan |
-| C06 | Authored HTTP body cap is not propagated to client config | Confirmed; spec needed | Sol implementation plan |
+| C05 | Partial final HTTP frame lacks terminal decode error | Complete — `d2c92bae08` | Independent Graham approved; RED→GREEN EOF coverage recorded |
+| C06 | Authored HTTP body cap is not propagated to client config | Complete — `0a9ba67232` | Independent Graham approved; clean-head behavioral RED→GREEN coverage recorded |
 | C07 | H2 prior knowledge is not usable over UDS | Confirmed; spec needed | Sol implementation plan |
 | C08 | Graph successor waits for parent completion instead of first token | Confirmed; spec needed | Sol implementation plan |
 | C09 | Graph firing delay ignores cancellation | Confirmed; spec needed | Sol implementation plan |
@@ -176,3 +176,12 @@ Graham review and a commit.
   retained frames at the supported protocol maximum, and propagates decode
   failure exactly once. RED→GREEN runtime boundary tests and the mock-server
   caller regression are green; independent Graham review passed.
+- 2026-08-26: C05 completed and integrated as `d2c92bae08`: a truncated
+  EventStream frame at response EOF produces one terminal SSE decode error and
+  then ends, while a clean boundary ends without an error. Focused/module
+  GREEN evidence and independent Graham approval are recorded.
+- 2026-08-26: C06 completed and integrated as `0a9ba67232` after a clean-head
+  TDD redo: an authored positive response-body cap projects unchanged, zero is
+  rejected before transport construction, and the existing shared declared and
+  chunked enforcement remains covered. The redo has an unknown-field behavioral
+  RED, focused GREEN, and independent Graham approval.

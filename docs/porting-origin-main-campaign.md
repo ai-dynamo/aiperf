@@ -84,7 +84,7 @@ implementation, test run, or review.
 | 56 | `94fee7338b` | random range ratio | complete | applicable | Exact merge `cd31c0ae5a`; native PCG64/MT19937 stream, config, prefix/special-token semantics, and 48 byte-exact production captures are covered by three audits and independent Graham approval. |
 | 57 | `e10d53b1d3` | version 0.13.0 | pending | shared-product-action | Coordinated release decision, not standalone Rust port. |
 | 58 | `9b60a3d479` | FakeTokenizer | complete | applicable | The ancestor's harness method had regressed from the semantic tree; this closure restores the exact zero-returning Python fake method, proves the native trait's existing zero default needs no duplicate API, and records Graham approval in `docs/origin-main-findings/commit-058-9b60a3d479.md`. |
-| 59 | `c9288da6c1` | mmap conversation cache | pending | not-applicable | No equivalent native mmap backend. |
+| 59 | `c9288da6c1` | mmap conversation cache | complete | not-applicable | Exact upstream object already entered through #60 actual merge `f1d39ad583`; Python-only mmap cursor/prefault/executor fix has no native backend. Findings/spec/Sol plan and Graham closure: `commit-059-c9288da6c1.md`. |
 | 60 | `c2889280a6` | random_pool batch sizes | complete | applicable | Native four-modality CLI/YAML/config projection, safe real-loader batching, and binary integration coverage approved at `5dd2939765`; exact target-only merge `f1d39ad583`. |
 
 ## Per-commit record: 817a8d84ddb9
