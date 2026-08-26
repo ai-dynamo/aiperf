@@ -1649,6 +1649,10 @@ pub trait StreamingCheckpointParticipant {
         &mut self,
         state: Option<CommittedParticipantState>,
     ) -> Result<(), CheckpointError>;
+    async fn checkpoint_committed(
+        &mut self,
+        receipt: &CommittedParticipantReceipt,
+    ) -> Result<(), CheckpointError>;
 }
 ```
 
@@ -1666,6 +1670,16 @@ it before polling resumes. `initialize(None)` establishes fresh state;
 only once. A prepared source `open` constructs handles/control but does not poll
 or resolve a mutable snapshot before this initialization. `StreamingStateStore` is storage beneath these
 participants, never proof that a typed snapshot exists.
+
+`checkpoint_view` is non-destructive because generation preparation/CAS may
+fail. Only after the backend returns a committed generation does the coordinator
+deliver its participant-specific receipt through `checkpoint_committed` in the
+frozen participant order. That callback is idempotent and advances the mutable
+baseline, prunes pre-cut overlays, rotates epoch state, and releases source/
+cache/spill permits. If a callback fails, the generation remains authoritative,
+phase execution fails, and retry or process restore replays the notification;
+it cannot roll back the committed root. Dropping an uncommitted generation
+transaction releases prepared leases by RAII and never calls the callback.
 
 ### Typed horizons
 
