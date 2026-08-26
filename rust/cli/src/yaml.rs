@@ -1898,10 +1898,7 @@ impl Benchmark {
             None => anyhow::bail!("endpoint.url is required"),
         };
 
-        // Single-run: the shorthand `dataset:` or the first `datasets:` entry.
-        let dataset = self
-            .dataset
-            .or_else(|| self.datasets.and_then(|d| d.into_iter().next()));
+        let dataset = resolve_effective_dataset(self.dataset, self.datasets)?;
         let (isl, osl, batch_size, isl_block_size) = extract_prompts(dataset.as_ref());
         let prefix_reuse_fraction = dataset
             .as_ref()
@@ -2824,6 +2821,30 @@ fn extract_prompts(
     (isl, osl, prompts.batch_size, prompts.block_size)
 }
 
+/// Resolve the one dataset that a native single run can lower.
+///
+/// An omitted dataset remains the established synthetic-default path.  Every
+/// explicitly authored `datasets:` list, however, must carry exactly one entry:
+/// lowering only its first entry would silently discard benchmark input.
+fn resolve_effective_dataset(
+    dataset: Option<DatasetSection>,
+    datasets: Option<Vec<DatasetSection>>,
+) -> anyhow::Result<Option<DatasetSection>> {
+    match (dataset, datasets) {
+        (Some(_), Some(_)) => anyhow::bail!(
+            "dataset and datasets cannot both be set; native single-run supports exactly one dataset"
+        ),
+        (Some(dataset), None) => Ok(Some(dataset)),
+        (None, None) => Ok(None),
+        (None, Some(datasets)) => match datasets.len() {
+            1 => Ok(datasets.into_iter().next()),
+            dataset_count => anyhow::bail!(
+                "datasets must contain exactly one dataset for a native single run (got {dataset_count})"
+            ),
+        },
+    }
+}
+
 fn parse_yaml_rate_series(
     value: &serde_json::Value,
 ) -> anyhow::Result<crate::model::rate_series::RateSeries> {
@@ -3246,6 +3267,75 @@ mod tests {
         resolve_str(&cfg(body), Some("/tmp/x".into()))
             .expect_err("expected a validation error")
             .to_string()
+    }
+
+    #[test]
+    fn expanded_datasets_require_exactly_one_entry() {
+        for (name, body) in [
+            (
+                "empty",
+                "  datasets: []\n  phases: {type: concurrency, requests: 1, concurrency: 1}\n",
+            ),
+            (
+                "multiple",
+                "  datasets:\n    - {prompts: {isl: 17}}\n    - {prompts: {isl: 29}}\n  phases: {type: concurrency, requests: 1, concurrency: 1}\n",
+            ),
+        ] {
+            let error = resolve_str(&cfg(body), Some("/tmp/x".into()))
+                .expect_err(&format!("{name} datasets must not silently lower"))
+                .to_string();
+            assert!(
+                error.contains("datasets") && error.contains("exactly one"),
+                "{name}: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn shorthand_and_expanded_datasets_are_mutually_exclusive() {
+        let error = resolve_str(
+            &cfg(
+                "  dataset: {prompts: {isl: 17}}\n  datasets:\n    - {prompts: {isl: 29}}\n  phases: {type: concurrency, requests: 1, concurrency: 1}\n",
+            ),
+            Some("/tmp/x".into()),
+        )
+        .expect_err("two dataset authoring forms must not silently choose one")
+        .to_string();
+        assert!(
+            error.contains("dataset") && error.contains("datasets"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn one_expanded_dataset_matches_shorthand_and_absence_keeps_synthetic_default() {
+        let shorthand = resolve_str(
+            &cfg(
+                "  dataset: {prompts: {isl: 17}}\n  phases: {type: concurrency, requests: 1, concurrency: 1}\n",
+            ),
+            Some("/tmp/x".into()),
+        )
+        .expect("shorthand dataset resolves");
+        let expanded = resolve_str(
+            &cfg(
+                "  datasets:\n    - {prompts: {isl: 17}}\n  phases: {type: concurrency, requests: 1, concurrency: 1}\n",
+            ),
+            Some("/tmp/x".into()),
+        )
+        .expect("one expanded dataset resolves");
+        let shorthand = serde_json::to_value(shorthand).expect("shorthand serializes");
+        let expanded = serde_json::to_value(expanded).expect("expanded serializes");
+        assert_eq!(shorthand["cfg"]["datasets"], expanded["cfg"]["datasets"]);
+
+        let omitted = resolve_str(
+            &cfg("  phases: {type: concurrency, requests: 1, concurrency: 1}\n"),
+            Some("/tmp/x".into()),
+        )
+        .expect("omitted dataset retains synthetic default");
+        assert_eq!(
+            serde_json::to_value(omitted).expect("omitted run serializes")["cfg"]["datasets"][0]["type"],
+            serde_json::json!("synthetic")
+        );
     }
 
     #[test]

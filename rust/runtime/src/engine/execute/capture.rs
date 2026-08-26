@@ -1149,6 +1149,7 @@ impl TurnDispatcher for ConfiguredDispatcher {
             CreditReportKind::CreditReturn(measured) => TurnCreditReportKind::CreditReturn(
                 Box::new(self.absorb_credit(report.uuid, *measured)),
             ),
+            CreditReportKind::Cancelled => TurnCreditReportKind::Cancelled,
         };
         Some(TurnCreditReport {
             uuid: report.uuid,

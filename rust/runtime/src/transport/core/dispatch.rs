@@ -501,6 +501,10 @@ pub enum CreditReportKind {
     /// given `uuid`. Returning it is what releases the issuer's admission slot
     /// and the worker's in-flight depth.
     CreditReturn(Box<Result<MeasuredOutcome>>),
+    /// The worker abandoned the credit because the placement was cancelled.
+    /// This still returns the credit and releases worker depth, but is not a
+    /// transport failure.
+    Cancelled,
 }
 
 /// Pluggable execution placement behind the one logical turn dispatcher.

@@ -63,9 +63,9 @@ Graham review and a commit.
 | E04 | Abort still starts ready tool nodes | Confirmed; spec ready | Sol implementation plan |
 | E05 | Closed-worker credit return can hang drain | Confirmed; spec ready | Sol implementation plan |
 | E06 | Sidecar setup/finish failures leak siblings | Complete | Integrated `bb5e3fe5ff`, `bb23c66b39`; independent Graham PASS |
-| E07 | Global-push cancellation is misclassified as transport failure | Confirmed; spec ready | Sol implementation plan |
+| E07 | Global-push cancellation is misclassified as transport failure | Complete | Integrated `82bf74990c`; independent Graham PASS |
 | E08 | Declared terminal outputs cannot execute | Confirmed; spec ready | Sol implementation plan |
-| E09 | Multi-dataset requests silently retain only the first | Confirmed; spec ready | Sol implementation plan |
+| E09 | Multi-dataset requests silently retain only the first | Complete | Integrated `e8a787f47e`; independent Graham PASS |
 | E10 | Docker verifier orchestration is duplicated and diverges | Confirmed; spec ready | Sol implementation plan |
 | E11 | CLI Dynosim runs skip process defaults | Confirmed; spec ready | Sol implementation plan |
 | C01 | Phaser Velo subscription accepts forged/replayed event | Complete — `cf09af5034` | Independent Graham approved; explicit benchmark trust-boundary contract |
@@ -255,3 +255,14 @@ Graham review and a commit.
   protocol when debt clears through release, increase, or drain. Baseline
   over-admission RED evidence, the 16-test slots suite GREEN, and independent
   Graham re-review PASS are recorded.
+- 2026-08-26: E07 completed and integrated as `82bf74990c`: a worker-owned
+  global-push cancellation settles its issued credit as `Canceled` with a
+  typed `dispatch_cancelled` result instead of a transport failure, while a
+  real worker transport error remains failed and latches abort-on-failure. Its
+  behavioral RED, two focused GREEN tests, post-commit hook audit, and
+  independent Graham PASS are recorded.
+- 2026-08-26: E09 completed and integrated as `e8a787f47e`: Config-v2 YAML
+  accepts exactly one expanded dataset or one shorthand dataset, rejects
+  explicit empty/multiple and mixed forms before lowering, and preserves the
+  absent-form synthetic default. Its first-entry-loss RED, 47-test YAML GREEN
+  suite, and independent Graham PASS are recorded.
