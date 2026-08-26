@@ -216,6 +216,7 @@ pub(crate) async fn start_phase_sidecars(
 ) -> Result<(), PhaseExecutionError> {
     for (index, sidecar) in sidecars.iter().enumerate() {
         if let Err(error) = sidecar.start().await {
+            let mut cleanup_errors = Vec::new();
             for started_sidecar in sidecars[..index].iter().rev() {
                 if let Err(cleanup_error) = started_sidecar.finish().await {
                     tracing::warn!(
@@ -223,10 +224,16 @@ pub(crate) async fn start_phase_sidecars(
                         component = "phase_runtime",
                         "failed to finish sidecar after setup failure"
                     );
+                    cleanup_errors.push(format!("{cleanup_error:#}"));
                 }
             }
+            let cleanup_context = if cleanup_errors.is_empty() {
+                String::new()
+            } else {
+                format!("; cleanup: {}", cleanup_errors.join("; "))
+            };
             return Err(PhaseExecutionError::new(format!(
-                "starting {label} phase sidecar: {error:#}"
+                "starting {label} phase sidecar: {error:#}{cleanup_context}"
             )));
         }
     }
@@ -1529,6 +1536,35 @@ mod tests {
             .expect_err("setup must fail");
 
         assert_eq!(error.to_string(), "starting scheduled phase sidecar: boom");
+        assert_eq!(
+            events.borrow().as_slice(),
+            ["start:first", "start:second", "finish:first"]
+        );
+    }
+
+    #[test]
+    fn sidecar_setup_failure_includes_sibling_cleanup_failure() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let sidecars: Vec<Rc<dyn ScheduledPhaseSidecar>> = vec![
+            Rc::new(RecordingSidecar::new("first", events.clone()).with_finish_error("cleanup boom")),
+            Rc::new(RecordingSidecar::new("second", events.clone()).with_start_error("setup boom")),
+        ];
+
+        let error = runtime
+            .block_on(start_phase_sidecars(
+                &sidecars,
+                &SimClock::new(),
+                "scheduled",
+            ))
+            .expect_err("setup must fail");
+
+        assert_eq!(
+            error.to_string(),
+            "starting scheduled phase sidecar: setup boom; cleanup: cleanup boom"
+        );
         assert_eq!(
             events.borrow().as_slice(),
             ["start:first", "start:second", "finish:first"]
