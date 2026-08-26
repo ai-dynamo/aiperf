@@ -6,12 +6,14 @@
 //! The agentic-replay timing mode runs on the shared scheduled runtime, which
 //! reads turns through a [`ConversationSource`](crate::multiturn::ConversationSource)
 //! over a [`Dataset`]. This module builds that dataset directly from the
-//! byte-exact AgentX reconstruction: each turn's exact OpenAI `/v1/chat/completions`
-//! body (from [`crate::agentx::wire::chat_request_body`], with the byte-exact
-//! cache-bust marker on the first turn of each trajectory tree) is interned as an
-//! opaque `Raw` segment so the transport replays it verbatim — no re-tokenization
-//! or prompt re-synthesis — and the recorded per-turn `timestamp_ms`/`delay_ms`
-//! are carried so the workload can compute t\*-relative dispatch times.
+//! byte-exact AgentX reconstruction: each turn's delta chat messages (from
+//! `crate::agentx::wire::chat_messages_array`, with the byte-exact cache-bust
+//! marker on turn 0 of each trajectory-tree member) are interned as an opaque
+//! `Raw` segment so the transport replays them verbatim — no re-tokenization or
+//! prompt re-synthesis — and the recorded per-turn `timestamp_ms`/`delay_ms` are
+//! carried so the workload can compute t\*-relative dispatch times. The composed
+//! dataset's `DeltasWithoutResponses` context mode leaves the accumulation of
+//! those deltas with the captured live replies to the runtime materializer.
 
 use std::sync::Arc;
 
@@ -37,17 +39,23 @@ pub struct WekaComposeOptions {
     pub cache_bust_target: CacheBustTarget,
 }
 
-/// Apply the per-lane t\* snapshot slice to reconstructed trajectories, porting
-/// Python `AgenticReplayStrategy`'s snapshot construction.
+/// Apply the per-trace-tree t\* snapshot slice to reconstructed trajectories,
+/// porting Python `AgenticReplayStrategy`'s snapshot construction.
 ///
-/// For each lane (in stable order, the seed's lane index): sample t\* uniformly
-/// over `[min_ts + min_ratio·dur, min_ts + max_ratio·dur)` from the lane's
-/// recorded turn timestamps (numpy PCG64, matched to Python), find the first turn
-/// at/after t\* (the PROFILING resume point), DROP the earlier history turns, and
-/// rebase each retained turn's `timestamp_ms` to its t\*-relative dispatch offset
-/// (`max(0, ts − t*)`). Lanes with no post-t\* turn are dropped. The result feeds
-/// [`compose_weka_agentic_dataset`]; the workload then only aligns lanes and
-/// dispatches — history exclusion and t\* live here.
+/// Conversations are grouped into trace-trees by `replay_scope_id`, and each tree
+/// draws ONE t\* uniformly over `[min_ts + min_ratio·dur, min_ts + max_ratio·dur)`
+/// spanning EVERY member's recorded turn timestamps (numpy PCG64 matched to
+/// Python, seeded on the root session id at lane index 0), so a subagent resumes
+/// on its root's t\* rather than an independent one. Per tree this emits one
+/// warmup conversation — the root's last pre-t\* turn carrying the flattened root
+/// prefix, `max_tokens = 1`, session id suffixed [`WARMUP_SUFFIX`], its lead
+/// before t\* capped by `idle_gap_cap_ms` — followed by the PROFILING slice of
+/// every member: find the first turn at/after t\* (the resume point), drop the
+/// earlier history turns after back-seeding their flattened prefix onto the
+/// retained resume turn, and rebase each retained turn's `timestamp_ms` to its
+/// t\*-relative dispatch offset (`max(0, ts − t*)`). Members with no post-t\* turn
+/// are dropped. The result feeds [`compose_weka_agentic_dataset`]; the workload
+/// then only aligns lanes and dispatches — history exclusion and t\* live here.
 pub fn slice_trajectories_at_tstar(
     convs: Vec<ReconstructedConversation>,
     base_seed: u64,

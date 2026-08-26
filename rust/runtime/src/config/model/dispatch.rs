@@ -131,13 +131,15 @@ normalized_wire_enum!(DispatchMode {
     GlobalPush => "global-push",
 });
 
-/// Worker-assignment policy applied at the single [`DispatchMode::GlobalHop`]
-/// pick site (`ThreadPerCoreExecutor::execute_command`) when `workers > 1`.
+/// Worker-assignment policy applied by both single-coordinator modes when
+/// `workers > 1`: [`DispatchMode::GlobalHop`]
+/// (`ThreadPerCoreExecutor::execute_command`) and [`DispatchMode::GlobalPush`]
+/// (`ThreadPerCoreExecutor::send_credit`), which share one `pick_worker` seam.
 ///
-/// The hop only chooses *which worker executes an already-issued request*; every
-/// global-hop guarantee (exactly-once, deterministic merged record order,
-/// aggregate concurrency/rate/arrival pattern) is coordinator-side and unaffected
-/// by this choice, so the policy is free to trade placement determinism for
+/// The choice only decides *which worker executes an already-issued request*;
+/// every single-coordinator guarantee (exactly-once, deterministic merged record
+/// order, aggregate concurrency/rate/arrival pattern) is coordinator-side and
+/// unaffected by it, so the policy is free to trade placement determinism for
 /// per-session connection reuse.
 ///
 /// - `RoundRobin` (default) hops each issued turn to worker `i % workers` in

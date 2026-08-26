@@ -3,8 +3,10 @@
 
 //! Raw and Jinja-compatible template endpoint implementations.
 //!
-//! JMESPath compilation is deliberately failure-soft for raw responses; an
-//! explicitly valid template selector that does not match is a hard parse miss.
+//! JMESPath compilation is deliberately failure-soft for both dialects — an
+//! uncompilable selector falls back to response auto-detection — but a
+//! compiled template selector that does not match is a hard parse miss, while
+//! the same miss on a raw response falls back to auto-detection.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

@@ -45,8 +45,9 @@ pub mod grpc_execution;
 #[cfg(feature = "grpc")]
 pub mod grpc_turn_execution;
 pub mod heartbeat_lane;
-/// Legacy AgentX weka execution path (byte-exact agentic replay), selected by
-/// `--weka-semantics legacy`.
+/// Unwired seam reserved for a standalone legacy AgentX weka runtime; its one
+/// entry point refuses and has no callers. `--weka-semantics legacy` runs are
+/// lowered by `online_execution::lower_legacy_agentic` instead.
 pub mod legacy_agentx_execution;
 pub mod live_streaming;
 pub mod network_latency;

@@ -11,9 +11,9 @@ use serde_json::Value;
 
 /// Lognormal parameters with real-space summary statistics.
 ///
-/// `mu`/`sigma` are resolved
-/// from `mean`/`median` when absent: `mu = ln(median)`,
-/// `sigma = sqrt(2 * ln(mean/median))` if `mean/median > 1` else `0`.
+/// `mu`/`sigma` are resolved from `mean`/`median` unless both are authored:
+/// `mu = ln(median)`, `sigma = sqrt(2 * ln(mean/median))` if `mean/median > 1`
+/// else `0`.
 #[derive(Clone, Debug)]
 pub struct LognormalParams {
     pub mu: f64,
@@ -30,7 +30,9 @@ impl LognormalParams {
         Self::new(mean, median, None, None, None, None)
     }
 
-    /// Resolve missing `mu` or `sigma` from `mean` and `median`.
+    /// Honor an authored `mu`/`sigma` pair; otherwise derive both from `mean`
+    /// and `median`. A lone `mu` or `sigma` is discarded, since the pair is
+    /// resolved together.
     pub fn new(
         mean: f64,
         median: f64,

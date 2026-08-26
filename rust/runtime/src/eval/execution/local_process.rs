@@ -541,14 +541,14 @@ impl MaterializedSandbox {
     }
 }
 
-/// Captured output from a successful local sandbox process.
+/// Terminal outcome of a successful local sandbox process.
 #[derive(Debug)]
 pub struct ProcessOutput {
     /// Terminal process status.
     pub status: ExitStatus,
-    /// Captured standard output bytes.
+    /// Standard output bytes; empty because the sandbox discards the stream.
     pub stdout: Vec<u8>,
-    /// Captured standard error bytes.
+    /// Standard error bytes; empty because the sandbox discards the stream.
     pub stderr: Vec<u8>,
 }
 

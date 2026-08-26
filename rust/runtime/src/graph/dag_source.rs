@@ -6,12 +6,12 @@
 //! This leaf parser validates one authored `dag_jsonl` source, preserving owned
 //! exact JSON wires and normalizing FORK/SPAWN branch declarations, then hands
 //! the validated program to [`crate::graph::input::compile_dag_jsonl_input`] for direct
-//! Graph-IR lowering. It deliberately lives in the graph crate — beside its sole
+//! Graph-IR lowering. It deliberately lives in the graph module — beside its sole
 //! consumer — rather than in the linear dataset loader registry: `dag_jsonl` is a
 //! graph source, never a linear `Dataset`, conversation, or credit-orchestrator
 //! program.
 //!
-//! Source acquisition reuses the dataset crate's registry-free
+//! Source acquisition reuses the dataset module's registry-free
 //! [`crate::dataset::load_raw_rows`] seam; no [`crate::dataset::DatasetLoader`]
 //! registration or linear composer is involved.
 

@@ -1510,7 +1510,8 @@ mod tests {
         // Structural detection must key on the CSV header columns, never on
         // JSON-parsing the first line (the CSV header is not JSON). A canonical
         // BurstGPT header with extra columns is recognized; a JSONL file, a CSV
-        // missing a required column, and a value-less probe are all rejected.
+        // missing a required column, and a probe carrying no path are all
+        // rejected.
         let directory = tempfile::tempdir().unwrap();
         let burst = directory.path().join("burst_gpt.csv");
         std::fs::write(

@@ -3,7 +3,7 @@
 
 //! Integration coverage for the `dataset_load_bench` timed adapter example.
 //!
-//! Exercises the public load → compose → tokenize path for the four generated
+//! Exercises the public load → compose → tokenize path for the generated
 //! fixture formats, the one-line `Sample` JSON schema, and structured errors for
 //! unknown formats and missing CLI arguments.
 #![cfg(feature = "engine")]

@@ -329,7 +329,7 @@ pub enum ReplayTerminalStatus {
     Failed,
 }
 
-/// Flat record emitted by `--report-jsonl`.
+/// Flat record emitted when `artifacts.per_request_jsonl` is configured.
 #[derive(Debug, Clone, Serialize)]
 pub struct PerRequestRecord {
     /// Session identifier, serialized first with `turn_index`.
@@ -674,7 +674,7 @@ impl TraceCollector {
 
     pub fn finish(self) -> TraceSimulationReport {
         // Build records before moving requests into aggregation. This avoids the
-        // record pass and allocation unless `--report-jsonl` requested them.
+        // record pass and allocation unless per-request capture requested them.
         let per_request = if self.capture_per_request {
             self.per_request_records()
         } else {
@@ -754,7 +754,7 @@ impl TraceCollector {
         }
     }
 
-    /// Flatten retained requests for `--report-jsonl`.
+    /// Flatten retained requests for the per-request JSONL artifact.
     ///
     /// Only requests with a terminal outcome are emitted. Requests truncated
     /// by a simulation-time cap have no terminal outcome and remain omitted.

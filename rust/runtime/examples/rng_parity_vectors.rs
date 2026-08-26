@@ -7,10 +7,10 @@
 //! their raw IEEE-754 `u64` bit patterns (`f64::to_bits`) so the comparison is exact and
 //! never subject to decimal-formatting drift.
 //!
-//! Regenerate the committed golden with:
+//! Regenerate the committed golden from the `rust/` workspace root with:
 //! ```bash
 //! cargo run -p aiperf-runtime --example rng_parity_vectors \
-//!   > rust/runtime/tests/data/rng_parity_vectors.json
+//!   > runtime/tests/data/rng_parity_vectors.json
 //! ```
 
 use aiperf_runtime::rng::{HashIdRandomGenerator, RngRoot, RustRandomGenerator, namespace};

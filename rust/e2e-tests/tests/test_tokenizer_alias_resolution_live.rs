@@ -69,6 +69,9 @@ const EDGE_CASE_INVALID: &[&str] = &[
     "https://evil.com",
 ];
 
+// Alias resolution has no native seam, so these helpers are unimplemented stubs:
+// every `#[ignore]`d test below would pass vacuously if it were enabled. The
+// tables above record the intended contract, not a checked one.
 fn assert_resolves_to(_alias: &str, _expected: &str) {}
 
 fn assert_unchanged(_name: &str) {}

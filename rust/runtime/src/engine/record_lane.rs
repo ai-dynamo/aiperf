@@ -1,8 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Streaming per-record artifact lane: `records.jsonl`, `raw.jsonl`, and the
-//! per-record CSV, written one row per record at completion.
+//! Streaming per-record artifact lane: `records.jsonl`, `raw.jsonl`, the
+//! per-record CSV, `outputs.json`, and (under the `parquet` feature) the
+//! per-record Parquet sidecar, written one row per record at completion.
 //!
 //! The exact-fold path (`execute::RunCapture`) folds each completed
 //! record's metric scalars into the exact accumulator and drops the heavy
@@ -219,7 +220,8 @@ impl EvalNodeRecordArtifact {
 
 /// A run-held lane that streams enabled per-record artifacts one row at a time.
 ///
-/// Built once (when the exact-fold path requests any of records/raw/CSV), fed
+/// Built once (when the exact-fold path requests any of records/raw/CSV/outputs,
+/// or the per-record Parquet sidecar under the `parquet` feature), fed
 /// [`Self::write`] per completed record, and flushed with [`Self::finish`] at run
 /// end. Each writer is optional; a `None` slot is an artifact the run did not
 /// request.

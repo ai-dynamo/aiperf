@@ -40,7 +40,8 @@ pub(crate) struct TokenEmitter<'a> {
     pub uuid: Uuid,
     /// Whether the endpoint produces streamable tokens.
     pub produces_tokens: bool,
-    /// Run origin, for the first-token ns delta.
+    /// Clock-ns when this request's dispatch started, subtracted to form the
+    /// first-token delta.
     pub start_ns: i64,
     /// Measurement observer.
     pub obs: &'a dyn RequestObserver,
@@ -48,7 +49,7 @@ pub(crate) struct TokenEmitter<'a> {
     pub to_ms: &'a dyn Fn(i64) -> f64,
     /// Shared once-only first-token latch.
     pub first_token_released: &'a Cell<bool>,
-    /// First-token callback taking a run-relative ns delta.
+    /// First-token callback taking a dispatch-relative ns delta (TTFT).
     pub on_first_token: &'a dyn Fn(i64),
 }
 

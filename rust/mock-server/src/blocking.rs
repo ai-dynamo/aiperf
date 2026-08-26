@@ -7,10 +7,10 @@
 //! No async runtime at all: N `SO_REUSEPORT` accept loops on OS threads, each
 //! accepted connection handled on its own blocking thread. This is `--plaid`'s
 //! I/O model (which reaches the raw transport ceiling) but running the *real*
-//! non-streaming chat path — a control point isolating "how much does the async
-//! runtime cost?" from "how much does the real per-request work cost?". Request
-//! framing/routing is shared with the io_uring engine via [`crate::http_core`].
-//! Implies `--fast` semantics.
+//! chat/text-completions/embeddings paths — a control point isolating "how much
+//! does the async runtime cost?" from "how much does the real per-request work
+//! cost?". Request framing/routing is shared with the io_uring engine via
+//! [`crate::http_core`]. Implies `--fast` semantics.
 
 use std::io::{Read, Write};
 use std::net::TcpStream;

@@ -293,7 +293,8 @@ pub fn resolve_inputs(flags: &ProfileFlags) -> anyhow::Result<Inputs> {
 
     // Fixed-schedule replays each timestamped entry once, so the request bound is
     // the schedule length (the input file's non-empty line count).
-    // `--no-fixed-schedule` wins over `--fixed-schedule` (clap overrides_with).
+    // The pair's mutual clap `overrides_with` keeps only whichever was passed
+    // last; the guard below then also honors an explicit `--no-fixed-schedule true`.
     let want_fixed =
         flags.fixed_schedule.unwrap_or(false) && !flags.no_fixed_schedule.unwrap_or(false);
     let (fixed_schedule, request_count) = if want_fixed {
@@ -913,7 +914,7 @@ pub(crate) fn build_synthesis(flags: &ProfileFlags) -> anyhow::Result<Option<ser
         return Ok(None);
     }
     // clap's f64 parser accepts `nan`/`inf`; JSON has no non-finite numbers, so reject
-    // them with a clean error instead of panicking in `Number::from_f64`.
+    // them with a clean error instead of the bare `None` from `Number::from_f64`.
     let f = |v: f64| -> anyhow::Result<serde_json::Value> {
         serde_json::Number::from_f64(v)
             .map(serde_json::Value::Number)
@@ -1040,7 +1041,7 @@ fn build_rankings(flags: &ProfileFlags) -> Option<crate::model::dataset::Ranking
     })
 }
 
-/// One rankings sub-distribution: a `{mean, stddev}` normal when the mean flag is
+/// One rankings sub-distribution: a `{mean, stddev}` normal when either flag is
 /// set (stddev defaults to 0.0, matching `NormalDistribution`), else the config's
 /// `FixedDistribution{value}` default.
 fn rankings_dist(mean: Option<f64>, stddev: Option<f64>, default_value: f64) -> Distribution {

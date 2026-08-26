@@ -7,8 +7,9 @@
 //! heavy-header tables (reusing [`crate::export::console_txt::render_table`])
 //! covering dataset shape, sequence lengths, the turn-by-turn breakdown, prefix
 //! cache reuse (including the realized-capacity sweep), and the execution
-//! timeline. Distributions include a compact fixed-width ASCII sparkline so the
-//! shape reads at a glance without a plotting dependency.
+//! timeline. The realized-capacity sweep and the concurrency timeline carry
+//! compact fixed-width Unicode block bars so the shape reads at a glance without
+//! a plotting dependency.
 
 use crate::dataset::analysis::{DatasetAnalysis, StatSummary};
 use crate::export::console_txt::{Justify, render_table};
@@ -39,7 +40,7 @@ pub fn render_analysis_txt(a: &DatasetAnalysis) -> String {
     blocks.join("\n")
 }
 
-/// Format an `f64` with grouped magnitude and two decimals.
+/// Format an `f64` with two decimals.
 fn num(value: f64) -> String {
     format!("{value:.2}")
 }

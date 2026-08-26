@@ -144,7 +144,7 @@ pub struct BuiltinAIPerfRegistryFactory;
 impl AIPerfRegistryFactory for BuiltinAIPerfRegistryFactory {
     fn build(&self) -> Result<AIPerfRegistry, ExtensionError> {
         // Feature gates remove optional components from both the registry and
-        // the derived `--capabilities` catalog. Built-in names are omitted from
+        // the derived discovery catalog. Built-in names are omitted from
         // `run.extensions`, which records add-ons only.
         AIPerfRegistry::empty_or_base().with_builtin_extensions([
             &BuiltinLoadersExtension as &dyn AIPerfExtension,
@@ -341,9 +341,9 @@ impl AIPerfExtension for BuiltinNativeGraphExtension {
 
 /// Aggregate of every runtime-name registry shared by the native CLI paths.
 ///
-/// Directly injected seams such as clocks, transports, observers, segment
-/// stores, and materializers intentionally remain constructor arguments rather
-/// than entries in this name-based catalog.
+/// Directly injected seams such as clocks, observers, segment stores, and
+/// materializers intentionally remain constructor arguments rather than entries
+/// in this name-based catalog.
 #[derive(Clone)]
 pub struct AIPerfRegistry {
     dataset_formats: LoaderRegistry,
@@ -444,8 +444,9 @@ impl AIPerfRegistry {
         }
     }
 
-    /// Contains the stock loaders/samplers/endpoints universe with empty
-    /// transport/workload sub-registries; it is the base a custom distribution
+    /// Contains the stock loaders/samplers/endpoints/exporters/actuators
+    /// universe with empty transport/workload sub-registries; it is the base a
+    /// custom distribution
     /// layers additional [`AIPerfExtension`] values on top of. The built-in
     /// components are applied through [`Self::with_builtin_extensions`] without
     /// recording extension names.
@@ -808,7 +809,9 @@ impl AIPerfRegistry {
         })
     }
 
-    /// Names of successfully applied extensions in deterministic order.
+    /// Names of the successfully applied extensions that record a name, sorted.
+    /// Built-in extensions are applied without recording one (see
+    /// [`Self::with_builtin_extensions`]), so a stock build yields nothing here.
     pub fn extension_names(&self) -> impl ExactSizeIterator<Item = &str> {
         self.extension_names.iter().map(String::as_str)
     }

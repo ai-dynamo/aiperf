@@ -164,8 +164,8 @@ async fn tuned_https_single_turn_raw_timing() {
     // measured window spans the TLS handshake plus the mock's 100ms first-token
     // sleep, and a sleep only resolves to host scheduler wakeup granularity, so
     // it always overshoots (observed at +41ms under load) and has no
-    // load-independent bound: solo it lands near +41ms, under the full 84-binary
-    // suite at +51ms. Chasing observed samples would mean re-widening after every
+    // load-independent bound: solo it lands near +41ms, under the full e2e suite
+    // at +51ms. Chasing observed samples would mean re-widening after every
     // load change, so the band is fixed by what it must DETECT instead. The
     // regressions this guards are a dropped first-token delay (TTFT -> ~0ms) and a
     // doubled one (-> ~200ms), each 100ms away from tuned; 75ms separates both

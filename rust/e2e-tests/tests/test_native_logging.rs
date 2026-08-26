@@ -134,7 +134,7 @@ async fn native_front_door_writes_full_log_narrative() {
 /// 100% of requests (verified: 100/100 on a 100-request run, 5/5 on a
 /// 5-request run). The slot exists -- `record_counts()` climbs 1..N and is never
 /// freed -- and `snapshot_record` returns a populated request, so
-/// `take_terminal`'s `request.terminal?` gate at `metrics.rs:191` is what fails:
+/// `take_terminal`'s `request.terminal?` gate at `metrics.rs:206` is what fails:
 /// the realtime observer never receives `on_terminal`.
 ///
 /// The cause is `ConfiguredDispatcher::dispatch_turn`

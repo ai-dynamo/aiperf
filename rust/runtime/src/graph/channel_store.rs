@@ -4,8 +4,8 @@
 //!
 //! A versioned append-only log per channel; writes are linearized by a single
 //! monotonic sequence counter (`last_seq`); readers capture per-channel versions and reducers
-//! consume them in `(write_seq, writer_node_id)` order. Values are stored by
-//! clone of the `serde_json::Value`, never mutated in place.
+//! consume them in `(write_seq, writer_node_id)` order. Values are stored as
+//! cloned [`ChanVal`]s, never mutated in place.
 
 use crate::graph::model::{ChannelSpec, Count, ReducerName};
 use crate::graph::reducers::{ChanVal, ReducerError, apply_reducer};

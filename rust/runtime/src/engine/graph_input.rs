@@ -74,9 +74,10 @@ pub struct TStarWindow {
 impl TStarWindow {
     /// Build the resolved recycle-index draw for this window's strategy.
     ///
-    /// The child generator seed is salted off [`TStarWindow::run_random_seed`] per
-    /// strategy, so `Sequential`/`Shuffle`/`RandomSampler` all derive from the SAME
-    /// run root with different salts. Building a fresh draw at each site is safe:
+    /// The `Shuffle` and `Random` child generator seeds are salted off
+    /// [`TStarWindow::run_random_seed`] per strategy, so both derive from the SAME
+    /// run root with different salts; `Sequential` needs no seed. Building a fresh
+    /// draw at each site is safe:
     /// the draw is a pure function of `(mode, child_seed)`, so pressure warmup
     /// and the profiling recycle (built independently) agree draw-for-draw.
     pub fn recycle_draw(&self) -> PermutationDraw {
@@ -173,7 +174,8 @@ pub struct PreparedRunnerGraphInput {
     pub allow_dataset_wrap: bool,
     /// Trajectory-start (`t*`) window for the warmup/profiling snapshot split.
     pub t_star_window: TStarWindow,
-    /// Cache-bust marker target for the recorded first-turn user message.
+    /// Cache-bust marker target selecting which recorded message the marker
+    /// prefixes, if any.
     pub cache_bust_target: CacheBustTarget,
 }
 
@@ -599,8 +601,8 @@ impl DagJsonlRunnerGraphInputAdapter {
             default_output_tokens: prepared.default_output_tokens,
             allow_dataset_wrap: true,
             // Authored `dag_jsonl` programs carry no recorded timing, so the
-            // trajectory-start split never engages: the default window yields
-            // `t* = 0` (profiling full, warmup empty). Authored programs supply
+            // trajectory-start split never engages: the default window replays
+            // every plan unchanged in both phases. Authored programs supply
             // their own message content verbatim, so no cache-bust marker is
             // applied.
             t_star_window: TStarWindow::default(),
@@ -681,7 +683,8 @@ pub struct AIPerfTraceRunnerGraphInputAdapter;
 #[derive(Debug)]
 pub struct TraceLabRunnerGraphInputAdapter;
 
-/// Built-in native Mini-SWE-Agent recording adapter.
+/// Built-in native `agent_recording` adapter: strict Mini-SWE-Agent recording
+/// corpora plus imported Codex CLI and Claude Code sessions.
 #[derive(Debug)]
 pub struct RecordedAgentRunnerGraphInputAdapter;
 

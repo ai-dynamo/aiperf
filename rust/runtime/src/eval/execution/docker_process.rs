@@ -923,7 +923,7 @@ impl DockerProcessSandbox {
         )
     }
 
-    /// Builds the task environment, executes an external agent, and runs a shared verifier.
+    /// Builds the task environment, executes an external agent, and runs the plan's verifier.
     pub fn execute(
         &self,
         recipe: &HarborSandboxRecipe,
@@ -1233,7 +1233,8 @@ impl DockerProcessSandbox {
             };
             // A rollout callback never executes in the task container. Keep this host-owned
             // workspace untouched so sealed patches can be applied before verification; its
-            // isolated adapter sidecar prepares its own user-writable snapshot below.
+            // isolated adapter sidecar prepares its own user-writable snapshot on the
+            // NativeGraph execution path.
             if !package
                 .native_graph()
                 .is_some_and(|native_graph| native_graph.rollout().is_some())
@@ -3423,7 +3424,7 @@ fn sleep_with_clock(
 ) -> Result<(), EvalExecutionError> {
     if !clock.is_virtual() {
         // Evaluation is a synchronous provider boundary. A real-clock delay
-        // therefore polls the clock directly instead of nesting Tokio's
+        // therefore blocks the calling thread instead of nesting Tokio's
         // `block_on` when the caller happens to be a Tokio task.
         std::thread::sleep(duration);
         return Ok(());

@@ -4,10 +4,11 @@
 //! endpoint-agnostic. Each dialect supplies a `WireMessage` implementation and
 //! matching [`GraphSink`](super::sink) for body encoding and reply parsing.
 //!
-//! The segment store, prompt materializer, executor, and channels are all
-//! generic over `M: WireMessage` — a message is whatever a dialect says it is
-//! (role + content blocks, tool calls, system-vs-turn split, …), round-tripped
-//! through channels as JSON.
+//! The executor and its sink are generic over `M: WireMessage` — a message is
+//! whatever a dialect says it is (role + content blocks, tool calls,
+//! system-vs-turn split, …). The segment store, prompt materializer, and
+//! channels stay dialect-agnostic by carrying each message as its serialized
+//! JSON bytes.
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};

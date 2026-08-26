@@ -568,21 +568,6 @@ fn csv_opt_u64(value: Option<u64>) -> String {
     value.map(|v| v.to_string()).unwrap_or_default()
 }
 
-/// Write finalized request metrics as a per-record CSV.
-///
-/// Writes metadata columns, then one column per catalog
-/// record-metric (in catalog order, empty when a request lacks the metric), then
-/// the error columns. Reuses the exact [`record_metrics`] projection and
-/// [`classify_record_error`] classification the JSONL/Parquet sinks use, so all
-/// three per-record artifacts agree.
-///
-/// Metric columns use one column per metric named
-/// `{Header} ({unit})` (`RecordMetricColumn::csv_display_name`), so the unit lives
-/// in the header exactly like `profile_export_aiperf.csv`.
-///
-/// The artifact includes error status `error_code` and, when `include_trace` is
-/// set, flat `trace_*` HTTP-timing columns. A record with no projected metrics
-/// and no error is skipped; an all-skipped run writes no file.
 /// Build the records CSV header line (no trailing newline): fixed metadata
 /// columns, one column per catalog record-metric (`{Header} ({unit})`), the error
 /// triple, then the optional flat `trace_*` columns. Shared by [`write_records_csv`]
@@ -711,6 +696,22 @@ pub(crate) fn record_csv_row(
     Some(cells.join(","))
 }
 
+/// Write finalized request metrics as a per-record CSV.
+///
+/// Writes metadata columns, then one column per catalog record-metric (in catalog
+/// order, empty when a request lacks the metric), then the error columns. Reuses
+/// the exact [`record_metrics`] projection and [`classify_record_error`]
+/// classification the JSONL/Parquet sinks use, so all three per-record artifacts
+/// agree.
+///
+/// Metric columns use one column per metric named `{Header} ({unit})`
+/// (`RecordMetricColumn::csv_display_name`), so the unit lives in the header
+/// exactly like `profile_export_aiperf.csv`.
+///
+/// The artifact includes the `error_code`/`error_type`/`error_message` triple and,
+/// when `include_trace` is set, flat `trace_*` HTTP-timing columns. A record with
+/// no projected metrics and no error is skipped; an all-skipped run writes no
+/// file.
 pub(crate) fn write_records_csv(
     path: &Path,
     records: &[CapturedRecord],

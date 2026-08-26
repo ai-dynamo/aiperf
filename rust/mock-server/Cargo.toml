@@ -16,8 +16,8 @@ path = "src/main.rs"
 path = "src/lib.rs"
 
 [dependencies]
-# The mock server reuses `aiperf_runtime::transport::grpc::{proto,riva_proto,
-# riva_binding}` for its KServe OIP v2 / Riva gRPC listeners, so it always needs
+# The mock server reuses `aiperf_runtime::transport::grpc::{proto,riva_proto}`
+# for its KServe OIP v2 / Riva gRPC listeners, so it always needs
 # the `grpc` feature even if a future build drops it from the workspace default.
 aiperf-runtime = { workspace = true, features = ["grpc"] }
 tokio = { workspace = true }
@@ -25,7 +25,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 # Native KServe OIP v2 gRPC target. The `server` feature adds tonic's h2/hyper
 # server plane on top of the workspace's client-only feature set; the KServe
-# prost message types are reused from `aiperf_runtime::transport_grpc::proto` (no
+# prost message types are reused from `aiperf_runtime::transport::grpc::proto` (no
 # build-time protoc / tonic-build anywhere in the workspace).
 tonic = { workspace = true, features = ["server"] }
 prost = { workspace = true }
@@ -67,7 +67,7 @@ num_cpus = "1"
 libc = "0.2"
 # TLS/HTTPS + grpcs listener stack. rustls (aws-lc-rs provider, selected
 # explicitly to match the runner's HTTP client in
-# `aiperf_runtime::transport_http::client::connection`) + tokio-rustls for the accept
+# `aiperf_runtime::transport::http::client::connection`) + tokio-rustls for the accept
 # loop; rustls-pemfile parses `--tls-cert`/`--tls-key` PEM; rcgen mints an
 # in-memory self-signed cert for `--tls-self-signed`. All versions are already
 # resolved transitively in the workspace `Cargo.lock` (rustls 0.23,

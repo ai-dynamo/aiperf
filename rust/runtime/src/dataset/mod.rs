@@ -3,7 +3,7 @@
 
 //! Unified dataset substrate for every AIPerf execution mode.
 //!
-//! The crate owns the linear `load -> compose -> store -> sample -> materialize`
+//! This module owns the linear `load -> compose -> store -> sample -> materialize`
 //! pipeline. Text, preformatted messages, raw request bodies, tools, headers, and
 //! multimodal content are interned once in a prefix-dependent content-addressed
 //! [`SegmentPool`]. [`Conversation`] and [`Turn`] contain only dense [`Handle`]s,

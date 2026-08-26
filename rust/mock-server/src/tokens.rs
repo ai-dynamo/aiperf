@@ -233,7 +233,8 @@ impl TokenizedText {
             } else {
                 None
             },
-            // Populated by RequestCtx::build when the prefix cache is active.
+            // Always populated by RequestCtx::build, with zero cached tokens
+            // when the prefix cache is off.
             prompt_tokens_details: None,
             // Optional extended usage accounting, populated by RequestCtx::build
             // from the `--usage-*` config knobs (absent by default).
@@ -812,7 +813,7 @@ mod tests {
         // A request with no extractable text (e.g. NativeGraph start node with
         // empty messages or an empty-string user message) must still return
         // output tokens so the transport classifies the reply as Completed
-        // rather than Failed. max_tokens defaults to 2*0=0 → floor 16.
+        // rather than Failed. The explicit 64-token cap below bounds the reply.
         let mut req = chat("gpt-4", "");
         req.max_tokens = Some(64);
         let req_gen = GenRequest::Chat(&req);

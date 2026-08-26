@@ -11,9 +11,9 @@ use crate::transport::http::models::RequestConfig;
 /// toggle. Mirrors Python's `Environment.HTTP` settings, which are likewise
 /// plain env-var-gated globals rather than per-endpoint Config v2 surface.
 /// Callers read this once at transport-construction time (see
-/// `HttpTransport::with_dynamo_session_id_from_correlation_id`), not per
-/// request, so `build_headers` itself stays a pure function of its
-/// arguments and is directly unit-testable without mutating process env.
+/// `HttpTransport::new`), not per request, so `build_headers` itself stays a
+/// pure function of its arguments and is directly unit-testable without
+/// mutating process env.
 pub fn dynamo_session_id_from_correlation_id_enabled() -> bool {
     env_flag_enabled("AIPERF_HTTP_X_DYNAMO_SESSION_ID_FROM_CORRELATION_ID")
 }
@@ -43,9 +43,10 @@ fn env_flag_enabled(name: &str) -> bool {
 }
 
 /// Compose the final header set: base (User-Agent) -> correlation/request-id ->
-/// endpoint headers -> transport headers (Accept, Content-Type) -> derived
+/// endpoint headers -> transport headers (`Accept` overrides, `Content-Type`
+/// only fills in when absent) -> derived session-affinity headers -> derived
 /// Dynamo session headers (opt-in, always last/authoritative). Later sources
-/// override earlier ones.
+/// otherwise override earlier ones.
 pub fn build_headers(
     cfg: &RequestConfig,
     streaming: bool,

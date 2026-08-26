@@ -30,7 +30,8 @@ pub struct RequestConfig {
     /// The parent session's `correlation_id`, when this request is a DAG
     /// (`dag_jsonl` Fork/Spawn) child of another session. `None` for
     /// ordinary sampled turns. Feeds `X-Dynamo-Parent-Session-ID` under
-    /// `--dynamo-session-id-from-correlation-id`; see `headers::build_headers`.
+    /// `AIPERF_HTTP_X_DYNAMO_SESSION_ID_FROM_CORRELATION_ID`; see
+    /// `headers::build_headers`.
     pub parent_correlation_id: Option<String>,
     pub request_id: Option<String>,
     pub is_final_turn: bool,

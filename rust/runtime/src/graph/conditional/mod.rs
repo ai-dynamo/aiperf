@@ -10,7 +10,8 @@
 //! pre-execution data only (pinned `selected_branches`, per-trace distributions,
 //! or static-seed `branch_weights`); the taken subgraph is pruned; recorded
 //! replay outputs fold into `TraceRecord.initial_state`; and one validated
-//! `GraphRecord` is emitted into `parsed.graphs[trace.id]`.
+//! `GraphRecord` per trace is emitted as a `GraphTraceProgram` in the returned
+//! `GraphInputBundle.programs`.
 //! Completion-anchored edge delays and replay durations compose across folded
 //! replay paths. Replay paths reject minimum-start, predecessor-start, and
 //! predecessor-first-token anchors because the flat edge has no equivalent

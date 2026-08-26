@@ -3,16 +3,17 @@
 
 //! Long-form tool generators (read-long, search-verbose, bash-verbose).
 //!
-//! Each takes a `lang: Option<usize>` selector (`Some(0..=3)` =
-//! Python, Go, Rust, and TypeScript. Conversation renderers pass the
-//! conversation's language; the code body, file pool, and per-language draw
-//! sequence is byte-exact.
+//! Each takes a `lang: Option<usize>` selector (`Some(0..=3)` = Python, Go,
+//! Rust, TypeScript; `None` = the shared pool path). Conversation renderers pass
+//! the conversation's language; the code body, file pool, and per-language draw
+//! sequence are byte-exact.
 
 use super::CodingCorpusError;
 use super::templates::TemplateRenderer;
 use super::vocab::*;
 
-/// A 40-80-line file read.
+/// A file read of one fixed per-language body: 34 numbered lines for Go, 39 for
+/// Rust, 41 for TypeScript, 43 for Python.
 pub(super) fn tool_read_long(
     r: &mut TemplateRenderer,
     lang: Option<usize>,

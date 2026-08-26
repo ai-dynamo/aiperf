@@ -179,6 +179,10 @@ fn write_jsonl(
     let mut buf = String::new();
     for session in sessions {
         for turn in &session.turns {
+            // Mooncake rows are per-turn deltas: `input_length` carries the
+            // turn's new tokens, and only turn 0 emits the allocator's layered
+            // prefix. Later turns emit just their own new blocks, numbered from
+            // a monotonic counter held above every id any first turn claimed.
             let n_blocks = div_ceil(turn.new_tokens, block_size);
             let hash_ids: Vec<i64> = if turn.turn_index == 0 {
                 if let Some(&mx) = turn.hash_ids.iter().max() {

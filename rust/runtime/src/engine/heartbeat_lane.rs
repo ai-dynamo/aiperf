@@ -122,8 +122,9 @@ impl HeartbeatLane {
         std::env::var_os(HEARTBEAT_LOG_ENV).is_some_and(|path| !path.is_empty())
     }
 
-    /// Builds the lane when `AIPERF_CELLULAR_HEARTBEAT_LOG` names a writable path,
-    /// else `None`. Truncates the target so each run starts a fresh stream.
+    /// Builds the lane when `AIPERF_CELLULAR_HEARTBEAT_LOG` names a path; `None`
+    /// when the var is unset or empty, and an error when the named path cannot be
+    /// created. Truncates the target so each run starts a fresh stream.
     pub(crate) fn from_env(clock: Rc<dyn Clock>, origin_ns: i64) -> Result<Option<Rc<Self>>> {
         let Some(path) = std::env::var_os(HEARTBEAT_LOG_ENV) else {
             return Ok(None);

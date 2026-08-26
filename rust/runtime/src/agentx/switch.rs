@@ -93,7 +93,7 @@ pub async fn run_graph_ir(
 /// Run the complete **legacy** WEKA replay pipeline for one trace and emit its
 /// export-level raw records: reconstruct (root + subagent children + flat chains)
 /// → annotate with the agentic-replay dispatch schedule (when `t_star_ms` is
-/// given) → serialize to the `export.records` shape. This is the end-to-end
+/// given) → serialize to the `artifacts.records` shape. This is the end-to-end
 /// legacy path from trace to export artifact, composed from byte-exact units.
 pub fn run_legacy_pipeline<S>(
     trace_id: &str,

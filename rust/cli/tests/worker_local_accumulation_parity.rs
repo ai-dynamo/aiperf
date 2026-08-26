@@ -134,9 +134,9 @@ fn run_scenario(address: SocketAddr, worker_count: u64) -> Value {
 /// Count/token metric identities whose counts/values are deterministic given the
 /// fixed mock, so their series counts and distribution stats must be
 /// byte-identical across worker counts. The wall-clock-derived `rate`
-/// (throughput = count / duration) is intentionally *not* compared: A1 makes the
-/// four-worker run finish faster, so a higher `rate` is the expected win, not a
-/// regression.
+/// (throughput = count / duration) is intentionally *not* compared: four-way
+/// parallel dispatch makes the four-worker run finish faster, so a higher `rate`
+/// is the expected win, not a regression.
 const DETERMINISTIC_METRICS: &[&str] = &[
     "request_count",
     "error_request_count",

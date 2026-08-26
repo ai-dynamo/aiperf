@@ -1519,13 +1519,11 @@ pub async fn sagemaker_invoke(
 /// dropped: AWS SageMaker eventstream responses have no terminal sentinel,
 /// they end at HTTP body EOF.
 ///
-/// The `data: ` prefix (and a trailing `\n`) is preserved in the
-/// `PayloadPart.Bytes` payload rather than stripped: real SageMaker
-/// containers (HF TGI/vLLM/LMI) emit the raw SSE-formatted line inside the
-/// PayloadPart, and clients (boto3-based benchmarkers, AIPerf's SageMaker
-/// transport) buffer/parse PayloadPart bytes as `data: {...}` lines. See
-/// `~/nvidia/projects/aws-issue/sample-InferenceBenchmarker/factories/sagemakerai_realtime/factories_llm_textgeneration_stream.py`
-/// for the reference client-side parsing this mirrors.
+/// The `data: ` prefix is stripped rather than preserved: the AWS
+/// `PayloadPart.Bytes` member carries the raw inner chat-completion-chunk JSON
+/// directly, not the SSE-framed `data: {...}` line, so clients (boto3-based
+/// benchmarkers, AIPerf's SageMaker transport) parse bare JSON out of each
+/// PayloadPart.
 fn sse_to_eventstream<S>(sse: S) -> impl Stream<Item = Result<Bytes, Infallible>>
 where
     S: Stream<Item = Result<Bytes, Infallible>>,

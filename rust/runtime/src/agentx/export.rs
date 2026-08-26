@@ -7,7 +7,7 @@
 //! (`raw_messages`), per-turn timing (`timestamp_ms`/`delay_ms`/`api_time_ms`),
 //! provenance, prefix-cache tallies, and the agentic-replay dispatch schedule
 //! ([`crate::agentx::trajectory_source::replay_schedule`]) — into the
-//! `export.records` raw record shape: one record per reconstructed turn carrying
+//! `artifacts.records` raw record shape: one record per reconstructed turn carrying
 //! the exact wire timing and content. This is the export-level artifact whose
 //! byte-exactness the real-corpus + schedule e2es establish field-by-field.
 

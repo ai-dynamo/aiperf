@@ -28,10 +28,11 @@ use crate::endpoints::registry::{
     PreparedRequest, ReadinessMethod, ReadinessPolicy, ReadinessSuccess,
 };
 
-/// Shared field defaults for the KServe descriptors below. Every descriptor is
-/// non-streaming, token-producing off, tokenizes input, needs no raw token IDs /
-/// form data / polling / inline media, and reports `service_kind = "kserve"`;
-/// each literal overrides only the fields that differ via `..DEFAULT`.
+/// Shared field defaults for the KServe descriptors below: non-streaming,
+/// token-producing off, tokenizes input, needs no raw token IDs / form data /
+/// polling / inline media, and reports `service_kind = "kserve"`. Each literal
+/// overrides only the fields that differ via `..DEFAULT`, so `service_kind` is
+/// the only one of these every descriptor keeps.
 const DEFAULT: EndpointDescriptor = EndpointDescriptor {
     id: "",
     aliases: &[],

@@ -47,9 +47,10 @@ pub(crate) fn corpus_error(message: impl Into<String>) -> CodingCorpusError {
     CodingCorpusError(message.into())
 }
 
-/// Multiplier applied to every category's block count when building the pool
-/// (`_pool_scale`). Fractional values scale down via truncation, mirroring the
-/// recorded-trace contract.
+/// Multiplier applied to every category's block count when building the pool,
+/// matching `coding_content.py`'s `int(count * self._pool_scale)`: a fractional
+/// scale truncates. Python clamps its own `_pool_scale` to `>= 1.0`; only this
+/// module's tests pass a fractional scale.
 const POOL_SCALE: f64 = 1.0;
 
 const TOOL_POOL_BLOCK_COUNTS: &[(TemplateKind, usize)] = &[

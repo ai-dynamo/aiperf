@@ -1820,8 +1820,9 @@ pub trait DockerRuntime {
 
 /// Required Docker Compose operations for a task-owned benchmark project.
 ///
-/// The trait intentionally has no operation defaults: a runtime must provide
-/// every lifecycle operation before it can advertise Compose support.
+/// Every project lifecycle operation is required, so a runtime must provide all
+/// of them before it can advertise Compose support. Only the optional streaming
+/// adapter spawner carries a fail-closed default.
 pub trait DockerComposeRuntime: DockerRuntime {
     /// Returns the normalized JSON for the supplied read-only Compose request.
     fn compose_config(

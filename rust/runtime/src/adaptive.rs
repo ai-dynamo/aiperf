@@ -131,7 +131,9 @@ pub trait ActuatorFactory {
     /// Stable control-variable id keying this factory in the registry.
     ///
     /// The returned id is authoritative: it must equal the built actuator's
-    /// [`ControlActuator::variable`], since the controller cross-checks the two.
+    /// [`ControlActuator::variable`], because [`build_adaptive_scale`] refuses a
+    /// run whose actuator variable disagrees with the configured control-variable
+    /// name that keyed this lookup.
     fn id(&self) -> &'static str;
 
     /// Construct the actuator, consuming the resources it owns from `context`.

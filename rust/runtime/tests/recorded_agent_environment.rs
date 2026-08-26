@@ -298,8 +298,9 @@ fn pinch_without_an_image_selects_local_execution_only_outside_the_scenario() {
 
 #[test]
 fn pinch_staging_keeps_root_contained_sorted_assets_as_raw_segments() {
-    // This catches staging that serializes host paths, accepts a directory escape,
-    // or loses an executable fixture's byte/mode contract.
+    // This catches staging that serializes host paths instead of sorted
+    // workspace-relative destinations, or loses an executable fixture's
+    // byte/mode contract.
     let root = tempfile::tempdir().expect("temporary task pack root");
     fs::create_dir_all(root.path().join("assets/bin")).expect("asset tree exists");
     fs::write(

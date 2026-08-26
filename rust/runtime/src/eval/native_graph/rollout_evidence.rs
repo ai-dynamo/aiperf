@@ -2249,7 +2249,7 @@ pub enum RolloutAdmissionError {
     },
     /// Descriptor byte accounting overflowed while applying total capacity.
     ArtifactTotalBytesOverflow,
-    /// The reset/action/observation/info descriptor bytes exceeded total capacity.
+    /// The reset/action/observation/info/workspace-patch descriptor bytes exceeded capacity.
     ArtifactTotalBytesExceeded {
         /// The checked descriptor-byte total.
         requested: u64,

@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Shared LCP-trie lowering used by both recorded adapters.
+//! Shared LCP-trie lowering used by the WEKA, Dynamo, and `aiperf_trace`
+//! adapters.
 
 mod messages;
 mod parents;
@@ -204,10 +205,8 @@ struct EmittedNode {
 }
 
 /// Emit one node: reconstruct and intern its prompt (and response), then build
-/// its `LlmNode`, channel state, and incoming edges. Shared by the sequential and
-/// the chain-parallel drivers; the only per-node mutable state is `pool` and
-/// `message_cache`, so a chain that owns both can run this concurrently with
-/// other chains.
+/// its `LlmNode`, channel state, and incoming edges. The only per-node mutable
+/// state is `pool` and `message_cache`.
 #[allow(clippy::too_many_arguments)]
 fn emit_one_node(
     node: &TrieNode,
@@ -372,7 +371,7 @@ fn emit_one_node(
     }
 }
 
-/// Assemble and structurally validate the final graph from the per-node output.
+/// Structurally validate the graph assembled from the per-node output.
 fn validate_recorded_graph(graph: &GraphRecord) -> Result<(), RecordedTraceError> {
     let errors = crate::graph::validate::validate(graph);
     if !errors.is_empty() {

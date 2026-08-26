@@ -1118,9 +1118,10 @@ pub(crate) struct GraphBackendFactoryConfig {
     /// the first node failure (default); `Continue` treats a failed node as
     /// empty and drains the DAG.
     pub(crate) on_failure: OnFailure,
-    /// Scenario-locked first-turn cache-bust marker configuration. `None` when
-    /// the run has no `cache_bust_target`; `Some` prepends a per-conversation
-    /// nonce marker to the first user message of every request.
+    /// Scenario-locked cache-bust marker configuration. `None` when the run has
+    /// no `cache_bust_target`; `Some` prepends the target's marker to the first
+    /// message of the selected role in every request (a per-conversation nonce
+    /// on the first user message for `FirstTurnPrefix`).
     pub(crate) cache_bust: Option<GraphCacheBust>,
     /// Ignore recorded trace inter-message/inter-request delays: fire every node
     /// as soon as its inputs are ready via `ExecutorFlags::ignore_edge_delays`.
@@ -1138,7 +1139,9 @@ pub(crate) struct GraphBackendFactoryConfig {
 pub(crate) struct GraphCacheBust {
     /// Per-run benchmark identity digested into the marker.
     pub(crate) benchmark_id: String,
-    /// Resolved marker placement target (only `FirstTurnPrefix` mints a marker).
+    /// Resolved marker placement target: `FirstTurnPrefix` mints the digest
+    /// marker, the warmup-isolation targets mint a fixed `[warmup]` marker, and
+    /// `None` mints nothing.
     pub(crate) target: crate::engine::graph_input::CacheBustTarget,
 }
 
@@ -1147,7 +1150,8 @@ impl GraphCacheBust {
     /// instance, or `None` when the target is disabled. The digest is taken over
     /// the whole instance `trace_id` (base template + `::` nonce) so every
     /// instance and recycle draws a distinct marker while every node of one
-    /// instance shares it.
+    /// instance shares it. The warmup-isolation targets instead mint the fixed
+    /// `[warmup]\n\n` marker, which is shared by every instance.
     fn marker(&self, trace_id: &str) -> Option<String> {
         use sha2::{Digest, Sha256};
         if !self.target.is_enabled() {
@@ -1173,7 +1177,9 @@ impl GraphCacheBust {
     }
 }
 
-/// Idempotently prepend `marker` to the first user message.
+/// Idempotently prepend `marker` to the first message the target selects: the
+/// first `system` message for `WarmupIsolationSystem`, the first `user` message
+/// otherwise.
 fn prepend_cache_bust_marker(
     messages: &mut [Value],
     marker: &str,
@@ -1500,7 +1506,8 @@ impl TracePlacement for GraphWorkerBackend {
         let terminal_nodes = terminal_graph_nodes(plan);
         // Mint the per-conversation cache-bust marker once for this trace
         // instance; every node dispatched for it shares the marker, so the
-        // first-turn user prefix is byte-stable across the conversation's turns.
+        // injected prefix is byte-stable across the conversation's turns. The
+        // warmup-isolation targets only apply inside the warmup phase.
         let cache_bust_marker = self
             .cache_bust
             .as_ref()
@@ -1946,8 +1953,9 @@ struct EngineGraphSink {
     raw_enabled: bool,
     terminal_nodes: RefCell<HashSet<String>>,
     events: Arc<dyn GraphExecutionEventSink>,
-    /// Per-conversation first-turn cache-bust marker, minted once per trace
-    /// instance. `None` when cache-bust is disabled.
+    /// Cache-bust marker for this trace, minted once per trace instance. `None`
+    /// when cache-bust is disabled, and also `None` for a warmup-isolation
+    /// target outside the warmup phase.
     cache_bust_marker: Option<String>,
     cache_bust_target: crate::engine::graph_input::CacheBustTarget,
     /// Requests this trace registered with the shared observer (one per dispatched
@@ -2201,8 +2209,8 @@ impl GraphSink<OpenAiChatMessage> for EngineGraphSink {
                     endpoint,
                     endpoint_aware: true,
                     data_policy: crate::multiturn::TurnDataPolicy::ordinary(),
-                    // Graph programs are placed by `ThreadPerCoreTracePlacement`
-                    // and never routed as credits.
+                    // Graph traces are dispatched directly by their placement and
+                    // never routed as credits.
                     deferred: None,
                 },
                 self.observer.as_ref(),

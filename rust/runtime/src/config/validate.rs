@@ -209,9 +209,10 @@ const AGENTIC_REPLAY: &str = "agentic_replay";
 /// Resolve the default dataset's cache-bust target.
 ///
 /// Mirrors Python `BenchmarkConfig.get_cache_bust_target`: for a synthetic
-/// dataset the target lives at `prompts.cache_bust.target`; for a file-backed
-/// dataset it lives at the dataset-level `cache_bust.target`. Any other dataset
-/// kind (or an absent dataset section) resolves to `None`.
+/// dataset the target lives at `prompts.cache_bust.target`; for a file-backed or
+/// public dataset it lives at the dataset-level `cache_bust.target`. An absent
+/// dataset section, or a dataset that authored no `cache_bust` block, resolves
+/// to `None`.
 fn cache_bust_target(cfg: &BenchmarkConfig) -> CacheBustTarget {
     let Some(dataset) = cfg.datasets.as_ref().and_then(|d| d.first()) else {
         return CacheBustTarget::None;

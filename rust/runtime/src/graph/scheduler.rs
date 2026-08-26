@@ -8,9 +8,10 @@
 use crate::graph::model::{END_NODE_ID, GraphRecord, START_NODE_ID, StaticEdge};
 use std::collections::BTreeMap;
 
-/// Returned at construction for a start-anchored in-edge that is not its
-/// target's only in-edge (mixed-anchor / multi-start-anchored fan-in), an
-/// unsupported topology the runtime rejects up front.
+/// Why an anchored edge topology is unsupported and rejected at construction:
+/// a START edge anchored on a dispatch or first-token event it cannot have, or a
+/// start-anchored in-edge that is not its target's only in-edge (mixed-anchor /
+/// multi-start-anchored fan-in).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum AnchorFanInKind {
     /// START cannot provide a dispatch or first-token event.

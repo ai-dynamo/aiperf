@@ -1803,8 +1803,10 @@ pub struct DynosimArtifactOutputs {
 /// Prepared offline backend adapter shared by scheduled and graph pair factories.
 ///
 /// Construction and static validation perform no IO. Each execution method
-/// initializes exactly one library-owned engine/clock composition, waits for
-/// exact parity validation, and only then writes optional backend artifacts.
+/// initializes exactly one library-owned engine/clock composition, waits for the
+/// parity verification its clock axis allows (byte-exact under
+/// `dynosim_offline`, relaxed under `dynosim_online`; see [`verify_parity_for`]),
+/// and only then writes optional backend artifacts.
 #[derive(Clone, Debug)]
 pub struct DynosimExecutor {
     engine: OfflineEngineConfig,
@@ -1818,8 +1820,9 @@ pub struct DynosimExecutor {
 }
 
 impl DynosimExecutor {
-    /// Run a scheduled workload whose deterministic observer reduction occurs
-    /// after the virtual-time driver and its Tokio `LocalSet` have exited.
+    /// Run a scheduled workload whose observer reduction occurs after the driver
+    /// selected by the clock axis (virtual-time under `dynosim_offline`,
+    /// wall-clock under `dynosim_online`) and its Tokio `LocalSet` have exited.
     pub fn execute_scheduled_deferred(
         self,
         workload: Box<dyn DeferredOfflineScheduledRunFactory>,
@@ -1888,9 +1891,9 @@ impl DynosimExecutor {
         })
     }
 
-    /// Execute a direct authored Graph-IR workload over the shared SimClock and
-    /// steppable engine, without the generated benchmark graph or a linear
-    /// dataset conversion.
+    /// Execute a direct authored Graph-IR workload over the clock the transport
+    /// ID selected and the shared steppable engine, without the generated
+    /// benchmark graph or a linear dataset conversion.
     #[allow(clippy::too_many_arguments)]
     pub fn execute_graph(
         self,
@@ -1943,8 +1946,8 @@ impl DynosimExecutor {
         })
     }
 
-    /// Execute an injected multi-phase Graph-IR driver over one SimClock and
-    /// one passive engine.
+    /// Execute an injected multi-phase Graph-IR driver over one clock (the one
+    /// the transport ID selected) and one passive engine.
     pub fn execute_graph_deferred(
         self,
         segments: Arc<dyn SegmentStore>,

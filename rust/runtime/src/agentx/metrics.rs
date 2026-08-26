@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! AgentX metric accumulators (Slice 4), ported from
+//! AgentX metric accumulators, ported from
 //! `src/aiperf/metrics/theoretical_prefix_cache.py` and
 //! `src/aiperf/metrics/types/context_overflow_count_metric.py`.
 //!

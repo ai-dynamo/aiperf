@@ -13,14 +13,15 @@
 //! prepare/execute is caught and converted to a typed v2 failure envelope so the
 //! parent sees a clean failure instead of a crashed subprocess.
 //!
-//! The stdin payload is a bare protocol-v2 `BenchmarkRun`; the requested
-//! operation is selected by the re-exec MODE (argv), not a wire field. The child
-//! reconstructs the internal `EnvelopeV2` with the fixed protocol version and
-//! selected operation.
+//! The stdin payload is the protocol-v2 execute wire: an authoring
+//! `{"authoring": …}` envelope (what every profile path ships) or a bare resolved
+//! `BenchmarkRun`. The requested operation is selected by the re-exec MODE
+//! (argv), not a wire field. The child reconstructs the internal `EnvelopeV2`
+//! with the fixed protocol version and selected operation.
 //!
 //! Modes (selected by the first argument, set by the re-exec spawn site):
 //! `--execute` (single-process run / controller self-promotion on `cells>1`),
-//! `--validate` (side-effect-free validate of the same bare run), `--cell` and
+//! `--validate` (side-effect-free validate of the same wire payload), `--cell` and
 //! `--aggregator` (an early refusal for unavailable hierarchical aggregation).
 //! Capabilities is an in-process
 //! function, not a mode.
@@ -45,11 +46,11 @@ unsafe extern "C" {
     fn aiperf_mi_option_purge_delay() -> libmimalloc_sys::mi_option_t;
 }
 
-/// The internal re-exec flag: `aiperf --execute` reads one bare protocol-v2
-/// `BenchmarkRun` from stdin and executes it. It is hidden from `--help`.
+/// The internal re-exec flag: `aiperf --execute` reads one protocol-v2 execute
+/// wire payload from stdin and executes it. It is hidden from `--help`.
 pub const EXECUTE_FLAG: &str = "--execute";
-/// The internal re-exec flag: `aiperf --validate` reads the same bare
-/// `BenchmarkRun` from stdin but runs it as a side-effect-free `validate`
+/// The internal re-exec flag: `aiperf --validate` reads the same execute wire
+/// payload from stdin but runs it as a side-effect-free `validate`
 /// operation.
 pub const VALIDATE_FLAG: &str = "--validate";
 /// `aiperf --cell` runs this process as one cell of a multi-cell run (velo).
@@ -245,14 +246,16 @@ fn run_aggregator(input: &[u8]) -> ! {
 
 #[cfg(not(feature = "cellular"))]
 fn run_aggregator(_input: &[u8]) -> ! {
-    tracing::error!("aiperf was built without the `velo` feature; `--aggregator` is unavailable");
+    tracing::error!(
+        "aiperf was built without the `cellular` feature; `--aggregator` is unavailable"
+    );
     std::process::exit(2);
 }
 
 #[cfg(not(feature = "cellular"))]
 fn run_cell() -> ! {
     tracing::error!(
-        "aiperf was built without the `velo` feature; `--cell` (multi-cell runs) requires it"
+        "aiperf was built without the `cellular` feature; `--cell` (multi-cell runs) requires it"
     );
     std::process::exit(2);
 }
@@ -266,7 +269,7 @@ fn run_controller(envelope: &Value) -> ! {
     emit_cellular_failure(
         benchmark_id,
         "velo_feature_required",
-        "aiperf was built without the `velo` feature; multi-cell runs (cells>1) require it"
+        "aiperf was built without the `cellular` feature; multi-cell runs (cells>1) require it"
             .to_owned(),
     );
 }

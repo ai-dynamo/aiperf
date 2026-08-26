@@ -1209,7 +1209,7 @@ impl ConversationSession {
         //
         // 1. No lowerable dialect's formatter inspects a reply's content. Every
         //    dialect `ShapeLowerer` can lower splices `lowered` verbatim
-        //    (`rendered_turn_messages`, `endpoints.rs`), and every dialect that
+        //    (`rendered_turn_messages`, `endpoints/implementation.rs`), and every dialect that
         //    does read `texts`/`role`/`raw_messages` directly either rejects
         //    multiple turns or selects `first()`/`last()` — neither of which a
         //    captured reply can ever be. A new lowerable id whose formatter

@@ -8,7 +8,10 @@ use std::path::PathBuf;
 use serde_json::Value;
 use tempfile::TempDir;
 
-// The faker emits eight of the twelve default telemetry metrics.
+// Conservative floor on the default telemetry metrics the faker's page can fill:
+// `DCGM_METRICS` declares twelve and the faker emits every source field except
+// `DCGM_FI_DEV_JPG_UTIL`, so the per-GPU `metrics` map carries at least this many
+// before the custom CSV entries are added.
 const DCGM_FAKER_DEFAULT_METRIC_COUNT: usize = 8;
 
 const FREQ_MEGAHERTZ: &str = "MHz";

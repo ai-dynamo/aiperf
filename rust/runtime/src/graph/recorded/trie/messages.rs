@@ -107,6 +107,18 @@ fn geometry_from_hashes(
     }
 }
 
+/// Inputs to [`block_role_split`]: the turn and its content parent's geometry.
+struct BlockRoleSplitArgs<'a> {
+    prev_hash_ids: &'a [crate::graph::recorded::BlockHash],
+    curr_hash_ids: &'a [crate::graph::recorded::BlockHash],
+    curr_in_tokens: usize,
+    prev_out_tokens: usize,
+    block_size: usize,
+    max_asst_blocks: Option<usize>,
+    parent_has_user: bool,
+    parent_covered_blocks: usize,
+}
+
 /// Split a turn's new blocks into per-block `assistant`/`user` roles relative to
 /// its content parent. Byte-exact port of the graph-ir Python
 /// `segment_ir.trie_content.block_role_split`.
@@ -119,17 +131,6 @@ fn geometry_from_hashes(
 /// carries no user context (context-loss branch); the remainder is user. A turn
 /// whose new region is all-assistant flips its OWN last new block to user so the
 /// frozen boundary lands on a user block (inherited verbatim by every descendant).
-struct BlockRoleSplitArgs<'a> {
-    prev_hash_ids: &'a [crate::graph::recorded::BlockHash],
-    curr_hash_ids: &'a [crate::graph::recorded::BlockHash],
-    curr_in_tokens: usize,
-    prev_out_tokens: usize,
-    block_size: usize,
-    max_asst_blocks: Option<usize>,
-    parent_has_user: bool,
-    parent_covered_blocks: usize,
-}
-
 fn block_role_split(args: BlockRoleSplitArgs<'_>) -> (usize, Vec<Role>) {
     let geo = geometry_from_hashes(
         args.prev_hash_ids,

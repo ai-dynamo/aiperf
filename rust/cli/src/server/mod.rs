@@ -5,14 +5,14 @@
 //! The `aiperf` orchestrator (`rust/cli`) drives many runs — single, multi-trial,
 //! and sweep cells — and is the one process with cross-run visibility. This module
 //! embeds an axum HTTP server there so a browser can browse every run's
-//! `native-v2.json` (and, in a follow-on, watch the in-flight run live). It is the
-//! native successor to the retired per-run Python `api` service: no ZMQ, no mesh,
-//! no Python — the orchestrator serves its own runs directly.
+//! `native-v2.json` and watch the in-flight run live over [`live`]'s SSE endpoint.
+//! It is the native successor to the retired per-run Python `api` service: no ZMQ,
+//! no mesh, no Python — the orchestrator serves its own runs directly.
 //!
 //! Threading: the orchestrator's main thread is a *blocking* child-spawn loop
 //! (`profile::run_cells` → `execute::run_once` → `child.wait()`) with **no** tokio
 //! runtime. So the server runs on its own `std::thread` owning a multi-thread tokio
-//! runtime (modelled on `aiperf::runner_protocol::artifact_shipping`'s server). It
+//! runtime (modelled on `aiperf_runtime::engine::artifact_shipping`'s server). It
 //! shares only `Send` state with the loop — an `Arc<Mutex<Vec<RunEntry>>>` the loop
 //! pushes each completed cell into — and never touches the run's `!Send` state.
 

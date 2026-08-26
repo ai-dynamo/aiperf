@@ -131,7 +131,8 @@ impl RustRandomGenerator {
             .expect("an inclusive i64 sample must remain representable"))
     }
 
-    /// Uniform float in `[a, b)` or `[b, a)` when `b < a`.
+    /// Uniform float in `[a, b)`, or `(b, a]` when `b < a`, from Python's
+    /// `a + (b - a) * random()`.
     pub fn uniform(&mut self, a: f64, b: f64) -> f64 {
         a + (b - a) * self.random()
     }
@@ -433,9 +434,10 @@ impl RustRandomGenerator {
     /// Sample one index against precomputed cumulative weights, consuming a
     /// single uniform draw. `cumulative` must be the running sums produced by
     /// [`cumulative_weights`] over already-validated weights; its last element
-    /// is the total. This uses `weighted_index`'s draw and boundary
-    /// selected index) while skipping that method's per-draw O(n) validation and
-    /// re-accumulation, so repeated draws over a fixed weight vector stay cheap.
+    /// is the total. This keeps `weighted_index`'s draw count and boundary rule
+    /// (so both pick the same index) while skipping its per-draw O(n) validation
+    /// and re-accumulation, so repeated draws over a fixed weight vector stay
+    /// cheap.
     fn weighted_index_cached(&mut self, cumulative: &[f64]) -> usize {
         let total = *cumulative
             .last()

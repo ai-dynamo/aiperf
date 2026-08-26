@@ -100,8 +100,8 @@ impl SimClock {
         })
     }
 
-    /// Advance virtual time to `ns` (no-op if `ns <= now`), waking every sleeper
-    /// whose deadline is `<= ns` in `(deadline, seq_no)` heap order.
+    /// Advance virtual time to `ns` (time does not move when `ns <= now`), waking
+    /// every sleeper whose deadline is `<= ns` in `(deadline, seq_no)` heap order.
     ///
     pub fn advance_to(&self, ns: i64) {
         if ns <= self.now_ns.get() {

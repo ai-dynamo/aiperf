@@ -28,7 +28,7 @@ pub use stats::{
 pub const NANOS_PER_SECOND: f64 = 1_000_000_000.0;
 
 const PARALLEL_SWEEP_MIN_ROWS: usize = 4_096;
-#[allow(dead_code)] // Exercised by `radix_argsort_mt` tests.
+#[allow(dead_code)] // Only sizes the large-event `sort_sweep_events` tests.
 const PARALLEL_EVENT_SORT_MIN_EVENTS: usize = 262_144;
 
 /// One timestamped change applied by the sweep-line cumulative sum.
@@ -319,7 +319,7 @@ fn radix_key(x: f64) -> u64 {
 /// A stable LSD radix on `radix_key(timestamp)` orders by timestamp (ties keep
 /// input order); each equal-timestamp run is then sorted by `delta` so the
 /// cumulative sum accumulates in the same order — and therefore to the same
-/// `f64` bits — as the comparison sort. Parallel above the event threshold.
+/// `f64` bits — as the comparison sort.
 fn sort_by_timestamp_then_delta<T, Ts, Delta>(items: &mut [T], timestamp: Ts, delta: Delta)
 where
     T: Copy + Send,
@@ -807,8 +807,8 @@ impl SweepLineCurves {
                 },
                 || {
                     // These ICL-aware curves own the two largest temporary event
-                    // buffers. Running them serially lets each parallel sort use
-                    // the whole pool without making both peak allocations live.
+                    // buffers. Running them serially keeps both peak allocations
+                    // from being live at the same time.
                     let decode_throughput = compute_decode_throughput();
                     let tokens_in_flight = compute_tokens_in_flight();
                     (decode_throughput, tokens_in_flight)
@@ -859,7 +859,7 @@ impl SweepLineCurves {
         }
     }
 
-    /// Computes the nine effective and five active metric results for a window.
+    /// Computes the eleven effective and six active metric results for a window.
     pub fn compute_metrics(
         &self,
         window_start_ns: f64,

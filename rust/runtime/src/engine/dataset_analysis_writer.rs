@@ -56,9 +56,9 @@ pub struct DatasetAnalysisRequest {
 
 /// Stable conversation identity for a captured record.
 ///
-/// Prefers the endpoint-provided `conversation_id`; falls back to the workload
-/// session number so single-turn runs without an explicit conversation id still
-/// group into distinct conversations rather than collapsing to one.
+/// Prefers the dataset/trace-provided `conversation_id`; falls back to the
+/// workload session number so single-turn runs without an explicit conversation
+/// id still group into distinct conversations rather than collapsing to one.
 fn conversation_key(record: &CapturedRecord) -> String {
     record
         .ingest
@@ -201,11 +201,11 @@ pub fn analyzed_turns_from_graph_input(input: &GraphInputBundle) -> Vec<Analyzed
 /// length. `block_ids` and `system_handle` are left absent (see the module docs);
 /// the analysis then falls back to length-structure identity synthesis.
 ///
-/// This is the shared source for both the graph path
-/// ([`write_dataset_analysis`]) and the scheduled path
-/// ([`write_dataset_analysis_from_records`]) — neither the compiled
-/// [`GraphInputBundle`] nor the scheduled conversation source exposes per-turn
-/// block hashes, so the records are the ground truth in both cases.
+/// This is the scheduled path's turn source ([`write_dataset_analysis_from_records`]);
+/// the scheduled conversation source exposes no per-turn block hashes, so the
+/// records are the ground truth there. The graph path instead reads the compiled
+/// [`GraphInputBundle`]'s real segment handles through
+/// [`analyzed_turns_from_graph_input`].
 pub fn analyzed_turns_from_records(records: &[CapturedRecord]) -> Vec<AnalyzedTurn> {
     records
         .iter()
@@ -442,8 +442,8 @@ mod tests {
             assert!(path.exists(), "expected {name} to be written");
         }
 
-        // Length-structure identity synthesis (from positive ISL) yields a cache
-        // section, so the JSON carries the reuse hit-rate curve.
+        // The bundle's real segment handles drive the hash-id identity path, so
+        // the JSON carries the reuse hit-rate curve.
         let json =
             std::fs::read_to_string(dir.path().join("dataset_analysis.json")).expect("read json");
         assert!(

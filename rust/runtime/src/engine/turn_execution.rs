@@ -283,8 +283,9 @@ impl ExecutionSinkBuilder for HttpSinkBuilder {
 /// `workers > 1` builds the [`ThreadPerCoreExecutor`] cross-thread hop: one
 /// coordinator-owned scheduling loop above this backend issues every turn in
 /// exact global order, and each [`RequestExecutor::execute_measured`] call is
-/// round-robined to one of `workers` worker OS threads over a bounded mpsc
-/// command queue, driven to terminal by that thread's worker-local
+/// placed on one of `workers` worker OS threads by `hop_routing` (round-robin
+/// by default) over a bounded mpsc command queue, driven to terminal by that
+/// thread's worker-local
 /// [`WorkerSink`], and returned over a oneshot reply. This is the
 /// [`DispatchMode::GlobalHop`] placement (see
 /// [`crate::engine::global_hop::run_global_hop`]); it reproduces exact
@@ -515,9 +516,10 @@ impl Drop for PlacementCancellationGuard {
 ///
 /// One worker loop for every transport: the sink type is the only variable,
 /// supplied by `B::Sink`. Worker threads, measurement, drain, cancellation, and
-/// streaming are written once here. Round-robins each dispatched turn to the
-/// next worker thread in issuance order, so the coordinator's single scheduling
-/// loop maps turn `i` deterministically to worker `i % workers`.
+/// streaming are written once here. Placement follows `routing`: under the
+/// default [`HopRouting::RoundRobin`] the coordinator's single scheduling loop
+/// maps turn `i` deterministically to worker `i % workers`, while `Sticky` and
+/// `LeastLoaded` bind a session to one worker instead.
 struct ThreadPerCoreExecutor<B: ExecutionSinkBuilder> {
     senders: RefCell<Option<Vec<mpsc::Sender<WorkerMessage>>>>,
     threads: RefCell<Vec<JoinHandle<Result<()>>>>,
@@ -656,9 +658,9 @@ pub(crate) fn pick_worker(
 
 /// Per-worker load signals consulted when several workers tie on in-flight depth.
 ///
-/// Mirrors the fields Python's `StickyCreditRouter` tie-breaks on, minus
-/// `active_sessions` — that one requires an end-of-session signal to decrement, which does not
-/// reach this pick site (see [`pick_worker`]). `sent` is Python's `virtual_sent_credits` and
+/// Mirrors the fields Python's `StickyCreditRouter` tie-breaks on, including
+/// `active_sessions` — [`pick_worker`] carries the `is_final_turn` end-of-session signal, so a
+/// binding's eviction decrements it. `sent` is Python's `virtual_sent_credits` and
 /// `last_sent` its `last_sent_at_ns`, kept as a monotonic sequence rather than a wall-clock
 /// reading so placement stays reproducible run to run and under a `SimClock`.
 ///

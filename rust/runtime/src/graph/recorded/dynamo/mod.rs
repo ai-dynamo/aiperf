@@ -50,9 +50,9 @@ pub async fn compile_dynamo_trace_input(
     let chains = build_chains(records)?;
     validate_forest(&chains)?;
     let selected = select_trees(&chains, config.root_limit, config.max_context_length)?;
-    // Resolve this authority across the complete capture before per-tree
-    // selection/build. A mixed-size tree cannot be hidden behind a root or
-    // context filter and make the remaining trees silently executable.
+    // Resolve this authority across the complete capture, not just the selected
+    // trees, before any per-tree build. A mixed-size tree cannot be hidden behind
+    // a root or context filter and make the remaining trees silently executable.
     let block_size = resolve_block_size(&chains)?;
     let owned = CorpusContentSynthesizer::build_owned(
         tokenizer,

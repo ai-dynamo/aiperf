@@ -197,7 +197,7 @@ pub struct ContentGroup {
     pub handles: SmallVec<[Handle; 1]>,
     /// Image-only, vLLM-extension cache UUIDs aligned 1:1 with `handles`.
     /// Empty when unused; when set, always the same length as `handles`
-    /// (validated at load time). See [`crate::endpoints::models::Media::uuids`].
+    /// (validated at load time). See [`crate::endpoints::Media::uuids`].
     #[serde(default)]
     pub uuids: SmallVec<[String; 1]>,
 }

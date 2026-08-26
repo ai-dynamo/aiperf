@@ -3,11 +3,11 @@
 
 //! Tool-use and bash-output template renderers.
 //!
-//! Every generator here takes a `lang: Option<usize>` language selector
-//! (`Some(0..=3)` = python/go/rust/typescript, `None` = the pool path). The pool
-//! The pool path passes `None`; the multi-turn
-//! conversation renderers pass the conversation's chosen language, so the
-//! language-specific code branches AND file pools must be reproduced exactly.
+//! The read, edit, search, and bash generators take a `lang: Option<usize>`
+//! language selector (`Some(0..=3)` = python/go/rust/typescript). The pool path
+//! passes `None`; the multi-turn conversation renderers pass the conversation's
+//! chosen language, so the language-specific code branches AND file pools must
+//! be reproduced exactly. The `bash_*` transcript generators take no selector.
 
 use super::CodingCorpusError;
 use super::templates::TemplateRenderer;

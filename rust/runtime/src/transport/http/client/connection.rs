@@ -400,9 +400,11 @@ pub(crate) async fn with_timeout<T, E>(
 }
 
 /// Establish a connection to `url`, enforcing `cfg.connect_timeout_ns` (when set
-/// to a positive value) around the whole DNS -> TCP -> TLS -> handshake phase by
+/// to a positive value) around each DNS -> TCP -> TLS -> handshake attempt by
 /// racing it against a [`Clock`] timer. A `None`/non-positive timeout means "no
-/// deadline". `trace` is filled with connect timings.
+/// deadline". Up to `cfg.max_connect_retries` further attempts follow a
+/// connect-phase failure, so that deadline bounds one attempt and not the whole
+/// call. `trace` is filled with connect timings.
 pub async fn establish(
     url: &Url,
     cfg: &ClientConfig,
@@ -500,7 +502,7 @@ async fn establish_inner(
         .port_or_known_default()
         .unwrap_or(if is_tls { 443 } else { 80 });
 
-    // When a proxy is configured (dataset/tokenizer downloads only), tunnel via
+    // When a proxy is configured, tunnel via
     // HTTP CONNECT: the proxy resolves the origin, so we must not resolve it
     // locally. Otherwise resolve and connect to the origin directly, unchanged —
     // DNS stays outside the TCP-connect span exactly as before.
@@ -587,9 +589,11 @@ where
     I: hyper::rt::Read + hyper::rt::Write + Unpin + 'static,
 {
     if use_h2 {
-        // Hyper's Rapid Reset guard caps locally reset streams at 1024. Large
-        // cancellation bursts can exceed it and close the connection, so stress
-        // tests may raise the cap with `AIPERF_H2_MAX_RESET_STREAMS`.
+        // h2 remembers only `max_concurrent_reset_streams` locally reset streams
+        // (default 50); past that the oldest is purged, and a late frame for a
+        // purged stream is a connection-level protocol error that terminates the
+        // connection. Large cancellation bursts can hit that, so stress tests may
+        // raise the cap with `AIPERF_H2_MAX_RESET_STREAMS`.
         let mut builder = hyper::client::conn::http2::Builder::new(LocalExec);
         if let Some(cap) = std::env::var("AIPERF_H2_MAX_RESET_STREAMS")
             .ok()

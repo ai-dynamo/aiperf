@@ -13,10 +13,12 @@ fn load_golden(name: &str) -> serde_json::Value {
 }
 
 /// When `AIPERF_UPDATE_SWEEP_GOLDEN=1`, tests regenerate the golden JSON from the
-/// current branch's computed cells instead of asserting against it. The regenerated
-/// structure mirrors exactly the fields the assertions read back
-/// (`{cells:[{label,artifact_dir,random_seed,trial,request:{run:{...}}}], trials}`),
-/// so a fresh `cargo test` run reads self-consistent goldens.
+/// current branch's computed cells instead of asserting against it. Each test
+/// writes exactly the fields its own assertions read back — at most
+/// `{trials, cells:[{label,trial,artifact_dir,random_seed,request:{run:{...}}}]}`,
+/// where `trials` and the per-cell `trial` come only from the multi-run fixtures
+/// and the search-recipe fixtures omit `artifact_dir` — so a fresh `cargo test`
+/// run reads self-consistent goldens.
 fn regen_enabled() -> bool {
     std::env::var("AIPERF_UPDATE_SWEEP_GOLDEN").is_ok_and(|v| !v.is_empty() && v != "0")
 }

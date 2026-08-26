@@ -4,7 +4,8 @@
 //!
 //! Config v2 accepts shorthand forms (`model:` → `models.items[0]`, `dataset:`
 //! → `datasets[0]`, a flat `phases:` → one phase) and both snake_case and
-//! camelCase keys via `serde(alias)`. Unknown keys are ignored.
+//! camelCase keys via `serde(alias)`. Every section is `deny_unknown_fields`, so
+//! an unknown key is a hard error rather than a silently ignored one.
 
 use std::path::PathBuf;
 
@@ -1800,7 +1801,6 @@ impl Benchmark {
             }
         });
 
-        // DynoSim needs a never-dialed sentinel when no URL is authored.
         // Honored by construction (round-robin is the only native selector), so
         // reject any other name instead of running a strategy nobody asked for.
         if let Some(strategy) = self.endpoint.url_strategy.as_deref()
@@ -1812,6 +1812,7 @@ impl Benchmark {
             );
         }
 
+        // DynoSim needs a never-dialed sentinel when no URL is authored.
         let urls = match self.endpoint.url {
             Some(u) => u.into_vec(),
             None if is_dynosim => vec!["dynosim://offline".to_string()],
@@ -2309,8 +2310,8 @@ impl Benchmark {
             }
             None => Vec::new(),
         };
-        // `artifacts.userFiles`: rendered once here, so the runner materializes
-        // bytes rather than re-rendering templates at run time.
+        // `artifacts.userFiles`: serialized once here, so the runner
+        // materializes bytes rather than formatting content at run time.
         let mut user_files = Vec::new();
         for f in self
             .artifacts

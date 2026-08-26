@@ -8,7 +8,7 @@
 //!   client streams those chunks into the request body over a bounded channel
 //!   so backpressure caps in-flight bytes.
 //! - **Receive** (`decode_channel_to_file`): stream the request body frames
-//!   into a `zstd::stream::write::Decoder` writing to a `.part` file, then atomic
+//!   into a `zstd::stream::raw::Decoder` writing to a `.part` file, then atomic
 //!   `rename` to the final path (crash-safe: a partial upload never leaves a
 //!   truncated final file). Bounded [`CHUNK_SIZE`] chunks throughout.
 //!
@@ -1223,15 +1223,17 @@ impl PlainToFile {
     }
 }
 
-/// Drain `rx` (compressed-or-plain chunks the async handler forwards from the
-/// request body) into `dest`, streaming-decompressing when `zstd` is set, then
-/// atomic-rename. Runs on a blocking task so the file/zstd work never stalls the
-/// async runtime. Bounded memory: one [`CHUNK_SIZE`] chunk at a time.
+/// One frame of an in-flight upload: a body chunk, or the sender's explicit
+/// end-of-body marker (a dropped channel instead means a cancelled transfer).
 enum UploadChunk {
     Data(Bytes),
     Complete,
 }
 
+/// Drain `rx` (compressed-or-plain chunks the async handler forwards from the
+/// request body) into `dest`, streaming-decompressing when `zstd` is set, then
+/// atomic-rename. Runs on a blocking task so the file/zstd work never stalls the
+/// async runtime. Bounded memory: one [`CHUNK_SIZE`] chunk at a time.
 fn decode_channel_to_file(
     mut rx: mpsc::Receiver<UploadChunk>,
     dest: &Path,
@@ -1272,7 +1274,8 @@ fn decode_channel_to_file(
 /// - a path not present in `allowed` verbatim.
 ///
 /// The allowlist is the exact set of relative artifact paths the controller
-/// derived from `cfg.artifacts` (records/raw/CSV/parquet/outputs + `inputs.json`),
+/// derived from `cfg.artifacts` ([`shippable_relatives`]: records/raw/CSV/parquet/
+/// outputs, `inputs.json`, and the graph replay artifacts),
 /// so a cell can only ever land bytes at a known per-record artifact location
 /// inside its own `cell-{id}` dir — never traverse out of it.
 pub(crate) fn validate_artifact_relpath(rel: &str, allowed: &HashSet<String>) -> Result<PathBuf> {
@@ -1823,8 +1826,8 @@ async fn serve_dataset_manifest(
 /// Ship one cell's per-record artifact files (+ `inputs.json`) to the controller
 /// over HTTP with streaming zstd, then POST the per-cell `/done` marker.
 ///
-/// `authority` is the controller's artifact `host:port` (DNS-resolved, so a k8s
-/// service name works); `cell_dir` is this cell's own artifact dir; `relatives`
+/// `client` carries the controller's artifact `host:port` (DNS-resolved, so a k8s
+/// service name works) and this cell's bearer; `cell_dir` is this cell's own artifact dir; `relatives`
 /// is the set of relative artifact paths to ship (only those that exist on disk
 /// are sent — a metrics-only or lazy-CSV run legitimately omits some). Bounded
 /// memory: each file streams through a [`FileCompressor`] over a bounded channel.
@@ -1922,9 +1925,9 @@ async fn post_done(client: &ArtifactChannelClient, cell_id: u32) -> Result<()> {
     Ok(())
 }
 
-/// Open an HTTP/1.1 connection to `authority` (DNS-resolved), send `request`, and
-/// return its status after draining the response. Uses a raw hyper client
-/// connection.
+/// Open a pinned-TLS HTTP/1.1 connection to the client's authority (DNS-resolved),
+/// send `request`, and return its status after draining the response. Uses a raw
+/// hyper client connection.
 async fn send_request<B>(
     client: &ArtifactChannelClient,
     request: hyper::Request<B>,
@@ -1949,7 +1952,7 @@ where
 /// blocking streaming decode (`.part` + atomic rename), so a crashed transfer
 /// never leaves a truncated final file — the same discipline as the upload leg.
 ///
-/// `authority` is the controller's artifact `host:port`; a same-host cell never
+/// `client` carries the controller's artifact `host:port`; a same-host cell never
 /// calls this (it reads the controller-local path directly).
 pub(crate) async fn fetch_dataset_to_file(
     client: &ArtifactChannelClient,
@@ -2186,8 +2189,10 @@ pub(crate) async fn reconstruct_shipped_dataset(
 }
 
 /// The relative artifact paths a run may ship over HTTP, derived from its
-/// `ArtifactSpec` — every per-record file (records/raw/CSV/parquet/outputs) plus
-/// the per-session `inputs.json`. Both the controller's server allowlist and the
+/// `ArtifactSpec` — every per-record file (records/raw/CSV/parquet/outputs), the
+/// per-session `inputs.json`, and the per-cell graph replay artifacts (tool time,
+/// trace summary, replay metrics JSON/CSV, failures, provenance, backend
+/// metadata). Both the controller's server allowlist and the
 /// cell's client shipping list come from this single function, so they can never
 /// disagree on which files cross the wire.
 pub fn shippable_relatives(artifacts: &crate::engine::protocol::ArtifactSpec) -> Vec<String> {

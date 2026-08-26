@@ -813,14 +813,14 @@ enum PublicDatasetInput {
 /// Decode an authored dataset source through `serde_json::Value`.
 ///
 /// Every adapter source is an internally tagged (`#[serde(tag = "type")]`) enum
-/// whose payload nests `#[serde(untagged)]` [`DistributionSpec`] fields. serde's
-/// tagged and untagged machinery both buffer input through
-/// `serde::__private::de::Content`, and serde_json's streaming `from_str`
-/// populates that buffer in a form the untagged float variants fail to match —
-/// a valid `{"value": 4.0}` distribution is rejected with "data did not match
-/// any variant". The `serde_json::Value` deserializer buffers the same content
-/// correctly, so routing every source decode through a `Value` sidesteps the
-/// streaming-only defect while preserving each variant's strict field checking.
+/// whose payload nests [`DistributionSpec`] fields with a hand-written
+/// key-dispatching deserializer. serde's internally tagged machinery buffers
+/// input through `serde::__private::de::Content`, and serde_json's streaming
+/// `from_str` populates that buffer in a form those nested float fields fail to
+/// match, so a valid `{"value": 4.0}` distribution is rejected. The
+/// `serde_json::Value` deserializer buffers the same content correctly, so
+/// routing every source decode through a `Value` sidesteps the streaming-only
+/// defect while preserving each variant's strict field checking.
 fn decode_dataset_source<T>(raw: &RawValue) -> serde_json::Result<T>
 where
     T: serde::de::DeserializeOwned,

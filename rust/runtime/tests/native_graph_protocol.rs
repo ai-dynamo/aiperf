@@ -792,7 +792,7 @@ fn session_model_call_lineage_entry_cap_rejects_another_pending_decision_before_
     assert_eq!(
         exhausted.operation_state("decision-2"),
         Some(ProtocolOperationState::Pending),
-        "rejected model-call admission leaves the other decision ready for a terminal response"
+        "rejected model-call admission leaves the target decision state untouched"
     );
     assert_eq!(
         exhausted.session_state(),

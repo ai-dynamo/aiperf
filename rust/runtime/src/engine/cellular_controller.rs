@@ -3,14 +3,17 @@
 
 //! Multi-process cellular controller.
 //!
-//! When a run requests `cfg.runtime.cells > 1`, the receiving runner becomes the
-//! controller rather than executing in-process. It partitions the request budget by
-//! `(cell_id, cell_count)`, spawns one `aiperf --cell` child per cell (each a
-//! separate OS process, wired with the autonomous issuer and per-cell sampler),
+//! When a run requests `cfg.runtime.cells > 1` — or any `cells >= 1` under a
+//! cross-host launcher — the receiving runner becomes the controller rather than
+//! executing in-process. It partitions the request budget by
+//! `(cell_id, cell_count)`, has the selected launcher produce one `aiperf --cell`
+//! process per cell (locally spawned, or expected to already exist under k8s /
+//! SLURM; each wired with the autonomous issuer and per-cell sampler),
 //! serves the [`transport`](crate::cellular::transport) endpoint the cells ship
 //! their records-shard partitions and heartbeats back over, merges every cell's
-//! records in global dispatch-ordinal order into the single authoritative
-//! `native-v2.json`, and fails the run loudly if any cell exits non-zero. The
+//! records into the single authoritative `native-v2.json` (scheduled runs in global
+//! dispatch-ordinal order, graph runs concatenated by cell id, exact-fold runs as
+//! folded stores), and fails the run loudly if any cell exits non-zero. The
 //! controller exposes cellular execution as one protocol-v2 run.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -39,8 +42,8 @@ use crate::engine::cellular_kind::CellularRunKind;
 use crate::graph::supplement::GraphCellSupplement;
 
 // The velo transport + launcher wiring is the only part of the controller that
-// needs the `velo` feature; the validation, budget-slicing, merge, and report
-// assembly below are plain envelope/metric logic reused by the non-velo build.
+// needs the `cellular` feature; the validation, budget-slicing, merge, and report
+// assembly below are plain envelope/metric logic reused by the non-cellular build.
 #[cfg(feature = "cellular")]
 use crate::cellular::transport::CellPhaseSignal;
 #[cfg(feature = "cellular")]
@@ -71,11 +74,12 @@ use crate::engine::control_plane_http::{
     NativeControlPlaneHttpProviderFactory,
 };
 
-/// Env toggle for barrier-free start: the controller
-/// triggers START immediately instead of gathering all N cell registrations first
-/// (the O(N) fan-in rendezvous). Default off (the tight synchronized start). Cells
-/// registering after the trigger see the completed event instantly (velo's
-/// completed-event cache), so each starts on its own registration.
+/// Env toggle for barrier-free start: the controller skips the explicit
+/// all-registrations wait instead of gathering all N cell registrations first.
+/// START stays gated on the all-cell replay preflight barrier, which every cell
+/// reports to immediately after registering, so this does not remove the O(N)
+/// fan-in. Default off (the explicit synchronized start). A cell registering after
+/// the trigger sees the completed event instantly (velo's completed-event cache).
 pub const CELL_BARRIER_FREE_ENV: &str = "AIPERF_CELL_BARRIER_FREE";
 
 /// Env toggle routing the run-wide START through the monotonic phaser control plane
@@ -637,7 +641,7 @@ impl CellularProfilerCoordinator {
 }
 
 /// Runs one benchmark across `cell_count` cells and writes the merged report to
-/// `report_path`. Blocks until every cell ships. Requires the `velo` feature (the
+/// `report_path`. Blocks until every cell ships. Requires the `cellular` feature (the
 /// cell transport).
 #[cfg(feature = "cellular")]
 pub fn run_cellular(
@@ -1285,18 +1289,17 @@ fn run_cellular_with_startup_probe<P: StartupProbe>(
         // trigger the START event so all cells begin dispatching together. This is a
         // tight O(N) fan-in rendezvous that fights unbounded horizontal scale.
         //
-        // `AIPERF_CELL_BARRIER_FREE=1` triggers START without gathering all registrations:
-        // the controller triggers START IMMEDIATELY, without gathering all N
-        // registrations. A cell that registers *after* the trigger sees the completed
-        // event instantly (velo's completed-event cache), so each cell starts as soon
-        // as it has its envelope — no O(N) rendezvous. The tradeoff is looser start
-        // correlation across cells (arrival-epoch jitter), which is aggregate-equivalent
-        // (the same bar as rate/ramp) and does not affect data-deterministic metrics.
-        // A failed cell is still caught by the collect loop's failure watch below.
+        // `AIPERF_CELL_BARRIER_FREE=1` skips only this explicit all-registrations wait.
+        // START itself stays behind the preflight barrier below, which every cell reports
+        // to right after registering, so the O(N) fan-in survives the toggle; what is
+        // dropped is the separate registration wait and its own timeout. A cell that
+        // registers *after* the trigger sees the completed event instantly (velo's
+        // completed-event cache). A failed cell is still caught by the collect loop's
+        // failure watch below.
         if barrier_free {
             tracing::info!(
-                "barrier-free start: triggering immediately without the O(N) register \
-                 rendezvous (cells start on their own registration; looser cross-cell start sync)"
+                "barrier-free start: skipping the explicit register rendezvous \
+                 (START still waits for every cell's preflight report)"
             );
         } else {
             tokio::select! {
@@ -1686,21 +1689,6 @@ fn controller_artifact_bind() -> std::net::SocketAddr {
         .unwrap_or_else(|| std::net::SocketAddr::from(([0, 0, 0, 0], DEFAULT_ARTIFACT_PORT)))
 }
 
-/// The controller's velo bind plus the `tcp://HOST:PORT` endpoint string cells
-/// `velo.connect` to. The coordinate stays `tcp://` everywhere so the HTTP artifact
-/// plane (which derives its authority by swapping the port on this coordinate) keeps
-/// working — hence local uses a known loopback port, not UDS.
-/// - **cross-host (k8s / SLURM)**: bind the well-known port (`AIPERF_CONTROLLER_PORT`,
-///   default 9500) on all interfaces so cells on other hosts can reach it. The cell
-///   endpoint is injected into each cell's environment out of band — by the operator
-///   for k8s, by the `aiperf slurm run` rank dispatch (from the allocation's rank-0
-///   host) for SLURM — as `AIPERF_CELL_CONTROLLER_ADDR`. The returned coordinate is
-///   that same env value (empty for k8s, `tcp://<rank0-host>:<port>` for SLURM); it is
-///   used only for the artifact-authority derivation, not for cell discovery (the
-///   "expect, don't spawn" launchers do not inject it).
-/// - **local**: pre-bind a loopback TCP listener so the actual port is known before
-///   build; cells connect to `tcp://127.0.0.1:<port>`.
-///
 /// Whether the controller's cell coordinate (`AIPERF_CELL_CONTROLLER_ADDR`, a
 /// `tcp://HOST:PORT` velo endpoint) resolves to a LOOPBACK host — i.e. a co-located
 /// deployment where cells write to a shared filesystem instead of shipping over HTTP.
@@ -1726,6 +1714,20 @@ fn controller_coordinate_is_loopback() -> bool {
         .unwrap_or_else(|_| host.eq_ignore_ascii_case("localhost"))
 }
 
+/// The controller's velo bind plus the `tcp://HOST:PORT` endpoint string cells
+/// `velo.connect` to. The coordinate stays `tcp://` everywhere so the HTTP artifact
+/// plane (which derives its authority by swapping the port on this coordinate) keeps
+/// working — hence local uses a known loopback port, not UDS.
+/// - **cross-host (k8s / SLURM)**: bind the well-known port (`AIPERF_CONTROLLER_PORT`,
+///   default 9500) on all interfaces so cells on other hosts can reach it. The cell
+///   endpoint is injected into each cell's environment out of band — by the operator
+///   for k8s, by the `aiperf slurm run` rank dispatch (from the allocation's rank-0
+///   host) for SLURM — as `AIPERF_CELL_CONTROLLER_ADDR`. The returned coordinate is
+///   that same env value (empty for k8s, `tcp://<rank0-host>:<port>` for SLURM); it is
+///   used only for the artifact-authority derivation, not for cell discovery (the
+///   "expect, don't spawn" launchers do not inject it).
+/// - **local**: pre-bind a loopback TCP listener so the actual port is known before
+///   build; cells connect to `tcp://127.0.0.1:<port>`.
 #[cfg(feature = "cellular")]
 fn controller_bind_and_endpoint(
     cross_host: bool,

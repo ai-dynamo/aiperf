@@ -121,8 +121,8 @@ pub struct RequestTrace {
 /// One completed request record ready for metric ingestion.
 ///
 /// Cells serialize captured records to the controller for global
-/// dispatch-ordinal ingestion (`cellular::shard::RecordShard::to_bytes`, via
-/// `rmp_serde::to_vec`).
+/// dispatch-ordinal ingestion (`cellular::shard::RecordsShardPartition::to_bytes`,
+/// via `rmp_serde::to_vec`).
 // That encoding is POSITIONAL — struct fields go on the wire as a bare array,
 // so the `#[serde(default)]` annotations below buy nothing there: inserting a
 // field mid-struct shifts every later field whether or not it has a default.

@@ -165,8 +165,8 @@ fn dialect_table(
     Rc<dyn PreparedTurnEndpointResolver>,
 ) {
     let default_id = EndpointId::new(endpoint_config.endpoint_type.canonical_id()).unwrap();
-    // Per-run polling, download, and response settings apply to every selected
-    // dialect.
+    // Per-run polling, download, and response settings seed every dialect that
+    // accepts them; the loop below falls back to defaults for the rest.
     let base = RawEndpointConfig::from(endpoint_config);
     let mut table = PreparedEndpointTable::new();
     let mut by_name = BTreeMap::new();

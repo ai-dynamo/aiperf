@@ -3,11 +3,12 @@
 
 //! Timed Rust adapter for the Python/Rust dataset-load comparison harness.
 //!
-//! Initializes the built-in Tiktoken tokenizer before measurement, then times
-//! load → compose → benchmark accounting for one fixture. Emits a single one-line
-//! JSON [`Sample`] record on stdout. Argument parsing is deliberately minimal
-//! and dependency-free. Benchmark-mode usage notes live in
-//! `dev/benchmarks/README.md`.
+//! Resolves and warms the `--tokenizer` spec (built-in tiktoken encoding, local
+//! tokenizer directory/file, or a downloaded Hugging Face repo) before
+//! measurement, then times load → compose → benchmark accounting for one
+//! fixture. Emits a single one-line JSON [`Sample`] record on stdout. Argument
+//! parsing is deliberately minimal and dependency-free. Benchmark-mode usage
+//! notes live in `dev/benchmarks/README.md`.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

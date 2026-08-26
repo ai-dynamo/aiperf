@@ -310,8 +310,8 @@ mod tests {
         );
     }
 
-    /// A base config with `profiling` (concurrency) and `requests` phase fields
-    /// plus a `main` dataset, exercising multi-axis and array-by-name paths.
+    /// A base config carrying one `profiling` phase with `concurrency` and
+    /// `requests`, exercising multi-axis and array-element-by-name paths.
     fn base_two_field_cfg() -> BenchmarkConfig {
         use crate::model::phase::{Phase, PhaseCommon, PhaseKind, PhaseRole};
         let common = PhaseCommon {

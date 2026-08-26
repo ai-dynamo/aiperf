@@ -376,8 +376,9 @@ pub struct Inputs {
     /// Admission strategy for `workers>1` scheduled execution (`runtime.dispatch`
     /// / `--dispatch`). `None` omits the wire field, decoded as `Global`.
     pub runtime_dispatch: Option<DispatchMode>,
-    /// Explicit `--hop-routing` worker-assignment policy for `global-hop`
-    /// (`workers > 1`). `None` lets resolution derive it from the resolved
+    /// Explicit `--hop-routing` worker-assignment policy for the
+    /// single-coordinator modes `global-hop`/`global-push` (`workers > 1`).
+    /// `None` lets resolution derive it from the resolved
     /// connection-reuse strategy (`sticky` under `sticky-user-sessions`, else
     /// `round-robin`).
     pub runtime_hop_routing: Option<HopRouting>,
@@ -664,7 +665,6 @@ fn validate_baseten_extra_input_collisions(inputs: &Inputs) -> anyhow::Result<()
     anyhow::bail!(message)
 }
 
-/// Build one run from normalized inputs.
 /// Reject baseten_trace-only replay knobs on incompatible datasets.
 ///
 /// Ports Python's `_reject_baseten_only_trace_flags`: these knobs are only
@@ -914,11 +914,11 @@ pub fn resolve(mut inputs: Inputs) -> anyhow::Result<BenchmarkRun> {
     // Resolve the effective connection-reuse strategy once so the hop-routing
     // default can derive from it (see `resolved_hop_routing`).
     let resolved_connection_reuse = inputs.connection_reuse.unwrap_or(ConnectionReuse::Pooled);
-    // Effective global-hop worker-assignment policy: an explicit
+    // Effective single-coordinator worker-assignment policy: an explicit
     // `--hop-routing`/`runtime.hop_routing` always wins; absent, sticky
     // per-session connection reuse makes `Sticky` the sensible default (one
     // worker per session keeps the sticky pool warm), otherwise `RoundRobin`.
-    // Inert unless the run is `global-hop` with `workers > 1`.
+    // Inert unless the run is `global-hop`/`global-push` with `workers > 1`.
     let resolved_hop_routing =
         resolve_hop_routing(inputs.runtime_hop_routing, resolved_connection_reuse);
     let endpoint = Endpoint {
@@ -1754,13 +1754,13 @@ fn resolve_weka_semantics(inputs: &Inputs) -> Option<String> {
     None
 }
 
-/// Resolve the effective global-hop worker-assignment policy.
+/// Resolve the effective single-coordinator worker-assignment policy.
 ///
 /// An explicit `--hop-routing`/`runtime.hop_routing` always wins. Absent, a
 /// [`ConnectionReuse::StickyUserSessions`] run defaults to [`HopRouting::Sticky`]
 /// (one worker per session keeps the sticky connection pool warm); every other
 /// reuse strategy defaults to [`HopRouting::RoundRobin`]. The value is inert
-/// unless the run is `global-hop` with `workers > 1`.
+/// unless the run is `global-hop` or `global-push` with `workers > 1`.
 pub(crate) fn resolve_hop_routing(
     explicit: Option<HopRouting>,
     connection_reuse: ConnectionReuse,

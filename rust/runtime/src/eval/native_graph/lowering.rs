@@ -44,9 +44,9 @@ pub struct NativeGraphControlContract {
     pub stage_bound: NonZeroU32,
     /// Declared terminal channel identifiers.
     pub terminal_outputs: Vec<String>,
-    /// Exact node identifiers permitted in this slice's one acyclic stage.
+    /// Exact node identifiers of the complete declared graph that any stage may execute.
     pub stage_node_ids: Vec<String>,
-    /// Exact channel identifiers permitted in this slice's one acyclic stage.
+    /// Exact channel identifiers of the complete declared graph that any stage may carry.
     pub stage_channel_ids: Vec<String>,
     /// Declared model-selected branch facts.
     pub branches: Vec<ReservedNativeGraphBranch>,

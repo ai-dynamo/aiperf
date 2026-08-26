@@ -9,9 +9,10 @@
 //!
 //! Waiters queue FIFO on the per-origin `Notify`. Freeing one slot (an HTTP/1
 //! lease returning, or a connect reservation rolling back) wakes exactly one
-//! waiter with [`Notify::notify_one`]; only transitions that admit many at once
-//! — a first connect revealing multi-slot HTTP/1 or unbounded HTTP/2, and a
-//! session retire — broadcast with `notify_waiters`. A fresh request can still
+//! waiter with [`Notify::notify_one`]; a completed establish and a session
+//! retire broadcast with `notify_waiters`, since either can admit many at once
+//! (a first connect may reveal multi-slot HTTP/1 or unbounded HTTP/2). A fresh
+//! request can still
 //! take a just-freed idle slot ahead of a woken waiter, which then re-queues.
 
 use std::cell::{Cell, RefCell};
@@ -377,8 +378,9 @@ impl ConnectionPool {
                         }
                     };
                     guard.disarm();
-                    // The first connection may admit many waiters through
-                    // multi-slot HTTP/1 or multiplexed HTTP/2.
+                    // Broadcast on every establish: a first connection may admit
+                    // many waiters through multi-slot HTTP/1 or multiplexed
+                    // HTTP/2.
                     entry.notify.notify_waiters();
                     return Ok(lease);
                 }

@@ -6,13 +6,13 @@
 //! completions backend.
 //!
 //! Usage:
-//!   UPSTREAM=http://vllm-server:8000 LISTEN=0.0.0.0:9000 aiperf-sagemaker-logproxy
+//!   UPSTREAM=http://vllm-server:8000 LISTEN=0.0.0.0:9000 sagemaker-logproxy
 //!
 //! Requests to `/endpoints/<name>/invocations` or
 //! `/endpoints/<name>/invocations-response-stream` (the paths boto3's
 //! `invoke_endpoint`/`invoke_endpoint_with_response_stream` hit) are
 //! rewritten to `UPSTREAM/v1/chat/completions` and forwarded unchanged
-//! otherwise - the request body a `--transport sagemaker` client sends is
+//! otherwise - the request body an `--endpoint-type sagemaker` client sends is
 //! already an OpenAI-shaped chat completions JSON payload, so no body
 //! conversion is needed on the way in.
 //!
@@ -22,12 +22,14 @@
 //! `application/vnd.amazon.eventstream`-framed binary messages (AWS's own
 //! binary event framing) where each message's payload is one raw SSE
 //! `data: ...\n\n` chunk from the underlying container - not plain SSE text
-//! like a normal OpenAI-compatible server. `SageMakerTransport` in aiperf
-//! decodes that framing and unwraps the SSE bytes back out, so to make a
-//! plain vLLM/OpenAI-compatible server look like a real SageMaker endpoint,
-//! this proxy re-segments vLLM's raw SSE byte stream on message boundaries
-//! (`\n\n`) and wraps each complete `data: ...\n\n` chunk as one
-//! `PayloadPart` event-stream message before writing it to the client.
+//! like a normal OpenAI-compatible server. aiperf's HTTP client
+//! (`eventstream_to_sse` in `transport::http::client::http_client`, over the
+//! `transport::core::eventstream` codec) decodes that framing and unwraps the
+//! SSE bytes back out, so to make a plain vLLM/OpenAI-compatible server look
+//! like a real SageMaker endpoint, this proxy re-segments vLLM's raw SSE byte
+//! stream on message boundaries (`\n\n`) and wraps each complete
+//! `data: ...\n\n` chunk as one `PayloadPart` event-stream message before
+//! writing it to the client.
 //!
 //! Any other path (e.g. `/metrics`) is forwarded byte-for-byte with no
 //! translation, identical to `logproxy`.
@@ -444,8 +446,8 @@ async fn pump_passthrough(
 /// boundaries and emits one AWS event-stream `PayloadPart` message per
 /// complete `data: ...\n\n` chunk, matching how real SageMaker containers
 /// frame their streaming output (one line per PayloadPart - see the
-/// docstring on `SageMakerTransport._chunks_as_sse_frames` on the aiperf
-/// side for the corresponding decode-side assumption).
+/// `eventstream_to_sse` comment in `transport::http::client::http_client` on
+/// the aiperf side for the corresponding decode-side assumption).
 #[allow(unused_assignments)] // `first_data_at`'s final write (trailing flush) is intentionally unread
 async fn pump_as_eventstream(
     mut incoming: Incoming,

@@ -4,8 +4,9 @@
 //! Adaptive ramp step policies.
 //!
 //! The formulas are: fixed-percent uses
-//! `ceil(current * percent / 100)`, while SLA-margin scaling is governed by the
-//! tightest filter's normalized headroom.
+//! `max(1, ceil(current * percent / 100))`, while SLA-margin scaling is
+//! `base_step * clamp(floor(margin * max_step_multiplier), 1,
+//! max_step_multiplier)` over the tightest filter's normalized headroom.
 
 use serde::Serialize;
 

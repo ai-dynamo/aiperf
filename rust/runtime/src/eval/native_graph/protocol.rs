@@ -498,7 +498,7 @@ pub trait AdapterProtocol {
         download: &ArtifactDownloadHandle,
     ) -> Result<(), ProtocolError>;
 
-    /// Returns the terminal session disposition.
+    /// Returns the current session disposition, which may still be negotiating or ready.
     fn session_state(&self) -> ProtocolSessionState;
 
     /// Returns one permanently recorded operation disposition.
@@ -1902,7 +1902,7 @@ pub enum ProtocolError {
         expected: String,
         actual: String,
     },
-    /// A typed identifier was empty or exceeded its byte bound.
+    /// A typed identifier was empty or exceeded its byte bound, or a configured limit was zero.
     InvalidIdentifier { field: &'static str },
     /// A sequence was not exactly the next expected directional value.
     SequenceOutOfOrder { expected: u64, actual: u64 },
@@ -1927,7 +1927,7 @@ pub enum ProtocolError {
     DriverTerminalCandidateState,
     /// The sole terminal response was not a terminal candidate.
     DriverTerminalCandidateRequired,
-    /// Ready failed to acknowledge the exact host-selected capability set.
+    /// A hello or ready message did not declare the exact Rust-pinned capability set.
     ReadyCapabilitiesMismatch,
     /// A correlation was already recorded and cannot be recycled.
     OperationAlreadyUsed(String),
@@ -1982,8 +1982,8 @@ pub enum ProtocolError {
     ArtifactHandleLimit { limit: usize },
     /// An arbitrary JSON payload exceeded a byte cap.
     ///
-    /// Streaming canonicalization stops at the cap, so it cannot truthfully report an exact
-    /// serialized size without retaining or serializing the rejected remainder.
+    /// Streaming canonicalization stops at the cap, so the variant carries no exact serialized
+    /// size: reporting one would require retaining or serializing the rejected remainder.
     JsonTooLarge { limit: usize },
     /// An arbitrary JSON payload exceeded a nesting cap.
     JsonTooDeep { limit: usize, actual: usize },

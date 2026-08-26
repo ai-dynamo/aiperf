@@ -14,7 +14,7 @@ use super::TrieNode;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum IdleWarpMode {
     /// Gap between a request start and the running max end of all prior requests
-    /// (busy-period aware). Default for dynamo/aiperf recorded traces.
+    /// (busy-period aware). The mode every recorded compiler selects.
     BusyPeriod,
     #[cfg(test)]
     /// Gap between consecutive request *starts*, ignoring durations. Byte-exact

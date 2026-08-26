@@ -11,9 +11,11 @@
 //! Phase 1 builds chains greedily (forking on every shrink); phase 2 splices the
 //! elected continuation back onto tails whose longer state turned out dead.
 //!
-//! The interval-grouping helpers (`worker_group_assignment`,
-//! `compute_chain_prefix_blocks`) are ported in a follow-up; this module covers
-//! the core partition (`detect_agent_chains`) and the aux one-shot classifiers.
+//! Alongside the core partition ([`detect_agent_chains`]) and the aux one-shot
+//! classifiers, this module carries the interval-grouping helpers
+//! ([`worker_group_assignment`], [`compute_chain_prefix_blocks`]) and the
+//! preamble / turn-0 token splitters ([`split_off_preamble`],
+//! [`chain_init_tokens`]) that plan assembly consumes.
 
 use std::collections::HashMap;
 

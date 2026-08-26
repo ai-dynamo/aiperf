@@ -22,7 +22,10 @@ pub struct RequestSample {
     pub request_latency_ns: i64,
     /// Time to first token in nanoseconds, when a token was observed.
     pub ttft_ns: Option<i64>,
-    /// Mean inter-token latency in nanoseconds, when at least two tokens arrived.
+    /// Mean inter-token latency in nanoseconds over the authoritative output
+    /// count: `(last - first) / (output_sequence_length - 1)`. Present only when
+    /// more than one token was observed *and* endpoint usage reported more than
+    /// one completion token, since either alone yields a bogus value.
     pub inter_token_latency_ns: Option<f64>,
     /// Authoritative completion-token count, when endpoint usage was returned.
     pub output_sequence_length: Option<usize>,
@@ -33,7 +36,8 @@ pub struct RequestSample {
 pub struct WindowStats {
     /// Successful requests returned during the window.
     pub successful_requests: Vec<RequestSample>,
-    /// Failed or rejected requests returned during the window.
+    /// Failed or rejected requests returned during the window, plus any
+    /// nominally completed return that carried no meaningful token timing.
     pub errors: usize,
     /// Cancelled requests returned during the window.
     pub cancelled: usize,

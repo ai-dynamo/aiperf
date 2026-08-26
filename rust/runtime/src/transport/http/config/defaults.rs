@@ -148,7 +148,8 @@ use crate::transport::http::models::HttpVersion;
 /// Client-wide configuration. Timeouts are clock-nanoseconds.
 ///
 /// `connect_timeout_ns` is enforced in `client::connection::establish` (races
-/// the DNS/TCP/TLS/handshake phase against a Clock timer) and `request_timeout_ns`
+/// each DNS/TCP/TLS/handshake attempt against a Clock timer, so with
+/// `max_connect_retries` set it bounds an attempt, not the call) and `request_timeout_ns`
 /// is enforced in `client::http_client::HttpClient::dispatch` (races the
 /// send + response phase). `total_timeout_ns` wraps connection acquisition,
 /// send, and the complete response lifecycle with one deadline, matching
@@ -214,8 +215,9 @@ pub struct ClientConfig {
     /// HTTP/1.1 is used over UDS. The request URL still supplies the path + Host.
     pub uds_path: Option<String>,
     /// When set, tunnel TCP through this forward proxy via HTTP `CONNECT` before
-    /// TLS. Only dataset/tokenizer downloads set it (from the proxy environment);
-    /// the measured benchmark path leaves it `None` so its connect is unchanged.
+    /// TLS. Dataset/tokenizer downloads set it from the proxy environment;
+    /// benchmark traffic sets it only when `--proxy`/`--proxy-from-env` opted in,
+    /// and otherwise leaves it `None` so its connect is unchanged.
     pub proxy: Option<crate::transport::http::client::proxy::ProxyConfig>,
 }
 

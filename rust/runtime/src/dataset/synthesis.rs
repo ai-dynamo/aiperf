@@ -77,7 +77,9 @@ impl TraceSynthesisConfig {
         Ok(())
     }
 
-    /// Whether the Python runtime invokes the structural synthesizer.
+    /// Whether any authored multiplier or speedup differs from its default, so
+    /// [`TraceSynthesizer::synthesize`] runs the structural transform instead of
+    /// returning the records untouched.
     ///
     /// ISL/OSL caps alone are loader/finalizer policy and do not trigger prefix
     /// rewriting.

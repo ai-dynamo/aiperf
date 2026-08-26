@@ -4,7 +4,7 @@
 //! `M`) the graph executor fires each node through. A `GraphSink<M>` impl owns
 //! that dialect's body encoding + reply parsing:
 //!
-//! * `EchoSink<M>` — serverless test double for any dialect.
+//! * [`EchoSink`] — serverless test double for any dialect.
 //!
 //! The live over-the-wire sink is [`crate::graph::transport_sink::TransportChatSink`].
 
@@ -208,7 +208,8 @@ pub trait GraphSink<M: WireMessage> {
     }
 }
 
-/// Serverless test double for any dialect: echoes the last message's debug form.
+/// Serverless test double for any dialect: echoes the last message's wire bytes
+/// as lossy UTF-8 text.
 pub struct EchoSink;
 
 #[async_trait(?Send)]

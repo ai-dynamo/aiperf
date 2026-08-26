@@ -98,7 +98,7 @@ fn native_source_lowers_to_the_existing_trace_program_type() {
             .get("control_flow")
             .and_then(|value| value.get("loops")),
         Some(&json!([])),
-        "Task 6 records only the empty typed Task-8 control reservations"
+        "a source declaring no feedback records an empty typed loop collection"
     );
     assert!(report.nodes().all(|node| node.is_exact()));
     assert!(matches!(

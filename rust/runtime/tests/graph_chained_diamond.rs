@@ -13,8 +13,9 @@
 //!                             -> root3 (AND-wait A2,B2; think3) -> A3, B3 ...
 //! ```
 //!
-//! The flat runtime has ONE node kind (`LlmNode`, every node dispatches), so the
-//! request-less roots are NOT materialized as nodes. Instead each level's two
+//! A flat-runtime node either dispatches an inference request (`LlmNode`) or
+//! produces a tool observation (`ToolNode`); there is no request-less control
+//! node, so the roots are NOT materialized as nodes. Instead each level's two
 //! branch nodes carry:
 //!   * `inputs` requiring BOTH prior-level tail channels  -> the root's AND-barrier
 //!   * `min_start_delay_us` = that root's think-time       -> applied after the barrier

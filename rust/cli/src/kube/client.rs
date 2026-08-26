@@ -54,7 +54,7 @@ pub struct KubeRequest {
 pub struct KubeResponse {
     /// HTTP status of the completed request.
     pub status: u16,
-    /// Response body truncated at [`MAX_RESPONSE_BYTES`].
+    /// Complete response body; a body past the request's `response_limit` is refused.
     pub body: Vec<u8>,
 }
 

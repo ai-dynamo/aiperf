@@ -9,7 +9,7 @@
 //! - [`LocalLauncher`] (default, dev/test) spawns `aiperf --cell`
 //!   subprocesses on the same host. Each child learns only its `cell_id`, the
 //!   `cell_count`, and the controller's bootstrap coordinate — all via env — and
-//!   fetches its full `CellLaunchSpec` over velo (no stdin pipe).
+//!   fetches its full execute envelope over velo (no stdin pipe).
 //! - [`K8sLauncher`] does **not** spawn: the operator/JobSet already created the
 //!   cell pods. It only reports how many cells to expect; the pods find the
 //!   controller from the same env the operator injects.
@@ -308,7 +308,7 @@ pub fn is_cross_host_launcher() -> bool {
 ///
 /// Lives here (not the velo-gated controller) so the thread-per-core sharded
 /// scheduled runtime ([`crate::engine::sharded_scheduled`]) reuses the identical round-robin
-/// share **without** the `velo` feature — the two-level `(cell × thread)` partition
+/// share **without** the `cellular` feature — the two-level `(cell × thread)` partition
 /// tiles only if both levels use this exact `ceil((total-k)/C)` share.
 pub(crate) fn owned_positions(total: u64, cell_id: u32, cell_count: u32) -> u64 {
     let count = cell_count as u64;
@@ -321,7 +321,7 @@ pub(crate) fn owned_positions(total: u64, cell_id: u32, cell_count: u32) -> u64 
 
 /// Reads `cfg.runtime.cells` from a v2 envelope, defaulting to 1 (single process).
 /// Lives here (not the velo-gated controller) so the runner's mode dispatch can
-/// read it without the `velo` feature.
+/// read it without the `cellular` feature.
 pub fn cell_count_from_envelope(envelope: &serde_json::Value) -> u32 {
     envelope
         .pointer("/run/cfg/runtime/cells")

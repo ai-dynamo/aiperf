@@ -11,13 +11,15 @@
 //! `min_tokens`/`hash_ids`/`block_size` KV-cache routing hints injected into
 //! the outgoing request body.
 //!
-//! Scope cut from the Python loader: Synthesizer integration is not ported. Trace
-//! synthesis is already rejected for this loader before it ever reaches
-//! composition -- `engine/execute.rs`'s `build_file_dataset` only allows
-//! synthesis for `mooncake_trace`/`bailian_trace`/`burst_gpt`, so any
-//! `--synthesis-*` config on `baseten_trace` errors at the engine layer
-//! (matching Python's conservative rejection: prompt reshaping would desync
-//! the forwarded `hash_ids` KV hints from the verbatim-replayed prompt).
+//! Scope cut from the Python loader: Synthesizer integration is not ported.
+//! Reshaping trace synthesis is rejected for this loader before it ever reaches
+//! composition -- `engine/execute/dataset_build.rs`'s `build_file_dataset`
+//! builds a synthesis config only for
+//! `mooncake_trace`/`bailian_trace`/`burst_gpt_trace`, and on `baseten_trace` it
+//! errors on any non-unit speedup or prefix/prompt multiplier while still
+//! honoring `--synthesis-max-isl`/`--synthesis-max-osl` (matching Python's
+//! conservative rejection: prompt reshaping would desync the forwarded
+//! `hash_ids` KV hints from the verbatim-replayed prompt).
 //! `--trace-session-sample-ratio` whole-session subsampling is ported.
 
 use std::collections::HashMap;
@@ -191,7 +193,7 @@ fn choose_session_key(rows: &[BasetenRow]) -> Option<SessionKey> {
     None
 }
 
-/// Port of Python baseten `_sample_sessions`: keep whole sessions (and null-session
+/// Port of Python baseten `_sample_session_ids`: keep whole sessions (and null-session
 /// rows) at `ratio`, always retaining at least one session when any existed.
 fn sample_trace_sessions(
     rows: &mut Vec<BasetenRow>,
@@ -1552,7 +1554,7 @@ impl Composer for BasetenTraceComposer {
                 // (_cap_grouped_traces_max_osl) before building the request
                 // body, so min_tokens reflects the CAPPED length. Using the
                 // raw recorded length for min_tokens here would let it
-                // exceed max_tokens whenever --max-output-tokens caps below
+                // exceed max_tokens whenever `max_output_tokens` caps below
                 // a row's recorded output_tokens, an invalid request.
                 let capped_output_length =
                     cap_output(Some(row.output_length), config.max_output_tokens)
@@ -1700,7 +1702,8 @@ mod tests {
     }
 
     /// Write a minimal Baseten-shaped Parquet fixture (the required columns
-    /// plus `provided_session_id`/`duration_e2e_ms`) to a temp file, return
+    /// plus `provided_session_id`/`duration_e2e_ms` and the nullable
+    /// `duration_ttft_ms`/`cached_tokens_reference`) to a temp file, return
     /// its path.
     fn write_fixture(directory: &Path, rows: &[FixtureRow]) -> std::path::PathBuf {
         let schema = Arc::new(

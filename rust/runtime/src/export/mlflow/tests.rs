@@ -161,7 +161,7 @@ fn metric_payload_key_scheme_matches_python() {
     assert!(!payload.contains_key("adj_request_latency"));
     assert_eq!(payload.get("adj_request_latency.min"), Some(&1.0));
 
-    // Counter total -> bare tag; rate is NOT a `_STAT_FIELD` and is never keyed.
+    // Counter total -> bare tag; rate is NOT a `_STAT_FIELDS` member and is never keyed.
     assert_eq!(payload.get("request_count"), Some(&3.0));
     assert!(!payload.contains_key("request_count.rate"));
 

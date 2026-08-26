@@ -431,8 +431,10 @@ impl HttpClient {
         record
     }
 
-    /// Build the POST request shared by [`dispatch`](Self::dispatch) and
-    /// [`dispatch_streaming`](Self::dispatch_streaming). Uses origin-form URI +
+    /// Build the POST request shared by the lean no-record paths
+    /// [`dispatch_streaming`](Self::dispatch_streaming) and
+    /// [`dispatch_bounded_streaming_with_handler`](Self::dispatch_bounded_streaming_with_handler).
+    /// Uses origin-form URI +
     /// explicit Host header so both HTTP/1.1 (Host required) and HTTP/2
     /// (`:authority` derived) work. `completion` is the shared signal that
     /// [`TimedBody`] stamps at end-of-stream (the real "send complete").

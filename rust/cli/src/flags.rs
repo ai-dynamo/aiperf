@@ -138,13 +138,15 @@ pub struct ProfileFlags {
     #[arg(long = "dispatch")]
     pub dispatch: Option<String>,
 
-    /// Worker-assignment policy for `--dispatch global-hop` with `workers > 1`
+    /// Worker-assignment policy for `--dispatch global-hop`/`global-push` with
+    /// `workers > 1`
     /// (`--hop-routing`): `round-robin` (default; deterministic, load-even, but
     /// fragments a session's worker-local connection pool), `sticky` (each
     /// conversation hashed to one worker so its sticky connection pool reuses
     /// one connection per session), or `least-loaded` (a new session goes to the
     /// shallowest-in-flight worker, then binds sticky). Absent, this resolves to
-    /// `sticky` when `--conn-reuse sticky-user-sessions` is selected, else
+    /// `sticky` when `--connection-reuse-strategy sticky-user-sessions` is
+    /// selected, else
     /// `round-robin`. Inert under any other dispatch mode or `workers == 1`.
     #[arg(long = "hop-routing")]
     pub hop_routing: Option<String>,
@@ -367,7 +369,7 @@ pub struct ProfileFlags {
     /// `round_robin`).
     #[arg(long = "url-strategy")]
     pub url_strategy: Option<String>,
-    /// Disable auto fixed-schedule detection (`--no-fixed-schedule`).
+    /// Negate `--fixed-schedule` (`--no-fixed-schedule`).
     #[arg(
         long = "no-fixed-schedule",
         num_args = 0..=1,
@@ -377,7 +379,8 @@ pub struct ProfileFlags {
     pub no_fixed_schedule: Option<bool>,
 
     /// Public-dataset loader filters as `key=value` (`--dataset-filter`, repeatable).
-    /// Requires `--public-dataset`; merged into the dataset's loader options.
+    /// Requires `--public-dataset` or `--hf-dataset`; merged into the dataset's
+    /// loader options.
     #[arg(long = "dataset-filter", num_args = 1..)]
     pub dataset_filter: Option<Vec<String>>,
 
@@ -411,7 +414,7 @@ pub struct ProfileFlags {
     /// OSL search step count (`--osl-steps`).
     #[arg(long = "osl-steps")]
     pub osl_steps: Option<i64>,
-    /// Paired ISL:OSL workload shapes (`--isl-osl-pairs`, repeatable `isl:osl`).
+    /// Paired ISL/OSL workload shapes (`--isl-osl-pairs`, repeatable `isl/osl`).
     #[arg(long = "isl-osl-pairs", num_args = 1..)]
     pub isl_osl_pairs: Option<Vec<String>>,
     /// Degradation-knee metric tag (`--degradation-metric-tag`).
@@ -423,8 +426,6 @@ pub struct ProfileFlags {
     /// Degradation-knee threshold fraction (`--degradation-threshold`).
     #[arg(long = "degradation-threshold")]
     pub degradation_threshold: Option<f64>,
-    /// Paired ISL/OSL shapes for pareto-sweep (`--isl-osl-pairs`, `isl/osl` list).
-    // (declared above via `isl_osl_pairs`)
     /// Adaptive search style (`--search-style`: smooth_isotonic/monotonic/bo/optuna/grid).
     #[arg(long = "search-style")]
     pub search_style: Option<String>,
@@ -509,7 +510,8 @@ pub struct ProfileFlags {
     /// SLO attainment fraction (`--slo-attainment-fraction`).
     #[arg(long = "slo-attainment-fraction")]
     pub slo_attainment_fraction: Option<f64>,
-    /// Enable OTel live-streaming (`--stream`; requires `--otel-url`).
+    /// Accepted for compatibility and unused (`--stream`); `--otel-url` alone
+    /// enables the OTLP export.
     #[arg(long = "stream", num_args = 0..=1, default_missing_value = "true")]
     pub stream: Option<bool>,
 
@@ -887,7 +889,7 @@ pub struct ProfileFlags {
     pub public_dataset: Option<String>,
 
     /// HuggingFace dataset repo for the generic Weka loader (`--hf-weka-dataset`).
-    /// Auto-selects `--public-dataset weka_hf` when unset.
+    /// Selects `--public-dataset weka_hf` when `--public-dataset` is unset.
     #[arg(long = "hf-weka-dataset")]
     pub hf_weka_dataset: Option<String>,
 
@@ -1460,7 +1462,7 @@ impl ProfileFlags {
                 .map_err(|_| {
                     anyhow::anyhow!(
                         "--dispatch {value:?} is not a recognized dispatch mode; expected \
-                         \"sharded\", \"global\", or \"global-hop\""
+                         \"sharded\", \"global\", \"global-hop\", or \"global-push\""
                     )
                 }),
         }

@@ -13,10 +13,10 @@ use crate::graph::model::{
 };
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
-/// The node's recorded arrival offset in microseconds, or `0.0` when absent.
+/// The LLM node's recorded arrival offset in microseconds, or `0.0` when absent.
 ///
 /// Missing, non-numeric, and zero `metadata["arrival_offset_us"]` values resolve
-/// to `0.0`.
+/// to `0.0`; tool nodes report infinity so no chop drops them.
 fn arrival_offset_us(node: &ExecutableGraphNode) -> f64 {
     match node {
         ExecutableGraphNode::Llm(node) => node
@@ -771,7 +771,7 @@ mod tests {
 
     // A recorded-id node: id uses the Rust `:` ordinal separator and carries
     // the authoritative chain identity in `metadata["conversation_id"]` (as the
-    // recorded trie lowerer writes it, `graph/recorded/trie/mod.rs:170`).
+    // recorded trie lowerer writes it, `graph/recorded/trie/mod.rs:266`).
     fn rnode(conversation_id: &str, arrival_us: u64) -> ExecutableGraphNode {
         let mut n = llm_node(arrival_us, &[]);
         n.metadata

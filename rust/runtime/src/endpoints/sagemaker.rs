@@ -5,8 +5,9 @@
 //!
 //! A single runner-protocol-v2-only factory, following the same
 //! endpoint-path/streaming-path convention as `huggingface_generate`
-//! (TGI): one endpoint id exposes both the non-streaming `/invocations`
-//! path and the streaming `/invocations-response-stream` path, and
+//! (TGI): one endpoint id exposes both the non-streaming
+//! `/endpoints/{model_name}/invocations` path and the streaming
+//! `/endpoints/{model_name}/invocations-response-stream` path, and
 //! `--streaming` selects between them at request-binding time. Request
 //! body construction and response/chunk parsing are delegated entirely to
 //! [`ChatEndpoint`], since the mock server (and real SageMaker JumpStart/DJL

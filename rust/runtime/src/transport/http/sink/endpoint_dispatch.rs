@@ -49,10 +49,9 @@ use crate::transport::http::sse::ChatChunk;
 /// Metadata absorption for a streamed chat chunk, equivalent to
 /// [`absorb_wire_response_metadata`] on the same body but without a `Value`.
 ///
-/// Deliberately NOT [`super::absorb_chat_chunk_metadata`]: that one also appends
-/// content and reasoning into the metadata, which on this path is the job of
-/// `reduce_parsed_response`. Using it here would emit every delta twice. It also
-/// scans all choices, whereas the generic reader takes `choices[0]` only.
+/// Deliberately narrow: content and reasoning deltas are `reduce_parsed_response`'s
+/// job on this path, so appending them here too would emit every delta twice. Like
+/// the generic reader, this takes `choices[0]` only.
 ///
 /// `cached_prompt_tokens` is untouched because the caller only takes this path
 /// for chunks with no `usage`, and the generic reader leaves it unchanged there.

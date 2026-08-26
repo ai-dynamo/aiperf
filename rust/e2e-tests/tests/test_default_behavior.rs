@@ -7,7 +7,7 @@ use common::*;
 /// lands on the default request count.
 ///
 /// `--endpoint-type` is part of the minimum: it has no default anywhere in the
-/// product, and `cli/src/load.rs:163` rejects the run without it.
+/// product, and `cli/src/load.rs` bails with "--endpoint-type is required" without it.
 #[tokio::test]
 async fn test_default_behavior() {
     let h = AIPerfHarness::new().await;

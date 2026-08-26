@@ -152,12 +152,14 @@ impl BatchScheduler {
     }
 
     /// Block until all prefill chunks for this prompt have been admitted;
-    /// returns the chunk count. The count is `scheduler_prefill_chunks_per_request`
-    /// when set (ISL-independent), else `ceil(prompt_tokens / chunk_tokens)`, then
-    /// scaled down by the prefix-cache hit fraction (`cached_tokens` skip prefill,
-    /// floored at one block of real work), and finally scaled by a per-request
-    /// mean-1 lognormal (seeded by `seed`) when `scheduler_prefill_work_cv > 0` so
-    /// queue-wait/TTFT spreads request-to-request.
+    /// returns the chunk count. The prefix-cache hit fraction (`cached_tokens`
+    /// skip prefill) scales the work down, floored at one chunk of real work:
+    /// the count is `scheduler_prefill_chunks_per_request` scaled by the
+    /// uncached fraction when that flag is set (ISL-independent), else
+    /// `ceil(prompt_tokens * uncached_fraction / chunk_tokens)`. It is finally
+    /// scaled by a per-request mean-1 lognormal (seeded by `seed`) when
+    /// `scheduler_prefill_work_cv > 0` so queue-wait/TTFT spreads
+    /// request-to-request.
     pub async fn run_prefill(
         &self,
         request_id: &str,

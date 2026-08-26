@@ -7,12 +7,11 @@
 //! [`TreeSpec`] is the DAG-free description of one session tree (a root
 //! conversation, its recursive subagent children, and the root turns that must
 //! block on child completion). It is intentionally defined here — outside the
-//! `agentx`-gated [`crate::agentic_replay`] module — so it can be named in the
-//! shared native-run plumbing (`PreparedDatasetInput`, the phase-plan builder)
-//! regardless of whether the `agentx` feature is active. The gate that consumes
-//! these specs ([`crate::agentic_replay::TreeGate`]) lives behind `agentx`; a
-//! build without it simply never populates a non-empty `Vec<TreeSpec>` and the
-//! join gate stays a pass-through.
+//! [`crate::agentic_replay`] module — so it can be named in the shared
+//! native-run plumbing (`PreparedDatasetInput`, the phase-plan builder) without
+//! reaching into the replay mode's own module. A non-agentic run simply never
+//! populates a non-empty `Vec<TreeSpec>`, so the gate that consumes these specs
+//! ([`crate::agentic_replay::TreeGate`]) stays a pass-through.
 
 /// Declarative description of one session tree used to build a
 /// [`crate::agentic_replay::TreeGate`].
@@ -38,10 +37,10 @@ pub struct TreeSpec {
 
 /// Opaque cross-phase carrier slot for the accelerated cache-warmup handoff.
 ///
-/// The concrete payload (`Arc<Mutex<Option<LegacyWarmupHandoff>>>`) lives behind
-/// the `agentx`-gated [`crate::agentx::handoff`] module; this non-gated type-erased
-/// alias lets the (non-gated) native phase-plan plumbing thread the carrier without
-/// a feature-conditional signature. The WARMUP agentic phase downcasts and populates
+/// The concrete payload (`Arc<Mutex<Option<LegacyWarmupHandoff>>>`) is named by
+/// [`crate::agentic_replay`] over the [`crate::agentx::handoff`] type; this
+/// type-erased alias lets the native phase-plan plumbing thread the carrier
+/// without naming it. The WARMUP agentic phase downcasts and populates
 /// it at finalize; PROFILING downcasts and reads it. Non-agentic (and non-accelerated)
 /// runs carry [`empty_warmup_handoff_carrier`], which no phase ever downcasts.
 pub type WarmupHandoffCarrierAny = std::sync::Arc<dyn std::any::Any + Send + Sync>;

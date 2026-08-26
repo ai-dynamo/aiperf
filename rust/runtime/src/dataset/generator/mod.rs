@@ -418,7 +418,7 @@ pub struct SyntheticPromptConfig {
     pub batch_size: usize,
     /// Fraction of generated prompts, in `[0, 1]`, that draw the shared reusable
     /// prefix so a server KV cache observes real prefix hits. The default `0.0`
-    /// leaves every prompt fully unique and changes no existing behavior.
+    /// leaves every prompt fully unique.
     pub prefix_reuse_fraction: f64,
     /// Fraction of each reusing prompt's input length, in `[0, 1]`, occupied by
     /// the shared prefix; the remaining tokens stay unique to that prompt.
@@ -439,7 +439,7 @@ impl Default for SyntheticPromptConfig {
 /// Synthetic KV-prefix and conversation-context prompt configuration.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct SyntheticPrefixConfig {
-    /// Number of reusable prefixes sampled per turn.
+    /// Number of reusable prefixes in the pool one prefix is drawn from.
     pub pool_size: Option<usize>,
     /// Token length of each reusable prefix.
     pub prefix_tokens: Option<usize>,

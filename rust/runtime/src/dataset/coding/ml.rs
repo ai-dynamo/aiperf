@@ -124,7 +124,8 @@ print({v3}[0])
     ))
 }
 
-/// A training, LoRA, or quantization JSON configuration.
+/// A fine-tuning JSON configuration carrying training, LoRA, quantization, and
+/// data sections.
 pub(super) fn config(r: &mut TemplateRenderer) -> Result<String, CodingCorpusError> {
     let model = r.pick(MODELS)?;
     let lr = ["1e-05", "2e-05", "5e-05", "0.0001", "0.0003"][r.index(5)?];

@@ -3,9 +3,10 @@
 
 //! Graph prompt materialization over pre-serialized message slices.
 //!
-//! Static items resolve dense handles through `aiperf-dataset`; dynamic items
-//! clone the encoded replies retained by message channels. Neither path parses or
-//! reserializes a message while building a successor prompt.
+//! Static items resolve dense handles through `crate::dataset`; dynamic items
+//! clone the encoded replies retained by message channels. Segment and channel
+//! message wires are spliced as stored bytes; a raw message array is split by a
+//! validating parse that preserves each entry's original bytes.
 
 use std::collections::BTreeMap;
 use std::error::Error;

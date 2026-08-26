@@ -458,7 +458,8 @@ impl MetricFlags {
         self.intersects(flags)
     }
 
-    /// Returns true when none of the requested flags are missing.
+    /// Returns true when none of the requested flags are set, so an empty
+    /// request is trivially satisfied.
     pub fn missing(self, flags: Self) -> bool {
         flags.is_empty() || !self.intersects(flags)
     }

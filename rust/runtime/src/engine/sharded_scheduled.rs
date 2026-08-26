@@ -31,9 +31,9 @@
 //! cells*W)`, so all threads together stamp a permutation of `0..total`, as
 //! required by [`merge_records_in_global_order`](crate::cellular).
 //!
-//! # Cell-level split under `Global`/`GlobalHop`
+//! # Cell-level split under `Global`
 //!
-//! Under [`DispatchMode::Global`]/[`DispatchMode::GlobalHop`] dispatch, the
+//! Under [`DispatchMode::Global`] dispatch, the
 //! cell-level split (`owned_positions(global, cell_id, cells)`, applied by the
 //! cellular controller's `build_cell_envelope` before this cell's process ever
 //! starts) is preserved exactly as [`DispatchMode::Sharded`] mode's is; only
@@ -116,10 +116,13 @@ pub(crate) fn two_level_partition(
 /// stops asking while any thread still holding budget can occupy the whole
 /// shared pool — an uneven budget never becomes idle capacity.
 ///
-/// `concurrency` and `prefill_concurrency` are admission caps, and under
-/// [`DispatchMode::Global`]/[`DispatchMode::GlobalHop`] both are left at the
-/// cell-local (unsliced-by-thread) value so every thread admits against the
-/// shared per-cell `GlobalAdmission` gate. Partitioning a cap is what strands
+/// `concurrency` and `prefill_concurrency` are admission caps, and under every
+/// non-[`DispatchMode::Sharded`] mode both are left at the cell-local
+/// (unsliced-by-thread) value. Under [`DispatchMode::Global`] every thread then
+/// admits against the shared per-cell `GlobalAdmission` gate; the
+/// single-coordinator [`DispatchMode::GlobalHop`]/`GlobalPush` pipelines build
+/// no such gate and instead pass `workers == 1`, so one loop holds the full
+/// cell-level cap in its own local pool. Partitioning a cap is what strands
 /// capacity — the share a finished thread still owns cannot be lent to a busy
 /// one — and `owned_cap`'s floor of one over-subscribes whenever the cap is
 /// below the thread count. Both slice under [`DispatchMode::Sharded`] exactly
@@ -127,8 +130,10 @@ pub(crate) fn two_level_partition(
 ///
 /// Caps are gated only on the request-rate phase shapes
 /// (`Concurrency`/`Poisson`/`Constant`/`Gamma`). `UserCentric` builds its own
-/// internal session pool independent of this seam, and `FixedSchedule` has no
-/// concurrency or rate concept at all; both are unaffected by dispatch mode.
+/// internal session pool independent of this seam, so its `rate`/`users`/
+/// `concurrency` slice per thread in every dispatch mode and only its shared
+/// `prefill_concurrency` follows the mode; `FixedSchedule` has no concurrency or
+/// rate concept at all and is left untouched entirely.
 pub(crate) fn slice_phase_for_thread(
     phase: &PhaseSpec,
     thread_id: usize,
@@ -142,9 +147,10 @@ pub(crate) fn slice_phase_for_thread(
     // thread — the same bounded trade the cellular per-cell split accepts.
     let owned_cap = |value: usize| owned_positions(value as u64, t, workers).max(1) as usize;
     let scaled_rate = |rate: f64| rate / workers as f64;
-    // Global/GlobalHop admit concurrency+rate from the shared per-cell gate on
-    // the request-rate phase shapes, so this thread's LOCAL slice of those two
-    // fields is left at the cell-local (unsliced) value instead of `1/workers`.
+    // Every non-`Sharded` mode leaves this thread's LOCAL slice of concurrency+rate
+    // at the cell-local (unsliced) value instead of `1/workers`: `Global` admits
+    // them from the shared per-cell gate, while the single-coordinator modes reach
+    // this with `workers == 1` and hold the full cap in one local pool.
     let global_admits_concurrency_and_rate = !matches!(dispatch_mode, DispatchMode::Sharded);
 
     let mut sliced = phase.clone();
@@ -396,8 +402,9 @@ fn run_worker_thread(shared: &ShardedShared, worker_id: usize) -> Result<Schedul
 /// The shards already carry globally-unique two-level ordinals (a permutation of
 /// `0..total`), so concatenation needs no renumber. Sorting by `request_index`
 /// makes the per-record store placement and the deterministic-per-topology row
-/// order independent of the (racy) thread completion order, and the input-session
-/// list is re-sorted by session id so `inputs.json` is stable across runs.
+/// order independent of the (racy) thread completion order. `inputs.json` is not
+/// ordered here: it is projected from the resident dataset up front rather than
+/// harvested from the shards.
 fn merge_shards(
     shards: Vec<Option<Result<ScheduledShardOutcome>>>,
 ) -> Result<ScheduledShardOutcome> {

@@ -20,7 +20,7 @@ use super::templates::TemplateRenderer;
 use super::vocab::{TABLES, lang_index};
 use super::{cicd_docs, errors_diff, json_blocks, sql, tool, tool_long};
 
-/// Lowercase hex-digit choice alphabet.
+/// Lowercase hex letters `a`-`f` (Python `r.choice("abcdef")`).
 const HEX_LOWER: &[&str] = &["a", "b", "c", "d", "e", "f"];
 /// Decimal-digit choice alphabet.
 const DIGITS: &[&str] = &["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"];

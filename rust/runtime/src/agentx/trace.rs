@@ -196,7 +196,7 @@ mod tests {
     use std::path::Path;
 
     fn fixture_root() -> std::path::PathBuf {
-        // rust/runtime/src/agentx/ -> repo root is four parents up.
+        // `CARGO_MANIFEST_DIR` is `rust/runtime`; the repo root is two parents up.
         Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../..")
             .join("tests/fixtures/weka_traces")

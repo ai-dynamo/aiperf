@@ -1,8 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Ideal (unbounded) prefix-cache reuse analysis for the `--dry-run` dataset
-//! report.
+//! Prefix-cache reuse analysis for the `--dry-run` dataset report: both the
+//! ideal unbounded reuse ([`ideal_reuse`]) and the realized finite-capacity LRU
+//! hit-rate curve ([`realized_reuse`], [`realized_sweep`]).
 //!
 //! Block identifiers are prefix-dependent (chained): an identical id means the
 //! whole prefix up to it matched, so per-block set membership is the exact
@@ -11,8 +12,8 @@
 //! was seen in an *earlier* request. Reuse is classified as intra- or
 //! cross-conversation by the conversation that first introduced the id.
 //!
-//! This models an ideal cache with no eviction (unbounded capacity); realized
-//! LRU behavior is a separate concern.
+//! [`ideal_reuse`] models a cache with no eviction (unbounded capacity), which
+//! is the upper bound the realized LRU curve is read against.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 

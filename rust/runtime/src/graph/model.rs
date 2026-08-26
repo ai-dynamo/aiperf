@@ -211,8 +211,8 @@ fn default_true() -> bool {
 impl LlmNode {
     /// Channels this node writes: `[output]`.
     ///
-    /// Returns an iterator so per-fire callers (`finalize_node`) do not heap-
-    /// allocate a single-element `Vec` on the completion path.
+    /// Returns an iterator so callers do not heap-allocate a single-element
+    /// `Vec` for the one output channel.
     pub fn write_channels(&self) -> std::iter::Once<&str> {
         std::iter::once(self.output.as_str())
     }

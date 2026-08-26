@@ -131,7 +131,7 @@ pub fn snapshot_body(snapshot: Value) -> Value {
     json!({ "status": { "snapshot": snapshot } })
 }
 
-/// Build the terminal status merge patch.
+/// Build the workload's final status merge patch, which enters `PublishingResults`.
 pub fn complete_body() -> Value {
     json!({ "status": { "phase": "PublishingResults" } })
 }

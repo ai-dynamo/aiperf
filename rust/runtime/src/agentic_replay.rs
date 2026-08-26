@@ -647,8 +647,8 @@ impl AgenticReplayWorkload {
                     continue;
                 }
             };
-            // `build_turn_at(start_turn_index + 1)`; the sliced profiling lane's
-            // start turn is turn 0, so the pressure replay begins at turn 0.
+            // The sliced profiling lane is already rebased so its start turn is
+            // turn 0, so the pressure replay begins at `build_turn_at(0)`.
             let mut first = match session.build_turn_at(0, None) {
                 Ok(turn) => turn,
                 Err(error) => {
@@ -912,22 +912,6 @@ pub fn take_ready<T>(
     ready
 }
 
-/// Schedule one lane turn at `target_ns`, then (when `chain`) recursively schedule
-/// its continuation on completion at the recorded inter-turn `delay_ms` from the
-/// prior turn's end — Python's per-stream sequential continuation.
-///
-/// `gate`/`defer_queue` implement subagent-join gating: a turn whose
-/// `(conversation_id, turn_index)` is a waiting join point is parked in
-/// `defer_queue` instead of issued, and re-dispatched from a child's terminal
-/// callback once [`TreeGate::is_waiting`] clears. A `None` gate (the no-tree
-/// degenerate case) never defers and recycles exactly as before.
-///
-/// `observer` is the accelerated cache-warmup return seam (Python
-/// `observe_credit_return`, lines 698-717): when `Some`, every credit return
-/// advances the replay barrier gate ([`ReplayGate::complete`]) and records the
-/// warmup-to-profile handoff, routing the return wall through the injected
-/// [`Clock`](crate::clock::Clock). The accelerated-warmup path passes `Some` to
-/// arm this behavior; standard warmup and profiling pass `None`.
 /// Accelerated-warmup dispatch context threaded alongside the tree gate: the
 /// drain latch (set when the duration timer fires — no new continuation/recycle
 /// issuance after it) and the zero-idle flag (accelerated pressure fires each
@@ -945,6 +929,22 @@ struct AccelCtx {
     max_tokens_override: Option<u32>,
 }
 
+/// Schedule one lane turn at `target_ns`, then (when `chain`) recursively schedule
+/// its continuation on completion at the recorded inter-turn `delay_ms` from the
+/// prior turn's end — Python's per-stream sequential continuation.
+///
+/// `gate`/`defer_queue` implement subagent-join gating: a turn whose
+/// `(conversation_id, turn_index)` is a waiting join point is parked in
+/// `defer_queue` instead of issued, and re-dispatched from a child's terminal
+/// callback once [`TreeGate::is_waiting`] clears. A `None` gate (the no-tree
+/// degenerate case) never defers and recycles exactly as before.
+///
+/// `observer` is the accelerated cache-warmup return seam (Python
+/// `observe_credit_return`): when `Some`, every credit return advances the
+/// replay barrier gate ([`ReplayGate::complete`]) and records the
+/// warmup-to-profile handoff, routing the return wall through the injected
+/// [`Clock`](crate::clock::Clock). The accelerated-warmup path passes `Some` to
+/// arm this behavior; standard warmup and profiling pass `None`.
 #[allow(clippy::too_many_arguments)]
 fn schedule_agentic_turn(
     runtime: Rc<ScheduledRuntime>,

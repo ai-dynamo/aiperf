@@ -23,9 +23,11 @@
 //!    a session's turns across workers (`worker_id` not constant per
 //!    `correlation_id`), so per-session single-connection reuse does not hold.
 //!
-//! A real in-process HTTP server on `127.0.0.1` (NOT `localhost`: the runtime
-//! client is IPv4-only on loopback) serves a fixed streaming SSE completion over
-//! keep-alive connections, so a worker CAN reuse a pooled connection.
+//! A real in-process HTTP server on `127.0.0.1` (NOT `localhost`: the client
+//! connects to the first address `lookup_host` returns, which for `localhost`
+//! can be `::1` while this listener binds IPv4 only) serves a fixed streaming
+//! SSE completion over keep-alive connections, so a worker CAN reuse a pooled
+//! connection.
 
 #![cfg(feature = "engine")]
 

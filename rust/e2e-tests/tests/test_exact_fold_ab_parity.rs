@@ -55,8 +55,9 @@ const SEED: u32 = 20260715;
 const CONCURRENCY: u32 = 4;
 
 /// A single-turn synthetic config with ALL per-record artifacts enabled, pointed at
-/// `url` and seeded so two runs synthesize byte-identical inputs. `workers: 1` forces
-/// the single-thread scheduled path, the only path exact-fold is eligible on.
+/// `url` and seeded so two runs synthesize byte-identical inputs. `workers: 1` pins the
+/// single-thread scheduled path so the two runs differ only in the retention decision
+/// (`workers > 1` is exact-fold-eligible too, folding and streaming per shard).
 fn full_coverage_config(url: &str) -> String {
     format!(
         "schemaVersion: \"2.0\"\n\
@@ -501,11 +502,10 @@ async fn test_exact_fold_matches_retained_records_end_to_end() {
 }
 
 /// A metrics-only synthetic config (no per-record artifacts) with a LARGE request
-/// budget, seeded and single-worker so exact-fold is eligible. Metrics-only isolates
-/// the coordinator/accumulator retention term: retained execution holds every
-/// finished record
-/// until the end-of-run batch fold; exact-fold folds each into the exact accumulator
-/// and drops it mid-run.
+/// budget, seeded and single-worker so both arms run the same one-thread path.
+/// Metrics-only isolates the coordinator/accumulator retention term: retained
+/// execution holds every finished record until the end-of-run batch fold; exact-fold
+/// folds each into the exact accumulator and drops it mid-run.
 fn metrics_only_config(url: &str, entries: u32, requests: u32, concurrency: u32) -> String {
     format!(
         "schemaVersion: \"2.0\"\n\
@@ -535,9 +535,9 @@ fn metrics_only_config(url: &str, entries: u32, requests: u32, concurrency: u32)
     )
 }
 
-/// Peak `VmHWM` (KiB) of any live `aiperf` process, sampled from `/proc`.
-/// `VmHWM` is a monotonic high-water mark, so the max over frequent samples is the
-/// process peak even though the process exits before the final read.
+/// Peak `VmHWM` (KiB) over every live process whose `/proc/<pid>/comm` is exactly
+/// `aiperf runner`. `VmHWM` is a monotonic high-water mark, so the max over frequent
+/// samples is the process peak even though the process exits before the final read.
 #[cfg(target_os = "linux")]
 fn max_runner_vmhwm_kb() -> u64 {
     let mut best = 0u64;

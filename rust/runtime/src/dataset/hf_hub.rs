@@ -8,7 +8,7 @@
 //! `dynamo-tokenizers` already links via `fastokens`, pinned to the blocking `ureq`
 //! backend so no `reqwest`/`native-tls` stack enters the product graph. That buys
 //! retry/backoff, xet-CDN `302`, shared `~/.cache/huggingface` reuse, and
-//! `HF_HUB_OFFLINE`/`HF_TOKEN` handling.
+//! `HF_HOME`/`HF_ENDPOINT` handling.
 //!
 //! File selection excludes weights, images, and non-tokenizer repository files;
 //! cache resolution returns the directory containing the tokenizer artifacts.
@@ -25,7 +25,9 @@ use crate::dataset::error::{DatasetError, Result};
 /// it is applied explicitly to support CI where the token is only an env var.
 const HF_TOKEN_ENV: &str = "HF_TOKEN";
 
-/// Bounded automatic retry for transient hub failures (429/5xx/timeouts).
+/// Bounded automatic retry, with exponential backoff, for a failed file body
+/// download. `hf-hub` resumes from the bytes already on disk and does not
+/// discriminate by failure kind.
 const DOWNLOAD_RETRIES: usize = 3;
 
 /// Repository files that are never tokenizer artifacts.
@@ -86,8 +88,8 @@ fn is_downloadable_tokenizer_file(filename: &str) -> bool {
         && is_tokenizer_file(filename)
 }
 
-/// Reject repository ids that are not a bare or `namespace/name` HuggingFace id,
-/// before any network call.
+/// Reject repository ids that cannot name a HuggingFace repository, before any
+/// network call. Segment count is left to the hub, not enforced here.
 ///
 /// Fails closed on empty input, whitespace or control characters, and empty /
 /// `.` / `..` path segments — a crafted id (`""`, `"../etc/passwd"`,
@@ -391,7 +393,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "run with HF_HUB_OFFLINE=1 and a cold cache"]
+    #[ignore = "run with a cold cache and no hub reachability"]
     fn offline_cold_cache_errors() {
         let result = block_on(download_hugging_face_tokenizer(
             "aiperf-definitely-not-cached-000000",

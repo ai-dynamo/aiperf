@@ -1711,7 +1711,8 @@ pub(crate) enum ServerAction {
     SendPing(Bytes),
     /// Send one Pong control frame.
     SendPong(Bytes),
-    /// Close with a protocol-error application message already emitted.
+    /// Close after the already-emitted application messages, either a protocol
+    /// error or the `close_before_terminal` scenario.
     Close,
     /// End the underlying transport without a close handshake.
     DropTransport,

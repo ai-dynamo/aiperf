@@ -12,7 +12,7 @@ use super::environment::TraceEnvironmentError;
 pub enum CommandDisposition {
     /// Send the authored command to the sandbox.
     Execute,
-    /// Return a synthetic terminal command result without opening the sandbox.
+    /// Return a synthetic terminal command result without running it in the sandbox.
     Synthetic(ToolCommandResult),
 }
 
@@ -87,7 +87,8 @@ pub trait ToolCommandPolicy {
     fn evaluate(&self, command: &str) -> Result<CommandDisposition, TraceEnvironmentError>;
 }
 
-/// Stock policy that rejects package installation in any top-level command segment.
+/// Stock policy that rejects process detachment and package installation in any command
+/// segment, including nested command substitutions.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct GuardedToolCommandPolicy;
 

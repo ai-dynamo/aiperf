@@ -159,10 +159,12 @@ pub struct MetricsConfig {
     pub osl_mismatch_threshold_pct: f64,
     /// Absolute OSL mismatch cap in tokens.
     pub osl_mismatch_max_tokens: f64,
-    /// Source input-token accounting from server-reported `usage.prompt_tokens`
-    /// instead of client-side tokenization. When enabled,
-    /// `TokenCounts.input = usage.prompt_tokens`; output
-    /// is already server-authoritative in the accumulator regardless.
+    /// Source visible token accounting from the endpoint's `usage` fields
+    /// instead of client-side tokenization. When enabled, `TokenCounts.input`
+    /// is `usage.prompt_tokens` and `output`/`reasoning` come from
+    /// `usage.completion_tokens`/`usage.reasoning_tokens`; otherwise all three
+    /// are the client-tokenized counts. `metrics.rs` applies that per-mode
+    /// choice, so the accumulator only ever sees the resolved `TokenCounts`.
     pub use_server_token_count: bool,
     /// Per-record retention mode. [`MetricsStorageMode::Sketch`] streams each value
     /// into a bounded-memory t-digest instead of retaining it, trading exact

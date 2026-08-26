@@ -4,7 +4,8 @@
 //!
 //! Grid recipes expand log-spaced config-path axes before execution. The
 //! `monotonic` style instead probes exponentially and bisects a one-dimensional
-//! SLA boundary, running one child process per feasibility verdict.
+//! SLA boundary, running one child process per probe; a point's verdict latches
+//! only once `stability_trials` concordant probes have landed on it.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -144,8 +145,9 @@ pub struct RecipeVariation {
     pub values: Vec<(String, i64)>,
 }
 
-/// Return ascending log-spaced integers in `[lo, hi]`, with endpoints forced
-/// and rounding duplicates removed.
+/// Return ascending log-spaced integers spanning `[lo, hi]`. The first and last
+/// samples land on `lo` and `hi` by construction; every sample is then
+/// banker's-rounded and floored at 1, and rounding duplicates are removed.
 pub fn logspace_int_steps(lo: f64, hi: f64, steps: i64) -> anyhow::Result<Vec<i64>> {
     anyhow::ensure!(steps >= 2, "search steps must be >= 2 (got {steps})");
     anyhow::ensure!(lo > 0.0, "search lower bound must be > 0 (got {lo})");

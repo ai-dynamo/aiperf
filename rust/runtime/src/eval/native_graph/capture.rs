@@ -18,7 +18,7 @@ pub enum CaptureFidelity {
     ObservedProxy,
     /// Some declared calls were only partially observable.
     Partial,
-    /// At least one declared call was unobservable or bypassed capture.
+    /// No call was observed, or at least one declared call was unobservable or bypassed capture.
     Missing,
 }
 

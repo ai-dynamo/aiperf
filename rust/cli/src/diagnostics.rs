@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Native process diagnostics hooks.
 
-/// Register a best-effort SIGUSR1 stack-dump handler on Linux.
+/// Register a best-effort SIGUSR1 stack-dump handler on Unix.
 ///
 /// `kill -USR1 <pid>` writes a backtrace for the current process to stderr.
 pub fn register_sigusr1_faulthandler() {

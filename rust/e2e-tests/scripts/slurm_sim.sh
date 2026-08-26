@@ -8,8 +8,9 @@
 # rank 0 = controller, ranks 1..2 = cells, SLURM_JOB_NODELIST -> 127.0.0.1 (via the
 # AIPERF_SLURM_CONTROLLER_HOST override so the coordinate is IPv4 loopback, not ::1).
 #
-# Each task's stderr is captured to its own file so a cell that dies is visible
-# (the launcher nulls cell stdout, but stderr is inherited/redirected here).
+# Each task's output is captured to its own file so a cell that dies is visible
+# (the slurm launcher spawns no cells at all, so this script owns each task's
+# stdio, exactly as srun would).
 set -u
 set -o pipefail
 

@@ -7,7 +7,7 @@ use std::fmt::{self, Display};
 
 use crate::dataset::segment::Handle;
 
-/// Result type used throughout the dataset crate.
+/// Result type used throughout the dataset module.
 pub type Result<T> = std::result::Result<T, DatasetError>;
 
 /// A load-time or materialization error with enough context to fix the input.
@@ -17,7 +17,9 @@ pub enum DatasetError {
     UnknownHandle(Handle),
     /// A segment was interned under a parent handle that does not exist.
     UnknownParent(Handle),
-    /// More than `u32::MAX` unique segments were interned.
+    /// A `u32` segment-store quantity overflowed: more than `u32::MAX` unique
+    /// segments interned, a text segment's token count, or a parent handle
+    /// shifted past the arena's capacity while concatenating disjoint pools.
     SegmentCapacityExceeded,
     /// A payload was used in a materialization position that requires another kind.
     PayloadKind {

@@ -54,8 +54,9 @@ pub enum ClockKind {
 
 /// Deterministic capability facts for one linked transport factory.
 ///
-/// These feed the `--capabilities` `Catalog` only. Each workload validates and
-/// resolves its transport-specific execution path during preparation.
+/// These feed the discovery [`Catalog`](crate::engine::protocol::Catalog) only.
+/// Each workload validates and resolves its transport-specific execution path
+/// during preparation.
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 pub struct TransportDescriptor {
     /// Stable registry ID.
@@ -220,7 +221,8 @@ pub trait TransportFactory: Debug + Send + Sync {
     /// (`crate::engine::online_execution`) matches on it exhaustively so the
     /// compiler keeps arms and registrations in correspondence. The default
     /// returns `None`; every RequestExecutor transport
-    /// (`http`/`grpc`/`dry_run`) overrides it.
+    /// (`http`/`grpc`/`dry_run`, plus `websocket` under its feature) overrides
+    /// it.
     fn native_execution(
         &self,
         _config: &dyn ValidatedTransportConfig,
@@ -231,8 +233,8 @@ pub trait TransportFactory: Debug + Send + Sync {
 }
 
 /// Execution binding produced by a validated *native* transport — one that
-/// drives the `RequestExecutor` seam over a real clock (`http`, `grpc`,
-/// `dry_run`).
+/// drives the `RequestExecutor` seam (`http`, `grpc`, `dry_run`, and
+/// `websocket` under its feature).
 ///
 /// The scheduled and graph workloads resolve one of these and drive the entire
 /// native runtime (pacing, admission, phase orchestration, metrics, export)
@@ -254,7 +256,8 @@ pub trait NativeTransportExecution: Send + Sync {
     }
 
     /// Whether a model-readiness probe runs before profiling. Only the HTTP
-    /// transport polls a live server; `grpc`/`dry_run` skip it.
+    /// transport polls a live server; `grpc`, `websocket`, and `dry_run` skip
+    /// it.
     fn readiness_enabled(&self) -> bool;
 
     /// Whether this transport drives the run on a virtual `SimClock` (idle-pumped
@@ -873,11 +876,11 @@ pub struct WorkloadConfigV2 {
     pub failure_policy: Option<OnFailure>,
     /// Graph-only WEKA reconstruction semantics selector (`legacy`|`graph-ir`);
     /// absent/`graph-ir` uses the graph-ir path, `legacy` routes weka runs to the
-    /// byte-exact AgentX agentic pipeline (requires the `agentx` feature). Absent
-    /// on scheduled runs.
+    /// byte-exact AgentX agentic pipeline. Absent on scheduled runs.
     #[serde(default)]
     pub weka_semantics: Option<String>,
-    /// Legacy AgentX replay global idle cap, seconds.
+    /// Global replay idle-gap cap, seconds; applies to both weka arms (legacy
+    /// AgentX and graph-ir).
     #[serde(default)]
     pub system_idle_gap_cap_seconds: Option<f64>,
     /// Ignore recorded trace inter-message/inter-request delays: fire every node
@@ -1629,13 +1632,15 @@ pub(crate) fn strict_decode<T>(authored: &RawValue, label: &str) -> Result<T>
 where
     T: DeserializeOwned,
 {
-    // The workspace enables serde_json's `arbitrary_precision` feature for >u64
-    // recorded-trace hashes. Streaming `from_str` then represents every number as an
-    // internal map, so any `#[serde(flatten)]` (e.g. `PhaseSpec`'s
-    // `PhaseCommonSpec`) or `#[serde(untagged)]` field whose type is `f64` fails
-    // with "invalid type: map, expected f64". Buffering through `serde_json::Value`
-    // first reconstructs numbers in a form the derived impls accept, at the cost
-    // of one extra parse.
+    // Authored component configs arrive as `RawValue` text and are buffered
+    // through `serde_json::Value` before decoding, at the cost of one extra
+    // parse. That keeps `#[serde(flatten)]` (e.g. `PhaseSpec`'s
+    // `PhaseCommonSpec`) and `#[serde(untagged)]` `f64` fields decoding from a
+    // self-describing value: streaming `from_str` would fail with "invalid type:
+    // map, expected f64" if serde_json's global `arbitrary_precision` feature —
+    // which represents every number as an internal map — were ever enabled in
+    // the dependency graph. The workspace deliberately keeps it off (guarded by
+    // `graph::recorded::scalar`'s `serde_json_arbitrary_precision_not_enabled`).
     let value: serde_json::Value =
         serde_json::from_str(authored.get()).map_err(|error| anyhow!("{label}: {error}"))?;
     serde_json::from_value(value).map_err(|error| anyhow!("{label}: {error}"))
@@ -2254,8 +2259,9 @@ mod tests {
             vec!["graph", "scheduled"]
         );
 
-        // The stock build layers only built-in extensions, so the native
-        // The report's third-party extension metadata stays empty.
+        // The stock build registers only built-in extensions, whose names are
+        // deliberately not recorded, so the native report's third-party
+        // extension metadata stays empty.
         assert_eq!(registry.extension_names().count(), 0);
     }
 

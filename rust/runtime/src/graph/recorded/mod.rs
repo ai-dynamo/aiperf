@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Recorded-trace compilation shared by WEKA, Dynamo, and AIPerf trace inputs.
+//! Recorded-trace compilation shared by the WEKA, Dynamo, TraceLab,
+//! `aiperf.trace.v1`, and recorded-agent inputs.
 
 pub mod agent_recording;
 mod aiperf_trace;
@@ -65,7 +66,8 @@ pub struct RecordedTraceInputConfig {
     pub root_limit: Option<usize>,
     /// Peak per-request input-plus-output ceiling.
     pub max_context_length: Option<usize>,
-    /// WEKA top-level output cap; Dynamo deliberately ignores this value.
+    /// WEKA top-level output cap; the Dynamo and `aiperf_trace` compilers
+    /// deliberately ignore this value.
     pub max_osl: Option<usize>,
     /// True-idle gap cap. `None` replays raw recorded gaps.
     pub idle_gap_cap_seconds: Option<f64>,

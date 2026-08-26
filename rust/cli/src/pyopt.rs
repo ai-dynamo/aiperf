@@ -85,9 +85,10 @@ pub struct OptunaStudy {
 }
 
 impl OptunaStudy {
-    /// Create a seeded study. `direction` is `"maximize"`/`"minimize"`;
-    /// `sampler_name` is `"tpe"`/`"gp"`; `sla_specs` is `(attr_key, op, threshold)`
-    /// per SLA filter (empty = unconstrained).
+    /// Create a study, seeded only when `seed` is present. `direction` is
+    /// `"maximize"`/`"minimize"`; `sampler_name` is `"tpe"`/`"gp"`/`"botorch"`/`"bo"`;
+    /// `sla_specs` is `(attr_key, op, threshold)` per SLA filter (empty =
+    /// unconstrained).
     pub fn new(
         direction: &str,
         sampler_name: &str,

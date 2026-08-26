@@ -3,8 +3,12 @@
 
 //! Hash-derived random-number substrate for AIPerf.
 //!
-//! Streams are derived solely from the run root seed and component identifier
-//! using BLAKE3, then consumed through `Pcg64` wrappers.
+//! Streams are derived from the run root seed and component identifier alone,
+//! never from creation or draw order. The native backend
+//! ([`RustRandomGenerator`]) derives with BLAKE3 and draws from `rand_pcg`'s
+//! `Pcg64`; the Python-parity backend ([`PythonRandomGenerator`]) derives with
+//! SHA-256 and draws from a CPython Mersenne Twister plus a numpy-compatible
+//! PCG64, matching `src/aiperf/common/random_generator.py` byte-for-byte.
 
 pub mod compat;
 pub mod configured;

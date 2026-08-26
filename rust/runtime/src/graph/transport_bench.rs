@@ -10,7 +10,7 @@
 //!
 //! * default: **HTTP/1.1 keep-alive** (fastest for serial lanes — no per-stream
 //!   hpack/flow-control overhead);
-//! * `--http2`: h2c prior-knowledge, cloning senders off a small per-worker pool
+//! * `http2`: h2c prior-knowledge, cloning senders off a small per-worker pool
 //!   so many lanes multiplex over few connections;
 //! * `unix:/path` base URL: **Unix-domain socket** (HTTP/1.1), which bypasses the
 //!   TCP/IP loopback softirq tax and is what pushes co-located throughput past
@@ -494,7 +494,7 @@ fn transport_worker(
     local.block_on(&rt, async {
         let clock: Rc<dyn Clock> = RealClock::new();
         // One duration gate per worker, sharing this worker's clock. `started_at_ns`
-        // is stamped now so the [`crate::timing::Duration`] condition measures
+        // is stamped now so the [`crate::timing::stop::Duration`] condition measures
         // elapsed time from the worker's start. Shared across the worker's lanes.
         let gate: Option<Rc<DurationGate>> = max_duration_ns.map(|d| {
             Rc::new(DurationGate {
@@ -617,7 +617,7 @@ mod gate_tests {
     use super::*;
     use crate::clock::sim_clock::SimClock;
 
-    // The gate wires the shared `aiperf-timing` duration condition to the worker
+    // The gate wires the shared `crate::timing` duration condition to the worker
     // clock: not expired before the bound, expired once elapsed reaches it.
     #[test]
     fn duration_gate_expires_at_the_bound() {

@@ -63,14 +63,12 @@ pub fn execute_replay_sim(dispatches: Vec<(i64, Value)>) -> Vec<(i64, Value)> {
     out.into_iter().map(|(ns, _, rec)| (ns, rec)).collect()
 }
 
-/// Execute one conversation's agentic replay under the SimClock at `t_star_ms`:
-/// warmup turn(s) fire at t=0, profiling turns fire at their phase-start-anchored
-/// delay (`profiling_dispatch_delays_ms`, honoring `burst` / `cap_ms`), history
-/// turns are omitted. Returns `(dispatch_ns, export_record)` in true fired order.
 /// Compute the dispatch schedule for one conversation at `t_star_ms`
-/// synchronously (no clock): `(dispatch_ns, export_record)` per dispatched turn
-/// (warmup@0, profiling at phase-start-anchored delays), sorted into fire order.
-/// This is the deterministic plan `run_replay_sim` then executes under the clock.
+/// synchronously (no clock): `(dispatch_ns, export_record)` per dispatched turn —
+/// warmup at 0, profiling at its phase-start-anchored delay
+/// (`profiling_dispatch_delays_ms`, honoring `burst` / `cap_ms`), history turns
+/// omitted — sorted into fire order. This is the deterministic plan
+/// [`run_replay_sim`] then executes under the clock.
 pub fn computed_dispatch(
     conv: &ReconstructedConversation,
     t_star_ms: f64,
@@ -223,7 +221,9 @@ fn record_phase(rec: &Value) -> ReplayPhase {
 /// For each conversation the trajectory tree's marker is resolved once through
 /// the shared `ledger` (root mints, tree members reuse, `recycle_pass` per base
 /// trace id) and applied to the **first dispatched turn only** — the warmup turn,
-/// or the first profiling turn when there is no warmup. Every dispatch of a tree
+/// or the first profiling turn when there is no warmup. The warmup-isolation
+/// targets are narrower still: their constant marker rides the warmup turn alone,
+/// so a stream with no pre-t\* turn carries none. Every dispatch of a tree
 /// carries the same `correlation_id`, so the marker (embedded in the warmup
 /// prefix) and sticky routing survive the warmup→profiling handoff. Passing the
 /// same `ledger` by `&mut` across warmup and profiling builds preserves marker

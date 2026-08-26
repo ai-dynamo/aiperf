@@ -207,9 +207,9 @@ pub(crate) fn build_native_scheduled_phase_plan_with_source_factory(
                     shared.prefill.clone(),
                 )?
                 .with_failure_policy(on_failure)
-                // Under `global`/`global-hop` dispatch this phase paces against
-                // the cell-shared gate; `None` (sharded / single-thread) leaves
-                // local `intervals` pacing intact.
+                // Under `global` dispatch this phase paces against the
+                // cell-shared gate; `None` (every other mode / single-thread)
+                // leaves local `intervals` pacing intact.
                 .with_rate_gate(shared.rate.clone())
                 .with_deferred_single_turn_bodies(defer_single_turn_bodies),
             ) as Rc<dyn Workload>;

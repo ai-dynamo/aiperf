@@ -376,7 +376,9 @@ pub struct MockServerConfig {
     )]
     pub prefix_cache_block_tokens: usize,
 
-    /// Cache capacity in tokens (LRU eviction). Bounds the reuse window: once
+    /// Cache capacity in blocks of `--prefix-cache-block-tokens` tokens, so the
+    /// default block size of 1 makes this a token count (LRU eviction by
+    /// default). Bounds the reuse window: once
     /// exceeded, least-recently-used prefixes go cold and stop hitting. Uses
     /// SGLang's `max_total_num_tokens` KV pool (which it derives from
     /// mem-fraction-static x GPU memory); the default is a representative

@@ -260,7 +260,8 @@ impl MetricType {
         matches!(self, MetricType::Gauge | MetricType::Unknown)
     }
 
-    /// Whether rows are emitted for this type. Summaries remain stored but omitted.
+    /// Whether scalar rows are emitted for this type (histograms emit through
+    /// their own path). Summaries remain stored but omitted.
     fn is_scalar_emitted(self) -> bool {
         matches!(
             self,
@@ -430,7 +431,7 @@ impl Hierarchy {
         counts
     }
 
-    /// Configured or observed endpoint URLs, sorted.
+    /// Endpoint URLs observed in the wire input, sorted.
     fn endpoint_urls_sorted(&self) -> Vec<String> {
         let mut urls = self.order.clone();
         urls.sort();

@@ -11,8 +11,9 @@
 //!    template context. Each variable may reference any other variable.
 //! 3. Jinja2 `{{ expr }}` / `{% ... %}` rendering over every string leaf, with
 //!    `StrictUndefined` (a missing name is a hard error) and result coercion.
-//!    `template`/`body`/`payload_template` fields and the `artifacts.user_files`
-//!    subtree are skipped (rendered at request/run time, not config-load time).
+//!    `template`/`body`/`payload_template` fields are skipped because the
+//!    endpoint renders them per request, and the `artifacts.user_files` subtree
+//!    is skipped because its leaves are serialized verbatim.
 //!
 //! The Jinja engine is `minijinja`; its
 //! expression semantics match Jinja2 for the arithmetic/attribute forms the
@@ -36,7 +37,7 @@ static UNTERMINATED_ENV_VAR: LazyLock<Regex> =
 
 /// Request-time Jinja fields that must not render during config loading.
 const SKIP_TEMPLATE_FIELDS: &[&str] = &["template", "body", "payload_template"];
-/// Subtrees rendered at run start with runtime-only context.
+/// Subtrees whose string leaves are carried through verbatim, never rendered.
 const SKIP_TEMPLATE_PATH_PREFIXES: &[&str] = &[
     "artifacts.user_files",
     "benchmark.artifacts.user_files",

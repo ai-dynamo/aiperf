@@ -311,7 +311,7 @@ pub(crate) fn adaptive_run_config(
             phase,
             PhaseSpec::FixedSchedule { .. } | PhaseSpec::AgenticReplay { .. }
         ),
-        "adaptive_scale is not defined for fixed_schedule phases"
+        "adaptive_scale is not defined for fixed_schedule or agentic_replay phases"
     );
     let control_variable = match spec.control_variable {
         AdaptiveControlVariableSpec::Concurrency => AdaptiveControlVariable::Concurrency,

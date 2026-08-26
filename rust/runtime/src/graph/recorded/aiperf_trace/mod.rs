@@ -117,8 +117,9 @@ pub async fn compile_aiperf_trace_input(
 /// Flatten one session's `inference_calls` into normalized `RecordedRequest`s.
 ///
 /// Calls are taken in file order (`aiperf.trace.v1` emits them time-sorted, and
-/// its `previous_ref`/`compaction.prior_ref`/`response_refs` are indices into
-/// that same order). Each call's prompt is the concatenation of its referenced
+/// its `previous_ref`/`compaction.prior_ref` are indices into that same order,
+/// while `segment_refs`/`response_refs` index the segment pool). Each call's
+/// prompt is the concatenation of its referenced
 /// segments' block ids; per-block `(role, starts_message)` tags come straight
 /// from the segment roles. `input_tokens` is the **exact** sum of the referenced
 /// segments' token counts, and `block_lens` records each block's true length —

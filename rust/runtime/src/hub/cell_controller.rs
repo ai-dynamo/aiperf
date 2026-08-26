@@ -1,8 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! The cell↔controller hub plugin: folds the register / heartbeat / partition /
-//! store-partition velo handlers ([`VeloControllerTransport`]) onto the shared hub
+//! The cell↔controller hub plugin: folds the register / preflight / heartbeat /
+//! phase-signal / partition / store-partition velo handlers
+//! ([`VeloControllerTransport`]) onto the shared hub
 //! velo instance, so a [`Hub`](super::Hub) instance BECOMES the connect anchor the
 //! standalone controller is today (the `:9500` role).
 //!
@@ -48,7 +49,7 @@ struct CellStatus {
     cell_count: u32,
 }
 
-/// The cell↔controller hub plugin. Registers the four control-plane velo handlers on
+/// The cell↔controller hub plugin. Registers the six control-plane velo handlers on
 /// the shared hub velo instance and captures the resulting transport for the
 /// bootstrap to own.
 pub struct CellControllerHubPlugin {

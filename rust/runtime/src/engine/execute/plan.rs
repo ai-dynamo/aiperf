@@ -14,8 +14,8 @@ pub(crate) struct NativeScheduledResources {
     pub(crate) session: Option<Rc<SlotPool>>,
     pub(crate) prefill: Option<Rc<SlotPool>>,
     pub(crate) phase: Rc<dyn ScheduledPhaseResources>,
-    /// Cell-shared request-rate gate for this phase under `global`/`global-hop`
-    /// dispatch (`None` for `sharded` dispatch, non-rate phases, and the
+    /// Cell-shared request-rate gate for this phase under `global` dispatch
+    /// (`None` for every other dispatch mode, non-rate phases, and the
     /// single-thread coordinator path). When present, a request-rate workload
     /// paces against it instead of its locally-sliced `intervals`, so aggregate
     /// arrival rate across all `W` worker threads matches the global rate
@@ -24,7 +24,7 @@ pub(crate) struct NativeScheduledResources {
 }
 
 /// Select one phase's admission resources for one worker thread under
-/// `global`/`global-hop` dispatch.
+/// `global` dispatch.
 ///
 /// The ordinary cross-phase-persistent `shared_resources` (one `SlotPool`
 /// reused, resized via `set_limit`, across every phase in the run so a
@@ -37,10 +37,10 @@ pub(crate) struct NativeScheduledResources {
 /// `SlotPool::new_global` over that gate's `Arc<GlobalSlotPool>` — the same
 /// `Arc` every other worker thread in the cell holds — instead of continuing
 /// to draw from `shared_resources`'s persistent local pool. Every other case
-/// (Sharded dispatch, or a phase with no concurrency cap, e.g.
+/// (any non-`Global` dispatch mode, or a phase with no concurrency cap, e.g.
 /// `fixed_schedule`) falls back to `shared_resources` unchanged.
 ///
-/// A known approximation: under `Global`/`GlobalHop`, a seamless
+/// A known approximation: under `Global`, a seamless
 /// warmup->profiling transition that carries session guards across the
 /// boundary switches from one phase's `GlobalSlotPool` to the next phase's
 /// (rather than resizing one persistent pool in place, as `Sharded` does).
@@ -196,7 +196,8 @@ pub(crate) struct NativeRunSpec {
     /// ([`ShardedShared::dispatch_mode`]); the single-thread coordinator path
     /// has no cross-thread admission concern regardless of this value.
     pub(crate) dispatch_mode: DispatchMode,
-    /// Worker-assignment policy for the [`DispatchMode::GlobalHop`] hop executor
+    /// Worker-assignment policy for the single-coordinator hop executor shared by
+    /// [`DispatchMode::GlobalHop`] and [`DispatchMode::GlobalPush`]
     /// (`runtime.hop_routing`). `None` leaves the hop executor on its
     /// [`crate::engine::protocol::HopRouting::default`] (`RoundRobin`) placement.
     /// Inert under any other dispatch mode or `workers == 1`.
@@ -618,8 +619,8 @@ pub(crate) fn validate_plan(request: &NativeRunSpec) -> Result<()> {
 /// The streaming [`RecordArtifactLane`] supports records JSONL, raw JSONL, CSV,
 /// Parquet, and `outputs.json`. Per-record OTLP histograms fold into an
 /// order-independent accumulator. `inputs.json` payloads are always generated up front
-/// from the resident dataset (a run whose dataset cannot be projected that way is
-/// rejected outright, see [`dataset_supports_up_front_inputs`]), so none of these
+/// from the resident dataset (a run whose dataset cannot be projected that way warns and
+/// skips the artifact, see [`dataset_supports_up_front_inputs`]), so none of these
 /// outputs requires record retention.
 ///
 /// Parquet is only streamable under the `parquet` feature; a lite runner cannot emit
@@ -750,9 +751,9 @@ pub(crate) struct ExactFoldInputs {
     /// The single-process cellular heartbeat lane is enabled: also reads the
     /// per-record clone.
     pub(crate) has_heartbeat: bool,
-    /// A per-record file artifact (records/raw/CSV/parquet on a lite build) or the
-    /// during-run inputs.json capture still needs the retained records
-    /// ([`wants_per_record_artifacts`]).
+    /// An output the streaming lane cannot produce — Parquet on a build without
+    /// the `parquet` feature, or dataset analysis, which reads the full retained
+    /// record set ([`wants_per_record_artifacts`]).
     pub(crate) wants_per_record_artifacts: bool,
 }
 
@@ -958,16 +959,16 @@ mod tests {
         );
         // Records, raw data, CSV, Parquet, and outputs stream and merge across shards.
         // `wants_per_record_artifacts` only flags
-        // the residual unstreamable cases (live-reply-multiturn inputs.json retain, or a
-        // lite-build Parquet request), which STILL reject even when sharded because
-        // neither can be produced by the fold-and-drop path.
+        // the residual unstreamable cases (dataset analysis, or a lite-build Parquet
+        // request), which STILL reject even when sharded because neither can be
+        // produced by the fold-and-drop path.
         assert!(
             !exact_fold_eligible(ExactFoldInputs {
                 shardable: true,
                 wants_per_record_artifacts: true,
                 ..clean
             }),
-            "an unstreamable per-record artifact (inputs-retain / lite parquet) stays on retain even sharded"
+            "an unstreamable output (dataset analysis / lite parquet) stays on retain even sharded"
         );
         assert!(
             !exact_fold_eligible(ExactFoldInputs {
@@ -1157,11 +1158,11 @@ mod tests {
         );
     }
 
-    /// gate wiring: a run requesting records/raw/CSV/parquet/outputs (but no
-    /// inputs.json retain) does NOT set `wants_per_record_artifacts` on a Parquet build,
+    /// gate wiring: a run requesting records/raw/CSV/parquet/outputs (and no dataset
+    /// analysis) does NOT set `wants_per_record_artifacts` on a Parquet build,
     /// so a `workers > 1` run with every streamed artifact is exact-fold-eligible (the
     /// per-shard lanes + coordinator concat handle them). The residual retain triggers —
-    /// live-reply inputs.json and (lite build) Parquet — still flag it.
+    /// dataset analysis and (lite build) Parquet — still flag it.
     #[test]
     fn wants_per_record_artifacts_streamed_set_is_not_a_disqualifier() {
         use crate::engine::protocol::ArtifactSpec;

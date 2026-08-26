@@ -152,8 +152,8 @@ struct HangingHttpServer {
     base_url: String,
 }
 
-/// Minimal real TCP/OpenAI-SSE server used when the external mock binary is not
-/// installed. Each response closes its connection, exercising transport
+/// Minimal real TCP/OpenAI-SSE server, so the lowered-DAG test needs no external
+/// mock binary. Each response closes its connection, exercising transport
 /// re-establishment in a self-contained test.
 struct SseHttpServer {
     base_url: String,

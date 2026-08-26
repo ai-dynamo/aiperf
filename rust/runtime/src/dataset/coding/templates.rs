@@ -90,9 +90,10 @@ impl TemplateRenderer<PythonRandomGenerator> {
         }
     }
 
-    /// Python `f"{x:.{prec}e}"` scientific notation: Rust's `{:e}` omits the
-    /// exponent sign and zero-padding, so post-process to CPython's form
-    /// (`5.00e-04`, `1.23e+05`) — signed exponent, minimum two digits.
+    /// Python `f"{x:.{prec}e}"` scientific notation: Rust's `{:e}` drops the `+`
+    /// on non-negative exponents and never zero-pads, so post-process to
+    /// CPython's form (`5.00e-04`, `1.23e+05`) — always-signed exponent, minimum
+    /// two digits.
     pub(super) fn py_sci(x: f64, prec: usize) -> String {
         let raw = format!("{x:.prec$e}");
         let (mantissa, exp) = raw.split_once('e').expect("Rust {:e} always emits 'e'");
@@ -166,8 +167,9 @@ impl<R: RandomGenerator> TemplateRenderer<R> {
         self.random.uniform(low, high)
     }
 
-    /// Uniform pick from a runtime (non-`'static`) slice by value (Python
-    /// `random.choice(seq)` = `seq[randbelow(len)]`).
+    /// Uniform pick from a borrowed slice, returned by reference (Python
+    /// `random.choice(seq)` = `seq[randbelow(len)]`). [`Self::pick`] is the
+    /// `&'static str` counterpart that copies its result out.
     pub(super) fn choose<'a, T>(&mut self, seq: &'a [T]) -> Result<&'a T, CodingCorpusError> {
         self.random
             .choice(seq)

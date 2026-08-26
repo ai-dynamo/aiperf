@@ -796,7 +796,7 @@ model_binding_units = {{ primary = 1 }}
         "--lifecycle-request".to_owned(),
         lifecycle_path.to_string_lossy().into_owned(),
     ])
-    .expect_err("a multi-trial suite has no singular lifecycle provenance in the Task7 slice");
+    .expect_err("a multi-trial suite has no singular lifecycle provenance");
 
     assert!(
         error

@@ -162,7 +162,8 @@ pub struct Expansion {
     /// The dataset entry-count pool shared by every cell when a count axis
     /// (`request_count`/`num_conversations`) is swept: `max(axis)`, ensuring
     /// every variation has its full set.
-    /// `None` when no count axis is swept (each cell derives its own entries).
+    /// `None` when no count axis is swept, or when `--num-dataset-entries` was
+    /// authored explicitly (each cell then derives its own entries).
     pub entries_override: Option<i64>,
 }
 

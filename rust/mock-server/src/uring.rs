@@ -4,10 +4,10 @@
 //! io_uring thread-per-core HTTP engine for the request hot path (`--uring`).
 //!
 //! One monoio io_uring runtime per core, each with its own `SO_REUSEPORT`
-//! listener, running the real non-streaming chat path with no cross-core
-//! scheduling. Request framing/routing is shared with the blocking engine via
-//! [`crate::http_core`]. Implies `--fast` semantics. See `http_core` for the
-//! served routes.
+//! listener, running the real chat/text-completions/embeddings paths with no
+//! cross-core scheduling. Request framing/routing is shared with the blocking
+//! engine via [`crate::http_core`]. Implies `--fast` semantics. See `http_core`
+//! for the served routes.
 
 use std::sync::Arc;
 
@@ -31,7 +31,7 @@ pub fn run(config: &MockServerConfig) -> anyhow::Result<()> {
 
     tracing::info!(
         %host, port, cores,
-        "Starting AIPerf Mock Server (io_uring engine); non-streaming chat path, --fast semantics"
+        "Starting AIPerf Mock Server (io_uring engine); fast chat/text/embeddings path, --fast semantics"
     );
 
     let mut handles = Vec::with_capacity(cores);

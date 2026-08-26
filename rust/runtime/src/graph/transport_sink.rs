@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //! A [`GraphSink`] backed by the Rust-native [`crate::transport::http`] HTTP client
-//! (hyper + the `aiperf-clock` `Clock`).
+//! (hyper + the [`crate::clock::Clock`] seam).
 //!
 //! This is the graph dataflow's live dispatch path: it streams real OpenAI
 //! chat-completions over HTTP to the target server (Dynamo frontend / the

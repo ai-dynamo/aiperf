@@ -848,7 +848,7 @@ mod tests {
             .records
             .iter()
             .find(|record| record.path == "/content/../Cargo.toml")
-            .expect("tracked paths use the ASGI-compatible decoded representation");
+            .expect("tracked paths use the percent-decoded representation");
         assert_eq!(traversal_record.status_code, 403);
 
         server.shutdown().await.unwrap();

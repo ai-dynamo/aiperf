@@ -37,7 +37,7 @@ pub fn tokenize_sonnet_corpus(tokenizer: &dyn TextTokenizer) -> Result<Vec<u32>>
     tokenize_corpus_chunked(SHAKESPEARE_CORPUS, tokenizer)
 }
 
-/// Tokenize an arbitrary corpus body with character-bounded chunks.
+/// Split an arbitrary corpus body into character-bounded chunks.
 ///
 /// Applying the identical stripping/chunking/join policy to custom corpora keeps
 /// a caller-supplied corpus on the same reproducibility contract as the default

@@ -37,9 +37,9 @@ pub struct GraphInputConfig {
 pub struct GraphInputMetadata {
     /// Stable authored format name.
     pub format: String,
-    /// Authored root trace count.
+    /// Retained root trace count.
     pub root_count: usize,
-    /// Total nodes across root-expanded plans.
+    /// Total LLM nodes across root-expanded plans.
     pub node_count: usize,
     /// Deterministic non-fatal facts produced while lowering this input.
     pub warning_facts: Vec<GraphInputWarning>,

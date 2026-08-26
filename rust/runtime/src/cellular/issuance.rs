@@ -91,7 +91,9 @@ impl IssuanceAuthority for DirectIssuanceAuthority {
 /// instances of the phase in ascending order (the sampler restarts each phase) —
 /// `m*cell_count + cell_id` is exactly the phase-local instance index, so within each
 /// phase the union across cells is the dense `[phase_base, phase_base+phase_total)`
-/// slot range and the whole run tiles `0..total`. Under deterministic (sequential)
+/// slot range and the whole run tiles `0..total`. A `cell_count == 1` partition
+/// instead keeps the cumulative flat index, because the strided form assumes each
+/// prior phase emitted exactly its reserved span. Under deterministic (sequential)
 /// sampling, where per-phase dispatch order equals per-phase instance order, a merged
 /// multi-cell report is byte-identical to the same run executed as one cell.
 #[derive(Debug, Clone)]

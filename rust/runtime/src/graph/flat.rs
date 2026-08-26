@@ -34,9 +34,11 @@ use crate::graph::sink::{GraphReplyStatus, GraphSink};
 use crate::graph::wire::WireMessage;
 
 /// Returns `true` when `graph` is an eligible flat trace: exactly one `LlmNode`,
-/// that node declares no channel-requirement inputs (no fan-in), and its prompt
-/// program contains no `PromptItem::Splice`. Every other shape — zero nodes,
-/// more than one node, a node awaiting a produced channel, or a node whose
+/// that node declares no channel-requirement inputs (no fan-in), its prompt
+/// program contains no `PromptItem::Splice`, and no `START` edge carries a
+/// start-anchored or first-token delay (the flat line runs no firing gate).
+/// Every other shape — zero nodes, more than one node, a node awaiting a
+/// produced channel, or a node whose
 /// prompt splices a channel (even one seeded only by `initial_state`, which
 /// needs no fan-in wait but still needs a real runtime value the flat path's
 /// empty inputs map cannot supply) — is ineligible and falls to the general
@@ -148,7 +150,7 @@ impl<M: WireMessage + 'static> FlatGraphActor<M> {
     /// Execute the eligible trace as one admitted, measured dispatch. Emits no
     /// channel write (a terminal 1-node trace has no downstream reader) and
     /// schedules no successor. Returns `Ok` on completion, cancellation, or a
-    /// dispatch the sink already recorded as failed.
+    /// failed dispatch whose failure policy continues.
     pub async fn run(&self, plan: GraphTracePlan, abort: &FlatAbort) -> Result<(), TraceError> {
         let trace_id: Rc<str> = Rc::from(plan.trace.id.as_str());
         let (node_id, node) = plan.graph.nodes.iter().next().ok_or_else(|| {
