@@ -241,6 +241,47 @@ fn happy_path_orders_setup_ramps_sending_and_returns() {
 }
 
 #[test]
+fn non_final_outbound_seamless_hands_off_before_returns_complete() {
+    let clock = Rc::new(SimClock::new());
+    let config = profiling_config(None, GracePeriod::Disabled, 30).with_seamless(true);
+    let (runner, _observer, _state) = runner(clock.clone(), config, Behavior::ReturnAfter(25));
+
+    let (handoff_at, handoff_stats, complete_at, complete_stats) =
+        drive_sim(clock.clone(), async {
+            let handoff_stats = runner.run(false).await.unwrap();
+            let handoff_at = clock.now_ns();
+            let complete_stats = runner.wait_complete().await.unwrap();
+            (handoff_at, handoff_stats, clock.now_ns(), complete_stats)
+        });
+
+    assert_eq!(handoff_at, 0);
+    assert_eq!(handoff_stats.completion_reason, None);
+    assert_eq!(handoff_stats.requests_completed, 0);
+    assert_eq!(complete_at, 25);
+    assert_eq!(
+        complete_stats.completion_reason,
+        Some(PhaseCompletionReason::Completed)
+    );
+    assert_eq!(complete_stats.final_requests_completed, Some(1));
+}
+
+#[test]
+fn final_phase_waits_for_returns_even_with_outbound_seamless_set() {
+    let clock = Rc::new(SimClock::new());
+    let config = profiling_config(None, GracePeriod::Disabled, 30).with_seamless(true);
+    let (runner, _observer, _state) = runner(clock.clone(), config, Behavior::ReturnAfter(25));
+
+    let stats = drive_sim(clock.clone(), runner.run(true)).unwrap();
+
+    assert_eq!(clock.now_ns(), 25);
+    assert_eq!(
+        stats.completion_reason,
+        Some(PhaseCompletionReason::Completed)
+    );
+    assert_eq!(stats.final_requests_completed, Some(1));
+}
+
+#[test]
 fn grace_timeout_cancels_and_drains_without_forcing() {
     let clock = Rc::new(SimClock::new());
     let (runner, _observer, state) = runner(
