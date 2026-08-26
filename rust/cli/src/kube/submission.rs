@@ -607,11 +607,12 @@ pub fn envelope_paths(args: &[String]) -> Result<Vec<&Path>, KubeError> {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::VecDeque;
+    use std::collections::{BTreeSet, VecDeque};
     use std::sync::{Arc, Mutex};
 
     use super::super::auth::KubeCredentials;
     use super::super::client::{KubeRequest, KubeResponse, KubeTransport, KubeWatch};
+    use super::super::contract::CellBootstrapReference;
 
     use super::*;
 
@@ -923,6 +924,195 @@ mod tests {
             jobs_path("bench"),
             "/apis/aiperf.nvidia.com/v1alpha1/namespaces/bench/aiperfjobs"
         );
+    }
+
+    #[test]
+    fn submission_mints_material_for_every_role() {
+        let envelope = envelope_with_cells("run-mint-all", 3);
+        let mint = mint_fixture(&envelope, 4);
+
+        let status = submit_profile_transactionally(&mint.client, &envelope, &BTreeMap::new())
+            .expect("minted submission");
+
+        assert_eq!(status, 201);
+        let requests = mint.transport.requests.lock().expect("requests");
+        let bundles = submitted_bundles(&requests);
+        assert_eq!(bundles.len(), 4);
+        assert_eq!(
+            bundles
+                .iter()
+                .map(|(_, bytes)| bytes.clone())
+                .collect::<BTreeSet<_>>()
+                .len(),
+            4
+        );
+        assert!(!material_directory(&envelope).exists());
+    }
+
+    #[test]
+    fn submission_envelope_never_carries_material_bytes() {
+        let envelope = envelope_with_cells("run-mint-opaque", 2);
+        let mint = mint_fixture(&envelope, 3);
+
+        submit_profile_transactionally(&mint.client, &envelope, &BTreeMap::new())
+            .expect("minted submission");
+
+        let requests = mint.transport.requests.lock().expect("requests");
+        let bundles = submitted_bundles(&requests);
+        let submitted = requests
+            .iter()
+            .find(|request| request.method == "POST" && request.path == jobs_path("bench"))
+            .expect("AIPerfJob submission");
+        for (_, bytes) in &bundles {
+            assert!(!contains_bytes(&submitted.body, bytes));
+            assert!(!contains_bytes(
+                &submitted.body,
+                BASE64.encode(bytes).as_bytes()
+            ));
+            for window in bytes.windows(16) {
+                assert!(
+                    !contains_bytes(&submitted.body, window),
+                    "projected envelope leaked minted bootstrap bytes"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn submission_rollback_removes_minted_files_and_secrets() {
+        let envelope = envelope_with_cells("run-mint-rollback", 2);
+        let transport = Arc::new(ConflictTransport::default());
+        let client = KubeClient::with_transport(test_credentials(), transport.clone());
+        for _ in 0..3 {
+            transport.push_response(201, Vec::new());
+        }
+        transport.push_response(422, b"invalid CR".to_vec());
+        for _ in 0..3 {
+            transport.push_response(200, Vec::new());
+        }
+
+        let error = submit_profile_transactionally(&client, &envelope, &BTreeMap::new())
+            .expect_err("rejected CR must fail the transaction");
+
+        assert!(error.to_string().contains("HTTP 422"));
+        let requests = transport.requests.lock().expect("requests");
+        let deleted = requests
+            .iter()
+            .filter(|request| request.method == "DELETE")
+            .map(|request| request.path.as_str())
+            .collect::<BTreeSet<_>>();
+        assert_eq!(deleted.len(), 3);
+        assert!(
+            deleted
+                .iter()
+                .all(|path| path.contains("/secrets/bootstrap-"))
+        );
+        assert!(!material_directory(&envelope).exists());
+    }
+
+    #[test]
+    fn submission_honors_explicit_bootstrap_material() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let supplied = b"operator provisioned cell material";
+        let path = directory.path().join("cell-0");
+        std::fs::write(&path, supplied).expect("supplied material");
+        let envelope = envelope_with_cells("run-mint-explicit", 1);
+        let mint = mint_fixture(&envelope, 2);
+        let material = BTreeMap::from([(BootstrapMaterialTarget::Cell(0), path)]);
+
+        submit_profile_transactionally(&mint.client, &envelope, &material)
+            .expect("mixed submission");
+
+        let expected_digest = format!("{:x}", Sha256::digest(supplied));
+        let requests = mint.transport.requests.lock().expect("requests");
+        let bundles = submitted_bundles(&requests);
+        let cell = bundles
+            .iter()
+            .find(|(name, _)| name == "bootstrap-cell-0")
+            .expect("cell bootstrap Secret");
+        assert_eq!(cell.1, supplied.to_vec());
+        let submitted = requests
+            .iter()
+            .find(|request| request.method == "POST" && request.path == jobs_path("bench"))
+            .expect("AIPerfJob submission");
+        let projected: Value = serde_json::from_slice(&submitted.body).expect("AIPerfJob JSON");
+        assert_eq!(
+            projected["spec"]["envelope"]["cellBootstraps"][0]["sha256"],
+            Value::String(expected_digest)
+        );
+        assert!(
+            bundles
+                .iter()
+                .any(|(name, bytes)| name == "bootstrap-controller" && bytes != supplied)
+        );
+    }
+
+    struct MintFixture {
+        client: KubeClient,
+        transport: Arc<ConflictTransport>,
+    }
+
+    /// Queue a successful submission for `secret_count` bootstrap identities.
+    fn mint_fixture(envelope: &ControllerEnvelope, secret_count: usize) -> MintFixture {
+        let transport = Arc::new(ConflictTransport::default());
+        let client = KubeClient::with_transport(test_credentials(), transport.clone());
+        for _ in 0..secret_count {
+            transport.push_response(201, Vec::new());
+        }
+        transport.push_response(
+            201,
+            serde_json::to_vec(&json!({"metadata": {
+                "name": envelope.job_id,
+                "namespace": envelope.namespace,
+                "uid": "4f78fcbe-9aae-4cc9-ae19-204231b21575",
+            }}))
+            .expect("created AIPerfJob JSON"),
+        );
+        for _ in 0..secret_count {
+            transport.push_response(200, Vec::new());
+        }
+        MintFixture { client, transport }
+    }
+
+    /// Build a validated envelope with `cells` cell identities under a unique run id.
+    fn envelope_with_cells(run_id: &str, cells: u32) -> ControllerEnvelope {
+        let mut envelope = fixture("valid-one-cell-envelope.json");
+        envelope.run_id = run_id.to_string();
+        envelope.cells = cells;
+        let template = envelope.cell_bootstraps[0].clone();
+        envelope.cell_bootstraps = (0..cells)
+            .map(|cell_id| CellBootstrapReference {
+                cell_id,
+                secret_name: format!("bootstrap-cell-{cell_id}"),
+                ..template.clone()
+            })
+            .collect();
+        envelope
+    }
+
+    /// Recover the exact bootstrap bytes this submission placed in each Secret.
+    fn submitted_bundles(requests: &[KubeRequest]) -> Vec<(String, Vec<u8>)> {
+        requests
+            .iter()
+            .filter(|request| request.method == "POST" && request.path.ends_with("/secrets"))
+            .map(|request| {
+                let body: Value = serde_json::from_slice(&request.body).expect("Secret JSON");
+                let name = body["metadata"]["name"]
+                    .as_str()
+                    .expect("Secret name")
+                    .to_string();
+                let bytes = BASE64
+                    .decode(body["data"]["bootstrap"].as_str().expect("bootstrap"))
+                    .expect("bootstrap encoding");
+                (name, bytes)
+            })
+            .collect()
+    }
+
+    fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
+        !needle.is_empty()
+            && haystack.len() >= needle.len()
+            && haystack.windows(needle.len()).any(|window| window == needle)
     }
 
     struct SecretConflictFixture {
