@@ -8,6 +8,7 @@ pub mod bootstrap;
 pub mod client;
 pub mod command;
 pub mod contract;
+pub mod dashboard;
 pub mod error;
 pub mod manifest;
 pub mod projection;

@@ -20,6 +20,7 @@ pub mod assets;
 pub mod index;
 pub mod live;
 pub mod routes;
+pub mod source;
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -28,6 +29,7 @@ use std::thread::JoinHandle;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use index::RunEntry;
+pub use source::{DiskSource, HistoricalSource};
 
 /// How deep to walk the results root for historical `native-v2.json` reports.
 const DEFAULT_SCAN_MAX_DEPTH: usize = 8;

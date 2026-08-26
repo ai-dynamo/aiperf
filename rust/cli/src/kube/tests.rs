@@ -1270,3 +1270,135 @@ fn index_command_fails_closed_on_an_unsuccessful_operator_response() {
     .expect_err("an unsuccessful operator response must fail");
     assert!(error.to_string().contains("503"), "error: {error:#}");
 }
+
+// --- operator-backed dashboard tests ---
+
+/// Transport that answers each recorded path from a fixed table, so a dashboard
+/// source test asserts both the addressed path and the mapped result.
+struct DashboardTransport {
+    paths: Mutex<Vec<String>>,
+    responses: Vec<(String, u16, Vec<u8>)>,
+}
+
+impl DashboardTransport {
+    fn new(responses: Vec<(String, u16, Vec<u8>)>) -> Self {
+        Self {
+            paths: Mutex::new(Vec::new()),
+            responses,
+        }
+    }
+
+    fn recorded_paths(&self) -> Vec<String> {
+        self.paths.lock().expect("dashboard transport lock").clone()
+    }
+}
+
+impl KubeTransport for DashboardTransport {
+    fn send(
+        &self,
+        _credentials: &KubeCredentials,
+        request: KubeRequest,
+    ) -> Result<KubeResponse, KubeError> {
+        self.paths
+            .lock()
+            .map_err(|_| KubeError::Transport("dashboard transport lock poisoned".to_string()))?
+            .push(request.path.clone());
+        let (_, status, body) = self
+            .responses
+            .iter()
+            .find(|(path, _, _)| *path == request.path)
+            .ok_or_else(|| {
+                KubeError::Transport(format!("no dashboard response for {}", request.path))
+            })?;
+        Ok(KubeResponse {
+            status: *status,
+            body: body.clone(),
+        })
+    }
+
+    fn watch(
+        &self,
+        _credentials: &KubeCredentials,
+        _request: KubeRequest,
+    ) -> Result<KubeWatch, KubeError> {
+        Err(KubeError::Transport(
+            "watch is not needed by the dashboard source".to_string(),
+        ))
+    }
+}
+
+fn dashboard_source(
+    responses: Vec<(String, u16, Vec<u8>)>,
+) -> (super::dashboard::OperatorSource, Arc<DashboardTransport>) {
+    let transport = Arc::new(DashboardTransport::new(responses));
+    let source = super::dashboard::OperatorSource::new(
+        KubeClient::with_transport(credentials(None), transport.clone()),
+        "bench".to_string(),
+        OPERATOR_PROXY.to_string(),
+    );
+    (source, transport)
+}
+
+#[test]
+fn dashboard_command_no_longer_refuses() {
+    let result = super::command::run(&["dashboard".to_string(), "--help".to_string()]);
+    let message = result
+        .err()
+        .map(|error| error.to_string())
+        .unwrap_or_default();
+    assert!(
+        !message.contains("native Kubernetes dashboard is unavailable"),
+        "dashboard must no longer produce the old refusal: {message}"
+    );
+}
+
+#[test]
+fn operator_source_list_maps_operator_items_to_run_entries() {
+    use crate::server::HistoricalSource as _;
+
+    let (source, transport) = dashboard_source(vec![(
+        format!("{OPERATOR_PROXY}/api/results/bench"),
+        200,
+        INDEX_BODY.to_vec(),
+    )]);
+    let runs = source.list();
+
+    assert_eq!(runs.len(), 1, "one retained run must map to one entry");
+    assert_eq!(runs[0].label, "run-1");
+    assert!(runs[0].success, "a ready run maps to a successful entry");
+    assert_eq!(runs[0].artifact_dir, "bench/job-1/run-1");
+    assert_eq!(runs[0].source, "operator");
+    assert_eq!(
+        transport.recorded_paths(),
+        vec![format!("{OPERATOR_PROXY}/api/results/bench")]
+    );
+}
+
+#[test]
+fn operator_source_read_report_proxies_artifact() {
+    use crate::server::HistoricalSource as _;
+
+    const REPORT_PATH: &str = "/api/results/bench/job-1/run-1/artifacts/native-v2.json";
+    let (source, transport) = dashboard_source(vec![
+        (
+            format!("{OPERATOR_PROXY}/api/results/bench"),
+            200,
+            INDEX_BODY.to_vec(),
+        ),
+        (
+            format!("{OPERATOR_PROXY}{REPORT_PATH}"),
+            200,
+            br#"{"runId":"run-1","concurrency":2}"#.to_vec(),
+        ),
+    ]);
+    let runs = source.list();
+    let report = source.read_report(&runs[0]).expect("operator report");
+
+    assert_eq!(report["runId"], "run-1");
+    assert!(
+        transport
+            .recorded_paths()
+            .contains(&format!("{OPERATOR_PROXY}{REPORT_PATH}")),
+        "the report must be addressed through the operator Service proxy"
+    );
+}
