@@ -34,11 +34,26 @@ pub fn router(state: AppState) -> axum::Router {
 /// Snapshot the merged cross-run list under the current state.
 fn snapshot(state: &AppState) -> Vec<RunEntry> {
     let session = state.session.lock().expect("session mutex").clone();
-    index::merged(
-        &session,
-        state.results_root.as_deref(),
-        state.scan_max_depth,
-    )
+    match state.historical.as_deref() {
+        Some(source) => index::merge_session_and_historical(&session, source.list()),
+        None => index::merged(
+            &session,
+            state.results_root.as_deref(),
+            state.scan_max_depth,
+        ),
+    }
+}
+
+/// The run's full `native-v2.json`, from its local report path when it has one and
+/// otherwise from the historical source (an operator-backed source addresses the
+/// report over the network and carries no local path).
+fn read_report(state: &AppState, run: &RunEntry) -> Option<Value> {
+    if let Some(path) = run.report_path.as_deref()
+        && let Some(report) = crate::sweep::aggregate::read_report_path(path)
+    {
+        return Some(report);
+    }
+    state.historical.as_deref()?.read_report(run)
 }
 
 /// `GET /api/meta` — server + session identity for the UI header.
@@ -68,10 +83,7 @@ async fn get_run(
     AxPath(id): AxPath<String>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
     let run = find_run(&state, &id).ok_or((StatusCode::NOT_FOUND, format!("unknown run {id}")))?;
-    let path = run
-        .report_path
-        .ok_or((StatusCode::NOT_FOUND, format!("run {id} has no report")))?;
-    let report = crate::sweep::aggregate::read_report_path(&path).ok_or((
+    let report = read_report(&state, &run).ok_or((
         StatusCode::NOT_FOUND,
         format!("could not read report for {id}"),
     ))?;
@@ -85,10 +97,7 @@ async fn get_run_summary(
     AxPath(id): AxPath<String>,
 ) -> Result<Json<Value>, (StatusCode, String)> {
     let run = find_run(&state, &id).ok_or((StatusCode::NOT_FOUND, format!("unknown run {id}")))?;
-    let report = run
-        .report_path
-        .as_deref()
-        .and_then(crate::sweep::aggregate::read_report_path);
+    let report = read_report(&state, &run);
     let metrics: serde_json::Map<String, Value> = report
         .as_ref()
         .map(|r| {
@@ -138,7 +147,7 @@ fn with_nested_percentiles(
     stats
 }
 
-/// Whether `root` currently holds any browseable run (a `native-v2.json` anywhere
+/// Whether `root` currently holds any browsable run (a `native-v2.json` anywhere
 /// under it). Used by callers to decide whether serving is worthwhile.
 pub fn has_runs(root: &Path, max_depth: usize) -> bool {
     !index::scan_disk(root, max_depth).is_empty()

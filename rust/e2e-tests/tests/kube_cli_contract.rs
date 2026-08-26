@@ -91,25 +91,31 @@ fn envelope_commands_require_an_envelope() {
 }
 
 #[test]
-fn commands_without_a_shipped_backend_refuse_before_cluster_access() {
-    // `sweep` left the refusal list in Task 10 and `index` in Task 12.
-    for command in ["dashboard"] {
-        let (code, _, stderr) = kube(&[command]);
-        assert_ne!(code, 0, "{command} must refuse without a shipped backend");
-        assert!(
-            stderr.contains("unavailable"),
-            "{command} produced an ambiguous refusal: {stderr}"
-        );
-    }
-}
-
-#[test]
 fn index_reaches_the_operator_instead_of_refusing() {
     let (code, _, stderr) = kube(&["index", "--kubeconfig=/nonexistent"]);
     assert_ne!(code, 0, "index without a reachable cluster must fail");
     assert!(
         !stderr.contains("shipped operator supports only"),
         "index must no longer refuse before cluster access: {stderr}"
+    );
+}
+
+#[test]
+fn dashboard_reaches_the_operator_instead_of_refusing() {
+    // `sweep` left the refusal list in Task 10, `index` in Task 12, and
+    // `dashboard` in Task 13; no native command refuses for want of a backend.
+    let (code, stdout, stderr) = kube(&["dashboard", "--help"]);
+    assert_eq!(code, 0, "dashboard help failed: {stderr}");
+    assert!(
+        stdout.contains("aiperf kube dashboard"),
+        "dashboard help omits its own usage: {stdout}"
+    );
+
+    let (code, _, stderr) = kube(&["dashboard", "--kubeconfig=/nonexistent"]);
+    assert_ne!(code, 0, "dashboard without a reachable cluster must fail");
+    assert!(
+        !stderr.contains("no dashboard upstream is implemented"),
+        "dashboard must no longer refuse before cluster access: {stderr}"
     );
 }
 

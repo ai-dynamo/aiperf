@@ -70,9 +70,7 @@ pub fn run(args: &[String]) -> anyhow::Result<i32> {
         return super::scaffold::run(&args[1..]);
     }
     if command == "dashboard" {
-        anyhow::bail!(
-            "native Kubernetes dashboard is unavailable: no dashboard upstream is implemented"
-        );
+        return super::dashboard::run(&args[1..]);
     }
     if command == "sweep" {
         return run_sweep(&args[1..]);
@@ -230,7 +228,8 @@ fn operator_results_location(args: &[String]) -> anyhow::Result<(String, String)
     Ok((service, trusted_run_id))
 }
 
-fn operator_service_proxy(args: &[String]) -> anyhow::Result<String> {
+/// The Kubernetes Service proxy prefix every operator results request travels.
+pub(super) fn operator_service_proxy(args: &[String]) -> anyhow::Result<String> {
     let namespace = flag_value(args, "--operator-namespace")
         .unwrap_or_else(|| DEFAULT_OPERATOR_NAMESPACE.to_string());
     let service = flag_value(args, "--operator-service")
@@ -259,7 +258,8 @@ fn is_dns_label(value: &str) -> bool {
             .is_some_and(u8::is_ascii_alphanumeric)
 }
 
-fn encode_segment(value: &str) -> String {
+/// Encode one URL path segment of an operator results address.
+pub(super) fn encode_segment(value: &str) -> String {
     url::form_urlencoded::byte_serialize(value.as_bytes()).collect()
 }
 
@@ -493,7 +493,8 @@ fn relist_resource_version(client: &KubeClient, collection: &str) -> anyhow::Res
         .ok_or_else(|| anyhow::anyhow!("Kubernetes relist omits metadata.resourceVersion"))
 }
 
-fn flag_value(args: &[String], flag: &str) -> Option<String> {
+/// The value of `--flag value` or `--flag=value`, when present.
+pub(super) fn flag_value(args: &[String], flag: &str) -> Option<String> {
     let mut arguments = args.iter();
     let equals = format!("{flag}=");
     while let Some(argument) = arguments.next() {
@@ -802,7 +803,8 @@ fn watch_sweep(client: &KubeClient, namespace: &str, run_id: &str) -> anyhow::Re
     Ok(())
 }
 
-fn auth_options(args: &[String]) -> anyhow::Result<KubeAuthOptions> {
+/// Resolve kubeconfig/context/token selection from the command's arguments.
+pub(super) fn auth_options(args: &[String]) -> anyhow::Result<KubeAuthOptions> {
     let mut options = KubeAuthOptions::default();
     let mut arguments = args.iter();
     while let Some(argument) = arguments.next() {
@@ -831,7 +833,8 @@ fn auth_options(args: &[String]) -> anyhow::Result<KubeAuthOptions> {
     Ok(options)
 }
 
-fn namespace(args: &[String]) -> anyhow::Result<&str> {
+/// The selected `--namespace`, defaulting to `default`. Must be a DNS label.
+pub(super) fn namespace(args: &[String]) -> anyhow::Result<&str> {
     let mut arguments = args.iter();
     while let Some(argument) = arguments.next() {
         if let Some(namespace) = argument.strip_prefix("--namespace=") {
@@ -947,6 +950,9 @@ fn help() -> anyhow::Result<i32> {
     println!(
         "aiperf kube index [--namespace <namespace>] [--operator-service <name>] [--operator-namespace <namespace>]"
     );
+    println!(
+        "aiperf kube dashboard [--namespace <namespace>] [--port <port>] [--operator-service <name>] [--operator-namespace <namespace>]"
+    );
     Ok(0)
 }
 
@@ -975,8 +981,9 @@ mod tests {
 
     #[test]
     fn index_no_longer_refuses_before_cluster_access() {
-        // `sweep` left the refusal list in Task 10 and `index` in Task 12; only
-        // `dashboard` still refuses, and it has its own test below.
+        // `sweep` left the refusal list in Task 10, `index` in Task 12, and
+        // `dashboard` in Task 13; nothing on the surface refuses for want of a
+        // shipped backend.
         let error = run(&["index".to_string(), "--kubeconfig=/nonexistent".to_string()])
             .expect_err("index without a reachable cluster must fail");
         assert!(
@@ -1002,16 +1009,6 @@ mod tests {
         );
         assert!(
             operator_service_proxy(&["--operator-service=operator.attacker".to_string()]).is_err()
-        );
-    }
-
-    #[test]
-    fn dashboard_refuses_instead_of_accepting_and_dropping_clients() {
-        let error = run(&["dashboard".to_string(), "job-1".to_string()])
-            .expect_err("dashboard has no upstream implementation");
-        assert_eq!(
-            error.to_string(),
-            "native Kubernetes dashboard is unavailable: no dashboard upstream is implemented"
         );
     }
 

@@ -60,6 +60,10 @@ pub struct ServerConfig {
     /// Results root scanned for historical runs (and where the live session's runs
     /// live). `None` serves only the in-memory session.
     pub results_root: Option<PathBuf>,
+    /// Historical results source. `None` browses `results_root` from disk;
+    /// `Some(_)` replaces the disk walk entirely (the operator-backed source
+    /// `aiperf kube dashboard` installs).
+    pub historical: Option<Arc<dyn HistoricalSource>>,
 }
 
 /// State shared with every request handler (cheap to clone: `Arc` + small fields).
@@ -68,6 +72,7 @@ pub struct AppState {
     session: SessionRuns,
     live: LiveSlot,
     results_root: Option<PathBuf>,
+    historical: Option<Arc<dyn HistoricalSource>>,
     started_unix: u64,
     scan_max_depth: usize,
 }
@@ -126,6 +131,7 @@ pub fn start(
         session,
         live,
         results_root: config.results_root.clone(),
+        historical: config.historical.clone(),
         started_unix: now_unix(),
         scan_max_depth: DEFAULT_SCAN_MAX_DEPTH,
     };

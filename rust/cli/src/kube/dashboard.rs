@@ -128,21 +128,148 @@ impl OperatorSource {
             operator_prefix,
         }
     }
+
+    /// Fetch one bounded operator results document, or `None` when it is not
+    /// retrievable. Browsing must degrade rather than fail the whole request, so
+    /// an unreachable or unsuccessful operator yields no document.
+    fn fetch(&self, path: &str) -> Option<Value> {
+        let response = match self.client.execute("GET", path, "", Vec::new()) {
+            Ok(response) => response,
+            Err(error) => {
+                tracing::warn!(error = %error, path, "operator results request failed");
+                return None;
+            }
+        };
+        if !response.is_success() {
+            tracing::warn!(
+                status = response.status,
+                path,
+                "operator results request was unsuccessful"
+            );
+            return None;
+        }
+        match serde_json::from_slice(&response.body) {
+            Ok(document) => Some(document),
+            Err(error) => {
+                tracing::warn!(error = %error, path, "operator results response is not JSON");
+                None
+            }
+        }
+    }
+}
+
+/// Map one retained result-index item onto the dashboard's run entry.
+///
+/// The operator index carries no metric report, so the headline map stays empty;
+/// the dashboard fills a run's metrics from its report when the detail endpoints
+/// resolve it.
+fn run_entry(namespace: &str, item: &Value) -> Option<RunEntry> {
+    let run_id = item.pointer("/metadata/name").and_then(Value::as_str)?;
+    let job_id = item.get("jobId").and_then(Value::as_str)?;
+    let artifact_dir = format!("{namespace}/{job_id}/{run_id}");
+    Some(RunEntry {
+        id: id_for(&format!("{job_id}/{run_id}")),
+        label: run_id.to_string(),
+        artifact_dir,
+        // The report is not a local file; the detail endpoints resolve it through
+        // `read_report` instead.
+        report_path: None,
+        success: item.get("ready").and_then(Value::as_bool).unwrap_or(false),
+        trial: 0,
+        sweep_id: None,
+        headline: std::collections::BTreeMap::new(),
+        source: "operator",
+    })
 }
 
 impl HistoricalSource for OperatorSource {
     fn list(&self) -> Vec<RunEntry> {
-        todo!("read the operator result index")
+        let path = format!(
+            "{}/api/results/{}",
+            self.operator_prefix,
+            super::command::encode_segment(&self.namespace)
+        );
+        let Some(document) = self.fetch(&path) else {
+            return Vec::new();
+        };
+        document
+            .get("items")
+            .and_then(Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| run_entry(&self.namespace, item))
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
-    fn read_report(&self, _run: &RunEntry) -> Option<Value> {
-        todo!("read the operator report artifact")
+    fn read_report(&self, run: &RunEntry) -> Option<Value> {
+        // `artifact_dir` is the virtual `"<namespace>/<job-id>/<run-id>"` coordinate
+        // `run_entry` wrote; anything else did not come from this source.
+        let mut parts = run.artifact_dir.split('/');
+        let (namespace, job_id, run_id) = (parts.next()?, parts.next()?, parts.next()?);
+        if parts.next().is_some() {
+            return None;
+        }
+        let path = format!(
+            "{}/api/results/{}/{}/{}/artifacts/{}",
+            self.operator_prefix,
+            super::command::encode_segment(namespace),
+            super::command::encode_segment(job_id),
+            super::command::encode_segment(run_id),
+            crate::server::index::NATIVE_REPORT_NAME
+        );
+        self.fetch(&path)
     }
 }
 
 /// Serve the local dashboard against one namespace's operator-retained results.
-pub fn run(_args: &[String]) -> anyhow::Result<i32> {
-    todo!("serve the operator-backed dashboard")
+///
+/// The listener is loopback-only, so the session is reachable from this machine
+/// alone; the upstream leg is the authenticated Kubernetes Service proxy, so no
+/// cluster port is opened and no `kubectl` process is spawned.
+pub fn run(args: &[String]) -> anyhow::Result<i32> {
+    if args.iter().any(|argument| argument == "--help") {
+        println!(
+            "aiperf kube dashboard [--namespace <namespace>] [--port <port>] [--operator-service <name>] [--operator-namespace <namespace>]"
+        );
+        return Ok(0);
+    }
+    let port = match super::command::flag_value(args, "--port") {
+        Some(value) => value
+            .parse::<u16>()
+            .map_err(|error| anyhow::anyhow!("--port must be a TCP port: {error}"))?,
+        None => 0,
+    };
+    let client = KubeClient::from_options(&super::command::auth_options(args)?)?;
+    let namespace = super::command::namespace(args)?.to_string();
+    let operator_prefix = super::command::operator_service_proxy(args)?;
+    let source = OperatorSource::new(client, namespace.clone(), operator_prefix);
+
+    // Must precede `server::start`: threads inherit this thread's signal mask, and
+    // a server thread with SIGINT/SIGTERM unblocked terminates the process before
+    // the graceful path below can run.
+    crate::serve::block_shutdown_signals();
+    let handle = crate::server::start(
+        ServerConfig {
+            bind: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port),
+            // Nothing is browsed from disk; the operator source owns the history.
+            results_root: None,
+            historical: Some(Arc::new(source)),
+        },
+        // A cluster dashboard has no local run loop, so its session index stays
+        // empty and its live slot stays unset.
+        Arc::new(Mutex::new(Vec::new())),
+        Arc::new(Mutex::new(None)),
+    )?;
+
+    println!("Dashboard: http://{}", handle.local_addr());
+    println!("aiperf: browsing namespace {namespace} through the operator results API");
+    println!("aiperf: press Ctrl-C to stop");
+    crate::serve::wait_for_shutdown();
+    handle.shutdown();
+    Ok(0)
 }
 
 #[cfg(test)]
