@@ -14,6 +14,7 @@ from .contract import (
     CellBootstrapReference,
     ControllerEnvelope,
     RoleEnvelope,
+    SweepEnvelope,
     validate_bootstrap_metadata,
 )
 
@@ -547,3 +548,245 @@ def validate_references(
 def submitted_status(envelope: ControllerEnvelope) -> dict[str, Any]:
     """Return the initial recognized lifecycle status without bootstrap content."""
     return {"phase": "Pending", "runId": envelope.run_id, "jobSet": envelope.job_id}
+
+
+# ---------------------------------------------------------------------------
+# Sweep reconciliation helpers
+# ---------------------------------------------------------------------------
+
+
+def sweep_workload_name(envelope: SweepEnvelope) -> str:
+    """Return a DNS-safe per-sweep workload identity name."""
+    identity = f"{envelope.namespace}\0{envelope.run_id}\0{envelope.sweep_id}".encode()
+    return f"aiperf-sweep-{hashlib.sha256(identity).hexdigest()[:16]}"
+
+
+def _sweep_incarnation_suffix(envelope: SweepEnvelope, object_uid: str) -> str:
+    identity = (
+        f"{envelope.namespace}\0{envelope.run_id}\0{envelope.sweep_id}\0{object_uid}"
+    ).encode()
+    return hashlib.sha256(identity).hexdigest()[:16]
+
+
+def sweep_config_snapshot_name(envelope: SweepEnvelope, object_uid: str) -> str:
+    """Return the deterministic sweep envelope ConfigMap name."""
+    return f"aiperf-sweep-config-{_sweep_incarnation_suffix(envelope, object_uid)}"
+
+
+def _sweep_owner_reference(envelope: SweepEnvelope, object_uid: str) -> dict[str, Any]:
+    return {
+        "apiVersion": "aiperf.nvidia.com/v1alpha1",
+        "kind": "AIPerfSweep",
+        "name": envelope.run_id,
+        "uid": object_uid,
+        "controller": True,
+    }
+
+
+def build_sweep_config_snapshot(
+    envelope: SweepEnvelope, object_uid: str
+) -> dict[str, Any]:
+    """Freeze the sweep envelope as an immutable ConfigMap for the sweep-controller."""
+    content = json.dumps(
+        envelope.model_dump(mode="json", by_alias=True),
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    return {
+        "apiVersion": "v1",
+        "kind": "ConfigMap",
+        "metadata": {
+            "name": sweep_config_snapshot_name(envelope, object_uid),
+            "namespace": envelope.namespace,
+            "ownerReferences": [_sweep_owner_reference(envelope, object_uid)],
+            "labels": {
+                "aiperf.nvidia.com/sweep-id": envelope.sweep_id,
+                "aiperf.nvidia.com/run-id": envelope.run_id,
+                "aiperf.nvidia.com/role": "sweep-config-snapshot",
+            },
+        },
+        "immutable": True,
+        "data": {"sweep-envelope.json": content},
+    }
+
+
+def _sweep_workload_metadata(
+    envelope: SweepEnvelope, object_uid: str
+) -> dict[str, Any]:
+    return {
+        "name": sweep_workload_name(envelope),
+        "namespace": envelope.namespace,
+        "ownerReferences": [_sweep_owner_reference(envelope, object_uid)],
+        "labels": {"aiperf.nvidia.com/role": "sweep-workload"},
+        "annotations": {
+            "aiperf.nvidia.com/sweep-id": envelope.sweep_id,
+            "aiperf.nvidia.com/run-id": envelope.run_id,
+        },
+    }
+
+
+def build_sweep_workload_identity(
+    envelope: SweepEnvelope, object_uid: str
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    """Build the per-sweep ServiceAccount and least-authority RBAC resources.
+
+    The sweep-controller needs broader RBAC than a regular job controller:
+    - create/get/list/watch/delete on aiperfjobs so it can manage child runs
+    - patch on aiperfsweeps/status to report progress back to the operator
+    """
+    name = sweep_workload_name(envelope)
+    metadata = _sweep_workload_metadata(envelope, object_uid)
+    service_account = {
+        "apiVersion": "v1",
+        "kind": "ServiceAccount",
+        "metadata": metadata,
+    }
+    role = {
+        "apiVersion": "rbac.authorization.k8s.io/v1",
+        "kind": "Role",
+        "metadata": metadata,
+        "rules": [
+            {
+                "apiGroups": ["aiperf.nvidia.com"],
+                "resources": ["aiperfjobs"],
+                "verbs": ["create", "get", "list", "watch", "delete"],
+            },
+            {
+                "apiGroups": ["aiperf.nvidia.com"],
+                "resources": ["aiperfsweeps/status"],
+                "resourceNames": [envelope.run_id],
+                "verbs": ["patch"],
+            },
+        ],
+    }
+    binding = {
+        "apiVersion": "rbac.authorization.k8s.io/v1",
+        "kind": "RoleBinding",
+        "metadata": metadata,
+        "roleRef": {
+            "apiGroup": "rbac.authorization.k8s.io",
+            "kind": "Role",
+            "name": name,
+        },
+        "subjects": [
+            {
+                "kind": "ServiceAccount",
+                "name": name,
+                "namespace": envelope.namespace,
+            }
+        ],
+    }
+    return service_account, role, binding
+
+
+def build_sweep_jobset(envelope: SweepEnvelope, object_uid: str) -> dict[str, Any]:
+    """Build the sweep-controller JobSet from the sweep envelope.
+
+    The sweep-controller needs automountServiceAccountToken: True (unlike the
+    controller/cell pattern which sets it False).  The sweep-controller binary
+    calls the Kubernetes API directly to create and manage child AIPerfJob
+    resources, so it must have an injected service-account token.
+    """
+    sweep_controller = envelope.sweep_controller
+    environment: dict[str, Any] = dict(sweep_controller.environment)
+    environment["AIPERF_CELL_LAUNCHER"] = "k8s"
+    environment["AIPERF_SWEEP_ID"] = envelope.sweep_id
+    environment["AIPERF_RUN_ID"] = envelope.run_id
+    environment["AIPERF_NAMESPACE"] = envelope.namespace
+
+    volume_mounts: list[dict[str, Any]] = [
+        {"name": "config", "mountPath": "/etc/aiperf/config", "readOnly": True}
+    ]
+    volumes: list[dict[str, Any]] = [
+        {
+            "name": "config",
+            "configMap": {"name": sweep_config_snapshot_name(envelope, object_uid)},
+        }
+    ]
+
+    if sweep_controller.bootstrap is not None:
+        bootstrap = sweep_controller.bootstrap
+        secret_name = bootstrap.get("secretName", "")
+        mount_path = str(bootstrap.get("mountPath", "/etc/aiperf/bootstrap"))
+        environment["AIPERF_ROLE_BOOTSTRAP_FILE"] = mount_path
+        volume_mounts.insert(
+            0,
+            {
+                "name": "bootstrap-sweep-controller",
+                "mountPath": mount_path,
+                "subPath": "bootstrap",
+                "readOnly": True,
+            },
+        )
+        volumes.insert(
+            0,
+            {
+                "name": "bootstrap-sweep-controller",
+                "secret": {
+                    "secretName": secret_name,
+                    "defaultMode": 0o600,
+                },
+            },
+        )
+
+    container = {
+        "name": "sweep-controller",
+        "image": envelope.image_reference,
+        "command": sweep_controller.command,
+        "args": sweep_controller.argv,
+        "env": [
+            {"name": key, **({"value": value} if isinstance(value, str) else value)}
+            for key, value in sorted(environment.items())
+        ],
+        "volumeMounts": volume_mounts,
+    }
+
+    return {
+        "apiVersion": "jobset.x-k8s.io/v1alpha2",
+        "kind": "JobSet",
+        "metadata": {
+            "name": envelope.run_id,
+            "namespace": envelope.namespace,
+            "ownerReferences": [_sweep_owner_reference(envelope, object_uid)],
+            "labels": {
+                "aiperf.nvidia.com/sweep-id": envelope.sweep_id,
+                "aiperf.nvidia.com/run-id": envelope.run_id,
+                "aiperf.nvidia.com/role": "sweep-jobset",
+            },
+        },
+        "spec": {
+            "replicatedJobs": [
+                _job(
+                    "sweep-controller",
+                    [container],
+                    volumes,
+                    {
+                        "restartPolicy": "Never",
+                        "serviceAccountName": sweep_workload_name(envelope),
+                        "securityContext": {"runAsUser": 0},
+                        # automountServiceAccountToken: True is required for the
+                        # sweep-controller because it calls the Kubernetes API to
+                        # create and manage child AIPerfJob resources.  This
+                        # diverges from the controller/cell pattern, which sets
+                        # automountServiceAccountToken: False to follow least
+                        # authority; the sweep-controller has no alternative to
+                        # a mounted token for its kube-API calls.
+                        "automountServiceAccountToken": True,
+                    },
+                )
+            ],
+        },
+    }
+
+
+def sweep_submitted_status(envelope: SweepEnvelope) -> dict[str, Any]:
+    """Return the initial sweep lifecycle status."""
+    return {
+        "phase": "Pending",
+        "sweepId": envelope.sweep_id,
+        "childRuns": [],
+        "completedRuns": 0,
+        "failedRuns": 0,
+        "aggregateReady": False,
+    }
