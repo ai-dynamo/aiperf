@@ -82,9 +82,13 @@ The following invariants apply together. None is optional:
    children, controllers, and cells use one resolved plugin-lock identity. No
    execution path constructs a separate built-in registry or discovers an
    additional plugin.
-5. **Process-lifetime residency.** A library whose code has been called is never
-   unloaded or replaced before process exit. No trait object's vtable or future
-   may outlive its defining code.
+5. **Process-lifetime residency after successful mapping.** Every library for
+   which the platform loader returns a handle is retained before AIPerf resolves
+   or calls its entry or permits any pointer/value to escape, and is never
+   unloaded or replaced before process exit. A platform may itself unmap a
+   module whose initializer fails before returning a handle; that failure
+   poisons composition and no plugin value can have escaped. No trait object's
+   vtable or future may outlive its defining code.
 6. **No runtime mutation.** Registration is impossible after freeze. There is no
    reload, unload, enable, disable, override, or priority change during a run.
 7. **Transactional packages.** A package contributes all declared entries or
@@ -160,7 +164,7 @@ listed enforcement and evidence MUST exist before generation 1 is released.
 | 2 | Embedded common-universe and package-build records plus immutable, staged, rehashed distribution-controlled non-system executable closure | Build-input mismatch, artifact-swap, dependency-tamper, and loaded-module identity fixtures |
 | 3 | Frozen composition invoked before every named host-owned effect; plugin initialization explicitly remains trusted/effectful | Help/list/config/profile/eval/re-exec/cell effect-order tests |
 | 4 | Full canonical lock carried by dedicated re-exec/cell bootstrap and bound into signed cell registration | Same-lock reproduction and first-difference mismatch tests for every process role |
-| 5 | Handles enter the process-resident set before pointers escape; Unix retains/pins and Windows pins modules | Subprocess lifetime, object-drop, and attempted-unload fixtures |
+| 5 | Every successfully returned handle enters the process-resident set before symbol resolution/pointer escape; Unix retains/pins and Windows pins modules; initializer failure before a returned handle poisons with no escape | Subprocess lifetime, failed-initializer, object-drop, and attempted-unload fixtures |
 | 6 | Type-state builders expose no registration after consuming freeze; process-global differing-lock reuse fails | Compile-fail API tests plus same-process lifecycle tests |
 | 7 | Package-scoped staging commits all declared registrations together | Multi-entry rollback and descriptor-disagreement fixtures |
 | 8 | Versioned normalization, canonical-first alias rules, unique-max priority, deterministic ties | Canonical/alias/version/tie/shadow fixture matrix |
@@ -1108,7 +1112,8 @@ against malicious native code.
 Production composition is process-global. The first platform load creates an
 unsealed process-resident `ActivatingLibrarySet`. Successful registration and
 freeze seal it as `LoadedLibrarySet` with the subsequently derived plugin-lock
-digest. Failure retains all mapped handles in a `PoisonedLibrarySet` with the
+digest. Failure retains every handle the loader actually returned in a
+`PoisonedLibrarySet` with the
 original activation error and no fictitious completed lock. A second
 composition request in the same process may reuse a successfully sealed set
 only when the requested lock digest is identical; a different digest is an
@@ -1120,9 +1125,13 @@ eliminates dependence on registry-clone or factory-product drop ordering.
 
 Before any pointer, descriptor, or object from a plugin becomes reachable, its
 handle is committed to the process-resident set. If failure occurs after the
-first platform-loader operation, the process-global loader is poisoned. All
-mapped handles remain resident, every later composition returns the original
-failure, and the process cannot execute a benchmark. Loader failure can follow
+first platform-loader operation, the process-global loader is poisoned. Every
+successfully obtained handle remains resident, every later composition returns
+the original failure, and the process cannot execute a benchmark. A platform
+loader may execute an initializer and then fail/unmap that module without ever
+returning a retainable handle (for example a rejected Windows
+`DLL_PROCESS_ATTACH`); AIPerf cannot prevent that OS-owned unmap, but no symbol
+was resolved and no pointer or value escaped. Loader failure can follow
 dependency mapping or native initializers, so the poison boundary is loader
 entry, not entry-symbol invocation.
 
@@ -1490,14 +1499,57 @@ capture fold per exporter instance.
 
 Run-plan validation computes whether the selected workload, retention mode, and
 cellular topology can satisfy the union. `FinalReport` is always available.
-`ExactRecordsV1` under sketch/no-record retention or any mode that cannot return
-the exact canonical sequence fails before runtime construction; the host never
-silently enables expensive retention. `GenAiClientHistogramsV1` is folded once
+Selecting an exporter that declares `ExactRecordsV1` is explicit user consent
+to exact retention: the validated plan sets host-owned retention reason
+`RequiredByExporter(<exporter-id>)` and feeds it into the same planning decision
+as per-record artifacts, overriding the default exact-fold/no-record
+optimization. No separate environment-only control is required. An explicit
+sketch policy or execution mode that cannot produce the exact canonical
+sequence conflicts and fails before runtime construction with the exporter ID
+and remediation; selection never silently disables sketch or substitutes a
+fold. `GenAiClientHistogramsV1` is folded once
 per completed profiling record and is supported in retain, exact-fold, sketch,
 sharded, and cellular modes through worker-local accumulation and deterministic
 boundary merge. Warmup/excluded records follow the existing metrics-plane scope
 and do not enter it. Any selected exporter requirement that cannot be satisfied
 fails run validation with exporter ID, requirement, and conflicting mode.
+
+Cellular `ExactRecordsV1` requires an explicit protocol migration. The current
+`RecordsShardPartition<Vec<RecordIngest>>` remains the compact metrics path and
+cannot satisfy exact capture because it omits UUID, correlation ID, output/
+reasoning text, and raw exchange. When and only when the validated union requests
+`ExactRecordsV1`, each cell instead emits versioned
+`ExactRecordsPartitionV1` chunks containing its `cell_id`, monotonically dense
+chunk sequence, declared record count and byte length, BLAKE3 payload digest,
+and complete public `ExactRecordV1` DTOs (the full captured-record projection,
+including optional output/raw fields only when the host capture policy permits
+them). Chunks use the existing authenticated cell route, configured finite byte
+and record bounds, and bounded backpressure; the controller rejects gaps,
+duplicates, digest/length/count mismatches, unexpected cells, or resource-limit
+excess before exporter preparation.
+
+The controller reassembles each cell sequence, applies the family-specific
+canonical ordering above, and verifies exactly one record per declared identity
+before exposing the projection. Same-host and cross-host cells use the same wire
+DTO and merge rules. Runs not requesting exact records retain the existing
+`RecordIngest`/folded-store partitions and pay no exact-record transfer cost.
+This host-owned post-run transfer adds no plugin callback or request/token-path
+operation, but its bandwidth/memory and parity are separately benchmarked.
+
+Every cellular terminal payload also carries a versioned host-owned
+`CellCaptureBundleV1` independent of whether the metrics payload is current
+`Records` or `Store`. It binds the cell's validated-plan digest and contains
+exactly one presence-tagged result for every folded projection in that plan;
+generation 1 therefore carries an empty or populated
+`GenAiClientHistogramsV1` DTO with its projection ID, schema version, bounds,
+keys, counts, sums, extrema, and payload digest. A cell cannot omit an expected
+empty projection or add an unrequested one. The controller verifies the plan
+digest, cell identity, projection set, schema, canonical bytes, and digest before
+performing the checked deterministic worker/cell merge defined above. Missing,
+duplicate, injected, malformed, or plan-mismatched projection results fail the
+run before exporter preparation. This replaces the current local-only transient
+OTLP report side channel; neither the `Records` nor folded `Store` metrics mode
+may silently drop generic capture state.
 
 `NativeReport` MUST NOT contain an OTLP-specific implementation type. The current
 `OtelRecordAccumulator` and `NativeReport::otel_per_record` side channel become
@@ -1963,6 +2015,12 @@ The separately built exemplar suite contains at least:
   static ID switch;
 - OTLP retain, exact-fold, sketch/folded, sharded, and cellular parity with no
   plugin-specific report type or per-record plugin callback;
+- same-/cross-host cellular `ExactRecordsPartitionV1` bounded chunking,
+  ordering, digest/count/sequence rejection, and compact-path no-transfer tests;
+- cellular `CellCaptureBundleV1` Records/Store projection parity plus missing,
+  empty, duplicate, injected, schema, plan-digest, and payload-digest rejection;
+- ExactRecords exporter selection forcing explicit reason-tagged retention,
+  default exact-fold replacement, and sketch/incompatible-mode rejection;
 - best-effort exporter failure and capability-limited artifact-path tests,
   including rejection of unchecked joins;
 - help/list/config/profile/eval effect-order tests and plugin-initializer
