@@ -422,9 +422,7 @@ impl PreparedEndpointBehavior for ChatEndpoint {
         }
         merge_extra(&mut payload, endpoint.extra.as_ref());
         merge_extra(&mut payload, last.extra_body.as_ref());
-        if endpoint.streaming && endpoint.use_server_token_count {
-            ensure_include_usage(&mut payload);
-        }
+        ensure_openai_stream_usage(&mut payload);
         build_reserved_plan(&payload, "messages", message_wires)
     }
 
@@ -1046,9 +1044,7 @@ impl PreparedEndpointBehavior for CompletionsEndpoint {
         }
         merge_extra(&mut payload, endpoint.extra.as_ref());
         merge_extra(&mut payload, turn.extra_body.as_ref());
-        if endpoint.streaming && endpoint.use_server_token_count {
-            ensure_include_usage(&mut payload);
-        }
+        ensure_openai_stream_usage(&mut payload);
         Ok(BodyPlan::from_object(&payload)?)
     }
 }
@@ -1585,6 +1581,23 @@ fn ensure_include_usage(payload: &mut Map<String, Value>) {
         Some(_) | None => {
             payload.insert("stream_options".into(), json!({"include_usage": true}));
         }
+    }
+}
+
+fn ensure_openai_stream_usage(payload: &mut Map<String, Value>) {
+    if payload.get("stream") != Some(&Value::Bool(true)) {
+        return;
+    }
+    match payload.get_mut("stream_options") {
+        Some(Value::Object(stream_options)) => {
+            stream_options
+                .entry("include_usage")
+                .or_insert(Value::Bool(true));
+        }
+        Some(Value::Null) | None => {
+            payload.insert("stream_options".into(), json!({"include_usage": true}));
+        }
+        Some(_) => {}
     }
 }
 
@@ -2203,6 +2216,161 @@ mod lowering_tests {
             images: vec![Media::new(vec![image.to_string()])],
             ..Turn::default()
         }
+    }
+
+    fn materialized_body(body: BodyPlan) -> Value {
+        serde_json::from_slice(&body.materialize_standalone().unwrap()).unwrap()
+    }
+
+    #[test]
+    fn streaming_chat_and_completions_request_usage_without_server_token_counting() {
+        let turns = [text_turn()];
+        let request = PreparedRequest::new(
+            "gpt-test",
+            &turns,
+            None,
+            None,
+            CreditPhase::Profiling,
+            None,
+            None,
+            None,
+        );
+        let endpoint = RawEndpointConfig {
+            streaming: true,
+            ..RawEndpointConfig::default()
+        };
+
+        let chat = materialized_body(
+            ChatEndpoint
+                .format_prepared_payload(&request, &endpoint)
+                .unwrap(),
+        );
+        let completions = materialized_body(
+            CompletionsEndpoint
+                .format_prepared_payload(&request, &endpoint)
+                .unwrap(),
+        );
+
+        assert_eq!(chat["stream_options"]["include_usage"], true);
+        assert_eq!(completions["stream_options"]["include_usage"], true);
+    }
+
+    #[test]
+    fn authored_stream_options_are_preserved_for_chat_and_completions() {
+        let turns = [text_turn()];
+        let request = PreparedRequest::new(
+            "gpt-test",
+            &turns,
+            None,
+            None,
+            CreditPhase::Profiling,
+            None,
+            None,
+            None,
+        );
+        let endpoint = RawEndpointConfig {
+            streaming: true,
+            extra: Some(Map::from_iter([(
+                "stream_options".to_owned(),
+                json!({"include_usage": false, "continuous_usage_stats": true}),
+            )])),
+            ..RawEndpointConfig::default()
+        };
+
+        let chat = materialized_body(
+            ChatEndpoint
+                .format_prepared_payload(&request, &endpoint)
+                .unwrap(),
+        );
+        let completions = materialized_body(
+            CompletionsEndpoint
+                .format_prepared_payload(&request, &endpoint)
+                .unwrap(),
+        );
+
+        for body in [chat, completions] {
+            assert_eq!(body["stream_options"]["include_usage"], false);
+            assert_eq!(body["stream_options"]["continuous_usage_stats"], true);
+        }
+    }
+
+    #[test]
+    fn effective_stream_value_controls_usage_negotiation() {
+        let mut turn = text_turn();
+        turn.extra_body = Some(Map::from_iter([
+            ("stream".to_owned(), Value::Bool(false)),
+            ("stream_options".to_owned(), Value::Null),
+        ]));
+        let turns = [turn];
+        let request = PreparedRequest::new(
+            "gpt-test",
+            &turns,
+            None,
+            None,
+            CreditPhase::Profiling,
+            None,
+            None,
+            None,
+        );
+        let endpoint = RawEndpointConfig {
+            streaming: true,
+            use_server_token_count: true,
+            ..RawEndpointConfig::default()
+        };
+
+        let chat = materialized_body(
+            ChatEndpoint
+                .format_prepared_payload(&request, &endpoint)
+                .unwrap(),
+        );
+        let completions = materialized_body(
+            CompletionsEndpoint
+                .format_prepared_payload(&request, &endpoint)
+                .unwrap(),
+        );
+
+        for body in [chat, completions] {
+            assert_eq!(body["stream"], false);
+            assert!(body["stream_options"].is_null());
+        }
+    }
+
+    #[test]
+    fn null_options_are_initialized_but_truthy_non_objects_are_preserved() {
+        let turns = [text_turn()];
+        let request = PreparedRequest::new(
+            "gpt-test",
+            &turns,
+            None,
+            None,
+            CreditPhase::Profiling,
+            None,
+            None,
+            None,
+        );
+        let mut endpoint = RawEndpointConfig {
+            streaming: true,
+            extra: Some(Map::from_iter([("stream_options".to_owned(), Value::Null)])),
+            ..RawEndpointConfig::default()
+        };
+
+        let null_options = materialized_body(
+            ChatEndpoint
+                .format_prepared_payload(&request, &endpoint)
+                .unwrap(),
+        );
+        assert_eq!(null_options["stream_options"]["include_usage"], true);
+
+        endpoint.extra = Some(Map::from_iter([(
+            "stream_options".to_owned(),
+            Value::String("provider-owned".to_owned()),
+        )]));
+        let non_object = materialized_body(
+            ChatEndpoint
+                .format_prepared_payload(&request, &endpoint)
+                .unwrap(),
+        );
+        assert_eq!(non_object["stream_options"], "provider-owned");
     }
 
     #[test]
