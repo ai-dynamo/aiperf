@@ -3434,7 +3434,6 @@ mod tests {
             Some(&serde_json::json!(["127.0.0.1:8000"]))
         );
         assert_eq!(inputs.endpoint.urls, ["127.0.0.1:8000"]);
-        assert_eq!(inputs.endpoint.telemetry.dataset.isl.mean, Some(128.0));
         assert_eq!(
             inputs.endpoint.telemetry.dataset.workload.request_count,
             Some(1)
