@@ -42,11 +42,39 @@ fn env_flag_enabled(name: &str) -> bool {
         .is_ok_and(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true"))
 }
 
-/// Compose the final header set: base (User-Agent) -> correlation/request-id ->
+/// Add the default router-facing affinity header for a stable correlation ID.
+///
+/// This policy is shared by the direct transport facade and the native
+/// endpoint-binding path. Both paths receive caller-owned headers, so remove
+/// every case-insensitive spelling before inserting the canonical derived
+/// value.
+pub fn apply_default_session_affinity_header(
+    headers: &mut BTreeMap<String, String>,
+    correlation_id: Option<&str>,
+) {
+    let Some(correlation_id) = correlation_id else {
+        headers.retain(|name, _| !name.eq_ignore_ascii_case("X-Session-Affinity"));
+        return;
+    };
+    let has_conflict = headers.iter().any(|(name, value)| {
+        name.eq_ignore_ascii_case("X-Session-Affinity")
+            && (name != "X-Session-Affinity" || value != correlation_id)
+    });
+    if !has_conflict
+        && headers
+            .get("X-Session-Affinity")
+            .is_some_and(|value| value == correlation_id)
+    {
+        return;
+    }
+    headers.retain(|name, _| !name.eq_ignore_ascii_case("X-Session-Affinity"));
+    headers.insert("X-Session-Affinity".to_string(), correlation_id.to_string());
+}
+
 /// endpoint headers -> transport headers (`Accept` overrides, `Content-Type`
-/// only fills in when absent) -> derived session-affinity headers -> derived
-/// Dynamo session headers (opt-in, always last/authoritative). Later sources
-/// otherwise override earlier ones.
+/// only fills in when absent) -> derived session-affinity headers (always
+/// last/authoritative) -> derived Dynamo session headers (opt-in, also
+/// authoritative). Later sources otherwise override earlier ones.
 pub fn build_headers(
     cfg: &RequestConfig,
     streaming: bool,
@@ -90,6 +118,7 @@ pub fn build_headers(
     // session-affinity header ALONGSIDE the correlation header. Strip any
     // caller-supplied variants case-insensitively first, since HTTP header
     // names are case-insensitive and `h` is a plain string-keyed map.
+    apply_default_session_affinity_header(&mut h, cfg.correlation_id.as_deref());
     if let Some(corr) = &cfg.correlation_id {
         if x_session_id_from_correlation_id {
             h.retain(|k, _| !k.eq_ignore_ascii_case("X-Session-ID"));
@@ -217,6 +246,59 @@ mod tests {
         let cfg = RequestConfig::new("http://h/x").correlation_id("sess-1");
         let h = build_headers(&cfg, true, None, "aiperf/test", false, false, false);
         assert_eq!(h.get("X-Session-ID"), None);
+    }
+
+    #[test]
+    fn session_affinity_is_default_and_independent_of_session_id_opt_in() {
+        let cfg = RequestConfig::new("http://h/x").correlation_id("sess-1");
+        let h = build_headers(&cfg, true, None, "aiperf/test", false, false, false);
+        assert_eq!(
+            h.get("X-Correlation-ID").map(String::as_str),
+            Some("sess-1")
+        );
+        assert_eq!(
+            h.get("X-Session-Affinity").map(String::as_str),
+            Some("sess-1")
+        );
+        assert_eq!(h.get("X-Session-ID"), None);
+    }
+
+    #[test]
+    fn session_affinity_replaces_caller_header_case_insensitively() {
+        let cfg = RequestConfig::new("http://h/x")
+            .correlation_id("sess-1")
+            .header("x-session-affinity", "stale-lowercase")
+            .header("X-Session-Affinity", "stale-canonical");
+        let h = build_headers(&cfg, true, None, "aiperf/test", false, false, false);
+        assert_eq!(
+            h.get("X-Session-Affinity").map(String::as_str),
+            Some("sess-1")
+        );
+        assert!(!h.contains_key("x-session-affinity"));
+    }
+
+    #[test]
+    fn session_affinity_removes_authored_variants_without_correlation_id() {
+        let cfg = RequestConfig::new("http://h/x")
+            .header("x-session-affinity", "stale-lowercase")
+            .header("X-Session-Affinity", "stale-canonical");
+        let h = build_headers(&cfg, true, None, "aiperf/test", false, false, false);
+        assert!(
+            h.keys()
+                .all(|name| !name.eq_ignore_ascii_case("X-Session-Affinity")),
+            "affinity must be absent without a correlation ID: {h:?}"
+        );
+    }
+
+    #[test]
+    fn default_session_affinity_normalization_is_idempotent() {
+        let mut headers =
+            BTreeMap::from([("X-Session-Affinity".to_string(), "sess-1".to_string())]);
+        apply_default_session_affinity_header(&mut headers, Some("sess-1"));
+        assert_eq!(
+            headers,
+            BTreeMap::from([("X-Session-Affinity".to_string(), "sess-1".to_string(),)])
+        );
     }
 
     #[test]

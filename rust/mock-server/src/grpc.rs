@@ -365,6 +365,7 @@ fn synth_chat(model: &str, prompt: &str, max_tokens: Option<usize>) -> ChatCompl
         min_tokens: None,
         reasoning_effort: None,
         priority: None,
+        mock_first_chunk_tokens: 1,
     }
 }
 

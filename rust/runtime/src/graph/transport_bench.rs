@@ -289,6 +289,7 @@ impl GraphSink<Msg> for TransportMeteredSink {
                 output: Some(output_tokens),
                 reasoning: (reasoning_tokens > 0).then_some(reasoning_tokens),
                 requested_output: Some(mot as u64),
+                first_content_chunk_tokens: None,
             },
             usage: UsageMetrics {
                 prompt_tokens: usage_prompt_tokens,

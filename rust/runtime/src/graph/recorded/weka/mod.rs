@@ -20,13 +20,21 @@ use crate::graph::model::{ExecutableGraphNode, GraphTracePlan, GraphTraceProgram
 use super::content::CorpusShared;
 use super::source::load_weka_documents;
 use super::trie::{RecordedGraphLowering, RecordedRequest, graph_plan, lower_recorded_graph};
-use super::{RecordedTraceError, RecordedTraceInputConfig};
+use super::{RecordedTraceError, RecordedTraceInputConfig, rejected_peak_context_error};
 use schema::{WekaEntry, WekaTrace, parse_trace};
 
 /// Parse, select, reconstruct, and lower a WEKA source exactly once.
 pub async fn compile_weka_trace_input(
     config: RecordedTraceInputConfig,
     tokenizer: &dyn TextTokenizer,
+) -> Result<GraphInputBundle, RecordedTraceError> {
+    compile_weka_trace_input_with_source(config, tokenizer, "WEKA source").await
+}
+
+pub(crate) async fn compile_weka_trace_input_with_source(
+    config: RecordedTraceInputConfig,
+    tokenizer: &dyn TextTokenizer,
+    selection_source: &str,
 ) -> Result<GraphInputBundle, RecordedTraceError> {
     config.validate()?;
     reject_loader_options(&config)?;
@@ -63,7 +71,7 @@ pub async fn compile_weka_trace_input(
     // decoding unselected documents, so it stays a sequential scan. Otherwise
     // the whole source is taken and every document parses in parallel.
     let parsed = if selection_enabled {
-        select_traces_sequential(&documents, &config)?
+        select_traces_sequential(&documents, &config, selection_source)?
     } else {
         parse_all_traces_parallel(&documents)?
     };
@@ -165,15 +173,21 @@ pub async fn compile_weka_trace_input(
 fn select_traces_sequential(
     documents: &[Box<RawValue>],
     config: &RecordedTraceInputConfig,
+    selection_source: &str,
 ) -> Result<Vec<WekaTrace>, RecordedTraceError> {
     let mut parsed = Vec::new();
     let mut ids = HashSet::new();
+    let mut scanned = 0;
+    let mut smallest_rejected = None;
     for document in documents {
         let trace = parse_trace(document)?;
-        if config
-            .max_context_length
-            .is_some_and(|limit| peak_context(&trace, config.max_osl) > limit)
+        scanned += 1;
+        let peak = peak_context(&trace, config.max_osl);
+        if let Some(limit) = config.max_context_length
+            && peak > limit
         {
+            smallest_rejected =
+                Some(smallest_rejected.map_or(peak, |smallest: usize| smallest.min(peak)));
             continue;
         }
         if !ids.insert(trace.id.clone()) {
@@ -186,6 +200,17 @@ fn select_traces_sequential(
         if parsed.len() >= config.root_limit.unwrap_or(usize::MAX) {
             break;
         }
+    }
+    if parsed.is_empty()
+        && let (Some(limit), Some(smallest)) = (config.max_context_length, smallest_rejected)
+    {
+        return Err(rejected_peak_context_error(
+            selection_source,
+            scanned,
+            config.root_limit,
+            limit,
+            smallest,
+        ));
     }
     Ok(parsed)
 }
@@ -505,5 +530,100 @@ mod tests {
             .expect("selection must filter before capping");
         assert_eq!(bundle.programs.len(), 1);
         assert_eq!(bundle.programs[0].profiling.trace.id, "first-eligible");
+    }
+
+    #[tokio::test]
+    async fn all_context_rejected_traces_report_the_smallest_peak() {
+        let trace = |id: &str, input_tokens: usize| {
+            json!({
+                "id": id,
+                "models": ["m"],
+                "block_size": 16,
+                "hash_id_scope": "global",
+                "requests": [{
+                    "t": 0,
+                    "type": "n",
+                    "model": "m",
+                    "in": input_tokens,
+                    "out": 4,
+                    "hash_ids": [1]
+                }]
+            })
+        };
+        let error = match compile_weka_trace_input(
+            RecordedTraceInputConfig {
+                load: LoadConfig::new(DatasetSource::Inline(json!([
+                    trace("larger", 120),
+                    trace("smaller", 40)
+                ]))),
+                root_limit: None,
+                max_context_length: Some(20),
+                max_osl: None,
+                idle_gap_cap_seconds: Some(60.0),
+                prompt_corpus: PromptCorpus::Sonnet,
+                content_root_seed: 42,
+            },
+            &TiktokenTokenizer::builtin(),
+        )
+        .await
+        {
+            Ok(_) => panic!("every trace exceeds the context cap"),
+            Err(error) => error,
+        };
+
+        assert!(
+            error.0.contains("No eligible traces in WEKA source after filter-then-cap (scanned 2, --max-context-length=20"),
+            "{}",
+            error.0
+        );
+        assert!(
+            error.0.contains("Smallest trace requires 44 tokens; raise --max-context-length to at least that (e.g. --max-context-length 44) to admit any trace."),
+            "{}",
+            error.0
+        );
+    }
+
+    #[tokio::test]
+    async fn empty_source_retains_its_preselection_error() {
+        let error = match compile_weka_trace_input(
+            RecordedTraceInputConfig {
+                load: LoadConfig::new(DatasetSource::Inline(json!([]))),
+                root_limit: None,
+                max_context_length: Some(20),
+                max_osl: None,
+                idle_gap_cap_seconds: Some(60.0),
+                prompt_corpus: PromptCorpus::Sonnet,
+                content_root_seed: 42,
+            },
+            &TiktokenTokenizer::builtin(),
+        )
+        .await
+        {
+            Ok(_) => panic!("an empty WEKA source must fail"),
+            Err(error) => error,
+        };
+        assert_eq!(error.0, "WEKA source contains no traces");
+    }
+
+    #[tokio::test]
+    async fn malformed_source_retains_its_parse_error() {
+        let error = match compile_weka_trace_input(
+            RecordedTraceInputConfig {
+                load: LoadConfig::new(DatasetSource::Inline(json!([{"id": "bad"}]))),
+                root_limit: None,
+                max_context_length: Some(20),
+                max_osl: None,
+                idle_gap_cap_seconds: Some(60.0),
+                prompt_corpus: PromptCorpus::Sonnet,
+                content_root_seed: 42,
+            },
+            &TiktokenTokenizer::builtin(),
+        )
+        .await
+        {
+            Ok(_) => panic!("a malformed WEKA source must fail"),
+            Err(error) => error,
+        };
+        assert!(!error.0.contains("Smallest trace requires"), "{}", error.0);
     }
 }

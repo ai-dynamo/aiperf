@@ -747,6 +747,7 @@ fn observed_usage(value: Option<&Value>) -> ObservedUsage {
         completion_tokens: as_usize(usage.completion_tokens()),
         total_tokens: as_usize(usage.total_tokens()),
         reasoning_tokens: as_usize(usage.reasoning_tokens()),
+        first_content_chunk_tokens: None,
         prompt_cache_read_tokens: as_usize(usage.prompt_cache_read_tokens()),
         prompt_cache_write_tokens: as_usize(usage.prompt_cache_write_tokens()),
         prompt_cache_miss_tokens: as_usize(usage.prompt_cache_miss_tokens()),

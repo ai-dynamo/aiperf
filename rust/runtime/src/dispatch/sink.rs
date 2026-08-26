@@ -36,6 +36,8 @@ pub struct ObservedUsage {
     pub total_tokens: Option<usize>,
     /// Provider-reported reasoning-token count.
     pub reasoning_tokens: Option<usize>,
+    /// Cumulative completion tokens on the first content-bearing streamed chunk.
+    pub first_content_chunk_tokens: Option<usize>,
     /// Prompt tokens served from a cache.
     pub prompt_cache_read_tokens: Option<usize>,
     /// Prompt tokens written into a cache.

@@ -34,6 +34,11 @@ impl ReasoningEffort {
 #[serde(default)]
 pub struct StreamOptions {
     pub include_usage: bool,
+    pub continuous_usage_stats: bool,
+}
+
+fn default_first_chunk_tokens() -> usize {
+    1
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -54,6 +59,10 @@ pub struct ChatCompletionRequest {
     /// absent => 0 (so the policy behaves as LRU).
     #[serde(default)]
     pub priority: Option<i64>,
+    /// Test seam for servers that bundle several output tokens in their first
+    /// streamed content chunk.
+    #[serde(default = "default_first_chunk_tokens")]
+    pub mock_first_chunk_tokens: usize,
 }
 
 impl ChatCompletionRequest {
@@ -66,6 +75,16 @@ impl ChatCompletionRequest {
 
     pub fn max_output_tokens(&self) -> Option<usize> {
         self.max_completion_tokens.or(self.max_tokens)
+    }
+
+    pub fn continuous_usage_stats(&self) -> bool {
+        self.stream_options
+            .as_ref()
+            .is_some_and(|options| options.continuous_usage_stats)
+    }
+
+    pub fn first_chunk_tokens(&self) -> usize {
+        self.mock_first_chunk_tokens.max(1)
     }
 }
 
@@ -153,6 +172,10 @@ pub struct MessagesRequest {
     /// Request priority for the `priority` KV-cache eviction policy.
     #[serde(default)]
     pub priority: Option<i64>,
+    /// Test seam for servers that bundle several output tokens in their first
+    /// streamed content chunk.
+    #[serde(default = "default_first_chunk_tokens")]
+    pub mock_first_chunk_tokens: usize,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -200,6 +223,10 @@ pub struct CompletionRequest {
     /// absent => 0 (so the policy behaves as LRU).
     #[serde(default)]
     pub priority: Option<i64>,
+    /// Test seam for servers that bundle several output tokens in their first
+    /// streamed content chunk.
+    #[serde(default = "default_first_chunk_tokens")]
+    pub mock_first_chunk_tokens: usize,
 }
 
 impl CompletionRequest {
@@ -212,6 +239,16 @@ impl CompletionRequest {
 
     pub fn prompt_text(&self) -> String {
         self.prompt.joined("\n")
+    }
+
+    pub fn continuous_usage_stats(&self) -> bool {
+        self.stream_options
+            .as_ref()
+            .is_some_and(|options| options.continuous_usage_stats)
+    }
+
+    pub fn first_chunk_tokens(&self) -> usize {
+        self.mock_first_chunk_tokens.max(1)
     }
 }
 
@@ -502,6 +539,48 @@ mod tests {
         let raw = r#"{"model": "x", "messages": [], "stream": true, "stream_options": {"include_usage": true}}"#;
         let req: ChatCompletionRequest = serde_json::from_str(raw).unwrap();
         assert!(req.include_usage());
+    }
+
+    #[test]
+    fn completion_requests_read_continuous_usage_and_first_chunk_policy() {
+        let chat: ChatCompletionRequest = serde_json::from_str(
+            r#"{
+                "model": "x",
+                "messages": [],
+                "stream": true,
+                "stream_options": {
+                    "include_usage": true,
+                    "continuous_usage_stats": true
+                },
+                "mock_first_chunk_tokens": 3
+            }"#,
+        )
+        .unwrap();
+        assert!(chat.continuous_usage_stats());
+        assert_eq!(chat.first_chunk_tokens(), 3);
+
+        let text: CompletionRequest = serde_json::from_str(
+            r#"{
+                "model": "x",
+                "prompt": "hello",
+                "stream": true,
+                "stream_options": {"continuous_usage_stats": true},
+                "mock_first_chunk_tokens": 0
+            }"#,
+        )
+        .unwrap();
+        assert!(text.continuous_usage_stats());
+        assert_eq!(text.first_chunk_tokens(), 1);
+
+        let chat_defaults: ChatCompletionRequest =
+            serde_json::from_str(r#"{"model":"x","messages":[]}"#).unwrap();
+        assert!(!chat_defaults.continuous_usage_stats());
+        assert_eq!(chat_defaults.first_chunk_tokens(), 1);
+
+        let text_defaults: CompletionRequest =
+            serde_json::from_str(r#"{"model":"x","prompt":"hello"}"#).unwrap();
+        assert!(!text_defaults.continuous_usage_stats());
+        assert_eq!(text_defaults.first_chunk_tokens(), 1);
     }
 
     #[test]

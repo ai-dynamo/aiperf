@@ -17,7 +17,7 @@ use url::Url;
 use crate::clock::Clock;
 
 use crate::transport::core::SseMessage;
-use crate::transport::core::eventstream::EventStreamDecoder;
+use crate::transport::core::eventstream::{EventStreamDecodeError, EventStreamDecoder};
 use crate::transport::core::{
     ErrorDetails, ErrorKind, RequestRecord, Response, TextResponse, TraceData,
 };
@@ -44,31 +44,35 @@ where
         inner: std::pin::Pin<Box<S>>,
         decoder: EventStreamDecoder,
         pending: std::collections::VecDeque<Bytes>,
+        is_terminal: bool,
     }
 
     let state = State {
         inner: Box::pin(stream),
         decoder: EventStreamDecoder::new(),
         pending: std::collections::VecDeque::new(),
+        is_terminal: false,
     };
 
     futures::stream::unfold(state, |mut state| async move {
         loop {
+            if state.is_terminal {
+                return None;
+            }
             if let Some(frame) = state.pending.pop_front() {
                 return Some((Ok(frame), state));
             }
             match state.inner.next().await {
                 Some(Ok(chunk)) => {
-                    state.decoder.push(&chunk);
+                    if let Err(error) = state.decoder.push(&chunk) {
+                        state.is_terminal = true;
+                        return Some((Err(eventstream_decode_error(error)), state));
+                    }
                     let messages = match state.decoder.drain_messages() {
                         Ok(messages) => messages,
                         Err(error) => {
-                            return Some((
-                                Err(ErrorDetails::sse(format!(
-                                    "eventstream decode error: {error}"
-                                ))),
-                                state,
-                            ));
+                            state.is_terminal = true;
+                            return Some((Err(eventstream_decode_error(error)), state));
                         }
                     };
                     for message in messages {
@@ -88,10 +92,23 @@ where
                     }
                 }
                 Some(Err(error)) => return Some((Err(error), state)),
+                None if state.decoder.has_trailing_bytes() => {
+                    state.is_terminal = true;
+                    return Some((
+                        Err(ErrorDetails::sse(
+                            "truncated eventstream frame at response EOF",
+                        )),
+                        state,
+                    ));
+                }
                 None => return None,
             }
         }
     })
+}
+
+fn eventstream_decode_error(error: EventStreamDecodeError) -> ErrorDetails {
+    ErrorDetails::sse(format!("eventstream decode error: {error}"))
 }
 
 #[derive(Default)]
@@ -923,13 +940,18 @@ impl HttpClient {
 mod eventstream_to_sse_tests {
     use super::*;
     use crate::transport::core::eventstream::EventStreamMessage;
+    use bytes::BytesMut;
     use futures::stream;
 
     #[tokio::test]
     async fn reframes_payload_parts_as_sse_data_lines() {
         let m1 = EventStreamMessage::payload_part(Bytes::from_static(br#"{"i":1}"#));
         let m2 = EventStreamMessage::payload_part(Bytes::from_static(br#"{"i":2}"#));
-        let wire = [m1.encode(), m2.encode()].concat();
+        let wire = [
+            m1.encode().expect("first frame encodes"),
+            m2.encode().expect("second frame encodes"),
+        ]
+        .concat();
 
         let raw = stream::iter(vec![Ok::<Bytes, ErrorDetails>(Bytes::from(wire))]);
         let sse = eventstream_to_sse(raw);
@@ -947,7 +969,7 @@ mod eventstream_to_sse_tests {
     #[tokio::test]
     async fn reframes_messages_split_across_chunk_boundaries() {
         let message = EventStreamMessage::payload_part(Bytes::from_static(br#"{"x":true}"#));
-        let encoded = message.encode();
+        let encoded = message.encode().expect("frame encodes");
         let (left, right) = encoded.split_at(encoded.len() / 2);
 
         let raw = stream::iter(vec![
@@ -963,5 +985,57 @@ mod eventstream_to_sse_tests {
         }
         let text = String::from_utf8(collected.concat()).unwrap();
         assert_eq!(text, "data: {\"x\":true}\n\n");
+    }
+
+    #[tokio::test]
+    async fn emits_one_error_for_an_invalid_eventstream_prelude() {
+        let valid = EventStreamMessage::payload_part(Bytes::from_static(br#"{"i":1}"#));
+        let encoded = valid.encode().expect("frame encodes");
+        let mut invalid = BytesMut::from(&encoded[..]);
+        invalid[11] ^= 0xFF;
+        let raw = stream::iter(vec![
+            Ok::<Bytes, ErrorDetails>(invalid.freeze()),
+            Ok(valid.encode().expect("frame encodes")),
+        ]);
+        let results: Vec<_> = eventstream_to_sse(raw).collect().await;
+
+        assert_eq!(results.len(), 1);
+        assert!(
+            results[0]
+                .as_ref()
+                .is_err_and(|error| error.message.contains("prelude CRC"))
+        );
+    }
+
+    #[tokio::test]
+    async fn trailing_eventstream_bytes_emit_one_terminal_error() {
+        let message = EventStreamMessage::payload_part(Bytes::from_static(br#"{"i":1}"#));
+        let encoded = message.encode().expect("frame encodes");
+        let truncated = Bytes::copy_from_slice(&encoded[..encoded.len() - 1]);
+        let raw = stream::iter(vec![Ok::<Bytes, ErrorDetails>(truncated)]);
+        let sse = eventstream_to_sse(raw);
+        futures::pin_mut!(sse);
+
+        let first = sse.next().await.expect("trailing bytes emit an error");
+        assert!(first.as_ref().is_err_and(|error| {
+            error.message == "truncated eventstream frame at response EOF"
+        }));
+        assert!(sse.next().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn clean_eventstream_boundary_ends_without_error() {
+        let message = EventStreamMessage::payload_part(Bytes::from_static(br#"{"i":1}"#));
+        let raw = stream::iter(vec![Ok::<Bytes, ErrorDetails>(
+            message.encode().expect("frame encodes"),
+        )]);
+        let sse = eventstream_to_sse(raw);
+        futures::pin_mut!(sse);
+
+        assert_eq!(
+            sse.next().await.expect("complete frame emits SSE").unwrap(),
+            Bytes::from_static(b"data: {\"i\":1}\n\n")
+        );
+        assert!(sse.next().await.is_none());
     }
 }

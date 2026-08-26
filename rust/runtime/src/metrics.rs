@@ -130,7 +130,7 @@ struct PendingResponseMetadata {
 
 #[derive(Clone, Copy, Debug, Default)]
 struct CompactObservedUsage {
-    values: [usize; 12],
+    values: [usize; 13],
     present: u16,
     prompt_audio_seconds: Option<f64>,
 }
@@ -150,6 +150,7 @@ impl CompactObservedUsage {
             usage.accepted_prediction_tokens,
             usage.rejected_prediction_tokens,
             usage.tool_use_prompt_tokens,
+            usage.first_content_chunk_tokens,
         ]
         .into_iter()
         .enumerate()
@@ -596,6 +597,7 @@ impl PendingRequest {
                     (self.reasoning_tokens > 0).then_some(self.reasoning_tokens)
                 },
                 requested_output: Some(self.requested_output_tokens),
+                first_content_chunk_tokens: self.observed_usage.get(12).map(|value| value as u64),
             },
             usage: UsageMetrics {
                 prompt_tokens,
@@ -1079,6 +1081,7 @@ mod tests {
             ObservedUsage {
                 prompt_tokens: Some(8),
                 completion_tokens: Some(2),
+                first_content_chunk_tokens: Some(1),
                 prompt_cache_read_tokens: Some(3),
                 prompt_cache_write_tokens: Some(4),
                 prompt_cache_miss_tokens: Some(5),
@@ -1118,6 +1121,10 @@ mod tests {
         assert_eq!(collection.records[0].1.correlation_id, uuid.to_string());
         assert_eq!(collection.records[0].1.session_num, 9);
         assert_eq!(collection.records[0].1.turn_index, 2);
+        assert_eq!(
+            collection.records[0].1.tokens.first_content_chunk_tokens,
+            Some(1)
+        );
         assert_eq!(
             collection.records[0].1.usage,
             UsageMetrics {
