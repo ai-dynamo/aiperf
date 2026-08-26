@@ -53,15 +53,15 @@ This file is the dependency and worktree index for the implementation plan set. 
 ## Dependency DAG
 
 ```text
-foundation 0 -> 1A -> 1B -> 1C -> 1D -> 1E
-                         |       |       |
-                         |       |       +-> registry 2 -> protocol/config 3
-                         |       +----------> checkpoint 5A -> 5B
-                         +------------------> terminal 4A -> capture 4B
+foundation 0 -> 1A -> 1B -> 1C -> checkpoint 5A -> 5B -> 1D -> 1E
+                                                               |       |
+                                                               |       +-> registry 2 -> protocol/config 3
+                                                               +----------> terminal 4A -> capture 4B
 
-checkpoint 5B -> local 5C -> leases 5D ----.
-             |-> coordinator 5E ------------+-> result 6B -> compaction 6C
-             `-> result index 6A -----------'
+checkpoint 5B -> local 5C -> leases 5D ------------------.
+             |-> coordinator 5E --------------------------+-> result 6B -> compaction 6C -> report order 6D
+             `-> result index 6A -------------------------'
+result index 6A -> leases 5D
 
 foundation 1D/1E + checkpoint 5A/5B
     |-> local A1     |-> JSONL A2
@@ -69,12 +69,16 @@ foundation 1D/1E + checkpoint 5A/5B
     |-> Dynamo A5    `-> S3 A6
 
 checkpoint 5A + foundation clock -> event time 7A
-session P1 -> action P2 -> pipeline P3
-local A1 + JSONL A2 + P3 + capture 4B + results 6C -> workload P4
+session P1 -> closure P1B -> action P2 -> pipeline P3
+local A1 + JSONL A2 + P3 + capture 4B + results 6D -> workload P4
 P1/P2 -> graph P5
 P1/P4 + crypto foundation -> sensitive state P6
+P3/P4 + results 6B + event time 7A -> observability P7
 
-workload P4 + checkpoint/results -> cellular C1 -> C2 -> C3 -> C4 -> C5 -> C6
+registry 2 + local 5C -> built-in backends 5F1
+S3 A6 + coordinator 5E + 5F1 -> object CAS 5F2
+leases 5D + sensitive P6 + 5F2 -> object retention 5F3
+workload P4 + checkpoint/results 6D -> cellular C1 -> C2 -> C3 -> C4 -> C5 -> C6
 all implementation plans -> product V1 -> V2 -> V3 -> V4 -> V5 -> V6
 ```
 
@@ -86,22 +90,25 @@ The individual plans contain the exact dependency clauses. If this overview and 
 - Task worktrees live at `/mnt/4tb/aiperf-streaming-worktrees/<task>` and all builds share `CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target`.
 - Each branch is cut from the current integrated `HEAD`, contains one task's focused commits and review fixes, and merges with `git merge --no-ff`. Never cherry-pick.
 - Keep three worktrees active whenever the DAG exposes three file-disjoint tasks. If fewer are ready, unused slots run Graham/behavior reviews and gates; they do not branch from stale state.
-- The integration owner exclusively resolves module declarations, Cargo.lock, registry/protocol hotspots, cellular controller/cell hotspots, and `artifacts/streaming-design/implementation-progress.md`.
+- Every task branch owns the minimal nearest-parent module declaration needed for its GREEN build. The integration owner resolves declaration conflicts plus Cargo.lock, registry/protocol hotspots, cellular controller/cell hotspots, and `artifacts/streaming-design/implementation-progress.md` during `--no-ff` merges.
 - A downstream worktree is created only after every declared prerequisite merge is present in the integration `HEAD`.
 
-Initial worktree waves after the serialized 0/1A-1E foundation:
+Initial worktree waves after the serialized 0/1A-1C → 5A-5B → 1D-1E contract foundation:
 
 | Wave | Worktree A | Worktree B | Worktree C |
 |---|---|---|---|
-| 1 | Registry 2 → Config 3 | Terminal 4A → Capture 4B | Checkpoint 5A → 5B |
-| 2 | Local store 5C → GC 5D | Coordinator 5E | Result index 6A |
-| 3 | Event time 7A | Local A1 | JSONL A2 |
-| 4 | Result epochs 6B → compaction 6C | Conversation P1 → Action P2 | HF A3 |
+| 1 | Registry 2 → Config 3 | Terminal 4A → Capture 4B | Local store 5C |
+| 2 | Coordinator 5E | Result index 6A | Event time 7A |
+| 3 | Leases/GC 5D | Local A1 | JSONL A2 |
+| 4 | Result epochs 6B → compaction 6C → report order 6D | Conversation P1 → closure P1B → Action P2 | HF A3 |
 | 5 | Pipeline P3 | Baseten A4 | Dynamo A5 |
 | 6 | Workload P4 | Graph P5 | S3 A6 |
-| 7 | Sensitive state P6 | Cellular C1 | review/fix |
+| 7 | Sensitive state P6 | Observability P7 | review/fix |
+| 8 | Local/none backends 5F1 | Cellular C1 | review/fix |
+| 9 | Object CAS 5F2 | Cellular C2 | review/fix |
+| 10 | Object retention 5F3 | Cellular C3 | review/fix |
 
-Cellular C2-C6 are serialized according to the cellular plan because they share controller/cell/protocol hotspots. Product V1-V6 follow after all implementation plans, with review work occupying spare slots.
+Cellular C2-C6 are serialized according to the cellular plan because they share controller/cell/protocol hotspots. Product V1-V6 follow after Task 5F3 and all other implementation plans, with review work occupying spare slots.
 
 ## Merge and Review Gate
 

@@ -30,10 +30,14 @@ SPDX-License-Identifier: Apache-2.0
 - Modify: `rust/cli/src/flags.rs`
 - Modify: `rust/cli/src/load.rs`
 - Modify: `rust/cli/src/yaml.rs`
-- Modify: `rust/runtime/src/engine/protocol.rs`
+- Modify: `rust/runtime/src/engine/protocol_v2.rs`
 - Modify: `rust/runtime/src/engine/application.rs`
+- Create: `rust/cli/src/streaming_results.rs`
 - Create: `docs/streaming-datasets.md`
 - Test: `rust/cli/tests/streaming_config.rs`
+- Test: `rust/cli/tests/streaming_capabilities.rs`
+- Test: `rust/cli/tests/streaming_results.rs`
+- Create fixture: `rust/cli/tests/fixtures/streaming-shadow.yaml`
 
 **Interfaces:**
 - Produces: Config-v2-first `dataset_streams`/`shadow_replay`; feature-accurate capability inventory; bounded latest-generation reader output; final/aborted metadata.
@@ -50,11 +54,30 @@ fn normative_streaming_yaml_projects_without_python_or_secrets() {
     assert!(!json.contains("secret-value"));
     assert!(!projected.requires_python());
 }
+
+#[test]
+fn capability_inventory_is_feature_accurate() {
+    let catalog = bootstrapped_catalog();
+    assert!(catalog.stream_source.contains_key("local"));
+    assert_eq!(catalog.stream_source.contains_key("s3"), cfg!(feature = "streaming-s3"));
+    assert_eq!(catalog.stream_checkpoint_backend.contains_key("object_store"), cfg!(feature = "streaming-s3"));
+}
+
+#[test]
+fn latest_generation_renders_through_bounded_pages() {
+    for state in [GenerationState::Partial, GenerationState::Final, GenerationState::Aborted] {
+        let fixture = generation_fixture(state, result_page_limit(2));
+        let rendered = render_latest_generation(fixture.reader()).unwrap();
+        assert_eq!(rendered.state, state);
+        assert!(fixture.high_water().index_page_items <= 2);
+        assert!(!rendered.contains_provisional_membership());
+    }
+}
 ```
 
 - [ ] **Step 2: Verify red**
 
-Run: `CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-cli --features streaming-s3,cellular,parquet --test streaming_config`
+Run: `CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-cli --features streaming-s3,cellular,parquet --test streaming_config --test streaming_capabilities --test streaming_results`
 
 - [ ] **Step 3: Implement exact public behavior**
 
@@ -73,7 +96,7 @@ pre-commit run check-docs-current --all-files
 - [ ] **Step 5: Commit**
 
 ```bash
-git add rust/cli rust/runtime/src/engine/protocol.rs rust/runtime/src/engine/application.rs docs/streaming-datasets.md
+git add rust/cli/src/flags.rs rust/cli/src/load.rs rust/cli/src/yaml.rs rust/cli/src/streaming_results.rs rust/cli/tests/streaming_config.rs rust/cli/tests/streaming_capabilities.rs rust/cli/tests/streaming_results.rs rust/cli/tests/fixtures/streaming-shadow.yaml rust/runtime/src/engine/protocol_v2.rs rust/runtime/src/engine/application.rs docs/streaming-datasets.md
 git commit -m "feat(cli): expose native streaming replay"
 ```
 
@@ -81,7 +104,7 @@ git commit -m "feat(cli): expose native streaming replay"
 
 **Files:**
 - Create: `rust/runtime/tests/streaming_delivery_modes.rs`
-- Extend private fault seams only in owning streaming modules.
+- No production files. This task consumes the private test support already landed by Tasks 6C and P4.
 
 **Interfaces:**
 - Consumes: checkpoint/pipeline/action contracts.
@@ -93,11 +116,11 @@ git commit -m "feat(cli): expose native streaming replay"
 #[test]
 fn restart_cuts_have_documented_semantics() {
     let cases = [
-        (DeliveryMode::Terminal, CrashPoint::AfterTargetBeforeCommit, ExpectedReplay::Reissue),
-        (DeliveryMode::Admitted, CrashPoint::AfterAdmission, ExpectedReplay::DoNotReissue),
-        (DeliveryMode::Decoded, CrashPoint::AfterDecode, ExpectedReplay::DiagnosticOnly),
-        (DeliveryMode::Acquired, CrashPoint::AfterAcquire, ExpectedReplay::DiagnosticOnly),
-        (DeliveryMode::None, CrashPoint::AfterTargetBeforeCommit, ExpectedReplay::NoResumeClaim),
+        (CheckpointDeliveryMode::Terminal, CrashPoint::AfterTargetBeforeCommit, ExpectedReplay::Reissue),
+        (CheckpointDeliveryMode::Admitted, CrashPoint::AfterAdmission, ExpectedReplay::DoNotReissue),
+        (CheckpointDeliveryMode::Decoded, CrashPoint::AfterDecode, ExpectedReplay::DiagnosticOnly),
+        (CheckpointDeliveryMode::Acquired, CrashPoint::AfterAcquire, ExpectedReplay::DiagnosticOnly),
+        (CheckpointDeliveryMode::None, CrashPoint::AfterTargetBeforeCommit, ExpectedReplay::NoResumeClaim),
     ];
     for (mode, crash, expected) in cases {
         assert_eq!(delivery_fixture(mode).crash_and_restore(crash).replay(), expected);
@@ -109,9 +132,9 @@ fn restart_cuts_have_documented_semantics() {
 
 Run: `CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime --features streaming --test streaming_delivery_modes`
 
-- [ ] **Step 3: Complete only missing semantic behavior**
+- [ ] **Step 3: Prove the integrated semantic behavior**
 
-Add tests that supported endpoint idempotency derives the key from `(logical_replay_run_id, stable_action_id)` and reports `idempotent_at_least_once_submission`; unsupported endpoint selection fails capability agreement. Crash after target acceptance before commit remains at-least-once without target support. Never claim exactly once.
+Add tests that supported endpoint idempotency derives the key from `(logical_replay_run_id, stable_action_id)` and reports `idempotent_at_least_once_submission`; unsupported endpoint selection fails capability agreement. Crash after target acceptance before commit remains at-least-once without target support. Never claim exactly once. If any row fails because production semantics are missing, stop V2 and reopen a narrowly named owning implementation task with its own RED/GREEN/review commit; do not patch production code from V2.
 
 - [ ] **Step 4: Verify green**
 
@@ -120,7 +143,7 @@ Run Step 2. Expected: every table row and supported/unsupported endpoint case pa
 - [ ] **Step 5: Commit**
 
 ```bash
-git add rust/runtime/tests/streaming_delivery_modes.rs rust/runtime/src/streaming rust/runtime/src/engine
+git add rust/runtime/tests/streaming_delivery_modes.rs
 git commit -m "test(runtime): pin streaming delivery semantics"
 ```
 
@@ -128,7 +151,7 @@ git commit -m "test(runtime): pin streaming delivery semantics"
 
 **Files:**
 - Create: `rust/runtime/tests/streaming_checkpoint_conformance.rs`
-- Extend private fault points in `rust/runtime/src/streaming/local_checkpoint.rs` and object-store backend only.
+- Extend private fault points in `rust/runtime/src/streaming/checkpoints/local.rs` and `rust/runtime/src/streaming/checkpoints/object_store.rs` only.
 
 - [ ] **Step 1: Write the RED backend matrix**
 
@@ -163,7 +186,7 @@ Run Step 2. Expected: all backend rows pass.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add rust/runtime/tests/streaming_checkpoint_conformance.rs rust/runtime/src/streaming/local_checkpoint.rs rust/runtime/src/streaming/checkpoint/object_store.rs
+git add rust/runtime/tests/streaming_checkpoint_conformance.rs rust/runtime/src/streaming/checkpoints/local.rs rust/runtime/src/streaming/checkpoints/object_store.rs
 git commit -m "test(runtime): inject streaming checkpoint failures"
 ```
 
@@ -233,12 +256,16 @@ fn baseten_hf_and_follow_resources_are_bounded() {
     assert!(report.fd_peak <= report.baseline_fds + 2 * report.object_concurrency + 32);
     assert!(report.task_peak <= report.baseline_tasks + report.authored_owner_tasks + 16);
     assert!(report.every_state_high_water_within_authored_budget());
+    assert!(report.expected_rate.schedule_slip_p99 <= Duration::from_millis(25));
+    assert!(report.expected_rate.cpu_per_action <= report.finite_cpu_per_action * 1.20 + Duration::from_micros(25));
+    assert!(report.double_rate.schedule_slip_p99 <= Duration::from_millis(250));
+    assert!(report.double_rate.cpu_per_action <= report.finite_cpu_per_action * 1.35 + Duration::from_micros(50));
 }
 ```
 
 - [ ] **Step 2: Implement deterministic fixture generation and sampling**
 
-Generate 8 GiB of Parquet/HF-compatible shards under the configured scratch directory using bounded writes; do not keep a second in-memory copy. Accelerate a 24-hour logical follow run with `SimClock`; sample after a 10% warmup and at every checkpoint. Fail if least-squares RSS slope exceeds 1 MiB/GiB, any state counter exceeds its authored item/byte cap, or task/FD bounds above are crossed. At expected and 2× ingest rate, separately report publication lag, acquisition/decode time, watermark age, schedule slip, endpoint latency, and cellular unacknowledged items/bytes.
+Generate 8 GiB of Parquet/HF-compatible shards under the configured scratch directory using bounded writes; do not keep a second in-memory copy. Accelerate a 24-hour logical follow run with `SimClock`; sample after a 10% warmup and at every checkpoint. Fail if least-squares RSS slope exceeds 1 MiB/GiB, any state counter exceeds its authored item/byte cap, or task/FD bounds above are crossed. At expected and 2× ingest rate, measure process CPU time per terminal action and separately report publication lag, acquisition/decode time, watermark age, schedule slip, admission delay, endpoint latency, queue occupancy, authored drops by reason, duplicate/gap counters, checkpoint horizons, and cellular unacknowledged items/bytes. Enforce the frozen p99 slip and CPU/action thresholds in Step 1.
 
 - [ ] **Step 3: Run the runtime soak**
 
@@ -246,7 +273,7 @@ Run: `AIPERF_STREAM_SOAK_DIR=/mnt/4tb/aiperf-streaming-soak AIPERF_STREAM_SOAK_G
 
 - [ ] **Step 4: Run the process-level soak**
 
-Run: `AIPERF_E2E_BIN=/mnt/4tb/aiperf-streaming-target/release/aiperf AIPERF_STREAM_SOAK_DIR=/mnt/4tb/aiperf-streaming-soak CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test --release -p aiperf-e2e-tests --test test_streaming_soak -- --ignored --nocapture --test-threads=1`
+Run: `AIPERF_E2E_BIN=/mnt/4tb/aiperf-streaming-target/release/aiperf AIPERF_STREAM_SOAK_DIR=/mnt/4tb/aiperf-streaming-soak AIPERF_STREAM_SOAK_GIB=8 AIPERF_STREAM_SOAK_LOGICAL_HOURS=24 CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test --release -p aiperf-e2e-tests --test test_streaming_soak -- --ignored --nocapture --test-threads=1`
 
 - [ ] **Step 5: Review and commit**
 

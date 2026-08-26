@@ -12,7 +12,8 @@
 
 ## Global Constraints
 
-- All commands run from `rust/` with `CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target`.
+- Cargo commands run from the nested `rust/` workspace; git commands run from the repository root. Builds use `CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target`.
+- Each task includes the nearest parent module declaration required for its own GREEN build; declaration conflicts are resolved during integration.
 - Every runtime command enables `--features streaming,cellular`; `engine` alone does not enable streaming.
 - These tasks consume the non-cellular streaming contracts: `StreamingPlacementPolicy`, `StreamingPlacementSubmitter`, `StreamingPlacementDriver`, `StreamingPlacementControl`, `ActiveExecutionSet`, `StreamingCheckpointParticipant`, `StreamingGenerationTransaction`, and checkpoint result-index types.
 - Controller-to-cell and cell-to-controller streaming frames are authenticated for exact role, purpose, run/session nonce, peer/destination, sequence, and payload digest before DTO decode.
@@ -43,7 +44,7 @@
 
 ### Task C1: Strict Authenticated Streaming DTOs
 
-**Dependencies:** Non-cellular streaming Tasks 1D, 5A, 6A, and 7B.
+**Dependencies:** Non-cellular Tasks 1D, 5A, 6D, P2, P3, and P4.
 
 **Files:**
 - Create: `rust/runtime/src/cellular/streaming_protocol.rs`
@@ -60,6 +61,33 @@
 
 ```rust
 pub const STREAMING_CELLULAR_PROTOCOL_VERSION: u16 = 1;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct StreamingCellularLimits {
+    pub max_frame_bytes: usize,
+    pub max_payload_bytes: usize,
+    pub max_content_items: usize,
+    pub max_content_bytes: usize,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ContentLeaseDescriptor {
+    pub content_id: [u8; 32],
+    pub byte_length: u64,
+    pub digest: [u8; 32],
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PreparedActionContent {
+    pub schema: DatasetActionSchema,
+    pub canonical_request: Vec<u8>,
+    pub content_leases: Vec<ContentLeaseDescriptor>,
+    pub item_count: u64,
+    pub byte_length: u64,
+    pub digest: [u8; 32],
+}
 
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -138,6 +166,8 @@ impl CellSecurityContext {
 }
 ```
 
+The transport checks `max_frame_bytes` on the raw MessagePack bytes before deserialization. After authentication and before queue admission, it checks payload length, `content_leases.len()`, checked sums of every declared `byte_length`, exact `item_count`/`byte_length`, and the payload digest against `StreamingCellularLimits`; violations return a fixed `AdmissionRejection` before allocating action bodies or acquiring queue permits.
+
 Add `AdmissionPurpose::StreamingPlacementEvent` and
 `AdmissionPurpose::StreamingResultPartition` for worker-signed inbound frames.
 Add a separate fixed controller-purpose send-sequence array and worker-local
@@ -160,8 +190,8 @@ fn prepare_action_rejects_unknown_fields() {
         "plan_digest": [0_u8; 32],
         "route_id": 7,
         "destination_cell": 2,
-        "action_id": StableActionId::from_test_bytes([1; 32]),
-        "attempt_id": ActionAttemptId::from_test_bytes([2; 32]),
+        "action_id": StableActionId::from_bytes([1; 32]),
+        "attempt_id": ActionAttemptId::from_bytes([2; 32]),
         "global_sequence": 11,
         "ownership_epoch": 3,
         "prior_session_state_version": 5,
@@ -179,7 +209,7 @@ fn prepare_action_rejects_unknown_fields() {
 - [ ] **Step 2: Verify DTO RED**
 
 ```bash
-CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime --features streaming,cellular --lib cellular::streaming_protocol::tests::prepare_action_rejects_unknown_fields --exact
+CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime --features streaming,cellular --lib streaming_
 ```
 
 Expected: FAIL because `cellular::streaming_protocol` and `PrepareAction` do not exist.
@@ -207,6 +237,20 @@ fn streaming_frame_binds_destination_purpose_and_payload_before_decode() {
     ).expect("bound frame opens once");
     assert_eq!(opened, fixture.prepare);
 }
+
+#[test]
+fn oversized_frame_and_nested_content_are_rejected_before_body_allocation() {
+    let fixture = StreamingAuthorityFixture::with_limits(StreamingCellularLimits {
+        max_frame_bytes: 1024,
+        max_payload_bytes: 512,
+        max_content_items: 2,
+        max_content_bytes: 256,
+    });
+    assert_eq!(fixture.open_raw(&vec![0_u8; 1025]).unwrap_err(), AdmissionRejection::FrameTooLarge);
+    let nested = fixture.authenticated_prepare_with_declared_items(3, 384);
+    assert_eq!(fixture.open_raw(&nested).unwrap_err(), AdmissionRejection::ContentLimitExceeded);
+    assert_eq!(fixture.body_allocated_bytes(), 0);
+}
 ```
 
 - [ ] **Step 4: Implement the minimal authenticated DTO boundary**
@@ -216,8 +260,7 @@ Use canonical MessagePack bytes and a domain-separated transcript containing pro
 - [ ] **Step 5: Verify GREEN and commit**
 
 ```bash
-CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime --features streaming,cellular --lib cellular::streaming_protocol::tests
-CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime --features streaming,cellular --lib engine::cellular_registration::tests
+CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime --features streaming,cellular --lib streaming_
 git add rust/runtime/src/cellular/mod.rs rust/runtime/src/cellular/streaming_protocol.rs rust/runtime/src/cellular/transport/velo_transport.rs rust/runtime/src/engine/cellular_registration.rs
 git commit -m "feat(cellular): authenticate strict streaming frames"
 ```
@@ -230,6 +273,7 @@ git commit -m "feat(cellular): authenticate strict streaming frames"
 
 **Files:**
 - Create: `rust/runtime/src/cellular/streaming_transport.rs`
+- Modify: `rust/runtime/src/cellular/mod.rs`
 - Modify: `rust/runtime/src/cellular/transport/mod.rs:46-58`
 - Modify: `rust/runtime/src/cellular/transport/velo_transport.rs:291-588`
 - Modify: `rust/runtime/src/cellular/transport/velo_transport.rs:588-915`
@@ -265,18 +309,20 @@ impl StreamingPlacementDriver for CellularPlacementDriver {
 
 - [ ] **Step 1: Add the bounded-window RED test**
 
+In the same test module, add `identical_chunk_retransmit_is_idempotent`, `conflicting_sequence_fails_route`, `cancel_pending_wakes_driver`, and `drain_joins_fixed_binding_tasks` before the RED run. Keep the protocol-independent cases in one parameterized harness.
+
 ```rust
 #[tokio::test(flavor = "current_thread")]
 async fn full_route_window_backpressures_without_spawning_per_action_drivers() {
     let fixture = TransferFixture::new(CellularTransferLimits { max_items: 2, max_bytes: 256 });
-    let mut third = Box::pin(fixture.submitter.prepare(fixture.decision(3), fixture.action(3, 128)));
-
-    fixture.submitter.prepare(fixture.decision(1), fixture.action(1, 128)).await.unwrap();
-    fixture.submitter.prepare(fixture.decision(2), fixture.action(2, 128)).await.unwrap();
+    let (mut submitter, cell, diagnostics) = fixture.into_parts();
+    submitter.prepare(decision(1), action(1, 128)).await.unwrap();
+    submitter.prepare(decision(2), action(2, 128)).await.unwrap();
+    let mut third = Box::pin(submitter.prepare(decision(3), action(3, 128)));
     assert!(futures::poll!(&mut third).is_pending());
-    assert_eq!(fixture.diagnostics().driver_count, 1);
+    assert_eq!(diagnostics.driver_count(), 1);
 
-    fixture.cell.ack_prepared(1).await.unwrap();
+    cell.ack_prepared(1).await.unwrap();
     assert!(third.await.is_ok());
 }
 ```
@@ -284,22 +330,22 @@ async fn full_route_window_backpressures_without_spawning_per_action_drivers() {
 - [ ] **Step 2: Verify RED**
 
 ```bash
-CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime --features streaming,cellular --lib cellular::streaming_transport::tests::full_route_window_backpressures_without_spawning_per_action_drivers --exact
+CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime --features streaming,cellular --lib cellular::streaming_transport::tests::full_route_window_backpressures_without_spawning_per_action_drivers -- --exact
 ```
 
 - [ ] **Step 3: Implement one multiplexed binding**
 
 Register dedicated streaming Velo handlers, but keep DTO queues in `streaming_transport.rs`. Use bounded item/byte permits for unacknowledged prepare commands and returned events. Keep one controller driver task and one cell endpoint task per binding; action state lives in an indexed slab keyed by `PlacementHandleId`. Identical retransmission is idempotent, gaps/conflicting duplicate bytes fail the route, and `StreamingPlacementControl` wakes a pending `next_event`. Do not add streaming variants to `CellMessage`, call `dataset_velo`, or clone action bodies into a lifetime history.
 
-- [ ] **Step 4: Add shutdown/retransmit behavior tests**
+- [ ] **Step 4: Verify shutdown/retransmit behavior**
 
-Add `identical_chunk_retransmit_is_idempotent`, `conflicting_sequence_fails_route`, `cancel_pending_wakes_driver`, and `drain_joins_fixed_binding_tasks`. Keep the three protocol-independent behaviors in one parameterized harness rather than duplicating cases per route.
+Confirm the Step-1 shutdown/retransmit cases exercise the completed binding without duplicating cases per route.
 
 - [ ] **Step 5: Verify GREEN and commit**
 
 ```bash
 CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime --features streaming,cellular --lib cellular::streaming_transport::tests
-git add rust/runtime/src/cellular/streaming_transport.rs rust/runtime/src/cellular/transport/mod.rs rust/runtime/src/cellular/transport/velo_transport.rs
+git add rust/runtime/src/cellular/mod.rs rust/runtime/src/cellular/streaming_transport.rs rust/runtime/src/cellular/transport/mod.rs rust/runtime/src/cellular/transport/velo_transport.rs
 git commit -m "feat(cellular): multiplex bounded streaming transfer"
 ```
 
@@ -313,6 +359,7 @@ git commit -m "feat(cellular): multiplex bounded streaming transfer"
 - Modify: `rust/runtime/src/streaming/placement.rs` at the `StreamingPlacementPolicy` implementation landed by the prerequisite
 - Create: `rust/runtime/src/engine/cellular_streaming_controller.rs`
 - Create: `rust/runtime/src/engine/cellular_streaming_cell.rs`
+- Modify: `rust/runtime/src/engine/mod.rs`
 - Modify: `rust/runtime/src/engine/cellular_controller.rs:707-900`
 - Modify: `rust/runtime/src/engine/cellular_cell.rs:713-1010`
 - Test: `rust/runtime/tests/streaming_cellular_placement.rs`
@@ -348,6 +395,8 @@ impl CellularExecutionEndpoint {
 
 - [ ] **Step 1: Add the SimClock no-early-issue RED test**
 
+Also add `same_session_routes_stickily`, `different_sessions_distribute_deterministically`, `prepared_digest_mismatch_never_releases`, and `terminal_event_returns_to_controller_before_dependent_release` before the RED run.
+
 ```rust
 #[tokio::test(flavor = "current_thread")]
 async fn prepare_never_issues_and_release_uses_only_controller_clock() {
@@ -378,16 +427,15 @@ CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime -
 
 Hash `(plan_digest, StableSessionKey)` to the initial cell once and retain the route until an explicit migration. `accept_prepare` validates and stores immutable content under its item/byte permit but cannot call the endpoint action submitter. `release_at_controller_target` uses only `Clock::now_ns`/`Clock::sleep`; `accept_release` validates the exact tuple then submits once. An absent, stale, duplicate-conflicting, or wrong-route release returns a typed failure and leaves the action fenced.
 
-- [ ] **Step 4: Add sticky-session and event-return tests**
+- [ ] **Step 4: Verify sticky-session and event-return tests**
 
 Add `four_partitions_keep_one_session_on_one_cell`, `stale_release_cannot_issue`, and `cell_action_event_flows_through_active_execution_set`. Assert that controller session state changes only after the ordered cell event is accepted.
 
-- [ ] **Step 5: Verify GREEN, E2E, and commit**
+- [ ] **Step 5: Verify GREEN and commit**
 
 ```bash
 CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime --features streaming,cellular --test streaming_cellular_placement
-CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-e2e-tests --test test_streaming_cellular prepare_release_no_early_issue -- --exact
-git add rust/runtime/src/streaming/placement.rs rust/runtime/src/engine/cellular_streaming_controller.rs rust/runtime/src/engine/cellular_streaming_cell.rs rust/runtime/src/engine/cellular_controller.rs rust/runtime/src/engine/cellular_cell.rs rust/runtime/tests/streaming_cellular_placement.rs rust/e2e-tests/tests/test_streaming_cellular.rs
+git add rust/runtime/src/streaming/placement.rs rust/runtime/src/engine/mod.rs rust/runtime/src/engine/cellular_streaming_controller.rs rust/runtime/src/engine/cellular_streaming_cell.rs rust/runtime/src/engine/cellular_controller.rs rust/runtime/src/engine/cellular_cell.rs rust/runtime/tests/streaming_cellular_placement.rs
 git commit -m "feat(cellular): fence streaming issue until controller release"
 ```
 
@@ -424,6 +472,8 @@ impl StickySessionPlacement {
 
 - [ ] **Step 1: Add the crash-table RED test**
 
+Also add `late_old_epoch_receipt_is_rejected`, `new_cell_prepare_is_not_authority_before_commit`, `migration_pending_fragments_obey_budget`, identical-retry, and conflicting-receipt cases before the RED run.
+
 ```rust
 #[tokio::test(flavor = "current_thread")]
 async fn restore_uses_only_last_committed_route_epoch() {
@@ -448,9 +498,9 @@ CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime -
 
 Implement: freeze sequence `N`; stop old-epoch prepares; drain or explicitly cancel all old-cell actions `<= N`; commit controller session state, terminal receipts, and old fence; prepare immutable content on the new cell without releasing it; commit the incremented route epoch/owner and next sequence in the global generation; then release actions `> N`. New fragments remain bounded at the controller during handoff. No canonical state is sent cell-to-cell.
 
-- [ ] **Step 4: Add stale-event and bounded-pending tests**
+- [ ] **Step 4: Verify stale-event and bounded-pending tests**
 
-Add `late_old_epoch_receipt_is_rejected`, `new_cell_prepare_is_not_authority_before_commit`, and `migration_pending_fragments_obey_budget`. Test identical retry separately from conflicting receipt bytes.
+Confirm the Step-1 stale-event, authority, retry/conflict, and bounded-pending cases pass.
 
 - [ ] **Step 5: Verify GREEN and commit**
 
@@ -488,7 +538,7 @@ pub struct CellResultPartitionReceipt {
     pub last_sequence: GlobalSequence,
     pub item_count: u64,
     pub byte_length: u64,
-    pub membership_root: ResultMembershipRoot,
+    pub membership_root: ContentDigest,
     pub payload_digest: [u8; 32],
 }
 
@@ -508,6 +558,8 @@ pub(crate) trait BoundedImmutableObjectWriter {
 ```
 
 - [ ] **Step 1: Add the retransmission RED test**
+
+Also add `receipt_binds_cell_range_count_length_and_digest`, `conflicting_retry_is_rejected`, `cell_flush_is_not_globally_visible`, and one over-byte-limit backpressure case before the RED run.
 
 ```rust
 #[tokio::test(flavor = "current_thread")]
@@ -530,9 +582,9 @@ CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime -
 
 Rotate worker-local epochs only at the barrier, sort canonical facts, write immutable bytes through the existing bounded artifact writer mechanics, and send only authenticated receipts on the placement/result route. Do not use `RecordsShardPartition`, `ColumnStorePartition`, `CellMessage`, dataset broadcast, or a resident `Vec` of all historical descriptors. An uncommitted cell-local flush is staging only.
 
-- [ ] **Step 4: Add corruption/membership tests**
+- [ ] **Step 4: Verify corruption/membership tests**
 
-Add `receipt_binds_cell_range_count_length_and_digest`, `conflicting_retry_is_rejected`, and `cell_flush_is_not_globally_visible`. Include one >queue-byte-limit fixture proving producer backpressure and bounded task count.
+Confirm the Step-1 digest, conflict, visibility, and backpressure cases pass.
 
 - [ ] **Step 5: Verify GREEN and commit**
 
@@ -546,16 +598,16 @@ git commit -m "feat(cellular): prepare content-addressed cell result partitions"
 
 ### Task C6: Controller-Last Checkpoint and Result Convergence
 
-**Dependencies:** C5 and local checkpoint/result compaction with `PreparedReportCommit` ordering.
+**Dependencies:** C5 and checkpoint/result Task 6D with `PreparedReportCommit` ordering.
 
 **Files:**
 - Create: `rust/runtime/src/engine/cellular_streaming_convergence.rs`
+- Modify: `rust/runtime/src/engine/mod.rs`
 - Modify: `rust/runtime/src/engine/cellular_streaming_controller.rs`
 - Modify: `rust/runtime/src/engine/cellular_controller.rs:707-900`
 - Modify: `rust/runtime/src/engine/cellular_controller.rs:1419-1605`
 - Modify: `rust/runtime/src/engine/coordinator.rs:483-540`
 - Test: `rust/runtime/tests/streaming_cellular_convergence.rs`
-- Test: `rust/e2e-tests/tests/test_streaming_checkpoint_results.rs`
 
 **Produces:**
 
@@ -588,6 +640,8 @@ pub(crate) struct CheckpointParticipantSet<'a> {
 
 - [ ] **Step 1: Add the exact-set/CAS RED test**
 
+Also add `cell_restart_retransmit_converges_once`, `controller_restart_ignores_uncommitted_cell_flush`, `gap_or_overlap_prevents_global_commit`, and `final_generation_precedes_compaction_and_report_commit` before the RED run.
+
 ```rust
 #[tokio::test(flavor = "current_thread")]
 async fn controller_commits_only_after_exact_partition_set_is_verified() {
@@ -613,9 +667,9 @@ CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime -
 
 At the barrier, freeze the expected `(cell, worker, projection, sequence range, membership)` set. Receive through the bounded authenticated stream; validate plan/schema/ownership epoch/count/length/digest and exact disjoint coverage before staging bytes. Stage every cell result plus every stable participant in one `StreamingGenerationTransaction`; commit the global generation once and only then call `checkpoint_committed` in frozen order. Missing cells, gaps, overlap, conflicting duplicates, topology mismatch, or stale CAS leave the previous generation authoritative. On controller restart, ignore unreachable cell staging and restore only the last committed global root.
 
-- [ ] **Step 4: Add restart and final report-order tests**
+- [ ] **Step 4: Verify restart and final report-order tests**
 
-Add `cell_restart_retransmit_converges_once`, `controller_restart_ignores_uncommitted_cell_flush`, `gap_or_overlap_prevents_global_commit`, and `final_generation_precedes_compaction_and_report_commit`. The last test must observe this order: final checkpoint CAS; leased compaction; durable report rename; synchronous `PreparedReportCommit`; retention-lease release.
+Confirm the Step-1 restart/convergence cases pass. The final-order test must observe: final checkpoint CAS; leased compaction; durable report rename; synchronous `PreparedReportCommit`; retention-lease release.
 
 - [ ] **Step 5: Verify runtime GREEN**
 
@@ -623,18 +677,12 @@ Add `cell_restart_retransmit_converges_once`, `controller_restart_ignores_uncomm
 CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime --features streaming,cellular --test streaming_cellular_convergence
 ```
 
-- [ ] **Step 6: Verify product E2E GREEN**
-
-```bash
-CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-e2e-tests --test test_streaming_checkpoint_results cellular_streaming_checkpoint_results -- --exact
-```
-
-- [ ] **Step 7: Graham review, behavior review, and commit**
+- [ ] **Step 6: Graham review, behavior review, and commit**
 
 Review authentication ordering, boundedness, all cancellation joins, `Clock` use, logical membership, final-generation/report ordering, and absence of dataset-broadcast/per-action-driver reuse. Then commit only this slice:
 
 ```bash
-git add rust/runtime/src/engine/cellular_streaming_convergence.rs rust/runtime/src/engine/cellular_streaming_controller.rs rust/runtime/src/engine/cellular_controller.rs rust/runtime/src/engine/coordinator.rs rust/runtime/tests/streaming_cellular_convergence.rs rust/e2e-tests/tests/test_streaming_checkpoint_results.rs
+git add rust/runtime/src/engine/mod.rs rust/runtime/src/engine/cellular_streaming_convergence.rs rust/runtime/src/engine/cellular_streaming_controller.rs rust/runtime/src/engine/cellular_controller.rs rust/runtime/src/engine/coordinator.rs rust/runtime/tests/streaming_cellular_convergence.rs
 git commit -m "feat(cellular): commit global streaming results last"
 ```
 
@@ -648,7 +696,6 @@ CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo clippy -p aiperf-runtime
 CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime --features streaming,cellular --lib cellular::streaming_protocol::tests
 CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime --features streaming,cellular --lib engine::cellular_registration::tests
 CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime --features streaming,cellular --test streaming_cellular_placement --test streaming_cellular_migration --test streaming_cellular_results --test streaming_cellular_convergence
-CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-e2e-tests --test test_streaming_cellular --test test_streaming_checkpoint_results
 ```
 
 Completion requires fresh evidence that:

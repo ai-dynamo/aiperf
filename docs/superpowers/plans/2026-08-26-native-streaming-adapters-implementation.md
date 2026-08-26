@@ -17,12 +17,13 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Global Constraints
 
-- Requires foundation Tasks 0, 1A-1E, 2, and checkpoint Tasks 5A-5E.
+- Requires the integrated contract foundation through Task 1E and registry Task 2. Each adapter implements checkpoint participant state from Tasks 5A-5B; it does not depend on a concrete checkpoint backend/coordinator.
 - Source and format worktrees never edit one another's modules or select one another by concrete type.
 - Every acquired/decoded value retains its item+byte lease until incorporation or terminal handoff.
 - Blocking file, network-body, Arrow, sort, digest, and catalog work uses `StreamingBlockingExecutor`.
 - No adapter calls `SystemTime`, `Instant`, Tokio timers, or Python.
-- All tests run from repository `rust/` with `CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target`.
+- Cargo commands run from the nested `rust/` workspace; git commands run from the repository root. Tests use `CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target`.
+- Each task includes the nearest parent module declaration required for its own GREEN build; declaration conflicts are resolved during integration.
 
 ## File Structure
 
@@ -47,6 +48,7 @@ rust/runtime/src/streaming/formats/streaming_dynamo.rs strict Dynamo decoder
 **Files:**
 - Create: `rust/runtime/src/streaming/sources.rs`
 - Create: `rust/runtime/src/streaming/sources/local.rs`
+- Modify: `rust/runtime/src/streaming.rs`
 - Test: `rust/runtime/tests/streaming_local_source.rs`
 
 **Interfaces:**
@@ -83,8 +85,8 @@ Expected: FAIL because `LocalSourceFactory` and fixture do not exist.
 ```rust
 #[async_trait(?Send)]
 impl StreamingDatasetSource for LocalSource {
-    async fn next_event(&mut self) -> Result<SourceEvent, StreamingSourceError>;
-    fn control(&self) -> StreamingSourceControl;
+    fn snapshot(&self) -> &SourceSnapshotReceipt;
+    async fn next_event(&mut self) -> Result<SourceEvent, StreamSourceError>;
 }
 
 #[async_trait(?Send)]
@@ -108,7 +110,7 @@ Run the Step 2 command. Expected: PASS for deterministic order, pending/seal, mu
 - [ ] **Step 5: Commit**
 
 ```bash
-git add rust/runtime/src/streaming/sources.rs rust/runtime/src/streaming/sources/local.rs rust/runtime/tests/streaming_local_source.rs
+git add rust/runtime/src/streaming.rs rust/runtime/src/streaming/sources.rs rust/runtime/src/streaming/sources/local.rs rust/runtime/tests/streaming_local_source.rs
 git commit -m "feat(dataset): add bounded local streaming source"
 ```
 
@@ -117,11 +119,12 @@ git commit -m "feat(dataset): add bounded local streaming source"
 **Files:**
 - Create: `rust/runtime/src/streaming/formats.rs`
 - Create: `rust/runtime/src/streaming/formats/jsonl.rs`
+- Modify: `rust/runtime/src/streaming.rs`
 - Test: `rust/runtime/tests/streaming_jsonl_format.rs`
 
 **Interfaces:**
-- Consumes: `StreamingDatasetFormatFactory`, `StreamingDatasetFormat`, `StreamingPartitionDecoder`, `PartitionAccess`, `DecodeStep`.
-- Produces: format ID `streaming_jsonl_v1`; strict `JsonlRecordV1`; exact byte/line cursor.
+- Consumes: `StreamingDatasetFormatFactory`, `StreamingDatasetFormat`, `StreamingPartitionDecoder`, `AcquiredPartition`, `DecodeStep`.
+- Produces: format ID `jsonl`; strict `JsonlRecordV1`; exact byte/line cursor.
 
 - [ ] **Step 1: Write the RED blocked-output/cursor test**
 
@@ -130,12 +133,17 @@ git commit -m "feat(dataset): add bounded local streaming source"
 async fn blocked_output_stops_reading_and_restore_starts_at_next_record() {
     let access = CountingPartitionAccess::jsonl(3, 256);
     let mut decoder = jsonl_decoder(access.clone(), StreamingBudget::items_and_bytes(1, 64));
-    let first = decoder.next_step().await.unwrap().into_fragment().unwrap();
+    let first = decoder.next_batch(DecodeBatchBudget::items_and_bytes(1, 64)).await.unwrap()
+        .into_fragment().unwrap();
     assert_eq!(access.completed_reads(), 1);
-    let state = decoder.checkpoint_view(&barrier()).await.unwrap();
+    let state = decoder.resume_state().unwrap();
     drop(first);
     let mut restored = restore_jsonl_decoder(access, state).await;
-    assert_eq!(restored.next_step().await.unwrap().record_ordinal(), 1);
+    assert_eq!(
+        restored.next_batch(DecodeBatchBudget::items_and_bytes(1, 64)).await.unwrap()
+            .record_ordinal(),
+        1,
+    );
 }
 ```
 
@@ -150,8 +158,9 @@ Expected: FAIL because the format is unregistered.
 ```rust
 #[async_trait(?Send)]
 impl StreamingPartitionDecoder for JsonlPartitionDecoder {
-    async fn next_step(&mut self) -> Result<DecodeStep, StreamingFormatError>;
-    async fn cancel_and_join(&mut self) -> Result<(), StreamingFormatError>;
+    async fn next_batch(&mut self, budget: DecodeBatchBudget)
+        -> Result<DecodeStep, StreamFormatError>;
+    fn resume_state(&self) -> Result<DecoderResumeState, StreamFormatError>;
 }
 ```
 
@@ -164,7 +173,7 @@ Run Step 2. Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add rust/runtime/src/streaming/formats.rs rust/runtime/src/streaming/formats/jsonl.rs rust/runtime/tests/streaming_jsonl_format.rs
+git add rust/runtime/src/streaming.rs rust/runtime/src/streaming/formats.rs rust/runtime/src/streaming/formats/jsonl.rs rust/runtime/tests/streaming_jsonl_format.rs
 git commit -m "feat(dataset): decode bounded streaming JSONL"
 ```
 
@@ -173,6 +182,7 @@ git commit -m "feat(dataset): decode bounded streaming JSONL"
 **Files:**
 - Create: `rust/runtime/src/streaming/sources/hf_hub.rs`
 - Create: `rust/runtime/src/streaming/sources/hf_catalog.rs`
+- Modify: `rust/runtime/src/streaming/sources.rs`
 - Modify: `rust/runtime/src/dataset/loader/public.rs`
 - Test: `rust/runtime/tests/streaming_hf_source.rs`
 
@@ -208,7 +218,7 @@ Run Step 2. Expected: PASS for revision drift, incomplete inventory refusal, mil
 - [ ] **Step 5: Commit**
 
 ```bash
-git add rust/runtime/src/streaming/sources/hf_hub.rs rust/runtime/src/streaming/sources/hf_catalog.rs rust/runtime/src/dataset/loader/public.rs rust/runtime/tests/streaming_hf_source.rs
+git add rust/runtime/src/streaming/sources.rs rust/runtime/src/streaming/sources/hf_hub.rs rust/runtime/src/streaming/sources/hf_catalog.rs rust/runtime/src/dataset/loader/public.rs rust/runtime/tests/streaming_hf_source.rs
 git commit -m "feat(dataset): stream pinned Hugging Face shards"
 ```
 
@@ -216,11 +226,12 @@ git commit -m "feat(dataset): stream pinned Hugging Face shards"
 
 **Files:**
 - Create: `rust/runtime/src/streaming/formats/baseten.rs`
+- Modify: `rust/runtime/src/streaming/formats.rs`
 - Modify: `rust/runtime/src/dataset/loader/baseten.rs`
 - Test: `rust/runtime/tests/streaming_baseten_format.rs`
 
 **Interfaces:**
-- Produces: format ID `baseten`; projected one-pass decoder and exact two-pass disk-index mode; cursor `(object, row_group, row, decoder_digest)`.
+- Produces: format ID `baseten_trace`; projected one-pass decoder and exact two-pass disk-index mode; cursor `(object, row_group, row, decoder_digest)`.
 
 - [ ] **Step 1: Write the RED differential test**
 
@@ -251,7 +262,7 @@ Run Step 2. Expected: PASS for parity, cross-shard session, blocked output, over
 - [ ] **Step 5: Commit**
 
 ```bash
-git add rust/runtime/src/streaming/formats/baseten.rs rust/runtime/src/dataset/loader/baseten.rs rust/runtime/tests/streaming_baseten_format.rs
+git add rust/runtime/src/streaming/formats.rs rust/runtime/src/streaming/formats/baseten.rs rust/runtime/src/dataset/loader/baseten.rs rust/runtime/tests/streaming_baseten_format.rs
 git commit -m "feat(dataset): stream Baseten parquet traces"
 ```
 
@@ -259,6 +270,7 @@ git commit -m "feat(dataset): stream Baseten parquet traces"
 
 **Files:**
 - Create: `rust/runtime/src/streaming/formats/streaming_dynamo.rs`
+- Modify: `rust/runtime/src/streaming/formats.rs`
 - Modify: `rust/runtime/src/graph/recorded/dynamo/schema.rs`
 - Modify: `rust/runtime/src/graph/recorded/dynamo/mod.rs`
 - Test: `rust/runtime/tests/streaming_dynamo_format.rs`
@@ -294,7 +306,7 @@ Run Step 2. Expected: PASS including finite golden regression, duplicate idempot
 - [ ] **Step 5: Commit**
 
 ```bash
-git add rust/runtime/src/streaming/formats/streaming_dynamo.rs rust/runtime/src/graph/recorded/dynamo/schema.rs rust/runtime/src/graph/recorded/dynamo/mod.rs rust/runtime/tests/streaming_dynamo_format.rs
+git add rust/runtime/src/streaming/formats.rs rust/runtime/src/streaming/formats/streaming_dynamo.rs rust/runtime/src/graph/recorded/dynamo/schema.rs rust/runtime/src/graph/recorded/dynamo/mod.rs rust/runtime/tests/streaming_dynamo_format.rs
 git commit -m "feat(dataset): decode strict streaming Dynamo traces"
 ```
 
@@ -304,6 +316,7 @@ git commit -m "feat(dataset): decode strict streaming Dynamo traces"
 - Create: `rust/runtime/src/streaming/sources/s3_client.rs`
 - Create: `rust/runtime/src/streaming/sources/aws_s3_client.rs`
 - Create: `rust/runtime/src/streaming/sources/s3.rs`
+- Modify: `rust/runtime/src/streaming/sources.rs`
 - Test: `rust/runtime/tests/streaming_s3_source.rs`
 
 **Interfaces:**
@@ -342,12 +355,12 @@ Notifications are hints; reconciliation is authority. Pagination never advances 
 
 - [ ] **Step 4: Verify green and feature-off absence**
 
-Run Step 2, then `CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo check -p aiperf-runtime --no-default-features --features engine`. Expected: S3 tests pass and lean engine has no S3 descriptor.
+Run Step 2, then `CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime --no-default-features --features streaming --test streaming_feature_inventory streaming_without_s3_omits_s3_capabilities -- --exact`. Expected: lightweight streaming retains its local factories while the S3 source and object-store checkpoint factories are absent.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add rust/runtime/src/streaming/sources/s3_client.rs rust/runtime/src/streaming/sources/aws_s3_client.rs rust/runtime/src/streaming/sources/s3.rs rust/runtime/tests/streaming_s3_source.rs
+git add rust/runtime/src/streaming/sources.rs rust/runtime/src/streaming/sources/s3_client.rs rust/runtime/src/streaming/sources/aws_s3_client.rs rust/runtime/src/streaming/sources/s3.rs rust/runtime/tests/streaming_s3_source.rs
 git commit -m "feat(dataset): follow immutable S3 partitions"
 ```
 

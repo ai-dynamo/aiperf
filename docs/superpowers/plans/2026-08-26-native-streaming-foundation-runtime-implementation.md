@@ -30,7 +30,8 @@ SPDX-License-Identifier: Apache-2.0
 - Library APIs use explicit error enums with `Display` and `Error`; `anyhow` stays at engine/application boundaries.
 - Every public item has `///` documentation. Every new Rust file has exactly the two NVIDIA SPDX lines and `//!` module documentation.
 - Each task has one focused test-suite invocation, two reviews, one focused commit, and no unrelated changes.
-- Run commands from the nested `rust/` workspace after activating `/home/anthony/nvidia/projects/aiperf/ajc/rust/.venv/bin/activate`.
+- Cargo commands run from the nested `rust/` workspace after activating `/home/anthony/nvidia/projects/aiperf/ajc/rust/.venv/bin/activate`; git commands run from the repository root.
+- Each task includes the nearest parent module declaration required for its own GREEN build; declaration conflicts are resolved during integration.
 - Use `CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target` for every Cargo command.
 
 ---
@@ -54,7 +55,7 @@ rust/runtime/src/config/model/dataset_stream.rs strict public Config-v2 types
 rust/runtime/src/engine/execute/capture_service.rs reusable finite/streaming construction
 ```
 
-Task ordering is strict through Task 1E: `0 → 1A → 1B → 1C → 1D → 1E`. After Task 1E merges, Tasks 2 and 4A may run in parallel. Task 3 depends on Task 2. Task 4B depends on Task 4A. Task 7A depends on Tasks 1D and the checkpoint participant vocabulary from master Task 5A; do not start 7A before that merge.
+The cross-plan foundation order is `0 → 1A → 1B → 1C → checkpoint 5A → checkpoint 5B → 1D → 1E`. The checkpoint slices land the participant/backend vocabulary that source, format, session, and action traits extend. After Task 1E merges, Tasks 2 and 4A may run in parallel. Task 3 depends on Task 2. Task 4B depends on Task 4A. Task 7A depends on Tasks 1D and 5A.
 
 ### Task 0: Freeze Native Streaming Features and Dependencies
 
@@ -184,7 +185,7 @@ git commit -m "build: add native streaming feature gates"
 
 **Interfaces:**
 - Consumes: BLAKE3 and Serde.
-- Produces: checked `EventTimeUtc`, `SourcePosition`, `ImmutableObjectIdentity`, `StableRecordId`, `StableSessionKey`, `StableActionId`, `AttemptId`, `LogicalReplayRunId`, `RunIncarnationId`, `StableOrderKey`, `UnitProvenance`, `StreamingSessionFragment`, and `ExecutableDatasetAction`.
+- Produces: checked `EventTimeUtc`, `SourcePosition`, `GlobalSequence`, `ImmutableObjectIdentity`, `StableRecordId`, `StableSessionKey`, `StableActionId`, `ActionAttemptId`, `LogicalReplayRunId`, `RunIncarnationId`, `StableOrderKey`, `UnitProvenance`, `StreamingSessionFragment`, and `ExecutableDatasetAction`.
 
 The public identity constructors are:
 
@@ -194,7 +195,20 @@ pub fn physical_record_id(
     partition_generation: &ImmutableObjectIdentity,
     decoder_coordinate: &[u8],
     format_semantic_digest: &[u8; 32],
-) -> PhysicalRecordId;
+) -> StableRecordId;
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct GlobalSequence(u64);
+
+impl GlobalSequence {
+    pub const fn new(value: u64) -> Self { Self(value) }
+    pub const fn get(self) -> u64 { self.0 }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct ContentDigest([u8; 32]);
 
 pub fn stable_record_id_from_key(namespace: &[u8], producer_key: &[u8]) -> StableRecordId;
 pub fn stable_session_key(namespace: &[u8], producer_key: &[u8]) -> StableSessionKey;
@@ -210,11 +224,18 @@ pub fn attempt_id(
     action: StableActionId,
     incarnation: RunIncarnationId,
     attempt_ordinal: u64,
-) -> AttemptId;
+) -> ActionAttemptId;
 pub fn classify_logical_duplicate(
     existing: &LogicalRecordReceipt,
     candidate: &LogicalRecordReceipt,
 ) -> Result<DuplicateDisposition, IdentityError>;
+
+pub struct LogicalRecordReceipt {
+    pub record_id: StableRecordId,
+    pub content_digest: ContentDigest,
+}
+
+pub enum DuplicateDisposition { Identical, New }
 ```
 
 - [ ] **Step 1: Add representative RED identity tests**
@@ -325,6 +346,14 @@ pub enum SessionMutationV1 {
     GraphEdge(GraphEdgeFragment),
     SessionClose(SessionCloseFragment),
 }
+
+pub struct ConversationTurnFragment { pub role: String, pub content: Vec<u8>, pub turn_ordinal: u64 }
+pub struct AgentEventFragment { pub event_kind: String, pub payload: Vec<u8>, pub event_ordinal: u64 }
+pub struct GraphNodeFragment { pub node_key: String, pub request: Vec<u8> }
+pub struct GraphEdgeFragment { pub from: String, pub to: String }
+pub struct SessionCloseFragment { pub reason: String }
+
+pub struct SessionFragmentLease { _private: () }
 
 #[derive(Clone, Debug)]
 pub struct StreamingSessionFragment {
@@ -505,6 +534,18 @@ CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime -
 
 Use one fixed count of accepted `spawn_blocking` jobs guarded before enqueue. Retain accepted join handles in a slab whose entries are removed when joined; never use Tokio's global blocking queue as capacity authority. `BlockingCancellation` wraps an atomic flag; long work calls `is_cancelled()` between bounded chunks. `BudgetedBlockingOutput<T>` owns its output-byte lease and dereferences to `T` without exposing the permit.
 
+```rust
+pub struct BudgetedBlockingOutput<T> {
+    value: T,
+    lease: BudgetLease,
+}
+
+impl<T> std::ops::Deref for BudgetedBlockingOutput<T> {
+    type Target = T;
+    fn deref(&self) -> &T { &self.value }
+}
+```
+
 - [ ] **Step 4: Run the suite and verify GREEN**
 
 Run the Step 2 command.
@@ -523,13 +564,13 @@ git commit -m "feat(runtime): add bounded streaming blocking owner"
 - Create: `rust/runtime/src/streaming/format.rs`
 - Create: `rust/runtime/src/streaming/session.rs`
 - Create: `rust/runtime/src/streaming/action.rs`
-- Create: `rust/runtime/src/streaming/checkpoint.rs`
+- Modify: `rust/runtime/src/streaming/checkpoint.rs`
 - Modify: `rust/runtime/src/streaming.rs`
 - Test: `rust/runtime/tests/streaming_contracts.rs`
 
 **Interfaces:**
-- Consumes: Tasks 1A–1C types.
-- Produces: the five extension factory contracts, runtime source/decoder/session/action contracts, checkpoint participant/backend contracts, and backend-facing result vocabulary. Exact method signatures follow.
+- Consumes: Tasks 1A–1C plus checkpoint Tasks 5A-5B, which already own the participant/backend traits and backend-facing result vocabulary.
+- Produces: source, format, session-program, action-sink, and checkpoint-backend factory contracts plus runtime source/decoder/session/action contracts. Exact new method signatures follow.
 
 ```rust
 pub trait StreamingDatasetSourceFactory: std::fmt::Debug + Send + Sync {
@@ -539,6 +580,10 @@ pub trait StreamingDatasetSourceFactory: std::fmt::Debug + Send + Sync {
     fn prepare(&self, config: Box<dyn ValidatedStreamingSourceConfig>, context: &StreamingSourcePrepareContext)
         -> Result<Box<dyn PreparedStreamingDatasetSource>, StreamSourceError>;
 }
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct DatasetActionSchema(String);
 
 #[async_trait::async_trait(?Send)]
 pub trait PreparedStreamingDatasetSource {
@@ -677,17 +722,6 @@ pub trait StreamingActionDriverControl {
     async fn cancel_inflight(&self) -> Result<ActionCancelReceipt, ActionExecutionError>;
 }
 
-#[async_trait::async_trait(?Send)]
-pub trait StreamingCheckpointParticipant {
-    fn participant_id(&self) -> CheckpointParticipantId;
-    async fn checkpoint_view(&mut self, barrier: &CheckpointBarrier)
-        -> Result<PreparedParticipantState, CheckpointError>;
-    async fn initialize(&mut self, state: Option<CommittedParticipantState>)
-        -> Result<(), CheckpointError>;
-    async fn checkpoint_committed(&mut self, receipt: &CommittedParticipantReceipt)
-        -> Result<(), CheckpointError>;
-}
-
 pub trait StreamingCheckpointBackendFactory: std::fmt::Debug + Send + Sync {
     fn descriptor(&self) -> &'static StreamingCheckpointBackendDescriptor;
     fn validate(
@@ -702,52 +736,9 @@ pub trait StreamingCheckpointBackendFactory: std::fmt::Debug + Send + Sync {
     ) -> Result<Box<dyn StreamingCheckpointBackend>, CheckpointError>;
 }
 
-#[async_trait::async_trait(?Send)]
-pub trait StreamingCheckpointBackend {
-    async fn open_latest(&self, run: &StreamRunIdentity)
-        -> Result<Option<Box<dyn LeasedGenerationReader>>, CheckpointError>;
-    async fn begin_generation(
-        &self,
-        expected: Option<CheckpointGeneration>,
-    ) -> Result<Box<dyn StreamingGenerationTransaction>, CheckpointError>;
-}
-
-#[async_trait::async_trait(?Send)]
-pub trait LeasedGenerationReader {
-    fn generation(&self) -> &CommittedCheckpointGeneration;
-    async fn scan_result_index(
-        &self,
-        after: Option<ResultIndexCursor>,
-        budget: ResultIndexReadBudget,
-    ) -> Result<ResultIndexPage, CheckpointError>;
-    async fn read_segment(
-        &self,
-        descriptor: &ResultSegmentDescriptor,
-    ) -> Result<ResultSegmentReader, CheckpointError>;
-    async fn read_participant(
-        &self,
-        descriptor: &ParticipantStateDescriptor,
-    ) -> Result<CommittedParticipantState, CheckpointError>;
-}
-
-#[async_trait::async_trait(?Send)]
-pub trait StreamingGenerationTransaction {
-    async fn stage_participant(
-        &mut self,
-        state: PreparedParticipantState,
-    ) -> Result<(), CheckpointError>;
-    async fn stage_results(
-        &mut self,
-        partitions: Vec<ResultPartition>,
-    ) -> Result<PreparedResultEpoch, CheckpointError>;
-    async fn commit(
-        self: Box<Self>,
-        metadata: CheckpointCommitMetadata,
-    ) -> Result<CommittedCheckpointGeneration, CheckpointError>;
-}
 ```
 
-Also define `StreamingCheckpointBackend`, `LeasedGenerationReader`, and `StreamingGenerationTransaction` exactly as the spec, including `open_latest`, `begin_generation`, paged result index reads, participant state reads, immutable result-segment reads, staging participant/result data, and CAS commit. Put `ResultPartition`, `PreparedResultEpoch`, `ResultIndexCursor`, `ResultIndexReadBudget`, `ResultIndexPage`, `ResultSegmentDescriptor`, and `ResultSegmentReader` in `checkpoint.rs` now so later results code does not create a cycle.
+Task 1D consumes, and must not redefine, the exact `StreamingCheckpointParticipant`, `StreamingCheckpointBackend`, `LeasedGenerationReader`, `StreamingGenerationTransaction`, and backend-facing result DTOs landed by checkpoint Tasks 5A-5B. The checkpoint factory above is the only new checkpoint-facing interface in this task.
 
 - [ ] **Step 1: Add compile-time RED contract checks**
 
@@ -1160,7 +1151,7 @@ CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime -
 
 - [ ] **Step 3: Implement reservation-before-issue**
 
-The streaming caller asynchronously reserves item+estimated bytes before the synchronous issue call. Settlement moves that permit into `TerminalWork`; `submit` cannot block or fail for capacity after reservation. One `spawn_local` drain owner invokes the existing processors in order. It retains the first typed failure, counts later failures, wakes the phase owner, and never stores a per-record `JoinHandle` or error string.
+Capability agreement constructs a conservative `TerminalRecordSizeBound` from endpoint response limits, maximum output tokens/bytes, usage/metric envelopes, and the configured raw-capture policy. If no finite bound can be proven, streaming execution is refused before dispatch. The streaming caller asynchronously reserves one item plus that exact conservative maximum before issue; settlement computes the actual terminal size, verifies it is within the validated bound, shrinks the owned byte lease to actual size, and moves it into `TerminalWork`. Add RED cases `unbounded_terminal_payload_is_refused_before_dispatch` and `actual_terminal_bytes_never_exceed_reserved_bound`. Settlement cannot block or fail for capacity after reservation. One `spawn_local` drain owner invokes existing processors in order, retains the first typed failure plus bounded counters, wakes the phase owner, and never stores a per-record `JoinHandle` or error string.
 
 - [ ] **Step 4: Bound active session numbering without changing finite IDs**
 
@@ -1457,5 +1448,5 @@ Then run `cargo fmt --check` and `cargo clippy -p aiperf-runtime --all-targets -
 
 - Spec invariants covered here: stable topology-independent identity; typed source/format/session/action/checkpoint seams; bounded memory and blocking ownership; feature-accurate absence; strict resource ownership; cross-format capability agreement; bounded terminal processing; reusable phase/capture construction; one immutable UTC anchor; deterministic event-time ordering; no task per far-future action.
 - Deferred intentionally to later subsystem plans: checkpoint storage implementation, result segments/compaction, session state machines, pipeline execution, concrete local/HF/Baseten/Dynamo/S3 adapters, executable shadow workload, graph action sink, sensitive state, and cellular execution.
-- Type consistency: Task 1D owns all factory and checkpoint I/O vocabulary; Task 2 registers those exact traits; Task 3 references their descriptor lookups; Task 4A consumes Task 1B permits; Task 7A consumes Task 1A IDs, Task 1B budget, and Task 5A checkpoint cuts.
+- Type consistency: checkpoint Tasks 5A-5B own participant/backend I/O vocabulary; Task 1D owns the five factory and source/format/session/action contracts; Task 2 registers those exact traits; Task 3 references their descriptor lookups; Task 4A consumes Task 1B permits; Task 7A consumes Task 1A IDs, Task 1B budget, and Task 5A checkpoint cuts.
 - Placeholder scan: production registration is deliberately absent until executable implementations exist; no task asks for a rejecting placeholder, temporary workload, source-format switch, or `NativeDatasetPlan` variant.

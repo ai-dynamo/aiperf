@@ -17,8 +17,9 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Global Constraints
 
-- Prerequisites are the integrated Task 0–4B commits from the master streaming plan: feature gates, streaming vocabulary/traits, registries/config, bounded terminal lane, epoch-capable worker metrics, and reusable phase/capture construction.
-- Work from `rust/`; every command below is one targeted test-suite invocation and uses `CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target`.
+- Task 5A prerequisites are foundation Tasks 0 and 1A-1C. Task 5B follows 5A; foundation Task 1D then consumes these exact checkpoint contracts. Later checkpoint/result tasks declare their additional terminal/capture/registry dependencies explicitly.
+- Cargo commands run from the nested `rust/` workspace; git commands run from the repository root. Every targeted test-suite invocation uses `CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target`.
+- Each task includes the nearest parent module declaration required for its own GREEN build. The integration owner resolves overlapping declaration edits during the required `--no-ff` merge.
 - Checkpoint and result library APIs use explicit `CheckpointError`/`ResultPlaneError`, never `anyhow`.
 - `checkpoint_view` is non-destructive. No participant releases live state until the backend has returned a committed generation and `checkpoint_committed` is delivered.
 - The generation record is the only authority. A result head, report file, flush, or participant-local cursor cannot advance independently.
@@ -36,6 +37,8 @@ rust/runtime/src/streaming/checkpoint_backend.rs         # backend/transaction/l
 rust/runtime/src/streaming/checkpoints/memory.rs         # executable reference backend
 rust/runtime/src/streaming/checkpoints/local.rs          # durable local object store and CURRENT CAS
 rust/runtime/src/streaming/checkpoints/lease_gc.rs       # reader/prepare leases and mark-grace-sweep
+rust/runtime/src/streaming/checkpoints/none.rs           # explicit no-resume backend capability
+rust/runtime/src/streaming/checkpoints/object_store.rs   # conditional object-store generation backend
 rust/runtime/src/streaming/checkpoint_coordinator.rs     # barrier and post-CAS notification owner
 rust/runtime/src/streaming/results.rs                    # capture plan, correlation, public result DTOs
 rust/runtime/src/streaming/results/index.rs              # bounded persistent content-addressed index
@@ -50,11 +53,12 @@ rust/runtime/tests/streaming_result_index.rs
 rust/runtime/tests/streaming_result_epochs.rs
 rust/runtime/tests/streaming_result_finalization.rs
 rust/runtime/tests/support/streaming_checkpoint.rs
+rust/runtime/tests/support/streaming_checkpoint_coordinator.rs
 ```
 
 Existing integration anchors:
 
-- Extend `rust/runtime/src/metrics.rs:220` (`NativeMetricsObserver`) with epoch rotation supplied by Task 4A; do not create a second metrics vocabulary.
+- Extend `rust/runtime/src/metrics.rs:220` (`NativeMetricsObserver`) with epoch rotation in Task 6B; do not create a second metrics vocabulary.
 - Consume `rust/runtime/src/metrics_core/ingest.rs:136` (`RecordIngest`) and `rust/runtime/src/metrics_core/accumulator.rs:456` (`MetricsAccumulator`).
 - Extend bounded summary fields at `rust/runtime/src/metrics_core/report.rs:1082` (`NativeReport`).
 - Join captured terminal facts at `rust/runtime/src/engine/records.rs:51` (`CapturedRecord`); do not write checkpoint authority through `record_lane.rs:228` (`RecordArtifactLane`).
@@ -76,19 +80,24 @@ mod support;
       |-> 5C local durability -----> 5D leases/GC --.
       |-> 6A result index --------------------------+-> 6B epochs/holes/partial
       `-> 5E coordinator/post-CAS ------------------'          |
-                                                               `-> 6C final/aborted/delivery matrix
+                                                               `-> 6C final/aborted/delivery matrix -> 6D report order
+
+2 + 5C -> 5F1 local/none factories
+5B + 5E + 5F1 + A6 -> 5F2 object CAS
+5D + 5F2 + P6 -> 5F3 object leases/GC/encryption
 ```
 
-After 5B merges, two worktrees may run concurrently: one owns 5C then 5D; the other owns 6A. A third worktree may run 5E because it owns only `checkpoint_coordinator.rs` and its test. Merge 5C before starting 5D. Merge 5D, 5E, and 6A before cutting 6B. Task 6C is serialized after 6B. Only the integration owner edits module declarations when each reviewed task merges.
+After 5B merges, two worktrees may run concurrently: one owns 5C; the other owns 6A. A third worktree may run 5E because it owns only `checkpoint_coordinator.rs` and its dedicated support/test files. Merge 5C and 6A before starting 5D. Merge 5D, 5E, and 6A before cutting 6B. Tasks 6C and 6D serialize after 6B. Each worktree lands the minimal parent module declaration needed to compile; the integration owner resolves declaration conflicts. Tasks 5F1-5F3 follow their explicit cross-plan prerequisites.
 
 ---
 
 ### Task 5A: Typed Cuts and Stable Checkpoint Participants
 
-**Depends on:** master Tasks 0–4B.
+**Depends on:** foundation Tasks 0 and 1A-1C.
 
 **Files:**
-- Modify: `rust/runtime/src/streaming/checkpoint.rs` after the Task-1 participant trait declarations.
+- Create: `rust/runtime/src/streaming/checkpoint.rs`; Task 5A owns the participant declaration consumed by foundation Task 1D.
+- Modify: `rust/runtime/src/streaming.rs`
 - Create: `rust/runtime/tests/support/streaming_checkpoint.rs`
 - Create: `rust/runtime/tests/streaming_checkpoint_participants.rs`
 
@@ -294,7 +303,7 @@ Run the Step-2 command. Expected: all typed-domain, duplicate-ID, one-shot initi
 - [ ] **Step 5: Commit**
 
 ```bash
-git add rust/runtime/src/streaming/checkpoint.rs rust/runtime/tests/support/streaming_checkpoint.rs rust/runtime/tests/streaming_checkpoint_participants.rs
+git add rust/runtime/src/streaming.rs rust/runtime/src/streaming/checkpoint.rs rust/runtime/tests/support/streaming_checkpoint.rs rust/runtime/tests/streaming_checkpoint_participants.rs
 git commit -m "feat(runtime): define streaming checkpoint cuts"
 ```
 
@@ -304,9 +313,10 @@ git commit -m "feat(runtime): define streaming checkpoint cuts"
 
 **Files:**
 - Create: `rust/runtime/src/streaming/checkpoint_backend.rs`
+- Create: `rust/runtime/src/streaming/checkpoints.rs`
 - Create: `rust/runtime/src/streaming/checkpoints/memory.rs`
 - Create: `rust/runtime/src/streaming/results.rs`
-- Extend: `rust/runtime/tests/support/streaming_checkpoint.rs`
+- Modify: `rust/runtime/src/streaming.rs`
 - Create: `rust/runtime/tests/streaming_checkpoint_backend.rs`
 
 **Produces these exact interfaces:**
@@ -504,7 +514,7 @@ Run Step 2. Expected: atomic participant+result publication, stale-writer refusa
 - [ ] **Step 5: Commit**
 
 ```bash
-git add rust/runtime/src/streaming/checkpoint_backend.rs rust/runtime/src/streaming/checkpoints/memory.rs rust/runtime/src/streaming/results.rs rust/runtime/tests/support/streaming_checkpoint.rs rust/runtime/tests/streaming_checkpoint_backend.rs
+git add rust/runtime/src/streaming.rs rust/runtime/src/streaming/checkpoint_backend.rs rust/runtime/src/streaming/checkpoints.rs rust/runtime/src/streaming/checkpoints/memory.rs rust/runtime/src/streaming/results.rs rust/runtime/tests/support/streaming_checkpoint.rs rust/runtime/tests/streaming_checkpoint_backend.rs
 git commit -m "feat(runtime): add atomic checkpoint backend contract"
 ```
 
@@ -514,6 +524,7 @@ git commit -m "feat(runtime): add atomic checkpoint backend contract"
 
 **Files:**
 - Create: `rust/runtime/src/streaming/checkpoints/local.rs`
+- Modify: `rust/runtime/src/streaming/checkpoints.rs`
 - Extend: `rust/runtime/tests/support/streaming_checkpoint.rs`
 - Create: `rust/runtime/tests/streaming_local_checkpoint.rs`
 
@@ -595,7 +606,7 @@ Run Step 2. Expected: every fault exposes a complete prior/next generation, two 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add rust/runtime/src/streaming/checkpoints/local.rs rust/runtime/tests/support/streaming_checkpoint.rs rust/runtime/tests/streaming_local_checkpoint.rs
+git add rust/runtime/src/streaming/checkpoints.rs rust/runtime/src/streaming/checkpoints/local.rs rust/runtime/tests/support/streaming_checkpoint.rs rust/runtime/tests/streaming_local_checkpoint.rs
 git commit -m "feat(runtime): persist atomic local checkpoints"
 ```
 
@@ -606,6 +617,7 @@ git commit -m "feat(runtime): persist atomic local checkpoints"
 **Files:**
 - Create: `rust/runtime/src/streaming/checkpoints/lease_gc.rs`
 - Modify: `rust/runtime/src/streaming/checkpoints/local.rs`
+- Modify: `rust/runtime/src/streaming/checkpoints.rs`
 - Extend: `rust/runtime/tests/support/streaming_checkpoint.rs`
 - Create: `rust/runtime/tests/streaming_checkpoint_gc.rs`
 
@@ -670,7 +682,7 @@ Run Step 2. Expected: committed, prepared, reader, and compactor objects survive
 - [ ] **Step 5: Commit**
 
 ```bash
-git add rust/runtime/src/streaming/checkpoints/lease_gc.rs rust/runtime/src/streaming/checkpoints/local.rs rust/runtime/tests/support/streaming_checkpoint.rs rust/runtime/tests/streaming_checkpoint_gc.rs
+git add rust/runtime/src/streaming/checkpoints.rs rust/runtime/src/streaming/checkpoints/lease_gc.rs rust/runtime/src/streaming/checkpoints/local.rs rust/runtime/tests/support/streaming_checkpoint.rs rust/runtime/tests/streaming_checkpoint_gc.rs
 git commit -m "feat(runtime): lease and collect checkpoint objects"
 ```
 
@@ -680,7 +692,8 @@ git commit -m "feat(runtime): lease and collect checkpoint objects"
 
 **Files:**
 - Create: `rust/runtime/src/streaming/checkpoint_coordinator.rs`
-- Extend: `rust/runtime/tests/support/streaming_checkpoint.rs`
+- Modify: `rust/runtime/src/streaming.rs`
+- Create: `rust/runtime/tests/support/streaming_checkpoint_coordinator.rs`
 - Create: `rust/runtime/tests/streaming_checkpoint_coordinator.rs`
 
 **Produces:** `StreamingCheckpointCoordinator::commit_barrier`, exact participant-set enforcement, and idempotent post-CAS notification retry.
@@ -698,17 +711,20 @@ impl StreamingCheckpointCoordinator {
 - [ ] **Step 1: Write representative RED tests**
 
 ```rust
+#[path = "support/streaming_checkpoint_coordinator.rs"]
+mod coordinator_support;
+
 #[tokio::test(flavor = "current_thread")]
 async fn post_commit_failure_does_not_roll_back_authoritative_head() {
-    let mut fixture = support::coordinator_fixture();
+    let mut fixture = coordinator_support::coordinator_fixture();
     fixture.participant("session").fail_first_commit_notification();
     let error = fixture.coordinator.commit_barrier(
-        support::barrier_at(3),
+        coordinator_support::barrier_at(3),
         Vec::new(),
     ).await.unwrap_err();
     assert!(matches!(error, CheckpointError::PostCommitNotification { .. }));
     let latest = fixture.backend.open_latest(&fixture.run).await.unwrap().unwrap();
-    assert_eq!(latest.generation().generation(), support::generation(1));
+    assert_eq!(latest.generation().generation(), coordinator_support::generation(1));
     fixture.restore_and_replay_notifications().await.unwrap();
     assert_eq!(fixture.participant("session").commit_notifications(), 1);
 }
@@ -745,13 +761,221 @@ Run Step 2. Expected: exact set, no-notify-before-CAS, frozen order, retry, and 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add rust/runtime/src/streaming/checkpoint_coordinator.rs rust/runtime/tests/support/streaming_checkpoint.rs rust/runtime/tests/streaming_checkpoint_coordinator.rs
+git add rust/runtime/src/streaming.rs rust/runtime/src/streaming/checkpoint_coordinator.rs rust/runtime/tests/support/streaming_checkpoint_coordinator.rs rust/runtime/tests/streaming_checkpoint_coordinator.rs
 git commit -m "feat(runtime): coordinate checkpoint publication"
+```
+
+### Task 5F1: Built-In Local and None Backend Factories
+
+**Depends on:** Tasks 2 and 5C.
+
+**Files:**
+- Create: `rust/runtime/src/streaming/checkpoints/none.rs`
+- Create: `rust/runtime/src/streaming/checkpoint_factories.rs`
+- Modify: `rust/runtime/src/streaming/checkpoints.rs`
+- Modify: `rust/runtime/src/extensions/mod.rs`
+- Test: `rust/runtime/tests/streaming_checkpoint_factories.rs`
+
+**Produces these exact built-ins:**
+
+```rust
+pub const LOCAL_CHECKPOINT_BACKEND_ID: &str = "local";
+pub const NONE_CHECKPOINT_BACKEND_ID: &str = "none";
+```
+
+- [ ] **Step 1: Write the RED registry test**
+
+```rust
+#[test]
+fn local_and_none_factories_are_registered() {
+    let registry = frozen_streaming_registry();
+    assert!(registry.stream_checkpoint_backend_factory("local").is_some());
+    assert!(registry.stream_checkpoint_backend_factory("none").is_some());
+}
+```
+
+- [ ] **Step 2: Verify RED**
+
+```bash
+CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime --features streaming --test streaming_checkpoint_factories
+```
+
+Expected: built-in factories are absent.
+
+- [ ] **Step 3: Implement the two factories**
+
+`local` prepares Task-5C storage. `none` advertises no resume, durable reader, encrypted state, or report-retention capability and refuses `begin_generation`; checkpoint mode `none` bypasses checkpoint coordination without a resume claim.
+
+- [ ] **Step 4: Verify GREEN**
+
+Run Step 2. Expected: registry inventory and `none` capability/refusal cases pass.
+
+- [ ] **Step 5: Review and commit**
+
+```bash
+git add rust/runtime/src/streaming/checkpoints.rs rust/runtime/src/streaming/checkpoints/none.rs rust/runtime/src/streaming/checkpoint_factories.rs rust/runtime/src/extensions/mod.rs rust/runtime/tests/streaming_checkpoint_factories.rs
+git commit -m "feat(runtime): register local checkpoint backends"
+```
+
+### Task 5F2: Conditional Object-Store CAS Backend
+
+**Depends on:** Tasks 5B, 5E, 5F1, and adapter Task A6.
+
+**Files:**
+- Create: `rust/runtime/src/streaming/checkpoints/object_store.rs`
+- Modify: `rust/runtime/src/streaming/checkpoints.rs`
+- Modify: `rust/runtime/src/streaming/checkpoint_factories.rs`
+- Modify: `rust/runtime/src/extensions/mod.rs`
+- Modify: `rust/runtime/src/streaming/sources/aws_s3_client.rs` only to expose shared AWS client construction, never source listing authority.
+- Test: `rust/runtime/tests/streaming_object_checkpoint.rs`
+
+**Produces the conditional capability and a bounded object I/O contract:**
+
+```rust
+pub const OBJECT_STORE_CHECKPOINT_BACKEND_ID: &str = "object_store";
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ObjectKey(String);
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ObjectVersion(String);
+pub struct PointerObject { pub bytes: Bytes, pub digest: ContentDigest }
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ObjectReadRange { pub offset: u64, pub length: u64 }
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ObjectReadBudget { pub max_chunk_bytes: usize }
+pub struct BudgetOwnedObjectChunk { pub bytes: Bytes, pub lease: BudgetLease }
+
+#[async_trait(?Send)]
+pub trait BudgetOwnedObjectReader {
+    fn content_length(&self) -> u64;
+    fn content_digest(&self) -> ContentDigest;
+    async fn next_chunk(&mut self, max_bytes: usize)
+        -> Result<Option<BudgetOwnedObjectChunk>, CheckpointError>;
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CheckpointFailureCode {
+    ObjectLimitExceeded,
+    ConditionalWriteUnsupported,
+    StaleWriter,
+    Provider,
+}
+
+#[async_trait(?Send)]
+pub trait ConditionalObjectStore: Debug + Send + Sync {
+    async fn put_immutable(
+        &self,
+        object: Box<dyn BudgetOwnedObjectReader>,
+    ) -> Result<ObjectVersion, CheckpointError>;
+    async fn compare_and_swap_pointer(
+        &self,
+        key: &ObjectKey,
+        expected: Option<&ObjectVersion>,
+        next: PointerObject,
+    ) -> Result<ObjectVersion, CheckpointError>;
+    async fn get_version_range(
+        &self,
+        key: &ObjectKey,
+        version: &ObjectVersion,
+        range: ObjectReadRange,
+        budget: ObjectReadBudget,
+    ) -> Result<BudgetOwnedObjectChunk, CheckpointError>;
+}
+```
+
+`BudgetOwnedObjectReader` yields bounded chunks while retaining byte permits. `BudgetOwnedObjectChunk` owns its permit until drop. `ObjectReadRange` is checked before provider I/O, and provider metadata whose declared object/page/chunk length exceeds the configured limit is rejected before allocation. This trait has no list/reconcile operation and is not implemented in terms of the S3 source trait.
+
+- [ ] **Step 1: Write RED bounded-I/O and CAS tests**
+
+```rust
+#[tokio::test(flavor = "current_thread")]
+async fn object_pointer_cas_publishes_exactly_one_complete_generation() {
+    let store = FakeConditionalObjectStore::new(object_io_budget(64 * 1024));
+    let backend = object_backend(store.clone());
+    let left = prepared_transaction(&backend, None, 1).await;
+    let right = prepared_transaction(&backend, None, 1).await;
+    assert!(left.commit(metadata(1)).await.is_ok() ^ right.commit(metadata(1)).await.is_ok());
+    assert!(store.current_pointer_references_only_verified_objects());
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn oversized_metadata_is_rejected_before_allocation() {
+    let store = FakeConditionalObjectStore::declaring_length(usize::MAX);
+    let error = object_backend(store.clone()).restore_current(read_budget(4096)).await.unwrap_err();
+    assert_eq!(error.code(), CheckpointFailureCode::ObjectLimitExceeded);
+    assert_eq!(store.allocated_bytes(), 0);
+}
+```
+
+- [ ] **Step 2: Verify RED**
+
+```bash
+CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime --features streaming-s3 --test streaming_object_checkpoint
+```
+
+- [ ] **Step 3: Implement bounded immutable uploads and pointer CAS**
+
+Write and verify immutable participant/result/index/generation objects before conditionally replacing one pointer using the exact prior provider version. Stream uploads and ranged restores under permits; never assemble a complete multi-GiB object in `Bytes`. Register `object_store` only under `streaming-s3`. Providers without exact conditional pointer update fail capability agreement before effects.
+
+- [ ] **Step 4: Verify GREEN**
+
+Run Step 2. Expected: stale-writer, every-upload-fault, CAS, crash-after-CAS, feature inventory, oversized-metadata, and bounded chunk high-water cases pass.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add rust/runtime/src/streaming/checkpoints.rs rust/runtime/src/streaming/checkpoints/object_store.rs rust/runtime/src/streaming/checkpoint_factories.rs rust/runtime/src/extensions/mod.rs rust/runtime/src/streaming/sources/aws_s3_client.rs rust/runtime/tests/streaming_object_checkpoint.rs
+git commit -m "feat(runtime): add bounded object checkpoint CAS"
+```
+
+### Task 5F3: Object-Store Leases, GC, and Encrypted-State Capability
+
+**Depends on:** Tasks 5D, 5F2, and sensitive-state Task P6.
+
+**Files:**
+- Modify: `rust/runtime/src/streaming/checkpoints/object_store.rs`
+- Modify: `rust/runtime/src/streaming/checkpoint_factories.rs`
+- Test: `rust/runtime/tests/streaming_object_checkpoint_retention.rs`
+
+- [ ] **Step 1: Write RED retention tests**
+
+```rust
+#[tokio::test(flavor = "current_thread")]
+async fn leased_reader_survives_bounded_mark_grace_sweep() {
+    let (backend, store, clock) = object_backend_with_manual_clock(gc_page_limit(8));
+    let lease = backend.open_generation(committed_generation()).await.unwrap();
+    publish_and_age_successors(&backend, &clock).await;
+    backend.collect_garbage().await.unwrap();
+    assert!(lease.read_manifest(read_budget(4096)).await.is_ok());
+    assert!(store.max_list_page_items() <= 8);
+    assert!(store.max_live_chunk_bytes() <= 4096);
+}
+```
+
+- [ ] **Step 2: Verify RED**
+
+```bash
+CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime --features streaming-s3 --test streaming_object_checkpoint_retention
+```
+
+- [ ] **Step 3: Implement retention and capability agreement**
+
+Implement renewable generation/prepare leases and bounded mark/grace/sweep traversal. Every list page and read chunk owns permits; traversal state is cursor-bounded. Advertise encrypted-sensitive-state capability only when Task-P6 key resolution and authenticated encryption are available. GC must retain committed, prepared, and reader-leased generations and must not inspect source objects.
+
+- [ ] **Step 4: Verify GREEN**
+
+Run Step 2. Expected: lease renewal/expiry, prepared-generation retention, bounded GC, encryption capability/refusal, and provider-fault cases pass.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add rust/runtime/src/streaming/checkpoints/object_store.rs rust/runtime/src/streaming/checkpoint_factories.rs rust/runtime/tests/streaming_object_checkpoint_retention.rs
+git commit -m "feat(runtime): retain object checkpoint generations"
 ```
 
 ### Task 6A: Result Vocabulary, Membership, and Persistent Bounded Index
 
-**Depends on:** Task 5B and master Task 4A terminal/metrics rotation.
+**Depends on:** Task 5B. Task 6B later joins these result identities to Task-4 terminal capture and metrics rotation.
 
 **Files:**
 - Modify: `rust/runtime/src/streaming/results.rs`
@@ -880,6 +1104,7 @@ git commit -m "feat(runtime): index streaming result segments"
 
 **Files:**
 - Create: `rust/runtime/src/streaming/results/epoch.rs`
+- Modify: `rust/runtime/src/streaming/results.rs`
 - Modify: `rust/runtime/src/metrics.rs` at `NativeMetricsObserver`.
 - Modify: `rust/runtime/src/metrics_core/report.rs` at `NativeReport`.
 - Extend: `rust/runtime/tests/support/streaming_checkpoint.rs`
@@ -896,6 +1121,14 @@ pub struct CommittedPartialResult {
     pub incomplete_session_count: u64,
     pub metrics: BTreeMap<String, MetricEntry>,
     pub provisional: Option<ProvisionalDashboardSummary>,
+}
+
+pub struct WorkerResultEpoch {
+    pub generation: CheckpointGeneration,
+    pub worker_id: u32,
+    pub first_sequence: GlobalSequence,
+    pub last_sequence: GlobalSequence,
+    pub partitions: Vec<ResultPartition>,
 }
 
 impl EpochResultCoordinator {
@@ -960,7 +1193,7 @@ Run Step 2. Expected: long-hole capacity, backpressure, hole closure, exact/sket
 - [ ] **Step 5: Commit**
 
 ```bash
-git add rust/runtime/src/streaming/results/epoch.rs rust/runtime/src/metrics.rs rust/runtime/src/metrics_core/report.rs rust/runtime/tests/support/streaming_checkpoint.rs rust/runtime/tests/streaming_result_epochs.rs
+git add rust/runtime/src/streaming/results.rs rust/runtime/src/streaming/results/epoch.rs rust/runtime/src/metrics.rs rust/runtime/src/metrics_core/report.rs rust/runtime/tests/support/streaming_checkpoint.rs rust/runtime/tests/streaming_result_epochs.rs
 git commit -m "feat(runtime): rotate checkpoint result epochs"
 ```
 
@@ -1093,9 +1326,77 @@ git add rust/runtime/src/streaming/results.rs rust/runtime/src/streaming/results
 git commit -m "feat(runtime): finalize checkpointed streaming results"
 ```
 
+### Task 6D: Coordinator Report-Persistence and Lease Ordering
+
+**Depends on:** Task 6C.
+
+**Files:**
+- Modify: `rust/runtime/src/engine/coordinator.rs:483-538`
+- Test in: `rust/runtime/src/engine/coordinator.rs`
+
+**Produces:** the generic non-cellular and cellular ordering final generation CAS → leased compaction → durable report rename → synchronous `PreparedReportCommit::commit` → report-retention lease release.
+
+- [ ] **Step 1: Add the in-module RED test**
+
+```rust
+#[test]
+fn streaming_report_persists_before_commit_lease_release() {
+    let fixture = report_persistence_fixture();
+    let events = fixture.events();
+    persist_prepared_report(
+        fixture.outcome(),
+        fixture.report_run_metadata(),
+        fixture.report_path(),
+        fixture.artifact_dir(),
+        fixture.export_config(),
+        fixture.exporters(),
+    ).unwrap();
+    assert_eq!(
+        events.borrow().as_slice(),
+        ["final_generation", "compact", "report_rename", "report_commit", "lease_release"],
+    );
+}
+
+#[test]
+fn streaming_report_failure_retains_generation_and_skips_commit_hook() {
+    let fixture = failing_report_persistence_fixture();
+    assert!(persist_prepared_report(
+        fixture.outcome(),
+        fixture.report_run_metadata(),
+        fixture.report_path(),
+        fixture.artifact_dir(),
+        fixture.export_config(),
+        fixture.exporters(),
+    ).is_err());
+    assert!(fixture.final_generation_is_reconstructable());
+    assert_eq!(fixture.report_commit_calls(), 0);
+}
+```
+
+- [ ] **Step 2: Verify RED**
+
+```bash
+CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime --features streaming,parquet --lib engine::coordinator::tests::streaming_report_
+```
+
+- [ ] **Step 3: Integrate without exposing private helpers**
+
+Keep `persist_prepared_report` private. Thread `PreparedStreamingReport` through `PreparedRunOutcome`, persist the authoritative native report with the existing atomic file path, and call the synchronous commit hook only after rename succeeds. On failure, preserve the leased generation/diagnostic root for reconstruction and do not call the hook.
+
+- [ ] **Step 4: Verify GREEN**
+
+Run Step 2. Expected: both success ordering and persistence-failure retention tests pass in one suite invocation.
+
+- [ ] **Step 5: Review and commit**
+
+```bash
+git add rust/runtime/src/engine/coordinator.rs
+git commit -m "feat(engine): commit streaming report lease after persistence"
+```
+
 ## Completion Audit
 
-Before merging Task 6C, verify the following evidence is present in the named task suite:
+Before merging Task 6D, verify the following evidence is present in the named task suite:
 
 - `streaming_checkpoint_participants`: six distinct cuts, exact stable participant plan, one-shot restore, non-destructive view.
 - `streaming_checkpoint_backend`: atomic participant+result transaction, stale writer conflict, RAII abort.

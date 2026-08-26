@@ -21,7 +21,8 @@ SPDX-License-Identifier: Apache-2.0
 - No `NativeDatasetPlan::Streaming`, complete `GraphTraceProgram`, per-action boxed driver, unbounded queue/task/vector, or Python path.
 - One profiling phase in generation 1; warmup/live-profile combinations fail during capability agreement.
 - Every accepted action reaches exactly one terminal receipt; checkpoint cuts remain typed by stage.
-- All commands run from `rust/` with the shared `/mnt/4tb` target.
+- Cargo commands run from the nested `rust/` workspace; git commands run from the repository root. All builds use the shared `/mnt/4tb` target.
+- Each task includes the nearest parent module declaration required for its own GREEN build; declaration conflicts are resolved during integration.
 
 ---
 
@@ -34,7 +35,13 @@ SPDX-License-Identifier: Apache-2.0
 
 **Interfaces:**
 - Consumes: `StreamingSessionProgramFactory`, `StreamingSessionCoordinator`, `StreamingCheckpointParticipant`, `StreamingSessionFragment`.
-- Produces: `StreamingConversationCoordinator`; `SessionCausalFrontier`; explicit closure/eviction policy.
+- Produces and registers session-program ID `conversation`; `StreamingConversationCoordinator`; `SessionCausalFrontier`; explicit inactivity/watermark/sealed-source closure and bounded-state refusal/drop/fail policy.
+
+```rust
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct SessionStateVersion(u64);
+```
 
 - [ ] **Step 1: Write the RED continuity test**
 
@@ -42,12 +49,13 @@ SPDX-License-Identifier: Apache-2.0
 #[tokio::test(flavor = "current_thread")]
 async fn one_conversation_spans_partitions_and_checkpoint() {
     let mut sessions = conversation_coordinator(session_budget(2, 4096));
-    sessions.apply(fragment("s", 0, "hello")).unwrap();
-    sessions.on_partition_end(partition(0)).unwrap();
+    let mut output = CollectingActionSink::default();
+    sessions.ingest(fragment("s", 0, "hello"), &mut output).await.unwrap();
+    // Partition EOF is a decoder event and deliberately does not call session seal.
     let saved = sessions.checkpoint_view(&barrier()).await.unwrap();
     let mut restored = restore_conversations(saved).await;
-    let actions = restored.apply(fragment("s", 1, "again")).unwrap();
-    assert_eq!(actions[0].messages(), ["hello", "again"]);
+    restored.ingest(fragment("s", 1, "again"), &mut output).await.unwrap();
+    assert_eq!(output.actions().last().unwrap().messages(), ["hello", "again"]);
     assert_eq!(restored.active_session_count(), 1);
 }
 ```
@@ -61,15 +69,18 @@ Run: `CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-run
 ```rust
 #[async_trait(?Send)]
 impl StreamingSessionCoordinator for StreamingConversationCoordinator {
-    fn apply(&mut self, fragment: BudgetedSessionFragment)
-        -> Result<Vec<BudgetedDatasetAction>, SessionProgramError>;
-    fn causal_frontier(&self) -> SessionCausalFrontier;
-    fn on_action_event(&mut self, event: DatasetActionEvent)
-        -> Result<Vec<BudgetedDatasetAction>, SessionProgramError>;
+    async fn ingest(&mut self, fragment: StreamingSessionFragment, output: &mut dyn DatasetActionSink)
+        -> Result<(), SessionCoordinatorError>;
+    async fn advance_watermark(&mut self, watermark: SessionWatermark, output: &mut dyn DatasetActionSink)
+        -> Result<(), SessionCoordinatorError>;
+    async fn observe_execution(&mut self, event: ActionExecutionEvent, output: &mut dyn DatasetActionSink)
+        -> Result<(), SessionCoordinatorError>;
+    async fn seal(&mut self, seal: SourceSeal, output: &mut dyn DatasetActionSink)
+        -> Result<SessionSealReceipt, SessionCoordinatorError>;
 }
 ```
 
-Key state by `(stream_identity, StableSessionKey)`. Partition EOF never closes a session. Identical producer mutations are idempotent; conflicting content fails. Explicit close becomes terminal only after declared actions. Checkpoint complete state/spill or roll decoded horizon back before the first unrepresented mutation.
+Key state by `(stream_identity, StableSessionKey)`. Partition EOF never closes a session. Identical producer mutations are idempotent; conflicting content fails. Explicit close becomes terminal only after declared actions. Add named cases `bounded_inactivity_closes_only_below_soft_watermark`, `hard_session_watermark_closes_exactly_once`, `sealed_source_rejects_incomplete_session`, `external_sort_proves_finite_completeness`, `indefinite_follow_waits_for_missing_predecessor`, and `unbounded_session_without_spill_or_drop_fail_is_refused`. Checkpoint complete state/spill or roll decoded horizon back before the first unrepresented mutation.
 
 - [ ] **Step 4: Verify green**
 
@@ -82,7 +93,60 @@ git add rust/runtime/src/streaming/session.rs rust/runtime/src/streaming/session
 git commit -m "feat(runtime): preserve conversations across stream chunks"
 ```
 
+### Task P1B: Session Closure and Bounded Causality Policies
+
+**Depends on:** Task P1.
+
+**Files:**
+- Modify: `rust/runtime/src/streaming/session/conversation.rs`
+- Test: `rust/runtime/tests/streaming_session_closure.rs`
+
+**Produces:** `SessionClosurePolicy`, `MissingPredecessorPolicy`, externally sorted finite completeness receipts, and explicit refusal when neither a finite bound nor spill/drop/fail policy exists.
+
+- [ ] **Step 1: Write the RED policy matrix**
+
+```rust
+#[tokio::test(flavor = "current_thread")]
+async fn closure_requires_authored_proof_not_partition_eof() {
+    let cases = [
+        closure_case("inactivity", Evidence::SoftWatermarkBelowDeadline, Outcome::Close),
+        closure_case("hard_watermark", Evidence::HardWatermarkPastSession, Outcome::Close),
+        closure_case("sealed_incomplete", Evidence::FiniteSealWithGap, Outcome::Fail),
+        closure_case("external_sort", Evidence::CompleteSortedRun, Outcome::Close),
+        closure_case("follow_gap", Evidence::PartitionEofWithMissingPredecessor, Outcome::Wait),
+    ];
+    for case in cases {
+        assert_eq!(run_closure_case(case).await, case.expected);
+    }
+}
+
+#[test]
+fn unbounded_session_without_spill_drop_or_fail_is_refused() {
+    assert_eq!(validate_session_limits(unbounded_without_policy()).unwrap_err().code(),
+        SessionFailureCode::UnboundedCausalityState);
+}
+```
+
+- [ ] **Step 2: Verify RED**
+
+Run: `CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime --features streaming --test streaming_session_closure`
+
+- [ ] **Step 3: Implement explicit closure proofs**
+
+Partition EOF is never closure evidence. Inactivity closes only below the soft event-time watermark; hard session watermarks close exactly once; a finite seal fails incomplete sessions; external sort closes only from a verified complete run; indefinite follow waits for a missing predecessor. Charge active frontier, pending predecessor, and spill descriptors to configured item/byte budgets.
+
+- [ ] **Step 4: Verify GREEN and commit**
+
+Run Step 2, then commit:
+
+```bash
+git add rust/runtime/src/streaming/session/conversation.rs rust/runtime/tests/streaming_session_closure.rs
+git commit -m "feat(runtime): bound streaming session closure"
+```
+
 ### Task P2: Multiplexed Action Host and State-Only Sink
+
+**Depends on:** Task P1B.
 
 **Files:**
 - Create: `rust/runtime/src/streaming/action/host.rs`
@@ -92,6 +156,20 @@ git commit -m "feat(runtime): preserve conversations across stream chunks"
 
 **Interfaces:**
 - Produces: `StreamingActionHost`, `ActiveExecutionSet`, exact schema binding map, one submitter/driver/control triple per binding, and built-in `session_state` action sink.
+
+```rust
+pub struct ActiveExecutionSet {
+    entries: BTreeMap<StableActionId, ActiveExecution>,
+    budget: StreamingResourceBudget,
+}
+
+pub struct ActiveExecution {
+    pub submitted: SubmittedAction,
+    pub last_event_ordinal: u64,
+    pub terminal_receipt: Option<ActionTerminalReceipt>,
+    pub lease: BudgetLease,
+}
+```
 
 - [ ] **Step 1: Write the RED lifecycle test**
 
@@ -115,7 +193,7 @@ Run: `CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-run
 - [ ] **Step 3: Implement run-scoped multiplexing**
 
 ```rust
-pub struct PreparedActionBinding {
+pub struct PreparedStreamingActionBinding {
     pub submitter: Box<dyn StreamingActionSubmitter>,
     pub driver: Box<dyn StreamingActionDriver>,
     pub control: Box<dyn StreamingActionDriverControl>,
@@ -137,14 +215,120 @@ git commit -m "feat(runtime): multiplex streaming action bindings"
 
 ### Task P3: Bounded Pipeline and Local Placement
 
+**Depends on:** Tasks P2, 5E, 6B, and 7A.
+
 **Files:**
 - Create: `rust/runtime/src/streaming/pipeline.rs`
 - Create: `rust/runtime/src/streaming/placement.rs`
+- Modify: `rust/runtime/src/streaming.rs`
 - Test: `rust/runtime/tests/streaming_pipeline_sim.rs`
 
 **Interfaces:**
 - Consumes: prepared source/format/session/action components, event-time policy, checkpoint coordinator, result epoch control.
-- Produces: `StreamingPipeline::run`, `StreamingPipelineControl`, `LocalStreamingPlacement`.
+- Produces: `StreamingPipeline::run`, `StreamingPipelineControl`, the exact placement contracts below, `ActiveExecutionSet`, and bounded `LocalStreamingPlacement`.
+
+```rust
+pub struct StreamingPhaseContext {
+    pub clock: Rc<dyn Clock>,
+    pub checkpoint: StreamingCheckpointCoordinator,
+    pub results: EpochResultCoordinator,
+    pub stop: StreamingStopReceiver,
+}
+
+pub enum StreamingTerminalReason { Sealed, Cancelled, Failed }
+
+pub struct StreamingRunOutcome {
+    pub terminal_reason: StreamingTerminalReason,
+    pub prepared_report: Option<PreparedStreamingReport>,
+    pub last_committed_generation: Option<CommittedCheckpointGeneration>,
+}
+```
+
+```rust
+pub trait StreamingPlacementPolicy: StreamingCheckpointParticipant {
+    fn place(&mut self, action: &OrderedDatasetAction)
+        -> Result<PlacementDecision, PlacementError>;
+}
+
+#[async_trait(?Send)]
+pub trait StreamingPlacementSubmitter {
+    async fn prepare(&mut self, decision: PlacementDecision, action: OrderedDatasetAction)
+        -> Result<PlacementHandle, PlacementError>;
+    async fn release(&mut self, handle: PlacementHandleId) -> Result<(), PlacementError>;
+}
+
+#[async_trait(?Send)]
+pub trait StreamingPlacementDriver: StreamingCheckpointParticipant {
+    async fn next_event(&mut self) -> Result<PlacementEvent, PlacementError>;
+    async fn drain(&mut self) -> Result<(), PlacementError>;
+}
+
+#[async_trait(?Send)]
+pub trait StreamingPlacementControl {
+    fn stop_preparing(&self);
+    fn cancel_pending(&self);
+    async fn cancel_inflight(&self) -> Result<(), PlacementError>;
+}
+
+pub enum PlacementEvent {
+    Prepared(PlacementPreparedReceipt),
+    Released(PlacementReleasedReceipt),
+    Action(ActionExecutionEvent),
+    Failed(PlacementFailureReceipt),
+}
+
+pub struct PreparedStreamingPlacementBinding {
+    pub submitter: Box<dyn StreamingPlacementSubmitter>,
+    pub driver: Box<dyn StreamingPlacementDriver>,
+    pub control: Box<dyn StreamingPlacementControl>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct SessionOwnershipEpoch(u64);
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct PlacementHandleId(u64);
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PlacementDecision {
+    pub route_id: u32,
+    pub destination_cell: Option<u32>,
+    pub ownership_epoch: SessionOwnershipEpoch,
+}
+
+pub struct PlacementHandle {
+    pub id: PlacementHandleId,
+    pub action_id: StableActionId,
+    pub global_sequence: GlobalSequence,
+    pub ownership_epoch: SessionOwnershipEpoch,
+}
+
+pub struct PlacementPreparedReceipt {
+    pub handle: PlacementHandleId,
+    pub content_digest: ContentDigest,
+}
+
+pub struct PlacementReleasedReceipt {
+    pub handle: PlacementHandleId,
+}
+
+pub struct PlacementFailureReceipt {
+    pub handle: Option<PlacementHandleId>,
+    pub code: PlacementFailureCode,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlacementFailureCode {
+    RouteUnavailable,
+    StaleOwnershipEpoch,
+    DigestMismatch,
+    Cancelled,
+}
+```
 
 - [ ] **Step 1: Write the RED backpressure/shutdown test**
 
@@ -180,6 +364,8 @@ impl StreamingPipeline {
 
 Pull a new unit only when the next stage owns permits. Prefer inline/fused calls on the worker `LocalSet`; bounded leased channels are allowed only at measured concurrency boundaries. `Pending`, `Seal`, and `Cancelled` remain distinct. Shutdown fences admission, wakes pending source/decode/order, drains or cancels accepted actions through phase policy, checkpoints only a valid cut, and joins all owners.
 
+`LocalStreamingPlacement` implements the same policy/submitter/driver/control split as cellular without a transport hop. Placement policy, placement driver, and `ActiveExecutionSet` are stable checkpoint participants; dynamic handles are aggregated beneath them. `PlacementEvent::Action` is the only route back into session state.
+
 - [ ] **Step 4: Verify green**
 
 Run Step 2. Expected: PASS for finite seal, quiet follow, source error, permits, cross-partition session, checkpoint, and shutdown.
@@ -187,11 +373,13 @@ Run Step 2. Expected: PASS for finite seal, quiet follow, source error, permits,
 - [ ] **Step 5: Commit**
 
 ```bash
-git add rust/runtime/src/streaming/pipeline.rs rust/runtime/src/streaming/placement.rs rust/runtime/tests/streaming_pipeline_sim.rs
+git add rust/runtime/src/streaming.rs rust/runtime/src/streaming/pipeline.rs rust/runtime/src/streaming/placement.rs rust/runtime/tests/streaming_pipeline_sim.rs
 git commit -m "feat(runtime): compose bounded streaming pipeline"
 ```
 
 ### Task P4: Scheduled-Request Sink and Executable Shadow Workload
+
+**Depends on:** Tasks P3, 4B, and 6D plus adapter Tasks A1-A2.
 
 **Files:**
 - Create: `rust/runtime/src/streaming/action/scheduled_request.rs`
@@ -225,13 +413,12 @@ Run: `CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-run
 - [ ] **Step 3: Implement through existing execution seams**
 
 ```rust
-#[async_trait(?Send)]
 impl PreparedRunnerOperation for ShadowReplayPreparedOperation {
-    async fn execute(self: Box<Self>) -> anyhow::Result<PreparedRunOutcome>;
+    fn execute(self: Box<Self>) -> anyhow::Result<PreparedRunOutcome>;
 }
 ```
 
-Materialize requests through the selected endpoint, submit through extracted dispatcher/runtime facilities, and translate observer events to action events without new token-path hooks. Prepare every selected factory once, initialize participants before polling, and register the workload only in this executable commit. Refuse unsupported phase/resource/exporter/accuracy combinations during validation.
+Materialize requests through the selected endpoint, submit through extracted dispatcher/runtime facilities, and translate observer events to action events without new token-path hooks. Produce and register the `scheduled_request` action-sink factory and the `shadow_replay` workload only in this executable commit. Prepare every selected factory once and initialize participants before polling. Refuse unsupported phase/resource/exporter/accuracy combinations during validation.
 
 - [ ] **Step 4: Verify green**
 
@@ -246,9 +433,13 @@ git commit -m "feat(engine): execute native streaming shadow replay"
 
 ### Task P5: Incremental Agent/Graph Sessions
 
+**Depends on:** Tasks P1 and P2.
+
 **Files:**
 - Create: `rust/runtime/src/streaming/session/agent_graph.rs`
 - Create: `rust/runtime/src/streaming/action/graph.rs`
+- Modify: `rust/runtime/src/streaming/session.rs`
+- Modify: `rust/runtime/src/streaming/action.rs`
 - Test: `rust/runtime/tests/streaming_graph_sessions.rs`
 
 **Interfaces:**
@@ -284,21 +475,35 @@ Run Step 2. Expected: PASS for multi-chunk graph, duplicates/conflicts, retry at
 - [ ] **Step 5: Commit**
 
 ```bash
-git add rust/runtime/src/streaming/session/agent_graph.rs rust/runtime/src/streaming/action/graph.rs rust/runtime/tests/streaming_graph_sessions.rs
+git add rust/runtime/src/streaming/session.rs rust/runtime/src/streaming/action.rs rust/runtime/src/streaming/session/agent_graph.rs rust/runtime/src/streaming/action/graph.rs rust/runtime/tests/streaming_graph_sessions.rs
 git commit -m "feat(graph): execute cross-chunk streaming sessions"
 ```
 
 ### Task P6: Recorded and Encrypted Target-Closed-Loop Policies
 
+**Depends on:** Tasks P1 and P4.
+
 **Files:**
 - Create: `rust/runtime/src/streaming/sensitive_state.rs`
+- Modify: `rust/runtime/src/streaming.rs`
+- Create: `rust/runtime/src/engine/streaming_secrets.rs`
 - Modify: `rust/runtime/src/streaming/session.rs`
-- Modify: `rust/runtime/src/engine/context.rs`
+- Modify: `rust/runtime/src/engine/registry.rs:1113-1160` (`RunContext`)
 - Modify: `rust/runtime/src/engine/application.rs`
 - Test: `rust/runtime/tests/streaming_sensitive_state.rs`
 
 **Interfaces:**
 - Produces: `StreamingSensitiveStateKeyResolver`; `SensitiveStateKey { key_id, key: Zeroizing<[u8; 32]> }`; versioned XChaCha20-Poly1305 envelope; `recorded_inputs` and `target_closed_loop` policies.
+
+```rust
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct SensitiveStateKeyId(String);
+
+pub struct SensitiveStateKey {
+    pub key_id: SensitiveStateKeyId,
+    pub key: Zeroizing<[u8; 32]>,
+}
+```
 
 - [ ] **Step 1: Write the RED policy/envelope test**
 
@@ -336,14 +541,86 @@ Run Step 2. Expected: PASS for divergent target behavior, correct restart, wrong
 - [ ] **Step 5: Commit**
 
 ```bash
-git add rust/runtime/src/streaming/sensitive_state.rs rust/runtime/src/streaming/session.rs rust/runtime/src/engine/context.rs rust/runtime/src/engine/application.rs rust/runtime/tests/streaming_sensitive_state.rs
+git add rust/runtime/src/streaming.rs rust/runtime/src/streaming/sensitive_state.rs rust/runtime/src/streaming/session.rs rust/runtime/src/engine/streaming_secrets.rs rust/runtime/src/engine/registry.rs rust/runtime/src/engine/application.rs rust/runtime/tests/streaming_sensitive_state.rs
 git commit -m "feat(runtime): protect target-closed-loop session state"
+```
+
+### Task P7: Streaming-Plane Observability
+
+**Depends on:** Tasks P3, P4, 6B, and 7A.
+
+**Files:**
+- Create: `rust/runtime/src/streaming/observability.rs`
+- Modify: `rust/runtime/src/streaming.rs`
+- Modify: `rust/runtime/src/metrics_core/report.rs`
+- Test: `rust/runtime/tests/streaming_observability.rs`
+
+**Produces:** one bounded `StreamingPlaneMetrics` snapshot populated at stage boundaries, never from per-token callbacks.
+
+```rust
+pub struct StreamingDistributionSnapshot { pub count: u64, pub sum_ns: u128, pub max_ns: u64 }
+pub struct QueueHighWater { pub items: usize, pub bytes: usize, pub item_limit: usize, pub byte_limit: usize }
+pub enum StreamingStage { Source, Acquire, Decode, Order, Session, Placement, Action, Terminal, Result }
+pub enum StreamingDropReason { Late, Overload, AuthoredPolicy, Duplicate }
+pub struct CheckpointHorizonSnapshot {
+    pub acquired: GlobalSequence,
+    pub decoded: GlobalSequence,
+    pub admitted: GlobalSequence,
+    pub terminal: GlobalSequence,
+}
+
+pub struct StreamingPlaneMetrics {
+    pub acquisition_lag_ns: StreamingDistributionSnapshot,
+    pub publication_to_decode_ns: StreamingDistributionSnapshot,
+    pub watermark_lag_ns: StreamingDistributionSnapshot,
+    pub causal_wait_ns: StreamingDistributionSnapshot,
+    pub schedule_slip_ns: StreamingDistributionSnapshot,
+    pub admission_wait_ns: StreamingDistributionSnapshot,
+    pub endpoint_ns: StreamingDistributionSnapshot,
+    pub queues: BTreeMap<StreamingStage, QueueHighWater>,
+    pub drops_by_reason: BTreeMap<StreamingDropReason, u64>,
+    pub duplicate_count: u64,
+    pub gap_count: u64,
+    pub checkpoint_horizons: CheckpointHorizonSnapshot,
+}
+```
+
+- [ ] **Step 1: Write the RED timing/high-water test**
+
+```rust
+#[tokio::test(flavor = "current_thread")]
+async fn stage_metrics_separate_lag_wait_slip_and_endpoint_time() {
+    let fixture = observability_fixture_with_sim_clock();
+    fixture.run_one_action().await.unwrap();
+    let metrics = fixture.snapshot();
+    assert_eq!(metrics.schedule_slip_ns.count, 1);
+    assert_eq!(metrics.endpoint_ns.count, 1);
+    assert!(metrics.queues.values().all(|q| q.items <= q.item_limit && q.bytes <= q.byte_limit));
+    assert_eq!(metrics.checkpoint_horizons.terminal, GlobalSequence::new(0));
+}
+```
+
+- [ ] **Step 2: Verify RED**
+
+Run: `CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime --features streaming --test streaming_observability`
+
+- [ ] **Step 3: Instrument stage boundaries**
+
+Observe acquisition, publication, decode, watermark, causal release, schedule admission, endpoint terminal, queue permit high-water, drop reason, duplicate/gap, and all typed checkpoint horizons. Use `Clock` timestamps and bounded mergeable distributions. Aggregate per worker and merge at report/checkpoint boundaries; do not add logging, allocation, locking, or observer work to the token callback.
+
+- [ ] **Step 4: Verify GREEN and commit**
+
+Run Step 2, then commit:
+
+```bash
+git add rust/runtime/src/streaming.rs rust/runtime/src/streaming/observability.rs rust/runtime/src/metrics_core/report.rs rust/runtime/tests/streaming_observability.rs
+git commit -m "feat(runtime): report streaming plane metrics"
 ```
 
 ## Subsystem Completion Gate
 
 ```bash
-CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime --features streaming,parquet --test streaming_session_continuity --test streaming_action_binding --test streaming_pipeline_sim --test streaming_shadow_operation --test streaming_graph_sessions --test streaming_sensitive_state
+CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime --features streaming,parquet --test streaming_session_continuity --test streaming_session_closure --test streaming_action_binding --test streaming_pipeline_sim --test streaming_shadow_operation --test streaming_graph_sessions --test streaming_sensitive_state --test streaming_observability
 ```
 
 Review must confirm bounded high-water diagnostics, no new hot-token callback/allocation, no source/format switches, no placeholder capabilities, and existing finite scheduled/graph behavior unchanged.
