@@ -1393,33 +1393,40 @@ mod tests {
     }
 
     #[test]
-    fn authored_seamless_lowers_to_the_previous_phase_outbound_handoff() {
-        let phases: Vec<PhaseSpec> = serde_json::from_value(json!([{
-            "type": "concurrency",
-            "name": "warmup",
-            "exclude_from_results": true,
-            "requests": 1,
-            "concurrency": 1
-        }, {
-            "type": "concurrency",
-            "name": "profiling",
-            "exclude_from_results": false,
-            "requests": 1,
-            "concurrency": 1,
-            "seamless": true
-        }]))
-        .unwrap();
+    fn authored_seamless_is_incoming_for_every_transition() {
+        assert_eq!(
+            lowered_seamless_handoffs(&[false, true, false, true]),
+            [true, false, true, false]
+        );
+        assert_eq!(lowered_seamless_handoffs(&[true, false]), [false, false]);
+    }
 
-        let lowered = phases
+    fn lowered_seamless_handoffs(authored: &[bool]) -> Vec<bool> {
+        let phases = authored
+            .iter()
+            .enumerate()
+            .map(|(index, &seamless)| {
+                serde_json::from_value(json!({
+                    "type": "concurrency",
+                    "name": format!("phase-{index}"),
+                    "exclude_from_results": false,
+                    "requests": 1,
+                    "concurrency": 1,
+                    "seamless": seamless
+                }))
+                .unwrap()
+            })
+            .collect::<Vec<PhaseSpec>>();
+
+        phases
             .iter()
             .enumerate()
             .map(|(index, phase)| {
-                phase_config(phase, phase_seamless_to_next(&phases, index)).unwrap()
+                phase_config(phase, phase_seamless_to_next(&phases, index))
+                    .unwrap()
+                    .seamless
             })
-            .collect::<Vec<_>>();
-
-        assert!(lowered[0].seamless);
-        assert!(!lowered[1].seamless);
+            .collect()
     }
 
     #[test]

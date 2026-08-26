@@ -42,7 +42,7 @@ pub(crate) struct PreparedNativeSidecarResources {
     pub(crate) gpu_telemetry: Option<GpuTelemetryRun>,
     pub(crate) network_latency: Option<NetworkLatencyRun>,
     pub(crate) server_metrics: Option<ServerMetricsRun>,
-    pub(crate) server_profiler: Option<crate::engine::control_hooks::PreparedServerProfilerHook>,
+    pub(crate) server_profiler: Option<Rc<crate::engine::control_hooks::ServerProfilerCoordinator>>,
     pub(crate) live_streaming: Option<PythonLiveStreamingRun>,
     pub(crate) gpu_records_path: Option<PathBuf>,
     pub(crate) network_latency_records_path: Option<PathBuf>,
@@ -294,6 +294,14 @@ impl PreparedNativeSidecarResources {
     }
 
     pub(crate) async fn shutdown_run_resources(&mut self) {
+        if let Some(profiler) = self.server_profiler.take()
+            && let Err(error) = profiler.force_stop().await
+        {
+            tracing::warn!(
+                error = %error,
+                "server profiler failed to stop during run shutdown"
+            );
+        }
         if let Some(worker) = self.live_streaming.take()
             && let Err(error) = worker.shutdown().await
         {

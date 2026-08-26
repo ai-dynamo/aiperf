@@ -64,9 +64,8 @@ use crate::engine::cellular_bootstrap::{
 };
 #[cfg(feature = "cellular")]
 use crate::engine::control_hooks::{
-    PreparedEndpointControlHooks, PreparedServerProfilerHook,
-    prepare_endpoint_control_hooks_from_profile_value, run_reset_kv_cache, start_server_profiler,
-    stop_server_profiler,
+    PreparedEndpointControlHooks, PreparedServerProfilerHook, ServerProfilerCoordinator,
+    prepare_endpoint_control_hooks_from_profile_value, run_reset_kv_cache,
 };
 #[cfg(feature = "cellular")]
 use crate::engine::control_plane_http::{
@@ -533,9 +532,14 @@ fn prepare_controller_control_hooks(
 
 #[cfg(feature = "cellular")]
 struct CellularProfilerCoordinator {
-    hook: PreparedServerProfilerHook,
-    active_phase: Option<String>,
-    phase_released: bool,
+    profiler: Rc<ServerProfilerCoordinator>,
+    phases: BTreeMap<String, CellularProfilerPhase>,
+}
+
+#[cfg(feature = "cellular")]
+#[derive(Default)]
+struct CellularProfilerPhase {
+    is_released: bool,
     ready_cells: BTreeSet<u32>,
     complete_cells: BTreeSet<u32>,
 }
@@ -544,11 +548,8 @@ struct CellularProfilerCoordinator {
 impl CellularProfilerCoordinator {
     fn new(hook: PreparedServerProfilerHook) -> Self {
         Self {
-            hook,
-            active_phase: None,
-            phase_released: false,
-            ready_cells: BTreeSet::new(),
-            complete_cells: BTreeSet::new(),
+            profiler: Rc::new(ServerProfilerCoordinator::new(hook)),
+            phases: BTreeMap::new(),
         }
     }
 
@@ -560,48 +561,49 @@ impl CellularProfilerCoordinator {
         phase: &str,
         signal: CellPhaseSignal,
     ) -> Result<()> {
-        if self.active_phase.is_none() {
-            self.active_phase = Some(phase.to_owned());
-            self.phase_released = false;
-            self.ready_cells.clear();
-            self.complete_cells.clear();
-        }
-        ensure!(
-            self.active_phase.as_deref() == Some(phase),
-            "controller-owned server profiler received phase signal for {phase:?} while {:?} is active",
-            self.active_phase
-        );
         match signal {
             CellPhaseSignal::Ready => {
-                self.ready_cells.insert(cell_id);
-                if !self.phase_released && self.ready_cells.len() == cell_count as usize {
-                    start_server_profiler(&self.hook).await.with_context(|| {
+                let needs_release = {
+                    let state = self.phases.entry(phase.to_owned()).or_default();
+                    state.ready_cells.insert(cell_id);
+                    !state.is_released && state.ready_cells.len() == cell_count as usize
+                };
+                if needs_release {
+                    self.profiler.acquire().await.with_context(|| {
                         format!("starting controller-owned server profiler for phase {phase:?}")
                     })?;
+                    self.phases
+                        .get_mut(phase)
+                        .ok_or_else(|| anyhow!("server profiler phase {phase:?} disappeared"))?
+                        .is_released = true;
                     phaser.advance(crate::cellular::phaser::PhaseTransition::PhaseAdvance(
                         phase.to_owned(),
                     ));
-                    self.phase_released = true;
                 }
             }
             CellPhaseSignal::Complete => {
-                ensure!(
-                    self.phase_released,
-                    "controller-owned server profiler received a completion for phase {phase:?} before the phase gate opened"
-                );
-                self.complete_cells.insert(cell_id);
-                if self.complete_cells.len() == cell_count as usize {
-                    if let Err(error) = stop_server_profiler(&self.hook).await {
+                let is_complete = {
+                    let state = self.phases.get_mut(phase).ok_or_else(|| {
+                        anyhow!(
+                            "controller-owned server profiler received a completion for unknown phase {phase:?}"
+                        )
+                    })?;
+                    ensure!(
+                        state.is_released,
+                        "controller-owned server profiler received a completion for phase {phase:?} before the phase gate opened"
+                    );
+                    state.complete_cells.insert(cell_id);
+                    state.complete_cells.len() == cell_count as usize
+                };
+                if is_complete {
+                    self.phases.remove(phase);
+                    if let Err(error) = self.profiler.release().await {
                         tracing::warn!(
                             phase,
-                            error = format!("{error:#}"),
+                            error = %error,
                             "controller-owned server profiler stop failed after profiling drain"
                         );
                     }
-                    self.active_phase = None;
-                    self.phase_released = false;
-                    self.ready_cells.clear();
-                    self.complete_cells.clear();
                 }
             }
         }
@@ -610,7 +612,7 @@ impl CellularProfilerCoordinator {
 
     /// True while the profiling gate has opened and stop has not run yet.
     fn needs_stop(&self) -> bool {
-        self.phase_released
+        self.profiler.has_owners()
     }
 
     /// Stop the profiler if start already ran and stop has not.
@@ -619,24 +621,17 @@ impl CellularProfilerCoordinator {
     /// cell finished its profiling phase, so this is a safe drain barrier when
     /// Complete signals are delayed or lost on the fire-and-forget control path.
     async fn ensure_stopped(&mut self, phase_fallback: &str) {
-        if !self.phase_released {
+        if !self.profiler.has_owners() {
             return;
         }
-        let phase = self
-            .active_phase
-            .clone()
-            .unwrap_or_else(|| phase_fallback.to_owned());
-        if let Err(error) = stop_server_profiler(&self.hook).await {
+        if let Err(error) = self.profiler.force_stop().await {
             tracing::warn!(
-                phase = phase.as_str(),
-                error = format!("{error:#}"),
+                phase = phase_fallback,
+                error = %error,
                 "controller-owned server profiler stop failed after cellular drain"
             );
         }
-        self.active_phase = None;
-        self.phase_released = false;
-        self.ready_cells.clear();
-        self.complete_cells.clear();
+        self.phases.clear();
     }
 }
 
@@ -3154,6 +3149,36 @@ mod tests {
     use std::sync::{Mutex, OnceLock};
 
     use super::*;
+
+    #[tokio::test]
+    async fn cellular_profiler_keeps_one_session_across_overlapping_phases() {
+        let hook =
+            PreparedServerProfilerHook::empty_for_test(Rc::new(crate::clock::SimClock::new()));
+        let mut profiler = CellularProfilerCoordinator::new(hook);
+        let phaser = crate::cellular::phaser::Phaser::new();
+
+        profiler
+            .on_signal(&phaser, 1, 0, "first", CellPhaseSignal::Ready)
+            .await
+            .expect("first phase releases");
+        profiler
+            .on_signal(&phaser, 1, 0, "second", CellPhaseSignal::Ready)
+            .await
+            .expect("overlapping successor releases");
+        profiler
+            .on_signal(&phaser, 1, 0, "second", CellPhaseSignal::Complete)
+            .await
+            .expect("successor completes");
+
+        assert!(profiler.needs_stop());
+        assert_eq!(phaser.current_generation(), 2);
+
+        profiler
+            .on_signal(&phaser, 1, 0, "first", CellPhaseSignal::Complete)
+            .await
+            .expect("predecessor drains");
+        assert!(!profiler.needs_stop());
+    }
 
     struct DropProbe(Arc<AtomicUsize>);
 

@@ -351,7 +351,9 @@ fn attach_server_profiler_hook(
         provider.as_ref(),
         profile,
     )?;
-    sidecars.server_profiler = hooks.server_profiler;
+    sidecars.server_profiler = hooks
+        .server_profiler
+        .map(|hook| Rc::new(crate::engine::control_hooks::ServerProfilerCoordinator::new(hook)));
     Ok(())
 }
 
