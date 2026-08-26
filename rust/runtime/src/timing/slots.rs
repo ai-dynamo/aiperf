@@ -484,24 +484,23 @@ impl GlobalSlotPool {
                 self.capacity_notify.notify_waiters();
             }
         } else if diff < 0 {
-            // Decrease: drain available permits now, track the remainder as debt.
-            let mut remaining = (-diff) as usize;
-            // Reserve the entire reduction before attempting the drain. A
-            // concurrent release must be absorbed while permits are being
-            // removed; recording debt only afterward leaves a transient window
-            // in which that release can over-admit a waiter.
-            self.debt.fetch_add(remaining, Ordering::AcqRel);
-            while remaining > 0 {
-                match self.semaphore.try_acquire() {
-                    Ok(permit) => {
-                        permit.forget();
-                        self.debt.fetch_sub(1, Ordering::AcqRel);
-                        remaining -= 1;
-                    }
-                    // No free permit right now: the rest becomes debt, to be
-                    // absorbed by future releases instead of freeing slots.
-                    Err(_) => break,
+            self.decrease_with_hook((-diff) as usize, || {});
+        }
+    }
+
+    fn decrease_with_hook<F: FnOnce()>(&self, amount: usize, after_reservation: F) {
+        use std::sync::atomic::Ordering;
+        let mut remaining = amount;
+        self.debt.fetch_add(remaining, Ordering::AcqRel);
+        after_reservation();
+        while remaining > 0 {
+            match self.semaphore.try_acquire() {
+                Ok(permit) => {
+                    permit.forget();
+                    self.debt.fetch_sub(1, Ordering::AcqRel);
+                    remaining -= 1;
                 }
+                Err(_) => break,
             }
         }
     }
@@ -854,6 +853,18 @@ mod tests {
         // Second release now frees a real slot, landing at the reduced cap of 1.
         drop(g2);
         assert_eq!(pool.effective_slots(), 1);
+    }
+
+    #[test]
+    fn global_decrease_reserves_before_release_interleaving() {
+        let pool = GlobalSlotPool::new(1);
+        let guard = pool.try_acquire().unwrap();
+        pool.decrease_with_hook(1, || {
+            drop(guard);
+            assert_eq!(pool.effective_slots(), 0);
+        });
+        assert_eq!(pool.effective_slots(), 0);
+        assert_eq!(pool.debt(), 0);
     }
 
     #[test]
