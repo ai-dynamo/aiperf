@@ -715,7 +715,7 @@ pub struct ProfileFlags {
     #[arg(long = "streaming", num_args = 0..=1, default_missing_value = "true")]
     pub streaming: Option<bool>,
 
-    /// Prompts per request (`--batch-size`).
+    /// Synthetic or file-backed random-pool text items per request (`--batch-size`).
     #[arg(long = "batch-size", visible_aliases = ["batch-size-text", "prompt-batch-size"], short = 'b')]
     pub batch_size: Option<u32>,
 
@@ -1193,7 +1193,7 @@ pub struct ProfileFlags {
     /// Synthetic image height stddev (`--image-height-stddev`).
     #[arg(long = "image-height-stddev")]
     pub image_height_stddev: Option<f64>,
-    /// Synthetic images per request (`--image-batch-size`).
+    /// Synthetic or file-backed random-pool images per request (`--image-batch-size`).
     #[arg(long = "image-batch-size", visible_alias = "batch-size-image")]
     pub image_batch_size: Option<u32>,
     /// Synthetic image format (`--image-format`).
@@ -1212,7 +1212,7 @@ pub struct ProfileFlags {
     /// Synthetic audio length stddev (`--audio-length-stddev`).
     #[arg(long = "audio-length-stddev")]
     pub audio_length_stddev: Option<f64>,
-    /// Synthetic audio clips per request (`--audio-batch-size`).
+    /// Synthetic or file-backed random-pool audio clips per request (`--audio-batch-size`).
     #[arg(long = "audio-batch-size", visible_alias = "batch-size-audio")]
     pub audio_batch_size: Option<u32>,
     /// Synthetic audio channels (`--audio-num-channels`).
@@ -1253,7 +1253,7 @@ pub struct ProfileFlags {
     /// Synthetic video synthesis pattern (`--video-synth-type`).
     #[arg(long = "video-synth-type")]
     pub video_synth_type: Option<String>,
-    /// Synthetic video clips per request (`--video-batch-size`).
+    /// Synthetic or file-backed random-pool video clips per request (`--video-batch-size`).
     #[arg(long = "video-batch-size", visible_alias = "batch-size-video")]
     pub video_batch_size: Option<u32>,
 

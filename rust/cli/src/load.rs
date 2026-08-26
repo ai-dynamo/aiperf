@@ -605,7 +605,10 @@ pub fn resolve_inputs(flags: &ProfileFlags) -> anyhow::Result<Inputs> {
         steady_state: flags.steady_state.unwrap_or(false),
         steady_state_fraction: flags.steady_state_fraction,
         steady_state_hybrid: flags.steady_state_hybrid.unwrap_or(false),
+        random_pool_text_batch_size: flags.batch_size,
         random_pool_image_batch_size: flags.image_batch_size,
+        random_pool_audio_batch_size: flags.audio_batch_size,
+        random_pool_video_batch_size: flags.video_batch_size,
         image_spec: build_image_spec(flags),
         audio_spec: build_audio_spec(flags),
         video_spec: build_video_spec(flags),
@@ -1694,7 +1697,7 @@ mod tests {
     }
 
     #[test]
-    fn image_batch_size_projects_file_random_pool_options() {
+    fn modality_batch_sizes_project_file_random_pool_options() {
         run_on_big_stack(|| {
             let flags = parse(&[
                 "-m",
@@ -1706,15 +1709,129 @@ mod tests {
                 "image-pool.jsonl",
                 "--custom-dataset-type",
                 "random_pool",
+                "--batch-size",
+                "0",
                 "--image-batch-size",
                 "4",
+                "--audio-batch-size",
+                "3",
+                "--video-batch-size",
+                "2",
             ]);
             let run = super::resolve(&flags).expect("resolve run");
             let value = serde_json::to_value(&run).expect("serialize run");
             assert_eq!(
+                value["cfg"]["datasets"][0]["options"]["text_batch_size"],
+                serde_json::json!(0)
+            );
+            assert_eq!(
                 value["cfg"]["datasets"][0]["options"]["image_batch_size"],
                 serde_json::json!(4)
             );
+            assert_eq!(
+                value["cfg"]["datasets"][0]["options"]["audio_batch_size"],
+                serde_json::json!(3)
+            );
+            assert_eq!(
+                value["cfg"]["datasets"][0]["options"]["video_batch_size"],
+                serde_json::json!(2)
+            );
+        });
+    }
+
+    #[test]
+    fn random_pool_batch_sizes_reject_incompatible_datasets() {
+        run_on_big_stack(|| {
+            for flag in [
+                "--batch-size",
+                "--image-batch-size",
+                "--audio-batch-size",
+                "--video-batch-size",
+            ] {
+                let public = parse(&[
+                    "-m",
+                    "mock-model",
+                    "--endpoint-type",
+                    "chat",
+                    "--dry-run",
+                    "--public-dataset",
+                    "sharegpt",
+                    flag,
+                    "2",
+                ]);
+                let error = super::resolve(&public).expect_err("public batching must fail");
+                assert!(error.to_string().contains("public dataset"), "{error}");
+                assert!(error.to_string().contains("random_pool"), "{error}");
+            }
+
+            let wrong_format = parse(&[
+                "-m",
+                "mock-model",
+                "--endpoint-type",
+                "chat",
+                "--dry-run",
+                "--input-file",
+                "turns.jsonl",
+                "--custom-dataset-type",
+                "single_turn",
+                "--audio-batch-size",
+                "2",
+            ]);
+            let error = super::resolve(&wrong_format).expect_err("wrong format must fail");
+            assert!(error.to_string().contains("single_turn"), "{error}");
+            assert!(error.to_string().contains("random_pool"), "{error}");
+        });
+    }
+
+    #[test]
+    fn random_pool_directory_requires_unit_batch_sizes() {
+        run_on_big_stack(|| {
+            let directory = tempfile::tempdir().expect("temporary random-pool directory");
+            let path = directory.path().to_string_lossy().into_owned();
+            for (flag, modality) in [
+                ("--batch-size", "text"),
+                ("--image-batch-size", "image"),
+                ("--audio-batch-size", "audio"),
+                ("--video-batch-size", "video"),
+            ] {
+                let invalid = parse(&[
+                    "-m",
+                    "mock-model",
+                    "--endpoint-type",
+                    "chat",
+                    "--dry-run",
+                    "--input-file",
+                    &path,
+                    "--custom-dataset-type",
+                    "random_pool",
+                    flag,
+                    "0",
+                ]);
+                let error = super::resolve(&invalid).expect_err("directory batching must fail");
+                assert!(error.to_string().contains("directory"), "{error}");
+                assert!(error.to_string().contains(modality), "{error}");
+            }
+
+            let unit = parse(&[
+                "-m",
+                "mock-model",
+                "--endpoint-type",
+                "chat",
+                "--dry-run",
+                "--input-file",
+                &path,
+                "--custom-dataset-type",
+                "random_pool",
+                "--batch-size",
+                "1",
+                "--image-batch-size",
+                "1",
+                "--audio-batch-size",
+                "1",
+                "--video-batch-size",
+                "1",
+            ]);
+            super::resolve(&unit).expect("unit directory sizes must remain valid");
         });
     }
 

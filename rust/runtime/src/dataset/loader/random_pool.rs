@@ -40,6 +40,8 @@ struct NamedContents {
     #[serde(default)]
     name: String,
     contents: Vec<String>,
+    #[serde(default)]
+    uuids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -126,6 +128,37 @@ impl PoolEntry {
                 .collect(),
             _ => Vec::new(),
         }
+    }
+
+    fn has_modality(&self, kind: MediaKind) -> bool {
+        let (single, multiple) = match kind {
+            MediaKind::Text => (&self.text, &self.texts),
+            MediaKind::Image => (&self.image, &self.images),
+            MediaKind::Audio => (&self.audio, &self.audios),
+            MediaKind::Video => (&self.video, &self.videos),
+        };
+        single.is_some()
+            || match multiple {
+                Some(Contents::Strings(values)) => !values.is_empty(),
+                Some(Contents::Named(groups)) => !groups.is_empty(),
+                None => false,
+            }
+    }
+
+    fn carries_batch_metadata(&self) -> bool {
+        [
+            (self.texts.as_ref(), false),
+            (self.images.as_ref(), true),
+            (self.audios.as_ref(), false),
+            (self.videos.as_ref(), false),
+        ]
+        .into_iter()
+        .any(|(contents, checks_uuids)| match contents {
+            Some(Contents::Named(groups)) => groups
+                .iter()
+                .any(|group| !group.name.is_empty() || (checks_uuids && !group.uuids.is_empty())),
+            _ => false,
+        })
     }
 }
 
@@ -269,10 +302,10 @@ impl Composer for RandomPoolComposer {
         let mut rng: ConfiguredRandomGenerator = config
             .rng_root
             .derive_generator("dataset.loader.random_pool.sampling");
-        let sampled = if batches.all_unit() {
-            sample_associated(&pools, num_conversations, &mut rng)?
-        } else {
+        let sampled = if batches.is_requested(&pools) {
             sample_flattened(&pools, num_conversations, batches, &mut rng)?
+        } else {
+            sample_associated(&pools, num_conversations, &mut rng)?
         };
         let mut ids = SessionIdGenerator::new(config.rng_root.seed(), "session");
         let mut finalizer = config.finalizer()?;
@@ -301,10 +334,21 @@ struct BatchSizes {
 }
 
 impl BatchSizes {
-    fn all_unit(self) -> bool {
-        [self.text, self.image, self.audio, self.video]
-            .into_iter()
-            .all(|size| size == 1)
+    fn is_requested(self, pools: &BTreeMap<String, Vec<PoolEntry>>) -> bool {
+        [
+            MediaKind::Text,
+            MediaKind::Image,
+            MediaKind::Audio,
+            MediaKind::Video,
+        ]
+        .into_iter()
+        .any(|kind| {
+            self.get(kind) != 1
+                && pools
+                    .values()
+                    .flatten()
+                    .any(|entry| entry.has_modality(kind))
+        })
     }
 
     fn get(self, kind: MediaKind) -> usize {
@@ -369,6 +413,42 @@ fn sample_flattened(
     batches: BatchSizes,
     rng: &mut ConfiguredRandomGenerator,
 ) -> Result<Vec<Vec<SampledGroup>>> {
+    if pools.len() > 1 {
+        return Err(DatasetError::Validation(format!(
+            "random_pool batching cannot flatten {} named pools; use one pool or unit batch sizes",
+            pools.len()
+        )));
+    }
+    if pools
+        .values()
+        .flatten()
+        .any(PoolEntry::carries_batch_metadata)
+    {
+        return Err(DatasetError::Validation(
+            "random_pool batching cannot discard named-group or image UUID metadata".into(),
+        ));
+    }
+    let has_output = [
+        MediaKind::Text,
+        MediaKind::Image,
+        MediaKind::Audio,
+        MediaKind::Video,
+    ]
+    .into_iter()
+    .any(|kind| {
+        batches.get(kind) > 0
+            && pools
+                .values()
+                .flatten()
+                .any(|entry| entry.has_modality(kind))
+    });
+    if !has_output {
+        return Err(DatasetError::Validation(
+            "all present random_pool modalities have batch size zero; turns would contain no content"
+                .into(),
+        ));
+    }
+
     let mut flat = HashMap::<MediaKind, Vec<String>>::new();
     for entries in pools.values() {
         for entry in entries {
@@ -481,6 +561,7 @@ fn option_usize(config: &ComposeConfig, key: &str, default: usize) -> Result<usi
 
 #[cfg(test)]
 mod tests {
+    use std::io::Write;
     use std::sync::Arc;
 
     use crate::rng::RngRoot;
@@ -489,6 +570,17 @@ mod tests {
     use super::*;
     use crate::dataset::loader::{DatasetFormatRegistration, LoaderRegistry};
     use crate::dataset::tokenizer::TiktokenTokenizer;
+
+    fn random_pool_registry() -> LoaderRegistry {
+        let mut registry = LoaderRegistry::new();
+        registry
+            .register(DatasetFormatRegistration::new(
+                Arc::new(RandomPoolDatasetLoader),
+                Arc::new(RandomPoolComposer),
+            ))
+            .unwrap();
+        registry
+    }
 
     #[tokio::test]
     async fn every_named_pool_contributes_and_sampling_reproduces() {
@@ -500,13 +592,7 @@ mod tests {
         compose
             .format_options
             .insert("num_conversations".into(), Value::from(3));
-        let mut registry = LoaderRegistry::new();
-        registry
-            .register(DatasetFormatRegistration::new(
-                Arc::new(RandomPoolDatasetLoader),
-                Arc::new(RandomPoolComposer),
-            ))
-            .unwrap();
+        let registry = random_pool_registry();
         let first = registry
             .build_dataset(
                 Some("random_pool"),
@@ -537,5 +623,203 @@ mod tests {
                     .iter()
                     .any(|group| group.kind == MediaKind::Image)
         }));
+    }
+
+    #[test]
+    fn flattened_sampling_honors_each_present_modality_batch() {
+        let entry = PoolEntry::parse(
+            json!({
+                "texts": ["alpha", "beta"],
+                "images": ["one.png", "two.png"],
+                "audios": ["one.wav"],
+                "videos": ["one.mp4"]
+            }),
+            &"fixture",
+        )
+        .unwrap();
+        let pools = BTreeMap::from([("<inline>".to_string(), vec![entry])]);
+        let batches = BatchSizes {
+            text: 3,
+            image: 2,
+            audio: 0,
+            video: 1,
+        };
+        let mut rng = RngRoot::new(Some(11)).derive_generator("test");
+
+        let sampled = sample_flattened(&pools, 2, batches, &mut rng).unwrap();
+        for groups in sampled {
+            assert_eq!(groups.len(), 3);
+            assert_eq!(groups[0].kind, MediaKind::Text);
+            assert_eq!(groups[0].contents.len(), 3);
+            assert_eq!(groups[1].kind, MediaKind::Image);
+            assert_eq!(groups[1].contents.len(), 2);
+            assert_eq!(groups[2].kind, MediaKind::Video);
+            assert_eq!(groups[2].contents.len(), 1);
+        }
+    }
+
+    #[test]
+    fn zero_batch_suppresses_each_modality_independently() {
+        let entry = PoolEntry::parse(
+            json!({
+                "text": "alpha",
+                "image": "one.png",
+                "audio": "one.wav",
+                "video": "one.mp4"
+            }),
+            &"fixture",
+        )
+        .unwrap();
+        let pools = BTreeMap::from([("<inline>".to_string(), vec![entry])]);
+
+        for disabled in [
+            MediaKind::Text,
+            MediaKind::Image,
+            MediaKind::Audio,
+            MediaKind::Video,
+        ] {
+            let mut batches = BatchSizes {
+                text: 1,
+                image: 1,
+                audio: 1,
+                video: 1,
+            };
+            match disabled {
+                MediaKind::Text => {
+                    batches.text = 0;
+                    batches.image = 2;
+                }
+                MediaKind::Image => {
+                    batches.image = 0;
+                    batches.text = 2;
+                }
+                MediaKind::Audio => {
+                    batches.audio = 0;
+                    batches.text = 2;
+                }
+                MediaKind::Video => {
+                    batches.video = 0;
+                    batches.text = 2;
+                }
+            }
+            let mut rng = RngRoot::new(Some(11)).derive_generator("test");
+            let groups = sample_flattened(&pools, 1, batches, &mut rng).unwrap();
+            assert!(
+                groups[0].iter().all(|group| group.kind != disabled),
+                "{disabled:?} was not suppressed"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn real_jsonl_text_batch_reaches_composed_groups() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("pool.jsonl");
+        let mut file = std::fs::File::create(&path).unwrap();
+        writeln!(file, r#"{{"text":"alpha"}}"#).unwrap();
+        writeln!(file, r#"{{"text":"beta"}}"#).unwrap();
+        let mut compose = ComposeConfig::new("model", RngRoot::new(Some(7)));
+        compose
+            .format_options
+            .insert("text_batch_size".into(), Value::from(3));
+
+        let dataset = random_pool_registry()
+            .build_dataset(
+                Some("random_pool"),
+                &LoadConfig::new(DatasetSource::Path(path)),
+                &compose,
+                &TiktokenTokenizer::builtin(),
+            )
+            .await
+            .unwrap();
+        let groups = &dataset.conversations()[0].turns[0].content;
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].kind, MediaKind::Text);
+        assert_eq!(groups[0].handles.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn absent_modality_zero_preserves_named_pool_association() {
+        let source = DatasetSource::Inline(json!({
+            "queries": [{"texts": [{"name": "query", "contents": ["q1"]}]}],
+            "passages": [{"texts": [{"name": "passage", "contents": ["p1"]}]}]
+        }));
+        let mut compose = ComposeConfig::new("model", RngRoot::new(Some(7)));
+        compose
+            .format_options
+            .insert("image_batch_size".into(), Value::from(0));
+
+        let dataset = random_pool_registry()
+            .build_dataset(
+                Some("random_pool"),
+                &LoadConfig::new(source),
+                &compose,
+                &TiktokenTokenizer::builtin(),
+            )
+            .await
+            .unwrap();
+        let mut names = dataset.conversations()[0].turns[0]
+            .content
+            .iter()
+            .map(|group| group.name.as_str())
+            .collect::<Vec<_>>();
+        names.sort_unstable();
+        assert_eq!(names, ["passage", "query"]);
+    }
+
+    #[tokio::test]
+    async fn batching_rejects_lossy_pool_identity_and_empty_turns() {
+        for (source, option) in [
+            (
+                json!({"queries": [{"text": "q"}], "passages": [{"text": "p"}]}),
+                ("text_batch_size", 2),
+            ),
+            (
+                json!([{"texts": [{"name": "query", "contents": ["q"]}]}]),
+                ("text_batch_size", 2),
+            ),
+            (
+                json!([{"images": [{"name": "", "contents": ["one.png"], "uuids": ["cache-a"]}]}]),
+                ("image_batch_size", 2),
+            ),
+        ] {
+            let mut compose = ComposeConfig::new("model", RngRoot::new(Some(7)));
+            compose
+                .format_options
+                .insert(option.0.into(), Value::from(option.1));
+            let error = random_pool_registry()
+                .build_dataset(
+                    Some("random_pool"),
+                    &LoadConfig::new(DatasetSource::Inline(source)),
+                    &compose,
+                    &TiktokenTokenizer::builtin(),
+                )
+                .await
+                .expect_err("lossy batching must fail");
+            assert!(
+                error.to_string().contains("metadata") || error.to_string().contains("pools"),
+                "{error}"
+            );
+        }
+
+        let mut compose = ComposeConfig::new("model", RngRoot::new(Some(7)));
+        compose
+            .format_options
+            .insert("text_batch_size".into(), Value::from(0));
+        let error = random_pool_registry()
+            .build_dataset(
+                Some("random_pool"),
+                &LoadConfig::new(DatasetSource::Inline(json!([{"text": "q"}]))),
+                &compose,
+                &TiktokenTokenizer::builtin(),
+            )
+            .await
+            .expect_err("all-zero present modalities must fail");
+        assert!(
+            error
+                .to_string()
+                .contains("all present random_pool modalities have batch size zero"),
+            "{error}"
+        );
     }
 }

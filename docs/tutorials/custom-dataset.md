@@ -439,6 +439,53 @@ Log File: artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency4/logs/aiperf.log
 - Sampling with replacement (entries can repeat)
 - Use `--random-seed` for reproducibility
 
+### Per-modality batch sizes
+
+A single-file or flat-inline `random_pool` can independently sample several
+items of each modality into one request:
+
+| Modality | CLI | Config-v2 YAML | Default |
+|---|---|---|---|
+| Text | `--batch-size N` | `dataset.prompts.batchSize` | 1 |
+| Image | `--image-batch-size N` | `dataset.images.batchSize` | 1 |
+| Audio | `--audio-batch-size N` | `dataset.audio.batchSize` | 1 |
+| Video | `--video-batch-size N` | `dataset.video.batchSize` | 1 |
+
+Zero disables a modality. A non-unit size on a modality absent from a single
+pool is a no-op. If all present modalities are disabled, the run fails instead
+of emitting an empty request. Explicit CLI values override their matching YAML
+values, including zero.
+
+Batching flattens each present modality and samples it independently with
+replacement. It therefore does not preserve a text-image association from one
+source row. Use `single_turn` when those pairings must remain exact.
+
+Flattening is refused when it would erase identity: a directory or inline map
+with multiple pools, a named text/image/audio/video group, or image UUID/cache
+metadata. Directory inputs accept only explicitly authored unit sizes because
+their pool contents are not inspected during config resolution.
+
+The pool must contain the modality being batched. For example:
+
+```bash
+cat > multimodal_pool.jsonl << 'EOF'
+{"text": "Describe this image.", "image": "https://example.com/one.png"}
+{"text": "List the visible objects.", "image": "https://example.com/two.png"}
+EOF
+
+aiperf profile \
+    --model Qwen/Qwen3-VL-7B \
+    --endpoint-type chat \
+    --input-file multimodal_pool.jsonl \
+    --custom-dataset-type random_pool \
+    --batch-size 2 \
+    --image-batch-size 2 \
+    --num-conversations 50 \
+    --streaming \
+    --concurrency 4 \
+    --url localhost:8000
+```
+
 ### Inline alternative (multi-pool)
 
 ```yaml
