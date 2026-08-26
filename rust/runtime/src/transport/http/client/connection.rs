@@ -28,7 +28,8 @@ use crate::clock::Clock;
 
 use crate::transport::core::{ErrorDetails, ErrorKind, TraceData};
 use crate::transport::http::client::resolver::{CachingDnsResolver, DnsResolver};
-use crate::transport::http::config::{ClientConfig, apply_socket_opts};
+use crate::transport::http::config::ClientConfig;
+use crate::transport::http::config::defaults::{SocketOptions, apply_socket_options};
 use crate::transport::http::models::HttpVersion;
 
 /// Drives `!Send` HTTP/2 connections on the current thread.
@@ -518,10 +519,9 @@ async fn establish_inner(
         (stream, remote)
     };
     let local = tcp.local_addr().map_err(ErrorDetails::from)?;
-    // Apply low-latency socket options through a borrowed socket2 ref.
     {
         let sref = socket2::SockRef::from(&tcp);
-        let _ = apply_socket_opts(&sref);
+        continue_after_socket_options(&sref, || async { Ok(()) }).await?;
     }
 
     let force_h2 = matches!(cfg.http_version, HttpVersion::Http2PriorKnowledge);
@@ -565,6 +565,23 @@ async fn establish_inner(
     Ok((sender, SocketInfo { local, remote }))
 }
 
+async fn continue_after_socket_options<O, F, Fut, T>(
+    options: &O,
+    continuation: F,
+) -> Result<T, ErrorDetails>
+where
+    O: SocketOptions + ?Sized,
+    F: FnOnce() -> Fut,
+    Fut: Future<Output = Result<T, ErrorDetails>>,
+{
+    apply_socket_options(options).map_err(|error| ErrorDetails {
+        kind: ErrorKind::Connect,
+        code: None,
+        message: format!("required TCP socket setup failed: {error}"),
+    })?;
+    continuation().await
+}
+
 async fn handshake<I>(io: I, use_h2: bool) -> Result<Sender, ErrorDetails>
 where
     I: hyper::rt::Read + hyper::rt::Write + Unpin + 'static,
@@ -606,16 +623,109 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{establish_with_resolver, rustls_config, with_timeout};
+    use super::{
+        continue_after_socket_options, establish_with_resolver, rustls_config, with_timeout,
+    };
     use crate::clock::{Clock, SimClock, drive_sim};
     use crate::transport::core::{ErrorDetails, ErrorKind, TraceData};
     use crate::transport::http::client::resolver::DnsResolver;
     use crate::transport::http::config::ClientConfig;
+    use crate::transport::http::config::defaults::SocketOptions;
     use async_trait::async_trait;
     use std::cell::Cell;
     use std::net::SocketAddr;
     use std::rc::Rc;
     use std::sync::Arc;
+
+    fn run_local<F: std::future::Future>(future: F) -> F::Output {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("test runtime builds");
+        tokio::task::LocalSet::new().block_on(&runtime, future)
+    }
+
+    struct FakeSocketOptions {
+        nodelay_error: Option<&'static str>,
+        has_optional_tuning_error: bool,
+    }
+
+    impl FakeSocketOptions {
+        fn fail_nodelay(message: &'static str) -> Self {
+            Self {
+                nodelay_error: Some(message),
+                has_optional_tuning_error: false,
+            }
+        }
+
+        fn fail_optional_tuning() -> Self {
+            Self {
+                nodelay_error: None,
+                has_optional_tuning_error: true,
+            }
+        }
+
+        fn optional_result(&self) -> std::io::Result<()> {
+            if self.has_optional_tuning_error {
+                Err(std::io::Error::other("synthetic optional tuning failure"))
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    impl SocketOptions for FakeSocketOptions {
+        fn set_nodelay(&self, _nodelay: bool) -> std::io::Result<()> {
+            match self.nodelay_error {
+                Some(message) => Err(std::io::Error::other(message)),
+                None => Ok(()),
+            }
+        }
+
+        fn set_keepalive(&self, _keepalive: bool) -> std::io::Result<()> {
+            Ok(())
+        }
+
+        fn set_reuse_address(&self, _reuse: bool) -> std::io::Result<()> {
+            self.optional_result()
+        }
+
+        #[cfg(target_os = "linux")]
+        fn set_recv_buffer_size(&self, _size: usize) -> std::io::Result<()> {
+            self.optional_result()
+        }
+
+        #[cfg(target_os = "linux")]
+        fn set_send_buffer_size(&self, _size: usize) -> std::io::Result<()> {
+            self.optional_result()
+        }
+    }
+
+    #[test]
+    fn required_socket_option_failure_is_connect_error_before_handshake() {
+        let handshake_called = Cell::new(false);
+        let options = FakeSocketOptions::fail_nodelay("synthetic TCP_NODELAY failure");
+        let error = run_local(continue_after_socket_options(&options, || async {
+            handshake_called.set(true);
+            Ok(())
+        }))
+        .expect_err("required setup must fail");
+        assert_eq!(error.kind, ErrorKind::Connect);
+        assert!(error.message.contains("TCP_NODELAY"));
+        assert!(!handshake_called.get());
+    }
+
+    #[test]
+    fn optional_socket_tuning_failure_still_reaches_handshake() {
+        let handshake_called = Cell::new(false);
+        let options = FakeSocketOptions::fail_optional_tuning();
+        run_local(continue_after_socket_options(&options, || async {
+            handshake_called.set(true);
+            Ok(())
+        }))
+        .unwrap();
+        assert!(handshake_called.get());
+    }
 
     #[test]
     fn non_prepared_rustls_config_is_memoized_per_verify_mode() {

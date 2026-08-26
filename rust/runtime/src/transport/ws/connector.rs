@@ -180,7 +180,9 @@ async fn connect_attempt_inner(
             .await
             .map_err(|error| ConnectFailure::network(format!("websocket TCP connect: {error}")))?
     };
-    let _ = apply_socket_opts(&socket2::SockRef::from(&tcp));
+    apply_socket_opts(&socket2::SockRef::from(&tcp)).map_err(|error| {
+        ConnectFailure::network(format!("required TCP socket setup failed: {error}"))
+    })?;
     let stream = if url.scheme() == "wss" {
         let server_name =
             rustls::pki_types::ServerName::try_from(host.to_owned()).map_err(|error| {

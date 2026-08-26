@@ -245,6 +245,44 @@ impl Default for ClientConfig {
 /// Apply low-latency streaming socket options without taking ownership of the
 /// file descriptor.
 pub fn apply_socket_opts(sock: &socket2::SockRef<'_>) -> std::io::Result<()> {
+    apply_socket_options(sock)
+}
+
+pub(crate) trait SocketOptions {
+    fn set_nodelay(&self, nodelay: bool) -> std::io::Result<()>;
+    fn set_keepalive(&self, keepalive: bool) -> std::io::Result<()>;
+    fn set_reuse_address(&self, reuse: bool) -> std::io::Result<()>;
+    #[cfg(target_os = "linux")]
+    fn set_recv_buffer_size(&self, size: usize) -> std::io::Result<()>;
+    #[cfg(target_os = "linux")]
+    fn set_send_buffer_size(&self, size: usize) -> std::io::Result<()>;
+}
+
+impl SocketOptions for socket2::SockRef<'_> {
+    fn set_nodelay(&self, nodelay: bool) -> std::io::Result<()> {
+        (**self).set_nodelay(nodelay)
+    }
+
+    fn set_keepalive(&self, keepalive: bool) -> std::io::Result<()> {
+        (**self).set_keepalive(keepalive)
+    }
+
+    fn set_reuse_address(&self, reuse: bool) -> std::io::Result<()> {
+        (**self).set_reuse_address(reuse)
+    }
+
+    #[cfg(target_os = "linux")]
+    fn set_recv_buffer_size(&self, size: usize) -> std::io::Result<()> {
+        (**self).set_recv_buffer_size(size)
+    }
+
+    #[cfg(target_os = "linux")]
+    fn set_send_buffer_size(&self, size: usize) -> std::io::Result<()> {
+        (**self).set_send_buffer_size(size)
+    }
+}
+
+pub(crate) fn apply_socket_options<O: SocketOptions + ?Sized>(sock: &O) -> std::io::Result<()> {
     sock.set_nodelay(true)?;
     sock.set_keepalive(true)?;
     let _ = sock.set_reuse_address(true);
