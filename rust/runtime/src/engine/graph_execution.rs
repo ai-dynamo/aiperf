@@ -2619,10 +2619,6 @@ mod tests {
         RawEndpointConfig, StatelessEndpointFactory,
     };
     use crate::engine::graph_input::CacheBustTarget;
-    use crate::eval::{
-        HarborImporter, HarborSource, NativeGraphLiveTraceProgramDriverFactory,
-        NativeSourceAcquirer, lower_native_graph,
-    };
     use crate::graph::driver::{
         RecordedReplayAgentLoopFactories, RecordedReplayTraceProgramDriverFactory,
         TraceDriverCapabilities, TraceDriverContext, TraceDriverError, TraceDriverSpec,
@@ -2723,6 +2719,162 @@ mod tests {
         blocks_stage: bool,
         feedback_stage: bool,
         state: u8,
+    }
+
+    struct TerminalOutputStagedTraceDriverFactory {
+        observations: Arc<Mutex<Vec<TraceStageResult>>>,
+    }
+
+    impl TraceProgramDriverFactory for TerminalOutputStagedTraceDriverFactory {
+        fn capabilities(
+            &self,
+            _spec: &TraceDriverSpec,
+        ) -> Result<TraceDriverCapabilities, TraceDriverError> {
+            Ok(TraceDriverCapabilities {
+                has_live_turns: true,
+                ..TraceDriverCapabilities::default()
+            })
+        }
+
+        fn create(
+            &self,
+            _worker: WorkerIdentity,
+            trace: &TraceIdentity,
+            _spec: &TraceDriverSpec,
+        ) -> Result<Box<dyn TraceProgramDriver>, TraceDriverError> {
+            Ok(Box::new(TerminalOutputStagedTraceDriver {
+                trace: trace.clone(),
+                observations: self.observations.clone(),
+                dispatcher: Rc::new(TerminalOutputToolDispatcher),
+                terminal_outputs: vec!["tool-output".into()],
+                selected_outputs: BTreeMap::new(),
+                state: 0,
+            }))
+        }
+    }
+
+    struct TerminalOutputStagedTraceDriver {
+        trace: TraceIdentity,
+        observations: Arc<Mutex<Vec<TraceStageResult>>>,
+        dispatcher: Rc<dyn tools::ToolDispatcher>,
+        terminal_outputs: Vec<String>,
+        selected_outputs: BTreeMap<String, Handle>,
+        state: u8,
+    }
+
+    #[async_trait(?Send)]
+    impl TraceProgramDriver for TerminalOutputStagedTraceDriver {
+        fn tool_dispatcher(&self) -> Option<Rc<dyn tools::ToolDispatcher>> {
+            Some(self.dispatcher.clone())
+        }
+
+        fn stage_bound(&self) -> Option<std::num::NonZeroU32> {
+            std::num::NonZeroU32::new(2)
+        }
+
+        fn terminal_output_channels(&self) -> &[String] {
+            &self.terminal_outputs
+        }
+
+        async fn next_stage(
+            &mut self,
+            _context: &TraceDriverContext<'_>,
+        ) -> Result<Option<TraceStageDirective>, TraceDriverError> {
+            match self.state {
+                0 => {
+                    self.state = 1;
+                    Ok(Some(TraceStageDirective::Execute(tool_only_plan(
+                        &self.trace.trace_id,
+                        &["static-terminal"],
+                    ))))
+                }
+                2 => {
+                    self.state = 3;
+                    Ok(Some(TraceStageDirective::Execute(tool_only_plan(
+                        &self.trace.trace_id,
+                        &["dynamic-terminal"],
+                    ))))
+                }
+                4 => {
+                    self.state = 5;
+                    Ok(Some(TraceStageDirective::Complete(
+                        TraceTerminalSupplement::new(
+                            self.trace.run_id.clone(),
+                            self.trace.trajectory_id.clone(),
+                            self.trace.trace_id.clone(),
+                            7,
+                            "terminal-output-staged-test",
+                        )
+                        .with_terminal_outputs(self.selected_outputs.clone()),
+                    )))
+                }
+                _ => Err(TraceDriverError::new(
+                    "terminal-output staged test driver advanced out of order",
+                )),
+            }
+        }
+
+        async fn observe_stage(
+            &mut self,
+            result: TraceStageResult,
+        ) -> Result<(), TraceDriverError> {
+            if !matches!(self.state, 1 | 3) || result.terminal_status != GraphReplyStatus::Completed
+            {
+                return Err(TraceDriverError::new(
+                    "terminal-output staged test driver observed an invalid result",
+                ));
+            }
+            let handle = result
+                .output_handles
+                .get("tool-output")
+                .copied()
+                .ok_or_else(|| {
+                    TraceDriverError::new("executor did not provide the declared terminal output")
+                })?;
+            self.selected_outputs.insert("tool-output".into(), handle);
+            self.observations.lock().unwrap().push(result);
+            self.state += 1;
+            Ok(())
+        }
+
+        async fn run(
+            &mut self,
+            _program: &GraphTraceProgram,
+            _context: &TraceDriverContext<'_>,
+        ) -> Result<TraceTerminalSupplement, TraceDriverError> {
+            unreachable!("terminal-output staged driver must execute through the stage loop")
+        }
+    }
+
+    struct TerminalOutputToolDispatcher;
+
+    #[async_trait(?Send)]
+    impl tools::ToolDispatcher for TerminalOutputToolDispatcher {
+        async fn open_trace(
+            &self,
+            _context: tools::TraceOpenContext<'_>,
+        ) -> Result<(), tools::ToolDispatchError> {
+            Ok(())
+        }
+
+        async fn dispatch(
+            &self,
+            request: tools::ToolDispatchRequest,
+            _context: &tools::ToolDispatchContext,
+        ) -> Result<tools::ToolDispatchResult, tools::ToolDispatchError> {
+            Ok(tools::ToolDispatchResult::completed(
+                request.call_id,
+                0,
+                Bytes::from(request.command),
+            ))
+        }
+
+        async fn close_trace(
+            &self,
+            _trace: &TraceIdentity,
+        ) -> Result<(), tools::ToolDispatchError> {
+            Ok(())
+        }
     }
 
     #[async_trait(?Send)]
@@ -3643,6 +3795,18 @@ executable = "tools/adapter.sh"
         }
     }
 
+    #[derive(Default)]
+    struct CapturingTerminalSupplements(Mutex<Vec<TraceTerminalSupplement>>);
+
+    impl GraphExecutionEventSink for CapturingTerminalSupplements {
+        fn emit(&self, event: GraphExecutionEvent) -> Result<(), TraceError> {
+            if let GraphExecutionEvent::TraceSupplement { supplement } = event {
+                self.0.lock().unwrap().push(supplement);
+            }
+            Ok(())
+        }
+    }
+
     fn completed_evidence_record() -> CapturedRecord {
         let mut ingest =
             crate::metrics_core::RecordIngest::minimal(1_000_000, 9_000_000, Phase::Profiling);
@@ -4021,33 +4185,52 @@ executable = "tools/adapter.sh"
     }
 
     #[tokio::test(flavor = "current_thread")]
-    async fn lowered_terminal_contract_refuses_before_graph_executor_dispatch() {
-        let task = native_graph_task_fixture(
-            br#"{
-  "schema_version": "1.0", "trace_id": "terminal-preflight", "stage_bound": 1,
-  "channels": { "output": { "type": "messages", "reducer": "add_messages" } },
-  "nodes": [{ "id": "model", "kind": "model", "binding": "primary", "output": "output" }],
-  "edges": [{ "source": "START", "target": "model" }, { "source": "model", "target": "END" }],
-  "terminal_outputs": ["output"]
-}"#,
-        );
-        let source = HarborSource::local(task.path().to_string_lossy())
-            .expect("temporary task path is a valid source");
-        let imported = HarborImporter::new(&NativeSourceAcquirer)
-            .import(&source)
-            .expect("fixture imports");
-        let native = imported
-            .package
-            .native_graph()
-            .expect("fixture contains a NativeGraph package");
-        let (program, _) = lower_native_graph(native).expect("fixture lowers");
-        let backend =
-            empty_graph_worker(Arc::new(NativeGraphLiveTraceProgramDriverFactory::default()));
+    async fn staged_terminal_outputs_propagate_static_and_dynamic_catalogs() {
+        let observations = Arc::new(Mutex::new(Vec::new()));
+        let mut backend = empty_graph_worker(Arc::new(TerminalOutputStagedTraceDriverFactory {
+            observations: observations.clone(),
+        }));
+        let supplements = Arc::new(CapturingTerminalSupplements::default());
+        backend.events = supplements.clone();
+        let mut program = empty_recorded_program("terminal-output-staged");
+        program.driver.kind = "terminal_output_staged".into();
 
-        let error = tokio::task::LocalSet::new()
-            .run_until(async { backend.execute_trace(program).await.unwrap_err() })
-            .await;
-        assert!(error.to_string().contains("frozen terminal handles"));
+        tokio::task::LocalSet::new()
+            .run_until(async { backend.execute_trace(program).await })
+            .await
+            .expect("executor completes both terminal-output stages");
+        let supplement = supplements
+            .0
+            .lock()
+            .unwrap()
+            .pop()
+            .expect("execute_trace emits the staged terminal supplement");
+        let observations = observations.lock().unwrap();
+        assert_eq!(observations.len(), 2);
+        let static_handle = observations[0].output_handles["tool-output"];
+        let dynamic_handle = observations[1].output_handles["tool-output"];
+        assert_ne!(static_handle, dynamic_handle);
+        let static_wire = serde_json::to_vec(&observations[0].channels["tool-output"])
+            .expect("static completed channel serializes");
+        let dynamic_wire = serde_json::to_vec(&observations[1].channels["tool-output"])
+            .expect("dynamic completed channel serializes");
+
+        assert_eq!(
+            supplement.terminal_outputs,
+            BTreeMap::from([("tool-output".into(), dynamic_handle)])
+        );
+        assert!(matches!(
+            supplement
+                .terminal_output(static_handle)
+                .expect("executor catalog retains the static stage handle"),
+            Payload::Raw { wire } if wire.as_ref() == static_wire
+        ));
+        assert!(matches!(
+            supplement
+                .terminal_output(dynamic_handle)
+                .expect("executor catalog resolves the selected dynamic handle"),
+            Payload::Raw { wire } if wire.as_ref() == dynamic_wire
+        ));
         assert!(backend.active.borrow().is_empty());
     }
 
