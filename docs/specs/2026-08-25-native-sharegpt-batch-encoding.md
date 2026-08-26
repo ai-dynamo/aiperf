@@ -7,7 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Status
 
-Approved design for the native Rust port of origin/main commit
+Approved and independently revalidated native Rust port of origin/main commit
 `5566aae1e129f63c2d761d4c3fa5ee18de0ba9be`.
 
 ## Problem
@@ -177,3 +177,14 @@ Before closure:
    `/mnt/4tb` for every Rust build/test invocation.
 6. Complete independent task review and full Graham review, with no unresolved
    Critical or Important findings.
+
+## Independent closure evidence
+
+On 2026-08-26, the current-shared-HEAD revalidation confirmed that actual merge
+`6521729344cad4b8791fe94c85a876a2ee52b8e0` has the exact upstream commit as
+its second parent and that native range
+`4e39be3aeec509bc43853aeeb75f29452d1d2c33^..67e6f3988d7664900d4410910748cf5ff6352e20`
+remains behaviorally intact. Fresh focused ShareGPT composition coverage (5
+tests) and tokenizer batch-fidelity coverage (2 tests) passed with sccache and
+clang/lld using an isolated `/mnt/4tb` target. Independent Graham review
+approved the full native range with no findings.
