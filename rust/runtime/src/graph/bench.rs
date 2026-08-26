@@ -4,9 +4,9 @@
 //!
 //! Builds a multi-turn conversation as a content-addressed segment pool
 //! (system + growing user turns, prefix-chained so the static prefix dedups
-//! across every trace instance) and the per-node ISL map. The actual
-//! benchmark driver lives in [`crate::graph::transport_bench`]; this module only
-//! provides the workload builder + server-list helpers it consumes.
+//! across every trace instance) and the per-node ISL map. The direct raw-HTTP
+//! benchmark driver is the `graph-transport-bench`-gated `transport_bench`
+//! module; this module remains neutral scaffolding shared with DynoSim.
 
 use std::collections::HashMap;
 

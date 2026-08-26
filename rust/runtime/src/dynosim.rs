@@ -34,12 +34,12 @@ use crate::graph::model::{GraphTraceProgram, TraceRecord};
 use crate::graph::policy::{
     CompositeNodeDispatchPolicy, NodeDispatchPolicy, NodeFailurePolicy, PrefillSlotNodePolicy,
 };
+use crate::graph::report::GraphRpsReport;
 use crate::graph::runtime::{
     SimDriveError, SimEventSource, SimStep, drive_real_with_source, drive_sim_with_source,
 };
 use crate::graph::segment::SegmentStore;
 use crate::graph::sink::{GraphDispatchOptions, GraphReply, GraphSink};
-use crate::graph::transport_bench::GraphRpsReport;
 use crate::graph::wire::OpenAiChatMessage as GraphMessage;
 use crate::graph::workload::{GraphWorkload, GraphWorkloadReport};
 use crate::metrics_core::{
@@ -6109,6 +6109,15 @@ mod tests {
         assert_eq!(first.aiperf.completed, 18);
         assert_eq!(first.aiperf.errors, 0);
         assert_eq!(first.aiperf.output_tokens, 72);
+        assert!(first.aiperf.wall_secs > 0.0);
+        assert_eq!(
+            first.aiperf.rps(),
+            first.aiperf.completed as f64 / first.aiperf.wall_secs
+        );
+        assert_eq!(
+            first.aiperf.output_tps(),
+            first.aiperf.output_tokens as f64 / first.aiperf.wall_secs
+        );
         assert!(first.aiperf.ttft_mean_ms > 0.0);
         assert_eq!(first.dynamo.request_counts.completed_requests, 18);
         assert_metric_parity(&first.performance, &first.dynamo, first.parity);

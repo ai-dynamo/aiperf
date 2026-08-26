@@ -37,13 +37,13 @@ use crate::graph::bench::{BenchConfig, build_workload, resolve_servers};
 use crate::graph::executor::{ExecutorFlags, TraceExecutor};
 use crate::graph::materialize::SegmentItemsMaterializer;
 use crate::graph::model::{GraphRecord, TraceRecord};
+use crate::graph::report::GraphRpsReport;
 use crate::graph::runtime::Handle;
 use crate::graph::segment::{InMemorySegmentStore, SegmentStore};
 use crate::graph::sink::{GraphReply, GraphSink};
 use crate::graph::wire::OpenAiChatMessage as Msg;
 use crate::metrics_core::{
-    AccumulatorSummary, InferenceDimensions, MetricsAccumulator, Phase, RecordIngest, TokenCounts,
-    UsageMetrics,
+    InferenceDimensions, MetricsAccumulator, Phase, RecordIngest, TokenCounts, UsageMetrics,
 };
 use crate::timing::{RunState, StopChecker, StopConfig};
 use crate::transport::core::SseMessage;
@@ -77,39 +77,6 @@ struct MergedMetrics {
     errors: u64,
     output_tokens: u64,
     native: MetricsAccumulator,
-}
-
-/// The transport-bench result: throughput + TTFT distribution.
-#[derive(Debug, Clone)]
-pub struct GraphRpsReport {
-    pub completed: u64,
-    pub errors: u64,
-    pub output_tokens: u64,
-    pub wall_secs: f64,
-    pub ttft_p50_ms: f64,
-    pub ttft_p90_ms: f64,
-    pub ttft_p99_ms: f64,
-    pub ttft_mean_ms: f64,
-    /// Native typed distributions and sweeps merged once across workers.
-    pub native_metrics: AccumulatorSummary,
-}
-
-impl GraphRpsReport {
-    pub fn rps(&self) -> f64 {
-        if self.wall_secs > 0.0 {
-            self.completed as f64 / self.wall_secs
-        } else {
-            0.0
-        }
-    }
-    /// Output tokens per second (SSE content chunks / wall).
-    pub fn output_tps(&self) -> f64 {
-        if self.wall_secs > 0.0 {
-            self.output_tokens as f64 / self.wall_secs
-        } else {
-            0.0
-        }
-    }
 }
 
 fn percentile(sorted: &[f32], p: f64) -> f64 {

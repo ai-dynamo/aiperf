@@ -15,6 +15,10 @@ default = ["parquet", "cellular", "grpc"]
 # other direct library consumers build without it, so the gated module and its
 # dependency surface stay out of their builds.
 engine = []
+# Direct raw-HTTP Graph-IR throughput microbenchmark. It intentionally bypasses
+# the product sink so it measures the low-level path, and is excluded from the
+# default library API.
+graph-transport-bench = []
 # Native gRPC transport (Clock-injected Tonic HTTP/2 channels): the
 # `transport::grpc` prepared-sink stack, the engine's `grpc`/`grpc_execution`
 # placement path, the `grpc` runner transport factory, and the KServe OIP v2 /

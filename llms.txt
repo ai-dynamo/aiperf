@@ -452,8 +452,10 @@ profiler.
   `workload.rs` / `placement.rs` → `rust/runtime/src/engine/graph_phase_runtime.rs`
   (one lifecycle/policy driver) → `graph_execution.rs` or `offline_execution.rs`
   (injected backend adapter).
-  The throughput harness remains `rust/runtime/src/graph/transport_bench.rs`
-  (thread-per-core lanes, transport::http, UDS).
+  The opt-in `graph-transport-bench` throughput harness remains
+  `rust/runtime/src/graph/transport_bench.rs` (thread-per-core lanes,
+  transport::http, UDS); its neutral `GraphRpsReport` lives in
+  `rust/runtime/src/graph/report.rs` and is shared with DynoSim.
 - **How are prompts built without re-serializing?** `rust/runtime/src/dataset/segment.rs`
   (blake3 prefix-dependent dense handles) + `materialize.rs` (wire splice).
   `--system-prompt`/`--system-prompt-file` resolve once into exact owned text;
