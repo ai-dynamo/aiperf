@@ -44,8 +44,11 @@ In vLLM mode the base pool is the tokenizer's allowed random-token IDs, excludin
 tokens. In SGLang mode it is dense `0..vocab_size`. Request `i` with offset `o` receives
 `pool[(o+i+j) % pool.len()]` for token `j`. Offset bounds use `vocab_size`, as the
 reference does, even when the vLLM allowed pool is smaller. Existing native decode/encode
-repair remains authoritative for text endpoints, and the exact-ID path remains
-authoritative for raw-token endpoints.
+repair remains authoritative for text endpoints with the upstream ten-attempt budget,
+and the exact-ID path remains authoritative for raw-token endpoints. Independently
+sampled random prompts outside ratio mode subtract the tokenizer's automatic special
+tokens after the ISL draw, floored at one, so the authored ISL remains the server-side
+budget there too.
 
 Prefix IDs are additive and assembled before one decode. Building a prefix must not
 advance the body request ordinal. A body length of zero is valid only when a nonempty
@@ -69,3 +72,19 @@ preseed size, and consumed ordinal. No per-token logging is added.
 The port is complete only when parsing, checked bounds, pinned PCG64 and MT19937 vectors,
 offset arithmetic, special-token pool policy, exact token length, prefix/zero guards, raw
 token composition, and mock-server request evidence pass under the shared seed contract.
+
+In addition to Rust-owned fixtures, a heavy A/B parity gate launches the actual Python
+profile and the actual native `aiperf profile` against the same deterministic
+request-capturing Rust mock. Equivalent authored Config-v2 files cover multiple seeds,
+scalar/split and boundary ratios, both corpus styles, zero/two server-added special
+tokens, and all-ISL→all-OSL→offset order. The server's ordered captures must match for
+method, route, content type, exact outbound UTF-8 body bytes, and re-tokenized prompt IDs.
+The native half must traverse config parsing, projection, dataset construction, prompt
+generation, endpoint body planning, and production HTTP transport; test-local request
+serialization is not evidence.
+
+Before review, three separate semantic audits must enumerate the complete upstream delta
+and native equivalent with executable evidence: RNG/reference streams and boundaries;
+config/dataset/formatter/prefix semantics; and Python-to-native production protocol and
+output behavior. Each audit must report no unresolved divergence after the final rebuilt
+13-test/48-capture gate.

@@ -50,3 +50,47 @@ The Python suite is mapped to native Rust behavior tests as follows:
 The native port deliberately keeps count/hash-backed trace synthesis on its existing
 AIPerf deterministic corpus contract. The reference range-ratio stream is a synthetic
 dataset contract and is not silently applied to recorded trace hashes.
+
+## Implemented native port
+
+The target delta is retained as exact second-parent ancestry by merge `cd31c0ae5a`.
+Native implementation commits through `3af08f8807` provide:
+
+- checked vLLM/PCG64 and SGLang/RandomState-MT19937 range plans;
+- exact all-ISL→all-OSL→offset draw order, wide-seed XOR folding, continuation draws,
+  request-index arithmetic, style-specific token pools, and bounded failures;
+- Config-v2, YAML, CLI, and protocol-v2 projection;
+- token-additive prefix composition, prefix-only rescue, raw-ID composition, exact text
+  repair, and non-range special-token ISL compensation; and
+- a real Python/native profile A/B harness over the production HTTP request path.
+
+The earlier Baseten prerequisite commit `b244e54ea4` exists only because this branch is
+based on old shared HEAD `b009535bb8`. Integration must retain the current shared Baseten
+outcome work from `428e820510` and the open-loop correction from `aaba0e6990`; it must not
+reapply `b244e54ea4` over those newer semantics or restore closed-loop-only outcomes.
+
+## Mandatory semantic audits
+
+- [Audit 1: RNG and reference stream](commit-056-audit-1-rng-reference-stream.md)
+- [Audit 2: config, dataset, formatter, and prefix semantics](commit-056-audit-2-config-dataset-prefix.md)
+- [Audit 3: Python-to-native production E2E](commit-056-audit-3-production-e2e.md)
+
+All three audits compare exact upstream `94fee7338b` with implementation tree
+`3af08f8807`, cite source lines and executable evidence, and report no unresolved
+divergence after the rebuilt production gate passed 13/13 tests and all 48 ordered
+captures.
+
+## Verification receipt before independent review
+
+- Runtime engine random-range filter: 6 passed, 0 failed.
+- Native range integration: 3 passed, 0 failed after one recorded RED caused by an
+  obsolete whole-plan equality assertion.
+- Python-generated length/offset/token vectors: 1 passed, 0 failed; generator `--check`
+  and Ruff both passed.
+- CLI ratio/style: 2 passed, 0 failed; prompt-corpus surfaces: 7 passed, 0 failed.
+- Non-range special-token compensation: 1 passed, 0 failed.
+- Full production Python/native A/B: 13 passed, 0 failed; six cases × eight requests =
+  48 ordered method/route/content-type/body/token-ID matches.
+
+Independent Graham approval and campaign closure remain pending; these receipts do not
+authorize provenance or tracker closure by themselves.
