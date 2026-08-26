@@ -13,6 +13,7 @@ use std::collections::HashMap;
 use crate::dispatch::collector::ReplayTerminalStatus;
 use crate::dispatch::sink::ObservedUsage;
 use crate::metrics_core::RecordIngest;
+use crate::metrics_core::itl::decode_tokens_after_first_chunk;
 use uuid::Uuid;
 
 /// Per-request inputs used by quality-filtered goodput.
@@ -154,6 +155,7 @@ struct InFlightRequest {
     started_ns: i64,
     token_times_ns: Vec<i64>,
     output_sequence_length: Option<usize>,
+    first_content_chunk_tokens: Option<usize>,
 }
 
 /// Default single-loop [`WindowSampler`] implementation.
@@ -220,8 +222,14 @@ impl WindowSampler for TumblingWindowSampler {
         // Match on_terminal: a meaningful ITL needs both authoritative OSL > 1 and
         // more than one observed token, otherwise first == last yields a bogus 0.0.
         let inter_token_latency_ns = output_sequence_length
-            .filter(|count| *count > 1 && record.token_arrival_ns.len() > 1)
-            .map(|count| last.saturating_sub(first).max(0) as f64 / (count - 1) as f64);
+            .filter(|_| record.token_arrival_ns.len() > 1)
+            .and_then(|count| {
+                decode_tokens_after_first_chunk(
+                    count as u64,
+                    record.tokens.first_content_chunk_tokens,
+                )
+            })
+            .map(|count| last.saturating_sub(first).max(0) as f64 / count as f64);
         self.completed.push(RequestSample {
             request_latency_ns: last.saturating_sub(started_ns).max(0),
             ttft_ns: Some(first.saturating_sub(started_ns).max(0)),
@@ -237,6 +245,7 @@ impl WindowSampler for TumblingWindowSampler {
                 started_ns: at_ns,
                 token_times_ns: Vec::new(),
                 output_sequence_length: None,
+                first_content_chunk_tokens: None,
             },
         );
     }
@@ -256,6 +265,8 @@ impl WindowSampler for TumblingWindowSampler {
     fn on_usage(&mut self, uuid: Uuid, usage: ObservedUsage) {
         if let Some(request) = self.in_flight.get_mut(&uuid) {
             request.output_sequence_length = usage.completion_tokens.and_then(count_to_usize);
+            request.first_content_chunk_tokens =
+                usage.first_content_chunk_tokens.and_then(count_to_usize);
         }
     }
 
@@ -280,18 +291,16 @@ impl WindowSampler for TumblingWindowSampler {
                     .expect("a first token implies a last token");
                 let request_latency_ns = last.saturating_sub(request.started_ns).max(0);
                 let ttft_ns = Some(first.saturating_sub(request.started_ns).max(0));
-                let inter_token_latency_ns = match (
-                    request.token_times_ns.as_slice(),
-                    request.output_sequence_length,
-                ) {
-                    ([first, .., last], Some(output_sequence_length))
-                        if request.token_times_ns.len() > 1 && output_sequence_length > 1 =>
-                    {
-                        Some(
-                            last.saturating_sub(*first).max(0) as f64
-                                / (output_sequence_length - 1) as f64,
-                        )
-                    }
+                let inter_token_latency_ns = match request.token_times_ns.as_slice() {
+                    [first, .., last] if request.token_times_ns.len() > 1 => request
+                        .output_sequence_length
+                        .and_then(|count| {
+                            decode_tokens_after_first_chunk(
+                                count as u64,
+                                request.first_content_chunk_tokens.map(|value| value as u64),
+                            )
+                        })
+                        .map(|count| last.saturating_sub(*first).max(0) as f64 / count as f64),
                     _ => None,
                 };
                 self.completed.push(RequestSample {
@@ -350,6 +359,7 @@ mod tests {
             ObservedUsage {
                 prompt_tokens: Some(3),
                 completion_tokens: Some(5),
+                first_content_chunk_tokens: Some(3),
                 ..ObservedUsage::default()
             },
         );
@@ -363,7 +373,7 @@ mod tests {
         assert_eq!(first.successful_requests[0].ttft_ns, Some(10));
         assert_eq!(
             first.successful_requests[0].inter_token_latency_ns,
-            Some(2.5)
+            Some(5.0)
         );
         assert_eq!(first.successful_requests[0].output_sequence_length, Some(5));
         assert_eq!(
@@ -454,6 +464,7 @@ mod tests {
         completed.admit_ns = Some(20);
         completed.token_arrival_ns = vec![30, 40];
         completed.usage.completion_tokens = Some(5);
+        completed.tokens.first_content_chunk_tokens = Some(3);
         sampler.process_record(&completed);
 
         let mut failed = RecordIngest::minimal(10, 50, Phase::Profiling);
@@ -471,7 +482,7 @@ mod tests {
         assert_eq!(stats.successful_requests[0].ttft_ns, Some(10));
         assert_eq!(
             stats.successful_requests[0].inter_token_latency_ns,
-            Some(2.5)
+            Some(5.0)
         );
         assert_eq!(stats.successful_requests[0].output_sequence_length, Some(5));
     }

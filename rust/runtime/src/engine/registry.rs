@@ -999,6 +999,8 @@ struct EndpointProfileConfigV2 {
     use_legacy_max_tokens: bool,
     #[serde(default)]
     use_server_token_count: bool,
+    #[serde(default, alias = "perChunkUsage")]
+    per_chunk_usage: bool,
     #[serde(default)]
     headers: BTreeMap<String, String>,
     #[serde(default)]
@@ -1349,6 +1351,7 @@ pub fn validate_endpoint_profiles_v2(
             wait_for_model_mode_set: true,
             use_legacy_max_tokens: config.use_legacy_max_tokens,
             use_server_token_count: config.use_server_token_count,
+            per_chunk_usage: config.per_chunk_usage,
             headers: config.headers,
             api_key: config.api_key,
             extra: (!config.extra.is_empty()).then_some(config.extra),

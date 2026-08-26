@@ -32,6 +32,8 @@ pub(crate) struct EndpointReduceAccumulators<'a> {
     pub endpoint_metrics: &'a mut ObservedEndpointMetrics,
     /// Reconciled terminal usage counts.
     pub observed_usage: &'a mut ObservedUsage,
+    /// Whether to retain cumulative usage from the first content-bearing chunk.
+    pub capture_first_content_chunk_usage: bool,
 }
 
 /// Token-emission context supplied by a transport.
@@ -61,6 +63,11 @@ pub(crate) fn reduce_parsed_response(
     emit: &TokenEmitter<'_>,
     acc: EndpointReduceAccumulators<'_>,
 ) -> bool {
+    capture_first_content_chunk_usage(
+        parsed,
+        acc.capture_first_content_chunk_usage,
+        acc.observed_usage,
+    );
     absorb_usage(parsed, acc.observed_usage);
     let Some(data) = parsed.data.as_ref() else {
         return false;
@@ -91,6 +98,28 @@ pub(crate) fn reduce_parsed_response(
         }
     }
     true
+}
+
+fn capture_first_content_chunk_usage(
+    parsed: &ParsedResponse,
+    is_enabled: bool,
+    observed_usage: &mut ObservedUsage,
+) {
+    if !is_enabled
+        || observed_usage.first_content_chunk_tokens.is_some()
+        || !parsed
+            .data
+            .as_ref()
+            .is_some_and(ResponseData::has_token_output)
+    {
+        return;
+    }
+    observed_usage.first_content_chunk_tokens = parsed
+        .usage
+        .as_ref()
+        .and_then(UsageView::from_value)
+        .and_then(UsageView::completion_tokens)
+        .and_then(|value| usize::try_from(value).ok());
 }
 
 /// Admit the textual decision facts from one decoded response without creating
@@ -288,6 +317,97 @@ pub(crate) fn assistant_message(turn: &Turn) -> Option<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dispatch::collector::ReplayTerminalStatus;
+
+    struct NoopObserver;
+
+    impl RequestObserver for NoopObserver {
+        fn on_arrival(&self, _: Uuid, _: f64, _: usize, _: usize) {}
+        fn on_admit(&self, _: Uuid, _: f64, _: usize) {}
+        fn on_token(&self, _: Uuid, _: f64) {}
+        fn on_terminal(&self, _: Uuid, _: ReplayTerminalStatus) {}
+    }
+
+    fn reduce_usage_sequence(capture_first_content_chunk_usage: bool) -> ObservedUsage {
+        let responses = [
+            ParsedResponse {
+                perf_ns: 1,
+                data: None,
+                usage: Some(serde_json::json!({"completion_tokens": 1})),
+                sources: None,
+            },
+            ParsedResponse {
+                perf_ns: 2,
+                data: Some(ResponseData::Text {
+                    text: String::new(),
+                }),
+                usage: Some(serde_json::json!({"completion_tokens": 2})),
+                sources: None,
+            },
+            ParsedResponse {
+                perf_ns: 3,
+                data: Some(ResponseData::Reasoning {
+                    content: None,
+                    reasoning: "first content".to_owned(),
+                }),
+                usage: Some(serde_json::json!({"completion_tokens": 3})),
+                sources: None,
+            },
+            ParsedResponse {
+                perf_ns: 4,
+                data: Some(ResponseData::Text {
+                    text: "later content".to_owned(),
+                }),
+                usage: Some(serde_json::json!({"completion_tokens": 7})),
+                sources: None,
+            },
+        ];
+        let observer = NoopObserver;
+        let first_token_released = Cell::new(false);
+        let to_ms = |ns| ns as f64;
+        let on_first_token = |_| {};
+        let emitter = TokenEmitter {
+            uuid: Uuid::nil(),
+            produces_tokens: true,
+            start_ns: 0,
+            obs: &observer,
+            to_ms: &to_ms,
+            first_token_released: &first_token_released,
+            on_first_token: &on_first_token,
+        };
+        let mut response_text = String::new();
+        let mut model_response = ModelResponseMetadata::default();
+        let mut endpoint_metrics = ObservedEndpointMetrics::default();
+        let mut observed_usage = ObservedUsage::default();
+        for response in &responses {
+            reduce_parsed_response(
+                response,
+                &emitter,
+                EndpointReduceAccumulators {
+                    response_text: &mut response_text,
+                    model_response: &mut model_response,
+                    endpoint_metrics: &mut endpoint_metrics,
+                    observed_usage: &mut observed_usage,
+                    capture_first_content_chunk_usage,
+                },
+            );
+        }
+        observed_usage
+    }
+
+    #[test]
+    fn reduction_captures_first_meaningful_content_usage_once() {
+        let observed = reduce_usage_sequence(true);
+        assert_eq!(observed.first_content_chunk_tokens, Some(3));
+        assert_eq!(observed.completion_tokens, Some(7));
+    }
+
+    #[test]
+    fn reduction_does_not_capture_first_content_usage_without_opt_in() {
+        let observed = reduce_usage_sequence(false);
+        assert_eq!(observed.first_content_chunk_tokens, None);
+        assert_eq!(observed.completion_tokens, Some(7));
+    }
 
     #[test]
     fn usage_absorption_retains_extended_endpoint_facts() {

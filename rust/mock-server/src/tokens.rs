@@ -730,6 +730,7 @@ mod tests {
             min_tokens: None,
             reasoning_effort: None,
             priority: None,
+            mock_first_chunk_tokens: 1,
         }
     }
 

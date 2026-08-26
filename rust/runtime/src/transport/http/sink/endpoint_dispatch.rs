@@ -84,6 +84,7 @@ trait RuntimeEndpointAdapter {
     fn parse_response(&self, response: &ServerResponse) -> EndpointResult<Option<ParsedResponse>>;
     fn build_assistant_turn(&self, record: &EndpointRequestRecord) -> EndpointResult<Option<Turn>>;
     fn captures_assistant_turn(&self) -> bool;
+    fn captures_first_content_chunk_usage(&self) -> bool;
 }
 
 pub(super) struct EndpointDispatchHooks<'a> {
@@ -230,6 +231,10 @@ impl RuntimeEndpointAdapter for WorkerPreparedEndpointAdapter<'_> {
 
     fn captures_assistant_turn(&self) -> bool {
         self.0.captures_assistant_turn()
+    }
+
+    fn captures_first_content_chunk_usage(&self) -> bool {
+        self.0.config().as_raw().per_chunk_usage
     }
 }
 
@@ -627,6 +632,8 @@ impl TransportSink {
                             model_response: &mut model_response,
                             endpoint_metrics: &mut endpoint_metrics,
                             observed_usage: &mut observed_usage,
+                            capture_first_content_chunk_usage: endpoint
+                                .captures_first_content_chunk_usage(),
                         },
                     );
                 }
@@ -683,6 +690,8 @@ impl TransportSink {
                     model_response: &mut model_response,
                     endpoint_metrics: &mut endpoint_metrics,
                     observed_usage: &mut observed_usage,
+                    capture_first_content_chunk_usage: endpoint
+                        .captures_first_content_chunk_usage(),
                 },
             );
             parsed_content |= carried_content;

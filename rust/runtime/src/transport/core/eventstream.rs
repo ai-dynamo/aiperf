@@ -22,6 +22,12 @@ const PRELUDE_LEN: usize = 8;
 const CRC_LEN: usize = 4;
 /// Minimum frame size: prelude + prelude CRC + message CRC, zero headers/payload.
 const MIN_FRAME_LEN: usize = PRELUDE_LEN + CRC_LEN + CRC_LEN;
+const MAX_EVENTSTREAM_PAYLOAD_LEN: usize = 24 * 1024 * 1024;
+const MAX_EVENTSTREAM_HEADERS_LEN: usize = 128 * 1024;
+/// AIPerf's bounded retained-frame limit, sized to accept every AWS EventStream
+/// service maximum: 24 MiB payload, 128 KiB encoded headers, and the envelope.
+pub const MAX_EVENTSTREAM_FRAME_LEN: usize =
+    MAX_EVENTSTREAM_PAYLOAD_LEN + MAX_EVENTSTREAM_HEADERS_LEN + MIN_FRAME_LEN;
 
 fn crc32(bytes: &[u8]) -> u32 {
     const POLY: u32 = 0xEDB88320;
@@ -70,24 +76,26 @@ impl EventStreamMessage {
     }
 
     /// Encode this message into its wire framing.
-    pub fn encode(&self) -> Bytes {
-        let headers_len = self.headers.len() as u32;
-        let total_len =
-            (PRELUDE_LEN + CRC_LEN + self.headers.len() + self.payload.len() + CRC_LEN) as u32;
+    pub fn encode(&self) -> Result<Bytes, EventStreamEncodeError> {
+        let headers_len = u32::try_from(self.headers.len())
+            .map_err(|_| EventStreamEncodeError("headers length does not fit u32".to_string()))?;
+        let total_len = frame_len(self.headers.len(), self.payload.len())?;
+        let total_len_u32 = u32::try_from(total_len)
+            .map_err(|_| EventStreamEncodeError("frame length does not fit u32".to_string()))?;
 
         let mut prelude = BytesMut::with_capacity(PRELUDE_LEN);
-        prelude.put_u32(total_len);
+        prelude.put_u32(total_len_u32);
         prelude.put_u32(headers_len);
         let prelude_crc = crc32(&prelude);
 
-        let mut out = BytesMut::with_capacity(total_len as usize);
+        let mut out = BytesMut::with_capacity(total_len);
         out.extend_from_slice(&prelude);
         out.put_u32(prelude_crc);
         out.extend_from_slice(&self.headers);
         out.extend_from_slice(&self.payload);
         let message_crc = crc32(&out);
         out.put_u32(message_crc);
-        out.freeze()
+        Ok(out.freeze())
     }
 }
 
@@ -120,11 +128,25 @@ impl std::fmt::Display for EventStreamDecodeError {
 
 impl std::error::Error for EventStreamDecodeError {}
 
+/// Encode error for an EventStream message that exceeds AIPerf's retained-frame limit.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EventStreamEncodeError(pub String);
+
+impl std::fmt::Display for EventStreamEncodeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "eventstream encode error: {}", self.0)
+    }
+}
+
+impl std::error::Error for EventStreamEncodeError {}
+
 /// Incremental decoder: buffers arbitrary byte chunks and yields complete,
 /// CRC-verified messages as they become available.
 #[derive(Debug, Default)]
 pub struct EventStreamDecoder {
     buf: BytesMut,
+    frame_len: Option<usize>,
+    ready: Vec<EventStreamMessage>,
 }
 
 impl EventStreamDecoder {
@@ -133,79 +155,219 @@ impl EventStreamDecoder {
     }
 
     /// Feed a chunk of bytes from the wire.
-    pub fn push(&mut self, chunk: &[u8]) {
-        self.buf.extend_from_slice(chunk);
+    pub fn push(&mut self, mut chunk: &[u8]) -> Result<(), EventStreamDecodeError> {
+        loop {
+            if self.frame_len.is_none() {
+                let prelude_len = PRELUDE_LEN + CRC_LEN;
+                let copied = (prelude_len - self.buf.len()).min(chunk.len());
+                self.buf.extend_from_slice(&chunk[..copied]);
+                chunk = &chunk[copied..];
+                if self.buf.len() < prelude_len {
+                    return Ok(());
+                }
+
+                let mut prelude = [0; PRELUDE_LEN + CRC_LEN];
+                prelude.copy_from_slice(&self.buf[..prelude_len]);
+                self.frame_len = Some(validate_prelude(prelude)?.0);
+            }
+
+            let Some(frame_len) = self.frame_len else {
+                continue;
+            };
+            let copied = (frame_len - self.buf.len()).min(chunk.len());
+            self.buf.extend_from_slice(&chunk[..copied]);
+            chunk = &chunk[copied..];
+            if self.buf.len() < frame_len {
+                return Ok(());
+            }
+
+            self.ready
+                .push(decode_complete_frame(&mut self.buf, frame_len)?);
+            self.frame_len = None;
+            if chunk.is_empty() {
+                return Ok(());
+            }
+        }
     }
 
     /// Decode as many complete messages as are currently buffered.
     pub fn drain_messages(&mut self) -> Result<Vec<EventStreamMessage>, EventStreamDecodeError> {
-        let mut out = Vec::new();
-        loop {
-            if self.buf.len() < PRELUDE_LEN + CRC_LEN {
-                return Ok(out);
-            }
-            let total_len = u32::from_be_bytes(self.buf[0..4].try_into().unwrap()) as usize;
-            if total_len < MIN_FRAME_LEN {
-                return Err(EventStreamDecodeError(format!(
-                    "frame total length {total_len} is smaller than the minimum frame size"
-                )));
-            }
-            if self.buf.len() < total_len {
-                return Ok(out);
-            }
-
-            let headers_len = u32::from_be_bytes(self.buf[4..8].try_into().unwrap()) as usize;
-            let prelude_crc = u32::from_be_bytes(self.buf[8..12].try_into().unwrap());
-            let computed_prelude_crc = crc32(&self.buf[0..PRELUDE_LEN]);
-            if prelude_crc != computed_prelude_crc {
-                return Err(EventStreamDecodeError("prelude CRC mismatch".to_string()));
-            }
-
-            let headers_start = PRELUDE_LEN + CRC_LEN;
-            let payload_start = headers_start + headers_len;
-            if payload_start > total_len - CRC_LEN {
-                return Err(EventStreamDecodeError(
-                    "headers length exceeds frame bounds".to_string(),
-                ));
-            }
-            let payload_end = total_len - CRC_LEN;
-
-            let message_crc =
-                u32::from_be_bytes(self.buf[payload_end..total_len].try_into().unwrap());
-            let computed_message_crc = crc32(&self.buf[0..payload_end]);
-            if message_crc != computed_message_crc {
-                return Err(EventStreamDecodeError("message CRC mismatch".to_string()));
-            }
-
-            let mut frame = self.buf.split_to(total_len);
-            let headers = frame
-                .split_to(payload_start)
-                .split_off(headers_start)
-                .freeze();
-            frame.truncate(payload_end - payload_start);
-            let payload = frame.freeze();
-
-            out.push(EventStreamMessage { headers, payload });
-        }
+        Ok(std::mem::take(&mut self.ready))
     }
 
     /// True if unconsumed trailing bytes remain (a truncated final frame).
     pub fn has_trailing_bytes(&self) -> bool {
         !self.buf.is_empty()
     }
+
+    #[cfg(test)]
+    fn buffered_len(&self) -> usize {
+        self.buf.len()
+    }
+}
+
+fn frame_len(headers_len: usize, payload_len: usize) -> Result<usize, EventStreamEncodeError> {
+    let total_len = MIN_FRAME_LEN
+        .checked_add(headers_len)
+        .and_then(|len| len.checked_add(payload_len))
+        .ok_or_else(|| EventStreamEncodeError("frame length overflow".to_string()))?;
+    if total_len > MAX_EVENTSTREAM_FRAME_LEN {
+        return Err(EventStreamEncodeError(format!(
+            "frame total length {total_len} exceeds AIPerf's retained-frame limit"
+        )));
+    }
+    Ok(total_len)
+}
+
+fn validate_prelude(
+    prelude: [u8; PRELUDE_LEN + CRC_LEN],
+) -> Result<(usize, usize), EventStreamDecodeError> {
+    let total_len = u32::from_be_bytes([prelude[0], prelude[1], prelude[2], prelude[3]]) as usize;
+    let headers_len = u32::from_be_bytes([prelude[4], prelude[5], prelude[6], prelude[7]]) as usize;
+    let prelude_crc = u32::from_be_bytes([prelude[8], prelude[9], prelude[10], prelude[11]]);
+    if total_len < MIN_FRAME_LEN {
+        return Err(EventStreamDecodeError(format!(
+            "frame total length {total_len} is smaller than the minimum frame size"
+        )));
+    }
+    if total_len > MAX_EVENTSTREAM_FRAME_LEN {
+        return Err(EventStreamDecodeError(format!(
+            "frame total length {total_len} exceeds the maximum eventstream frame size"
+        )));
+    }
+    if prelude_crc != crc32(&prelude[..PRELUDE_LEN]) {
+        return Err(EventStreamDecodeError("prelude CRC mismatch".to_string()));
+    }
+    let payload_end = total_len - CRC_LEN;
+    let headers_end = (PRELUDE_LEN + CRC_LEN)
+        .checked_add(headers_len)
+        .ok_or_else(|| EventStreamDecodeError("headers length exceeds frame bounds".to_string()))?;
+    if headers_end > payload_end {
+        return Err(EventStreamDecodeError(
+            "headers length exceeds frame bounds".to_string(),
+        ));
+    }
+    Ok((total_len, headers_len))
+}
+
+fn decode_complete_frame(
+    buf: &mut BytesMut,
+    total_len: usize,
+) -> Result<EventStreamMessage, EventStreamDecodeError> {
+    let payload_end = total_len - CRC_LEN;
+    let message_crc = u32::from_be_bytes([
+        buf[payload_end],
+        buf[payload_end + 1],
+        buf[payload_end + 2],
+        buf[payload_end + 3],
+    ]);
+    if message_crc != crc32(&buf[..payload_end]) {
+        return Err(EventStreamDecodeError("message CRC mismatch".to_string()));
+    }
+    let headers_len = u32::from_be_bytes([buf[4], buf[5], buf[6], buf[7]]) as usize;
+    let headers_start = PRELUDE_LEN + CRC_LEN;
+    let payload_start = headers_start + headers_len;
+    let mut frame = buf.split_to(total_len);
+    let headers = frame
+        .split_to(payload_start)
+        .split_off(headers_start)
+        .freeze();
+    frame.truncate(payload_end - payload_start);
+    Ok(EventStreamMessage {
+        headers,
+        payload: frame.freeze(),
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn prelude(total_len: u32, headers_len: u32) -> BytesMut {
+        let mut bytes = BytesMut::with_capacity(PRELUDE_LEN + CRC_LEN);
+        bytes.put_u32(total_len);
+        bytes.put_u32(headers_len);
+        bytes.put_u32(crc32(&bytes));
+        bytes
+    }
+
+    fn assert_rejects_prelude_without_retaining_payload(prelude: BytesMut) {
+        let mut chunk = prelude;
+        chunk.extend_from_slice(&[0xA5; 4_096]);
+        let mut decoder = EventStreamDecoder::new();
+        assert!(decoder.push(&chunk).is_err());
+        assert!(decoder.buffered_len() <= PRELUDE_LEN + CRC_LEN);
+    }
+
+    #[test]
+    fn rejects_total_length_smaller_than_minimum_before_retaining_payload() {
+        assert_rejects_prelude_without_retaining_payload(prelude((MIN_FRAME_LEN - 1) as u32, 0));
+    }
+
+    #[test]
+    fn rejects_headers_outside_frame_before_retaining_payload() {
+        assert_rejects_prelude_without_retaining_payload(prelude(MIN_FRAME_LEN as u32, 1));
+    }
+
+    #[test]
+    fn rejects_bad_prelude_crc_before_retaining_payload() {
+        let mut invalid = prelude(MIN_FRAME_LEN as u32, 0);
+        invalid[PRELUDE_LEN + CRC_LEN - 1] ^= 0xFF;
+        assert_rejects_prelude_without_retaining_payload(invalid);
+    }
+
+    #[test]
+    fn rejects_oversized_frame_before_retaining_payload() {
+        assert_rejects_prelude_without_retaining_payload(prelude(
+            MAX_EVENTSTREAM_FRAME_LEN as u32 + 1,
+            0,
+        ));
+    }
+
+    #[test]
+    fn round_trips_minimum_legal_frame() {
+        let message = EventStreamMessage {
+            headers: Bytes::new(),
+            payload: Bytes::new(),
+        };
+        let mut decoder = EventStreamDecoder::new();
+        decoder
+            .push(&message.encode().expect("minimum frame encodes"))
+            .expect("minimum frame is accepted");
+        assert_eq!(decoder.drain_messages().expect("decodes"), vec![message]);
+    }
+
+    #[test]
+    fn round_trips_maximum_protocol_payload_and_headers() {
+        let message = EventStreamMessage {
+            headers: Bytes::from(vec![b'h'; MAX_EVENTSTREAM_HEADERS_LEN]),
+            payload: Bytes::from(vec![b'p'; MAX_EVENTSTREAM_PAYLOAD_LEN]),
+        };
+        let encoded = message.encode().expect("protocol maximum is accepted");
+        assert_eq!(encoded.len(), MAX_EVENTSTREAM_FRAME_LEN);
+
+        let mut decoder = EventStreamDecoder::new();
+        decoder.push(&encoded).expect("frame is accepted");
+        assert_eq!(decoder.drain_messages().expect("decodes"), vec![message]);
+    }
+
+    #[test]
+    fn rejects_encoding_larger_than_retention_limit() {
+        let message = EventStreamMessage {
+            headers: Bytes::from(vec![b'h'; MAX_EVENTSTREAM_HEADERS_LEN + 1]),
+            payload: Bytes::from(vec![b'p'; MAX_EVENTSTREAM_PAYLOAD_LEN]),
+        };
+
+        assert!(message.encode().is_err());
+    }
+
     #[test]
     fn round_trips_single_message() {
         let message = EventStreamMessage::payload_part(Bytes::from_static(b"hello world"));
-        let encoded = message.encode();
+        let encoded = message.encode().expect("frame encodes");
 
         let mut decoder = EventStreamDecoder::new();
-        decoder.push(&encoded);
+        decoder.push(&encoded).expect("frame is accepted");
         let decoded = decoder.drain_messages().expect("decode succeeds");
 
         assert_eq!(decoded.len(), 1);
@@ -219,15 +381,15 @@ mod tests {
         let m1 = EventStreamMessage::payload_part(Bytes::from_static(b"chunk-1"));
         let m2 = EventStreamMessage::payload_part(Bytes::from_static(b"chunk-2"));
         let mut wire = BytesMut::new();
-        wire.extend_from_slice(&m1.encode());
-        wire.extend_from_slice(&m2.encode());
+        wire.extend_from_slice(&m1.encode().expect("first frame encodes"));
+        wire.extend_from_slice(&m2.encode().expect("second frame encodes"));
         let wire = wire.freeze();
 
         // Feed byte-by-byte to exercise partial-frame buffering.
         let mut decoder = EventStreamDecoder::new();
         let mut all = Vec::new();
         for byte in wire.iter() {
-            decoder.push(&[*byte]);
+            decoder.push(&[*byte]).expect("chunk is accepted");
             all.extend(decoder.drain_messages().unwrap());
         }
 
@@ -240,25 +402,25 @@ mod tests {
     #[test]
     fn rejects_corrupted_prelude_crc() {
         let message = EventStreamMessage::payload_part(Bytes::from_static(b"x"));
-        let mut encoded = BytesMut::from(&message.encode()[..]);
+        let encoded = message.encode().expect("frame encodes");
+        let mut encoded = BytesMut::from(&encoded[..]);
         encoded[11] ^= 0xFF; // flip a byte inside the prelude CRC field
 
         let mut decoder = EventStreamDecoder::new();
-        decoder.push(&encoded);
-        let err = decoder.drain_messages().unwrap_err();
+        let err = decoder.push(&encoded).unwrap_err();
         assert!(err.0.contains("prelude CRC"));
     }
 
     #[test]
     fn rejects_corrupted_message_crc() {
         let message = EventStreamMessage::payload_part(Bytes::from_static(b"x"));
-        let mut encoded = BytesMut::from(&message.encode()[..]);
+        let encoded = message.encode().expect("frame encodes");
+        let mut encoded = BytesMut::from(&encoded[..]);
         let last = encoded.len() - 1;
         encoded[last] ^= 0xFF;
 
         let mut decoder = EventStreamDecoder::new();
-        decoder.push(&encoded);
-        let err = decoder.drain_messages().unwrap_err();
+        let err = decoder.push(&encoded).unwrap_err();
         assert!(err.0.contains("message CRC"));
     }
 }

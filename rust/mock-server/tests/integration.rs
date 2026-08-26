@@ -68,6 +68,14 @@ fn client() -> reqwest::Client {
         .unwrap()
 }
 
+fn sse_json_values(body: &str) -> Vec<Value> {
+    body.split("\n\n")
+        .filter_map(|frame| frame.strip_prefix("data: "))
+        .filter(|data| data.trim() != "[DONE]")
+        .filter_map(|data| serde_json::from_str(data.trim()).ok())
+        .collect()
+}
+
 #[tokio::test]
 async fn health_returns_healthy() {
     let (addr, _h) = spawn_server(fast_cfg()).await;
@@ -348,6 +356,55 @@ async fn text_completions_streaming_with_usage() {
     assert!(text.contains("data: "));
     assert!(text.contains("[DONE]"));
     assert!(text.contains("\"usage\""));
+}
+
+#[tokio::test]
+async fn text_completions_continuous_usage_is_independent_of_terminal_usage() {
+    let cfg = MockServerConfig {
+        fast: true,
+        no_tokenizer: true,
+        fixed_output_tokens: Some(6),
+        ..MockServerConfig::default()
+    };
+    let (addr, _h) = spawn_server(cfg).await;
+    let body = client()
+        .post(format!("http://{addr}/v1/completions"))
+        .json(&json!({
+            "model": "gpt-4",
+            "prompt": "continuous usage",
+            "stream": true,
+            "stream_options": {
+                "include_usage": false,
+                "continuous_usage_stats": true,
+            },
+            "mock_first_chunk_tokens": 3,
+        }))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    let frames = sse_json_values(&body);
+    let content = frames
+        .iter()
+        .filter(|frame| {
+            frame["choices"][0]["text"]
+                .as_str()
+                .is_some_and(|text| !text.is_empty())
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(content.len(), 4);
+    assert_eq!(
+        content
+            .iter()
+            .map(|frame| frame["usage"]["completion_tokens"].as_u64())
+            .collect::<Vec<_>>(),
+        [Some(3), Some(4), Some(5), Some(6)]
+    );
+    assert!(frames.iter().all(|frame| frame["choices"] != json!([])));
+    assert!(body.ends_with("data: [DONE]\n\n"));
 }
 
 #[tokio::test]
@@ -695,6 +752,52 @@ async fn error_injection_midstream_sse() {
         body.contains("chat.completion.chunk"),
         "mid-stream body should include partial token frames, got: {body:?}"
     );
+}
+
+#[tokio::test]
+async fn error_injection_keeps_continuous_usage_without_terminal_usage() {
+    let cfg = MockServerConfig {
+        fast: true,
+        no_tokenizer: true,
+        fixed_output_tokens: Some(6),
+        error_midstream_rate: 1.0,
+        random_seed: Some(42),
+        ..MockServerConfig::default()
+    };
+    let (addr, _h) = spawn_server(cfg).await;
+    let body = client()
+        .post(format!("http://{addr}/v1/chat/completions"))
+        .json(&json!({
+            "model": "m",
+            "stream": true,
+            "stream_options": {
+                "include_usage": true,
+                "continuous_usage_stats": true,
+            },
+            "mock_first_chunk_tokens": 3,
+            "messages": [{"role":"user","content":"error after generated content"}],
+        }))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    let frames = sse_json_values(&body);
+    let content = frames
+        .iter()
+        .filter(|frame| {
+            frame["choices"][0]["delta"]["content"]
+                .as_str()
+                .is_some_and(|text| !text.is_empty())
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(content.len(), 1);
+    assert_eq!(content[0]["usage"]["completion_tokens"], 3);
+    assert!(body.contains("event: error\n"));
+    assert!(!body.contains("data: [DONE]"));
+    assert!(frames.iter().all(|frame| frame["choices"] != json!([])));
 }
 
 #[tokio::test]

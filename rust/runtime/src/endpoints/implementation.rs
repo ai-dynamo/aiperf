@@ -422,7 +422,10 @@ impl PreparedEndpointBehavior for ChatEndpoint {
         }
         merge_extra(&mut payload, endpoint.extra.as_ref());
         merge_extra(&mut payload, last.extra_body.as_ref());
-        ensure_openai_stream_usage(&mut payload);
+        ensure_openai_stream_usage(
+            &mut payload,
+            endpoint.per_chunk_usage && endpoint.use_server_token_count,
+        );
         build_reserved_plan(&payload, "messages", message_wires)
     }
 
@@ -1044,7 +1047,7 @@ impl PreparedEndpointBehavior for CompletionsEndpoint {
         }
         merge_extra(&mut payload, endpoint.extra.as_ref());
         merge_extra(&mut payload, turn.extra_body.as_ref());
-        ensure_openai_stream_usage(&mut payload);
+        ensure_openai_stream_usage(&mut payload, false);
         Ok(BodyPlan::from_object(&payload)?)
     }
 }
@@ -1608,7 +1611,7 @@ fn ensure_include_usage(payload: &mut Map<String, Value>) {
     }
 }
 
-fn ensure_openai_stream_usage(payload: &mut Map<String, Value>) {
+fn ensure_openai_stream_usage(payload: &mut Map<String, Value>, continuous: bool) {
     if payload.get("stream") != Some(&Value::Bool(true)) {
         return;
     }
@@ -1617,9 +1620,19 @@ fn ensure_openai_stream_usage(payload: &mut Map<String, Value>) {
             stream_options
                 .entry("include_usage")
                 .or_insert(Value::Bool(true));
+            if continuous {
+                stream_options
+                    .entry("continuous_usage_stats")
+                    .or_insert(Value::Bool(true));
+            }
         }
         Some(Value::Null) | None => {
-            payload.insert("stream_options".into(), json!({"include_usage": true}));
+            let mut stream_options =
+                Map::from_iter([("include_usage".to_owned(), Value::Bool(true))]);
+            if continuous {
+                stream_options.insert("continuous_usage_stats".to_owned(), Value::Bool(true));
+            }
+            payload.insert("stream_options".into(), Value::Object(stream_options));
         }
         Some(_) => {}
     }
@@ -2338,6 +2351,74 @@ mod lowering_tests {
         for body in openai_bodies(text_turn(), &endpoint) {
             assert_eq!(body["stream_options"], "provider-owned");
         }
+    }
+
+    fn chat_payload(endpoint: &RawEndpointConfig) -> Value {
+        let [chat, _completions] = openai_bodies(text_turn(), endpoint);
+        chat
+    }
+
+    #[test]
+    fn chat_per_chunk_usage_injects_only_when_opted_in() {
+        let mut endpoint = RawEndpointConfig {
+            streaming: true,
+            use_server_token_count: true,
+            per_chunk_usage: true,
+            ..RawEndpointConfig::default()
+        };
+        let enabled = chat_payload(&endpoint);
+        assert_eq!(
+            enabled["stream_options"],
+            json!({"include_usage": true, "continuous_usage_stats": true})
+        );
+
+        endpoint.per_chunk_usage = false;
+        let disabled = chat_payload(&endpoint);
+        assert_eq!(disabled["stream_options"], json!({"include_usage": true}));
+    }
+
+    #[test]
+    fn chat_per_chunk_usage_preserves_authored_stream_options() {
+        let endpoint = RawEndpointConfig {
+            streaming: true,
+            use_server_token_count: true,
+            per_chunk_usage: true,
+            extra: Some(Map::from_iter([(
+                "stream_options".to_owned(),
+                json!({
+                    "include_usage": false,
+                    "continuous_usage_stats": false,
+                    "unrelated": "retained"
+                }),
+            )])),
+            ..RawEndpointConfig::default()
+        };
+        assert_eq!(
+            chat_payload(&endpoint)["stream_options"],
+            json!({
+                "include_usage": false,
+                "continuous_usage_stats": false,
+                "unrelated": "retained"
+            })
+        );
+    }
+
+    #[test]
+    fn chat_per_chunk_usage_leaves_non_object_stream_options_unchanged() {
+        let endpoint = RawEndpointConfig {
+            streaming: true,
+            use_server_token_count: true,
+            per_chunk_usage: true,
+            extra: Some(Map::from_iter([(
+                "stream_options".to_owned(),
+                Value::String("authored-invalid-shape".to_owned()),
+            )])),
+            ..RawEndpointConfig::default()
+        };
+        assert_eq!(
+            chat_payload(&endpoint)["stream_options"],
+            "authored-invalid-shape"
+        );
     }
 
     #[test]

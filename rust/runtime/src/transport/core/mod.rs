@@ -22,7 +22,9 @@ pub use dispatch::{
     PreparedEndpointBinding, PreparedTurn, Request, RequestExecutor, WorkerCreditReport,
 };
 pub use error::{ErrorDetails, ErrorKind};
-pub use eventstream::{EventStreamDecodeError, EventStreamDecoder, EventStreamMessage};
+pub use eventstream::{
+    EventStreamDecodeError, EventStreamDecoder, EventStreamEncodeError, EventStreamMessage,
+};
 pub use record::RequestRecord;
 pub use response::{Response, TextResponse};
 pub use reuse::ConnectionReuseStrategy;
