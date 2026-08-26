@@ -9,6 +9,7 @@ from typing import Annotated, Any
 
 from pydantic import BeforeValidator, ConfigDict, Field
 
+from aiperf.common.finite import FiniteFloat
 from aiperf.config.base import BaseConfig
 
 DEFAULT_RESET_KV_CACHE_PATH = "/reset_prefix_cache"
@@ -39,7 +40,7 @@ class ResetKvCacheConfig(BaseConfig):
     model_config = ConfigDict(extra="forbid")
 
     timeout_seconds: Annotated[
-        float | None,
+        FiniteFloat | None,
         Field(
             default=None,
             gt=0,
@@ -48,7 +49,7 @@ class ResetKvCacheConfig(BaseConfig):
         ),
     ] = None
     max_retry_seconds: Annotated[
-        float | None,
+        FiniteFloat | None,
         Field(
             default=None,
             ge=0,
@@ -72,7 +73,7 @@ class ServerProfilerConfig(BaseConfig):
     model_config = ConfigDict(extra="forbid")
 
     timeout_seconds: Annotated[
-        float | None,
+        FiniteFloat | None,
         Field(
             default=None,
             gt=0,
