@@ -8,7 +8,8 @@ Provides three layers of concurrency control:
 - ConcurrencyManager: High-level manager for session and prefill concurrency
 
 Used by CreditIssuer and CreditCallbackHandler to control how many concurrent
-sessions and prefill requests are active during benchmarking.
+sessions, prefill requests, and total in-flight requests are active during
+benchmarking.
 """
 
 import asyncio
@@ -390,13 +391,18 @@ class GlobalPhaseConcurrencyLimiter:
 
 
 class ConcurrencyManager:
-    """Manager for session and prefill concurrency limits.
+    """Manager for session, prefill, and total-in-flight request concurrency limits.
 
-    Supports two independent concurrency dimensions:
-    - Session concurrency: Limits concurrent sessions (conversations). A slot is
-      acquired on first turn and released on final turn or phase cleanup.
+    Supports three independent concurrency dimensions:
+    - Session concurrency: Limits concurrent sessions (conversations/trees). A slot
+      is acquired on first turn and released only when the whole tree drains.
     - Prefill concurrency: Limits requests waiting for first token (prefill phase).
       A slot is acquired on every turn and released when TTFT is received.
+    - Request concurrency: Limits total in-flight requests. A slot is acquired on
+      every wire request (roots AND children, unlike the session slot which
+      children inherit) and released when the request returns (not at TTFT, unlike
+      the prefill slot). This is the only dimension that bounds total in-flight
+      requests including ungated sub-agent fan-out.
 
     Each dimension uses a GlobalPhaseConcurrencyLimiter to handle phase-specific
     and global limits.
@@ -405,22 +411,24 @@ class ConcurrencyManager:
     def __init__(self) -> None:
         """Initialize the concurrency manager.
 
-        Note: By default, both session and prefill concurrency limiting is disabled.
-        They will be enabled or disabled based on the phase config.
+        Note: By default, session, prefill, and request concurrency limiting is
+        disabled. Each is enabled or disabled based on the phase config.
         """
         self._session_limiter = GlobalPhaseConcurrencyLimiter()
         self._prefill_limiter = GlobalPhaseConcurrencyLimiter()
+        self._request_limiter = GlobalPhaseConcurrencyLimiter()
 
     def configure_for_phase(
         self,
         phase: PhaseRuntimeKey,
         concurrency: int | None,
         prefill_concurrency: int | None,
+        request_concurrency: int | None = None,
     ) -> None:
         """Configure concurrency limits for a new phase.
 
-        Must be called before acquiring slots for a phase. Configures both
-        session and prefill limiters unconditionally - each limiter internally
+        Must be called before acquiring slots for a phase. Configures the session,
+        prefill, and request limiters unconditionally - each limiter internally
         enables/disables based on whether the limit is None.
 
         Args:
@@ -429,9 +437,13 @@ class ConcurrencyManager:
                 If None, session concurrency limiting is disabled globally.
             prefill_concurrency: Maximum concurrent prefill slots for this phase.
                 If None, prefill concurrency limiting is disabled globally.
+            request_concurrency: Maximum concurrent in-flight request slots for
+                this phase. If None, request concurrency limiting is disabled
+                globally.
         """
         self._session_limiter.configure_for_phase(phase, concurrency)
         self._prefill_limiter.configure_for_phase(phase, prefill_concurrency)
+        self._request_limiter.configure_for_phase(phase, request_concurrency)
 
     def session_slot_available(self, phase: PhaseRuntimeKey) -> bool:
         """Check if a session slot is available without blocking.
@@ -552,7 +564,73 @@ class ConcurrencyManager:
         if self._prefill_limiter.enabled:
             self._prefill_limiter.release(phase)
 
-    def release_stuck_slots(self, phase: PhaseRuntimeKey) -> tuple[int, int]:
+    def request_slot_available(self, phase: PhaseRuntimeKey) -> bool:
+        """Check if a request slot is available without blocking.
+
+        Returns True when request concurrency limiting is disabled (no limit
+        configured).
+        """
+        if not self._request_limiter.enabled:
+            return True  # No limit - always available
+        return self._request_limiter.slot_available(phase)
+
+    async def acquire_request_slot(
+        self, phase: PhaseRuntimeKey, can_proceed_fn: Callable[[], bool]
+    ) -> bool:
+        """Acquire a request concurrency slot.
+
+        Request slots bound total in-flight requests. Unlike the session slot,
+        every wire request acquires its own (roots AND children); unlike the
+        prefill slot, it is released when the request RETURNS (not at TTFT), so a
+        decoding request still counts. This is what caps total in-flight,
+        including sub-agent fan-out.
+
+        Args:
+            phase: The credit phase to acquire the slot for.
+            can_proceed_fn: Callback that returns True if the operation should
+                proceed. Used to check phase stop conditions. ALWAYS called, even
+                when concurrency limiting is disabled, to enforce stop conditions.
+
+        Returns:
+            True if slot was acquired and can_proceed_fn returned True, False otherwise.
+        """
+        if not self._request_limiter.enabled:
+            return can_proceed_fn()
+        return await self._request_limiter.acquire(phase, can_proceed_fn)
+
+    def try_acquire_request_slot(
+        self, phase: PhaseRuntimeKey, can_proceed_fn: Callable[[], bool]
+    ) -> bool:
+        """Try to acquire a request concurrency slot without blocking.
+
+        Non-blocking version of acquire_request_slot.
+
+        Args:
+            phase: The credit phase to acquire the slot for.
+            can_proceed_fn: Callback that returns True if the operation should
+                proceed. Checked BEFORE attempting slot acquisition.
+
+        Returns:
+            True if slot was acquired, False if no slot available or
+            can_proceed_fn returned False.
+        """
+        if not self._request_limiter.enabled:
+            return can_proceed_fn()
+        return self._request_limiter.try_acquire(phase, can_proceed_fn)
+
+    def release_request_slot(self, phase: PhaseRuntimeKey) -> None:
+        """Release a request concurrency slot.
+
+        Called on every credit return that fired a wire request (completed,
+        cancelled, or errored). No-op if request concurrency is disabled.
+
+        Args:
+            phase: The credit phase to release the slot for.
+        """
+        if self._request_limiter.enabled:
+            self._request_limiter.release(phase)
+
+    def release_stuck_slots(self, phase: PhaseRuntimeKey) -> tuple[int, int, int]:
         """Release all stuck slots for a phase during force-completion.
 
         Called when cancel drain timeout expires and credits will never return.
@@ -562,7 +640,8 @@ class ConcurrencyManager:
             phase: The phase to release stuck slots for.
 
         Returns:
-            Tuple of (session_slots_released, prefill_slots_released)
+            Tuple of (session_slots_released, prefill_slots_released,
+            request_slots_released)
         """
         session_released = 0
         if self._session_limiter.enabled:
@@ -576,7 +655,13 @@ class ConcurrencyManager:
             for _ in range(prefill_released):
                 self._prefill_limiter.release(phase)
 
-        return session_released, prefill_released
+        request_released = 0
+        if self._request_limiter.enabled:
+            request_released = self._request_limiter.get_held_slots(phase)
+            for _ in range(request_released):
+                self._request_limiter.release(phase)
+
+        return session_released, prefill_released, request_released
 
     def get_session_stats(
         self, phase: PhaseRuntimeKey | None = None

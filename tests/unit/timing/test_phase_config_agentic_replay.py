@@ -49,6 +49,44 @@ def test_profiling_config_propagates_cap() -> None:
     assert profiling.phase == CreditPhase.PROFILING
 
 
+def test_warmup_request_concurrency_falls_back_to_profiling() -> None:
+    """Without a warmup-specific value, the warmup inherits the profiling request cap."""
+    phase = _PHASE_ADAPTER.validate_python(
+        {
+            "name": "profiling",
+            "type": "concurrency",
+            "concurrency": 64,
+            "request_concurrency": 32,
+            "duration": 900,
+            "timing_mode": TimingMode.AGENTIC_REPLAY,
+        }
+    )
+    warmup = _build_agentic_warmup_config(phase)
+    assert warmup is not None
+    assert warmup.request_concurrency == 32
+
+
+def test_warmup_request_concurrency_overrides_profiling() -> None:
+    """A warmup-specific cap throttles priming without shrinking the burst size."""
+    phase = _PHASE_ADAPTER.validate_python(
+        {
+            "name": "profiling",
+            "type": "concurrency",
+            "concurrency": 64,
+            "request_concurrency": 32,
+            "agentic_warmup_request_concurrency": 8,
+            "duration": 900,
+            "timing_mode": TimingMode.AGENTIC_REPLAY,
+        }
+    )
+    warmup = _build_agentic_warmup_config(phase)
+    assert warmup is not None
+    # Gentle in-flight cap during warmup...
+    assert warmup.request_concurrency == 8
+    # ...but every lane is still primed (burst size tracks profiling concurrency).
+    assert warmup.total_expected_requests == 64
+
+
 def test_warmup_config_total_expected_requests_set() -> None:
     """Warmup config has a non-None ``total_expected_requests`` so the sending-complete stop condition can fire."""
     phase = _ar_profiling_phase(concurrency=10)

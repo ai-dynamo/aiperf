@@ -1091,6 +1091,11 @@ Number of concurrent requests to maintain. AIPerf issues a new request immediate
 
 Max concurrent requests waiting for first token (prefill phase). Limits how many requests can be in the prefill/prompt-processing stage simultaneously. Pass a comma-separated list (e.g. `--prefill-concurrency 1,2,4`) to sweep over multiple values; the converter promotes the list to a sweep before AIPerfConfig validation.
 
+#### `--request-concurrency` `<int>`
+
+Max total in-flight requests (must be >= 1). Caps every wire request -- roots AND sub-agent forks -- from dispatch until the response returns, unlike --concurrency (which caps session trees and lets forks oversubscribe) and --prefill-concurrency (which releases at first token). Use it to bound the total in-flight requests an engine can see. If unset, total in-flight is unbounded.
+<br/>_Constraints: ≥ 1_
+
 #### `--request-rate` `<str>`
 
 Target request rate in requests per second. AIPerf generates request timing according to `--request-rate-mode` to achieve this average rate. Can be combined with `--concurrency` to control the number of concurrent requests. Supports fractional rates (e.g., `0.5` = 1 request every 2 seconds). Pass a comma-separated list (e.g. `--request-rate 10,20,50`) to sweep over multiple rates; the converter promotes the list to a sweep before AIPerfConfig validation.
@@ -1207,6 +1212,11 @@ The concurrency value to use for the warmup phase. If not set, it will use the `
 #### `--warmup-prefill-concurrency` `<int>`
 
 The prefill concurrency value to use for the warmup phase. If not set, it will use the `--prefill-concurrency` value.
+<br/>_Constraints: ≥ 1_
+
+#### `--warmup-request-concurrency` `<int>`
+
+The total in-flight request cap to use for the warmup phase. If not set, it will use the `--request-concurrency` value.
 <br/>_Constraints: ≥ 1_
 
 #### `--warmup-request-rate` `<float>`
@@ -2682,6 +2692,11 @@ Number of concurrent requests to maintain. AIPerf issues a new request immediate
 
 Max concurrent requests waiting for first token (prefill phase). Limits how many requests can be in the prefill/prompt-processing stage simultaneously. Pass a comma-separated list (e.g. `--prefill-concurrency 1,2,4`) to sweep over multiple values; the converter promotes the list to a sweep before AIPerfConfig validation.
 
+#### `--request-concurrency` `<int>`
+
+Max total in-flight requests (must be >= 1). Caps every wire request -- roots AND sub-agent forks -- from dispatch until the response returns, unlike --concurrency (which caps session trees and lets forks oversubscribe) and --prefill-concurrency (which releases at first token). Use it to bound the total in-flight requests an engine can see. If unset, total in-flight is unbounded.
+<br/>_Constraints: ≥ 1_
+
 #### `--request-rate` `<str>`
 
 Target request rate in requests per second. AIPerf generates request timing according to `--request-rate-mode` to achieve this average rate. Can be combined with `--concurrency` to control the number of concurrent requests. Supports fractional rates (e.g., `0.5` = 1 request every 2 seconds). Pass a comma-separated list (e.g. `--request-rate 10,20,50`) to sweep over multiple rates; the converter promotes the list to a sweep before AIPerfConfig validation.
@@ -2798,6 +2813,11 @@ The concurrency value to use for the warmup phase. If not set, it will use the `
 #### `--warmup-prefill-concurrency` `<int>`
 
 The prefill concurrency value to use for the warmup phase. If not set, it will use the `--prefill-concurrency` value.
+<br/>_Constraints: ≥ 1_
+
+#### `--warmup-request-concurrency` `<int>`
+
+The total in-flight request cap to use for the warmup phase. If not set, it will use the `--request-concurrency` value.
 <br/>_Constraints: ≥ 1_
 
 #### `--warmup-request-rate` `<float>`

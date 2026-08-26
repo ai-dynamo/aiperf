@@ -38,8 +38,10 @@ def issuer(captured_router: MagicMock) -> CreditIssuer:
     concurrency = MagicMock()
     concurrency.acquire_session_slot = AsyncMock(return_value=True)
     concurrency.acquire_prefill_slot = AsyncMock(return_value=True)
+    concurrency.acquire_request_slot = AsyncMock(return_value=True)
     concurrency.try_acquire_session_slot = MagicMock(return_value=True)
     concurrency.try_acquire_prefill_slot = MagicMock(return_value=True)
+    concurrency.try_acquire_request_slot = MagicMock(return_value=True)
     concurrency.release_session_slot = MagicMock()
     concurrency.release_prefill_slot = MagicMock()
 

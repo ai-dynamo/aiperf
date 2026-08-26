@@ -287,6 +287,14 @@ class CreditPhaseConfig(AIPerfBaseModel):
         "This is the max number of requests that can be waiting for the first token at once. "
         "If None, the prefill concurrency is unlimited.",
     )
+    request_concurrency: int | None = Field(
+        default=None,
+        gt=0,
+        description="The max total in-flight requests for the credit phase. "
+        "Unlike 'concurrency' (session trees) this caps every wire request, "
+        "roots and sub-agent forks alike, from dispatch until the response "
+        "returns. If None, total in-flight requests are unlimited.",
+    )
     request_rate: float | None = Field(
         default=None, gt=0, description="The request rate of the credit phase."
     )
@@ -556,6 +564,7 @@ def _build_warmup_config(
         expected_num_sessions=phase.sessions,
         concurrency=phase.concurrency,
         prefill_concurrency=phase.prefill_concurrency,
+        request_concurrency=phase.request_concurrency,
         request_rate=_phase_request_rate(phase),
         arrival_pattern=_phase_arrival_pattern(phase),
         arrival_smoothness=getattr(phase, "smoothness", None),
@@ -622,6 +631,13 @@ def _build_agentic_warmup_config(phase: PhaseConfig) -> CreditPhaseConfig | None
     concurrency = getattr(phase, "concurrency", None)
     grace_period = _agentic_warmup_grace_period(phase)
     cache_warmup_duration = getattr(phase, "agentic_cache_warmup_duration", None)
+    # Total in-flight cap for the priming burst. A separate warmup value lets the
+    # pool warm gently (few requests in flight) while still priming one
+    # trajectory per profiling concurrency lane; profiling then runs at its own
+    # request_concurrency. Falls back to the profiling cap when unset.
+    request_concurrency = getattr(
+        phase, "agentic_warmup_request_concurrency", None
+    ) or getattr(phase, "request_concurrency", None)
     return CreditPhaseConfig(
         phase=CreditPhase.WARMUP,
         timing_mode=TimingMode.AGENTIC_REPLAY,
@@ -635,6 +651,7 @@ def _build_agentic_warmup_config(phase: PhaseConfig) -> CreditPhaseConfig | None
         expected_num_sessions=None,
         concurrency=concurrency,
         prefill_concurrency=getattr(phase, "prefill_concurrency", None),
+        request_concurrency=request_concurrency,
         request_rate=None,
         arrival_pattern=ArrivalPattern.CONCURRENCY_BURST,
         arrival_smoothness=getattr(phase, "smoothness", None),
@@ -676,6 +693,7 @@ def _build_profiling_config(
         expected_num_sessions=phase.sessions,
         concurrency=phase.concurrency,
         prefill_concurrency=phase.prefill_concurrency,
+        request_concurrency=phase.request_concurrency,
         request_rate=_phase_request_rate(phase),
         arrival_pattern=_phase_arrival_pattern(phase),
         arrival_smoothness=getattr(phase, "smoothness", None),

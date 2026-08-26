@@ -616,6 +616,7 @@ class PhaseRunner(TaskManagerMixin):
             self._phase_key,
             self._config.concurrency,
             self._config.prefill_concurrency,
+            self._config.request_concurrency,
         )
 
         await strategy.setup_phase()
@@ -1209,13 +1210,14 @@ class PhaseRunner(TaskManagerMixin):
 
     def _release_stuck_slots(self) -> None:
         """Release concurrency slots for credits that will never return."""
-        session_released, prefill_released = (
+        session_released, prefill_released, request_released = (
             self._concurrency_manager.release_stuck_slots(self._phase_key)
         )
-        if session_released or prefill_released:
+        if session_released or prefill_released or request_released:
             self.warning(
                 f"Released stuck slots for phase {self._config.phase}: "
-                f"session={session_released}, prefill={prefill_released}"
+                f"session={session_released}, prefill={prefill_released}, "
+                f"request={request_released}"
             )
 
     async def _wait_for_event_with_timeout(

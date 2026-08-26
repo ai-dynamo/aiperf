@@ -605,7 +605,7 @@ def mock_concurrency_manager() -> MagicMock:
     )
     m.set_session_limit = m.set_prefill_limit = MagicMock()
     m.acquire_session_slot = m.acquire_prefill_slot = _async_true
-    m.release_stuck_slots = MagicMock(return_value=(0, 0))
+    m.release_stuck_slots = MagicMock(return_value=(0, 0, 0))
     m.get_session_stats = m.get_prefill_stats = MagicMock(return_value=None)
     return m
 

@@ -330,6 +330,11 @@
       "pydantic-fields",
       "src/aiperf/common/models/export_models.py",
       "JsonExportData"
+    ],
+    [
+      "pydantic-fields",
+      "src/aiperf/config/phases.py",
+      "BasePhaseConfig"
     ]
   ]
 }

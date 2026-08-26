@@ -646,6 +646,14 @@ class CreditCallbackHandler:
         if not credit_return.first_token_sent:
             concurrency.release_prefill_slot(phase)
 
+        # Request slot (total in-flight cap): one per wire request, released on
+        # EVERY return (completed, cancelled, or errored) -- unlike prefill,
+        # which releases at TTFT. A no_request virtual credit never acquired one
+        # (mirrors the ``not turn.no_request`` acquire gate in the issuer), so
+        # skip it to avoid underflowing the semaphore.
+        if not credit.no_request:
+            concurrency.release_request_slot(phase)
+
     async def on_first_token(self, first_token: FirstToken) -> None:
         """Handle first token event (TTFT) from worker.
 

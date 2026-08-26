@@ -148,6 +148,10 @@ def build_warmup(cli: CLIConfig) -> dict[str, Any] | None:
         w["prefill_concurrency"] = cli.warmup_prefill_concurrency
     elif "prefill_concurrency" in s:
         w["prefill_concurrency"] = cli.prefill_concurrency
+    if "warmup_request_concurrency" in s:
+        w["request_concurrency"] = cli.warmup_request_concurrency
+    elif "request_concurrency" in s:
+        w["request_concurrency"] = cli.request_concurrency
     if cli.warmup_grace_period is not None:
         # grace_period is a duration-phase concept (a tail on top of ``duration``);
         # PhaseConfig rejects it without ``duration`` set. Raise a targeted error

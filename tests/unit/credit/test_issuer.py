@@ -46,8 +46,10 @@ def mock_concurrency():
     mock = MagicMock()
     mock.acquire_session_slot = AsyncMock(return_value=True)
     mock.acquire_prefill_slot = AsyncMock(return_value=True)
+    mock.acquire_request_slot = AsyncMock(return_value=True)
     mock.try_acquire_session_slot = MagicMock(return_value=True)
     mock.try_acquire_prefill_slot = MagicMock(return_value=True)
+    mock.try_acquire_request_slot = MagicMock(return_value=True)
     mock.release_session_slot = MagicMock()
     return mock
 
@@ -380,12 +382,17 @@ class TestSlotAcquisitionFailures:
 
 
 class _PrefillFailConcurrency:
-    """Session slot succeeds; prefill always fails. Counts session releases."""
+    """Session + request slots succeed; prefill always fails. Counts releases."""
 
     def __init__(self) -> None:
         self.session_releases = 0
+        self.request_releases = 0
+        self.prefill_releases = 0
 
     async def acquire_session_slot(self, phase: CreditPhase, can_proceed) -> bool:
+        return True
+
+    async def acquire_request_slot(self, phase: CreditPhase, can_proceed) -> bool:
         return True
 
     async def acquire_prefill_slot(self, phase: CreditPhase, can_proceed) -> bool:
@@ -394,11 +401,20 @@ class _PrefillFailConcurrency:
     def try_acquire_session_slot(self, phase: CreditPhase, can_proceed) -> bool:
         return True
 
+    def try_acquire_request_slot(self, phase: CreditPhase, can_proceed) -> bool:
+        return True
+
     def try_acquire_prefill_slot(self, phase: CreditPhase, can_proceed) -> bool:
         return False
 
     def release_session_slot(self, phase: CreditPhase) -> None:
         self.session_releases += 1
+
+    def release_request_slot(self, phase: CreditPhase) -> None:
+        self.request_releases += 1
+
+    def release_prefill_slot(self, phase: CreditPhase) -> None:
+        self.prefill_releases += 1
 
 
 # =============================================================================

@@ -39,6 +39,7 @@ def mock_concurrency():
     mock = MagicMock()
     mock.acquire_session_slot = AsyncMock(return_value=True)
     mock.acquire_prefill_slot = AsyncMock(return_value=True)
+    mock.acquire_request_slot = AsyncMock(return_value=True)
     mock.release_session_slot = MagicMock()
     return mock
 

@@ -2156,6 +2156,23 @@ class CLIConfig(BaseConfig):
         ),
     ] = None
 
+    request_concurrency: Annotated[
+        int | None,
+        Field(
+            ge=1,
+            description="Max total in-flight requests (must be >= 1). Caps every "
+            "wire request -- roots AND sub-agent forks -- from dispatch until the "
+            "response returns, unlike --concurrency (which caps session trees and "
+            "lets forks oversubscribe) and --prefill-concurrency (which releases "
+            "at first token). Use it to bound the total in-flight requests an "
+            "engine can see. If unset, total in-flight is unbounded.",
+        ),
+        CLIParameter(
+            name=("--request-concurrency",),
+            group=Groups.LOAD_GENERATOR,
+        ),
+    ] = None
+
     request_rate: Annotated[
         Any,
         Field(
@@ -2516,6 +2533,19 @@ class CLIConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--warmup-prefill-concurrency",),
+            group=Groups.WARMUP,
+        ),
+    ] = None
+
+    warmup_request_concurrency: Annotated[
+        int | None,
+        Field(
+            ge=1,
+            description="The total in-flight request cap to use for the warmup phase. "
+            "If not set, it will use the `--request-concurrency` value.",
+        ),
+        CLIParameter(
+            name=("--warmup-request-concurrency",),
             group=Groups.WARMUP,
         ),
     ] = None
