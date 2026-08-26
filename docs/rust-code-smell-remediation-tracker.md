@@ -52,7 +52,7 @@ Graham review and a commit.
 | S08 | Cellular test helper has a vacuous missing-log path | Complete — `860d93510b` | Independent Graham approved; RED→GREEN e2e evidence recorded |
 | S09 | Stale `dead_code` suppressions on live fields | Already fixed | Record retraction |
 | S10 | Disagg `TraceCollector` API suppressions lack coherent disposition | Complete on integration branch — `bacf85c014` | Independent Graham approved; await shared-file integration |
-| S11 | `Inputs` is an unguarded god struct | Confirmed/narrowed; spec ready | Sol implementation plan |
+| S11 | `Inputs` is an unguarded god struct | Complete — `de8b24adb6`, `37a78fd0a2`, `2fc4d17c6e` | Independent Graham r2 approved; direct grouped-construction and flat-wire evidence recorded |
 | S12 | Cellular controller feature gates are scattered | Confirmed; spec ready | Sol implementation plan |
 | S13 | Graph benchmark bypasses the transport seam | Confirmed/narrowed; spec ready | Sol implementation plan |
 | S14 | DAG validation test does not prove rejection | Confirmed; spec ready | Sol implementation plan |
@@ -90,6 +90,12 @@ Graham review and a commit.
 | B01 | AgentX integration fixtures omit required cache-bust option | Complete — `91b65b2044` | Independent Graham approved; compile regression green |
 
 ## Progress log
+
+- 2026-08-26: Completed S11. Profile input ownership now resides in seven
+  typed groups constructed directly by both CLI and YAML paths; the flat
+  externally serialized execute wire remains compatible, without a large
+  intermediate DTO or JSON conversion bridge. Five authoring regressions and
+  independent Graham r2 approved the final series.
 
 - 2026-08-26: Completed S07. Graph and media event delivery now uses bounded,
   nonblocking queues: graph saturation deterministically fails and releases the
