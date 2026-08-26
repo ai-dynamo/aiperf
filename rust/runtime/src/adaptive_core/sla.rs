@@ -327,10 +327,11 @@ impl DefaultSlaEvaluator {
         }
         if ERROR_RATE_METRICS.contains(&tag) {
             validate_rate_stat(filter.stat, "error_rate")?;
-            return Ok(if stats.total() == 0 {
+            let completed = stats.completed() + stats.errors;
+            return Ok(if completed == 0 {
                 0.0
             } else {
-                stats.errors as f64 / stats.total() as f64
+                100.0 * stats.errors as f64 / completed as f64
             });
         }
         if CANCELLATION_RATE_METRICS.contains(&tag) {
@@ -357,7 +358,22 @@ impl DefaultSlaEvaluator {
             || ERROR_RATE_METRICS.contains(&tag)
             || CANCELLATION_RATE_METRICS.contains(&tag)
         {
-            return validate_rate_stat(filter.stat, tag);
+            validate_rate_stat(filter.stat, tag)?;
+            if ERROR_RATE_METRICS.contains(&tag) {
+                if !(0.0..=100.0).contains(&filter.threshold) {
+                    return Err(AdaptiveError::InvalidConfig(format!(
+                        "error_rate SLA threshold is in percentage points and must be within [0, 100], got {}",
+                        filter.threshold
+                    )));
+                }
+                if filter.threshold > 0.0 && filter.threshold < 1.0 {
+                    tracing::warn!(
+                        threshold = filter.threshold,
+                        "adaptive error_rate SLA thresholds are percentage points (1 means 1%), not fractions; multiply legacy fraction thresholds by 100"
+                    );
+                }
+            }
+            return Ok(());
         }
         Err(unsupported_metric(tag))
     }
@@ -710,7 +726,7 @@ mod tests {
     }
 
     #[test]
-    fn rate_denominators_include_errors_and_cancellations() {
+    fn rate_metric_units_and_denominators_remain_distinct() {
         let evaluator = DefaultSlaEvaluator;
         let filters = vec![
             filter("success_rate", SlaStat::Avg, SlaOp::Ge, 0.0),
@@ -727,8 +743,44 @@ mod tests {
         };
         let values = evaluator.values(&filters, &stats).unwrap();
         assert_eq!(values[&evaluator.key(&filters[0])], 0.5);
-        assert_eq!(values[&evaluator.key(&filters[1])], 0.25);
+        assert_eq!(values[&evaluator.key(&filters[1])], 100.0 / 3.0);
         assert_eq!(values[&evaluator.key(&filters[2])], 0.25);
+    }
+
+    #[test]
+    fn error_rate_matches_exported_percentage_unit_and_denominator() {
+        let evaluator = DefaultSlaEvaluator;
+        let filters = vec![
+            filter("error_rate", SlaStat::Avg, SlaOp::Le, 1.0),
+            filter("request_error_rate", SlaStat::Avg, SlaOp::Le, 1.0),
+        ];
+        let stats = WindowStats {
+            successful_requests: vec![sample(10, None, None), sample(20, None, None)],
+            errors: 1,
+            cancelled: 1,
+            elapsed_sec: 2.0,
+            start_ns: 0,
+            end_ns: 2_000_000_000,
+        };
+
+        let values = evaluator.values(&filters, &stats).unwrap();
+        let expected = 100.0 / 3.0;
+        assert_eq!(values[&evaluator.key(&filters[0])], expected);
+        assert_eq!(values[&evaluator.key(&filters[1])], expected);
+        assert!(!evaluator.passes(&filters, &values).unwrap());
+    }
+
+    #[test]
+    fn error_rate_threshold_requires_percentage_point_domain() {
+        let evaluator = DefaultSlaEvaluator;
+        for threshold in [-1.0, 101.0] {
+            let filter = filter("error_rate", SlaStat::Avg, SlaOp::Le, threshold);
+            assert!(evaluator.validate_filters(&[filter]).is_err());
+        }
+        for threshold in [0.0, 0.05, 100.0] {
+            let filter = filter("request_error_rate", SlaStat::Avg, SlaOp::Le, threshold);
+            assert!(evaluator.validate_filters(&[filter]).is_ok());
+        }
     }
 
     #[test]
