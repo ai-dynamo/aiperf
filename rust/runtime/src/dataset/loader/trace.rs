@@ -1050,10 +1050,12 @@ fn parse_capture(value: &Value, origin: &impl std::fmt::Display) -> Result<Parse
         .ok_or_else(|| {
             DatasetError::Validation(format!("{origin}: missing eventMetadata object"))
         })?;
-    let timestamp = event
+    let timestamp_value = event
         .get("inferenceTime")
-        .and_then(Value::as_str)
         .ok_or_else(|| DatasetError::Validation(format!("{origin}: missing inferenceTime")))?;
+    let timestamp = timestamp_value.as_str().ok_or_else(|| {
+        DatasetError::Validation(format!("{origin}: invalid inferenceTime: expected string"))
+    })?;
     let timestamp_ms = parse_iso8601_ms(timestamp).map_err(|message| {
         DatasetError::Validation(format!("{origin}: invalid inferenceTime: {message}"))
     })?;
@@ -1621,7 +1623,8 @@ mod tests {
             )
             .await
             .expect_err("non-string inferenceTime must be rejected");
-        assert!(matches!(error, DatasetError::Validation(message) if
-            message.contains("bad-time") && message.contains("invalid inferenceTime")));
+        let message = error.to_string();
+        assert!(message.contains("bad-time"), "unexpected error: {message}");
+        assert!(message.contains("invalid inferenceTime"), "unexpected error: {message}");
     }
 }
