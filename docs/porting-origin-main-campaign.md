@@ -77,7 +77,7 @@ implementation, test run, or review.
 | 49 | `88242293b5` | verbatim system prompts | pending | applicable | Add CLI/file projection to existing composition seam. |
 | 50 | `ade1f69eb1` | seamless phase transitions | pending | already-covered | Native lowers incoming flag to predecessor handoff. |
 | 51 | `324bb05773` | per-chunk usage | pending | applicable | No first-chunk token multiplicity or option. |
-| 52 | `810fd8bdd4` | vLLM spec-decode wire | pending | applicable | Root metrics/histogram/trailing usage absent. |
+| 52 | `810fd8bdd4` | vLLM spec-decode wire | complete | applicable | Exact target-only merge `9fcd17c62e`; native root metrics, dense histogram normalization, automatic trailing-usage negotiation, four-mode mock/product integration, and 15/15 E2E are complete. Independent Graham review approved `082457b2de`. |
 | 53 | `e5ebe915df` | enum inequality | pending | not-applicable | Python enum behavior only. |
 | 54 | `bfe33151de` | rejected peak diagnostics | pending | applicable | Actual target is WEKA/Dynamo selection, not Baseten. |
 | 55 | `dd3f09b0c3` | session-affinity header | pending | applicable | Add default-on `X-Session-Affinity`, not opt-in `X-Session-ID`. |

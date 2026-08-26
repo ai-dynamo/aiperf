@@ -136,9 +136,9 @@ E2E harness, cargo, sccache.
   runtime with and without `engine`, CLI, mock-server, and changed-scope Clippy.
 - [x] Perform the complete Graham review and second pass over the exact
   base-to-tip diff; repair every finding with TDD and rerun affected tests.
-- [ ] Commit the self-review receipt and send the exact range to root for an
+- [x] Commit the self-review receipt and send the exact range to root for an
   independent full Graham review. Repair and re-review until explicitly
   approved.
-- [ ] After approval, commit closure evidence and tracker state. Re-verify the
+- [x] After approval, commit closure evidence and tracker state. Re-verify the
   checkpoint merge's parent order, first-parent tree equality, exact second
   parent, clean status, and absence of imported upstream Python changes.

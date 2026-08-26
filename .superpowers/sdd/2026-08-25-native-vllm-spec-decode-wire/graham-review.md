@@ -114,5 +114,12 @@ completed successfully.
 
 **APPROVE for independent Graham review.** I found no unresolved correctness,
 systems, performance, observability, or scope issue in the immutable
-base-to-tip implementation. Campaign tracker closure remains intentionally
-pending until root gives explicit independent approval.
+base-to-tip implementation.
+
+## Independent approval
+
+Root independently reviewed immutable range
+`13fdae44306aa1c04d8ce7a9c71c5c92f53797fe..082457b2de774db8556e9ed481d686ddae79f218`
+in two focused Graham passes across the runtime parser/dispatch path, mock wire,
+and E2E. The result was **APPROVED**, with no critical, important, or style
+findings. Campaign tracker closure is authorized.

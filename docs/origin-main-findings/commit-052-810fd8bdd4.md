@@ -120,5 +120,8 @@ than modified during this port. The complete pass-by-pass review and exact test
 receipts are in
 `.superpowers/sdd/2026-08-25-native-vllm-spec-decode-wire/graham-review.md`.
 
-Status: self-review approved; awaiting root's independent Graham approval before
-campaign tracker closure.
+Status: complete. Root independently reviewed immutable range
+`13fdae44306aa1c04d8ce7a9c71c5c92f53797fe..082457b2de774db8556e9ed481d686ddae79f218`
+in two focused Graham passes over parser/dispatch, mock wire, and E2E. The review
+approved with no critical, important, or style findings. Campaign row 52 is
+closed on that evidence.
