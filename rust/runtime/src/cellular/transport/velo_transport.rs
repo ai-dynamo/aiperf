@@ -184,6 +184,9 @@ where
         reply_payload.as_slice(),
     )?;
     let reply = encode_reply(reply_payload, attestation)?;
+    // Trust boundary: registered benchmark cells are trusted routing-plane participants after
+    // authenticated admission. There is deliberately no per-push route authenticity or replay protection;
+    // preserve normal replay/live delivery and revisit if cellular topology admits untrusted participants.
     register_peer(peer)?;
     let commit = prepared.commit(reply.clone());
     if commit.should_advance_barrier() {
@@ -947,6 +950,18 @@ mod tests {
     const PRODUCTION_ROUTE_TEST: &str = "cellular::transport::velo_transport::tests::production_handlers_authenticate_payloads_and_reject_replay";
     const VELO_MAX_FRAME_BYTES: usize = 16 * 1024 * 1024;
     const VELO_ACTIVE_MESSAGE_FIXED_HEADER_BYTES: usize = 22;
+
+    #[test]
+    fn route_registration_trust_boundary_is_disclosed() {
+        let production_module = include_str!("velo_transport.rs")
+            .split("#[cfg(test)]\nmod tests")
+            .next()
+            .expect("module source has a test boundary");
+
+        assert!(production_module.contains("registered benchmark cells are trusted"));
+        assert!(production_module.contains("per-push route authenticity or replay protection"));
+        assert!(production_module.contains("untrusted participants"));
+    }
 
     #[derive(Serialize, Deserialize)]
     struct TestAuthenticatedFrame {
