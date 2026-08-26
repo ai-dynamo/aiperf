@@ -307,7 +307,8 @@ impl<M: WireMessage> TraceExecutor<M> {
             return Ok(None);
         }
         let gate_seq = match self.prepare_node_inputs(node_id, node, ctx).await {
-            Ok(seq) => seq,
+            Ok(Some(seq)) => seq,
+            Ok(None) => return Ok(None),
             Err(e) => return Err(TraceError::Store(e)),
         };
         if ctx.is_aborted() {
@@ -560,16 +561,20 @@ impl<M: WireMessage> TraceExecutor<M> {
         node_id: &str,
         node: &LlmNode,
         ctx: &Rc<TraceContext>,
-    ) -> Result<i64, StoreError> {
+    ) -> Result<Option<i64>, StoreError> {
         let _capture = ctx
             .store
             .await_inputs(node.inputs.iter().map(|r| (r.channel.as_str(), &r.count)))
             .await?;
         let gate_seq = ctx.store.current_seq();
         let node_firable_wall_us = self.loop_wall_us();
-        self.apply_firing_delay(node_id, ctx, node_firable_wall_us)
-            .await;
-        Ok(gate_seq)
+        if !self
+            .apply_firing_delay(node_id, ctx, node_firable_wall_us)
+            .await
+        {
+            return Ok(None);
+        }
+        Ok(Some(gate_seq))
     }
 
     async fn apply_firing_delay(
@@ -577,25 +582,37 @@ impl<M: WireMessage> TraceExecutor<M> {
         node_id: &str,
         ctx: &Rc<TraceContext>,
         node_firable_wall_us: f64,
-    ) {
+    ) -> bool {
         if self.ignore_edge_delays || self.compress_edge_delays {
-            return;
+            return true;
         }
         for edge in self.scheduler.incoming_static_edges(node_id) {
             if edge.delay_after_predecessor_first_token_us.is_some() {
-                ctx.await_first_token(&edge.source).await;
+                let first_token = ctx.await_first_token(&edge.source);
+                tokio::pin!(first_token);
+                tokio::select! {
+                    biased;
+                    () = ctx.await_abort() => return false,
+                    () = &mut first_token => {}
+                }
             }
         }
         let gate_us = self.compute_firing_gate_us(node_id, ctx, node_firable_wall_us);
         if gate_us <= 0.0 {
-            return;
+            return true;
         }
         let wait_us = gate_us - self.loop_wall_us();
         if wait_us <= 0.0 {
-            return;
+            return true;
         }
         let wait_us = cap_system_idle_wait_us(wait_us, self.system_idle_gap_cap_ms);
-        self.handle.sleep_ns((wait_us * 1_000.0) as i64).await;
+        let delay = self.handle.sleep_ns((wait_us * 1_000.0) as i64);
+        tokio::pin!(delay);
+        tokio::select! {
+            biased;
+            () = ctx.await_abort() => false,
+            () = &mut delay => true,
+        }
     }
 
     fn compute_firing_gate_us(
