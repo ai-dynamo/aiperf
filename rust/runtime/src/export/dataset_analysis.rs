@@ -37,8 +37,17 @@ fn token(id: &str) -> &'static str {
 /// output never contains `NaN`/`Infinity` tokens.
 pub fn write_dataset_analysis_json(a: &DatasetAnalysis, path: &Path) -> std::io::Result<()> {
     let file = std::fs::File::create(path)?;
-    let writer = std::io::BufWriter::new(file);
-    serde_json::to_writer_pretty(writer, a).map_err(std::io::Error::other)
+    write_dataset_analysis_json_writer(a, file)
+}
+
+/// Serialize the analysis as pretty JSON and commit it to `writer`.
+fn write_dataset_analysis_json_writer<W: Write>(
+    a: &DatasetAnalysis,
+    writer: W,
+) -> std::io::Result<()> {
+    let mut writer = std::io::BufWriter::new(writer);
+    serde_json::to_writer_pretty(&mut writer, a).map_err(std::io::Error::other)?;
+    writer.flush()
 }
 
 /// Write the analysis's distribution metrics as a CSV to `path`.
@@ -144,6 +153,20 @@ mod tests {
     use super::*;
     use crate::dataset::analysis::*;
 
+    #[derive(Default)]
+    struct FlushFailWriter(Vec<u8>);
+
+    impl Write for FlushFailWriter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Err(std::io::Error::other("flush failed"))
+        }
+    }
+
     fn tiny() -> DatasetAnalysis {
         let turns = vec![AnalyzedTurn {
             conversation_id: "a".into(),
@@ -175,11 +198,19 @@ mod tests {
         let jp = dir.path().join("dataset_analysis.json");
         write_dataset_analysis_json(&a, &jp).unwrap();
         let json = std::fs::read_to_string(&jp).unwrap();
+        let _: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert!(json.contains("\"cache\""));
         assert!(!json.contains("NaN"));
         let cp = dir.path().join("dataset_analysis.csv");
         write_dataset_analysis_csv(&a, &cp).unwrap();
         let csv = std::fs::read_to_string(&cp).unwrap();
         assert!(csv.lines().next().unwrap().contains("p50"));
+    }
+
+    #[test]
+    fn json_writer_propagates_flush_error() {
+        let error = write_dataset_analysis_json_writer(&tiny(), FlushFailWriter::default())
+            .expect_err("flush failure must be returned");
+        assert_eq!(error.to_string(), "flush failed");
     }
 }
