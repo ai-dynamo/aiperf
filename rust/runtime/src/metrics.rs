@@ -1079,6 +1079,7 @@ mod tests {
             ObservedUsage {
                 prompt_tokens: Some(8),
                 completion_tokens: Some(2),
+                first_content_chunk_tokens: Some(1),
                 prompt_cache_read_tokens: Some(3),
                 prompt_cache_write_tokens: Some(4),
                 prompt_cache_miss_tokens: Some(5),
@@ -1118,6 +1119,10 @@ mod tests {
         assert_eq!(collection.records[0].1.correlation_id, uuid.to_string());
         assert_eq!(collection.records[0].1.session_num, 9);
         assert_eq!(collection.records[0].1.turn_index, 2);
+        assert_eq!(
+            collection.records[0].1.tokens.first_content_chunk_tokens,
+            Some(1)
+        );
         assert_eq!(
             collection.records[0].1.usage,
             UsageMetrics {

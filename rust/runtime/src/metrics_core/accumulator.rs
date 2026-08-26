@@ -2428,6 +2428,54 @@ mod tests {
     }
 
     #[test]
+    fn bundled_first_content_chunk_corrects_itl_and_tps_per_user() {
+        let mut record = successful_record(1_000_000_000, 1_100_000_000);
+        record.tokens.first_content_chunk_tokens = Some(4);
+        let mut accumulator = MetricsAccumulator::new();
+        accumulator.process_record(&record);
+        let summary = accumulator.summarize();
+
+        let itl_ms = summary
+            .result(MetricTag::InterTokenLatency)
+            .unwrap()
+            .distribution()
+            .unwrap()
+            .avg
+            .as_f64()
+            .unwrap();
+        assert!((itl_ms - 80.0 / 6.0).abs() < 1e-12);
+        assert_eq!(
+            summary
+                .result(MetricTag::OutputTokenThroughputPerUser)
+                .unwrap()
+                .distribution()
+                .unwrap()
+                .avg,
+            MetricValue::Finite(75.0)
+        );
+    }
+
+    #[test]
+    fn inconsistent_first_content_chunk_counts_fall_back_to_legacy_itl() {
+        for first_content_chunk_tokens in [0, 10, 11] {
+            let mut record = successful_record(1_000_000_000, 1_100_000_000);
+            record.tokens.first_content_chunk_tokens = Some(first_content_chunk_tokens);
+            let mut accumulator = MetricsAccumulator::new();
+            accumulator.process_record(&record);
+            let summary = accumulator.summarize();
+            let itl_ms = summary
+                .result(MetricTag::InterTokenLatency)
+                .unwrap()
+                .distribution()
+                .unwrap()
+                .avg
+                .as_f64()
+                .unwrap();
+            assert!((itl_ms - 80.0 / 9.0).abs() < 1e-12);
+        }
+    }
+
+    #[test]
     fn default_mode_uses_client_token_counts_endpoint_usage_only_feeds_discrepancy() {
         let mut record = successful_record(1_000_000_000, 1_100_000_000);
         // Three observed chunks yield two exact ICL samples and a locally

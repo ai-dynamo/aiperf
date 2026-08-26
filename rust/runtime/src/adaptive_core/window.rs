@@ -346,6 +346,7 @@ mod tests {
             ObservedUsage {
                 prompt_tokens: Some(3),
                 completion_tokens: Some(5),
+                first_content_chunk_tokens: Some(3),
                 ..ObservedUsage::default()
             },
         );
@@ -359,7 +360,7 @@ mod tests {
         assert_eq!(first.successful_requests[0].ttft_ns, Some(10));
         assert_eq!(
             first.successful_requests[0].inter_token_latency_ns,
-            Some(2.5)
+            Some(5.0)
         );
         assert_eq!(first.successful_requests[0].output_sequence_length, Some(5));
         assert_eq!(
@@ -450,6 +451,7 @@ mod tests {
         completed.admit_ns = Some(20);
         completed.token_arrival_ns = vec![30, 40];
         completed.usage.completion_tokens = Some(5);
+        completed.tokens.first_content_chunk_tokens = Some(3);
         sampler.process_record(&completed);
 
         let mut failed = RecordIngest::minimal(10, 50, Phase::Profiling);
@@ -467,7 +469,7 @@ mod tests {
         assert_eq!(stats.successful_requests[0].ttft_ns, Some(10));
         assert_eq!(
             stats.successful_requests[0].inter_token_latency_ns,
-            Some(2.5)
+            Some(5.0)
         );
         assert_eq!(stats.successful_requests[0].output_sequence_length, Some(5));
     }
