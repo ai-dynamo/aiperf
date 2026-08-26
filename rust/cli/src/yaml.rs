@@ -3586,6 +3586,55 @@ benchmark:
             .expect("worker panicked");
     }
 
+    /// A file-backed random pool uses the shared `dataset.images.batchSize` surface,
+    /// and an explicit CLI batch size has the usual config-overlay precedence.
+    #[test]
+    fn random_pool_image_batch_size_yaml_and_cli_override() {
+        std::thread::Builder::new()
+            .stack_size(32 * 1024 * 1024)
+            .spawn(|| {
+                let yaml = cfg(
+                    "  endpoint: {type: image_retrieval}\n  dataset:\n    type: file\n    path: /tmp/images.jsonl\n    format: random_pool\n    images: {batchSize: 2}\n  phases: {type: concurrency, requests: 1, concurrency: 1}\n",
+                );
+                let raw: serde_json::Value = serde_yaml::from_str(&yaml).unwrap();
+                let expanded = crate::expand::expand_config(raw).unwrap();
+
+                let authored = resolve_expanded_value(
+                    expanded.clone(),
+                    Some("/tmp/x".into()),
+                    None,
+                )
+                .expect("authored random-pool config resolves");
+                let authored = serde_json::to_value(&authored).unwrap();
+                assert_eq!(
+                    authored["cfg"]["datasets"][0]["options"]["image_batch_size"],
+                    serde_json::json!(2),
+                    "dataset.images.batchSize must reach random_pool options"
+                );
+
+                let flags = crate::flags::ProfileFlags::parse_from_args(&[
+                    "--image-batch-size".to_string(),
+                    "3".to_string(),
+                ])
+                .expect("flags parse");
+                let overlaid = resolve_expanded_value(
+                    expanded,
+                    Some("/tmp/x".into()),
+                    Some(&flags),
+                )
+                .expect("CLI-overlaid random-pool config resolves");
+                let overlaid = serde_json::to_value(&overlaid).unwrap();
+                assert_eq!(
+                    overlaid["cfg"]["datasets"][0]["options"]["image_batch_size"],
+                    serde_json::json!(3),
+                    "explicit --image-batch-size must override YAML"
+                );
+            })
+            .expect("spawn worker")
+            .join()
+            .expect("worker panicked");
+    }
+
     /// Increment A guard: an explicitly-set operational bool flag (`--streaming`)
     /// now overlays a YAML-authored endpoint, while an unset flag leaves the
     /// config value intact (byte-identical to no overlay).
