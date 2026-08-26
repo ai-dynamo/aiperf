@@ -618,9 +618,10 @@ mod tests {
             ];
             let clock = Rc::new(crate::clock::SimClock::new());
             let calls = Rc::new(RefCell::new(Vec::new()));
+            let parent_first_token = Rc::new(tokio::sync::Notify::new());
             let sink: Rc<dyn GraphSink<OpenAiChatMessage>> = Rc::new(FirstTokenParkingSink {
                 calls: calls.clone(),
-                parent_first_token: Rc::new(tokio::sync::Notify::new()),
+                parent_first_token: parent_first_token.clone(),
                 parent_release: Rc::new(tokio::sync::Notify::new()),
             });
             let backend = Rc::new(
@@ -649,9 +650,16 @@ mod tests {
                     )
                     .await
             });
-            tokio::task::yield_now().await;
-            tokio::task::yield_now().await;
+            parent_first_token.notified().await;
+            for _ in 0..8 {
+                if clock.scheduled_count() == 1 {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
             assert_eq!(calls.borrow().as_slice(), ["parent"]);
+            assert_eq!(clock.scheduled_count(), 1);
+            assert_eq!(clock.next_event_time(), Some(1_000_000_000));
 
             backend.cancel_inflight().unwrap();
             tokio::task::yield_now().await;
