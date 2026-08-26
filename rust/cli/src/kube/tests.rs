@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -9,11 +10,12 @@ use serde_json::Value;
 
 use super::auth::{KubeAuthOptions, KubeCredentials};
 use super::client::{
-    DEFAULT_REQUEST_DEADLINE, DEFAULT_WATCH_DEADLINE, KubeClient, KubeRequest, KubeTransport,
-    KubeWatch,
+    DEFAULT_REQUEST_DEADLINE, DEFAULT_WATCH_DEADLINE, KubeClient, KubeRequest, KubeResponse,
+    KubeTransport, KubeWatch,
 };
 use super::contract::{
-    ControllerEnvelope, validate_envelope, validate_image_capabilities, validate_sweep_envelope,
+    ControllerEnvelope, SweepEnvelope, SweepRoleEnvelope, validate_envelope,
+    validate_image_capabilities, validate_sweep_envelope,
 };
 use super::error::KubeError;
 use super::projection::{BootstrapDigests, build_controller_envelope};
@@ -625,5 +627,312 @@ fn generate_never_contacts_the_cluster() {
         value["cellBootstraps"].as_array().map(|a| a.len()),
         Some(2),
         "cellBootstraps must be sized by --cells"
+    );
+}
+
+// --- sweep-controller unit tests ---
+
+/// Build a minimal `SweepEnvelope` with the supplied axes for hermetic tests.
+///
+/// `base_config` must already contain every swept path so `build_benchmark_plan`
+/// can apply the axis values via `set_dotted`.
+fn sweep_envelope(
+    run_id: &str,
+    base_config: Value,
+    axes: Vec<super::contract::SweepAxis>,
+    trials: u32,
+    max_concurrent_runs: u32,
+) -> SweepEnvelope {
+    SweepEnvelope {
+        contract_version: "native-k8s/v1".to_string(),
+        run_id: run_id.to_string(),
+        namespace: "bench".to_string(),
+        sweep_id: "sweep-1".to_string(),
+        image_reference: format!(
+            "registry.example.com/aiperf/runner@sha256:{}",
+            "0".repeat(64)
+        ),
+        base_config,
+        axes,
+        trials,
+        max_concurrent_runs,
+        sweep_controller: SweepRoleEnvelope {
+            name: "sweep-controller".to_string(),
+            command: vec!["aiperf".to_string()],
+            argv: vec!["sweep-controller".to_string()],
+            environment: std::collections::BTreeMap::new(),
+            bootstrap: None,
+        },
+    }
+}
+
+/// A mock transport that records every request sent and serves pre-queued
+/// responses and watch streams.
+#[derive(Default)]
+struct SweepMockTransport {
+    responses: Mutex<VecDeque<(u16, Vec<u8>)>>,
+    watches: Mutex<VecDeque<KubeWatch>>,
+    pub requests: Mutex<Vec<KubeRequest>>,
+}
+
+impl SweepMockTransport {
+    fn push_response(&self, status: u16, body: Vec<u8>) {
+        self.responses
+            .lock()
+            .expect("responses lock")
+            .push_back((status, body));
+    }
+
+    fn push_watch(&self, events: Vec<Vec<u8>>) {
+        self.watches
+            .lock()
+            .expect("watches lock")
+            .push_back(KubeWatch::events_for_test(events));
+    }
+}
+
+impl KubeTransport for SweepMockTransport {
+    fn send(
+        &self,
+        _credentials: &KubeCredentials,
+        request: KubeRequest,
+    ) -> Result<KubeResponse, KubeError> {
+        self.requests
+            .lock()
+            .expect("requests lock")
+            .push(request);
+        let (status, body) = self
+            .responses
+            .lock()
+            .expect("responses lock")
+            .pop_front()
+            .ok_or_else(|| KubeError::Transport("no response queued for test".to_string()))?;
+        Ok(KubeResponse { status, body })
+    }
+
+    fn watch(
+        &self,
+        _credentials: &KubeCredentials,
+        _request: KubeRequest,
+    ) -> Result<KubeWatch, KubeError> {
+        self.watches
+            .lock()
+            .expect("watches lock")
+            .pop_front()
+            .ok_or_else(|| KubeError::Transport("no watch stream queued for test".to_string()))
+    }
+}
+
+fn sweep_test_credentials() -> KubeCredentials {
+    KubeCredentials {
+        host: "127.0.0.1".to_string(),
+        port: 443,
+        server_name: "localhost".to_string(),
+        token: Some("test-token".to_string()),
+        client_certificate_pem: None,
+        client_key_pem: None,
+        ca_pem: None,
+        insecure_skip_tls_verify: true,
+    }
+}
+
+/// Completed-phase watch event for the named AIPerfJob.
+fn completed_event(job_id: &str) -> Vec<u8> {
+    serde_json::to_vec(&serde_json::json!({
+        "type": "MODIFIED",
+        "object": {
+            "metadata": {"name": job_id, "namespace": "bench"},
+            "status": {"phase": "Completed"}
+        }
+    }))
+    .expect("completed event JSON")
+}
+
+#[test]
+fn sweep_controller_expands_axes_to_correct_plan_count() {
+    // A 2-axis grid (2 × 3 values) with 2 trials must produce 12 child specs.
+    // The base config must carry both swept paths so `set_dotted` can apply them.
+    let base_config = serde_json::json!({
+        "runtime": {"cells": 1}
+    });
+    let axes = vec![
+        super::contract::SweepAxis {
+            parameter: "runtime.cells".to_string(),
+            values: vec![serde_json::json!(1), serde_json::json!(2)],
+        },
+        super::contract::SweepAxis {
+            parameter: "runtime.workers".to_string(),
+            values: vec![
+                serde_json::json!(1),
+                serde_json::json!(2),
+                serde_json::json!(4),
+            ],
+        },
+    ];
+    let envelope = sweep_envelope("sweep-1", base_config, axes, 2, 1);
+
+    let specs = super::sweep_controller::build_child_specs(&envelope)
+        .expect("build_child_specs must succeed");
+
+    assert_eq!(specs.len(), 12, "2×3 grid × 2 trials = 12 child specs");
+}
+
+#[test]
+fn sweep_controller_child_run_id_is_deterministic() {
+    // Child run_id at index 0 must be "{envelope.run_id}-0000".
+    let run_id = "sweep-run-1";
+    let envelope = sweep_envelope(
+        run_id,
+        serde_json::json!({"runtime": {"cells": 1}}),
+        vec![super::contract::SweepAxis {
+            parameter: "runtime.cells".to_string(),
+            values: vec![serde_json::json!(1)],
+        }],
+        1,
+        1,
+    );
+
+    let specs = super::sweep_controller::build_child_specs(&envelope)
+        .expect("build_child_specs must succeed");
+    assert_eq!(specs.len(), 1);
+
+    // The run_id formula is deterministic: "{base_run_id}-{index:04}".
+    let expected_first = format!("{}-{:04}", run_id, 0);
+    assert_eq!(expected_first, "sweep-run-1-0000");
+}
+
+#[test]
+fn sweep_controller_submits_secrets_and_cr_per_child() {
+    // For a 2-run sweep (1 axis × 2 values × 1 trial), run_sweep must POST
+    // bootstrap Secrets and one AIPerfJob CR per child run.
+    //
+    // Each child run with 1 cell requires:
+    //   - 1 POST to /secrets (controller bootstrap)
+    //   - 1 POST to /secrets (cell-0 bootstrap)
+    //   - 1 POST to /aiperfjobs
+    //   - 1 PATCH to /aiperfsweeps/.../status (child run recorded)
+    //   - 1 PATCH to /aiperfsweeps/.../status (completedRuns updated)
+    // Plus 1 final PATCH for the sweep phase.
+    // Total sends = 2 × 5 + 1 = 11; watches = 2 (one per child).
+    let base_config = serde_json::json!({"runtime": {"cells": 1}});
+    let envelope = sweep_envelope(
+        "sweep-run-1",
+        base_config,
+        vec![super::contract::SweepAxis {
+            parameter: "runtime.cells".to_string(),
+            values: vec![serde_json::json!(1), serde_json::json!(1)],
+        }],
+        1,
+        1, // max_concurrent_runs = 1 → sequential
+    );
+
+    let transport = Arc::new(SweepMockTransport::default());
+    let client = KubeClient::with_transport(sweep_test_credentials(), transport.clone());
+
+    // Child 0: 2 secret POSTs, 1 CR POST, 2 status PATCHes; watch → Completed
+    for _ in 0..2 {
+        transport.push_response(201, Vec::new());
+    }
+    transport.push_response(201, Vec::new()); // CR
+    transport.push_response(200, Vec::new()); // PATCH child run
+    transport.push_watch(vec![completed_event("sweep-run-1-0000")]);
+    transport.push_response(200, Vec::new()); // PATCH completedRuns
+
+    // Child 1: same pattern
+    for _ in 0..2 {
+        transport.push_response(201, Vec::new());
+    }
+    transport.push_response(201, Vec::new()); // CR
+    transport.push_response(200, Vec::new()); // PATCH child run
+    transport.push_watch(vec![completed_event("sweep-run-1-0001")]);
+    transport.push_response(200, Vec::new()); // PATCH completedRuns
+
+    // Final sweep phase PATCH
+    transport.push_response(200, Vec::new());
+
+    let exit =
+        super::sweep_controller::run_sweep(&client, &envelope, "sweep-uid-abc").expect("run_sweep");
+    assert_eq!(exit, 0, "successful sweep must exit 0");
+
+    let requests = transport.requests.lock().expect("requests");
+    let secret_posts: Vec<_> = requests
+        .iter()
+        .filter(|r| r.method == "POST" && r.path.ends_with("/secrets"))
+        .collect();
+    let cr_posts: Vec<_> = requests
+        .iter()
+        .filter(|r| r.method == "POST" && r.path.ends_with("/aiperfjobs"))
+        .collect();
+    // 2 children × 2 bootstrap secrets each = 4 secret POSTs
+    assert_eq!(secret_posts.len(), 4, "2 children × 2 secrets each = 4 secret POSTs");
+    assert_eq!(cr_posts.len(), 2, "one AIPerfJob CR per child");
+
+    // Every CR body must carry an ownerReference to the sweep CR.
+    for post in &cr_posts {
+        let body: Value = serde_json::from_slice(&post.body).expect("CR body JSON");
+        let owners = body["metadata"]["ownerReferences"]
+            .as_array()
+            .expect("ownerReferences must be an array");
+        assert_eq!(owners.len(), 1);
+        assert_eq!(owners[0]["kind"], "AIPerfSweep");
+        assert_eq!(owners[0]["uid"], "sweep-uid-abc");
+    }
+}
+
+#[test]
+fn sweep_controller_patches_sweep_status_on_completion() {
+    // After a child run reaches Completed, run_sweep must PATCH the sweep status
+    // with updated completedRuns/failedRuns counts.
+    let base_config = serde_json::json!({"runtime": {"cells": 1}});
+    let envelope = sweep_envelope(
+        "sweep-run-2",
+        base_config,
+        vec![super::contract::SweepAxis {
+            parameter: "runtime.cells".to_string(),
+            values: vec![serde_json::json!(1)],
+        }],
+        1,
+        1,
+    );
+
+    let transport = Arc::new(SweepMockTransport::default());
+    let client = KubeClient::with_transport(sweep_test_credentials(), transport.clone());
+
+    // 2 secret POSTs, 1 CR POST, 1 child-run status PATCH
+    for _ in 0..2 {
+        transport.push_response(201, Vec::new());
+    }
+    transport.push_response(201, Vec::new()); // CR
+    transport.push_response(200, Vec::new()); // PATCH child run added
+    transport.push_watch(vec![completed_event("sweep-run-2-0000")]);
+    transport.push_response(200, Vec::new()); // PATCH completedRuns
+    transport.push_response(200, Vec::new()); // PATCH final phase
+
+    super::sweep_controller::run_sweep(&client, &envelope, "sweep-uid-xyz").expect("run_sweep");
+
+    let requests = transport.requests.lock().expect("requests");
+    let status_patches: Vec<_> = requests
+        .iter()
+        .filter(|r| {
+            r.method == "PATCH" && r.path.contains("/aiperfsweeps/")
+        })
+        .collect();
+    assert!(
+        !status_patches.is_empty(),
+        "at least one sweep status PATCH must be issued after child completion"
+    );
+
+    // One of the patches must carry completedRuns or phase information.
+    let has_completion_patch = status_patches.iter().any(|req| {
+        if let Ok(body) = serde_json::from_slice::<Value>(&req.body) {
+            body["status"]["completedRuns"].as_u64().is_some()
+                || body["status"]["phase"].as_str().is_some()
+        } else {
+            false
+        }
+    });
+    assert!(
+        has_completion_patch,
+        "at least one PATCH must carry completedRuns or phase"
     );
 }

@@ -15,6 +15,7 @@ pub mod render;
 pub mod results;
 pub(crate) mod scaffold;
 pub mod submission;
+pub(crate) mod sweep_controller;
 
 #[cfg(test)]
 mod tests;
