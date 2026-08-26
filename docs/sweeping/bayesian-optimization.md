@@ -128,6 +128,14 @@ field. A `users` dimension must also use `:int` kind (e.g.
 `users:1,50:int`) -- the omitted-kind default of `:real` is rejected, since
 the number of simulated users can only ever be a whole number.
 
+`smoothness` auto-selects the gamma shape only when `--arrival-pattern` is
+left unset. An explicit non-gamma `--arrival-pattern` (`poisson` or
+`constant`) wins instead and is rejected at config time if `smoothness` is
+also being searched, the same way `--arrival-smoothness` is rejected
+against an explicit non-gamma pattern -- drop `--arrival-pattern` to let
+`smoothness` auto-select gamma, or pass `--arrival-pattern gamma`
+explicitly.
+
 ### Search space grammar
 
 `PATH:LO,HI[:KIND]`

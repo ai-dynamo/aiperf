@@ -988,6 +988,100 @@ class TestSearchSpacePhaseShapeInference:
         with pytest.raises(ValueError, match="must be > 0"):
             build_profiling(user)
 
+    def test_smoothness_with_explicit_non_gamma_arrival_pattern_raises_clear_error(
+        self,
+    ) -> None:
+        """'smoothness' only auto-promotes the phase to GAMMA when
+        --arrival-pattern is unset; an explicit non-gamma pattern wins
+        instead, leaving 'smoothness' with nowhere to land (only GammaPhase
+        has that field). Must fail clearly at config time, not at trial 0
+        with a raw Pydantic extra_forbidden."""
+        loadgen = CLIConfig(
+            search_space=["smoothness:0.5,2.0:real"],
+            request_rate=10.0,
+            arrival_pattern=ArrivalPattern.POISSON,
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        with pytest.raises(ValueError, match="only supported with --arrival-pattern"):
+            build_profiling(user)
+
+    def test_smoothness_with_explicit_constant_arrival_pattern_raises_clear_error(
+        self,
+    ) -> None:
+        loadgen = CLIConfig(
+            search_space=["smoothness:0.5,2.0:real"],
+            request_rate=10.0,
+            arrival_pattern=ArrivalPattern.CONSTANT,
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        with pytest.raises(ValueError, match="only supported with --arrival-pattern"):
+            build_profiling(user)
+
+    def test_search_space_path_with_leading_whitespace_ignored_for_shape_inference(
+        self,
+    ) -> None:
+        """The real parser (parse_search_space) doesn't strip whitespace --
+        ' rate' and 'rate' are different paths to it, and ' rate' is
+        accepted as a literal (broken) path rather than resolved as the
+        'rate' alias. This helper must match that exactly: stripping the
+        path here would silently reshape the benchmark for a dimension the
+        real parser treats as something else entirely."""
+        loadgen = CLIConfig(
+            search_space=[" rate:1,100:real"],
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        prof = build_profiling(user)
+        assert prof["type"] == PhaseType.CONCURRENCY
+        assert "rate" not in prof
+
+    def test_search_space_kind_with_leading_whitespace_ignored_for_shape_inference(
+        self,
+    ) -> None:
+        """'rate:1,100: int' (space before kind) is REJECTED by the real
+        parser (kind must be exactly 'int' or 'real'). This helper must
+        not silently normalize ' int' to 'int' and proceed as if the
+        dimension were well-formed -- skip it and let the real parser
+        report the actual grammar error."""
+        loadgen = CLIConfig(
+            search_space=["rate:1,100: int"],
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        prof = build_profiling(user)
+        assert prof["type"] == PhaseType.CONCURRENCY
+        assert "rate" not in prof
+
+    def test_trace_auto_promote_conflict_message_mentions_search_space(
+        self, tmp_path: Path
+    ) -> None:
+        """When 'rate' was seeded from --search-space (not an explicit
+        --request-rate flag), the trace auto-promote conflict error must
+        not tell the user to "drop the conflicting flags" -- there is no
+        flag to drop, only a --search-space dimension."""
+        trace_path = tmp_path / "trace.jsonl"
+        trace_path.write_text(
+            '{"timestamp": 0, "input_length": 100, "output_length": 50}\n'
+            '{"timestamp": 100, "input_length": 120, "output_length": 60}\n',
+            encoding="utf-8",
+        )
+        # Built directly (not via _make_user's two-CLIConfig merge) since
+        # input_file's validator only accepts a literal str, and
+        # _make_user's model_dump()/reconstruct round-trip turns it back
+        # into a Path first.
+        user = CLIConfig(
+            url="http://localhost:8000/test",
+            model_names=["test-model"],
+            search_space=["rate:1,100:real"],
+            input_file=str(trace_path),
+            custom_dataset_type="mooncake_trace",
+            request_count=10,
+        )
+        with pytest.raises(ValueError, match="--search-space dimensions"):
+            build_profiling(user)
+
     def test_explicit_request_rate_still_wins_without_search_space(self) -> None:
         """Regression guard: explicit --request-rate path (no search-space)
         is unaffected by the new inference logic."""

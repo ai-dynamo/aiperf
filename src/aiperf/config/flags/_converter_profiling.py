@@ -124,50 +124,69 @@ def _search_space_dimensions(cli: CLIConfig) -> dict[str, tuple[float, str]]:
     if not cli.search_space:
         return {}
 
-    from aiperf.config.loader.dotted_path import _resolve_path_alias
-
     dims: dict[str, tuple[float, str]] = {}
     for raw in cli.search_space:
-        path_part, _, rest = raw.partition(":")
-        path = path_part.strip()
-        if not path:
-            continue
-        if "." not in path:
-            path = _resolve_path_alias(path)
-        if not path.startswith("phases.profiling."):
-            continue
-        remainder = path[len("phases.profiling.") :]
-        if "." in remainder:
-            # A nested sub-field (e.g. "phases.profiling.cancellation.rate")
-            # is not the phase's own scalar field -- matching it by leaf
-            # name alone would misclassify e.g. a cancellation-rate sweep
-            # as the phase's request rate. Not a shape-bearing dimension.
-            continue
-        field = remainder
-        if field == "rate_series":
-            raise ValueError(
-                "--search-space 'rate_series' is not a valid adaptive-search "
-                "dimension: it's a piecewise-linear rate schedule (a list of "
-                "time/rate points), not a single number the planner can "
-                "sample between two bounds. Pass --request-rate-series as a "
-                "fixed companion instead of searching over it, or search "
-                "'rate'/'rate_ramp' for a scalar rate to sweep."
-            )
-        bounds_part, _, kind_part = rest.partition(":")
-        if ":" in kind_part:
-            # More than three ':'-separated segments (e.g.
-            # "users:1,50:int:log") -- malformed grammar. Skip rather than
-            # guess a kind from it; the real parser's grammar error is what
-            # the user should see, not a wrong "expected :int" message from
-            # this lightweight helper misreading the extra segment as kind.
-            continue
-        lo_str = bounds_part.split(",", 1)[0].strip()
-        kind = kind_part.strip() or "real"
-        try:
-            dims[field] = (float(lo_str), kind)
-        except ValueError:
-            continue
+        parsed = _parse_shape_dimension(raw)
+        if parsed is not None:
+            field, lo, kind = parsed
+            dims[field] = (lo, kind)
     return dims
+
+
+def _parse_shape_dimension(raw: str) -> tuple[str, float, str] | None:
+    """Parse one ``--search-space`` entry into ``(field, lo, kind)``, or
+    ``None`` if it isn't a shape-bearing ``phases.profiling.<field>`` scalar.
+
+    Raises for ``rate_series`` specifically (see ``_search_space_dimensions``
+    docstring); every other malformed or out-of-scope entry is skipped so
+    the real parser (``parse_search_space``) is what reports the actual
+    grammar error, rather than this lightweight helper guessing wrong.
+    """
+    from aiperf.config.loader.dotted_path import _resolve_path_alias
+
+    path_part, _, rest = raw.partition(":")
+    path = path_part
+    if not path:
+        return None
+    if "." not in path:
+        path = _resolve_path_alias(path)
+    if not path.startswith("phases.profiling."):
+        return None
+    remainder = path[len("phases.profiling.") :]
+    if "." in remainder:
+        # A nested sub-field (e.g. "phases.profiling.cancellation.rate") is
+        # not the phase's own scalar field -- matching it by leaf name alone
+        # would misclassify e.g. a cancellation-rate sweep as the phase's
+        # request rate. Not a shape-bearing dimension.
+        return None
+    field = remainder
+    if field == "rate_series":
+        raise ValueError(
+            "--search-space 'rate_series' is not a valid adaptive-search "
+            "dimension: it's a piecewise-linear rate schedule (a list of "
+            "time/rate points), not a single number the planner can "
+            "sample between two bounds. Pass --request-rate-series as a "
+            "fixed companion instead of searching over it, or search "
+            "'rate'/'rate_ramp' for a scalar rate to sweep."
+        )
+    bounds_part, _, kind_part = rest.partition(":")
+    if ":" in kind_part:
+        # More than three ':'-separated segments (e.g. "users:1,50:int:log")
+        # -- malformed grammar. Skip rather than guess a kind from it.
+        return None
+    kind = kind_part or "real"
+    if kind not in ("int", "real"):
+        # Not one of the real parser's _VALID_KINDS (parsing.py) -- skip so
+        # the real parser's own grammar error is what the user sees. This is
+        # also what makes _seed_users_dimension's "not ':real'" message
+        # always accurate: by the time kind reaches there, it can only ever
+        # be "int" or "real".
+        return None
+    lo_str = bounds_part.split(",", 1)[0]
+    try:
+        return field, float(lo_str), kind
+    except ValueError:
+        return None
 
 
 def _profiling_phase_type(
@@ -272,6 +291,19 @@ def _apply_search_space_shape_seeds(
     _reject_non_positive_bound(search_dims, "rate_ramp", "the ramp duration (seconds)")
 
     phase_type = prof["type"]
+
+    # 'smoothness' only auto-promotes the phase to GAMMA when --arrival-pattern
+    # is unset (see the v1-parity comment in _profiling_phase_type); an
+    # EXPLICIT non-gamma --arrival-pattern silently wins instead, leaving a
+    # searched 'smoothness' dimension with nowhere to land (GammaPhase is the
+    # only phase with that field). Mirrors the equivalent gate for the
+    # --arrival-smoothness *flag* in _apply_phase_specific_routes below.
+    if "smoothness" in search_dims and phase_type != PhaseType.GAMMA:
+        raise ValueError(
+            "--search-space 'smoothness' is only supported with --arrival-pattern "
+            "gamma. Pass --arrival-pattern gamma (or omit --arrival-pattern so "
+            "'smoothness' can auto-select it), or drop the 'smoothness' dimension."
+        )
 
     if phase_type == PhaseType.USER_CENTRIC and "users" in search_dims:
         _seed_users_dimension(prof, search_dims)
@@ -570,16 +602,21 @@ def _maybe_auto_promote_trace(
     # FixedSchedulePhase doesn't accept rate/users/smoothness. If the user
     # explicitly opted into a rate-controlled mode against a timestamped
     # trace, refuse the combo loudly rather than silently dropping their
-    # flag — they almost certainly want one or the other, not both.
+    # flag — they almost certainly want one or the other, not both. `prof`
+    # may hold these because of an explicit CLI flag OR because
+    # _apply_search_space_shape_seeds seeded them from a --search-space
+    # dimension -- "flags" alone would be unactionable in the latter case
+    # (there's no flag to drop), so name both sources.
     conflicts = [k for k in ("rate", "users", "smoothness") if k in prof]
     if conflicts:
         raise ValueError(
             "Trace dataset has per-record timestamps and would be "
-            "auto-promoted to fixed_schedule, but the following flags "
-            f"are incompatible with fixed_schedule mode: {conflicts}. "
-            "Either drop the conflicting flags to enable auto-fixed-"
-            "schedule, or pass --no-fixed-schedule to keep your "
-            "user-selected timing mode and ignore trace timestamps."
+            "auto-promoted to fixed_schedule, but the following flags or "
+            f"--search-space dimensions are incompatible with "
+            f"fixed_schedule mode: {conflicts}. Either drop the "
+            "conflicting flags/dimensions to enable auto-fixed-schedule, "
+            "or pass --no-fixed-schedule to keep your user-selected timing "
+            "mode and ignore trace timestamps."
         )
     prof["type"] = PhaseType.FIXED_SCHEDULE
 

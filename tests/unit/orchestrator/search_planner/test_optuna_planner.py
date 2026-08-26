@@ -666,3 +666,60 @@ def test_ask_with_ordinary_bounds_violation_raises_original_error() -> None:
 
     with pytest.raises(ValidationError):
         planner.ask()
+
+
+def test_ask_shape_mismatch_names_profiling_phase_not_warmup() -> None:
+    """phases[0] is the warmup phase whenever one exists (warmup is
+    appended before profiling), so naming self._base.phases[0].type in
+    the shape-mismatch message would blame the wrong phase. The message
+    must name the PROFILING phase's shape, matched by kind (like
+    BenchmarkConfig.validate_profiling_phase_required does), not by
+    list position."""
+    base = BenchmarkConfig.model_validate(
+        {
+            "models": ["m"],
+            "endpoint": {"urls": ["http://x"], "type": "chat"},
+            "datasets": [{"name": "profiling", "type": "synthetic"}],
+            "phases": [
+                {
+                    "name": "warmup",
+                    "type": "concurrency",
+                    "concurrency": 1,
+                    "requests": 5,
+                },
+                {
+                    "name": "profiling",
+                    "type": "poisson",
+                    "rate": 10.0,
+                    "requests": 10,
+                },
+            ],
+        }
+    )
+    cfg = _cfg(
+        extra_dims=[
+            SearchSpaceDimension(path="phases.profiling.users", lo=1, hi=50, kind="int")
+        ]
+    )
+    planner = OptunaSearchPlanner(base, cfg)
+
+    with pytest.raises(ValueError, match=r"shape \('poisson'\)"):
+        planner.ask()
+
+
+def test_ask_with_root_level_extra_field_raises_original_error() -> None:
+    """extra_forbidden also fires for a malformed path that lands as a
+    phantom ROOT-level key (e.g. a bare, non-dotted path unrelated to any
+    phase field) -- that's not a phase-shape mismatch, and reframing it
+    as one would be actively wrong. Must propagate the original
+    ValidationError unreframed, same as an ordinary bounds violation."""
+    base = _base_config()  # phases[0].type == "concurrency"
+    cfg = _cfg(
+        search_space=[
+            SearchSpaceDimension(path="bogus_root_field", lo=1, hi=100, kind="real")
+        ]
+    )
+    planner = OptunaSearchPlanner(base, cfg)
+
+    with pytest.raises(ValidationError):
+        planner.ask()
