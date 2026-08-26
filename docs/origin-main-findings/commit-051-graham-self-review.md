@@ -93,5 +93,6 @@ opt-in.
 
 ## Disposition
 
-Self-review disposition: approve. Independent Graham approval remains mandatory
-before tracker closure.
+Self-review disposition: approve. Independent Graham review subsequently
+approved `7520bbefcc..8fa60b9800` after two passes with no blocking, Important,
+or style findings.
