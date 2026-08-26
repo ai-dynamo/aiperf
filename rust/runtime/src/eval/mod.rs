@@ -59,7 +59,8 @@ pub use execution::{
     ProviderCapabilities, SandboxRole, SecretProvider, SecretValue,
     StartedExternalDriverDockerSpawn, StepExecutionResult, VerifierCollectHook, VerifierPlan,
     WorkspaceOverlay, collect_artifacts, preflight_docker, resolve_phase_environment,
-    run_native_graph_episode_callback, transfer_artifacts,
+    run_native_graph_episode_callback, run_native_graph_episode_callback_with_agent_deadline,
+    transfer_artifacts,
 };
 #[cfg(feature = "engine")]
 pub use execution::{NativeGraphEnvironmentRolloutSession, NativeGraphLeaseRolloutStart};

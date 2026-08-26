@@ -50,6 +50,7 @@ use crate::{
         NativeGraphEpisodeBackendLease, NativeGraphEpisodeCallback, NativeGraphEpisodeLease,
         PreparedExternalDriverCapability, ProviderCapability, ProviderProfile,
         ResolvedEpisodeTrial, RewardDocument, VerifierMode, run_native_graph_episode_callback,
+        run_native_graph_episode_callback_with_agent_deadline,
     },
 };
 
@@ -1454,6 +1455,16 @@ impl DockerProcessSandbox {
                 .steps()
                 .first()
                 .ok_or(EvalExecutionError::InvalidRecipe("Docker benchmark step"))?;
+            let callback_agent_budget = plan.agent().timeout().map(|timeout| {
+                (
+                    timeout,
+                    remaining(&agent_deadline).and_then(|remaining| {
+                        remaining.ok_or(EvalExecutionError::InvalidRecipe(
+                            "NativeGraph agent deadline",
+                        ))
+                    }),
+                )
+            });
             let session = DockerStepSession {
                 clock: self.clock.clone(),
                 runtime,
@@ -1472,6 +1483,7 @@ impl DockerProcessSandbox {
                 session,
                 step,
                 package.source_digest(),
+                callback_agent_budget,
             )
             .await
         }
@@ -2498,17 +2510,42 @@ async fn run_native_graph_verifier_transaction(
     mut session: DockerStepSession<'_>,
     step: &BenchmarkStepPlan,
     verifier: ArtifactDigest,
+    agent_callback_budget: Option<(Duration, Result<Duration, EvalExecutionError>)>,
 ) -> Result<LocalExecutionResult, EvalExecutionError> {
-    run_native_graph_episode_callback(callback, lease, || {
-        let artifacts = session.collect_artifacts(step)?;
-        let reward = session.run_verifier(step, &artifacts)?;
-        Ok(LocalExecutionResult {
-            artifacts,
-            reward,
-            verifier: verifier.clone(),
-        })
-    })
-    .await
+    match agent_callback_budget {
+        Some((authored_timeout, remaining)) => {
+            let clock = session.clock.clone();
+            run_native_graph_episode_callback_with_agent_deadline(
+                clock,
+                authored_timeout,
+                remaining,
+                callback,
+                lease,
+                || {
+                    let artifacts = session.collect_artifacts(step)?;
+                    let reward = session.run_verifier(step, &artifacts)?;
+                    Ok(LocalExecutionResult {
+                        artifacts,
+                        reward,
+                        verifier: verifier.clone(),
+                    })
+                },
+            )
+            .await
+        }
+        None => {
+            run_native_graph_episode_callback(callback, lease, || {
+                let artifacts = session.collect_artifacts(step)?;
+                let reward = session.run_verifier(step, &artifacts)?;
+                Ok(LocalExecutionResult {
+                    artifacts,
+                    reward,
+                    verifier: verifier.clone(),
+                })
+            })
+            .await
+        }
+    }
 }
 
 impl BenchmarkStepSession for DockerStepSession<'_> {
@@ -6305,6 +6342,7 @@ mod tests {
             session,
             &step,
             crate::eval::ArtifactDigest::from_bytes(b"fixture"),
+            None,
         )
         .await
         .expect("selected-root transaction succeeds");

@@ -21,7 +21,7 @@ use std::{
     time::Duration,
 };
 
-use aiperf_runtime::clock::SimClock;
+use aiperf_runtime::clock::{Clock, SimClock};
 use aiperf_runtime::eval::{
     AdapterEnvelope, AdapterExit, AdapterLifecycleDeadlines, AdapterMessage, AdapterProcess,
     AdapterSpawnRequest, AdapterSpawnTransaction, AdapterSpawner, AdapterSupervisionError,
@@ -6759,6 +6759,40 @@ struct E10NativeGraphCallback<'a> {
     events: &'a RefCell<Vec<String>>,
 }
 
+struct NativeGraphCallbackCancellationGuard {
+    cancellations: Rc<Cell<usize>>,
+}
+
+impl Drop for NativeGraphCallbackCancellationGuard {
+    fn drop(&mut self) {
+        self.cancellations.set(self.cancellations.get() + 1);
+    }
+}
+
+struct StallingNativeGraphCallback {
+    clock: Rc<SimClock>,
+    cancellations: Rc<Cell<usize>>,
+}
+
+#[async_trait(?Send)]
+impl NativeGraphEpisodeCallback for StallingNativeGraphCallback {
+    async fn run(
+        &mut self,
+        lease: &mut dyn NativeGraphEpisodeLease,
+    ) -> Result<(), EvalExecutionError> {
+        assert!(lease.is_authorized());
+        assert!(lease.is_environment_acquired());
+        let _cancellation = NativeGraphCallbackCancellationGuard {
+            cancellations: self.cancellations.clone(),
+        };
+        self.clock
+            .clone()
+            .sleep(Duration::from_secs(1).as_nanos() as i64)
+            .await;
+        Ok(())
+    }
+}
+
 #[async_trait(?Send)]
 impl NativeGraphEpisodeCallback for E10NativeGraphCallback<'_> {
     async fn run(
@@ -6906,6 +6940,70 @@ fn e10_native_graph_profile() -> ProviderProfile {
     .unwrap()
     .with_model_endpoint_isolation(ModelEndpointIsolationProof::NoAdapterEgress)
     .unwrap()
+}
+
+#[test]
+fn native_graph_docker_preparation_uses_the_callback_agent_deadline() {
+    let temporary = tempfile::tempdir().unwrap();
+    let task_root = native_graph_task_root(&temporary);
+    fs::write(
+        task_root.join("task.toml"),
+        format!(
+            "{}\n[agent]\ntimeout_sec = 1\n\n[verifier]\ntimeout_sec = 1\n",
+            fs::read_to_string(task_root.join("task.toml")).unwrap()
+        ),
+    )
+    .unwrap();
+    let imported = HarborImporter::new(&NativeSourceAcquirer)
+        .import(&HarborSource::local(task_root.to_string_lossy()).unwrap())
+        .unwrap();
+    let clock = Rc::new(SimClock::new());
+    let runtime = StepRecordingRuntime::default()
+        .advance_after_agent_workdir_prepare(clock.clone(), 900_000_000)
+        .with_native_graph_profile(e10_native_graph_profile());
+    let cancellations = Rc::new(Cell::new(0));
+    let mut callback = StallingNativeGraphCallback {
+        clock: clock.clone(),
+        cancellations: cancellations.clone(),
+    };
+    let sandbox = DockerProcessSandbox::with_clock(clock.clone());
+    let recipe = HarborSandboxRecipe::for_standard_task(
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        None,
+    )
+    .unwrap();
+
+    clock.clone().drive(Box::pin(async {
+        let error = sandbox
+            .execute_native_graph_with_runtime(
+                &runtime,
+                &recipe,
+                &imported.package,
+                imported.package.execution_plan(),
+                &FixedSecret,
+                &mut callback,
+            )
+            .await
+            .expect_err("callback must not outlive the deadline started before preparation");
+
+        assert!(matches!(
+            error,
+            EvalExecutionError::Timeout {
+                phase: EvalExecutionPhase::Agent,
+                timeout,
+            } if timeout == Duration::from_secs(1)
+        ));
+    }));
+
+    assert_eq!(
+        cancellations.get(),
+        1,
+        "deadline cancellation drops the parked callback future"
+    );
+    assert_eq!(runtime.collection_calls.get(), 0);
+    assert_eq!(runtime.verifier_execs.get(), 0);
+    assert_eq!(runtime.removals.get(), 1);
+    assert_eq!(clock.now_ns(), Duration::from_secs(1).as_nanos() as i64);
 }
 
 #[tokio::test(flavor = "current_thread")]

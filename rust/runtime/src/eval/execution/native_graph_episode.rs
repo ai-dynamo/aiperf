@@ -3,17 +3,11 @@
 
 //! Narrow callback boundary between an acquired task environment and Rust-owned graph execution.
 
-use std::{cell::RefCell, future::Future, pin::Pin, rc::Rc};
-
-#[cfg(feature = "engine")]
-use std::time::Duration;
+use std::{cell::RefCell, future::Future, pin::Pin, rc::Rc, time::Duration};
 
 use async_trait::async_trait;
 
-use super::EvalExecutionError;
-#[cfg(feature = "engine")]
-use super::EvalExecutionPhase;
-#[cfg(feature = "engine")]
+use super::{EvalExecutionError, EvalExecutionPhase};
 use crate::clock::Clock;
 #[cfg(feature = "engine")]
 use crate::engine::graph_execution::NativeGraphLivePolicyCallSummary;
@@ -298,6 +292,47 @@ pub trait NativeGraphEpisodeCallback {
 pub async fn run_native_graph_episode_callback<T, Lease>(
     callback: &mut dyn NativeGraphEpisodeCallback,
     lease: &mut Lease,
+    after_callback: impl FnMut() -> Result<T, EvalExecutionError>,
+) -> Result<T, EvalExecutionError>
+where
+    Lease: NativeGraphEpisodeBackendLease,
+{
+    run_native_graph_episode_callback_with_budget(None, callback, lease, after_callback).await
+}
+
+/// Invokes an authorized NativeGraph callback within Docker's existing Agent deadline.
+///
+/// `remaining` derives from the deadline established before task-environment preparation;
+/// `authored_timeout` remains the error contract even after preparation consumes part of it.
+#[doc(hidden)]
+pub async fn run_native_graph_episode_callback_with_agent_deadline<T, Lease>(
+    clock: Rc<dyn Clock>,
+    authored_timeout: Duration,
+    remaining: Result<Duration, EvalExecutionError>,
+    callback: &mut dyn NativeGraphEpisodeCallback,
+    lease: &mut Lease,
+    after_callback: impl FnMut() -> Result<T, EvalExecutionError>,
+) -> Result<T, EvalExecutionError>
+where
+    Lease: NativeGraphEpisodeBackendLease,
+{
+    run_native_graph_episode_callback_with_budget(
+        Some((clock, authored_timeout, remaining)),
+        callback,
+        lease,
+        after_callback,
+    )
+    .await
+}
+
+async fn run_native_graph_episode_callback_with_budget<T, Lease>(
+    budget: Option<(
+        Rc<dyn Clock>,
+        Duration,
+        Result<Duration, EvalExecutionError>,
+    )>,
+    callback: &mut dyn NativeGraphEpisodeCallback,
+    lease: &mut Lease,
     mut after_callback: impl FnMut() -> Result<T, EvalExecutionError>,
 ) -> Result<T, EvalExecutionError>
 where
@@ -313,9 +348,39 @@ where
             "acquired native graph task environment",
         ));
     }
-    let callback_outcome = {
-        let mut callback_lease = NativeGraphEpisodeCallbackLease { backend: lease };
-        callback.run(&mut callback_lease).await
+    let callback_outcome = match budget {
+        Some((clock, authored_timeout, remaining)) => match remaining {
+            Ok(remaining) => {
+                let started_ns = clock.now_ns();
+                let remaining_ns = remaining.as_nanos().min(i64::MAX as u128) as i64;
+                let callback_deadline_ns = started_ns.saturating_add(remaining_ns);
+                let mut callback_lease = NativeGraphEpisodeCallbackLease { backend: lease };
+                let callback_run = callback.run(&mut callback_lease);
+                let timer = clock.clone().sleep(remaining_ns);
+                tokio::pin!(callback_run);
+                tokio::pin!(timer);
+                let mut outcome = tokio::select! {
+                    biased;
+                    result = &mut callback_run => result,
+                    () = &mut timer => Err(EvalExecutionError::Timeout {
+                        phase: EvalExecutionPhase::Agent,
+                        timeout: authored_timeout,
+                    }),
+                };
+                if outcome.is_ok() && clock.now_ns() >= callback_deadline_ns {
+                    outcome = Err(EvalExecutionError::Timeout {
+                        phase: EvalExecutionPhase::Agent,
+                        timeout: authored_timeout,
+                    });
+                }
+                outcome
+            }
+            Err(error) => Err(error),
+        },
+        None => {
+            let mut callback_lease = NativeGraphEpisodeCallbackLease { backend: lease };
+            callback.run(&mut callback_lease).await
+        }
     };
     match callback_outcome {
         Ok(()) => {
