@@ -86,6 +86,7 @@ implementation, test run, or review.
 | 58 | `9b60a3d479` | FakeTokenizer | complete | applicable | The ancestor's harness method had regressed from the semantic tree; this closure restores the exact zero-returning Python fake method, proves the native trait's existing zero default needs no duplicate API, and records Graham approval in `docs/origin-main-findings/commit-058-9b60a3d479.md`. |
 | 59 | `c9288da6c1` | mmap conversation cache | complete | not-applicable | Exact upstream object already entered through #60 actual merge `f1d39ad583`; Python-only mmap cursor/prefault/executor fix has no native backend. Findings/spec/Sol plan and Graham closure: `commit-059-c9288da6c1.md`. |
 | 60 | `c2889280a6` | random_pool batch sizes | complete | applicable | Native four-modality CLI/YAML/config projection, safe real-loader batching, and binary integration coverage approved at `5dd2939765`; exact target-only merge `f1d39ad583`. |
+| 62 | `d8d49e8c2a` | infer benchmark shape from search-space keywords | complete | not-applicable | Python Optuna conversion/planner repair; native has no general `--search-space` parser or planner to infer a shape for. Closure: `docs/origin-main-findings/commit-062-d8d49e8c2a.md`; spec/Sol plan record the boundary and future port prerequisites. |
 
 ## Per-commit record: 817a8d84ddb9
 
