@@ -235,6 +235,8 @@ navigation:
     path: reference/isl-tokenization.md
   - page: Prompt Corpus Selection
     path: reference/prompt-corpus.md
+  - page: Validating ISL/OSL Distributions with the Mock Server
+    path: reference/validating-isl-distribution.md
   - page: ISL Budget Compensation Derivation
     path: reference/isl-budget-compensation.md
   - page: Conversation Context Mode

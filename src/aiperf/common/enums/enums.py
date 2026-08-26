@@ -256,6 +256,10 @@ class PromptCorpus(CaseInsensitiveStrEnum):
     CODING = "coding"
     """Realistic coding content: code, bash output, JSON, error tracebacks, git diffs."""
 
+    RANDOM = "random"
+    """Random tokens drawn from the full tokenizer vocabulary minus special tokens.
+    Matches vLLM bench's RandomDataset token-generation strategy."""
+
 
 class MemoryMapFormat(CaseInsensitiveStrEnum):
     """Storage format for memory-mapped dataset files."""
@@ -794,3 +798,72 @@ class SweepType(CaseInsensitiveStrEnum):
 
     LATIN_HYPERCUBE = "latin_hypercube"
     """Latin hypercube sampling over dimensions."""
+
+
+class RandomCorpusStyle(CaseInsensitiveStrEnum):
+    """Benchmark style for RANDOM corpus generation.
+
+    Controls the full set of behaviors that vary between tools. Each style
+    is a bundle of decisions that together reproduce the statistical
+    distribution of a specific benchmarking tool:
+
+    .. list-table::
+       :header-rows: 1
+       :widths: 30 35 35
+
+       * - Concern
+         - VLLM
+         - SGLANG
+       * - Token pool
+         - ``valid_token_ids`` (special tokens excluded via ``all_special_ids``)
+         - ``all_token_ids`` (full ``range(vocab_size)``, no exclusion)
+       * - BOS / special-token adjustment
+         - ``max(0, mean - num_special_tokens)``, applied to the mean before
+           the window bounds are computed
+         - ``max(1, drawn - num_special_tokens)``, applied per-request after
+           sampling so the window keeps its raw-mean shape
+       * - ISL/OSL range formula
+         - Symmetric: ``[floor(mean*(1-r)), ceil(mean*(1+r))]``
+         - Lower-bounded: ``[max(1, int(mean*r)), mean]``
+       * - RNG algorithm (preseed)
+         - PCG64 via ``numpy.random.default_rng(seed)``
+         - MT19937 via a private ``numpy.random.RandomState(seed)``
+       * - RNG draw order (with preseed)
+         - All ISLs → all OSLs → all offsets
+         - All ISLs → all OSLs → all offsets (same order, different algorithm)
+       * - Top-up RNG
+         - Continues from the same ``default_rng`` stream (``_preseed_rng``)
+         - Continues from the same ``RandomState`` stream (``_preseed_rng``)
+
+    Both styles are preseeded whenever the corpus is
+    :attr:`PromptCorpus.RANDOM` — the composer gates on
+    ``isinstance(dist, RangeRatioDistribution)``, which the SGLANG subclass
+    satisfies. ``_corpus_rng`` is the fallback for the non-preseeded paths
+    (non-RANDOM corpora, and draws past cache exhaustion), not a per-style
+    difference.
+
+    .. note::
+       The two styles subtract special tokens at different points on purpose,
+       each following its own upstream. VLLM folds the count into the bounds;
+       SGLANG shifts each drawn length, mirroring ``sample_random_requests``
+       under ``return_text`` (the default, and what aiperf sends)::
+
+           input_lens[i] = max(1, input_lens[i] - num_special_tokens)
+
+       Both land the same wire ISL on the configured value; only the resulting
+       window shape differs.
+    """
+
+    VLLM = "vllm"
+    """vllm bench serve semantics: symmetric window ``[floor(mean*(1-r)), ceil(mean*(1+r))]``.
+    r=0 is fixed at mean; larger r widens the window on both sides. r must be in [0, 1).
+    Special tokens excluded from the sampling pool. BOS subtracted from ISL mean."""
+
+    SGLANG = "sglang"
+    """sglang ``benchmark.serving`` semantics under ``--dataset-name random-ids``:
+    lower-bounded window ``[max(1, int(mean*r)), mean]``.
+    r=0 allows full variability [1, mean]; r=1 fixes length at mean. Full vocab_size range
+    used for token sampling (no special-token exclusion). No BOS adjustment.
+
+    The default ``--dataset-name random`` is a different algorithm upstream
+    (repeat/truncate ShareGPT token ids) and is not what this style mirrors."""

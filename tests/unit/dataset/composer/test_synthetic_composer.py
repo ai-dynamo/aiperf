@@ -408,27 +408,28 @@ class TestSyntheticDatasetComposer:
         assert text_payload.name == "text"
         assert text_payload.contents == ["Generated text content"]
 
-    @patch("aiperf.dataset.generator.prompt.PromptGenerator.get_random_prefix_prompt")
     @patch("aiperf.dataset.generator.prompt.PromptGenerator.generate")
     def test_generate_text_payloads_first_turn_with_prefix(
-        self, mock_generate, mock_prefix, prefix_prompt_config, mock_tokenizer
+        self, mock_generate, prefix_prompt_config, mock_tokenizer
     ):
-        """Test _generate_text_payloads for first turn with prefix prompts."""
-        mock_generate.return_value = "User message"
-        mock_prefix.return_value = "Prefix prompt:"
+        """First turn delegates the prefix to the generator via with_prefix.
+
+        The composer no longer joins prefix and body as strings — that seam cost
+        ~0.84 extra tokens per request (AIP-1118). The generator concatenates the
+        token IDs instead, so the composer only signals intent.
+        """
+        mock_generate.return_value = "Prefixed user message"
 
         composer = SyntheticDatasetComposer(
             run=make_run(prefix_prompt_config), tokenizer=mock_tokenizer
         )
 
-        # Test prefix prompt is added to first turn
         turn = Turn()
         text = composer._generate_text_payloads(turn, is_first=True)
         turn.texts.append(text)
 
-        text_payload = turn.texts[0]
-        # Test prefix prompt format ("prefix prompt")
-        assert text_payload.contents == ["Prefix prompt: User message"]
+        assert turn.texts[0].contents == ["Prefixed user message"]
+        assert mock_generate.call_args.kwargs["with_prefix"] is True
 
     @patch("aiperf.dataset.generator.prompt.PromptGenerator.generate")
     def test_generate_text_payloads_subsequent_turn_no_prefix(
