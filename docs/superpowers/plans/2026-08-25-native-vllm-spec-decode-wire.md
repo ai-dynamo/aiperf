@@ -29,9 +29,10 @@ E2E harness, cargo, sccache.
   `CARGO_TARGET_DIR=/mnt/4tb/aiperf-target-port052`.
 - Preserve the #13 neutral metric identities, aggregation, artifact schema, and
   no-stats omission behavior.
-- The final provenance merge must keep the reviewed native tree and record
-  exact upstream `810fd8bdd40a1c35b64d487b3b8487f0a71a0f6b` as second parent.
-  Never cherry-pick or import its Python tree.
+- The checkpoint provenance merge must keep its first-parent tree and record
+  exact upstream `810fd8bdd40a1c35b64d487b3b8487f0a71a0f6b` as second parent. Root requested
+  that merge before implementation; the reviewed native commits descend from
+  it. Never cherry-pick or import the upstream Python tree.
 
 ---
 
@@ -47,14 +48,14 @@ E2E harness, cargo, sccache.
   root object and the existing canonical `ObservedSpecDecodeAcceptance`.
 - Consumes: vLLM `metrics.speculative_decoding` with dense integer histogram.
 
-- [ ] Write root-location and dense worked-example tests, including zero-step,
+- [x] Write root-location and dense worked-example tests, including zero-step,
   fully rejected, detailed, absent width, and obsolete per-choice refusal.
-- [ ] Run the focused endpoint suite and record the expected root/array RED.
-- [ ] Replace the extractor and histogram DTO/conversion; remove the obsolete
+- [x] Run the focused endpoint suite and record the expected root/array RED.
+- [x] Replace the extractor and histogram DTO/conversion; remove the obsolete
   streamed-choice capture field and method.
-- [ ] Add the three highest-value malformed-shape groups: wrong container or
+- [x] Add the three highest-value malformed-shape groups: wrong container or
   element type, negative/inconsistent counts, and width mismatch.
-- [ ] Run the focused suite GREEN and commit the slice.
+- [x] Run the focused suite GREEN and commit the slice.
 
 ### Task 2: Effective streaming request negotiation
 
@@ -67,14 +68,14 @@ E2E harness, cargo, sccache.
 - Consumes: endpoint streaming policy, endpoint extras, latest-turn extras,
   and the existing `BodyPlan` construction path.
 
-- [ ] Write failing exact-body tests for no-server-token-count streaming on
+- [x] Write failing exact-body tests for no-server-token-count streaming on
   chat and completions.
-- [ ] Write failing boundary tests for explicit false, null, preserved object
+- [x] Write failing boundary tests for explicit false, null, preserved object
   members, non-object author values, and turn-level `stream: false`.
-- [ ] Run the endpoint tests and record RED on the missing injection and wrong
+- [x] Run the endpoint tests and record RED on the missing injection and wrong
   pre-merge gate.
-- [ ] Implement one small post-merge helper used only by chat/completions.
-- [ ] Run the focused suite GREEN and commit the slice.
+- [x] Implement one small post-merge helper used only by chat/completions.
+- [x] Run the focused suite GREEN and commit the slice.
 
 ### Task 3: Reviewed mock wire
 
@@ -87,12 +88,12 @@ E2E harness, cargo, sccache.
 - Consumes: the existing `spec_decode_acceptance` mock opt-in and request
   `include_usage` policy.
 
-- [ ] Rewrite mock expectations first for dense root metrics on chat and
+- [x] Rewrite mock expectations first for dense root metrics on chat and
   completions, streaming and non-streaming, plus streaming opt-out.
-- [ ] Run the focused mock tests and record the old per-choice RED.
-- [ ] Move the fixture and serialization to root response/usage structures;
+- [x] Run the focused mock tests and record the old per-choice RED.
+- [x] Move the fixture and serialization to root response/usage structures;
   delete the artificial finish-only stats chunk.
-- [ ] Run focused mock tests GREEN and commit the slice.
+- [x] Run focused mock tests GREEN and commit the slice.
 
 ### Task 4: Real transport and product integration
 
@@ -106,14 +107,14 @@ E2E harness, cargo, sccache.
 - Consumes: the production HTTP/SSE decoder, endpoint formatter, mock server,
   observer, metric accumulator, and artifact exporters.
 
-- [ ] Change the transport integration fixture to root dense metrics on the
+- [x] Change the transport integration fixture to root dense metrics on the
   usage frame and run it RED against the old extractor.
-- [ ] Remove obsolete fast-path capture and run the focused transport test
+- [x] Remove obsolete fast-path capture and run the focused transport test
   GREEN against Task 1.
-- [ ] Parameterize the product E2E over chat and completions, remove manual
+- [x] Parameterize the product E2E over chat and completions, remove manual
   `stream_options` and `--use-server-token-count`, and retain literal expected
   summary/record/histogram assertions.
-- [ ] Run the real binary E2E GREEN and commit the slice.
+- [x] Run the real binary E2E GREEN and commit the slice.
 
 ### Task 5: Documentation, verification, review, and closure
 
@@ -129,7 +130,7 @@ E2E harness, cargo, sccache.
 - Produces: current public docs, complete verification/review receipts, exact
   upstream ancestry, and an evidence-backed tracker closure.
 
-- [ ] Update public docs and the historical #13 supersession marker; run
+- [x] Update public docs and the historical #13 supersession marker; run
   documentation link/text checks in the repository's normal verification.
 - [ ] Run formatting, diff checks, focused runtime/mock/E2E suites, full
   runtime with and without `engine`, CLI, mock-server, and changed-scope Clippy.
@@ -138,6 +139,6 @@ E2E harness, cargo, sccache.
 - [ ] Commit the self-review receipt and send the exact range to root for an
   independent full Graham review. Repair and re-review until explicitly
   approved.
-- [ ] After approval, commit closure evidence, create the two-parent `ours`
-  provenance merge, and verify parent order, first-parent tree equality, exact
-  second parent, clean status, and absence of imported upstream Python changes.
+- [ ] After approval, commit closure evidence and tracker state. Re-verify the
+  checkpoint merge's parent order, first-parent tree equality, exact second
+  parent, clean status, and absence of imported upstream Python changes.

@@ -79,11 +79,11 @@ invalidate.
 
 ## Ancestry constraint
 
-The final provenance merge must have the fully reviewed native implementation
-as first parent and exact upstream
-`810fd8bdd40a1c35b64d487b3b8487f0a71a0f6b` as second parent. An `ours` tree
-merge records real two-parent ancestry without importing the upstream Python
-tree or its ancestor commits. Cherry-picking is prohibited.
+At root's requested checkpoint, the isolated port records exact upstream
+`810fd8bdd40a1c35b64d487b3b8487f0a71a0f6b` as the second parent of target-only
+merge `9fcd17c62e989fc35dd4358418350d458c52dbc5`. Its first-parent tree is unchanged,
+so it imports no upstream Python tree; the reviewed native implementation is a
+descendant for root to integrate. No cherry-pick is used.
 
 ## Test translation map
 

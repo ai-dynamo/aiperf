@@ -10,6 +10,12 @@ SPDX-License-Identifier: Apache-2.0
 Approved design for the native Rust port of origin/main commit
 `d32f4bb98edbeac1374ec816aee32d7e4517c5ae`.
 
+> **Wire supersession:** origin/main `810fd8bdd40a1c35b64d487b3b8487f0a71a0f6b`
+> replaced this document's per-choice wire location and object histogram with
+> response-root `metrics.speculative_decoding` and a dense integer array. See
+> `2026-08-25-native-vllm-spec-decode-wire.md`. The engine-neutral record,
+> metrics, aggregation, and artifact contracts below remain current.
+
 ## Problem
 
 The native runtime captures OpenAI prediction-token usage and SGLang
