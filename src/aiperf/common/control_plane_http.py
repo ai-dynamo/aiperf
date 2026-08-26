@@ -18,7 +18,16 @@ _logger = AIPerfLogger(__name__)
 
 
 class ControlPlaneHttpError(RuntimeError):
-    """Non-retryable control-plane HTTP failure."""
+    """Control-plane HTTP failure.
+
+    ``retryable`` distinguishes transport-level failures (timeout, connection
+    refused) - which may resolve if the caller waits and retries - from an
+    explicit non-2xx response, which is a real rejection retrying won't fix.
+    """
+
+    def __init__(self, message: str, *, retryable: bool = False) -> None:
+        super().__init__(message)
+        self.retryable = retryable
 
 
 async def control_plane_post(
@@ -56,5 +65,6 @@ async def control_plane_post(
         raise
     except (TimeoutError, aiohttp.ClientError) as exc:
         raise ControlPlaneHttpError(
-            f"control_plane POST {safe_url} failed: {type(exc).__name__}: {exc}"
+            f"control_plane POST {safe_url} failed: {type(exc).__name__}: {exc}",
+            retryable=True,
         ) from exc

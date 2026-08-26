@@ -21,6 +21,18 @@ Deliberately independent of ``endpoint.timeout`` (tuned for inference
 requests and defaults to 6 hours) so a stalled control-plane POST fails
 fast instead of appearing to hang indefinitely.
 """
+DEFAULT_RESET_KV_CACHE_MAX_RETRY_SECONDS = 60.0
+"""Default total budget for retrying a retryable reset_kv_cache POST failure.
+
+Covers cases where the server is still finishing unrelated control-plane
+work (e.g. a profiler stop) and briefly can't accept a reset_kv_cache call.
+"""
+DEFAULT_RETRY_BACKOFF_SECONDS = 1.0
+"""Initial delay between retryable reset_kv_cache POST attempts."""
+DEFAULT_RETRY_BACKOFF_CAP_SECONDS = 8.0
+"""Ceiling on the exponential backoff delay between retry attempts."""
+DEFAULT_RETRY_BACKOFF_MULTIPLIER = 2.0
+"""Growth factor applied to the backoff delay after each retry attempt."""
 
 
 class ResetKvCacheConfig(BaseConfig):
@@ -33,6 +45,17 @@ class ResetKvCacheConfig(BaseConfig):
             gt=0,
             description="Timeout in seconds for the reset_kv_cache POST. "
             f"When unset, uses {DEFAULT_CONTROL_HOOK_TIMEOUT_SECONDS}s.",
+        ),
+    ] = None
+    max_retry_seconds: Annotated[
+        float | None,
+        Field(
+            default=None,
+            ge=0,
+            description="Total time budget in seconds for retrying a "
+            "retryable reset_kv_cache POST failure (timeout/connection "
+            "error only - non-2xx responses are never retried). "
+            f"When unset, uses {DEFAULT_RESET_KV_CACHE_MAX_RETRY_SECONDS}s.",
         ),
     ] = None
     path: Annotated[

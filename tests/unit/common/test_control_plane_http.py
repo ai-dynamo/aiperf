@@ -50,6 +50,7 @@ async def test_control_plane_post_raises_on_non_2xx() -> None:
         with pytest.raises(ControlPlaneHttpError, match="status 500") as exc_info:
             await control_plane_post(url=url, headers={}, timeout_s=2.0)
         assert "secret-body" not in str(exc_info.value)
+        assert exc_info.value.retryable is False
     finally:
         await runner.cleanup()
 
@@ -63,12 +64,15 @@ async def test_control_plane_post_wraps_client_error() -> None:
             )
         )
         session_cls.return_value.__aexit__ = AsyncMock(return_value=None)
-        with pytest.raises(ControlPlaneHttpError, match="ClientConnectorError"):
+        with pytest.raises(
+            ControlPlaneHttpError, match="ClientConnectorError"
+        ) as exc_info:
             await control_plane_post(
                 url="http://user:secret@127.0.0.1:9/x",
                 headers={},
                 timeout_s=0.1,
             )
+        assert exc_info.value.retryable is True
 
 
 @pytest.mark.asyncio
@@ -76,12 +80,13 @@ async def test_control_plane_post_wraps_timeout() -> None:
     with patch("aiperf.common.control_plane_http.aiohttp.ClientSession") as session_cls:
         session_cls.return_value.__aenter__ = AsyncMock(side_effect=TimeoutError())
         session_cls.return_value.__aexit__ = AsyncMock(return_value=None)
-        with pytest.raises(ControlPlaneHttpError, match="TimeoutError"):
+        with pytest.raises(ControlPlaneHttpError, match="TimeoutError") as exc_info:
             await control_plane_post(
                 url="http://127.0.0.1:9/x",
                 headers={},
                 timeout_s=0.1,
             )
+        assert exc_info.value.retryable is True
 
 
 @pytest.mark.asyncio
