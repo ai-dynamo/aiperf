@@ -133,3 +133,32 @@ configuration-memory reduction by consuming source rows during extraction and
 the absence of a direct empty/all-malformed ShareGPT zero-batch regression;
 the implementation's empty chunk iterator makes no backend call, and both
 tokenizer batch seams already cover empty input.
+
+## 2026-08-26 independent revalidation and approval
+
+The campaign tracker remained pending after the original implementation landed,
+so an isolated revalidation began from current shared HEAD rather than
+duplicating the upstream merge or Rust implementation. The exact upstream merge
+`6521729344cad4b8791fe94c85a876a2ee52b8e0` and both native commits are
+ancestors of shared HEAD. Its second parent is the exact upstream commit
+`5566aae1e129f63c2d761d4c3fa5ee18de0ba9be`.
+
+Fresh verification used `/usr/bin/sccache`, clang/lld, and
+`/mnt/4tb/aiperf-target-port008-rev2`:
+
+- `cargo test -p aiperf-runtime sharegpt_ --lib`: 5 passed, including the
+  4096/4 batch boundary, invalid-row alignment, scalar-forbidden seam, and
+  cardinality refusal before interning.
+- `cargo test -p aiperf-runtime
+  text_tokenizer_default_batch_is_ordered_and_empty_safe --lib`: 1 passed.
+- `cargo test -p aiperf-runtime
+  hugging_face_batch_encoding_matches_scalar_order --lib`: 1 passed.
+- `cargo fmt --all --check` and `git diff --check
+  4e39be3aee^..67e6f3988d`: passed.
+
+Independent Graham review covered
+`4e39be3aeec509bc43853aeeb75f29452d1d2c33^..67e6f3988d7664900d4410910748cf5ff6352e20`
+in two focused passes. It approved the range with no blocking, important, or
+style findings. Current shared changes to these files are limited to unrelated
+Hugging Face tokenizer metadata and a loader comment correction. Commit 008 is
+therefore complete.
