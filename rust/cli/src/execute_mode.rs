@@ -110,13 +110,27 @@ pub fn dispatch(args: &[String]) -> ! {
         run_aggregator(&input);
     }
 
+    let resolved_input = match ResolvedExecuteInput::new(&input).into_result() {
+        Ok(resolved_input) => resolved_input,
+        Err(error) => {
+            let application = compose_stock_application();
+            write_v2_protocol_failure(
+                Some(operation),
+                application.distribution_id().to_owned(),
+                benchmark_id_hint(&input),
+                "invalid_request",
+                format!("invalid protocol-v2 request: {error}"),
+            )
+        }
+    };
+
     // Cellular helpers require `/run/...` pointers, so controller requests use the
     // wrapped `{"run": …}` representation over a **resolved** run: the parent ships
     // authoring inputs, so `cfg.runtime.cells` only exists after resolution.
     if !validate_mode
         && std::env::var(aiperf_runtime::cellular::partition::CELL_ID_ENV).is_err()
         && let Some((wrapped, cells)) =
-            aiperf_runtime::engine::cell_launcher::resolved_envelope_from_input(&input)
+            aiperf_runtime::engine::cell_launcher::envelope_from_resolved_run_bytes(&resolved_input)
     {
         // Promote to the cellular controller when the run partitions across more than
         // one cell, OR when a cross-host launcher (k8s/slurm) is active even for a
@@ -131,9 +145,9 @@ pub fn dispatch(args: &[String]) -> ! {
         }
     }
 
-    configure_dynosim_process_defaults(&input);
+    configure_dynosim_process_defaults(&resolved_input);
     let application = compose_stock_application();
-    run_v2(&input, operation, &application);
+    run_v2_resolved(&resolved_input, operation, &application);
 }
 
 /// Run one cell using the launcher-provided `AIPERF_CELL_*` environment.
@@ -192,11 +206,12 @@ fn run_cell() -> ! {
     drop(runtime);
     // Execution consumes a bare `BenchmarkRun`, while cellular helpers use the
     // wrapped `{"run": …}` envelope. The landing guard stays in scope through
-    // `run_v2`, which owns every read of the rewritten local dataset path.
+    // the resolved execution path, which owns every read of the rewritten local
+    // dataset path.
     let run_bytes = run_object_bytes(&envelope_bytes);
     configure_dynosim_process_defaults(&run_bytes);
     let application = compose_stock_application();
-    run_v2_with_cleanup(&run_bytes, OperationV2::Execute, &application, move || {
+    run_v2_resolved_with_cleanup(&run_bytes, OperationV2::Execute, &application, move || {
         landing_guard.close()
     });
 }
@@ -384,18 +399,85 @@ fn compose_stock_application() -> Application {
     }
 }
 
-fn configure_dynosim_process_defaults(input: &[u8]) {
-    let Ok(envelope) = serde_json::from_slice::<Value>(input) else {
-        return;
-    };
+struct ResolvedExecuteInput {
+    bytes: anyhow::Result<Vec<u8>>,
+}
+
+impl ResolvedExecuteInput {
+    fn new(input: &[u8]) -> Self {
+        Self {
+            bytes: aiperf_runtime::engine::protocol_v2::resolved_run_bytes(input),
+        }
+    }
+
+    #[cfg(test)]
+    fn with_resolver(input: &[u8], resolve: impl FnOnce(&[u8]) -> anyhow::Result<Vec<u8>>) -> Self {
+        Self {
+            bytes: resolve(input),
+        }
+    }
+
+    fn into_result(self) -> anyhow::Result<Vec<u8>> {
+        self.bytes
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct DynosimProcessDefaults {
+    rayon_threads: String,
+}
+
+impl DynosimProcessDefaults {
+    fn entries(&self) -> [(&'static str, &str); 9] {
+        [
+            ("OPENBLAS_NUM_THREADS", "1"),
+            ("OMP_NUM_THREADS", "1"),
+            ("MKL_NUM_THREADS", "1"),
+            ("BLIS_NUM_THREADS", "1"),
+            ("GOTO_NUM_THREADS", "1"),
+            ("NUMEXPR_NUM_THREADS", "1"),
+            ("VECLIB_MAXIMUM_THREADS", "1"),
+            ("OMP_WAIT_POLICY", "PASSIVE"),
+            ("RAYON_NUM_THREADS", self.rayon_threads.as_str()),
+        ]
+    }
+}
+
+fn dynosim_process_defaults(input: &[u8]) -> Option<DynosimProcessDefaults> {
+    let envelope = serde_json::from_slice::<Value>(input).ok()?;
     if !matches!(
         envelope
             .pointer("/cfg/transport/type")
             .and_then(Value::as_str),
         Some("dynosim_offline" | "dynosim_online")
     ) {
-        return;
+        return None;
     }
+
+    Some(DynosimProcessDefaults {
+        rayon_threads: std::thread::available_parallelism()
+            .map_or(1, std::num::NonZeroUsize::get)
+            .min(8)
+            .to_string(),
+    })
+}
+
+fn install_dynosim_process_defaults(
+    defaults: &DynosimProcessDefaults,
+    mut is_set: impl FnMut(&str) -> bool,
+    mut set: impl FnMut(&str, &str),
+) {
+    for (name, value) in defaults.entries() {
+        if !is_set(name) {
+            set(name, value);
+        }
+    }
+}
+
+fn configure_dynosim_process_defaults(input: &[u8]) {
+    let Some(defaults) = dynosim_process_defaults(input) else {
+        return;
+    };
 
     // AIC imports SciPy, whose OpenBLAS builds otherwise create one worker per
     // host CPU. Offline replay uses AIC's scalar Rust interpolation kernels, so
@@ -408,27 +490,15 @@ fn configure_dynosim_process_defaults(input: &[u8]) {
     // small hosts. These
     // defaults are installed before Python, OpenMP, or either bundled OpenBLAS
     // library is initialized and before offline reduction allocates its buffers.
-    let rayon_threads = std::thread::available_parallelism()
-        .map_or(1, std::num::NonZeroUsize::get)
-        .min(8)
-        .to_string();
-    for (name, value) in [
-        ("OPENBLAS_NUM_THREADS", "1"),
-        ("OMP_NUM_THREADS", "1"),
-        ("MKL_NUM_THREADS", "1"),
-        ("BLIS_NUM_THREADS", "1"),
-        ("GOTO_NUM_THREADS", "1"),
-        ("NUMEXPR_NUM_THREADS", "1"),
-        ("VECLIB_MAXIMUM_THREADS", "1"),
-        ("OMP_WAIT_POLICY", "PASSIVE"),
-        ("RAYON_NUM_THREADS", rayon_threads.as_str()),
-    ] {
-        if std::env::var_os(name).is_none() {
+    install_dynosim_process_defaults(
+        &defaults,
+        |name| std::env::var_os(name).is_some(),
+        |name, value| {
             // SAFETY: this runs on the sole process thread before the execution
             // path constructs a runtime or initializes any native numeric library.
             unsafe { std::env::set_var(name, value) };
-        }
-    }
+        },
+    );
 
     if std::env::var_os("MIMALLOC_PURGE_DELAY").is_none() {
         // The process exits immediately after committing its report, so purging
@@ -441,20 +511,17 @@ fn configure_dynosim_process_defaults(input: &[u8]) {
     }
 }
 
-/// Drive one bare-run request to its terminal or validation envelope.
+/// Decode and drive one resolved bare-run request to its terminal or validation
+/// envelope.
 ///
-/// The stdin payload is the authoring execute wire decoded by
-/// [`decode_execute_wire`](aiperf_runtime::engine::protocol_v2::decode_execute_wire):
-/// an authoring `{"authoring": <Inputs>}` envelope the runtime resolves here (every
-/// profile path — single run, sweeps, and adaptive search — ships authoring). The
-/// `operation` is
-/// selected by the re-exec mode (`--execute` or `--validate`), not carried on the
-/// wire. A malformed run produces a typed v2 protocol failure.
-fn run_v2(input: &[u8], operation: OperationV2, application: &Application) -> ! {
-    run_v2_with_cleanup(input, operation, application, || Ok(()));
+/// `operation` is selected by the re-exec mode (`--execute` or `--validate`), not
+/// carried on the wire. A malformed resolved run produces a typed v2 protocol
+/// failure.
+fn run_v2_resolved(input: &[u8], operation: OperationV2, application: &Application) -> ! {
+    run_v2_resolved_with_cleanup(input, operation, application, || Ok(()));
 }
 
-fn run_v2_with_cleanup<F>(
+fn run_v2_resolved_with_cleanup<F>(
     input: &[u8],
     operation: OperationV2,
     application: &Application,
@@ -465,7 +532,7 @@ where
 {
     let mut cleanup = Some(cleanup);
     let distribution_id = application.distribution_id().to_owned();
-    let run = match aiperf_runtime::engine::protocol_v2::decode_execute_wire(input) {
+    let run = match decode_resolved_run(input) {
         Ok(run) => run,
         Err(error) => {
             run_v2_cleanup(&mut cleanup);
@@ -501,6 +568,13 @@ where
     };
     run_v2_cleanup(&mut cleanup);
     write_json_line(&result.response, result.exit_code);
+}
+
+fn decode_resolved_run(
+    input: &[u8],
+) -> anyhow::Result<aiperf_runtime::engine::protocol_v2::BenchmarkRunWireV2> {
+    serde_json::from_slice(input)
+        .map_err(|error| anyhow::anyhow!("resolved run failed the wire contract: {error}"))
 }
 
 fn run_v2_cleanup<F>(cleanup: &mut Option<F>)
@@ -638,9 +712,148 @@ fn write_json_line(value: &impl serde::Serialize, exit_code: i32) -> ! {
 #[cfg(test)]
 mod tests {
     use std::cell::Cell;
+    use std::collections::BTreeMap;
     use std::rc::Rc;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
-    use super::run_v2_cleanup;
+    use aiperf_runtime::config::model::transport::{DynosimConfig, Transport};
+    use aiperf_runtime::engine::protocol_v2::resolved_run_bytes;
+
+    use super::{
+        ResolvedExecuteInput, decode_resolved_run, dynosim_process_defaults,
+        install_dynosim_process_defaults, run_v2_cleanup,
+    };
+
+    fn with_large_stack(test: impl FnOnce() + Send + 'static) {
+        std::thread::Builder::new()
+            .stack_size(32 * 1024 * 1024)
+            .spawn(test)
+            .expect("spawn worker")
+            .join()
+            .expect("worker panicked");
+    }
+
+    fn authoring_wire(transport: Transport) -> Vec<u8> {
+        use crate::flags::ProfileFlags;
+
+        let args = [
+            "-m",
+            "mock-model",
+            "--url",
+            "http://localhost:8000",
+            "--endpoint-type",
+            "chat",
+            "--concurrency",
+            "1",
+            "--request-count",
+            "1",
+            "--isl",
+            "8",
+            "--osl",
+            "4",
+        ]
+        .iter()
+        .map(|value| value.to_string())
+        .collect::<Vec<_>>();
+        let flags = ProfileFlags::parse_from_args(&args).expect("parse flags");
+        let mut inputs = crate::load::resolve_inputs(&flags).expect("normalize inputs");
+        inputs.transport = transport;
+        serde_json::to_vec(&serde_json::json!({ "authoring": inputs }))
+            .expect("serialize authoring wire")
+    }
+
+    #[test]
+    fn authoring_and_bare_resolved_dynosim_select_identical_defaults() {
+        with_large_stack(|| {
+            let authoring = authoring_wire(Transport::DynosimOffline(DynosimConfig::default()));
+            let bare = resolved_run_bytes(&authoring).expect("resolve authoring wire");
+            let authoring = ResolvedExecuteInput::new(&authoring)
+                .into_result()
+                .expect("resolve authoring input");
+            let bare = ResolvedExecuteInput::new(&bare)
+                .into_result()
+                .expect("accept bare resolved input");
+
+            assert_eq!(
+                dynosim_process_defaults(authoring.as_slice()),
+                dynosim_process_defaults(bare.as_slice()),
+            );
+        });
+    }
+
+    #[test]
+    fn resolved_http_selects_no_dynosim_defaults() {
+        with_large_stack(|| {
+            let authoring = authoring_wire(Transport::Http);
+            let resolved = ResolvedExecuteInput::new(&authoring)
+                .into_result()
+                .expect("resolve authoring input");
+
+            assert!(dynosim_process_defaults(resolved.as_slice()).is_none());
+        });
+    }
+
+    #[test]
+    fn explicit_environment_value_wins_over_selected_default() {
+        let defaults =
+            dynosim_process_defaults(br#"{"cfg":{"transport":{"type":"dynosim_offline"}}}"#)
+                .expect("select dynosim defaults");
+        let mut installed = BTreeMap::new();
+        install_dynosim_process_defaults(
+            &defaults,
+            |name| name == "OPENBLAS_NUM_THREADS",
+            |name, value| {
+                installed.insert(name.to_owned(), value.to_owned());
+            },
+        );
+
+        assert!(!installed.contains_key("OPENBLAS_NUM_THREADS"));
+        assert_eq!(installed.get("OMP_NUM_THREADS"), Some(&"1".to_owned()));
+    }
+
+    #[test]
+    fn malformed_execute_input_retains_typed_protocol_failure() {
+        let error = ResolvedExecuteInput::new(br#"{"authoring":"not-inputs"}"#)
+            .into_result()
+            .expect_err("malformed authoring input must fail resolution");
+
+        assert!(
+            error.to_string().contains("invalid authoring inputs"),
+            "expected typed protocol error, got: {error:#}"
+        );
+    }
+
+    #[test]
+    fn resolved_input_is_selected_and_decoded_without_re_resolving() {
+        with_large_stack(|| {
+            let expected = resolved_run_bytes(&authoring_wire(Transport::DynosimOffline(
+                DynosimConfig::default(),
+            )))
+            .expect("resolve fixture");
+            let calls = Arc::new(AtomicUsize::new(0));
+            let observed = Arc::clone(&calls);
+            let input = ResolvedExecuteInput::with_resolver(b"source", move |source| {
+                observed.fetch_add(1, Ordering::Relaxed);
+                assert_eq!(source, b"source");
+                Ok(expected)
+            })
+            .into_result()
+            .expect("resolve once");
+
+            assert_eq!(calls.load(Ordering::Relaxed), 1);
+            assert!(dynosim_process_defaults(input.as_slice()).is_some());
+            assert_eq!(
+                decode_resolved_run(input.as_slice())
+                    .expect("decode resolved bytes")
+                    .cfg
+                    .transport
+                    .expect("resolved transport")
+                    .canonical_id(),
+                "dynosim_offline"
+            );
+        });
+    }
 
     #[test]
     fn owned_cleanup_run_v2_terminal_cleanup_runs_once() {
