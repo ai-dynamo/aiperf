@@ -211,6 +211,91 @@ benchmark:
     assert_eq!(summary["step_policy"], "sla_margin");
 }
 
+#[tokio::test]
+async fn adaptive_error_rate_sla_artifact_uses_exported_percentage_points() {
+    let mut cfg = MockServerConfig::default();
+    cfg.fast = true;
+    cfg.no_tokenizer = true;
+    cfg.workers = 1;
+    cfg.error_rate = 100.0;
+    let h = AIPerfHarness::new_with(cfg).await;
+
+    let config_dir = tempfile::TempDir::new().expect("config tempdir");
+    let config_path = config_dir.path().join("adaptive_error_rate.yaml");
+    std::fs::write(
+        &config_path,
+        format!(
+            r#"schemaVersion: "2.0"
+
+benchmark:
+  model: {model}
+  endpoint:
+    url: {url}
+    type: chat
+    streaming: true
+  dataset:
+    type: synthetic
+    entries: 1000
+    prompts:
+      isl: 8
+      osl: 4
+  phases:
+    - name: profiling
+      type: concurrency
+      concurrency: 2
+      duration: 6.0
+      adaptive_scale:
+        enabled: true
+        control_variable: concurrency
+        min_concurrency: 1
+        assessment_period: 1.0
+        min_completed_requests: 1
+        sustain_duration: 1.0
+        strategy:
+          type: ramp_until_fail
+          step_policy: sla_margin
+          base_step: 1
+          max_step_multiplier: 1
+      sla:
+        request_error_rate:
+          avg:
+            le: 1
+"#,
+            model = DEFAULT_MODEL,
+            url = h.mock.url,
+        ),
+    )
+    .expect("write config file");
+
+    let r = h.run_timeout(
+        &format!(
+            "--config {} --extra-inputs ignore_eos:true --workers-max 1 --ui none",
+            config_path.display()
+        ),
+        900,
+    );
+    assert_eq!(r.exit_code, 1, "stderr: {}", r.stderr);
+
+    let event_path = r
+        .artifacts
+        .find_file("**/adaptive_scale_events.jsonl")
+        .expect("adaptive events exist");
+    let windows: Vec<Value> = load_jsonl(&event_path)
+        .into_iter()
+        .filter(|event| event["event"] == "adaptive_window")
+        .collect();
+    assert!(!windows.is_empty());
+    let observed = windows
+        .iter()
+        .find(|event| event["sla_values"]["request_error_rate:avg:le:1"].is_number())
+        .expect("request-error-rate window");
+    assert_eq!(
+        observed["sla_values"]["request_error_rate:avg:le:1"].as_f64(),
+        Some(100.0)
+    );
+    assert_eq!(observed["sla_passed"], false);
+}
+
 fn read_json_value(path: &Path) -> Value {
     let bytes = std::fs::read(path).expect("read json file");
     serde_json::from_slice(&bytes).expect("parse json")
