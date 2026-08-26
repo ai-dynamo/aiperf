@@ -14,7 +14,7 @@ use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use super::auth::in_cluster_credentials;
 use super::client::{AIPERF_GROUP, AIPERF_VERSION, KubeClient, KubeWatchPoll};
@@ -119,6 +119,8 @@ pub(crate) fn run_sweep(
     for (index, base_config) in child_configs.into_iter().enumerate() {
         // Drain one slot before issuing when the window is full.
         while running.len() >= max_concurrent {
+            // SAFETY: the `len() >= max_concurrent` guard above ensures the
+            // queue is non-empty before we pop.
             let waiting = running.pop_front().expect("non-empty running queue");
             let succeeded = wait_for_child_completion(client, namespace, &waiting)?;
             if succeeded {
@@ -130,7 +132,7 @@ pub(crate) fn run_sweep(
         }
 
         let run_id = format!("{}-{:04}", envelope.run_id, index);
-        info!(run_id = %run_id, index, "submitting child run");
+        debug!(run_id = %run_id, index, "submitting child run");
         submit_child_run(
             client,
             envelope,
@@ -139,7 +141,6 @@ pub(crate) fn run_sweep(
             sweep_uid,
             &base_config,
         )?;
-        patch_sweep_child_recorded(client, namespace, sweep_name, &run_id)?;
         running.push_back(run_id);
     }
 
@@ -155,8 +156,8 @@ pub(crate) fn run_sweep(
     }
 
     // Patch the final sweep phase.
-    let all_failed = total > 0 && failed_count == total as u32;
-    let final_phase = if all_failed { "Failed" } else { "Completed" };
+    let is_all_failed = total > 0 && failed_count == total as u32;
+    let final_phase = if is_all_failed { "Failed" } else { "Completed" };
     patch_sweep_phase(client, namespace, sweep_name, final_phase)?;
 
     info!(
@@ -167,7 +168,7 @@ pub(crate) fn run_sweep(
         "sweep-controller done"
     );
 
-    Ok(if all_failed { 1 } else { 0 })
+    Ok(if is_all_failed { 1 } else { 0 })
 }
 
 /// Expand the sweep envelope into one `BenchmarkConfig` per child run.
@@ -437,32 +438,6 @@ fn wait_for_child_completion(
             }
         }
     }
-}
-
-/// Patch the sweep `.status.childRuns` to record a newly issued child run.
-fn patch_sweep_child_recorded(
-    client: &KubeClient,
-    namespace: &str,
-    sweep_name: &str,
-    child_run_id: &str,
-) -> anyhow::Result<()> {
-    let path = sweep_status_path(namespace, sweep_name);
-    let status = client.merge_patch(
-        &path,
-        &json!({
-            "status": {
-                "childRuns": [{"runId": child_run_id, "phase": "Running"}]
-            }
-        }),
-    )?;
-    if !(200..300).contains(&status) {
-        warn!(
-            %child_run_id,
-            http_status = status,
-            "sweep status patch (child recorded) did not succeed"
-        );
-    }
-    Ok(())
 }
 
 /// Patch the sweep `.status` with updated `completedRuns` / `failedRuns` counts.

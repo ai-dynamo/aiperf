@@ -810,10 +810,9 @@ fn sweep_controller_submits_secrets_and_cr_per_child() {
     //   - 1 POST to /secrets (controller bootstrap)
     //   - 1 POST to /secrets (cell-0 bootstrap)
     //   - 1 POST to /aiperfjobs
-    //   - 1 PATCH to /aiperfsweeps/.../status (child run recorded)
     //   - 1 PATCH to /aiperfsweeps/.../status (completedRuns updated)
     // Plus 1 final PATCH for the sweep phase.
-    // Total sends = 2 × 5 + 1 = 11; watches = 2 (one per child).
+    // Total sends = 2 × 4 + 1 = 9; watches = 2 (one per child).
     let base_config = serde_json::json!({"runtime": {"cells": 1}});
     let envelope = sweep_envelope(
         "sweep-run-1",
@@ -829,12 +828,11 @@ fn sweep_controller_submits_secrets_and_cr_per_child() {
     let transport = Arc::new(SweepMockTransport::default());
     let client = KubeClient::with_transport(sweep_test_credentials(), transport.clone());
 
-    // Child 0: 2 secret POSTs, 1 CR POST, 2 status PATCHes; watch → Completed
+    // Child 0: 2 secret POSTs, 1 CR POST; watch → Completed; 1 completedRuns PATCH
     for _ in 0..2 {
         transport.push_response(201, Vec::new());
     }
     transport.push_response(201, Vec::new()); // CR
-    transport.push_response(200, Vec::new()); // PATCH child run
     transport.push_watch(vec![completed_event("sweep-run-1-0000")]);
     transport.push_response(200, Vec::new()); // PATCH completedRuns
 
@@ -843,7 +841,6 @@ fn sweep_controller_submits_secrets_and_cr_per_child() {
         transport.push_response(201, Vec::new());
     }
     transport.push_response(201, Vec::new()); // CR
-    transport.push_response(200, Vec::new()); // PATCH child run
     transport.push_watch(vec![completed_event("sweep-run-1-0001")]);
     transport.push_response(200, Vec::new()); // PATCH completedRuns
 
@@ -898,12 +895,11 @@ fn sweep_controller_patches_sweep_status_on_completion() {
     let transport = Arc::new(SweepMockTransport::default());
     let client = KubeClient::with_transport(sweep_test_credentials(), transport.clone());
 
-    // 2 secret POSTs, 1 CR POST, 1 child-run status PATCH
+    // 2 secret POSTs, 1 CR POST; watch → Completed; 1 completedRuns PATCH; 1 final phase PATCH
     for _ in 0..2 {
         transport.push_response(201, Vec::new());
     }
     transport.push_response(201, Vec::new()); // CR
-    transport.push_response(200, Vec::new()); // PATCH child run added
     transport.push_watch(vec![completed_event("sweep-run-2-0000")]);
     transport.push_response(200, Vec::new()); // PATCH completedRuns
     transport.push_response(200, Vec::new()); // PATCH final phase
