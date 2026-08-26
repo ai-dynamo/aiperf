@@ -376,6 +376,7 @@ pub struct GlobalSlotPool {
     /// compare-and-swap loop so two concurrent releases can never both absorb
     /// the same unit of debt and drive the count below zero.
     debt: std::sync::atomic::AtomicUsize,
+    notify: Notify,
 }
 
 impl GlobalSlotPool {
@@ -389,6 +390,7 @@ impl GlobalSlotPool {
             wait_count: std::sync::atomic::AtomicU64::new(0),
             current_limit: std::sync::atomic::AtomicUsize::new(initial_limit),
             debt: std::sync::atomic::AtomicUsize::new(0),
+            notify: Notify::new(),
         })
     }
 
@@ -400,8 +402,10 @@ impl GlobalSlotPool {
     /// Acquire one globally-shared slot, waiting if none are free.
     pub async fn acquire(self: &Arc<Self>) -> GlobalSlotGuard {
         loop {
-            while self.debt() > 0 {
-                tokio::task::yield_now().await;
+            let notified = self.notify.notified();
+            if self.debt() > 0 {
+                notified.await;
+                continue;
             }
             let had_permit_immediately = self.semaphore.available_permits() > 0;
             if !had_permit_immediately {
@@ -492,6 +496,7 @@ impl GlobalSlotPool {
                     .compare_exchange_weak(debt, debt - cancel, Ordering::AcqRel, Ordering::Acquire)
                     .is_ok()
                 {
+                    self.notify.notify_waiters();
                     break;
                 }
             }
@@ -583,6 +588,7 @@ impl GlobalSlotPool {
                 .is_ok()
             {
                 // Debt absorbed this release; no permit freed.
+                self.notify.notify_waiters();
                 return;
             }
         }
