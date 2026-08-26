@@ -399,20 +399,30 @@ impl GlobalSlotPool {
 
     /// Acquire one globally-shared slot, waiting if none are free.
     pub async fn acquire(self: &Arc<Self>) -> GlobalSlotGuard {
-        let had_permit_immediately = self.semaphore.available_permits() > 0;
-        if !had_permit_immediately {
-            self.wait_count
+        loop {
+            while self.debt() > 0 {
+                tokio::task::yield_now().await;
+            }
+            let had_permit_immediately = self.semaphore.available_permits() > 0;
+            if !had_permit_immediately {
+                self.wait_count
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
+            let permit = self
+                .semaphore
+                .acquire()
+                .await
+                .expect("GlobalSlotPool semaphore is never closed");
+            if self.debt() > 0 {
+                permit.forget();
+                self.semaphore.add_permits(1);
+                continue;
+            }
+            permit.forget();
+            self.acquire_count
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            return GlobalSlotGuard { pool: self.clone() };
         }
-        let permit = self
-            .semaphore
-            .acquire()
-            .await
-            .expect("GlobalSlotPool semaphore is never closed");
-        permit.forget();
-        self.acquire_count
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        GlobalSlotGuard { pool: self.clone() }
     }
 
     /// Try to acquire one globally-shared slot without blocking.
@@ -421,8 +431,15 @@ impl GlobalSlotPool {
     /// worker thread. Mirrors [`SlotPool::try_acquire`]'s nonblocking contract
     /// for new-session admission under `global` dispatch.
     pub fn try_acquire(self: &Arc<Self>) -> Option<GlobalSlotGuard> {
+        if self.debt() > 0 {
+            return None;
+        }
         match self.semaphore.try_acquire() {
             Ok(permit) => {
+                if self.debt() > 0 {
+                    drop(permit);
+                    return None;
+                }
                 permit.forget();
                 self.acquire_count
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
