@@ -3371,6 +3371,50 @@ mod tests {
         }
     }
 
+    struct SaturatingGraphEventBackendFactory;
+
+    impl GraphPhaseBackendFactory for SaturatingGraphEventBackendFactory {
+        fn prepare_backend(
+            &self,
+            config: GraphPhaseBackendConfig,
+        ) -> Result<PreparedGraphPhaseBackend> {
+            Ok(PreparedGraphPhaseBackend {
+                placement: Rc::new(SaturatingGraphEventPlacement {
+                    events: config.events,
+                }),
+                requires_node_records: false,
+            })
+        }
+    }
+
+    struct SaturatingGraphEventPlacement {
+        events: Arc<dyn GraphExecutionEventSink>,
+    }
+
+    #[async_trait::async_trait(?Send)]
+    impl TracePlacement for SaturatingGraphEventPlacement {
+        async fn execute_trace(&self, program: GraphTraceProgram) -> Result<(), TraceError> {
+            let trace_id = program.profiling.trace.id;
+            // Deliberately suppress the sender-local Full error. The phase must
+            // still observe its shared saturation latch and release instead of
+            // waiting for a terminal event that could not be enqueued.
+            for index in 0..512 {
+                let mut supplement = TraceTerminalSupplement::new(
+                    "saturation-test".into(),
+                    format!("{trace_id}::{index}"),
+                    trace_id.clone(),
+                    0,
+                    "test",
+                );
+                supplement.completed = false;
+                let _ = self
+                    .events
+                    .emit(GraphExecutionEvent::TraceSupplement { supplement });
+            }
+            std::future::pending().await
+        }
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn graph_phase_folds_terminal_supplement_after_last_node_satisfies_phase_stop() {
         let mut program = GraphTraceProgram::static_graph(pressure_one_node_plan("recorded-root"));
@@ -3410,6 +3454,52 @@ mod tests {
         assert_eq!(
             output.supplement.traces[0].trace_id,
             "recorded-root::instance-0"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn saturated_graph_events_fail_and_release_the_phase_lifecycle() {
+        let input = GraphInputBundle {
+            programs: vec![GraphTraceProgram::static_graph(pressure_one_node_plan(
+                "saturated-root",
+            ))],
+            segments: Arc::new(SegmentPool::new().freeze()),
+            metadata: crate::graph::input::GraphInputMetadata {
+                format: "agent_recording".into(),
+                root_count: 1,
+                node_count: 1,
+                warning_facts: Vec::new(),
+            },
+        };
+        let phases = [concurrency_phase(1, Some(1))];
+        let local = tokio::task::LocalSet::new();
+        let run = local.run_until(run_graph_phases(
+            &phases,
+            "benchmark",
+            Path::new("."),
+            &input,
+            crate::clock::RealClock::new(),
+            RngRoot::new(Some(11)),
+            false,
+            false,
+            TStarWindow::default(),
+            vec![Vec::new()],
+            &SaturatingGraphEventBackendFactory,
+            OnFailure::Abort,
+            None,
+        ));
+        let result = tokio::time::timeout(std::time::Duration::from_secs(1), run)
+            .await
+            .expect("saturated graph phase must release without waiting for a terminal event");
+        let error = match result {
+            Ok(_) => panic!("saturated graph events must fail the phase"),
+            Err(error) => error,
+        };
+        assert!(
+            error
+                .to_string()
+                .contains("graph execution event queue saturated"),
+            "unexpected phase error: {error:#}"
         );
     }
 

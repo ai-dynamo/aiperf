@@ -357,6 +357,7 @@ pub(crate) fn create_run_artifacts(run: &NativeRunSpec) -> Result<()> {
 mod tests {
     use super::*;
     use crate::clock::SimClock;
+    use crate::content_server::ContentRecordSender;
 
     /// A served content record whose query string carries a parseable media tag
     /// (`rid`/`mi`/`td`), so the aggregator joins it into a `MediaRecord`.
@@ -454,6 +455,24 @@ mod tests {
         let second = resources.finalize_media_metrics().await.unwrap();
         assert_eq!(second.total_fetches, 0);
         assert!(resources.live_sink().is_none());
+    }
+
+    #[tokio::test]
+    async fn media_queue_overflow_fails_sidecar_finalization() {
+        let (queue, _receiver) = tokio::sync::mpsc::channel(1);
+        let sender = ContentRecordSender::new(queue);
+        sender.try_send(tagged_record()).unwrap();
+        assert!(sender.try_send(tagged_record()).is_err());
+
+        let mut resources = empty_resources();
+        resources.media_record_sender = Some(sender);
+        resources.media_handle = Some(tokio::spawn(async { MediaMetricsSummary::default() }));
+
+        let error = resources
+            .finalize_media_metrics()
+            .await
+            .expect_err("a media queue overflow must prevent a successful metrics report");
+        assert!(error.to_string().contains("media record queue overflowed"));
     }
 
     #[tokio::test]
