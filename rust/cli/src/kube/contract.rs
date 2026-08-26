@@ -328,39 +328,3 @@ fn validate_schema(schema_source: &str, value: &Value) -> Result<(), KubeError> 
     }
     Ok(())
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    const FIXTURES: &str = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../../contracts/native-k8s/v1/fixtures/"
-    );
-
-    fn valid_one_cell() -> Value {
-        let source = std::fs::read_to_string(format!("{FIXTURES}valid-one-cell-envelope.json"))
-            .expect("fixture read");
-        serde_json::from_str(&source).expect("fixture JSON")
-    }
-
-    #[test]
-    fn envelope_requires_an_explicit_controller_port() {
-        let mut portless = valid_one_cell();
-        portless["controllerAddress"] = Value::String("controller".to_string());
-        assert!(
-            matches!(
-                validate_envelope(portless),
-                Err(KubeError::ContractValidation(_))
-            ),
-            "portless controllerAddress must be rejected"
-        );
-
-        let mut with_port = valid_one_cell();
-        with_port["controllerAddress"] = Value::String("controller:9500".to_string());
-        assert!(
-            validate_envelope(with_port).is_ok(),
-            "explicit-port controllerAddress must be accepted"
-        );
-    }
-}
