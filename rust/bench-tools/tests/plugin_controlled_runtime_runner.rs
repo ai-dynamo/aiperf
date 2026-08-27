@@ -809,25 +809,12 @@ fn controller_observed_mock_death_replaces_the_whole_pair_in_seeded_order() {
 }
 
 fn run_until_the_replacement_cap(
-    fixture: &mut Fixture,
+    build_report: &BuildPairReportV1,
     boot_identity: &Path,
     requested: &Path,
 ) -> ControlledRuntimeReportV1 {
-    fixture.static_artifact =
-        runtime_artifact_rebooting_every_pair("static authority fixture", boot_identity);
-    fixture.dynamic_artifact =
-        runtime_artifact_rebooting_every_pair("dynamic authority fixture", boot_identity);
-    write_executable(
-        &fixture.static_source.join("artifact-source"),
-        &fixture.static_artifact,
-    );
-    write_executable(
-        &fixture.dynamic_source.join("artifact-source"),
-        &fixture.dynamic_artifact,
-    );
-    let build_report = fixture.build_report();
     run_controlled_runtime_with_liveness_v1(
-        &build_report,
+        build_report,
         requested,
         &HostLivenessSourceV1::new(boot_identity.to_path_buf(), None),
     )
@@ -839,9 +826,23 @@ fn continuous_reboots_exhaust_the_five_pair_replacement_cap_and_resume_diagnoses
     let mut fixture = Fixture::new();
     let boot_identity = fixture._directory.path().join("boot-identity");
     std::fs::write(&boot_identity, "boot-original").expect("boot identity fixture is written");
+    fixture.static_artifact =
+        runtime_artifact_rebooting_every_pair("static authority fixture", &boot_identity);
+    fixture.dynamic_artifact =
+        runtime_artifact_rebooting_every_pair("dynamic authority fixture", &boot_identity);
+    write_executable(
+        &fixture.static_source.join("artifact-source"),
+        &fixture.static_artifact,
+    );
+    write_executable(
+        &fixture.dynamic_source.join("artifact-source"),
+        &fixture.dynamic_artifact,
+    );
+    let build_report = fixture.build_report();
     let first_request = fixture._directory.path().join("cap-attempt-1.jsonl");
     let second_request = fixture._directory.path().join("cap-attempt-2.jsonl");
-    let first = run_until_the_replacement_cap(&mut fixture, &boot_identity, &first_request);
+
+    let first = run_until_the_replacement_cap(&build_report, &boot_identity, &first_request);
 
     assert_eq!(first.decision, ControlledAttemptDecision::Invalid);
     let replacements = first
@@ -865,7 +866,7 @@ fn continuous_reboots_exhaust_the_five_pair_replacement_cap_and_resume_diagnoses
     // A reboot between invocations is diagnosed from the persisted pair-start
     // context, not from anything the interrupted children reported.
     std::fs::write(&boot_identity, "boot-after-restart").expect("restart boot identity is written");
-    let second = run_until_the_replacement_cap(&mut fixture, &boot_identity, &second_request);
+    let second = run_until_the_replacement_cap(&build_report, &boot_identity, &second_request);
 
     let resumed = second
         .resumed_pair_context
