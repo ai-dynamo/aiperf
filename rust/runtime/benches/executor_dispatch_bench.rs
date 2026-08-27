@@ -50,7 +50,10 @@ impl WorkerSink for NoopSink {
         self.clock.as_ref()
     }
 
-    fn inference_dimensions(&self, _: &aiperf_runtime::multiturn::TurnToSend) -> InferenceDimensions {
+    fn inference_dimensions(
+        &self,
+        _: &aiperf_runtime::multiturn::TurnToSend,
+    ) -> InferenceDimensions {
         InferenceDimensions::default()
     }
 
@@ -76,7 +79,10 @@ impl RequestExecutor for NoopSink {
         Ok(())
     }
 
-    fn inference_dimensions(&self, _: &aiperf_runtime::multiturn::TurnToSend) -> InferenceDimensions {
+    fn inference_dimensions(
+        &self,
+        _: &aiperf_runtime::multiturn::TurnToSend,
+    ) -> InferenceDimensions {
         InferenceDimensions::default()
     }
 
