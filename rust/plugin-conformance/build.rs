@@ -3,8 +3,13 @@
 
 //! Build script for aiperf-plugin-conformance.
 //!
-//! Propagates the provider cdylib name and target-directory path to
-//! integration tests as compile-time environment variables.
+//! Propagates the provider cdylib name, target-directory path, and the
+//! mimalloc native library link directives to integration tests.
+//!
+//! The mimalloc search path and link flag are emitted here because Cargo
+//! does not propagate `cargo:rustc-link-lib` from dev-dependency build
+//! scripts into integration test binary link commands; only the search paths
+//! (`cargo:rustc-link-search`) propagate through that channel.
 
 use std::env;
 use std::path::PathBuf;
@@ -21,15 +26,36 @@ fn main() {
     };
     println!("cargo:rustc-env=AIPERF_ALLOC_V1_CDYLIB_NAME={cdylib_name}");
 
-    // Infer the Cargo target directory from OUT_DIR.
-    // OUT_DIR is:  <target_dir>/<profile>/build/<pkg>-<hash>/out
-    // We need:     <target_dir>/<profile>/
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
     if let Some(profile_dir) = out_dir.ancestors().nth(3) {
         println!(
             "cargo:rustc-env=AIPERF_CARGO_PROFILE_TARGET_DIR={}",
             profile_dir.display()
         );
+
+        // Cargo does not propagate cargo:rustc-link-lib from dev-dep build
+        // scripts into integration test binary link commands; only
+        // cargo:rustc-link-search propagates.  Emitting both directives here
+        // (from the crate's own build.rs) reaches all targets, including tests.
+        //
+        // libmimalloc-sys is in [dependencies] so its build script runs before
+        // this one, guaranteeing libmimalloc.a exists in the profile build dir
+        // when we scan.  The shim's mi_* extern "C" references require it.
+        if let Ok(entries) = std::fs::read_dir(profile_dir.join("build")) {
+            for entry in entries.flatten() {
+                if entry.file_name().to_string_lossy().starts_with("libmimalloc-sys-") {
+                    let lib_a = entry.path().join("out").join("libmimalloc.a");
+                    if lib_a.exists() {
+                        println!(
+                            "cargo:rustc-link-search=native={}",
+                            entry.path().join("out").display()
+                        );
+                        println!("cargo:rustc-link-lib=static=mimalloc");
+                        break;
+                    }
+                }
+            }
+        }
     }
 
     // Rerun if the provider Cargo.toml changes (new exports, version bump).
