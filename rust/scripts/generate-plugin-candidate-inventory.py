@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 """Generate Task 2's literal candidate inventory from the pinned base tree."""
 
 import subprocess
@@ -124,6 +126,8 @@ if len(rows) != 126:
     raise SystemExit(f"expected 126 rows, generated {len(rows)}")
 if len({row[0] for row in rows}) != len(rows):
     raise SystemExit("duplicate source paths")
+if len({row[1] for row in rows}) != len(rows):
+    raise SystemExit("duplicate candidate paths")
 
 output = [
     "# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.",

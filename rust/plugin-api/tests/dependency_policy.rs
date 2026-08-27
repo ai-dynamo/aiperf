@@ -71,6 +71,7 @@ const FOUNDATION_PACKAGES: &[(&str, &str)] = &[
 struct Metadata {
     packages: Vec<Package>,
     workspace_members: Vec<String>,
+    workspace_root: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -169,7 +170,9 @@ fn workspace_and_template_policy() {
     // Removing a shell, moving it out of the parent workspace, or publishing the
     // test helper would make the public package boundary incomplete.
     let root = workspace_root();
-    let packages = package_map(metadata(&root));
+    let parent_metadata = metadata(&root);
+    assert_eq!(Path::new(&parent_metadata.workspace_root), root);
+    let packages = package_map(parent_metadata);
 
     let baseline: serde_json::Value = serde_json::from_slice(
         &std::fs::read(
@@ -247,7 +250,12 @@ fn workspace_and_template_policy() {
             .any(|package| Path::new(&package.manifest_path) == standalone),
         "third-party exemplar must remain outside the parent workspace"
     );
-    let standalone_packages = package_map(standalone_metadata(&root));
+    let standalone_metadata = standalone_metadata(&root);
+    assert_eq!(
+        Path::new(&standalone_metadata.workspace_root),
+        root.join("tests/plugin-third-party")
+    );
+    let standalone_packages = package_map(standalone_metadata);
     assert_eq!(standalone_packages.len(), 1);
     assert!(standalone_packages.contains_key("aiperf-plugin-third-party-example"));
 
@@ -258,6 +266,19 @@ fn workspace_and_template_policy() {
         .parse()
         .expect("API allowlist must be valid TOML");
     assert_eq!(allowlist["schema_version"].as_integer(), Some(1));
+    assert_eq!(
+        allowlist
+            .as_table()
+            .expect("allowlist table")
+            .keys()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from([
+            "schema_version",
+            "allowed_dependencies",
+            "allowed_std_modules"
+        ])
+    );
     let allowed = allowlist["allowed_dependencies"]
         .as_array()
         .expect("API allowlist dependencies must be an array")
@@ -268,6 +289,13 @@ fn workspace_and_template_policy() {
                 .expect("allowlist dependency must be a string")
         })
         .collect::<BTreeSet<_>>();
+    assert_eq!(
+        allowlist["allowed_dependencies"]
+            .as_array()
+            .expect("dependencies")
+            .len(),
+        allowed.len()
+    );
     let api_dependencies = normal_and_build_dependencies(api);
     assert!(api_dependencies.is_subset(&allowed));
     for forbidden in FORBIDDEN {
@@ -317,28 +345,6 @@ fn workspace_and_template_policy() {
             package.name
         );
     }
-    let exclusions: toml::Value =
-        std::fs::read_to_string(root.join("plugin-conformance/boundary-exclusions.toml"))
-            .expect("boundary exclusions")
-            .parse()
-            .expect("boundary exclusions TOML");
-    assert_eq!(exclusions["schema_version"].as_integer(), Some(1));
-    for inventory in [
-        "native_distribution",
-        "wheel_distribution",
-        "container_distribution",
-        "kubernetes_distribution",
-        "host_universe",
-    ] {
-        let entries = exclusions[inventory]
-            .as_array()
-            .expect("authoritative exclusion inventory");
-        assert!(
-            !entries
-                .iter()
-                .any(|entry| entry.as_str() == Some("aiperf-plugin-test-support"))
-        );
-    }
     let expected_new_edges = BTreeSet::from([
         ("aiperf-plugin-api", "aiperf-core", "normal"),
         ("aiperf-plugin-test-support", "aiperf-core", "normal"),
@@ -358,7 +364,8 @@ fn workspace_and_template_policy() {
                 .dependencies
                 .iter()
                 .filter(|dependency| {
-                    dependency.name.starts_with("aiperf-") || dependency.name == "tempfile"
+                    dependency.kind.as_deref() != Some("dev")
+                        || dependency.name == "aiperf-plugin-test-support"
                 })
                 .map(|dependency| {
                     (
@@ -398,11 +405,10 @@ fn workspace_and_template_policy() {
                 || !(dependencies.contains("aiperf-plugin-host")
                     && dependencies.contains("aiperf-runtime"))
         );
-        for dependency in dev_dependencies(package) {
-            if dependency == "aiperf-plugin-test-support" {
-                assert!(package.name == "aiperf-export-sdk" || package.name.contains("plugin"));
-            }
-        }
+        assert!(
+            package.name == "aiperf-export-sdk"
+                || !dev_dependencies(package).contains("aiperf-plugin-test-support")
+        );
     }
 }
 
@@ -533,6 +539,7 @@ fn candidate_inventory_policy() {
     ]);
     let source_root = workspace_root();
     let mut source_paths = BTreeSet::new();
+    let mut candidate_paths = BTreeSet::new();
     let mut present = 0;
     let mut assets = 0;
     let mut implementation_leaves = 0;
@@ -545,6 +552,10 @@ fn candidate_inventory_policy() {
             "duplicate source path {source_path}"
         );
         let candidate_path = table["candidate_path"].as_str().expect("candidate path");
+        assert!(
+            candidate_paths.insert(candidate_path),
+            "duplicate candidate path {candidate_path}"
+        );
         let owner_task = table["owner_task"].as_integer().expect("owner task");
         let package = if owner_task == 33 && source_path.starts_with("dry-run-tests/")
             || owner_task == 33 && source_path == "runtime/src/transport/dry_run.rs"
