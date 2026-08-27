@@ -21,6 +21,7 @@ SPDX-License-Identifier: Apache-2.0
 | Pre-0b engine-only feature topology | Complete | Task `ceeccf9969`; merge `e8ffaf0cac`; two feature checks and 11 focused tests passed; two reviews approved |
 | Task 0 — feature/dependency freeze | Complete | Task `8e3d5b57b3`; merge `dc81d2987a`; lightweight and S3 inventory tests 1/1 each; two reviews approved |
 | Task 1A — identity and unit vocabulary | Complete | Task `283b6c872c`; merge `f8096d3041`; identity tests 10/10 and visibility doctest 1/1; two exact-head reviews approved |
+| Task 1B — item/byte resource budgets | Complete | Task `f27c352251`; merge `2aa38c3acc`; budget tests 15/15 and identity compatibility 10/10; two exact-head reviews approved |
 
 Baseline note: the full feature-off runtime suite reached execution after the
 repair and reported 1907 passing tests plus one pre-existing version-fixture
@@ -38,6 +39,13 @@ zero-charge fragment lease is crate-private, logical-ID conflicts retain both
 complete provenance receipts, and fixed golden vectors pin all six identity
 domains plus length framing. Stable IDs remain independent of worker, cell,
 route, discovery order, and global sequence.
+
+Task 1B establishes cancellation-safe two-dimensional RAII capacity. Session
+fragments always retain exactly one item permit, cross-chunk actions compose
+distinct leases without minting, and the final continuation/capture/receipt
+owner releases capacity. Checked construction charges retained `Vec`/`String`
+capacity and spilled predecessor/lease-set allocations, preventing small-length
+large-capacity payloads from bypassing the fixed-memory invariant.
 
 ## Implementation rulings
 
