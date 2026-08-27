@@ -27,22 +27,30 @@
 //! that instance's `PeerInfo` (see `crate::cellular::CellPartitionShip`).
 
 use std::collections::HashMap;
+#[cfg(feature = "cellular")]
 use std::sync::OnceLock;
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
+#[cfg(feature = "cellular")]
 use crate::cellular::partition::CellPartition;
 use crate::cellular::{CellularAutonomousIssuer, IssuanceAuthority, ModuloCellPartition};
 use crate::metrics_core::Phase;
-use anyhow::{Context, Result, ensure};
+#[cfg(feature = "cellular")]
+use anyhow::ensure;
+use anyhow::{Context, Result};
 
+#[cfg(feature = "cellular")]
 use crate::cellular::transport::ArtifactChannelServerConfig;
+#[cfg(feature = "cellular")]
 use crate::engine::artifact_shipping::{ArtifactBearer, ArtifactChannelClient};
 
+#[cfg(feature = "cellular")]
 static ARTIFACT_CHANNEL: OnceLock<ArtifactChannelClient> = OnceLock::new();
 /// Install this cell's pinned-TLS artifact client once the controller returns its
 /// public identity beside the Velo envelope.
+#[cfg(feature = "cellular")]
 pub(crate) fn install_artifact_channel(
     authority: String,
     server_config: ArtifactChannelServerConfig,
@@ -58,6 +66,7 @@ pub(crate) fn install_artifact_channel(
 }
 
 /// The process-local channel installed during authenticated registration.
+#[cfg(feature = "cellular")]
 pub(crate) fn installed_artifact_channel() -> Option<&'static ArtifactChannelClient> {
     ARTIFACT_CHANNEL.get()
 }
@@ -73,6 +82,7 @@ pub const CELL_CONTROLLER_ADDR_ENV: &str = "AIPERF_CELL_CONTROLLER_ADDR";
 pub const CELL_PHASE_ORDINAL_BASES_ENV: &str = "AIPERF_CELL_PHASE_ORDINAL_BASES";
 
 /// Acquire this cell process's private security context before any network activity.
+#[cfg(feature = "cellular")]
 pub fn acquire_cell_process_security(cell_id: u32) -> Result<()> {
     crate::engine::cellular_bootstrap::acquire_process_cell_security(
         crate::engine::cellular_bootstrap::CellularRole::Cell(cell_id),
@@ -537,6 +547,7 @@ fn remote_dataset_landing_lease() -> Result<RemoteDatasetLandingLease> {
     Ok(RemoteDatasetLandingLease(landing))
 }
 
+#[cfg(feature = "cellular")]
 fn manifest_has_local_replay_root(
     manifest: &crate::engine::artifact_shipping::DatasetManifest,
 ) -> bool {

@@ -18,24 +18,30 @@
 //! child exit) or, for k8s where there is no child to watch, by the controller's
 //! registration timeout.
 
+#[cfg(feature = "cellular")]
 use std::collections::BTreeMap;
-#[cfg(unix)]
+#[cfg(all(feature = "cellular", unix))]
 use std::io::Write;
-#[cfg(unix)]
+#[cfg(all(feature = "cellular", unix))]
 use std::os::fd::AsRawFd;
-#[cfg(unix)]
+#[cfg(all(feature = "cellular", unix))]
 use std::os::unix::net::UnixStream;
 
-#[cfg(not(unix))]
+#[cfg(all(feature = "cellular", not(unix)))]
 use anyhow::bail;
+#[cfg(feature = "cellular")]
 use anyhow::{Context, Result, ensure};
+#[cfg(feature = "cellular")]
 use tokio::process::Child;
 
+#[cfg(feature = "cellular")]
 use crate::cellular::partition::{CELL_COUNT_ENV, CELL_ID_ENV};
 
+#[cfg(feature = "cellular")]
 use crate::engine::cellular_bootstrap::{
     CELL_SECURITY_FD, CELL_SECURITY_FD_ENV, CellularRole, LocalRoleProvisioner,
 };
+#[cfg(feature = "cellular")]
 use crate::engine::cellular_cell::{
     CELL_ARTIFACT_ADDR_ENV, CELL_CONTROLLER_ADDR_ENV, CELL_PHASE_ORDINAL_BASES_ENV,
 };
@@ -46,6 +52,7 @@ pub const CELL_LAUNCHER_ENV: &str = "AIPERF_CELL_LAUNCHER";
 /// Everything a launcher needs to start (or expect) a run's cells. The controller
 /// builds this after it has bound its velo transport and published its bootstrap
 /// coordinate.
+#[cfg(feature = "cellular")]
 pub struct CellLaunchContext {
     /// Number of cells the run is partitioned across.
     pub cell_count: u32,
@@ -69,11 +76,13 @@ pub struct CellLaunchContext {
 /// A started cell the controller watches for hard failure. For a local subprocess
 /// this wraps the child; for a k8s pod there is nothing to wait on (pod liveness
 /// is the operator's concern; the controller uses a registration timeout).
+#[cfg(feature = "cellular")]
 pub struct CellHandle {
     child: Option<Child>,
     cell_id: u32,
 }
 
+#[cfg(feature = "cellular")]
 impl CellHandle {
     /// Await this cell's failure, returning a diagnostic if it exits non-zero (or
     /// cannot be waited on). For a k8s cell (no child) this never resolves.
@@ -98,14 +107,17 @@ impl CellHandle {
 }
 
 /// Starts (or expects) a run's cells; the transport is always velo.
+#[cfg(feature = "cellular")]
 pub trait CellLauncher {
     /// Start the cells and return handles the controller watches for hard failure.
     fn launch(&self, ctx: CellLaunchContext) -> Result<Vec<CellHandle>>;
 }
 
 /// Spawns `aiperf --cell` subprocesses on this host.
+#[cfg(feature = "cellular")]
 pub struct LocalLauncher;
 
+#[cfg(feature = "cellular")]
 impl LocalLauncher {
     /// Build (but do not spawn) the `Command` for one cell — its own function so
     /// the env wiring is unit-testable without spawning a process.
@@ -142,7 +154,7 @@ impl LocalLauncher {
     }
 }
 
-#[cfg(unix)]
+#[cfg(all(feature = "cellular", unix))]
 fn inherit_security_fd(command: &mut tokio::process::Command, source_fd: i32) {
     // SAFETY: this hook runs after fork and before exec and invokes only async-signal-safe
     // descriptor operations. The parent retains ownership and closes its copy after spawn.
@@ -167,7 +179,7 @@ fn inherit_security_fd(command: &mut tokio::process::Command, source_fd: i32) {
 /// Arm a kernel-backed parent-death signal so a cell is SIGKILLed the instant the
 /// controller dies, even on a hard controller kill (SIGKILL/OOM) that skips the
 /// `kill_on_drop` Drop path. Mirrors the mock-server balancer's guard. Linux-only.
-#[cfg(target_os = "linux")]
+#[cfg(all(feature = "cellular", target_os = "linux"))]
 fn set_parent_death_signal(command: &mut tokio::process::Command) {
     // SAFETY: `pre_exec` runs in the forked child before `exec`; `prctl` and
     // `getppid`/`raise` are async-signal-safe and touch no shared state.
@@ -184,9 +196,10 @@ fn set_parent_death_signal(command: &mut tokio::process::Command) {
     }
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(all(feature = "cellular", not(target_os = "linux")))]
 fn set_parent_death_signal(_command: &mut tokio::process::Command) {}
 
+#[cfg(feature = "cellular")]
 impl CellLauncher for LocalLauncher {
     fn launch(&self, mut ctx: CellLaunchContext) -> Result<Vec<CellHandle>> {
         let mut local_roles = ctx
@@ -226,8 +239,10 @@ impl CellLauncher for LocalLauncher {
 
 /// Expects cells that a Kubernetes JobSet/operator already created. Spawns nothing;
 /// the pods discover the controller from the operator-injected env.
+#[cfg(feature = "cellular")]
 pub struct K8sLauncher;
 
+#[cfg(feature = "cellular")]
 impl CellLauncher for K8sLauncher {
     fn launch(&self, ctx: CellLaunchContext) -> Result<Vec<CellHandle>> {
         ensure!(
@@ -256,8 +271,10 @@ impl CellLauncher for K8sLauncher {
 /// environment by the `aiperf slurm run` rank dispatch — not by an operator. Cell
 /// liveness is SLURM's concern (a failed task fails the step); the controller uses
 /// its registration/collect timeout as the backstop, exactly as for k8s.
+#[cfg(feature = "cellular")]
 pub struct SlurmLauncher;
 
+#[cfg(feature = "cellular")]
 impl CellLauncher for SlurmLauncher {
     fn launch(&self, ctx: CellLaunchContext) -> Result<Vec<CellHandle>> {
         ensure!(
@@ -278,6 +295,7 @@ impl CellLauncher for SlurmLauncher {
 }
 
 /// Select the launcher from [`CELL_LAUNCHER_ENV`] (`local` default, `k8s`, `slurm`).
+#[cfg(feature = "cellular")]
 pub fn select_launcher() -> Box<dyn CellLauncher> {
     match std::env::var(CELL_LAUNCHER_ENV).as_deref() {
         Ok("k8s") => Box::new(K8sLauncher),
