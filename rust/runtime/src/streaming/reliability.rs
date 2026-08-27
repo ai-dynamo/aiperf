@@ -3983,6 +3983,15 @@ enum IssueIdentityResolution {
 /// with no wildcard so a future variant must be classified deliberately.
 fn is_retryable_submission_error(error: &StreamingReliabilityError) -> bool {
     match error {
+        // A permanent budget failure reproduces exactly on replay, so it is not
+        // retryable even though it arrives through a budget-shaped variant.
+        StreamingReliabilityError::StateBudget(StateBudgetFailureCode::PermanentError)
+        | StreamingReliabilityError::QuarantineInstallBudget(
+            StateBudgetFailureCode::PermanentError,
+        )
+        | StreamingReliabilityError::ExportReceiptBudget(StateBudgetFailureCode::PermanentError) => {
+            false
+        }
         StreamingReliabilityError::StateBudget(_)
         | StreamingReliabilityError::QuarantineInstallBudget(_)
         | StreamingReliabilityError::ExportReceiptBudget(_) => true,
@@ -5480,14 +5489,19 @@ const fn budget_failure_code(error: BudgetError) -> StateBudgetFailureCode {
         BudgetError::CapacityUnavailable | BudgetError::RequestExceedsCapacity => {
             StateBudgetFailureCode::ByteCapacity
         }
-        BudgetError::ZeroCapacity
-        | BudgetError::PermitCountTooLarge
-        | BudgetError::Closed
+        BudgetError::ZeroCapacity | BudgetError::PermitCountTooLarge => {
+            StateBudgetFailureCode::ItemCapacity
+        }
+        // A closed budget, a lease that cannot grow, a miscomputed charge, and
+        // an overflowed accounting total are all terminal: the same submission
+        // replayed against the same budget fails identically, so classifying
+        // them as capacity pressure would spin a retry loop forever.
+        BudgetError::Closed
         | BudgetError::CannotGrowLease
         | BudgetError::InvalidFragmentItemCharge { .. }
         | BudgetError::ActionPayloadUndercharged { .. }
         | BudgetError::PartialLeasedBuffer { .. }
-        | BudgetError::AccountingOverflow => StateBudgetFailureCode::ItemCapacity,
+        | BudgetError::AccountingOverflow => StateBudgetFailureCode::PermanentError,
     }
 }
 
@@ -8121,25 +8135,25 @@ mod tests {
                 BudgetError::CapacityUnavailable,
                 StateBudgetFailureCode::ByteCapacity,
             ),
-            (BudgetError::Closed, StateBudgetFailureCode::ItemCapacity),
+            (BudgetError::Closed, StateBudgetFailureCode::PermanentError),
             (
                 BudgetError::CannotGrowLease,
-                StateBudgetFailureCode::ItemCapacity,
+                StateBudgetFailureCode::PermanentError,
             ),
             (
                 BudgetError::InvalidFragmentItemCharge { charged_items: 3 },
-                StateBudgetFailureCode::ItemCapacity,
+                StateBudgetFailureCode::PermanentError,
             ),
             (
                 BudgetError::ActionPayloadUndercharged {
                     required_bytes: 4,
                     retained_bytes: 1,
                 },
-                StateBudgetFailureCode::ItemCapacity,
+                StateBudgetFailureCode::PermanentError,
             ),
             (
                 BudgetError::AccountingOverflow,
-                StateBudgetFailureCode::ItemCapacity,
+                StateBudgetFailureCode::PermanentError,
             ),
         ];
         for (error, expected) in cases {
@@ -8151,6 +8165,11 @@ mod tests {
             assert_eq!(
                 export_budget_error(error),
                 StreamingReliabilityError::ExportReceiptBudget(expected)
+            );
+            // A terminal budget error must never be replayed as backpressure.
+            assert_eq!(
+                is_retryable_submission_error(&state_budget_error(error)),
+                expected != StateBudgetFailureCode::PermanentError
             );
         }
     }

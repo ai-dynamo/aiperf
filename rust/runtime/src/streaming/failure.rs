@@ -212,6 +212,7 @@ const fn budget_code(code: StateBudgetFailureCode) -> &'static str {
         StateBudgetFailureCode::ByteCapacity => "byte_capacity",
         StateBudgetFailureCode::SpillCapacity => "spill_capacity",
         StateBudgetFailureCode::ProvisionalCapacity => "provisional_capacity",
+        StateBudgetFailureCode::PermanentError => "permanent_error",
     }
 }
 
