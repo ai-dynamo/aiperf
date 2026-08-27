@@ -472,7 +472,18 @@ class DynamoDeployer:
         deploy_name = self._deployment_name()
 
         # Frontend service
-        frontend_container: dict = {"image": c.effective_image, "env": [_POD_UID_ENV]}
+        frontend_envs: list[dict] = [_POD_UID_ENV]
+        if c.hf_token_secret:
+            for env_name in ("HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"):
+                frontend_envs.append(
+                    {
+                        "name": env_name,
+                        "valueFrom": {
+                            "secretKeyRef": {"name": c.hf_token_secret, "key": "token"}
+                        },
+                    }
+                )
+        frontend_container: dict = {"image": c.effective_image, "env": frontend_envs}
         frontend_pod_spec: dict = {"mainContainer": frontend_container}
         if c.runtime_class_name:
             frontend_pod_spec["runtimeClassName"] = c.runtime_class_name
