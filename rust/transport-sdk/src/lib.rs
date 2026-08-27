@@ -28,6 +28,9 @@
 
 pub mod direct;
 pub mod execution;
+pub mod measure;
+pub mod reduce;
+pub mod retry;
 
 pub use direct::{
     CreditMaterializer, ExecutionSinkBuilder, WorkerRequest, WorkerSink, WorkerTerminal,
@@ -38,6 +41,11 @@ pub use execution::{
     build_native_request_executor, execute_worker_command, pick_worker, run_worker,
     run_worker_thread,
 };
+pub use measure::{ArrivalFacts, WorkerMeasurement, measure_dispatch};
+pub use reduce::{
+    TokenEmitter, absorb_observed_endpoint_metrics, absorb_observed_usage, append_text,
+};
+pub use retry::retry_connect;
 
 /// The source API version exposed by provisional plugin crate shells.
 pub const PLUGIN_SOURCE_API_VERSION: &str = "1.0.0";
