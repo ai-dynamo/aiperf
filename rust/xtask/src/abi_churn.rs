@@ -191,12 +191,11 @@ fn definition_in_items(items: &[syn::Item], name: &str) -> Option<(usize, usize)
         if let Some(span) = matched {
             return Some((span.start().line, span.end().line));
         }
-        if let syn::Item::Mod(module) = item {
-            if let Some((_, nested)) = &module.content {
-                if let Some(span) = definition_in_items(nested, name) {
-                    return Some(span);
-                }
-            }
+        if let syn::Item::Mod(module) = item
+            && let Some((_, nested)) = &module.content
+            && let Some(span) = definition_in_items(nested, name)
+        {
+            return Some(span);
         }
     }
     None

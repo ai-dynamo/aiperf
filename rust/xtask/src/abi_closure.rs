@@ -141,7 +141,7 @@ pub fn compute_in(workspace: &Path, seeds: &Seeds) -> Result<Closure> {
     if !workspace.join("Cargo.toml").is_file() {
         bail!("ABI workspace {} has no Cargo.toml", workspace.display());
     }
-    let rustdoc = RustdocIndex::build(&workspace)?;
+    let rustdoc = RustdocIndex::build(workspace)?;
     let blocked: BTreeSet<&str> = seeds.blocked.iter().map(String::as_str).collect();
     let mut queue = VecDeque::new();
     for seed in &seeds.seeds {
