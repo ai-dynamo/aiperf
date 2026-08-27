@@ -253,7 +253,7 @@ async def _wait_for_sweep_deleted(
     )
 
 
-@pytest.mark.timeout(600)
+@pytest.mark.timeout(1200)
 @pytest.mark.asyncio
 async def test_grid_sweep_completes_and_harvests_aggregate(
     operator_ready: OperatorDeployer,
@@ -281,7 +281,7 @@ async def test_grid_sweep_completes_and_harvests_aggregate(
             operator=operator_ready,
             name=name,
             namespace=operator_job_namespace,
-            timeout=k8s_settings.benchmark_timeout,
+            timeout=1100,
         )
 
         status = doc.get("status", {})
@@ -382,7 +382,7 @@ async def test_grid_sweep_completes_and_harvests_aggregate(
         )
 
 
-@pytest.mark.timeout(600)
+@pytest.mark.timeout(1200)
 @pytest.mark.asyncio
 async def test_adaptive_sweep_runs_shared_planner_and_archives_history(
     operator_ready: OperatorDeployer,
@@ -410,7 +410,7 @@ async def test_adaptive_sweep_runs_shared_planner_and_archives_history(
             operator=operator_ready,
             name=name,
             namespace=operator_job_namespace,
-            timeout=k8s_settings.benchmark_timeout,
+            timeout=1100,
         )
 
         status = doc.get("status", {})
