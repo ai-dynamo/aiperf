@@ -11,11 +11,11 @@ use serde_json::Value;
 
 use crate::endpoints::EndpointId;
 
+use crate::transport::grpc::codec::CodecError;
 use crate::transport::grpc::kserve_binding::{
     GrpcBindingRegistryBuilder, GrpcEndpointBinding, GrpcEndpointBindingFactory,
     GrpcEndpointBindingRegistryError, GrpcStreamChunk,
 };
-use crate::transport::grpc::codec::CodecError;
 use crate::transport::grpc::riva_codec::{
     decode_analyze_entities_response, decode_analyze_intent_response, decode_asr_response,
     decode_asr_stream_response, decode_natural_query_response, decode_text_classify_response,
