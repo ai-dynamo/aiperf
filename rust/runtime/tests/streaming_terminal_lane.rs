@@ -626,8 +626,7 @@ fn finite_session_numbers_are_unchanged_by_the_bounded_allocator() {
                 let turn = session
                     .build_deferred_turn(turn_index, None)
                     .expect("deferred turn identity");
-                let admitted =
-                    runtime.issue_turn(turn, start_ns, None, noop_completion());
+                let admitted = runtime.issue_turn(turn, start_ns, None, noop_completion());
                 assert!(admitted);
                 let ordinal = runtime
                     .last_session_number()

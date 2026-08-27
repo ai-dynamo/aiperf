@@ -285,9 +285,7 @@ enum TerminalWorkPayload {
         request_id: Uuid,
     },
     /// Boundedness-only payload used by the lane's own test seam.
-    Probe {
-        index: u64,
-    },
+    Probe { index: u64 },
 }
 
 struct TerminalWork {
@@ -413,10 +411,7 @@ impl TerminalLanePermit {
     /// real terminal record; this is the only way to drive the oversize branch
     /// from the integration suite.
     #[doc(hidden)]
-    pub fn settle_measured_for_test(
-        self,
-        actual_bytes: usize,
-    ) -> Result<(), TerminalLaneError> {
+    pub fn settle_measured_for_test(self, actual_bytes: usize) -> Result<(), TerminalLaneError> {
         self.settle_measured(TerminalWorkPayload::Probe { index: 0 }, actual_bytes)
     }
 
