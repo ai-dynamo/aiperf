@@ -330,7 +330,7 @@ impl StreamingDatasetFormatFactory for SynthesisFormatFactory {
             initialization: ParticipantInitialization::default(),
             active: None,
             restored: None,
-            issue_reporter: context.issue_reporter.clone(),
+            _issue_reporter: context.issue_reporter.clone(),
         }))
     }
 }
@@ -412,7 +412,10 @@ struct SynthesisFormat {
     initialization: ParticipantInitialization,
     active: Option<SharedOrdinal>,
     restored: Option<SynthesisCursor>,
-    issue_reporter: StreamingIssueReporterHandle,
+    // Retained for the reliability-continuation path. A4S returns typed
+    // `StreamFormatError`s and never mints a disposition, so it holds only the
+    // cloneable handle and never a boxed reporter.
+    _issue_reporter: StreamingIssueReporterHandle,
 }
 
 impl SynthesisFormat {
