@@ -1878,6 +1878,18 @@ class _ZMQSettings(BaseSettings):
         default=10,
         description="Interval in seconds between TCP keepalive probes for ZMQ connections",
     )
+    RECONNECT_IVL: int = Field(
+        ge=1,
+        le=100000,
+        default=100,
+        description="Delay in milliseconds before the first ZMQ reconnect attempt",
+    )
+    RECONNECT_IVL_MAX: int = Field(
+        ge=1,
+        le=100000,
+        default=5000,
+        description="Ceiling in milliseconds on the exponential ZMQ reconnect backoff",
+    )
     EVENT_BUS_PROXY_FRONTEND_PORT: int = Field(
         ge=1,
         le=65535,
@@ -2053,6 +2065,35 @@ class _Environment(BaseSettings):
         if self.SERVICE.PROFILE_CONFIGURE_TIMEOUT < self.DATASET.CONFIGURATION_TIMEOUT:
             raise ValueError(
                 f"AIPERF_SERVICE_PROFILE_CONFIGURE_TIMEOUT: {self.SERVICE.PROFILE_CONFIGURE_TIMEOUT} must be greater than or equal to AIPERF_DATASET_CONFIGURATION_TIMEOUT: {self.DATASET.CONFIGURATION_TIMEOUT}"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def validate_worker_stale_time_vs_heartbeat(self) -> Self:
+        """Validate the router's stale-worker cutoff outlives the heartbeat cadence.
+
+        ``StickyCreditRouter.evict_stale_workers`` computes its cutoff as
+        ``WORKER.STALE_TIME * 3``, fed only by the generic ``HeartbeatMessage``
+        cadence (``SERVICE.HEARTBEAT_INTERVAL`` /
+        ``SERVICE.HEARTBEAT_MISSED_THRESHOLD``). If the cutoff is shorter than
+        the worst-case gap between heartbeats, every worker looks stale on the
+        very first sweep and gets evicted -- terminal when it owns in-flight
+        credits or sticky sessions, regardless of ``WORKER.MIN_ALIVE_FRACTION``.
+        """
+        heartbeat_worst_case = (
+            self.SERVICE.HEARTBEAT_INTERVAL * self.SERVICE.HEARTBEAT_MISSED_THRESHOLD
+        )
+        stale_cutoff = self.WORKER.STALE_TIME * 3
+        if stale_cutoff <= heartbeat_worst_case:
+            raise ValueError(
+                f"AIPERF_WORKER_STALE_TIME: {self.WORKER.STALE_TIME} "
+                f"(eviction cutoff = STALE_TIME * 3 = {stale_cutoff}) must satisfy "
+                f"STALE_TIME * 3 > AIPERF_SERVICE_HEARTBEAT_INTERVAL * "
+                f"AIPERF_SERVICE_HEARTBEAT_MISSED_THRESHOLD "
+                f"({self.SERVICE.HEARTBEAT_INTERVAL} * "
+                f"{self.SERVICE.HEARTBEAT_MISSED_THRESHOLD} = {heartbeat_worst_case}), "
+                "otherwise workers appear stale to the router before their "
+                "heartbeat cadence could plausibly reach it."
             )
         return self
 
