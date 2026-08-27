@@ -117,6 +117,7 @@ pub trait FrozenActionInventoryView: reliability_view_seal::FrozenActionInventor
 
 /// Crate-owned sealed terminal evidence passed from the action host to the
 /// reliability owner without exposing a public proof constructor.
+#[allow(dead_code)]
 pub(crate) struct CheckedActionFailureTerminalEvidence {
     run: StreamRunIdentity,
     action_id: StableActionId,
@@ -124,6 +125,7 @@ pub(crate) struct CheckedActionFailureTerminalEvidence {
     terminal_evidence_digest: ContentDigest,
 }
 
+#[allow(dead_code)]
 impl CheckedActionFailureTerminalEvidence {
     pub(crate) const fn new(
         run: StreamRunIdentity,
@@ -164,6 +166,7 @@ impl CheckedActionFailureTerminalEvidenceView for CheckedActionFailureTerminalEv
 }
 
 /// Crate-owned sealed terminal membership borrowed by the reliability owner.
+#[allow(dead_code)]
 pub(crate) struct CheckedActionTerminalMembership {
     run: StreamRunIdentity,
     action_id: StableActionId,
@@ -172,6 +175,7 @@ pub(crate) struct CheckedActionTerminalMembership {
     membership_digest: ContentDigest,
 }
 
+#[allow(dead_code)]
 impl CheckedActionTerminalMembership {
     pub(crate) const fn new(
         run: StreamRunIdentity,
@@ -226,6 +230,7 @@ pub(crate) struct FrozenActionInventory {
     terminals: BTreeMap<GlobalSequence, ContentDigest>,
 }
 
+#[allow(dead_code)]
 impl FrozenActionInventory {
     pub(crate) fn new(
         run: StreamRunIdentity,

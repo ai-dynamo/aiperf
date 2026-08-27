@@ -64,6 +64,7 @@ pub trait SessionQuarantineTombstoneView:
 /// The borrowed entry slice prevents reliability preparation from moving or
 /// cloning the retained map, while the crate-private constructor keeps the
 /// proof unavailable to adapters.
+#[allow(dead_code)]
 pub(crate) struct CheckedSessionQuarantineTombstoneView<'a> {
     run: StreamRunIdentity,
     tombstone_root: ContentDigest,
@@ -71,6 +72,7 @@ pub(crate) struct CheckedSessionQuarantineTombstoneView<'a> {
     canonical_encoded_entries: &'a [u8],
 }
 
+#[allow(dead_code)]
 impl<'a> CheckedSessionQuarantineTombstoneView<'a> {
     pub(crate) const fn new(
         run: StreamRunIdentity,

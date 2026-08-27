@@ -17,8 +17,8 @@ use aiperf_runtime::streaming::{
         StreamFormatError, StreamSourceError, StreamingFailureStage,
     },
     identity::{
-        ContentDigest, GlobalSequence, ImmutableObjectIdentity, LogicalReplayRunId, StableActionId,
-        StableRecordId, StableSessionKey, SessionCausalFrontier,
+        ContentDigest, GlobalSequence, ImmutableObjectIdentity, LogicalReplayRunId,
+        SessionCausalFrontier, StableActionId, StableRecordId, StableSessionKey,
     },
     reliability::{
         ActionFailureDisposition, BudgetOwnedStreamingIssueReporter, HandledIssueCut,
@@ -486,18 +486,13 @@ async fn ordered_reporter_is_arrival_invariant_and_replay_counts_once() {
             SourcePosition::new(position),
             0,
             ContentDigest::from_bytes([tie; 32]),
-            OrdinaryStreamingFailure::Format(StreamFormatError::decode(
-                DecodeFailureCode::Syntax,
-            )),
+            OrdinaryStreamingFailure::Format(StreamFormatError::decode(DecodeFailureCode::Syntax)),
         )
         .unwrap_or_else(|error| panic!("valid ordered issue: {error}"))
     };
 
-    let mut reverse = BudgetOwnedStreamingIssueReporter::new(
-        run(0x11),
-        record_policy(),
-        budget(64, 64 * 1024),
-    );
+    let mut reverse =
+        BudgetOwnedStreamingIssueReporter::new(run(0x11), record_policy(), budget(64, 64 * 1024));
     assert_eq!(
         reverse
             .report(IssueSequenceUpdate::Issue(make_issue(9, 9)))
@@ -529,11 +524,8 @@ async fn ordered_reporter_is_arrival_invariant_and_replay_counts_once() {
     assert_eq!(replay.issue_id(), replay_id);
     assert_eq!(reverse.summary().unwrap().total, 2);
 
-    let mut forward = BudgetOwnedStreamingIssueReporter::new(
-        run(0x11),
-        record_policy(),
-        budget(64, 64 * 1024),
-    );
+    let mut forward =
+        BudgetOwnedStreamingIssueReporter::new(run(0x11), record_policy(), budget(64, 64 * 1024));
     for (position, tie) in [(7, 7), (9, 9)] {
         forward
             .report(IssueSequenceUpdate::Issue(make_issue(position, tie)))
@@ -585,11 +577,8 @@ async fn tiny_reporter_budget_refuses_without_frontier_or_counter_mutation() {
 async fn receipt_partition_handoff_moves_payload_and_view_leases_without_copy() {
     let reporter_budget = budget(64, 64 * 1024);
     let descriptor_budget = budget(4, 4096);
-    let mut reporter = BudgetOwnedStreamingIssueReporter::new(
-        run(0x11),
-        record_policy(),
-        reporter_budget.clone(),
-    );
+    let mut reporter =
+        BudgetOwnedStreamingIssueReporter::new(run(0x11), record_policy(), reporter_budget.clone());
     let input_domain = domain(0x21, 0x20);
     reporter
         .report(IssueSequenceUpdate::Issue(record_issue(

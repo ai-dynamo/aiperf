@@ -38,8 +38,8 @@ use super::{
         ContentDigest, GlobalSequence, ImmutableObjectIdentity, StableActionId, StableRecordId,
         StableSessionKey,
     },
-    session::SessionQuarantineTombstoneView,
     results::{BudgetedResultDescriptor, ResultPartition},
+    session::SessionQuarantineTombstoneView,
     unit::{SourcePosition, StateBudgetFailureCode},
 };
 
@@ -1820,8 +1820,7 @@ pub struct BudgetOwnedStreamingIssueReporter {
     budget: StreamingResourceBudget,
     submission: Rc<ReporterSubmissionEndpoint>,
     input_frontiers: BTreeMap<StreamingInputDomainIdentity, SourcePosition>,
-    pending_inputs:
-        BTreeMap<StreamingInputDomainIdentity, BTreeMap<PendingInputKey, PendingIssue>>,
+    pending_inputs: BTreeMap<StreamingInputDomainIdentity, BTreeMap<PendingInputKey, PendingIssue>>,
     pending_actions: BTreeMap<u64, PendingActionFailure>,
     current_action_attempts: BTreeMap<GlobalSequence, u64>,
     action_terminals: BTreeMap<GlobalSequence, RetainedActionTerminal>,
@@ -1912,6 +1911,9 @@ impl BudgetOwnedStreamingIssueReporter {
             .map_err(|(error, _pending)| error)
     }
 
+    // Returning the move-only pending reservation preserves retry authority
+    // without an unbudgeted recovery allocation.
+    #[allow(clippy::result_large_err)]
     fn submit_reserved_issue(
         &mut self,
         pending: PendingIssue,
@@ -1926,10 +1928,7 @@ impl BudgetOwnedStreamingIssueReporter {
             ));
         }
         let Some(input_domain) = pending.issue.scope.input_domain().cloned() else {
-            return self
-                .classify_pending(pending)
-                .map(Some)
-                .map_err(|(error, pending)| (error, pending));
+            return self.classify_pending(pending).map(Some);
         };
         let position = pending
             .issue
@@ -2001,7 +2000,10 @@ impl BudgetOwnedStreamingIssueReporter {
                 reporter_token: existing.reporter_token,
             });
         }
-        if self.action_frontier.is_some_and(|frontier| sequence <= frontier) {
+        if self
+            .action_frontier
+            .is_some_and(|frontier| sequence <= frontier)
+        {
             return Err(StreamingReliabilityError::CorruptCheckpointState);
         }
         if self.pending_actions.values().any(|existing| {
@@ -2112,14 +2114,15 @@ impl BudgetOwnedStreamingIssueReporter {
             return Err(StreamingReliabilityError::ForeignRun);
         }
         let outcome = match membership.outcome() {
-            ActionTerminalMembershipOutcomeView::Succeeded => CheckedActionSequenceOutcome::Succeeded,
+            ActionTerminalMembershipOutcomeView::Succeeded => {
+                CheckedActionSequenceOutcome::Succeeded
+            }
             ActionTerminalMembershipOutcomeView::Failed { issue_id } => {
                 let retained = self
                     .receipts
                     .get(&issue_id)
                     .ok_or(StreamingReliabilityError::InvalidActionTerminalMembership)?;
-                if retained.outcome.disposition
-                    != StreamingIssueDisposition::TerminalActionReceipt
+                if retained.outcome.disposition != StreamingIssueDisposition::TerminalActionReceipt
                     || retained.receipt.receipt.scope.action_id() != Some(membership.action_id())
                     || retained.receipt.receipt.order.global_sequence != Some(membership.sequence())
                 {
@@ -2211,17 +2214,12 @@ impl BudgetOwnedStreamingIssueReporter {
             .values()
             .filter(|retained| retained.fact.sequence <= through)
         {
-            if !inventory.contains_terminal(
-                retained.fact.sequence,
-                retained.fact.membership_digest,
-            ) {
+            if !inventory.contains_terminal(retained.fact.sequence, retained.fact.membership_digest)
+            {
                 return Err(StreamingReliabilityError::InvalidActionTerminalMembership);
             }
         }
-        for (sequence, token) in self
-            .current_action_attempts
-            .range(..=through)
-        {
+        for (sequence, token) in self.current_action_attempts.range(..=through) {
             let current = self
                 .pending_actions
                 .get(token)
@@ -2307,6 +2305,9 @@ impl BudgetOwnedStreamingIssueReporter {
         Ok(())
     }
 
+    // Returning the move-only pending reservation preserves retry authority
+    // without an unbudgeted recovery allocation.
+    #[allow(clippy::result_large_err)]
     fn classify_pending(
         &mut self,
         pending: PendingIssue,
@@ -2476,7 +2477,10 @@ impl BudgetOwnedStreamingIssueReporter {
             .get(&issue_id)
             .ok_or(StreamingReliabilityError::QuarantineReceiptUnavailable)?;
         if retained.outcome.disposition != StreamingIssueDisposition::Quarantine
-            || !matches!(retained.receipt.receipt.scope, StreamingIssueScope::Session { .. })
+            || !matches!(
+                retained.receipt.receipt.scope,
+                StreamingIssueScope::Session { .. }
+            )
         {
             return Err(StreamingReliabilityError::QuarantineReceiptUnavailable);
         }
@@ -2530,8 +2534,9 @@ impl BudgetOwnedStreamingIssueReporter {
         if current_view.run() != &self.run || barrier.run != self.run {
             return Err(StreamingReliabilityError::ForeignRun);
         }
-        let current_payload_digest =
-            ContentDigest::from_bytes(*blake3::hash(current_view.canonical_encoded_entries()).as_bytes());
+        let current_payload_digest = ContentDigest::from_bytes(
+            *blake3::hash(current_view.canonical_encoded_entries()).as_bytes(),
+        );
         if prepared.barrier != *barrier
             || prepared.tombstone_root != current_view.tombstone_root()
             || prepared.view_revision != current_view.revision()
@@ -2805,6 +2810,7 @@ impl PreparedIssueReceiptResultPartition {
         self.view_lease.charged_bytes()
     }
 
+    #[allow(dead_code)]
     pub(crate) fn into_parts(self) -> (ResultPartition, HandledIssueCut, BudgetLease) {
         (self.partition, self.handled_cut, self.view_lease)
     }
@@ -2930,8 +2936,9 @@ impl BudgetOwnedExportIssueReceipt {
 
     /// Return the exact parsed allocation charge.
     #[must_use]
-    pub const fn parsed_charge_bytes(&self) -> usize {
-        self.parsed_charge_bytes
+    pub fn parsed_charge_bytes(&self) -> usize {
+        debug_assert_eq!(self.parsed_charge_bytes, self.parsed_lease.charged_bytes());
+        self.parsed_lease.charged_bytes()
     }
 }
 
@@ -3085,6 +3092,7 @@ pub struct DurableExportReceiptValidationContext {
 impl DurableExportReceiptValidationContext {
     /// Construct validation inputs only after the status owner has verified its
     /// independently persisted predecessor fields.
+    #[allow(dead_code)]
     pub(crate) fn from_status_authority(
         run: StreamRunIdentity,
         generation: CheckpointGeneration,
@@ -3145,8 +3153,7 @@ pub async fn restore_durable_export_issue_receipt(
         return Err(StreamingReliabilityError::ExportReceiptPolicyMismatch);
     }
     if wire.counter_before != context.expected_counter_before
-        || wire.embedded_receipt.threshold.prior_matching_count
-            != context.expected_counter_before
+        || wire.embedded_receipt.threshold.prior_matching_count != context.expected_counter_before
         || wire.counter_after
             != wire
                 .counter_before
@@ -3160,10 +3167,7 @@ pub async fn restore_durable_export_issue_receipt(
         || wire.embedded_receipt.terminal_invariant.is_some()
         || wire.embedded_receipt.class == StreamingIssueClass::Invariant
         || wire.embedded_receipt.disposition == StreamingIssueDisposition::FailRun
-        || !scope_order_matches(
-            &wire.embedded_receipt.scope,
-            &wire.embedded_receipt.order,
-        )
+        || !scope_order_matches(&wire.embedded_receipt.scope, &wire.embedded_receipt.order)
     {
         return Err(StreamingReliabilityError::DerivedExportReceiptUnreachable);
     }
@@ -3270,11 +3274,17 @@ fn issue_id_from_wire(wire: &PersistedStreamingIssueReceiptWire) -> ContentDiges
         update_hash_field(&mut hasher, input_domain.stream_identity.as_bytes());
         update_hash_field(&mut hasher, input_domain.source_identity.as_bytes());
     }
-    update_hash_field(&mut hasher, &[u8::from(wire.order.source_position.is_some())]);
+    update_hash_field(
+        &mut hasher,
+        &[u8::from(wire.order.source_position.is_some())],
+    );
     if let Some(source_position) = wire.order.source_position {
         update_hash_field(&mut hasher, &source_position.get().to_le_bytes());
     }
-    update_hash_field(&mut hasher, &[u8::from(wire.order.global_sequence.is_some())]);
+    update_hash_field(
+        &mut hasher,
+        &[u8::from(wire.order.global_sequence.is_some())],
+    );
     if let Some(global_sequence) = wire.order.global_sequence {
         update_hash_field(&mut hasher, &global_sequence.get().to_le_bytes());
     }
@@ -3300,7 +3310,9 @@ fn reserve_pending_issue(
         .checked_add(RECEIPT_ENCODED_RESERVATION_BYTES)
         .and_then(|bytes| bytes.checked_add(parsed_reservation))
         .ok_or(StreamingReliabilityError::CounterOverflow)?;
-    let reservation = budget.try_acquire(3, total_bytes).map_err(state_budget_error)?;
+    let reservation = budget
+        .try_acquire(3, total_bytes)
+        .map_err(state_budget_error)?;
     Ok(PendingIssue {
         issue,
         reservation,
@@ -3313,11 +3325,11 @@ fn action_disposition(
     decision: ActionDecisionSnapshot,
 ) -> Result<ActionFailureDisposition, StreamingReliabilityError> {
     match decision.disposition {
-        StreamingIssueDisposition::Retry => Ok(ActionFailureDisposition::Retry(
-            PreparedActionRetry {
+        StreamingIssueDisposition::Retry => {
+            Ok(ActionFailureDisposition::Retry(PreparedActionRetry {
                 retry_ordinal: decision.retry_ordinal,
-            },
-        )),
+            }))
+        }
         StreamingIssueDisposition::Backpressure => Ok(ActionFailureDisposition::Backpressure(
             PreparedActionBackpressure {
                 needs_admission_fence: decision.needs_admission_fence,
@@ -3343,7 +3355,10 @@ fn action_disposition(
 fn retained_issue_bytes(issue: &OrdinaryStreamingIssue) -> usize {
     size_of::<OrdinaryStreamingIssue>()
         + issue.code.as_str().len()
-        + issue.scope.exporter_id().map_or(0, |value| value.as_str().len())
+        + issue
+            .scope
+            .exporter_id()
+            .map_or(0, |value| value.as_str().len())
 }
 
 fn parsed_receipt_bytes(receipt: &PersistedStreamingIssueReceipt) -> usize {
@@ -3417,15 +3432,30 @@ fn budget_owned_receipt_from_reservation(
     }
     let encoded_lease = match reservation.split_off(1, encoded.len()) {
         Ok(lease) => lease,
-        Err(_) => return Err((StreamingReliabilityError::CorruptCheckpointState, reservation)),
+        Err(_) => {
+            return Err((
+                StreamingReliabilityError::CorruptCheckpointState,
+                reservation,
+            ));
+        }
     };
     let parsed_lease = match reservation.split_off(1, parsed_charge_bytes) {
         Ok(lease) => lease,
-        Err(_) => return Err((StreamingReliabilityError::CorruptCheckpointState, reservation)),
+        Err(_) => {
+            return Err((
+                StreamingReliabilityError::CorruptCheckpointState,
+                reservation,
+            ));
+        }
     };
     let encoded = match BudgetedCheckpointBytes::new(Bytes::from(encoded), encoded_lease) {
         Ok(encoded) => encoded,
-        Err(_) => return Err((StreamingReliabilityError::CorruptCheckpointState, reservation)),
+        Err(_) => {
+            return Err((
+                StreamingReliabilityError::CorruptCheckpointState,
+                reservation,
+            ));
+        }
     };
     Ok((
         BudgetOwnedStreamingIssueReceipt {
@@ -3737,15 +3767,8 @@ impl StreamingIssueReporter for BudgetOwnedStreamingIssueReporter {
         outcome: ResultSinkAttemptOutcome,
         budget: &StreamingResourceBudget,
     ) -> Result<PreparedExportAttemptFailure, StreamingReliabilityError> {
-        self.prepare_export_failure(
-            run,
-            generation,
-            sink_id,
-            attempt_ordinal,
-            outcome,
-            budget,
-        )
-        .await
+        self.prepare_export_failure(run, generation, sink_id, attempt_ordinal, outcome, budget)
+            .await
     }
 
     async fn report(
@@ -4064,8 +4087,8 @@ mod tests {
             CheckedActionTerminalMembership, FrozenActionInventory,
         },
         checkpoint::{
-            AcquisitionHorizon, AdmissionHorizon, CheckpointCut, DecodeHorizon,
-            DiscoveryHorizon, EventTimeWatermark, OrderedActionHorizon, TerminalActionHorizon,
+            AcquisitionHorizon, AdmissionHorizon, CheckpointCut, DecodeHorizon, DiscoveryHorizon,
+            EventTimeWatermark, OrderedActionHorizon, TerminalActionHorizon,
         },
         failure::{
             ActionExecutionError, ActionFailureCode, DecodeFailureCode, ResultExportError,
@@ -4147,8 +4170,8 @@ mod tests {
     }
 
     fn test_barrier(run: StreamRunIdentity, epoch: u64) -> CheckpointBarrier {
-        let event_time = EventTimeUtc::new(10)
-            .unwrap_or_else(|error| panic!("valid event time: {error}"));
+        let event_time =
+            EventTimeUtc::new(10).unwrap_or_else(|error| panic!("valid event time: {error}"));
         CheckpointBarrier {
             run,
             epoch: CheckpointEpoch::new(epoch),
@@ -4582,7 +4605,10 @@ mod tests {
         let issue = action_issue(1, 0);
         let evidence = CheckedActionFailureTerminalEvidence::new(
             run,
-            issue.scope().action_id().unwrap_or_else(|| panic!("action ID")),
+            issue
+                .scope()
+                .action_id()
+                .unwrap_or_else(|| panic!("action ID")),
             GlobalSequence::new(1),
             ContentDigest::from_bytes([0x91; 32]),
         );
@@ -4607,9 +4633,9 @@ mod tests {
         let terminal = reporter
             .prepare_action_terminal(&success)
             .unwrap_or_else(|error| panic!("prepare success terminal: {error}"));
-        futures::executor::block_on(reporter.report(IssueSequenceUpdate::CheckedActionTerminal(
-            terminal,
-        )))
+        futures::executor::block_on(
+            reporter.report(IssueSequenceUpdate::CheckedActionTerminal(terminal)),
+        )
         .unwrap_or_else(|error| panic!("record success terminal: {error}"));
 
         let failure = match reporter
@@ -4744,7 +4770,10 @@ mod tests {
         let issue = action_issue(2, 0);
         let evidence = CheckedActionFailureTerminalEvidence::new(
             run,
-            issue.scope().action_id().unwrap_or_else(|| panic!("action ID")),
+            issue
+                .scope()
+                .action_id()
+                .unwrap_or_else(|| panic!("action ID")),
             GlobalSequence::new(2),
             ContentDigest::from_bytes([0xa2; 32]),
         );
@@ -4768,9 +4797,9 @@ mod tests {
         let closure = reporter
             .prepare_no_more_actions_before(&inventory, GlobalSequence::new(1))
             .unwrap_or_else(|error| panic!("prepare action gap closure: {error}"));
-        futures::executor::block_on(reporter.report(
-            IssueSequenceUpdate::CheckedNoMoreActionsBefore(closure),
-        ))
+        futures::executor::block_on(
+            reporter.report(IssueSequenceUpdate::CheckedNoMoreActionsBefore(closure)),
+        )
         .unwrap_or_else(|error| panic!("record action gap closure: {error}"));
 
         let backpressure = match reporter
@@ -4806,7 +4835,10 @@ mod tests {
         let issue = action_issue(0, 0);
         let evidence = CheckedActionFailureTerminalEvidence::new(
             run,
-            issue.scope().action_id().unwrap_or_else(|| panic!("action ID")),
+            issue
+                .scope()
+                .action_id()
+                .unwrap_or_else(|| panic!("action ID")),
             GlobalSequence::new(0),
             ContentDigest::from_bytes([0xa4; 32]),
         );
@@ -4834,18 +4866,16 @@ mod tests {
             ContentDigest::from_bytes([0xb2; 32]),
             ImmutableObjectIdentity::from_bytes([0xb3; 32]),
         );
-        let policy = PreparedStreamingIssuePolicy::new([
-            StreamingIssueThresholdRule::new(
-                component("session_default"),
-                StreamingIssueScopeKind::Session,
-                StreamingIssueClass::Permanent,
-                None,
-                0,
-                StreamingIssueDisposition::Quarantine,
-                None,
-            )
-            .unwrap_or_else(|error| panic!("valid session rule: {error}")),
-        ])
+        let policy = PreparedStreamingIssuePolicy::new([StreamingIssueThresholdRule::new(
+            component("session_default"),
+            StreamingIssueScopeKind::Session,
+            StreamingIssueClass::Permanent,
+            None,
+            0,
+            StreamingIssueDisposition::Quarantine,
+            None,
+        )
+        .unwrap_or_else(|error| panic!("valid session rule: {error}"))])
         .unwrap_or_else(|error| panic!("valid session policy: {error}"));
         let reporter_budget = StreamingResourceBudget::new(super::super::budget::BudgetLimits {
             max_items: 64,
@@ -4901,11 +4931,7 @@ mod tests {
 
         let replayed_digest = CheckedSessionQuarantineTombstoneView::new(run, root, 5, entries);
         assert_eq!(
-            reporter.verify_session_quarantine_install(
-                &prepared,
-                &replayed_digest,
-                &barrier,
-            ),
+            reporter.verify_session_quarantine_install(&prepared, &replayed_digest, &barrier,),
             Err(StreamingReliabilityError::StaleQuarantineTombstoneView)
         );
         drop(prepared);
@@ -4921,18 +4947,16 @@ mod tests {
             ContentDigest::from_bytes([0xc2; 32]),
         );
         let sink_id = component("native_report");
-        let policy = PreparedStreamingIssuePolicy::new([
-            StreamingIssueThresholdRule::new(
-                component("export_default"),
-                StreamingIssueScopeKind::Export,
-                StreamingIssueClass::Permanent,
-                None,
-                0,
-                StreamingIssueDisposition::ExportIncomplete,
-                None,
-            )
-            .unwrap_or_else(|error| panic!("valid export rule: {error}")),
-        ])
+        let policy = PreparedStreamingIssuePolicy::new([StreamingIssueThresholdRule::new(
+            component("export_default"),
+            StreamingIssueScopeKind::Export,
+            StreamingIssueClass::Permanent,
+            None,
+            0,
+            StreamingIssueDisposition::ExportIncomplete,
+            None,
+        )
+        .unwrap_or_else(|error| panic!("valid export rule: {error}"))])
         .unwrap_or_else(|error| panic!("valid export policy: {error}"));
         let policy_digest = *policy.digest();
         let reporter_budget = StreamingResourceBudget::new(super::super::budget::BudgetLimits {
@@ -5006,14 +5030,16 @@ mod tests {
         ))
         .unwrap_or_else(|error| panic!("restore durable export receipt: {error}"));
         assert_eq!(restored.issue_id(), issue_id);
-        assert_eq!(restored.encoded_charge_bytes(), reference.receipt_length() as usize);
+        assert_eq!(
+            restored.encoded_charge_bytes(),
+            reference.receipt_length() as usize
+        );
         assert_eq!(stored_budget.snapshot().used_items, 2);
         drop(restored);
         assert_eq!(stored_budget.snapshot().used_items, 0);
 
-        let mut wire: PersistedExportIssueReceiptWire =
-            serde_json::from_slice(&tamper_source)
-                .unwrap_or_else(|error| panic!("decode test export receipt: {error}"));
+        let mut wire: PersistedExportIssueReceiptWire = serde_json::from_slice(&tamper_source)
+            .unwrap_or_else(|error| panic!("decode test export receipt: {error}"));
         wire.embedded_receipt.threshold.is_exhausted = false;
         let embedded_receipt = persisted_receipt_from_wire(wire.embedded_receipt);
         let embedded_encoded = serde_json::to_vec(&embedded_receipt)
@@ -5043,10 +5069,8 @@ mod tests {
             embedded_receipt_digest,
             embedded_receipt_length,
         };
-        let tampered_lease = futures::executor::block_on(
-            stored_budget.acquire(1, tampered.len()),
-        )
-        .unwrap_or_else(|error| panic!("charge tampered receipt: {error}"));
+        let tampered_lease = futures::executor::block_on(stored_budget.acquire(1, tampered.len()))
+            .unwrap_or_else(|error| panic!("charge tampered receipt: {error}"));
         let tampered = BudgetedCheckpointBytes::new(Bytes::from(tampered), tampered_lease)
             .unwrap_or_else(|error| panic!("valid tampered receipt bytes: {error}"));
         assert!(matches!(
@@ -5069,18 +5093,16 @@ mod tests {
             ContentDigest::from_bytes([0xd2; 32]),
         );
         let sink_id = component("native_report");
-        let policy = PreparedStreamingIssuePolicy::new([
-            StreamingIssueThresholdRule::new(
-                component("export_default"),
-                StreamingIssueScopeKind::Export,
-                StreamingIssueClass::Permanent,
-                None,
-                1,
-                StreamingIssueDisposition::ExportIncomplete,
-                None,
-            )
-            .unwrap_or_else(|error| panic!("valid export rule: {error}")),
-        ])
+        let policy = PreparedStreamingIssuePolicy::new([StreamingIssueThresholdRule::new(
+            component("export_default"),
+            StreamingIssueScopeKind::Export,
+            StreamingIssueClass::Permanent,
+            None,
+            1,
+            StreamingIssueDisposition::ExportIncomplete,
+            None,
+        )
+        .unwrap_or_else(|error| panic!("valid export rule: {error}"))])
         .unwrap_or_else(|error| panic!("valid export policy: {error}"));
         let policy_digest = *policy.digest();
         let reporter_budget = StreamingResourceBudget::new(super::super::budget::BudgetLimits {
@@ -5156,15 +5178,11 @@ mod tests {
             max_bytes: 32 * 1024,
         })
         .unwrap_or_else(|error| panic!("valid stored budget: {error}"));
-        let wrong_lease = futures::executor::block_on(
-            stored_budget.acquire(1, stored_bytes.len()),
-        )
-        .unwrap_or_else(|error| panic!("charge stored receipt: {error}"));
-        let wrong_bytes = BudgetedCheckpointBytes::new(
-            Bytes::copy_from_slice(&stored_bytes),
-            wrong_lease,
-        )
-        .unwrap_or_else(|error| panic!("valid stored receipt bytes: {error}"));
+        let wrong_lease = futures::executor::block_on(stored_budget.acquire(1, stored_bytes.len()))
+            .unwrap_or_else(|error| panic!("charge stored receipt: {error}"));
+        let wrong_bytes =
+            BudgetedCheckpointBytes::new(Bytes::copy_from_slice(&stored_bytes), wrong_lease)
+                .unwrap_or_else(|error| panic!("valid stored receipt bytes: {error}"));
         let wrong_context = DurableExportReceiptValidationContext::from_status_authority(
             run,
             generation.clone(),
@@ -5184,10 +5202,9 @@ mod tests {
         ));
         assert_eq!(stored_budget.snapshot().used_items, 0);
 
-        let stored_lease = futures::executor::block_on(
-            stored_budget.acquire(1, stored_bytes.len()),
-        )
-        .unwrap_or_else(|error| panic!("recharge stored receipt: {error}"));
+        let stored_lease =
+            futures::executor::block_on(stored_budget.acquire(1, stored_bytes.len()))
+                .unwrap_or_else(|error| panic!("recharge stored receipt: {error}"));
         let stored = BudgetedCheckpointBytes::new(Bytes::from(stored_bytes), stored_lease)
             .unwrap_or_else(|error| panic!("valid stored receipt bytes: {error}"));
         let context = DurableExportReceiptValidationContext::from_status_authority(
