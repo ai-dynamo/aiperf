@@ -2695,6 +2695,64 @@ mod tests {
     }
 
     #[test]
+    fn affinity_monitor_arms_only_on_an_exact_pin_match() {
+        let pinned: BTreeSet<usize> = (4..=7).collect();
+        let unarmed = AffinityMonitorState::NeverArmed {
+            has_observation: false,
+        };
+
+        // The pre-exec window: the spawned `taskset` still carries the
+        // controller's inherited mask. A subset of the pin is exactly what an
+        // externally pinned controller contributes there, so it must not arm.
+        assert_eq!(
+            advance_affinity_monitor(&unarmed, &BTreeSet::from([4, 5]), &pinned),
+            AffinityMonitorState::NeverArmed {
+                has_observation: true
+            }
+        );
+        // Only the pin itself arms the monitor.
+        assert_eq!(
+            advance_affinity_monitor(&unarmed, &pinned, &pinned),
+            AffinityMonitorState::ArmedAndStable
+        );
+        // Once armed, the pin repeating is the steady state.
+        assert_eq!(
+            advance_affinity_monitor(&AffinityMonitorState::ArmedAndStable, &pinned, &pinned),
+            AffinityMonitorState::ArmedAndStable
+        );
+        // Once armed, any deviation is real affinity loss, named by its mask.
+        assert_eq!(
+            advance_affinity_monitor(
+                &AffinityMonitorState::ArmedAndStable,
+                &BTreeSet::from([3, 5, 9]),
+                &pinned
+            ),
+            AffinityMonitorState::ArmedThenLost {
+                observed: BTreeSet::from([3, 5, 9])
+            }
+        );
+    }
+
+    #[test]
+    fn a_controller_mask_inside_the_pin_does_not_fabricate_affinity_loss() {
+        // The round-6 C1 sequence on a `taskset -c 4-71` pin with the controller
+        // externally pinned to 4-19: two pre-exec polls carrying the inherited
+        // mask, then the real pin twice. Arming on the inherited mask would read
+        // the third observation as affinity loss.
+        let pinned: BTreeSet<usize> = (4..=71).collect();
+        let inherited: BTreeSet<usize> = (4..=19).collect();
+        let mut state = AffinityMonitorState::NeverArmed {
+            has_observation: false,
+        };
+
+        for observed in [&inherited, &inherited, &pinned, &pinned] {
+            state = advance_affinity_monitor(&state, observed, &pinned);
+        }
+
+        assert_eq!(state, AffinityMonitorState::ArmedAndStable);
+    }
+
+    #[test]
     fn ledger_hash_chain_survives_reopen_and_three_invalid_attempts_block() {
         let directory = tempfile::tempdir().expect("ledger directory");
         let path = directory.path().join("attempts.jsonl");
