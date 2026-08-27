@@ -683,7 +683,7 @@ pub enum PairAttemptDecision {
 }
 
 /// Controller-derived outcome of one complete experiment attempt.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ControlledAttemptDecision {
     /// Infrastructure/noise rules invalidated the attempt.
@@ -695,7 +695,8 @@ pub enum ControlledAttemptDecision {
 }
 
 /// One retained complete-attempt decision.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct ControlledAttemptRecord {
     /// One-based contiguous attempt ordinal.
     pub ordinal: u8,
@@ -794,6 +795,7 @@ pub struct ControlledMeasurementEvaluator {
     raw_pair_history: Vec<ControlledPairAttemptRecord>,
     exporter_pair_history: Vec<ControlledExporterPairRecord>,
     last_statistical_report: Option<SimultaneousGateReport>,
+    last_attempt_evidence_bytes: Option<Vec<u8>>,
 }
 
 impl ControlledMeasurementEvaluator {
@@ -813,7 +815,28 @@ impl ControlledMeasurementEvaluator {
             raw_pair_history: Vec::new(),
             exporter_pair_history: Vec::new(),
             last_statistical_report: None,
+            last_attempt_evidence_bytes: None,
         })
+    }
+
+    pub(crate) fn resume(history: Vec<ControlledAttemptRecord>) -> Result<Self, PluginStatsError> {
+        let mut evaluator = Self::new()?;
+        for (index, attempt) in history.iter().enumerate() {
+            let ordinal = u8::try_from(index + 1)
+                .map_err(|_| PluginStatsError::new("experiment attempt ordinal overflow"))?;
+            if attempt.ordinal != ordinal {
+                return Err(PluginStatsError::new(
+                    "persisted attempt ordinals are not contiguous",
+                ));
+            }
+            if index + 1 < history.len() && attempt.decision != ControlledAttemptDecision::Invalid {
+                return Err(PluginStatsError::new(
+                    "persisted attempt history extends a valid terminal result",
+                ));
+            }
+        }
+        evaluator.history = history;
+        Ok(evaluator)
     }
 
     /// Exact seeded pair schedule whose order every replacement must preserve.
@@ -841,6 +864,10 @@ impl ControlledMeasurementEvaluator {
         self.last_statistical_report.as_ref()
     }
 
+    pub(crate) fn last_attempt_evidence_bytes(&self) -> Option<&[u8]> {
+        self.last_attempt_evidence_bytes.as_deref()
+    }
+
     /// Start the next attempt after no attempt or an invalid attempt.
     pub fn begin_attempt(&mut self) -> Result<u8, PluginStatsError> {
         if self.active.is_some() {
@@ -865,6 +892,7 @@ impl ControlledMeasurementEvaluator {
         let ordinal = u8::try_from(self.history.len() + 1)
             .map_err(|_| PluginStatsError::new("experiment attempt ordinal overflow"))?;
         self.last_statistical_report = None;
+        self.last_attempt_evidence_bytes = None;
         self.active = Some(ActiveControlledAttempt {
             ordinal,
             replacements_by_scenario: BTreeMap::new(),
@@ -1555,8 +1583,14 @@ impl ControlledMeasurementEvaluator {
             "report_blake3": report_blake3,
             "schema_version": 1
         });
-        let evidence_tree_blake3 =
-            canonical_jcs_blake3(&evidence_tree, "controlled attempt evidence tree")?;
+        let evidence_tree_bytes =
+            serde_json_canonicalizer::to_vec(&evidence_tree).map_err(|error| {
+                PluginStatsError::new(format!(
+                    "cannot canonicalize controlled attempt evidence tree: {error}"
+                ))
+            })?;
+        let evidence_tree_blake3 = format!("blake3:{}", blake3::hash(&evidence_tree_bytes));
+        self.last_attempt_evidence_bytes = Some(evidence_tree_bytes);
         self.history.push(ControlledAttemptRecord {
             ordinal: active.ordinal,
             decision,

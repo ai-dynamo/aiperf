@@ -5,7 +5,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
-use std::fs::{self, File};
+use std::fs::{self, File, OpenOptions};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -224,11 +225,240 @@ struct RuntimeReportContext<'a> {
     scenario_count: usize,
 }
 
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct AttemptLedgerEntryPreimageV1 {
+    schema_version: u8,
+    experiment_identity_blake3: String,
+    previous_entry_blake3: Option<String>,
+    attempt: ControlledAttemptRecord,
+    evidence_tree_bytes: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct AttemptLedgerEntryV1 {
+    schema_version: u8,
+    experiment_identity_blake3: String,
+    previous_entry_blake3: Option<String>,
+    attempt: ControlledAttemptRecord,
+    evidence_tree_bytes: Vec<u8>,
+    entry_blake3: String,
+}
+
+struct AttemptLedger {
+    file: File,
+    experiment_identity_blake3: String,
+    entries: Vec<AttemptLedgerEntryV1>,
+}
+
+impl AttemptLedger {
+    fn acquire(
+        path: &Path,
+        experiment_identity_blake3: &str,
+    ) -> Result<Self, ControlledRuntimeError> {
+        #[cfg(unix)]
+        use std::os::unix::fs::OpenOptionsExt as _;
+        #[cfg(unix)]
+        use std::os::unix::io::AsRawFd as _;
+
+        let mut options = OpenOptions::new();
+        options.create(true).read(true).append(true);
+        #[cfg(unix)]
+        options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
+        let mut file = options.open(path).map_err(|error| {
+            ControlledRuntimeError::new(format!("cannot open attempt ledger: {error}"))
+        })?;
+        #[cfg(unix)]
+        if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) } != 0 {
+            return Err(ControlledRuntimeError::new(format!(
+                "cannot lock attempt ledger: {}",
+                std::io::Error::last_os_error()
+            )));
+        }
+        #[cfg(not(unix))]
+        return Err(ControlledRuntimeError::new(
+            "persistent attempt ledger locking is unavailable on this platform",
+        ));
+
+        file.seek(SeekFrom::Start(0)).map_err(|error| {
+            ControlledRuntimeError::new(format!("cannot rewind attempt ledger: {error}"))
+        })?;
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes).map_err(|error| {
+            ControlledRuntimeError::new(format!("cannot read attempt ledger: {error}"))
+        })?;
+        let mut entries = Vec::new();
+        let mut start = 0;
+        for end in bytes
+            .iter()
+            .enumerate()
+            .filter_map(|(index, byte)| (*byte == b'\n').then_some(index + 1))
+        {
+            let line = &bytes[start..end];
+            if line == b"\n" {
+                return Err(ControlledRuntimeError::new(
+                    "attempt ledger contains an empty line",
+                ));
+            }
+            let entry: AttemptLedgerEntryV1 = serde_json::from_slice(line).map_err(|error| {
+                ControlledRuntimeError::new(format!("attempt ledger entry is invalid: {error}"))
+            })?;
+            let mut canonical = serde_json_canonicalizer::to_vec(&entry).map_err(|error| {
+                ControlledRuntimeError::new(format!(
+                    "cannot canonicalize attempt ledger entry: {error}"
+                ))
+            })?;
+            canonical.push(b'\n');
+            if canonical != line {
+                return Err(ControlledRuntimeError::new(
+                    "attempt ledger entry is not exact canonical JCS plus newline",
+                ));
+            }
+            Self::validate_entry(&entry, experiment_identity_blake3, entries.last())?;
+            entries.push(entry);
+            start = end;
+        }
+        if start != bytes.len() {
+            return Err(ControlledRuntimeError::new(
+                "attempt ledger has an unterminated final entry",
+            ));
+        }
+        Ok(Self {
+            file,
+            experiment_identity_blake3: experiment_identity_blake3.to_owned(),
+            entries,
+        })
+    }
+
+    fn validate_entry(
+        entry: &AttemptLedgerEntryV1,
+        experiment_identity_blake3: &str,
+        previous: Option<&AttemptLedgerEntryV1>,
+    ) -> Result<(), ControlledRuntimeError> {
+        let expected_ordinal =
+            u8::try_from(previous.map_or(1, |entry| usize::from(entry.attempt.ordinal) + 1))
+                .map_err(|_| ControlledRuntimeError::new("attempt ledger ordinal overflow"))?;
+        let expected_previous = previous.map(|entry| entry.entry_blake3.as_str());
+        let preimage = AttemptLedgerEntryPreimageV1 {
+            schema_version: entry.schema_version,
+            experiment_identity_blake3: entry.experiment_identity_blake3.clone(),
+            previous_entry_blake3: entry.previous_entry_blake3.clone(),
+            attempt: entry.attempt.clone(),
+            evidence_tree_bytes: entry.evidence_tree_bytes.clone(),
+        };
+        let expected_entry_blake3 = canonical_digest(&preimage, "attempt ledger preimage")?;
+        if entry.schema_version != 1
+            || entry.experiment_identity_blake3 != experiment_identity_blake3
+            || entry.previous_entry_blake3.as_deref() != expected_previous
+            || entry.attempt.ordinal != expected_ordinal
+            || entry.attempt.evidence_tree_blake3 != digest(&entry.evidence_tree_bytes)
+            || entry.entry_blake3 != expected_entry_blake3
+            || previous.is_some_and(|previous| {
+                previous.attempt.decision != ControlledAttemptDecision::Invalid
+            })
+        {
+            return Err(ControlledRuntimeError::new(
+                "attempt ledger hash chain or terminal authority is invalid",
+            ));
+        }
+        Ok(())
+    }
+
+    fn history(&self) -> Vec<ControlledAttemptRecord> {
+        self.entries
+            .iter()
+            .map(|entry| entry.attempt.clone())
+            .collect()
+    }
+
+    fn next_attempt_ordinal(&self) -> Result<u8, ControlledRuntimeError> {
+        if self
+            .entries
+            .last()
+            .is_some_and(|entry| entry.attempt.decision != ControlledAttemptDecision::Invalid)
+        {
+            return Err(ControlledRuntimeError::new(
+                "the first valid experiment attempt is authoritative",
+            ));
+        }
+        if self.entries.len() >= 3 {
+            return Err(ControlledRuntimeError::new(
+                "three invalid attempts block the experiment",
+            ));
+        }
+        u8::try_from(self.entries.len() + 1)
+            .map_err(|_| ControlledRuntimeError::new("attempt ledger ordinal overflow"))
+    }
+
+    fn append_attempt(
+        &mut self,
+        attempt: ControlledAttemptRecord,
+        evidence_tree_bytes: &[u8],
+    ) -> Result<AttemptLedgerEntryV1, ControlledRuntimeError> {
+        if attempt.ordinal != self.next_attempt_ordinal()? {
+            return Err(ControlledRuntimeError::new(
+                "attempt ledger append ordinal is not next",
+            ));
+        }
+        if attempt.evidence_tree_blake3 != digest(evidence_tree_bytes) {
+            return Err(ControlledRuntimeError::new(
+                "attempt ledger evidence bytes do not match their digest",
+            ));
+        }
+        let preimage = AttemptLedgerEntryPreimageV1 {
+            schema_version: 1,
+            experiment_identity_blake3: self.experiment_identity_blake3.clone(),
+            previous_entry_blake3: self.entries.last().map(|entry| entry.entry_blake3.clone()),
+            attempt,
+            evidence_tree_bytes: evidence_tree_bytes.to_vec(),
+        };
+        let entry_blake3 = canonical_digest(&preimage, "attempt ledger preimage")?;
+        let entry = AttemptLedgerEntryV1 {
+            schema_version: preimage.schema_version,
+            experiment_identity_blake3: preimage.experiment_identity_blake3,
+            previous_entry_blake3: preimage.previous_entry_blake3,
+            attempt: preimage.attempt,
+            evidence_tree_bytes: preimage.evidence_tree_bytes,
+            entry_blake3,
+        };
+        let mut line = serde_json_canonicalizer::to_vec(&entry).map_err(|error| {
+            ControlledRuntimeError::new(format!(
+                "cannot canonicalize attempt ledger append: {error}"
+            ))
+        })?;
+        line.push(b'\n');
+        self.file.write_all(&line).map_err(|error| {
+            ControlledRuntimeError::new(format!("cannot append attempt ledger: {error}"))
+        })?;
+        self.file.sync_all().map_err(|error| {
+            ControlledRuntimeError::new(format!("cannot sync attempt ledger: {error}"))
+        })?;
+        self.entries.push(entry.clone());
+        Ok(entry)
+    }
+}
+
 /// Execute both build-bound members across the complete checked-in matrix.
 pub fn run_controlled_runtime_v1(
-    build_report: &BuildPairReportV1,
+    _build_report: &BuildPairReportV1,
 ) -> Result<ControlledRuntimeReportV1, ControlledRuntimeError> {
-    run_controlled_runtime_internal(build_report, None, CALIBRATION_POLICY_BYTES)
+    Err(ControlledRuntimeError::new(
+        "authoritative runtime execution requires a persistent attempt ledger",
+    ))
+}
+
+/// Execute both build-bound members under one persistent attempt ledger.
+pub fn run_controlled_runtime_with_ledger_v1(
+    build_report: &BuildPairReportV1,
+    attempt_ledger_path: &Path,
+) -> Result<ControlledRuntimeReportV1, ControlledRuntimeError> {
+    run_controlled_runtime_internal(
+        build_report,
+        None,
+        CALIBRATION_POLICY_BYTES,
+        attempt_ledger_path,
+    )
 }
 
 /// Refuse an exporter implementation that is unrelated to the acquired artifacts.
@@ -251,6 +481,7 @@ fn run_controlled_runtime_internal(
     build_report: &BuildPairReportV1,
     mut exporter_factory: Option<&mut dyn ControlledExporterWorkloadFactory>,
     policy_bytes: &[u8],
+    attempt_ledger_path: &Path,
 ) -> Result<ControlledRuntimeReportV1, ControlledRuntimeError> {
     let artifact_paths = validate_authoritative_build_report_v1(build_report).map_err(|error| {
         ControlledRuntimeError::new(format!("invalid paired build authority: {error}"))
@@ -354,6 +585,9 @@ fn run_controlled_runtime_internal(
     let experiment_identity_bytes = observed
         .canonical_identity_bytes()
         .map_err(|error| ControlledRuntimeError::new(error.to_string()))?;
+    let mut attempt_ledger =
+        AttemptLedger::acquire(attempt_ledger_path, &experiment_identity_blake3)?;
+    let expected_attempt_ordinal = attempt_ledger.next_attempt_ordinal()?;
     let exporter_artifacts = if exporter_factory.is_some() {
         Some([
             File::open(&artifact_paths[0]).map_err(|error| {
@@ -391,11 +625,16 @@ fn run_controlled_runtime_internal(
         scenario_count: cases.len(),
     };
 
-    let mut evaluator = ControlledMeasurementEvaluator::new()
+    let mut evaluator = ControlledMeasurementEvaluator::resume(attempt_ledger.history())
         .map_err(|error| ControlledRuntimeError::new(error.to_string()))?;
-    evaluator
+    let attempt_ordinal = evaluator
         .begin_attempt()
         .map_err(|error| ControlledRuntimeError::new(error.to_string()))?;
+    if attempt_ordinal != expected_attempt_ordinal {
+        return Err(ControlledRuntimeError::new(
+            "persistent ledger and evaluator attempt ordinals differ",
+        ));
+    }
     let schedule = evaluator.pair_schedule().to_vec();
     let mut executed_member_count = 0_usize;
     let mut terminal_output_blake3 = Vec::new();
@@ -436,6 +675,7 @@ fn run_controlled_runtime_internal(
                             .map_err(|error| ControlledRuntimeError::new(error.to_string()))?;
                         return runtime_report(
                             &evaluator,
+                            &mut attempt_ledger,
                             &report_context,
                             executed_member_count,
                             terminal_output_blake3,
@@ -464,6 +704,7 @@ fn run_controlled_runtime_internal(
                             .map_err(|error| ControlledRuntimeError::new(error.to_string()))?;
                         return runtime_report(
                             &evaluator,
+                            &mut attempt_ledger,
                             &report_context,
                             executed_member_count,
                             terminal_output_blake3,
@@ -507,6 +748,7 @@ fn run_controlled_runtime_internal(
                                 .map_err(|error| ControlledRuntimeError::new(error.to_string()))?;
                             return runtime_report(
                                 &evaluator,
+                                &mut attempt_ledger,
                                 &report_context,
                                 executed_member_count,
                                 terminal_output_blake3,
@@ -571,6 +813,7 @@ fn run_controlled_runtime_internal(
             if decision != PairAttemptDecision::RetainPair {
                 return runtime_report(
                     &evaluator,
+                    &mut attempt_ledger,
                     &report_context,
                     executed_member_count,
                     terminal_output_blake3,
@@ -596,6 +839,7 @@ fn run_controlled_runtime_internal(
         .map_err(|error| ControlledRuntimeError::new(error.to_string()))?;
     runtime_report(
         &evaluator,
+        &mut attempt_ledger,
         &report_context,
         executed_member_count,
         terminal_output_blake3,
@@ -793,6 +1037,7 @@ fn decode_member_output(
 
 fn runtime_report(
     evaluator: &ControlledMeasurementEvaluator,
+    attempt_ledger: &mut AttemptLedger,
     context: &RuntimeReportContext<'_>,
     executed_member_count: usize,
     terminal_output_blake3: Vec<String>,
@@ -806,6 +1051,15 @@ fn runtime_report(
                 "controlled runtime report requires one terminal attempt ledger entry",
             )
         })?;
+    let terminal_attempt = evaluator.history().last().cloned().ok_or_else(|| {
+        ControlledRuntimeError::new(
+            "controlled runtime report requires one terminal attempt ledger entry",
+        )
+    })?;
+    let attempt_evidence_bytes = evaluator.last_attempt_evidence_bytes().ok_or_else(|| {
+        ControlledRuntimeError::new("controlled runtime report lacks exact attempt evidence bytes")
+    })?;
+    attempt_ledger.append_attempt(terminal_attempt, attempt_evidence_bytes)?;
     let statistical_report = evaluator.last_statistical_report().cloned();
     let attempt_history = evaluator.history().to_vec();
     let exporter_pair_history = evaluator.exporter_pair_history().to_vec();
@@ -952,7 +1206,10 @@ mod tests {
         for ordinal in 1..=3 {
             let evidence = format!("{{\"attempt\":{ordinal}}}").into_bytes();
             let mut ledger = AttemptLedger::acquire(&path, identity).expect("ledger reopens");
-            assert_eq!(ledger.next_attempt_ordinal().expect("attempt is allowed"), ordinal);
+            assert_eq!(
+                ledger.next_attempt_ordinal().expect("attempt is allowed"),
+                ordinal
+            );
             let entry = ledger
                 .append_attempt(invalid_attempt(ordinal, &evidence), &evidence)
                 .expect("invalid attempt appends");

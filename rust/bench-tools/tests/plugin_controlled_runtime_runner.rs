@@ -16,8 +16,7 @@ use aiperf_bench_tools::exporter_runner::{
 use aiperf_bench_tools::plugin_stats::{ControlledAttemptDecision, ExporterMember, Variant};
 use aiperf_bench_tools::runtime_runner::{
     ControlledExporterWorkloadFactory, ExporterWorkloadAcquisitionError, ExporterWorkloadRequest,
-    run_controlled_runtime_v1, run_controlled_runtime_with_exporters_v1,
-    run_controlled_runtime_with_ledger_v1,
+    run_controlled_runtime_with_exporters_v1, run_controlled_runtime_with_ledger_v1,
 };
 
 const COMMIT: &str = "0123456789abcdef0123456789abcdef01234567";
@@ -260,8 +259,11 @@ fn raw_member_stdout_cannot_authorize_an_exporter_parity_pass() {
     let fixture = Fixture::new();
     let build_report = fixture.build_report();
 
-    let report = run_controlled_runtime_v1(&build_report)
-        .expect("controlled runtime matrix executes and evaluates");
+    let report = run_controlled_runtime_with_ledger_v1(
+        &build_report,
+        &fixture._directory.path().join("raw-member-attempts.jsonl"),
+    )
+    .expect("controlled runtime matrix executes and evaluates");
 
     assert_eq!(report.decision, ControlledAttemptDecision::ValidFailure);
     assert_eq!(report.scenario_count, 12);
@@ -383,8 +385,11 @@ fn terminal_failure_is_retained_once_with_its_exact_empty_output_digest() {
     fixture.static_artifact = failing_artifact;
     let build_report = fixture.build_report();
 
-    let report = run_controlled_runtime_v1(&build_report)
-        .expect("terminal product failure is retained as an authoritative outcome");
+    let report = run_controlled_runtime_with_ledger_v1(
+        &build_report,
+        &fixture._directory.path().join("terminal-attempts.jsonl"),
+    )
+    .expect("terminal product failure is retained as an authoritative outcome");
 
     assert_eq!(report.decision, ControlledAttemptDecision::ValidFailure);
     assert_eq!(report.attempt_history.len(), 1);
