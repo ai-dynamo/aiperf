@@ -104,6 +104,7 @@ from aiperf.plugin.enums import PluginType, ServiceRunType
 from aiperf.records.payload_retention import resolve_strip_record_payload_bytes
 from aiperf.workers.clock_offset_tracker import ClockOffsetTracker
 from aiperf.workers.inference_client import InferenceClient
+from aiperf.workers.return_channel_probe import probe_return_channel
 from aiperf.workers.session_manager import UserSession, UserSessionManager
 
 if TYPE_CHECKING:
@@ -639,6 +640,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             self.run.cfg.runtime.service_run_type == ServiceRunType.KUBERNETES
         )
         self._tracks_clock_offset = self._is_kubernetes
+        self._clock_probe_lock = asyncio.Lock()
         self._startup_state: WorkerStartupState | None = None
         # Kubernetes: the pod index this container runs in. Dataset-downloaded
         # notifications from other pods name files this container cannot see.
@@ -992,6 +994,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         """Send the dispatchable transition exactly once, holding the ready lock."""
         if self._worker_ready_event.is_set():
             return
+        await self._await_return_channel_ready()
         await self.credit_dealer_client.send(
             WorkerDispatchable(worker_id=self.service_id)
         )
@@ -1000,6 +1003,35 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         retry_task = self._dataset_state_retry_task
         if retry_task is not None and retry_task is not asyncio.current_task():
             retry_task.cancel()
+
+    async def _await_return_channel_ready(self) -> None:
+        """Gate dispatchability on the credit-RETURN channel being live.
+
+        Credits are dispatched on the DEALER and returned on a separate PUSH
+        fan-in. Only the DEALER is exercised before this point (WorkerConnected
+        rides it, and the clock probe is both fire-and-forget and Kubernetes
+        only), so without this the worker can enter the routing pool with a dead
+        PUSH side and stall every credit routed to it until a run-level timeout.
+
+        Degrades open on budget expiry rather than refusing to become
+        dispatchable: the PUSH client parks unsendable returns in an unbounded
+        backlog and drains them on reconnect, so a late-connecting return
+        channel costs latency, whereas never announcing costs the whole run.
+        """
+        if await probe_return_channel(
+            self.credit_return_push_client,
+            worker_id=self.service_id,
+            budget=Environment.WORKER.RETURN_PROBE_BUDGET,
+            retry_delay=Environment.WORKER.RETURN_PROBE_RETRY_DELAY,
+        ):
+            return
+        self.warning(
+            f"Credit-return channel still has no peer after "
+            f"{Environment.WORKER.RETURN_PROBE_BUDGET}s; announcing "
+            "dispatchability anyway. Returns are buffered and drained on "
+            "reconnect, so credits routed before then complete late rather "
+            "than being lost."
+        )
 
     async def _measure_baseline_rtt(self) -> None:
         """Probe credit-channel RTT under a hard total time budget.
@@ -1017,26 +1049,54 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         starts; a single long probe would burn the budget before it is. On
         expiry the worker proceeds with whatever RTTs already landed (possibly
         none), which costs a diagnostic, not correctness.
+
+        Serialized against itself: the periodic re-measurement can fire while a
+        startup probe is still burning its budget, and two concurrent rounds
+        would fight over the tracker's single in-flight pong slot and cross their
+        sequence numbers.
         """
         budget = Environment.WORKER.CLOCK_PROBE_BUDGET
         probe_timeout = Environment.WORKER.CLOCK_PROBE_TIMEOUT
-        try:
-            await asyncio.wait_for(
-                self.clock_offset_tracker.measure_baseline_rtt(
-                    send_ping=self.credit_dealer_client.send,
-                    probe_count=Environment.WORKER.CLOCK_PROBE_COUNT,
-                    timeout=probe_timeout,
-                    max_attempts=max(1, int(budget / probe_timeout)),
-                ),
-                timeout=budget,
-            )
-        except TimeoutError:
-            self.warning(
-                f"Clock-offset RTT probe exceeded its "
-                f"{Environment.WORKER.CLOCK_PROBE_BUDGET}s budget; announcing "
-                "readiness without a baseline RTT (offset tracking still runs "
-                "off credit receipts)"
-            )
+        async with self._clock_probe_lock:
+            try:
+                await asyncio.wait_for(
+                    self.clock_offset_tracker.measure_baseline_rtt(
+                        send_ping=self.credit_dealer_client.send,
+                        probe_count=Environment.WORKER.CLOCK_PROBE_COUNT,
+                        timeout=probe_timeout,
+                        max_attempts=max(1, int(budget / probe_timeout)),
+                    ),
+                    timeout=budget,
+                )
+            except TimeoutError:
+                self.warning(
+                    f"Clock-offset RTT probe exceeded its "
+                    f"{Environment.WORKER.CLOCK_PROBE_BUDGET}s budget; announcing "
+                    "readiness without a baseline RTT (offset tracking still runs "
+                    "off credit receipts)"
+                )
+
+    @background_task(
+        immediate=False,
+        interval=Environment.WORKER.CLOCK_REMEASURE_INTERVAL,
+    )
+    async def _clock_remeasure_task(self) -> None:
+        """Re-probe credit-channel RTT so the transit estimate does not go stale.
+
+        The offset itself re-measures on every credit receipt, but the one-way
+        transit term subtracted from it comes from a probe round that, without
+        this task, ran exactly once at startup. A controller restart or a route
+        change then leaves every exported timestamp biased by an unknown delta
+        for the remainder of the run. Re-probing on a cadence bounds that to one
+        interval.
+
+        Skipped outside Kubernetes, where both clocks are the same clock and no
+        correction is meaningful. Failures are inert: the previous baseline
+        stays in place.
+        """
+        if not self._tracks_clock_offset:
+            return
+        await self._measure_baseline_rtt()
 
     async def _publish_startup_state(self, state: WorkerStartupState) -> None:
         """Publish a worker startup-state transition, skipping repeats."""
@@ -1821,10 +1881,19 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         defer eviction: children arrive on the orchestrator's intercept
         path AFTER this credit return runs, so ``evict_if_unpinned``
         cannot find any pin to honor here. Setting ``pending_fork_eviction``
-        signals ``release_fork_child`` to auto-evict the moment the last
-        child joins.
+        hands the collection decision to the session manager, which ends the
+        deferral once every declared FORK child has joined (whichever of
+        ``release_fork_child`` / ``evict_if_unpinned`` observes that last).
 
-        Non-FORK and non-parent sessions evict immediately.
+        This is worker-local bookkeeping only. The timing manager's
+        ``StickyCreditRouter`` runs in a different process and keeps its own
+        refcount; nothing here races it.
+
+        Every path goes through ``evict_if_unpinned`` so an in-flight FORK
+        pin is honored even on a session whose ``is_fork_parent`` stamp is
+        False (a parent created from a conversation whose ``branches`` were
+        already stripped still gets pinned by arriving children, and a hard
+        ``evict`` would drop the history out from under them).
         """
         if (
             credit.parent_correlation_id is not None
@@ -1832,12 +1901,9 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         ):
             self.session_manager.release_fork_child(credit.parent_correlation_id)
         cur_session = self.session_manager.get(x_correlation_id)
-        if cur_session is not None and cur_session.is_fork_parent:
-            if credit.has_forks:
-                cur_session.pending_fork_eviction = True
-            self.session_manager.evict_if_unpinned(x_correlation_id)
-        else:
-            self.session_manager.evict(x_correlation_id)
+        if cur_session is not None and cur_session.is_fork_parent and credit.has_forks:
+            cur_session.pending_fork_eviction = True
+        self.session_manager.evict_if_unpinned(x_correlation_id)
 
     def _maybe_warn_cache_bust_silent_drop(
         self,
@@ -2117,11 +2183,20 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         # when one was measured, and degrades to the raw offset when it was not.
         #
         # Gated on the same flag that gates sampling in _schedule_credit_drop_task:
-        # with no samples the tracker is never calibrated, so outside Kubernetes
-        # this only ever wrote the field's own default of None. Skipping it keeps
-        # local records byte-identical while dropping a property call and an
-        # attribute store from the per-record egress path.
-        if self._tracks_clock_offset and self.clock_offset_tracker.is_calibrated:
+        # with no samples the correction is None, so outside Kubernetes this only
+        # ever wrote the field's own default of None. Skipping it keeps local
+        # records byte-identical while dropping a property call and an attribute
+        # store from the per-record egress path.
+        #
+        # Deliberately NOT gated on ``is_calibrated``. Every record here descends
+        # from a credit, and every credit receipt is a sample, so a correction
+        # always exists by this point -- but the calibration threshold is several
+        # samples, so gating on it stamped None onto the first few records of each
+        # worker and a correction onto the rest. That mixes corrected and
+        # uncorrected timestamps inside a single exported artifact, which is worse
+        # than a slightly noisier early estimate: consumers cannot tell the two
+        # apart, and the mixed rows are exactly the ones at the start of the run.
+        if self._tracks_clock_offset:
             record.clock_offset_ns = self.clock_offset_tracker.correction_ns
 
         msg = InferenceResultsMessage(

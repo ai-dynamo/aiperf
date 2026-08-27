@@ -609,21 +609,37 @@ def _healthy_pod() -> dict[str, Any]:
     return pod
 
 
+def _install_pod_list(
+    monkeypatch: pytest.MonkeyPatch, pods: list[dict[str, Any]]
+) -> MagicMock:
+    """Serve one JobSet-wide Pod list to the event-driven startup reconciler.
+
+    ``handle_pod_recovery_event`` deliberately re-lists every JobSet Pod instead
+    of trusting the single watched body, so the startup-issue fingerprint stays
+    pinned to the lexicographically-first blocked Pod and ``firstObservedTime``
+    does not reset each time a different Pod fires an event.
+    """
+    core = MagicMock(name="CoreV1Api")
+    core.list_namespaced_pod = AsyncMock(return_value=SimpleNamespace(items=pods))
+    factory = MagicMock(return_value=core)
+    monkeypatch.setattr(monitor.client, "CoreV1Api", factory)
+    return factory
+
+
 @pytest.mark.asyncio
-async def test_pod_startup_event_persists_focused_parent_diagnosis_without_listing(
+async def test_pod_startup_event_persists_focused_parent_diagnosis_from_pod_list(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A watched startup blocker is classified from that Pod body directly."""
+    """A watched startup blocker is classified from the JobSet-wide Pod list."""
     status_patch = _install_status_api(monkeypatch)
     parent = _aiperfjob_body(heartbeat=_timestamp(seconds_ago=1))
     pod = _startup_pod()
-    list_pods = MagicMock(side_effect=AssertionError("pod list invoked"))
+    list_pods = _install_pod_list(monkeypatch, [pod])
     monkeypatch.setattr(
         pod_restarts,
         "_lookup_aiperfjob_body",
         AsyncMock(return_value=parent),
     )
-    monkeypatch.setattr(monitor.client, "CoreV1Api", list_pods)
 
     await monitor.handle_pod_recovery_event(
         body=pod,
@@ -646,7 +662,7 @@ async def test_pod_startup_event_persists_focused_parent_diagnosis_without_listi
         if condition["type"] == "WorkersReady"
     )
     assert workers_ready["reason"] == "PodStartupBlocked"
-    list_pods.assert_not_called()
+    list_pods.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -719,7 +735,7 @@ async def test_aged_pod_startup_event_defers_delete_to_claiming_deadline(
 
 
 @pytest.mark.asyncio
-async def test_pod_recovery_event_clears_same_pod_startup_diagnosis_without_listing(
+async def test_pod_recovery_event_clears_same_pod_startup_diagnosis_from_pod_list(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A healthy update for the diagnosed Pod clears the durable blocker."""
@@ -739,13 +755,12 @@ async def test_pod_recovery_event_clears_same_pod_startup_diagnosis_without_list
         }
     ]
     pod = _healthy_pod()
-    list_pods = MagicMock(side_effect=AssertionError("pod list invoked"))
+    list_pods = _install_pod_list(monkeypatch, [pod])
     monkeypatch.setattr(
         pod_restarts,
         "_lookup_aiperfjob_body",
         AsyncMock(return_value=parent),
     )
-    monkeypatch.setattr(monitor.client, "CoreV1Api", list_pods)
 
     await monitor.handle_pod_recovery_event(
         body=pod,
@@ -767,7 +782,7 @@ async def test_pod_recovery_event_clears_same_pod_startup_diagnosis_without_list
         if condition["type"] == "WorkersReady"
     )
     assert workers_ready["reason"] == "WorkersStarting"
-    list_pods.assert_not_called()
+    list_pods.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -1156,6 +1171,7 @@ async def test_healthy_pod_clear_retries_after_controller_heartbeat_conflict(
         AsyncMock(side_effect=lambda *_: deepcopy(parent)),
     )
     pod = _healthy_pod()
+    _install_pod_list(monkeypatch, [pod])
 
     with pytest.raises(kopf.TemporaryError):
         await monitor.handle_pod_recovery_event(

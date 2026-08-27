@@ -13,9 +13,24 @@ from tests.kubernetes.gpu.conftest import _OPTIONS, _release_gpu, _resolve_setti
 from tests.kubernetes.helpers.benchmark import BenchmarkDeployer
 
 
-def _config() -> SimpleNamespace:
+class _FakeConfig:
+    """Pytest-config-shaped stub exposing both ``option`` and ``getoption``.
+
+    ``_resolve_settings`` reads ``--gpu-*`` flags off ``config.option`` but
+    reads xdist's ``numprocesses`` through the ``config.getoption`` API, so the
+    stub must honour both access paths.
+    """
+
+    def __init__(self, **options: object) -> None:
+        self.option = SimpleNamespace(**options)
+
+    def getoption(self, name: str, default: object = None) -> object:
+        return getattr(self.option, name, default)
+
+
+def _config(**options: object) -> _FakeConfig:
     """Build a pytest-config-shaped object with no explicit CLI options."""
-    return SimpleNamespace(option=SimpleNamespace())
+    return _FakeConfig(**options)
 
 
 def _set_safe_external_environment(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -55,6 +70,16 @@ def test_resolve_settings_external_cluster_accepts_explicit_user_scope(
     assert settings.vllm_namespace == "acasagrande-gpu-e2e"
     assert settings.dynamo_namespace == "acasagrande-gpu-e2e"
     assert settings.external_existing_operator is True
+
+
+def test_resolve_settings_external_cluster_rejects_parallel_xdist_workers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Parallel workers contend for the same GPUs, so -n > 1 must be refused."""
+    _set_safe_external_environment(monkeypatch)
+
+    with pytest.raises(pytest.UsageError, match="must be serial"):
+        _resolve_settings(_config(numprocesses=2))
 
 
 @pytest.mark.asyncio

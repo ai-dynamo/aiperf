@@ -8,6 +8,7 @@ Kubernetes mode, where the controller needs per-worker startup visibility and
 worker clocks are not the controller's clock.
 """
 
+import time
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -102,9 +103,24 @@ class TestClockOffsetHooks:
         self, mock_worker: Worker
     ) -> None:
         mock_worker._tracks_clock_offset = True
-        mock_worker._schedule_credit_drop_task(_credit(issued_at_ns=1))
+        mock_worker._schedule_credit_drop_task(_credit(issued_at_ns=time.time_ns()))
         assert mock_worker.clock_offset_tracker.sample_count == 1
         assert mock_worker.clock_offset_tracker.offset_ns is not None
+
+    @pytest.mark.asyncio
+    async def test_credit_receipt_rejects_an_implausible_issue_timestamp(
+        self, mock_worker: Worker
+    ) -> None:
+        """A credit stamped decades from the worker's clock is corrupt, not skew.
+
+        Admitting it would hand a minimum estimator an offset the size of the
+        Unix epoch, which every record for the rest of the window would carry.
+        """
+        mock_worker._tracks_clock_offset = True
+        mock_worker._schedule_credit_drop_task(_credit(issued_at_ns=1))
+        assert mock_worker.clock_offset_tracker.sample_count == 0
+        assert mock_worker.clock_offset_tracker.rejected_sample_count == 1
+        assert mock_worker.clock_offset_tracker.offset_ns is None
 
     @pytest.mark.asyncio
     async def test_credit_receipt_skips_the_offset_in_local_mode(
@@ -113,7 +129,7 @@ class TestClockOffsetHooks:
         """Nothing reads the offset outside Kubernetes, so the credit hot path
         must not pay for the sample."""
         assert mock_worker._tracks_clock_offset is False
-        mock_worker._schedule_credit_drop_task(_credit(issued_at_ns=1))
+        mock_worker._schedule_credit_drop_task(_credit(issued_at_ns=time.time_ns()))
         assert mock_worker.clock_offset_tracker.sample_count == 0
         assert mock_worker.clock_offset_tracker.offset_ns is None
 

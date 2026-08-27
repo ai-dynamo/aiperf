@@ -22,6 +22,7 @@ from typing import Self
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import aiohttp
+import orjson
 import pytest
 from pytest import param
 
@@ -74,6 +75,7 @@ class _Response:
         self._json_data = json_data
         self.headers = headers or {}
         self._content_length = content_length
+        self.read_calls = 0
         self.json_loads: object | None = None
         self.content = _StreamContent([body])
 
@@ -82,6 +84,9 @@ class _Response:
         return self._content_length
 
     async def read(self) -> bytes:
+        self.read_calls += 1
+        if self._json_data is not None:
+            return orjson.dumps(self._json_data)
         return self._body
 
     async def json(self, *, loads: object | None = None) -> dict[str, object]:

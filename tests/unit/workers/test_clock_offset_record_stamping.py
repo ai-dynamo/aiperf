@@ -183,6 +183,7 @@ async def test_probe_budget_bounds_a_router_that_never_echoes(
     )
     worker.credit_dealer_client = AsyncMock()
     worker.warning = MagicMock()
+    worker._clock_probe_lock = asyncio.Lock()
 
     # Unbounded, this never returns; the budget is what makes it complete.
     await Worker._measure_baseline_rtt(worker)
@@ -198,17 +199,20 @@ async def test_probe_budget_bounds_a_router_that_never_echoes(
 
 
 @pytest.mark.asyncio
-async def test_kubernetes_worker_defers_record_correction_until_clock_calibrates() -> (
-    None
-):
-    """One-way credit samples must not shift Kubernetes records before calibration."""
+async def test_kubernetes_worker_stamps_records_before_the_tracker_calibrates() -> None:
+    """Every Kubernetes record carries a correction, including the early ones.
+
+    Regression: gating the stamp on ``is_calibrated`` left the first few records
+    of each worker uncorrected while the rest were corrected, so one exported
+    artifact mixed two clock frames with nothing distinguishing the rows.
+    """
     from aiperf.workers.worker import Worker
 
     worker = MagicMock(spec=Worker)
     worker.clock_offset_tracker = ClockOffsetTracker()
     worker._tracks_clock_offset = True
-    for _ in range(4):
-        worker.clock_offset_tracker.observe(issued_at_ns=1_000, received_at_ns=3_500)
+    worker.clock_offset_tracker.observe(issued_at_ns=1_000, received_at_ns=3_500)
+    assert not worker.clock_offset_tracker.is_calibrated
     worker.task_stats = MagicMock()
     worker.execute_async = MagicMock()
     worker.inference_results_push_client = AsyncMock()
@@ -217,7 +221,7 @@ async def test_kubernetes_worker_defers_record_correction_until_clock_calibrates
     record = RequestRecord()
     await Worker._send_inference_result_message(worker, record)
 
-    assert record.clock_offset_ns is None
+    assert record.clock_offset_ns == 2_500
 
 
 @pytest.mark.asyncio
@@ -316,3 +320,70 @@ async def test_credit_to_start_latency_keeps_the_delivery_hop_it_measures() -> N
         clock_offset_ns=worker.clock_offset_tracker.offset_ns,
     )
     assert raw.controller_timestamp_ns - issued_at_ns == true_wait_ns - transit_ns
+
+
+def test_clock_remeasure_is_registered_as_a_periodic_background_task() -> None:
+    """Without a cadence the transit estimate is frozen at its startup value."""
+    from aiperf.common.environment import Environment
+    from aiperf.workers.worker import Worker
+
+    params = Worker._clock_remeasure_task.__aiperf_hook_params__
+
+    assert params.interval == Environment.WORKER.CLOCK_REMEASURE_INTERVAL
+    assert params.immediate is False
+
+
+@pytest.mark.asyncio
+async def test_clock_remeasure_task_reprobes_only_under_kubernetes() -> None:
+    """Local runs share one clock, so there is nothing to re-measure."""
+    from aiperf.workers.worker import Worker
+
+    worker = MagicMock(spec=Worker)
+    worker._measure_baseline_rtt = AsyncMock()
+
+    worker._tracks_clock_offset = False
+    await Worker._clock_remeasure_task(worker)
+    worker._measure_baseline_rtt.assert_not_awaited()
+
+    worker._tracks_clock_offset = True
+    await Worker._clock_remeasure_task(worker)
+    worker._measure_baseline_rtt.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_probe_rounds_are_serialized() -> None:
+    """A re-measurement firing during the startup probe must wait its turn.
+
+    The tracker holds one in-flight pong slot; two overlapping rounds cross
+    their sequence numbers and each drops the other's replies.
+    """
+    import asyncio
+
+    from aiperf.workers.worker import Worker
+
+    worker = MagicMock(spec=Worker)
+    worker._clock_probe_lock = asyncio.Lock()
+    worker.credit_dealer_client = AsyncMock()
+    worker.warning = MagicMock()
+    worker.clock_offset_tracker = MagicMock()
+    concurrent = 0
+    peak = 0
+
+    async def _slow_probe(**_: object) -> None:
+        nonlocal concurrent, peak
+        concurrent += 1
+        peak = max(peak, concurrent)
+        await asyncio.sleep(0)
+        concurrent -= 1
+
+    worker.clock_offset_tracker.measure_baseline_rtt = AsyncMock(
+        side_effect=_slow_probe
+    )
+
+    await asyncio.gather(
+        Worker._measure_baseline_rtt(worker),
+        Worker._measure_baseline_rtt(worker),
+    )
+
+    assert peak == 1
+    assert worker.clock_offset_tracker.measure_baseline_rtt.await_count == 2

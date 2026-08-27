@@ -40,6 +40,8 @@ async def _probe_once(url: str, timeout: float) -> EndpointHealthResult:
                         reachable=False,
                         error=f"DNS resolution failed for {check_url}: {e.os_error}",
                     )
+            except aiohttp.ClientError:
+                continue
             except (TimeoutError, OSError) as e:
                 return EndpointHealthResult(
                     reachable=False, error=f"Unexpected error: {e}"

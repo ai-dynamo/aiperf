@@ -136,6 +136,9 @@ def _prefix_findings(findings: list, prefix: str) -> list:
 
 @pytest.mark.k8s_audit
 @pytest.mark.asyncio
+@pytest.mark.timeout(
+    3600
+)  # sweep(1800) + 6 bare-pod runs(900 each) exceeds global 1800s
 @pytest.mark.parametrize("case", SWEEP_AUDIT_CASES, ids=lambda c: c.case_id)
 async def test_operator_vs_bare_pod_sweep(
     case: AuditCase,
