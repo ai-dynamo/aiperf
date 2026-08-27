@@ -4,6 +4,8 @@
 //! Native streaming dataset contracts and execution support.
 
 pub mod action;
+#[cfg(feature = "streaming-s3")]
+pub mod aws;
 pub mod blocking;
 pub mod budget;
 pub mod checkpoint;

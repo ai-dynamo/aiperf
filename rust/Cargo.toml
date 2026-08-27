@@ -118,6 +118,19 @@ petgraph = "0.6"
 arrow = { version = "58.3", default-features = false, features = ["ipc"] }
 aws-config = { version = "=1.8.14", default-features = false, features = ["behavior-version-latest", "rt-tokio", "rustls"] }
 aws-sdk-s3 = { version = "=1.123.0", default-features = false, features = ["behavior-version-latest", "default-https-client", "http-1x", "rt-tokio", "rustls"] }
+# Direct connector construction for the streaming S3 client. The SDK's default
+# HTTPS client installs `ProxyConfig::from_env()` at behavior version
+# v2025_08_07 and later, and the underlying hyper-util matcher has no loopback
+# exclusion — an ambient HTTP_PROXY would be applied to a local S3 gateway. To
+# keep the project rule that loopback traffic never traverses an ambient proxy,
+# AIPerf owns the proxy decision, and therefore must own the connector. The
+# version matches what `aws-sdk-s3 1.123.0` already resolves, so this adds no
+# new compilation unit.
+aws-smithy-http-client = { version = "=1.1.10", default-features = false, features = ["rustls-aws-lc"] }
+# `provider::future::ProvideCredentials` and `provider::error::CredentialsError`
+# are needed to implement the shared credential authority; `aws-sdk-s3`
+# re-exports the trait and `Credentials` but not those two modules.
+aws-credential-types = { version = "=1.2.12", default-features = false }
 parquet = { version = "58.3", default-features = false, features = ["arrow", "json", "snap", "zstd"] }
 rand = "0.9"
 ed25519-dalek = "2.2"
