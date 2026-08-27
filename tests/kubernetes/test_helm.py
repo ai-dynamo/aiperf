@@ -21,6 +21,7 @@ from dataclasses import replace
 
 import pytest
 
+from tests.kubernetes.conftest import K8sTestSettings
 from tests.kubernetes.helpers.deadline import (
     await_before_deadline,
     delete_and_observe_until_deadline,
@@ -724,12 +725,18 @@ class TestHelmScaling:
     async def test_high_concurrency_job(
         self,
         helm_deployed: HelmDeployer,
+        k8s_settings: K8sTestSettings,
     ) -> None:
         """Test operator handles high concurrency job."""
         config = AIPerfJobConfig(
             concurrency=10,
             request_count=20,
             warmup_request_count=2,
+            image=k8s_settings.aiperf_image,
+            image_pull_policy=k8s_settings.image_pull_policy,
+            image_pull_secrets=[k8s_settings.image_pull_secret]
+            if k8s_settings.image_pull_secret
+            else [],
         )
 
         result = await helm_deployed.run_job(config, timeout=180)
@@ -743,6 +750,7 @@ class TestHelmScaling:
     async def test_multiple_workers_job(
         self,
         helm_deployed: HelmDeployer,
+        k8s_settings: K8sTestSettings,
     ) -> None:
         """Test operator handles job requiring multiple workers."""
         config = AIPerfJobConfig(
@@ -750,6 +758,11 @@ class TestHelmScaling:
             request_count=40,
             warmup_request_count=5,
             connections_per_worker=10,
+            image=k8s_settings.aiperf_image,
+            image_pull_policy=k8s_settings.image_pull_policy,
+            image_pull_secrets=[k8s_settings.image_pull_secret]
+            if k8s_settings.image_pull_secret
+            else [],
         )
 
         result = await helm_deployed.run_job(config, timeout=600)

@@ -1965,6 +1965,10 @@ def small_helm_config(k8s_settings: K8sTestSettings) -> AIPerfJobConfig:
         request_count=10,
         warmup_request_count=2,
         image=k8s_settings.aiperf_image,
+        image_pull_policy=k8s_settings.image_pull_policy,
+        image_pull_secrets=[k8s_settings.image_pull_secret]
+        if k8s_settings.image_pull_secret
+        else [],
     )
 
 
@@ -1976,6 +1980,10 @@ def small_helm_config_module(k8s_settings: K8sTestSettings) -> AIPerfJobConfig:
         request_count=10,
         warmup_request_count=2,
         image=k8s_settings.aiperf_image,
+        image_pull_policy=k8s_settings.image_pull_policy,
+        image_pull_secrets=[k8s_settings.image_pull_secret]
+        if k8s_settings.image_pull_secret
+        else [],
     )
 
 

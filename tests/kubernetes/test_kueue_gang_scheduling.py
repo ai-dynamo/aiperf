@@ -267,6 +267,10 @@ class TestKueueOperatorIntegration:
             request_count=5,
             warmup_request_count=1,
             image=k8s_settings.aiperf_image,
+            image_pull_policy=k8s_settings.image_pull_policy,
+            image_pull_secrets=[k8s_settings.image_pull_secret]
+            if k8s_settings.image_pull_secret
+            else [],
             queue_name=kueue_queues,
         )
         await kueue_manager.create_local_queue(
@@ -309,6 +313,10 @@ class TestKueueOperatorIntegration:
             request_count=5,
             warmup_request_count=1,
             image=k8s_settings.aiperf_image,
+            image_pull_policy=k8s_settings.image_pull_policy,
+            image_pull_secrets=[k8s_settings.image_pull_secret]
+            if k8s_settings.image_pull_secret
+            else [],
             queue_name=kueue_queues,
             priority_class="test-priority",
         )
