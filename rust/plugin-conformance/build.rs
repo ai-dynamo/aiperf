@@ -32,6 +32,13 @@ fn main() {
         );
     }
 
+    // The test binary links aiperf-allocator-shim, which references mi_* symbols
+    // as extern "C". Cargo propagates cargo:rustc-link-search from dev-dependency
+    // build scripts but NOT cargo:rustc-link-lib. The search path comes from
+    // libmimalloc-sys's build script (which IS propagated), so libmimalloc.a is
+    // findable; we just need to tell the linker to include it.
+    println!("cargo:rustc-link-lib=static=mimalloc");
+
     // Rerun if the provider Cargo.toml changes (new exports, version bump).
     println!(
         "cargo:rerun-if-changed={}",
