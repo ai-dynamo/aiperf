@@ -29,7 +29,8 @@ Source-of-truth locations:
 
 - Native CLI and process entry: `rust/cli/`.
 - Runtime and execution engine: `rust/runtime/`; the `engine` feature exposes `aiperf_runtime::engine`.
-- Transport-neutral observer seam: `rust/runtime/src/dispatch/`.
+- Boundary-owned plugin contracts: `rust/core/` (crate `aiperf-core`).
+- Transport-neutral observer seam: `rust/core/src/dispatch.rs`, re-exported through `rust/runtime/src/dispatch/`.
 - Standalone mock target: `rust/mock-server/`.
 - Python package and delegated command implementation: `src/aiperf/`.
 - Repository architecture index: `llms.txt`.
@@ -104,13 +105,14 @@ The exporter plane writes configured JSON, CSV, Parquet, console, timeslice, ser
 
 The Cargo workspace uses edition 2024 and resolver 3.
 
-- `aiperf-runtime`: library-only runtime composition. It contains clocks, datasets, endpoints, transports, scheduling, graph execution, metrics, exporters, accuracy, adaptive control, telemetry, content serving, cellular support, extension registration, and the feature-gated v2 engine. The `dispatch` module defines `Dispatchable`, `RequestSink<R>`, `RequestObserver`, `ObservedUsage`, endpoint observations, `TraceCollector`, and `CollectorObserver`.
+- `aiperf-core` (`rust/core`): boundary-owned values and host-service traits shared by every plugin category SDK. It owns `Clock`/`RunOutcome`, the `Dispatchable`/`RequestSink<R>`/`RequestObserver` dispatch seam with its observations, transport-neutral measurement values (response, record, SSE, eventstream, trace, reuse, error), the atomic finalized-report commit, endpoint `Handle`/`SegmentReader`/`Overrides` and store-free WebSocket operation values, and the capability-limited `ArtifactAccess`. It must never depend on `aiperf-runtime`: the measured plugin ABI closure is exactly what this crate exposes.
+- `aiperf-runtime`: library-only runtime composition. It contains clocks, datasets, endpoints, transports, scheduling, graph execution, metrics, exporters, accuracy, adaptive control, telemetry, content serving, cellular support, extension registration, and the feature-gated v2 engine. The `dispatch` module re-exports the boundary seam (`Dispatchable`, `RequestSink<R>`, `RequestObserver`, `ObservedUsage`, endpoint observations) from `aiperf-core` and defines the runtime-side `TraceCollector` and `CollectorObserver`.
 - `aiperf-cli`: library plus the `aiperf` binary. It owns command routing, Config v2 loading and expansion, profile projection, self-execution, cellular roles, native searches and sweeps, result rendering, and process signals.
 - `aiperf-mock-server`: standalone HTTP/gRPC inference target with deterministic response generation, latency models, error injection, usage accounting, telemetry, TLS, UDS, balancing, accuracy fixtures, and request recording.
 - `aiperf-e2e-tests` (`rust/e2e-tests`): product integration harness and tests.
 - `aiperf-dry-run-tests` (`rust/dry-run-tests`): standalone socket-free end-to-end suite for the native `--dry-run` transport.
 
-Direct internal dependency direction is `aiperf-cli` to `aiperf-runtime`; `aiperf-mock-server` to `aiperf-runtime`; and `aiperf-e2e-tests` has development dependencies on `aiperf-runtime` and `aiperf-mock-server`. `aiperf-dry-run-tests` launches the `aiperf` binary and has no server dependency. The CLI and mock server are independent executables.
+Direct internal dependency direction is `aiperf-cli` to `aiperf-runtime`; `aiperf-runtime` to `aiperf-core`; `aiperf-mock-server` to `aiperf-runtime`; and `aiperf-e2e-tests` has development dependencies on `aiperf-runtime` and `aiperf-mock-server`. `aiperf-core` depends on no other workspace crate, so Cargo's normal-dependency cycle rejection makes a runtime leak edge back into the boundary a compile error. `aiperf-dry-run-tests` launches the `aiperf` binary and has no server dependency. The CLI and mock server are independent executables.
 
 ## Runtime modules
 
@@ -134,11 +136,11 @@ See `docs/module-organization.md` for the complete module map.
 
 ### Clock
 
-All clock-aware runtime code uses `aiperf_runtime::clock::Clock`. `RealClock` supplies wall time. `SimClock` supplies integer-nanosecond virtual time with deterministic event ordering. Execution selects the real-reactor or simulation driver through `Clock::is_virtual()`. Measurement and firing gates must not call `Instant::now`, `SystemTime::now`, or Tokio timers directly.
+All clock-aware runtime code uses `aiperf_runtime::clock::Clock`, which re-exports the boundary-owned `aiperf_core::clock::Clock`. `RealClock` supplies wall time. `SimClock` supplies integer-nanosecond virtual time with deterministic event ordering. Execution selects the real-reactor or simulation driver through `Clock::is_virtual()`. Measurement and firing gates must not call `Instant::now`, `SystemTime::now`, or Tokio timers directly.
 
 ### Dispatch and observation
 
-`aiperf_runtime::dispatch::sink` is transport-neutral:
+`aiperf_runtime::dispatch::sink` re-exports the boundary-owned `aiperf_core::dispatch`, which is transport-neutral:
 
 - A transport-native request implements `Dispatchable`.
 - A sink implements `RequestSink<R>` and drives one request to terminal.
