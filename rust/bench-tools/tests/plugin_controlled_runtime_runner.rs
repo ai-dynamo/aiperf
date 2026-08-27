@@ -641,20 +641,24 @@ fn one_experiment_identity_owns_one_ledger_across_requested_output_paths() {
     fixture.static_artifact = failing_artifact;
     let build_report = fixture.build_report();
     let first_request = fixture._directory.path().join("first-ledger.jsonl");
-    let second_request = fixture._directory.path().join("second-ledger.jsonl");
 
     let first = run_controlled_runtime_with_ledger_v1(&build_report, &first_request, None)
         .expect("first invocation records its terminal attempt");
     assert_eq!(first.decision, ControlledAttemptDecision::ValidFailure);
 
-    let error = run_controlled_runtime_with_ledger_v1(&build_report, &second_request, None)
-        .expect_err("a second requested filename cannot restart the same identity");
-    assert!(
-        error
-            .to_string()
-            .contains("first valid experiment attempt is authoritative"),
-        "unexpected error: {error}"
-    );
+    // An extensionless path and a dotted directory name are ordinary requested
+    // outputs; every shape under one root must reach the same ledger.
+    for shape in ["second-ledger.jsonl", "attempts", "run.d"] {
+        let requested = fixture._directory.path().join(shape);
+        let error = run_controlled_runtime_with_ledger_v1(&build_report, &requested, None)
+            .expect_err("a second requested output path cannot restart the same identity");
+        assert!(
+            error
+                .to_string()
+                .contains("first valid experiment attempt is authoritative"),
+            "requested {shape} produced {error}"
+        );
+    }
 
     let derived = controlled_attempt_ledger_path(
         fixture._directory.path(),
@@ -689,12 +693,11 @@ fn three_invalid_attempts_block_the_identity_across_requested_output_paths() {
     );
     let build_report = fixture.build_report();
 
+    // Each attempt requests a differently shaped output path under one root:
+    // dotted file, extensionless, and dotted directory.
     let mut identity = String::new();
-    for attempt in 0..3 {
-        let requested = fixture
-            ._directory
-            .path()
-            .join(format!("attempt-{attempt}.jsonl"));
+    for shape in ["attempt-0.jsonl", "attempt-1", "attempt.d"] {
+        let requested = fixture._directory.path().join(shape);
         let report = run_controlled_runtime_with_ledger_v1(&build_report, &requested, None)
             .expect("each invalid attempt is recorded");
         assert_eq!(report.decision, ControlledAttemptDecision::Invalid);
