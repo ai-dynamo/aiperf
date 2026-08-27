@@ -1,0 +1,1388 @@
+{
+  "types": 230,
+  "files": 55,
+  "type_lines": 3888,
+  "file_lines": 53768,
+  "entries": [
+    {
+      "name": "AIPerfExtension",
+      "file": "runtime/src/extensions/mod.rs",
+      "start": 122,
+      "end": 128
+    },
+    {
+      "name": "AccuracyAnalysis",
+      "file": "runtime/src/metrics_core/accuracy.rs",
+      "start": 765,
+      "end": 774
+    },
+    {
+      "name": "AccuracyAssociation",
+      "file": "runtime/src/dataset/model.rs",
+      "start": 207,
+      "end": 212
+    },
+    {
+      "name": "AccuracyAtLoad",
+      "file": "runtime/src/metrics_core/accuracy.rs",
+      "start": 752,
+      "end": 761
+    },
+    {
+      "name": "AccuracyCsvExportConfig",
+      "file": "runtime/src/export/accuracy_csv.rs",
+      "start": 27,
+      "end": 30
+    },
+    {
+      "name": "AccuracyRecord",
+      "file": "runtime/src/metrics_core/accuracy.rs",
+      "start": 118,
+      "end": 131
+    },
+    {
+      "name": "AccuracyRollup",
+      "file": "runtime/src/metrics_core/accuracy.rs",
+      "start": 144,
+      "end": 159
+    },
+    {
+      "name": "AccuracySummary",
+      "file": "runtime/src/metrics_core/accuracy.rs",
+      "start": 177,
+      "end": 182
+    },
+    {
+      "name": "AudioResponseData",
+      "file": "runtime/src/endpoints/models.rs",
+      "start": 316,
+      "end": 325
+    },
+    {
+      "name": "BodyPlan",
+      "file": "runtime/src/body_plan.rs",
+      "start": 303,
+      "end": 316
+    },
+    {
+      "name": "BranchId",
+      "file": "runtime/src/dataset/model.rs",
+      "start": 69,
+      "end": 72
+    },
+    {
+      "name": "BucketHistogram",
+      "file": "runtime/src/export/otel/accumulator.rs",
+      "start": 55,
+      "end": 62
+    },
+    {
+      "name": "CachedTurnPlan",
+      "file": "runtime/src/dataset/runtime_dataset.rs",
+      "start": 61,
+      "end": 68
+    },
+    {
+      "name": "CapturedReply",
+      "file": "runtime/src/dataset/request.rs",
+      "start": 1031,
+      "end": 1035
+    },
+    {
+      "name": "Clock",
+      "file": "runtime/src/clock/runtime_clock.rs",
+      "start": 12,
+      "end": 46
+    },
+    {
+      "name": "ConfidenceInterval",
+      "file": "runtime/src/metrics_core/accuracy.rs",
+      "start": 135,
+      "end": 140
+    },
+    {
+      "name": "ConnectionReuseStrategy",
+      "file": "runtime/src/transport/core/reuse.rs",
+      "start": 12,
+      "end": 20
+    },
+    {
+      "name": "ConsoleMetricMeta",
+      "file": "runtime/src/export/console_txt.rs",
+      "start": 86,
+      "end": 103
+    },
+    {
+      "name": "ConsoleTxtExportConfig",
+      "file": "runtime/src/export/console_txt.rs",
+      "start": 51,
+      "end": 68
+    },
+    {
+      "name": "ContentGroup",
+      "file": "runtime/src/dataset/model.rs",
+      "start": 191,
+      "end": 203
+    },
+    {
+      "name": "Conversation",
+      "file": "runtime/src/dataset/model.rs",
+      "start": 403,
+      "end": 418
+    },
+    {
+      "name": "ConversationBranch",
+      "file": "runtime/src/dataset/model.rs",
+      "start": 176,
+      "end": 187
+    },
+    {
+      "name": "ConversationBranchMode",
+      "file": "runtime/src/dataset/model.rs",
+      "start": 123,
+      "end": 128
+    },
+    {
+      "name": "ConversationContextMode",
+      "file": "runtime/src/dataset/model.rs",
+      "start": 107,
+      "end": 118
+    },
+    {
+      "name": "ConversationMetadata",
+      "file": "runtime/src/multiturn.rs",
+      "start": 277,
+      "end": 282
+    },
+    {
+      "name": "ConversationMetadata",
+      "file": "runtime/src/dataset/model.rs",
+      "start": 472,
+      "end": 483
+    },
+    {
+      "name": "ConversationSession",
+      "file": "runtime/src/dataset/request.rs",
+      "start": 1042,
+      "end": 1052
+    },
+    {
+      "name": "CorrelationId",
+      "file": "runtime/src/metrics_core/accuracy.rs",
+      "start": 24,
+      "end": 24
+    },
+    {
+      "name": "CorrelationId",
+      "file": "runtime/src/dataset/model.rs",
+      "start": 73,
+      "end": 76
+    },
+    {
+      "name": "CreditIdentity",
+      "file": "runtime/src/multiturn.rs",
+      "start": 2116,
+      "end": 2125
+    },
+    {
+      "name": "CreditMaterializerFactory",
+      "file": "runtime/src/engine/turn_execution.rs",
+      "start": 168,
+      "end": 171
+    },
+    {
+      "name": "CreditPhase",
+      "file": "runtime/src/endpoints/models.rs",
+      "start": 66,
+      "end": 72
+    },
+    {
+      "name": "CreditReportKind",
+      "file": "runtime/src/transport/core/dispatch.rs",
+      "start": 496,
+      "end": 508
+    },
+    {
+      "name": "DagMetadata",
+      "file": "runtime/src/dataset/model.rs",
+      "start": 388,
+      "end": 399
+    },
+    {
+      "name": "Dataset",
+      "file": "runtime/src/dataset/runtime_dataset.rs",
+      "start": 93,
+      "end": 122
+    },
+    {
+      "name": "DatasetError",
+      "file": "runtime/src/dataset/error.rs",
+      "start": 15,
+      "end": 61
+    },
+    {
+      "name": "DatasetMetadata",
+      "file": "runtime/src/dataset/runtime_dataset.rs",
+      "start": 43,
+      "end": 56
+    },
+    {
+      "name": "Definition",
+      "file": "runtime/src/metrics_core/definition.rs",
+      "start": 67,
+      "end": 92
+    },
+    {
+      "name": "DefinitionGroup",
+      "file": "runtime/src/metrics_core/definition.rs",
+      "start": 57,
+      "end": 62
+    },
+    {
+      "name": "DispatchResult",
+      "file": "runtime/src/transport/core/dispatch.rs",
+      "start": 305,
+      "end": 312
+    },
+    {
+      "name": "DispatchTiming",
+      "file": "runtime/src/dataset/model.rs",
+      "start": 133,
+      "end": 139
+    },
+    {
+      "name": "EffectiveEndpointConfig",
+      "file": "runtime/src/endpoints/config.rs",
+      "start": 517,
+      "end": 519
+    },
+    {
+      "name": "Endpoint",
+      "file": "runtime/src/endpoints/implementation.rs",
+      "start": 53,
+      "end": 135
+    },
+    {
+      "name": "EndpointConfig",
+      "file": "runtime/src/endpoints/config.rs",
+      "start": 181,
+      "end": 235
+    },
+    {
+      "name": "EndpointDescriptor",
+      "file": "runtime/src/endpoints/metadata.rs",
+      "start": 34,
+      "end": 71
+    },
+    {
+      "name": "EndpointError",
+      "file": "runtime/src/endpoints/models.rs",
+      "start": 21,
+      "end": 31
+    },
+    {
+      "name": "EndpointFactory",
+      "file": "runtime/src/endpoints/registry.rs",
+      "start": 190,
+      "end": 212
+    },
+    {
+      "name": "EndpointKey",
+      "file": "runtime/src/endpoints/registry.rs",
+      "start": 1002,
+      "end": 1002
+    },
+    {
+      "name": "EndpointRegistryError",
+      "file": "runtime/src/endpoints/registry.rs",
+      "start": 92,
+      "end": 119
+    },
+    {
+      "name": "EndpointResult",
+      "file": "runtime/src/endpoints/models.rs",
+      "start": 17,
+      "end": 17
+    },
+    {
+      "name": "EndpointType",
+      "file": "runtime/src/endpoints/metadata.rs",
+      "start": 76,
+      "end": 115
+    },
+    {
+      "name": "ErrorDetails",
+      "file": "runtime/src/transport/core/error.rs",
+      "start": 27,
+      "end": 34
+    },
+    {
+      "name": "ErrorKind",
+      "file": "runtime/src/transport/core/error.rs",
+      "start": 8,
+      "end": 23
+    },
+    {
+      "name": "EvaluatorDatasetReportInfo",
+      "file": "runtime/src/metrics_core/report.rs",
+      "start": 882,
+      "end": 903
+    },
+    {
+      "name": "EvaluatorReportInfo",
+      "file": "runtime/src/metrics_core/report.rs",
+      "start": 907,
+      "end": 935
+    },
+    {
+      "name": "ExecutionBackendConfig",
+      "file": "runtime/src/engine/turn_execution.rs",
+      "start": 117,
+      "end": 152
+    },
+    {
+      "name": "ExecutionSinkBuilder",
+      "file": "runtime/src/engine/turn_execution.rs",
+      "start": 255,
+      "end": 270
+    },
+    {
+      "name": "ExecutionTransportPolicy",
+      "file": "runtime/src/engine/turn_execution.rs",
+      "start": 61,
+      "end": 76
+    },
+    {
+      "name": "ExportConfig",
+      "file": "runtime/src/export/mod.rs",
+      "start": 281,
+      "end": 301
+    },
+    {
+      "name": "Exporter",
+      "file": "runtime/src/export/mod.rs",
+      "start": 310,
+      "end": 326
+    },
+    {
+      "name": "ExtensionError",
+      "file": "runtime/src/extensions/mod.rs",
+      "start": 50,
+      "end": 68
+    },
+    {
+      "name": "ExtractedPayload",
+      "file": "runtime/src/endpoints/models.rs",
+      "start": 406,
+      "end": 430
+    },
+    {
+      "name": "FieldName",
+      "file": "runtime/src/body_plan.rs",
+      "start": 43,
+      "end": 43
+    },
+    {
+      "name": "FieldProgram",
+      "file": "runtime/src/body_plan.rs",
+      "start": 165,
+      "end": 168
+    },
+    {
+      "name": "FieldValue",
+      "file": "runtime/src/body_plan.rs",
+      "start": 121,
+      "end": 144
+    },
+    {
+      "name": "FiniteReportValue",
+      "file": "runtime/src/metrics_core/report.rs",
+      "start": 187,
+      "end": 187
+    },
+    {
+      "name": "GenaiPerfEnvelope",
+      "file": "runtime/src/export/genai_perf.rs",
+      "start": 83,
+      "end": 92
+    },
+    {
+      "name": "GenaiPerfExportConfig",
+      "file": "runtime/src/export/genai_perf.rs",
+      "start": 45,
+      "end": 62
+    },
+    {
+      "name": "GradingResult",
+      "file": "runtime/src/metrics_core/accuracy.rs",
+      "start": 80,
+      "end": 97
+    },
+    {
+      "name": "Handle",
+      "file": "runtime/src/dataset/segment.rs",
+      "start": 28,
+      "end": 28
+    },
+    {
+      "name": "HopRouting",
+      "file": "runtime/src/config/model/dispatch.rs",
+      "start": 156,
+      "end": 161
+    },
+    {
+      "name": "ImageDataItem",
+      "file": "runtime/src/endpoints/models.rs",
+      "start": 329,
+      "end": 338
+    },
+    {
+      "name": "ImageResponseData",
+      "file": "runtime/src/endpoints/models.rs",
+      "start": 342,
+      "end": 353
+    },
+    {
+      "name": "InferenceDimensions",
+      "file": "runtime/src/metrics_core/ingest.rs",
+      "start": 22,
+      "end": 27
+    },
+    {
+      "name": "InputTokenCounter",
+      "file": "runtime/src/multiturn.rs",
+      "start": 49,
+      "end": 99
+    },
+    {
+      "name": "LiteralValue",
+      "file": "runtime/src/body_plan.rs",
+      "start": 65,
+      "end": 68
+    },
+    {
+      "name": "MaterializedRequest",
+      "file": "runtime/src/dataset/request.rs",
+      "start": 36,
+      "end": 80
+    },
+    {
+      "name": "MeasuredContext",
+      "file": "runtime/src/transport/core/dispatch.rs",
+      "start": 320,
+      "end": 348
+    },
+    {
+      "name": "MeasuredOutcome",
+      "file": "runtime/src/transport/core/dispatch.rs",
+      "start": 352,
+      "end": 358
+    },
+    {
+      "name": "Media",
+      "file": "runtime/src/endpoints/models.rs",
+      "start": 76,
+      "end": 90
+    },
+    {
+      "name": "MediaKind",
+      "file": "runtime/src/dataset/model.rs",
+      "start": 81,
+      "end": 90
+    },
+    {
+      "name": "MetricEntry",
+      "file": "runtime/src/metrics_core/report.rs",
+      "start": 155,
+      "end": 167
+    },
+    {
+      "name": "MetricSeries",
+      "file": "runtime/src/metrics_core/report.rs",
+      "start": 140,
+      "end": 151
+    },
+    {
+      "name": "MetricTag",
+      "file": "runtime/src/metrics_core/catalog.rs",
+      "start": 21,
+      "end": 160
+    },
+    {
+      "name": "MetricValue",
+      "file": "runtime/src/metrics_core/value.rs",
+      "start": 16,
+      "end": 23
+    },
+    {
+      "name": "MetricValueType",
+      "file": "runtime/src/metrics_core/units.rs",
+      "start": 12,
+      "end": 21
+    },
+    {
+      "name": "MetricsConfig",
+      "file": "runtime/src/metrics_core/accumulator.rs",
+      "start": 152,
+      "end": 178
+    },
+    {
+      "name": "MetricsStorageMode",
+      "file": "runtime/src/metrics_core/store.rs",
+      "start": 528,
+      "end": 538
+    },
+    {
+      "name": "MlflowExportConfig",
+      "file": "runtime/src/export/mlflow.rs",
+      "start": 49,
+      "end": 79
+    },
+    {
+      "name": "Modality",
+      "file": "runtime/src/endpoints/metadata.rs",
+      "start": 11,
+      "end": 26
+    },
+    {
+      "name": "ModelEndpoint",
+      "file": "runtime/src/endpoints/models.rs",
+      "start": 56,
+      "end": 61
+    },
+    {
+      "name": "ModelId",
+      "file": "runtime/src/dataset/model.rs",
+      "start": 61,
+      "end": 64
+    },
+    {
+      "name": "ModelResponseMetadata",
+      "file": "runtime/src/scheduled.rs",
+      "start": 101,
+      "end": 120
+    },
+    {
+      "name": "NativeReport",
+      "file": "runtime/src/metrics_core/report.rs",
+      "start": 1082,
+      "end": 1131
+    },
+    {
+      "name": "NativeSessionEndpoint",
+      "file": "runtime/src/multiturn.rs",
+      "start": 967,
+      "end": 972
+    },
+    {
+      "name": "ObservedEndpointMetrics",
+      "file": "runtime/src/dispatch/sink.rs",
+      "start": 91,
+      "end": 98
+    },
+    {
+      "name": "ObservedRoundTripMetrics",
+      "file": "runtime/src/dispatch/sink.rs",
+      "start": 102,
+      "end": 107
+    },
+    {
+      "name": "ObservedSpecDecodeAcceptance",
+      "file": "runtime/src/dispatch/sink.rs",
+      "start": 63,
+      "end": 86
+    },
+    {
+      "name": "ObservedTokenKind",
+      "file": "runtime/src/dispatch/sink.rs",
+      "start": 21,
+      "end": 26
+    },
+    {
+      "name": "ObservedTransportRoute",
+      "file": "runtime/src/dispatch/sink.rs",
+      "start": 151,
+      "end": 156
+    },
+    {
+      "name": "ObservedUsage",
+      "file": "runtime/src/dispatch/sink.rs",
+      "start": 30,
+      "end": 59
+    },
+    {
+      "name": "OpenAiChatMessage",
+      "file": "runtime/src/graph/wire.rs",
+      "start": 33,
+      "end": 36
+    },
+    {
+      "name": "OtelExportConfig",
+      "file": "runtime/src/export/otel.rs",
+      "start": 68,
+      "end": 81
+    },
+    {
+      "name": "OtelRecordAccumulator",
+      "file": "runtime/src/export/otel/accumulator.rs",
+      "start": 151,
+      "end": 157
+    },
+    {
+      "name": "Overrides",
+      "file": "runtime/src/dataset/materialize.rs",
+      "start": 25,
+      "end": 27
+    },
+    {
+      "name": "ParquetExportConfig",
+      "file": "runtime/src/export/mod.rs",
+      "start": 270,
+      "end": 273
+    },
+    {
+      "name": "ParsedResponse",
+      "file": "runtime/src/endpoints/models.rs",
+      "start": 392,
+      "end": 402
+    },
+    {
+      "name": "PartTypes",
+      "file": "runtime/src/endpoints/extraction.rs",
+      "start": 12,
+      "end": 17
+    },
+    {
+      "name": "Payload",
+      "file": "runtime/src/dataset/segment.rs",
+      "start": 117,
+      "end": 163
+    },
+    {
+      "name": "Phase",
+      "file": "runtime/src/metrics_core/window.rs",
+      "start": 13,
+      "end": 18
+    },
+    {
+      "name": "PreparedEndpoint",
+      "file": "runtime/src/endpoints/registry.rs",
+      "start": 452,
+      "end": 575
+    },
+    {
+      "name": "PreparedEndpointBinding",
+      "file": "runtime/src/transport/core/dispatch.rs",
+      "start": 407,
+      "end": 410
+    },
+    {
+      "name": "PreparedEndpointReference",
+      "file": "runtime/src/multiturn.rs",
+      "start": 537,
+      "end": 542
+    },
+    {
+      "name": "PreparedEndpointTable",
+      "file": "runtime/src/endpoints/registry.rs",
+      "start": 1021,
+      "end": 1023
+    },
+    {
+      "name": "PreparedEndpointTableFactory",
+      "file": "runtime/src/engine/turn_execution.rs",
+      "start": 155,
+      "end": 158
+    },
+    {
+      "name": "PreparedReadinessRequest",
+      "file": "runtime/src/endpoints/registry.rs",
+      "start": 424,
+      "end": 435
+    },
+    {
+      "name": "PreparedRequest",
+      "file": "runtime/src/endpoints/registry.rs",
+      "start": 258,
+      "end": 267
+    },
+    {
+      "name": "PreparedTurn",
+      "file": "runtime/src/transport/core/dispatch.rs",
+      "start": 371,
+      "end": 389
+    },
+    {
+      "name": "PreparedTurnEndpointResolver",
+      "file": "runtime/src/multiturn.rs",
+      "start": 556,
+      "end": 560
+    },
+    {
+      "name": "PreparedWsMessage",
+      "file": "runtime/src/body_plan.rs",
+      "start": 750,
+      "end": 754
+    },
+    {
+      "name": "PreparedWsMessageRole",
+      "file": "runtime/src/body_plan.rs",
+      "start": 739,
+      "end": 746
+    },
+    {
+      "name": "PreparedWsOpcode",
+      "file": "runtime/src/body_plan.rs",
+      "start": 730,
+      "end": 735
+    },
+    {
+      "name": "PreparedWsOperation",
+      "file": "runtime/src/body_plan.rs",
+      "start": 789,
+      "end": 794
+    },
+    {
+      "name": "PrerequisiteKind",
+      "file": "runtime/src/dataset/model.rs",
+      "start": 144,
+      "end": 155
+    },
+    {
+      "name": "RawEndpointConfig",
+      "file": "runtime/src/endpoints/config.rs",
+      "start": 64,
+      "end": 115
+    },
+    {
+      "name": "ReadinessMethod",
+      "file": "runtime/src/endpoints/registry.rs",
+      "start": 404,
+      "end": 409
+    },
+    {
+      "name": "ReadinessPolicy",
+      "file": "runtime/src/endpoints/registry.rs",
+      "start": 439,
+      "end": 449
+    },
+    {
+      "name": "ReadinessSuccess",
+      "file": "runtime/src/endpoints/registry.rs",
+      "start": 413,
+      "end": 420
+    },
+    {
+      "name": "RealClockAnchor",
+      "file": "runtime/src/clock/real_clock.rs",
+      "start": 27,
+      "end": 29
+    },
+    {
+      "name": "RecordIngest",
+      "file": "runtime/src/metrics_core/ingest.rs",
+      "start": 136,
+      "end": 221
+    },
+    {
+      "name": "RecordedOutcome",
+      "file": "runtime/src/dataset/model.rs",
+      "start": 219,
+      "end": 226
+    },
+    {
+      "name": "RegistryId",
+      "file": "runtime/src/extensions/registry_id.rs",
+      "start": 36,
+      "end": 36
+    },
+    {
+      "name": "RegistryIdError",
+      "file": "runtime/src/extensions/registry_id.rs",
+      "start": 104,
+      "end": 106
+    },
+    {
+      "name": "ReplayTerminalStatus",
+      "file": "runtime/src/dispatch/collector.rs",
+      "start": 309,
+      "end": 314
+    },
+    {
+      "name": "ReplySlots",
+      "file": "runtime/src/dataset/runtime_dataset.rs",
+      "start": 81,
+      "end": 89
+    },
+    {
+      "name": "ReportClockKind",
+      "file": "runtime/src/metrics_core/report.rs",
+      "start": 462,
+      "end": 467
+    },
+    {
+      "name": "ReportCounterStats",
+      "file": "runtime/src/metrics_core/report.rs",
+      "start": 81,
+      "end": 87
+    },
+    {
+      "name": "ReportDistributionStats",
+      "file": "runtime/src/metrics_core/report.rs",
+      "start": 52,
+      "end": 70
+    },
+    {
+      "name": "ReportDynamoCapacityInfo",
+      "file": "runtime/src/metrics_core/report.rs",
+      "start": 534,
+      "end": 545
+    },
+    {
+      "name": "ReportDynamoParityInfo",
+      "file": "runtime/src/metrics_core/report.rs",
+      "start": 493,
+      "end": 502
+    },
+    {
+      "name": "ReportDynamoRouter",
+      "file": "runtime/src/metrics_core/report.rs",
+      "start": 484,
+      "end": 489
+    },
+    {
+      "name": "ReportDynamoRunInfo",
+      "file": "runtime/src/metrics_core/report.rs",
+      "start": 579,
+      "end": 599
+    },
+    {
+      "name": "ReportDynamoTopology",
+      "file": "runtime/src/metrics_core/report.rs",
+      "start": 472,
+      "end": 479
+    },
+    {
+      "name": "ReportEndpointProfileIdentity",
+      "file": "runtime/src/metrics_core/report.rs",
+      "start": 265,
+      "end": 270
+    },
+    {
+      "name": "ReportError",
+      "file": "runtime/src/metrics_core/report.rs",
+      "start": 868,
+      "end": 878
+    },
+    {
+      "name": "ReportExtensionIdentity",
+      "file": "runtime/src/metrics_core/report.rs",
+      "start": 240,
+      "end": 246
+    },
+    {
+      "name": "ReportGraphOutcomeInfo",
+      "file": "runtime/src/metrics_core/report.rs",
+      "start": 426,
+      "end": 433
+    },
+    {
+      "name": "ReportGraphRunInfo",
+      "file": "runtime/src/metrics_core/report.rs",
+      "start": 356,
+      "end": 370
+    },
+    {
+      "name": "ReportHistogramStats",
+      "file": "runtime/src/metrics_core/report.rs",
+      "start": 91,
+      "end": 109
+    },
+    {
+      "name": "ReportPairRunFacts",
+      "file": "runtime/src/metrics_core/report.rs",
+      "start": 657,
+      "end": 664
+    },
+    {
+      "name": "ReportRun",
+      "file": "runtime/src/metrics_core/report.rs",
+      "start": 688,
+      "end": 698
+    },
+    {
+      "name": "ReportRunInfo",
+      "file": "runtime/src/metrics_core/report.rs",
+      "start": 171,
+      "end": 178
+    },
+    {
+      "name": "ReportRunMetadata",
+      "file": "runtime/src/metrics_core/report.rs",
+      "start": 295,
+      "end": 306
+    },
+    {
+      "name": "ReportScalarStats",
+      "file": "runtime/src/metrics_core/report.rs",
+      "start": 74,
+      "end": 77
+    },
+    {
+      "name": "ReportServerMetricsEndpointInfo",
+      "file": "runtime/src/metrics_core/report.rs",
+      "start": 821,
+      "end": 843
+    },
+    {
+      "name": "ReportServerMetricsMetadata",
+      "file": "runtime/src/metrics_core/report.rs",
+      "start": 847,
+      "end": 864
+    },
+    {
+      "name": "ReportServerMetricsPhaseRange",
+      "file": "runtime/src/metrics_core/report.rs",
+      "start": 812,
+      "end": 817
+    },
+    {
+      "name": "ReportStats",
+      "file": "runtime/src/metrics_core/report.rs",
+      "start": 114,
+      "end": 123
+    },
+    {
+      "name": "ReportSteadyState",
+      "file": "runtime/src/metrics_core/report.rs",
+      "start": 943,
+      "end": 963
+    },
+    {
+      "name": "ReportSummary",
+      "file": "runtime/src/metrics_core/report.rs",
+      "start": 787,
+      "end": 808
+    },
+    {
+      "name": "ReportTimeslice",
+      "file": "runtime/src/metrics_core/report.rs",
+      "start": 127,
+      "end": 136
+    },
+    {
+      "name": "ReportValue",
+      "file": "runtime/src/metrics_core/report.rs",
+      "start": 31,
+      "end": 36
+    },
+    {
+      "name": "Request",
+      "file": "runtime/src/transport/core/dispatch.rs",
+      "start": 29,
+      "end": 72
+    },
+    {
+      "name": "RequestBody",
+      "file": "runtime/src/body_plan.rs",
+      "start": 626,
+      "end": 643
+    },
+    {
+      "name": "RequestContentType",
+      "file": "runtime/src/endpoints/config.rs",
+      "start": 20,
+      "end": 25
+    },
+    {
+      "name": "RequestExecutor",
+      "file": "runtime/src/transport/core/dispatch.rs",
+      "start": 517,
+      "end": 628
+    },
+    {
+      "name": "RequestInfo",
+      "file": "runtime/src/endpoints/models.rs",
+      "start": 142,
+      "end": 162
+    },
+    {
+      "name": "RequestMaterializer",
+      "file": "runtime/src/dataset/request.rs",
+      "start": 83,
+      "end": 106
+    },
+    {
+      "name": "RequestMetricMetadata",
+      "file": "runtime/src/metrics.rs",
+      "start": 33,
+      "end": 63
+    },
+    {
+      "name": "RequestObserver",
+      "file": "runtime/src/dispatch/sink.rs",
+      "start": 168,
+      "end": 215
+    },
+    {
+      "name": "RequestRecord",
+      "file": "runtime/src/transport/core/record.rs",
+      "start": 12,
+      "end": 44
+    },
+    {
+      "name": "RequestRecord",
+      "file": "runtime/src/endpoints/models.rs",
+      "start": 188,
+      "end": 191
+    },
+    {
+      "name": "RequestTrace",
+      "file": "runtime/src/metrics_core/ingest.rs",
+      "start": 95,
+      "end": 122
+    },
+    {
+      "name": "ResetKvCacheConfig",
+      "file": "runtime/src/endpoints/config.rs",
+      "start": 29,
+      "end": 44
+    },
+    {
+      "name": "ResolvedPreparedEndpoint",
+      "file": "runtime/src/multiturn.rs",
+      "start": 545,
+      "end": 550
+    },
+    {
+      "name": "Response",
+      "file": "runtime/src/transport/core/response.rs",
+      "start": 36,
+      "end": 39
+    },
+    {
+      "name": "ResponseData",
+      "file": "runtime/src/endpoints/models.rs",
+      "start": 196,
+      "end": 223
+    },
+    {
+      "name": "Result",
+      "file": "runtime/src/dataset/error.rs",
+      "start": 11,
+      "end": 11
+    },
+    {
+      "name": "Role",
+      "file": "runtime/src/dataset/segment.rs",
+      "start": 83,
+      "end": 83
+    },
+    {
+      "name": "RunOutcome",
+      "file": "runtime/src/graph/runtime.rs",
+      "start": 128,
+      "end": 131
+    },
+    {
+      "name": "RuntimeSessionBackend",
+      "file": "runtime/src/multiturn.rs",
+      "start": 314,
+      "end": 359
+    },
+    {
+      "name": "SampledSession",
+      "file": "runtime/src/multiturn.rs",
+      "start": 363,
+      "end": 369
+    },
+    {
+      "name": "Segment",
+      "file": "runtime/src/dataset/segment.rs",
+      "start": 229,
+      "end": 236
+    },
+    {
+      "name": "SegmentDomain",
+      "file": "runtime/src/dataset/segment.rs",
+      "start": 169,
+      "end": 182
+    },
+    {
+      "name": "SegmentId",
+      "file": "runtime/src/dataset/segment.rs",
+      "start": 55,
+      "end": 55
+    },
+    {
+      "name": "SegmentStore",
+      "file": "runtime/src/dataset/segment.rs",
+      "start": 239,
+      "end": 275
+    },
+    {
+      "name": "ServerMetricsExportConfig",
+      "file": "runtime/src/export/server_metrics/mod.rs",
+      "start": 42,
+      "end": 60
+    },
+    {
+      "name": "ServerProfilerConfig",
+      "file": "runtime/src/endpoints/config.rs",
+      "start": 48,
+      "end": 58
+    },
+    {
+      "name": "ServerResponse",
+      "file": "runtime/src/endpoints/models.rs",
+      "start": 166,
+      "end": 173
+    },
+    {
+      "name": "SessionId",
+      "file": "runtime/src/dataset/model.rs",
+      "start": 57,
+      "end": 60
+    },
+    {
+      "name": "SloThreshold",
+      "file": "runtime/src/metrics_core/accumulator.rs",
+      "start": 97,
+      "end": 110
+    },
+    {
+      "name": "SseField",
+      "file": "runtime/src/transport/core/sse.rs",
+      "start": 44,
+      "end": 47
+    },
+    {
+      "name": "SseFieldName",
+      "file": "runtime/src/transport/core/sse.rs",
+      "start": 20,
+      "end": 27
+    },
+    {
+      "name": "SseMessage",
+      "file": "runtime/src/transport/core/sse.rs",
+      "start": 51,
+      "end": 56
+    },
+    {
+      "name": "StaticInputCountEndpoint",
+      "file": "runtime/src/multiturn.rs",
+      "start": 975,
+      "end": 977
+    },
+    {
+      "name": "StaticInputCountKey",
+      "file": "runtime/src/multiturn.rs",
+      "start": 980,
+      "end": 983
+    },
+    {
+      "name": "SteadyStateConfig",
+      "file": "runtime/src/metrics_core/steady_state.rs",
+      "start": 83,
+      "end": 106
+    },
+    {
+      "name": "StoredRawTokenIds",
+      "file": "runtime/src/multiturn.rs",
+      "start": 494,
+      "end": 497
+    },
+    {
+      "name": "StoredTraceHashIds",
+      "file": "runtime/src/multiturn.rs",
+      "start": 449,
+      "end": 452
+    },
+    {
+      "name": "TaskId",
+      "file": "runtime/src/metrics_core/accuracy.rs",
+      "start": 52,
+      "end": 52
+    },
+    {
+      "name": "TextResponse",
+      "file": "runtime/src/transport/core/response.rs",
+      "start": 12,
+      "end": 22
+    },
+    {
+      "name": "TextTokenizer",
+      "file": "runtime/src/dataset/tokenizer.rs",
+      "start": 46,
+      "end": 129
+    },
+    {
+      "name": "TimesliceExportConfig",
+      "file": "runtime/src/export/timeslice.rs",
+      "start": 34,
+      "end": 53
+    },
+    {
+      "name": "TokenCounts",
+      "file": "runtime/src/metrics_core/ingest.rs",
+      "start": 40,
+      "end": 52
+    },
+    {
+      "name": "TraceData",
+      "file": "runtime/src/transport/core/trace.rs",
+      "start": 10,
+      "end": 41
+    },
+    {
+      "name": "TransportFallbackReason",
+      "file": "runtime/src/dispatch/sink.rs",
+      "start": 132,
+      "end": 137
+    },
+    {
+      "name": "TransportRoute",
+      "file": "runtime/src/dispatch/sink.rs",
+      "start": 112,
+      "end": 117
+    },
+    {
+      "name": "TransportRouteMetadata",
+      "file": "runtime/src/metrics_core/ingest.rs",
+      "start": 31,
+      "end": 36
+    },
+    {
+      "name": "Turn",
+      "file": "runtime/src/endpoints/models.rs",
+      "start": 105,
+      "end": 138
+    },
+    {
+      "name": "Turn",
+      "file": "runtime/src/dataset/model.rs",
+      "start": 230,
+      "end": 300
+    },
+    {
+      "name": "TurnDataPolicy",
+      "file": "runtime/src/multiturn.rs",
+      "start": 704,
+      "end": 706
+    },
+    {
+      "name": "TurnDispatchOutcome",
+      "file": "runtime/src/scheduled.rs",
+      "start": 124,
+      "end": 141
+    },
+    {
+      "name": "TurnEndpoint",
+      "file": "runtime/src/multiturn.rs",
+      "start": 686,
+      "end": 689
+    },
+    {
+      "name": "TurnMetadata",
+      "file": "runtime/src/multiturn.rs",
+      "start": 241,
+      "end": 255
+    },
+    {
+      "name": "TurnMetadata",
+      "file": "runtime/src/dataset/model.rs",
+      "start": 364,
+      "end": 384
+    },
+    {
+      "name": "TurnPrerequisite",
+      "file": "runtime/src/dataset/model.rs",
+      "start": 159,
+      "end": 172
+    },
+    {
+      "name": "TurnResponse",
+      "file": "runtime/src/multiturn.rs",
+      "start": 303,
+      "end": 312
+    },
+    {
+      "name": "TurnResponseObserver",
+      "file": "runtime/src/scheduled.rs",
+      "start": 77,
+      "end": 83
+    },
+    {
+      "name": "TurnToSend",
+      "file": "runtime/src/multiturn.rs",
+      "start": 752,
+      "end": 811
+    },
+    {
+      "name": "Unit",
+      "file": "runtime/src/metrics_core/units.rs",
+      "start": 26,
+      "end": 109
+    },
+    {
+      "name": "UsageMetrics",
+      "file": "runtime/src/metrics_core/ingest.rs",
+      "start": 64,
+      "end": 91
+    },
+    {
+      "name": "VideoResponseData",
+      "file": "runtime/src/endpoints/models.rs",
+      "start": 357,
+      "end": 388
+    },
+    {
+      "name": "WandbExportConfig",
+      "file": "runtime/src/export/wandb/mod.rs",
+      "start": 78,
+      "end": 102
+    },
+    {
+      "name": "WebSocketCapabilities",
+      "file": "runtime/src/endpoints/registry.rs",
+      "start": 234,
+      "end": 249
+    },
+    {
+      "name": "WebSocketConnectionModel",
+      "file": "runtime/src/endpoints/registry.rs",
+      "start": 216,
+      "end": 221
+    },
+    {
+      "name": "WebSocketDialect",
+      "file": "runtime/src/endpoints/registry.rs",
+      "start": 225,
+      "end": 230
+    },
+    {
+      "name": "WorkerCreditReport",
+      "file": "runtime/src/transport/core/dispatch.rs",
+      "start": 482,
+      "end": 493
+    },
+    {
+      "name": "WorkerMaterializationRecipe",
+      "file": "runtime/src/multiturn.rs",
+      "start": 1989,
+      "end": 1998
+    },
+    {
+      "name": "WorkerMaterializer",
+      "file": "runtime/src/multiturn.rs",
+      "start": 2026,
+      "end": 2034
+    },
+    {
+      "name": "WorkerSink",
+      "file": "runtime/src/engine/turn_execution.rs",
+      "start": 181,
+      "end": 217
+    }
+  ]
+}

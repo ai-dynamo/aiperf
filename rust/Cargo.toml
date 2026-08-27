@@ -43,6 +43,7 @@ members = [
     # with no dependency on aiperf-runtime or aiperf-mock-server, so they build
     # instantly regardless of aiperf's own build state.
     "bench-tools",
+    "xtask",
 ]
 
 [workspace.package]

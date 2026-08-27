@@ -7,7 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Shrink the host/plugin ABI closure from 193 types to ~118 and instrument the universe-rebuild rate, so the recompile-boundary matrix in the plugin design is true of this codebase instead of aspirational.
+**Goal:** Shrink the measured host/plugin ABI closure by the Task 2–6 deltas and instrument the universe-rebuild rate, so the recompile-boundary matrix in the plugin design is true of this codebase instead of aspirational.
 
 **Architecture:** Six independent refactors of `rust/runtime`, each cutting one measured leak edge that drags host-private implementation into the plugin ABI closure. Every task is behavior-preserving; the observable deliverable is a smaller measured ABI closure and a lower measured universe-bump rate. Task 1 builds the measurement first so every later task proves its own effect.
 
@@ -113,8 +113,24 @@ is not a pool of independent tickets.
 
 ## Baseline Numbers (measured 2026-08-27 at `110e00321a`)
 
-These numbers were measured at commit `110e00321a`. They calibrate the tool;
-they are **not** a target the current tree must reproduce.
+Task 1 originally quoted `193 types / 52 files`. That figure came from
+`/tmp/closure2.py`, a regular-expression source scan that matched types by bare
+name. Comparing its retained `/tmp/abi_types.txt` evidence with pinned rustdoc
+JSON showed known false positives (`Distribution`, `Peak`, `Rankings`,
+`Tokenizer`, `ToolCall`, and `ToolFunction`, among others) and missed real
+structural types (`Conversation`, `EndpointDescriptor`, `ErrorKind`,
+`MetricValueType`, `Modality`, `Response`, `SseMessage`, and `Unit`, among
+others). It is not an authoritative ABI measurement.
+
+**Ruling (2026-08-27):** pinned rustdoc JSON structural reachability is
+authoritative. At historical commit `110e00321a`, format 61 with private items
+and the `engine` feature measures `230 types / 55 files`. Later task deltas use
+the independently measured present-tree baseline, not the discarded regex
+count.
+
+The Task 1 integration base `5d8ba0c3300921452a78703b0c89531bb605611a`
+independently measures `230 types / 55 files`, `3,888` type-definition lines,
+and `53,768` total lines in contributing files.
 
 Task 1 validates in two steps, in this order:
 
@@ -132,15 +148,18 @@ Step 2 measurement, not as an absolute. If a task's measured delta differs
 materially from the predicted one, that is a finding to record before
 proceeding — the leak edge may have changed shape.
 
-| Measure at `110e00321a` | Value |
+| Measure | Value |
 |---|---:|
-| ABI closure, `RunContext` narrowed | 193 types / 52 files |
-| ABI type-definition lines | 2,083 |
-| Total lines in those files | 32,461 |
-| Implementation lines co-resident with ABI types | 30,378 (94%) |
-| Universe-bump rate, file-granular, 120 merge units | 19 / 54 code units (35%) |
-| Universe-bump rate, type-granular | 13 / 54 code units (24%) |
-| Target after Tasks 2–6 | ~118 types, 7–8 / 54 (13–15%) |
+| Historical ABI closure at `110e00321a` | 230 types / 55 files |
+| Present-base ABI closure at `5d8ba0c330` | 230 types / 55 files |
+| Present-base ABI type-definition lines | 3,888 |
+| Present-base total lines in contributing files | 53,768 |
+| Present-base implementation lines co-resident with ABI types | 49,880 (93%) |
+| Historical universe-bump rate, file-granular, 120 merge units | 19 / 54 code units (35%) |
+| Historical universe-bump rate, type-granular | 15 / 54 code units (28%) |
+| Present-base universe rate, file-granular | 20 / 55 code units (36%) |
+| Present-base universe rate, type-granular | 15 / 55 code units (27%) |
+| Target after Tasks 2–6 | present-tree closure minus the independently measured Task 2–6 deltas |
 
 ## File Structure
 
@@ -391,9 +410,13 @@ pub fn compute(seeds: &Seeds) -> Result<Closure> {
 }
 ```
 
-Implement the supporting `rustdoc` module in the same crate. It shells out to
-an **explicitly pinned nightly**, named inline so it never becomes a workspace
-default:
+Implement the supporting `rustdoc` module in the same crate. It invokes the
+explicitly pinned `nightly-2026-08-01` Cargo, rustc, and rustdoc only for this
+measurement, with `--features engine --document-private-items -Z
+unstable-options --output-format json`. It deserializes
+`target/doc/aiperf_runtime.json`, validates format 61, and maps each item id to
+its source span and structural references. Stable Rust remains authoritative
+for the product workspace; do not add or change `rust-toolchain.toml`.
 
 ```rust
 /// rustdoc JSON is nightly-only and format-unstable, so the toolchain is
@@ -402,17 +425,6 @@ default:
 const RUSTDOC_TOOLCHAIN: &str = "nightly-2026-08-01";
 ```
 
-```
-cargo +nightly-2026-08-01 rustdoc -p aiperf-runtime --lib -- \
-    -Z unstable-options --output-format json
-```
-
-It then deserializes `target/doc/aiperf_runtime.json` and maps each item id to
-its `span` (file, `begin.0`, `end.0`) and its structural type references. Do
-**not** add `rust-toolchain.toml`, and do not change any existing toolchain
-setting: a missing nightly must fail the measurement tool with an actionable
-message, never the product build.
-
 - [ ] **Step 5: Validate the tool in two steps**
 
 First calibrate against the commit the baseline table was measured at:
@@ -420,12 +432,13 @@ First calibrate against the commit the baseline table was measured at:
 ```bash
 source .venv/bin/activate
 git worktree add /tmp/abi-calibrate 110e00321a
-cd /tmp/abi-calibrate/rust
-cargo run -p aiperf-xtask -- abi-closure --seeds xtask/abi-seeds.toml --json \
+cd /home/anthony/nvidia/projects/aiperf/ajc/rust/rust
+cargo xtask abi-closure --workspace /tmp/abi-calibrate/rust \
+  --seeds xtask/abi-seeds.toml --json \
   | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["types"], d["files"])'
 ```
 
-Expected: `193 52`. A mismatch means the traversal rules are wrong — most
+Expected: `230 55`. A mismatch means the traversal rules are wrong — most
 likely following doc mentions (too many) or missing types behind
 `Box`/`Rc`/`Arc`/`Result`/`Option`/futures (too few). Both count as reachable
 per `design.md`: "including behind `Box`, `Rc`, `Arc`, `Result`, a future, a
@@ -440,7 +453,7 @@ cargo run -p aiperf-xtask -- abi-closure --seeds xtask/abi-seeds.toml --json \
   | tee /tmp/abi.json
 ```
 
-Expected: a number that may differ from 193. Record it in the tracker alongside
+Expected: a number that may differ from 230. Record it in the tracker alongside
 the integration HEAD it was measured at. This is the figure every later task's
 delta is measured against.
 
@@ -457,7 +470,7 @@ Computes the ABI-facing type closure from rustdoc JSON and pins it in
 abi-baseline.json so a boundary regression fails CI. Seeds and forbidden
 edges are checked in and reviewed rather than inferred.
 
-Measured at this commit: 193 types across 52 files.
+Measured at this commit: <present-tree measurement>.
 EOF
 ```
 
@@ -487,7 +500,7 @@ cargo xtask abi-churn --since 110e00321a --merges 120
 ```
 
 Expected: `code_units: 54`, file-granular `universe: 19` (35%), type-granular
-`universe: 13` (24%), `one_plugin: 1`. A mismatch means the per-commit span
+`universe: 15` (28%), `one_plugin: 1`. A mismatch means the per-commit span
 recomputation or the merge-unit classification is wrong — fix the tool.
 
 Then record the rate on the present tree, which is what Task 6 Step 5 compares
@@ -498,7 +511,9 @@ cargo xtask abi-churn --merges 120
 ```
 
 Expected: numbers that may differ from the calibration window. Record them in
-the tracker with the integration HEAD.
+the tracker with the integration HEAD. The Task 1 base independently measured
+55 code units, with file-granular `universe: 20` and type-granular
+`universe: 15`.
 
 - [ ] **Step 9: Wire the CI gate and commit**
 
@@ -515,7 +530,7 @@ feat(xtask): gate ABI-closure growth and report universe-bump rate
 
 abi-churn replays first-parent merge history against per-commit type spans
 and reports how many units would rebuild every plugin. Baseline at this
-commit: 35% file-granular, 24% type-granular, 1 single-plugin unit of 54.
+commit: 35% file-granular, 28% type-granular, 1 single-plugin unit of 54.
 EOF
 ```
 

@@ -1,0 +1,27 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: Rust ABI closure
+
+on:
+  pull_request:
+    paths:
+      - ".cargo/config.toml"
+      - "rust/**"
+      - ".github/workflows/rust-abi-closure.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  abi-closure:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install stable product toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Install pinned measurement toolchain
+        run: rustup toolchain install nightly-2026-08-01 --profile minimal
+      - name: Reject ABI-universe growth
+        working-directory: rust
+        run: cargo xtask abi-gate

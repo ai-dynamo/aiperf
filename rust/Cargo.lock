@@ -515,6 +515,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "aiperf-xtask"
+version = "0.12.0"
+dependencies = [
+ "anyhow",
+ "proc-macro2",
+ "serde",
+ "serde_json",
+ "syn",
+ "toml",
+]
+
+[[package]]
 name = "aligned-vec"
 version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
