@@ -18,7 +18,8 @@ use aiperf_bench_tools::plugin_stats::{
 };
 use aiperf_bench_tools::runtime_runner::{
     ControlledExporterWorkloadFactory, ExporterWorkloadAcquisitionError, ExporterWorkloadRequest,
-    run_controlled_runtime_with_exporters_v1, run_controlled_runtime_with_ledger_v1,
+    controlled_attempt_ledger_path, run_controlled_runtime_with_exporters_v1,
+    run_controlled_runtime_with_ledger_v1,
 };
 
 const COMMIT: &str = "0123456789abcdef0123456789abcdef01234567";
@@ -53,6 +54,17 @@ fn runtime_artifact_rejecting_exporter(label: &str) -> Vec<u8> {
         .replacen(
             "set -eu\n",
             "set -eu\nif [ \"$AIPERF_PARITY_SCENARIO\" = exporter_100k ]; then exit 71; fi\n",
+            1,
+        )
+        .into_bytes()
+}
+
+fn runtime_artifact_with_persistent_affinity_loss(label: &str) -> Vec<u8> {
+    let script = String::from_utf8(runtime_artifact(label)).expect("fixture script is UTF-8");
+    script
+        .replacen(
+            "set -eu\n",
+            "set -eu\nif [ \"$AIPERF_PARITY_SCENARIO\" = http_non_streaming_c1 ]; then sleep 0.05; /usr/bin/taskset -pc 8 $$ >/dev/null; sleep 0.1; fi\n",
             1,
         )
         .into_bytes()
@@ -545,5 +557,98 @@ fn controller_affinity_monitor_replaces_the_whole_pair_in_seeded_order() {
             .expect("raw pair history is retained")
             .len(),
         report.raw_pair_history.len()
+    );
+}
+
+#[test]
+fn one_experiment_identity_owns_one_ledger_across_requested_output_paths() {
+    let mut fixture = Fixture::new();
+    let failing_artifact = b"#!/bin/sh\nexit 9\n".to_vec();
+    write_executable(
+        &fixture.static_source.join("artifact-source"),
+        &failing_artifact,
+    );
+    fixture.static_artifact = failing_artifact;
+    let build_report = fixture.build_report();
+    let first_request = fixture._directory.path().join("first-ledger.jsonl");
+    let second_request = fixture._directory.path().join("second-ledger.jsonl");
+
+    let first = run_controlled_runtime_with_ledger_v1(&build_report, &first_request)
+        .expect("first invocation records its terminal attempt");
+    assert_eq!(first.decision, ControlledAttemptDecision::ValidFailure);
+
+    let error = run_controlled_runtime_with_ledger_v1(&build_report, &second_request)
+        .expect_err("a second requested filename cannot restart the same identity");
+    assert!(
+        error
+            .to_string()
+            .contains("first valid experiment attempt is authoritative"),
+        "unexpected error: {error}"
+    );
+
+    let derived = controlled_attempt_ledger_path(
+        fixture._directory.path(),
+        &first.experiment_identity_blake3,
+    );
+    assert_eq!(
+        std::fs::read(&derived)
+            .expect("identity-derived ledger is retained")
+            .split(|byte| *byte == b'\n')
+            .filter(|line| !line.is_empty())
+            .count(),
+        1
+    );
+    assert!(!first_request.exists());
+    assert!(!second_request.exists());
+}
+
+#[test]
+fn three_invalid_attempts_block_the_identity_across_requested_output_paths() {
+    let mut fixture = Fixture::new();
+    fixture.static_artifact = runtime_artifact_with_persistent_affinity_loss("static authority fixture");
+    fixture.dynamic_artifact =
+        runtime_artifact_with_persistent_affinity_loss("dynamic authority fixture");
+    write_executable(
+        &fixture.static_source.join("artifact-source"),
+        &fixture.static_artifact,
+    );
+    write_executable(
+        &fixture.dynamic_source.join("artifact-source"),
+        &fixture.dynamic_artifact,
+    );
+    let build_report = fixture.build_report();
+
+    let mut identity = String::new();
+    for attempt in 0..3 {
+        let requested = fixture
+            ._directory
+            .path()
+            .join(format!("attempt-{attempt}.jsonl"));
+        let report = run_controlled_runtime_with_ledger_v1(&build_report, &requested)
+            .expect("each invalid attempt is recorded");
+        assert_eq!(report.decision, ControlledAttemptDecision::Invalid);
+        identity = report.experiment_identity_blake3.clone();
+    }
+
+    let error = run_controlled_runtime_with_ledger_v1(
+        &build_report,
+        &fixture._directory.path().join("attempt-3.jsonl"),
+    )
+    .expect_err("three invalid attempts block another invocation");
+    assert!(
+        error
+            .to_string()
+            .contains("three invalid attempts block the experiment"),
+        "unexpected error: {error}"
+    );
+
+    let derived = controlled_attempt_ledger_path(fixture._directory.path(), &identity);
+    assert_eq!(
+        std::fs::read(&derived)
+            .expect("identity-derived ledger is retained")
+            .split(|byte| *byte == b'\n')
+            .filter(|line| !line.is_empty())
+            .count(),
+        3
     );
 }
