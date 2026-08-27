@@ -1,14 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Frozen inventory and observed-experiment authority for plugin parity.
+//! Frozen inventory and explicitly non-authoritative experiment fixtures.
 
 use std::collections::BTreeMap;
 
 use aiperf_bench_tools::plugin_stats::{
-    ExperimentObservationReceipt, MachineObservation, ObservedExperimentAuthority, PairedCase,
-    PairedSample, RatioDirection, SimultaneousGateInput, SimultaneousGatePolicy, Variant,
-    checked_in_case_plans, checked_in_inventory_digest, evaluate_simultaneous_gate,
+    MachineObservation, NonAuthoritativeExperimentFixture, NonAuthoritativeObservationFixture,
+    PairedCase, PairedSample, RatioDirection, SimultaneousGateInput, SimultaneousGatePolicy,
+    Variant, checked_in_case_plans, checked_in_inventory_digest,
+    evaluate_non_authoritative_simultaneous_fixture,
 };
 
 const COMMIT: &str = "0123456789abcdef0123456789abcdef01234567";
@@ -17,10 +18,10 @@ const FORGED_DIGEST: &str =
 const INVENTORY_DIGEST: &str =
     "blake3:298ee51d2c9d319b9db3571681e4056d5b57e264661e6892d189a1179c901222";
 
-struct AuthorityFixture {
+struct StatisticalFixture {
     directory: tempfile::TempDir,
     receipt_path: std::path::PathBuf,
-    authority: ObservedExperimentAuthority,
+    observed: NonAuthoritativeExperimentFixture,
     input: SimultaneousGateInput,
 }
 
@@ -33,14 +34,14 @@ fn metric_direction(metric: &str) -> RatioDirection {
     }
 }
 
-fn authority_fixture() -> AuthorityFixture {
+fn statistical_fixture() -> StatisticalFixture {
     let directory = tempfile::tempdir().expect("temporary authority directory");
     let write = |name: &str, bytes: &[u8]| {
         let path = directory.path().join(name);
         std::fs::write(&path, bytes).expect("observed fixture is written");
         path
     };
-    let receipt = ExperimentObservationReceipt {
+    let receipt = NonAuthoritativeObservationFixture {
         source_commit: COMMIT.to_owned(),
         target: "x86_64-unknown-linux-gnu".to_owned(),
         profile: "release-fat-lto".to_owned(),
@@ -81,8 +82,8 @@ fn authority_fixture() -> AuthorityFixture {
         serde_json::to_vec(&receipt).expect("observation serializes"),
     )
     .expect("observation receipt is written");
-    let authority =
-        ObservedExperimentAuthority::acquire(&receipt).expect("observed authority validates");
+    let observed = NonAuthoritativeExperimentFixture::acquire(&receipt)
+        .expect("observed statistical fixture validates");
     let plans = checked_in_case_plans().expect("checked-in inventory validates");
     let cases = plans
         .iter()
@@ -92,7 +93,7 @@ fn authority_fixture() -> AuthorityFixture {
                 "http_streaming_c1" | "http_streaming_c64"
             );
             let mut samples = Vec::new();
-            for (pair, scheduled) in authority.pair_schedule().iter().enumerate() {
+            for (pair, scheduled) in observed.pair_schedule().iter().enumerate() {
                 for metric in &plan.measured_metrics {
                     let static_value = 100.0 + (pair % 5) as f64 * 0.1;
                     let is_allocation_metric = matches!(
@@ -121,8 +122,8 @@ fn authority_fixture() -> AuthorityFixture {
                             },
                             unit: "ratio-source".to_owned(),
                             commit: COMMIT.to_owned(),
-                            artifact_digest: authority.artifact_digest(variant).to_owned(),
-                            experiment_identity_digest: authority.identity_digest().to_owned(),
+                            artifact_digest: observed.artifact_digest(variant).to_owned(),
+                            experiment_identity_digest: observed.identity_digest().to_owned(),
                         });
                     }
                 }
@@ -135,10 +136,10 @@ fn authority_fixture() -> AuthorityFixture {
             }
         })
         .collect();
-    AuthorityFixture {
+    StatisticalFixture {
         directory,
         receipt_path,
-        authority,
+        observed,
         input: SimultaneousGateInput { cases },
     }
 }
@@ -173,13 +174,13 @@ fn checked_in_task1_inventory_is_the_only_complete_authority() {
 
 #[test]
 fn missing_or_extra_cases_and_metrics_reject_before_resampling() {
-    let fixture = authority_fixture();
+    let fixture = statistical_fixture();
     let mut subset = fixture.input.clone();
     subset.cases.pop();
     assert!(
-        evaluate_simultaneous_gate(
+        evaluate_non_authoritative_simultaneous_fixture(
             &subset,
-            &fixture.authority,
+            &fixture.observed,
             &SimultaneousGatePolicy::normative(),
         )
         .is_err()
@@ -191,9 +192,9 @@ fn missing_or_extra_cases_and_metrics_reject_before_resampling() {
         .samples
         .retain(|sample| sample.metric != removed_metric);
     assert!(
-        evaluate_simultaneous_gate(
+        evaluate_non_authoritative_simultaneous_fixture(
             &missing_metric,
-            &fixture.authority,
+            &fixture.observed,
             &SimultaneousGatePolicy::normative(),
         )
         .is_err()
@@ -204,9 +205,9 @@ fn missing_or_extra_cases_and_metrics_reject_before_resampling() {
     extra_sample.metric = "caller_added_metric".to_owned();
     extra_metric.cases[0].samples.push(extra_sample);
     assert!(
-        evaluate_simultaneous_gate(
+        evaluate_non_authoritative_simultaneous_fixture(
             &extra_metric,
-            &fixture.authority,
+            &fixture.observed,
             &SimultaneousGatePolicy::normative(),
         )
         .is_err()
@@ -215,13 +216,13 @@ fn missing_or_extra_cases_and_metrics_reject_before_resampling() {
 
 #[test]
 fn row_identity_mutation_and_caller_sealed_identity_reject() {
-    let fixture = authority_fixture();
+    let fixture = statistical_fixture();
     let mut one_row = fixture.input.clone();
     one_row.cases[0].samples[0].experiment_identity_digest = FORGED_DIGEST.to_owned();
     assert!(
-        evaluate_simultaneous_gate(
+        evaluate_non_authoritative_simultaneous_fixture(
             &one_row,
-            &fixture.authority,
+            &fixture.observed,
             &SimultaneousGatePolicy::normative(),
         )
         .is_err()
@@ -233,9 +234,9 @@ fn row_identity_mutation_and_caller_sealed_identity_reject() {
         sample.artifact_digest = FORGED_DIGEST.to_owned();
     }
     assert!(
-        evaluate_simultaneous_gate(
+        evaluate_non_authoritative_simultaneous_fixture(
             &forged,
-            &fixture.authority,
+            &fixture.observed,
             &SimultaneousGatePolicy::normative(),
         )
         .is_err()
@@ -251,14 +252,14 @@ fn row_identity_mutation_and_caller_sealed_identity_reject() {
         );
     assert!(
         serde_json::from_value::<SimultaneousGateInput>(injected_identity).is_err(),
-        "the authoritative input cannot carry a caller-sealed identity"
+        "the statistical fixture input cannot carry a caller-sealed identity"
     );
 }
 
 #[test]
 fn observed_artifact_mutation_changes_authority_and_rejects_stale_rows() {
-    let fixture = authority_fixture();
-    let receipt: ExperimentObservationReceipt = serde_json::from_slice(
+    let fixture = statistical_fixture();
+    let receipt: NonAuthoritativeObservationFixture = serde_json::from_slice(
         &std::fs::read(&fixture.receipt_path).expect("observation receipt is readable"),
     )
     .expect("observation receipt parses");
@@ -267,14 +268,14 @@ fn observed_artifact_mutation_changes_authority_and_rejects_stale_rows() {
         b"mutated dynamic artifact bytes",
     )
     .expect("observed artifact mutation is written");
-    let reacquired =
-        ObservedExperimentAuthority::acquire(&receipt).expect("changed observations reacquire");
+    let reacquired = NonAuthoritativeExperimentFixture::acquire(&receipt)
+        .expect("changed observations reacquire");
     assert_ne!(
         reacquired.identity_digest(),
-        fixture.authority.identity_digest()
+        fixture.observed.identity_digest()
     );
     assert!(
-        evaluate_simultaneous_gate(
+        evaluate_non_authoritative_simultaneous_fixture(
             &fixture.input,
             &reacquired,
             &SimultaneousGatePolicy::normative(),
@@ -285,24 +286,24 @@ fn observed_artifact_mutation_changes_authority_and_rejects_stale_rows() {
 
 #[test]
 fn static_and_dynamic_artifact_assignments_must_be_distinct() {
-    let fixture = authority_fixture();
-    let mut receipt: ExperimentObservationReceipt = serde_json::from_slice(
+    let fixture = statistical_fixture();
+    let mut receipt: NonAuthoritativeObservationFixture = serde_json::from_slice(
         &std::fs::read(&fixture.receipt_path).expect("observation receipt is readable"),
     )
     .expect("observation receipt parses");
     receipt.dynamic_artifact_path = receipt.static_artifact_path.clone();
-    assert!(ObservedExperimentAuthority::acquire(&receipt).is_err());
+    assert!(NonAuthoritativeExperimentFixture::acquire(&receipt).is_err());
 }
 
 #[test]
 fn every_metric_enforces_the_seeded_exact_member_order() {
-    let fixture = authority_fixture();
+    let fixture = statistical_fixture();
     let mut drifted = fixture.input.clone();
     drifted.cases[0].samples.swap(0, 1);
     assert!(
-        evaluate_simultaneous_gate(
+        evaluate_non_authoritative_simultaneous_fixture(
             &drifted,
-            &fixture.authority,
+            &fixture.observed,
             &SimultaneousGatePolicy::normative(),
         )
         .is_err()
@@ -310,8 +311,8 @@ fn every_metric_enforces_the_seeded_exact_member_order() {
 }
 
 #[test]
-fn production_cli_has_no_inventory_or_expected_digest_input() {
-    let fixture = authority_fixture();
+fn production_cli_has_no_standalone_acceptance_input() {
+    let fixture = statistical_fixture();
     let mut subset = fixture.input;
     subset.cases.pop();
     let input_path = fixture.directory.path().join("subset.json");
@@ -331,7 +332,7 @@ fn production_cli_has_no_inventory_or_expected_digest_input() {
             input_path.to_str().expect("temporary path is UTF-8"),
         ])
         .output()
-        .expect("production acceptance seam executes");
+        .expect("production command executes");
     assert!(!rejected.status.success());
 
     let old_self_authorizing_shape = std::process::Command::new(command)
@@ -346,13 +347,13 @@ fn production_cli_has_no_inventory_or_expected_digest_input() {
     assert!(!old_self_authorizing_shape.status.success());
     assert!(
         String::from_utf8_lossy(&old_self_authorizing_shape.stderr)
-            .contains("harness-observation.json")
+            .contains("same-process controlled measurement capability")
     );
 }
 
 #[test]
 fn production_cli_refuses_consistently_forged_receipt_files_and_rows() {
-    let fixture = authority_fixture();
+    let fixture = statistical_fixture();
     let input_path = fixture.directory.path().join("forged-complete-input.json");
     std::fs::write(
         &input_path,
@@ -369,10 +370,10 @@ fn production_cli_refuses_consistently_forged_receipt_files_and_rows() {
             input_path.to_str().expect("temporary path is UTF-8"),
         ])
         .output()
-        .expect("production acceptance seam executes");
+        .expect("production command executes");
     assert!(
         !output.status.success(),
-        "a caller-controlled receipt, files, authority, and matching rows must not self-authorize"
+        "a caller-controlled receipt, files, derived fixture, and matching rows must not self-authorize"
     );
     assert!(
         String::from_utf8_lossy(&output.stderr)
@@ -381,11 +382,11 @@ fn production_cli_refuses_consistently_forged_receipt_files_and_rows() {
 }
 
 #[test]
-fn full_authoritative_joint_bootstrap_retains_the_golden_distribution() {
-    let fixture = authority_fixture();
-    let report = evaluate_simultaneous_gate(
+fn full_non_authoritative_joint_bootstrap_retains_the_golden_distribution() {
+    let fixture = statistical_fixture();
+    let report = evaluate_non_authoritative_simultaneous_fixture(
         &fixture.input,
-        &fixture.authority,
+        &fixture.observed,
         &SimultaneousGatePolicy::normative(),
     )
     .expect("full checked-in matrix evaluates");
@@ -443,9 +444,9 @@ fn full_authoritative_joint_bootstrap_retains_the_golden_distribution() {
             case.samples[second].value = first_value;
         }
     }
-    let decorrelated_report = evaluate_simultaneous_gate(
+    let decorrelated_report = evaluate_non_authoritative_simultaneous_fixture(
         &decorrelated,
-        &fixture.authority,
+        &fixture.observed,
         &SimultaneousGatePolicy::normative(),
     )
     .expect("same marginal vectors with changed joint correlation evaluate");

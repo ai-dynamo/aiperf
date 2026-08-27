@@ -51,7 +51,7 @@ pub struct PairedSample {
     pub commit: String,
     /// Digest of the measured artifact.
     pub artifact_digest: String,
-    /// Digest of the complete experiment authority that produced this member.
+    /// Digest of the complete experiment identity assigned to this member.
     pub experiment_identity_digest: String,
 }
 
@@ -182,7 +182,7 @@ pub struct PairSchedule {
     pub member_order: [Variant; 2],
 }
 
-/// Complete authenticated identity for one parity experiment.
+/// Complete internal identity for one non-authoritative parity fixture.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 struct ExperimentIdentity {
@@ -259,7 +259,8 @@ impl ExperimentIdentity {
     }
 }
 
-/// Machine and placement observations captured by the benchmark harness.
+/// Machine and placement values for a non-authoritative statistical fixture.
+#[doc(hidden)]
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct MachineObservation {
@@ -287,14 +288,15 @@ pub struct MachineObservation {
     pub mock_server_placement: String,
 }
 
-/// Paths and scalar observations acquired by the benchmark harness.
+/// Caller-selected paths and scalar values for statistical test support.
 ///
-/// Digest fields are deliberately absent. Acquisition reads and hashes the
-/// named observed files, so an evidence producer cannot submit a checksum in
-/// place of the source, lock, compiler/sysroot receipt, or compared artifact.
+/// Digest fields are deliberately absent, and acquisition reads the named
+/// files. The caller still chooses every value and path, so this type cannot
+/// authenticate a production experiment.
+#[doc(hidden)]
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct ExperimentObservationReceipt {
+pub struct NonAuthoritativeObservationFixture {
     /// Exact source commit observed by the harness.
     pub source_commit: String,
     /// Rust compilation target.
@@ -325,15 +327,19 @@ pub struct ExperimentObservationReceipt {
     pub bootstrap_seed: u64,
 }
 
-/// Opaque experiment authority derived from observed receipts and artifacts.
+/// Opaque experiment fixture derived from caller-selected observations.
+///
+/// This type provides statistical test support only. It does not authenticate
+/// the observation source and cannot establish migration acceptance.
+#[doc(hidden)]
 #[derive(Clone, Debug)]
-pub struct ObservedExperimentAuthority {
+pub struct NonAuthoritativeExperimentFixture {
     identity: ExperimentIdentity,
 }
 
-impl ObservedExperimentAuthority {
-    /// Acquire and hash every harness-owned observation before measurement.
-    pub fn acquire(receipt: &ExperimentObservationReceipt) -> Result<Self, PluginStatsError> {
+impl NonAuthoritativeExperimentFixture {
+    /// Hash every caller-selected observation for a statistical fixture.
+    pub fn acquire(receipt: &NonAuthoritativeObservationFixture) -> Result<Self, PluginStatsError> {
         let inventory = checked_in_inventory_authority()?;
         let rustc_bytes = read_observed_file(&receipt.rustc_receipt_path, "rustc receipt")?;
         let rustc = String::from_utf8(rustc_bytes)
@@ -407,7 +413,7 @@ impl ObservedExperimentAuthority {
     }
 }
 
-/// One authoritative simultaneous-gate input document.
+/// One non-authoritative simultaneous-gate fixture document.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct SimultaneousGateInput {
@@ -579,7 +585,7 @@ impl ExperimentAttempt {
         }
     }
 
-    /// Construct an authoritative valid failure.
+    /// Construct a statistically valid failure.
     pub fn valid_failure(ordinal: u8, reason: impl Into<String>) -> Self {
         Self {
             ordinal,
@@ -588,7 +594,7 @@ impl ExperimentAttempt {
         }
     }
 
-    /// Construct an authoritative valid pass.
+    /// Construct a statistically valid pass.
     pub fn valid_pass(ordinal: u8) -> Self {
         Self {
             ordinal,
@@ -604,9 +610,9 @@ impl ExperimentAttempt {
 pub enum ExperimentOutcome {
     /// Noise-protocol invalidation; retry is permitted within the cap.
     Invalid,
-    /// Statistically valid authoritative pass.
+    /// Statistically valid pass.
     ValidPass,
-    /// Statistically valid authoritative failure.
+    /// Statistically valid failure.
     ValidFailure,
 }
 
@@ -769,8 +775,9 @@ pub fn balanced_pair_orders(bootstrap_seed: u64) -> Vec<[Variant; 2]> {
 /// Evaluate one metric as a non-authoritative statistical fixture.
 ///
 /// This helper does not authenticate inventory or experiment evidence and
-/// therefore cannot establish migration acceptance. The sole authoritative
-/// gate is [`evaluate_simultaneous_gate`].
+/// therefore cannot establish migration acceptance. This crate exposes no
+/// authoritative acceptance gate until the controlled same-process harness is
+/// implemented.
 pub fn evaluate_non_authoritative_paired_fixture(
     samples: &[PairedSample],
     gate: &NonInferiorityGate,
@@ -799,10 +806,14 @@ pub fn evaluate_non_authoritative_paired_fixture(
     })
 }
 
-/// Evaluate the complete case/metric matrix with one max-degradation bootstrap.
-pub fn evaluate_simultaneous_gate(
+/// Evaluate a non-authoritative complete-matrix statistical fixture.
+///
+/// The frozen inventory is authenticated, but the caller-selected experiment
+/// observations are not. This function cannot establish migration acceptance.
+#[doc(hidden)]
+pub fn evaluate_non_authoritative_simultaneous_fixture(
     input: &SimultaneousGateInput,
-    observed: &ObservedExperimentAuthority,
+    observed: &NonAuthoritativeExperimentFixture,
     policy: &SimultaneousGatePolicy,
 ) -> Result<SimultaneousGateReport, PluginStatsError> {
     validate_policy(policy)?;
