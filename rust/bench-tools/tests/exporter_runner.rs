@@ -5,8 +5,9 @@
 
 use std::collections::BTreeSet;
 
+use aiperf_bench_tools::exporter_observable::parse_receiver_transcript_observable;
 use aiperf_bench_tools::exporter_policy::{
-    SelectedBackingPayloadV1, parse_exporter_observable_policy,
+    AuthenticatedReceiverProtocolV1, SelectedBackingPayloadV1, parse_exporter_observable_policy,
 };
 use aiperf_bench_tools::exporter_runner::{
     ExporterHarnessError, ExporterHarnessRunner, ExporterMemberSource, ExporterRecordStream,
@@ -81,11 +82,16 @@ fn artifact_policy() -> aiperf_bench_tools::exporter_policy::ExporterObservableP
     .expect("artifact policy validates")
 }
 
-fn receiver_policy() -> aiperf_bench_tools::exporter_policy::ExporterObservablePolicyV1 {
+fn receiver_policy(
+    protocol: &str,
+) -> aiperf_bench_tools::exporter_policy::ExporterObservablePolicyV1 {
     parse_exporter_observable_policy(
         &canonical_policy(serde_json::json!({
             "mode": "paired",
-            "receiver_transport_fields_removed": [],
+            "receiver_transport_fields_removed": [{
+                "keys": ["date"],
+                "protocol": protocol,
+            }],
             "scenarios": [{
                 "allows_empty": false,
                 "observable_kind": "receiver_transcript",
@@ -101,7 +107,7 @@ fn receiver_policy() -> aiperf_bench_tools::exporter_policy::ExporterObservableP
             }],
             "schema_version": 1,
         })),
-        &BTreeSet::new(),
+        &BTreeSet::from([protocol.to_owned()]),
     )
     .expect("receiver policy validates")
 }
@@ -119,6 +125,19 @@ fn source<'a>(
         member,
         build_artifact: artifact.as_file(),
         build_receipt_bytes: b"authenticated build receipt",
+        receiver_protocol: None,
+    }
+}
+
+fn receiver_source<'a>(
+    pair_id: &'a str,
+    member: ExporterMember,
+    artifact: &'a tempfile::NamedTempFile,
+    protocol: Option<&'a AuthenticatedReceiverProtocolV1>,
+) -> ExporterMemberSource<'a> {
+    ExporterMemberSource {
+        receiver_protocol: protocol,
+        ..source(pair_id, member, artifact)
     }
 }
 
@@ -177,9 +196,22 @@ impl ExporterWorkload for ArtifactExporter {
     }
 }
 
-#[derive(Default)]
 struct ReceiverExporter {
     acknowledgements: Vec<(u64, usize)>,
+    metadata: Vec<[String; 2]>,
+}
+
+impl Default for ReceiverExporter {
+    fn default() -> Self {
+        Self {
+            acknowledgements: Vec::new(),
+            metadata: vec![
+                ["content-type".to_owned(), "application/json".to_owned()],
+                ["date".to_owned(), "generated".to_owned()],
+                ["x-request-id".to_owned(), "retained".to_owned()],
+            ],
+        }
+    }
 }
 
 impl ExporterWorkload for ReceiverExporter {
@@ -190,12 +222,8 @@ impl ExporterWorkload for ReceiverExporter {
         capture: &mut HostExporterCapture,
     ) -> Result<(), ExporterHarnessError> {
         assert_eq!(records.count(), 100_000);
-        let acknowledgement = capture.accept_receiver(
-            "POST",
-            "/v1/traces",
-            vec![["content-type".to_owned(), "application/json".to_owned()]],
-            b"abcXYZ",
-        )?;
+        let acknowledgement =
+            capture.accept_receiver("POST", "/v1/traces", self.metadata.clone(), b"abcXYZ")?;
         self.acknowledgements.push((
             acknowledgement.sequence(),
             acknowledgement.recorded_acceptances(),
@@ -549,17 +577,26 @@ fn evaluator_classifies_a_sealed_unknown_pair_as_product_failure() {
 #[test]
 fn receiver_records_exact_body_before_returning_acknowledgement() {
     let artifact = build_artifact();
-    let runner =
-        ExporterHarnessRunner::new(receiver_policy()).expect("runner builds its fixed corpus");
+    let policy = receiver_policy("otel_http_v1");
+    let protocol = policy
+        .authenticate_receiver_protocol("otel_http_v1")
+        .expect("controller authenticates the receiver protocol");
+    let runner = ExporterHarnessRunner::new(policy).expect("runner builds its fixed corpus");
     let mut exporter = ReceiverExporter::default();
 
     let completed = runner
         .run_member(
-            source("pair-00", ExporterMember::Static, &artifact),
+            receiver_source(
+                "pair-00",
+                ExporterMember::Static,
+                &artifact,
+                Some(&protocol),
+            ),
             &mut exporter,
         )
         .expect("receiver member completes");
 
+    assert_eq!(completed.receiver_protocol(), Some("otel_http_v1"));
     assert_eq!(exporter.acknowledgements, vec![(0, 1); 16]);
     assert_eq!(completed.backing_payloads().len(), 1);
     assert_eq!(
@@ -577,4 +614,116 @@ fn receiver_records_exact_body_before_returning_acknowledgement() {
             .windows(b"application/json".len())
             .any(|window| window == b"application/json")
     );
+}
+
+#[test]
+fn receiver_protocol_identity_is_controller_bound_and_mismatches_fail_before_export() {
+    let artifact = build_artifact();
+    let policy = receiver_policy("otel_http_v1");
+    let protocol = policy
+        .authenticate_receiver_protocol("otel_http_v1")
+        .expect("controller authenticates the receiver protocol");
+    let other_policy = receiver_policy("zipkin_http_v1");
+    let mismatched = other_policy
+        .authenticate_receiver_protocol("zipkin_http_v1")
+        .expect("other controller authenticates its protocol");
+    let runner = ExporterHarnessRunner::new(policy).expect("runner binds its policy");
+
+    for supplied in [None, Some(&mismatched)] {
+        let mut exporter = ReceiverExporter::default();
+        let error = runner
+            .run_member(
+                receiver_source("pair-00", ExporterMember::Static, &artifact, supplied),
+                &mut exporter,
+            )
+            .expect_err("missing or cross-policy receiver identity fails");
+        assert!(error.to_string().contains("receiver protocol"));
+        assert!(exporter.acknowledgements.is_empty());
+    }
+
+    let mut exporter = ReceiverExporter::default();
+    let completed = runner
+        .run_member(
+            receiver_source(
+                "pair-00",
+                ExporterMember::Static,
+                &artifact,
+                Some(&protocol),
+            ),
+            &mut exporter,
+        )
+        .expect("matching receiver identity completes");
+    assert_eq!(completed.receiver_protocol(), Some("otel_http_v1"));
+    assert_eq!(
+        completed.receiver_protocol_authority_blake3(),
+        Some(protocol.authority_blake3())
+    );
+}
+
+#[test]
+fn receiver_removes_only_bound_transport_fields_and_refuses_noncanonical_metadata() {
+    let artifact = build_artifact();
+    let policy = receiver_policy("otel_http_v1");
+    let protocol = policy
+        .authenticate_receiver_protocol("otel_http_v1")
+        .expect("controller authenticates the receiver protocol");
+    let runner = ExporterHarnessRunner::new(policy).expect("runner binds its policy");
+    let mut exporter = ReceiverExporter::default();
+    let completed = runner
+        .run_member(
+            receiver_source(
+                "pair-00",
+                ExporterMember::Static,
+                &artifact,
+                Some(&protocol),
+            ),
+            &mut exporter,
+        )
+        .expect("canonical receiver metadata completes");
+    let retained = &completed.evidence().retained.raw_observable_bytes;
+    let entries = parse_receiver_transcript_observable(retained, false)
+        .expect("harness forms a canonical transcript");
+    assert!(entries.iter().all(|entry| {
+        entry.metadata
+            == [
+                ["content-type".to_owned(), "application/json".to_owned()],
+                ["x-request-id".to_owned(), "retained".to_owned()],
+            ]
+    }));
+    assert_eq!(
+        completed.summary().repetitions[0].raw_observable_blake3,
+        format!("blake3:{}", blake3::hash(retained))
+    );
+
+    for metadata in [
+        vec![
+            ["x-request-id".to_owned(), "retained".to_owned()],
+            ["content-type".to_owned(), "application/json".to_owned()],
+        ],
+        vec![
+            ["date".to_owned(), "first".to_owned()],
+            ["date".to_owned(), "second".to_owned()],
+        ],
+    ] {
+        let mut exporter = ReceiverExporter {
+            acknowledgements: Vec::new(),
+            metadata,
+        };
+        let error = runner
+            .run_member(
+                receiver_source(
+                    "pair-01",
+                    ExporterMember::Static,
+                    &artifact,
+                    Some(&protocol),
+                ),
+                &mut exporter,
+            )
+            .expect_err("unsorted or duplicate metadata fails closed");
+        assert!(
+            error.to_string().contains("sorted, and unique"),
+            "unexpected receiver failure: {error}"
+        );
+        assert!(exporter.acknowledgements.is_empty());
+    }
 }

@@ -69,6 +69,28 @@ pub struct ReceiverTranscriptEntry {
     pub body: ReceiverBody,
 }
 
+/// Validate protocol-canonical receiver metadata before transcript formation.
+pub fn validate_receiver_metadata(
+    metadata: &[[String; 2]],
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut previous_key = None;
+    for pair in metadata {
+        let [key, value] = pair;
+        if key.is_empty()
+            || key.contains('\0')
+            || value.contains('\0')
+            || key.bytes().any(|byte| byte.is_ascii_uppercase())
+            || previous_key.is_some_and(|previous| previous >= key.as_str())
+        {
+            return Err(
+                "receiver transcript metadata keys must be lower-case, sorted, and unique".into(),
+            );
+        }
+        previous_key = Some(key.as_str());
+    }
+    Ok(())
+}
+
 /// Rejects a JSON document containing duplicate object keys.
 pub fn reject_duplicate_json_keys(bytes: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
     let mut deserializer = serde_json::Deserializer::from_slice(bytes);
@@ -161,22 +183,7 @@ pub fn parse_receiver_transcript_observable(
         {
             return Err("receiver transcript operation or target is invalid".into());
         }
-        let mut previous_key = None;
-        for pair in &entry.metadata {
-            let [key, value] = pair;
-            if key.is_empty()
-                || key.contains('\0')
-                || value.contains('\0')
-                || key.bytes().any(|byte| byte.is_ascii_uppercase())
-                || previous_key.is_some_and(|previous| previous >= key.as_str())
-            {
-                return Err(
-                    "receiver transcript metadata keys must be lower-case, sorted, and unique"
-                        .into(),
-                );
-            }
-            previous_key = Some(key.as_str());
-        }
+        validate_receiver_metadata(&entry.metadata)?;
         if !is_lower_blake3(&entry.body.blake3) {
             return Err("receiver transcript body digest must be lower-case BLAKE3".into());
         }
