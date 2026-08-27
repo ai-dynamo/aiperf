@@ -183,6 +183,21 @@ fn runtime_artifact_with_exporter_child(label: &str, child: &Path) -> Vec<u8> {
         .into_bytes()
 }
 
+/// First CPU of the `exporter_100k` pin in `benchmarks/plugin-parity.yaml`.
+///
+/// The controller expects the pinned list reduced to the CPUs this host can
+/// install, so re-pinning the member to the pin's first CPU is a strict subset
+/// of that expectation on any host that can represent more than one of them —
+/// which makes the injected affinity loss independent of the host's CPU count.
+const EXPORTER_PIN_FIRST_CPU: usize = 4;
+
+/// Whether this host can represent at least two CPUs of the `exporter_100k`
+/// pin, which the injected affinity loss needs in order to shrink the member's
+/// mask at all.
+fn host_can_lose_exporter_affinity() -> bool {
+    std::thread::available_parallelism().is_ok_and(|cpus| cpus.get() > EXPORTER_PIN_FIRST_CPU + 1)
+}
+
 fn runtime_artifact_with_exporter_child_losing_affinity_once(
     label: &str,
     child: &Path,
@@ -193,8 +208,9 @@ fn runtime_artifact_with_exporter_child_losing_affinity_once(
         .replacen(
             "set -eu\n",
             &format!(
-                "set -eu\nif [ \"$AIPERF_PARITY_SCENARIO\" = exporter_100k ]; then if [ \"$AIPERF_PARITY_PAIR_ID\" = pair-00 ] && [ ! -e '{marker}' ]; then touch '{marker}'; sleep 0.05; /usr/bin/taskset -pc 8 $$ >/dev/null; sleep 0.1; fi; exec '{child}'; fi\n",
+                "set -eu\nif [ \"$AIPERF_PARITY_SCENARIO\" = exporter_100k ]; then if [ \"$AIPERF_PARITY_PAIR_ID\" = pair-00 ] && [ ! -e '{marker}' ]; then touch '{marker}'; sleep 0.05; /usr/bin/taskset -pc {cpu} $$ >/dev/null; sleep 0.1; fi; exec '{child}'; fi\n",
                 marker = marker.display(),
+                cpu = EXPORTER_PIN_FIRST_CPU,
                 child = child.display()
             ),
             1,
@@ -1236,6 +1252,12 @@ fn conforming_artifact_bound_exporter_children_are_admitted_as_authoritative_sam
 
 #[test]
 fn an_exporter_pair_that_lost_its_affinity_is_replaced_rather_than_retained() {
+    if !host_can_lose_exporter_affinity() {
+        eprintln!(
+            "skipping: host cannot represent two CPUs of the exporter_100k pin, so no affinity loss can be injected"
+        );
+        return;
+    }
     let mut fixture = Fixture::new();
     let child = exporter_fixture_child();
     let marker = fixture

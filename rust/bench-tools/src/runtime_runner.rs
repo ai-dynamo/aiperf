@@ -1975,6 +1975,31 @@ fn parse_cpu_list(value: &str) -> Result<BTreeSet<usize>, ControlledRuntimeError
     Ok(cpus)
 }
 
+/// Reduces a checked-in pin to the CPUs this host can actually install.
+///
+/// `taskset` asks for the checked-in list, but `sched_setaffinity` silently
+/// intersects it with the CPUs the controller is itself allowed to use. A
+/// matrix pinned above the host's CPU count would therefore leave the affinity
+/// monitor comparing the child against a set it can never hold, so the monitor
+/// would never arm and affinity loss would go unobserved with no diagnostic.
+/// The intersection is the set the child actually carries; an empty one means
+/// the pin is unrepresentable here and the member is refused rather than run
+/// unmonitored.
+fn representable_affinity(
+    pinned: &BTreeSet<usize>,
+) -> Result<BTreeSet<usize>, ControlledRuntimeError> {
+    // pid 0 asks for the calling thread's own mask.
+    let host = process_affinity(0)?
+        .ok_or_else(|| ControlledRuntimeError::new("cannot inspect controller CPU affinity"))?;
+    let representable: BTreeSet<usize> = pinned.intersection(&host).copied().collect();
+    if representable.is_empty() {
+        return Err(ControlledRuntimeError::new(
+            "checked-in CPU-affinity list is unrepresentable on this host",
+        ));
+    }
+    Ok(representable)
+}
+
 fn drain_bounded_output<R>(
     mut reader: R,
     limit: usize,
@@ -2186,7 +2211,7 @@ fn execute_member(
     let deadline = Duration::from_secs(case.minimum_duration_seconds)
         .checked_mul(DEADLINE_MULTIPLIER)
         .ok_or_else(|| ControlledRuntimeError::new("runtime member deadline overflow"))?;
-    let expected_affinity = parse_cpu_list(&case.command[2])?;
+    let expected_affinity = representable_affinity(&parse_cpu_list(&case.command[2])?)?;
     let result = execute_monitored_child(
         &mut command,
         deadline,
