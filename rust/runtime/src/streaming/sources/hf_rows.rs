@@ -741,7 +741,9 @@ async fn authorized_get_bounded(
                 // `Retry-After` is deliberately not honored: it is a
                 // server-supplied duration that would let a remote host drive the
                 // injected clock arbitrarily far.
-                Rc::clone(clock).sleep(policy.read_backoff_ns(read_round)).await;
+                Rc::clone(clock)
+                    .sleep(policy.read_backoff_ns(read_round))
+                    .await;
                 read_round += 1;
             }
             Some(404) => {
@@ -1260,8 +1262,7 @@ fn read_inventory(
     body: &[u8],
     require_explicit_completeness: bool,
 ) -> Result<PageInventory, StreamSourceError> {
-    let envelope: RowsEnvelope =
-        serde_json::from_slice(body).map_err(|_| discovery_error())?;
+    let envelope: RowsEnvelope = serde_json::from_slice(body).map_err(|_| discovery_error())?;
     let known_row_total = envelope.num_rows_total.ok_or_else(discovery_error)?;
     let is_sealed = match envelope.partial {
         Some(partial) => !partial,
@@ -1463,8 +1464,7 @@ async fn resolve_commit_sha(
     let url = hub_endpoint
         .join(&format!("/api/datasets/{dataset}/revision/{revision}"))
         .map_err(|_| discovery_error())?;
-    let fetched =
-        authorized_get_bounded(transport, HfHost::Hub, clock, policy, &url).await?;
+    let fetched = authorized_get_bounded(transport, HfHost::Hub, clock, policy, &url).await?;
     let envelope: RevisionEnvelope =
         serde_json::from_slice(&fetched.bytes).map_err(|_| discovery_error())?;
     let sha = envelope.sha.ok_or_else(discovery_error)?;
@@ -1559,10 +1559,7 @@ impl PreparedHfRowsSource {
             &probe,
         )
         .await?;
-        let inventory = read_inventory(
-            &fetched.bytes,
-            resolution.require_explicit_completeness,
-        )?;
+        let inventory = read_inventory(&fetched.bytes, resolution.require_explicit_completeness)?;
         if resolution.mode == HfRowsMode::Finite && !inventory.is_sealed {
             // A partial Viewer conversion cannot stand for a complete split.
             return Err(discovery_error());
@@ -1688,7 +1685,11 @@ mod tests {
                     if state.revision.len() > 1 {
                         state.revision.remove(0)
                     } else {
-                        state.revision.first().cloned().ok_or(HfTransportError::Transport)?
+                        state
+                            .revision
+                            .first()
+                            .cloned()
+                            .ok_or(HfTransportError::Transport)?
                     }
                 }
                 HfHost::Rows => {
@@ -1696,7 +1697,11 @@ mod tests {
                     if state.rows.len() > 1 {
                         state.rows.remove(0)
                     } else {
-                        state.rows.first().cloned().ok_or(HfTransportError::Transport)?
+                        state
+                            .rows
+                            .first()
+                            .cloned()
+                            .ok_or(HfTransportError::Transport)?
                     }
                 }
             };
@@ -1874,11 +1879,9 @@ mod tests {
     #[test]
     fn authored_configuration_is_refused_before_any_effect() {
         let reject = |patch: &str| {
-            let json = format!(
-                r#"{{"dataset":"openai/gsm8k","subset":"main","split":"train",{patch}}}"#
-            );
-            let config: HfRowsSourceConfig =
-                serde_json::from_str(&json).expect("config decodes");
+            let json =
+                format!(r#"{{"dataset":"openai/gsm8k","subset":"main","split":"train",{patch}}}"#);
+            let config: HfRowsSourceConfig = serde_json::from_str(&json).expect("config decodes");
             assert!(validate_config(&config).is_err(), "{patch}");
         };
         reject(r#""page_len":0"#);
@@ -1889,10 +1892,9 @@ mod tests {
         reject(r#""hub_endpoint":"ftp://example.invalid""#);
         reject(r#""credential_env_var":"A","credential_token_file":"/tmp/t""#);
 
-        let bad_dataset: HfRowsSourceConfig = serde_json::from_str(
-            r#"{"dataset":"gsm8k","subset":"main","split":"train"}"#,
-        )
-        .expect("config decodes");
+        let bad_dataset: HfRowsSourceConfig =
+            serde_json::from_str(r#"{"dataset":"gsm8k","subset":"main","split":"train"}"#)
+                .expect("config decodes");
         assert!(validate_config(&bad_dataset).is_err());
 
         // An unknown key is refused by strict decoding, before validation.
@@ -2187,8 +2189,7 @@ mod tests {
             );
 
             source.restore(cursor).expect("restore");
-            let SourceEvent::Partition(partition) =
-                source.next_event().await.expect("event")
+            let SourceEvent::Partition(partition) = source.next_event().await.expect("event")
             else {
                 panic!("expected a partition");
             };
