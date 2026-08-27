@@ -344,9 +344,12 @@ spec:
                         properties:
                           timeoutSeconds:
                             type: number
-                            exclusiveMinimum: true
-                            minimum: 0
-                            description: Timeout in seconds for the reset_kv_cache POST. When unset, uses endpoint.timeout.
+                            description: Timeout in seconds for the reset_kv_cache POST. When unset, uses 30.0s.
+                          maxRetrySeconds:
+                            type: number
+                            description: 'Total time budget in seconds for retrying a retryable reset_kv_cache POST failure:
+                              a timeout/connection error, or a response with status in RESET_KV_CACHE_RETRYABLE_STATUS_CODES
+                              (409/423/429/503). Other non-2xx responses are never retried. When unset, uses 60.0s.'
                           path:
                             type: string
                             description: 'Relative path for KV-cache reset. Default: /reset_prefix_cache.'
@@ -357,9 +360,7 @@ spec:
                         properties:
                           timeoutSeconds:
                             type: number
-                            exclusiveMinimum: true
-                            minimum: 0
-                            description: Timeout in seconds for profiler start/stop POSTs. When unset, uses endpoint.timeout.
+                            description: Timeout in seconds for profiler start/stop POSTs. When unset, uses 30.0s.
                           startPath:
                             type: string
                             description: 'Relative path for profiler start. Default: /start_profile.'
