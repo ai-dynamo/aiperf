@@ -1202,7 +1202,9 @@ class BenchmarkDeployer:
                         source="CR",
                         api_results={
                             "status": "complete",
-                            **({"results": cr_results} if cr_results else {}),
+                            "results": cr_results
+                            if cr_results
+                            else {"request_count": req_done},
                         },
                         success=True,
                         error_message=None,
