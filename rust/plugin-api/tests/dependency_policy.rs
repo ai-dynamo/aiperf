@@ -941,7 +941,11 @@ fn candidate_inventory_policy() {
         BTreeSet::from(["base_commit", "source"])
     );
 
-    let planned = BTreeSet::from([
+    let planned: BTreeSet<&str> = BTreeSet::new();
+    // Task 6 created these four files as new module-path entries not present in
+    // the pinned base commit; present-state validation reads the worktree file
+    // rather than the base-commit git object.
+    let task6_new = BTreeSet::from([
         "runtime/src/transport/grpc/kserve_binding.rs",
         "runtime/src/transport/ws/sink.rs",
         "runtime/src/transport/dry_run.rs",
@@ -1007,19 +1011,31 @@ fn candidate_inventory_policy() {
                         .bytes()
                         .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
                 );
-                let bytes = Command::new("git")
-                    .args([
-                        "show",
-                        &format!("057d116850cd059bcfa8e259c1e929e913e6ef07:rust/{source_path}"),
-                    ])
-                    .current_dir(repository_root)
-                    .output()
-                    .expect("pinned source object must be readable");
-                assert!(
-                    bytes.status.success(),
-                    "pinned source object is absent: {source_path}"
-                );
-                assert_eq!(blake3::hash(&bytes.stdout).to_hex().as_str(), digest);
+                if task6_new.contains(source_path) {
+                    // Task-6 new files have no pinned base-commit object; validate
+                    // the digest against the current worktree file instead.
+                    let content = std::fs::read(source_root.join(source_path))
+                        .unwrap_or_else(|error| {
+                            panic!("task6_new source missing from worktree: {source_path}: {error}")
+                        });
+                    assert_eq!(blake3::hash(&content).to_hex().as_str(), digest);
+                } else {
+                    let bytes = Command::new("git")
+                        .args([
+                            "show",
+                            &format!(
+                                "057d116850cd059bcfa8e259c1e929e913e6ef07:rust/{source_path}"
+                            ),
+                        ])
+                        .current_dir(repository_root)
+                        .output()
+                        .expect("pinned source object must be readable");
+                    assert!(
+                        bytes.status.success(),
+                        "pinned source object is absent: {source_path}"
+                    );
+                    assert_eq!(blake3::hash(&bytes.stdout).to_hex().as_str(), digest);
+                }
             }
             ("implementation_leaf", "planned") => {
                 implementation_leaves += 1;
@@ -1078,8 +1094,8 @@ fn candidate_inventory_policy() {
             _ => panic!("invalid inventory state for {source_path}: {classification}/{state}"),
         }
     }
-    assert_eq!(source_paths.intersection(&planned).count(), 4);
-    assert_eq!(present, 122);
+    assert_eq!(source_paths.intersection(&planned).count(), 0);
+    assert_eq!(present, 126);
     assert_eq!(implementation_leaves, 115);
     assert_eq!(assets, 9);
     assert_eq!(facade_rows, 2);

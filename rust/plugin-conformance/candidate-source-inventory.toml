@@ -752,8 +752,8 @@ source_path = "runtime/src/transport/grpc/kserve_binding.rs"
 candidate_path = "plugins/endpoints/src/transport/grpc/kserve_binding.rs"
 owner_task = 30
 classification = "implementation_leaf"
-state = "planned"
-producer_task = 6
+state = "present"
+blake3 = "82f9512fe44ad1a11796e802e0a9e00b652ec224e57101ac15b479bdd6290a76"
 
 [[source]]
 source_path = "runtime/src/transport/grpc/proto.rs"
@@ -912,8 +912,8 @@ source_path = "runtime/src/transport/ws/sink.rs"
 candidate_path = "plugins/transport-websocket/src/transport/ws/sink.rs"
 owner_task = 33
 classification = "implementation_leaf"
-state = "planned"
-producer_task = 6
+state = "present"
+blake3 = "210be7b6609b21d358c8e3bdba238a3b81eae558e78b867d6bc1de32183bfe47"
 
 [[source]]
 source_path = "runtime/tests/websocket_transport_config.rs"
@@ -928,8 +928,8 @@ source_path = "runtime/src/transport/dry_run.rs"
 candidate_path = "plugins/transport-dry-run/src/transport/dry_run.rs"
 owner_task = 33
 classification = "implementation_leaf"
-state = "planned"
-producer_task = 6
+state = "present"
+blake3 = "fb38d874db68451b01f2ababaccf34c2b4a600583c22097c05021dc3f5663a20"
 
 [[source]]
 source_path = "dry-run-tests/tests/common/mod.rs"
@@ -1000,8 +1000,8 @@ source_path = "runtime/src/dynosim/direct.rs"
 candidate_path = "plugins/transport-dynosim/src/dynosim/direct.rs"
 owner_task = 34
 classification = "implementation_leaf"
-state = "planned"
-producer_task = 6
+state = "present"
+blake3 = "8eea3c370b942d8c95ab55c3d2eaf5ddcb4df236f995948244582d5abe285dc1"
 
 [[source]]
 source_path = "runtime/src/endpoints/dynosim.rs"

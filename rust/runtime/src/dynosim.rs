@@ -8,6 +8,8 @@
 //! [`SteppableReplay`]. The `dynosim` feature keeps this dependency out of
 //! ordinary HTTP builds.
 
+pub(crate) mod direct;
+
 use std::cell::{Cell, RefCell};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BinaryHeap, HashMap};
