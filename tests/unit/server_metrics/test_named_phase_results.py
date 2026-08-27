@@ -15,6 +15,7 @@ from aiperf.common.models.server_metrics_models import (
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.plugin.enums import EndpointType
 from aiperf.server_metrics.accumulator import ServerMetricsAccumulator
+from aiperf.timing.config import AGENTIC_WARMUP_PHASE_NAME
 from tests.unit.conftest import make_run_from_cli
 
 
@@ -38,6 +39,26 @@ def _record(
                 type=PrometheusMetricType.GAUGE,
                 description="running",
                 samples=[MetricSample(value=float(timestamp_ns))],
+            )
+        },
+    )
+
+
+def _warmup_record(timestamp_ns: int, value: float) -> ServerMetricsRecord:
+    """A synthesized AGENTIC_REPLAY warmup scrape: phase_index is always None."""
+    return ServerMetricsRecord(
+        endpoint_url="http://server:8000/metrics",
+        timestamp_ns=timestamp_ns,
+        benchmark_phase=CreditPhase.WARMUP,
+        phase_index=None,
+        profiling_index=None,
+        phase_name=AGENTIC_WARMUP_PHASE_NAME,
+        phase_kind="warmup",
+        metrics={
+            "vllm:num_requests_running": MetricFamily(
+                type=PrometheusMetricType.GAUGE,
+                description="running",
+                samples=[MetricSample(value=value)],
             )
         },
     )
@@ -71,3 +92,53 @@ async def test_export_results_contains_exact_named_phase_summaries() -> None:
     ]
     assert [result.phase_index for result in results.phase_results] == [0, 1]
     assert all(result.endpoint_summaries for result in results.phase_results)
+
+
+@pytest.mark.asyncio
+async def test_export_results_keeps_repeated_agentic_warmup_instances_distinct() -> (
+    None
+):
+    """Two synthesized agentic-warmup instances (phase_index=None) must not pool.
+
+    AGENTIC_REPLAY synthesizes a warmup phase with phase_index=None for every
+    instance (it isn't a declared cfg.phases entry -- see
+    _build_agentic_warmup_config). A multi-phase agentic plan can run this
+    synthesized warmup more than once with the identical (None, phase_name)
+    identity; each instance must still produce its own phase_results entry
+    instead of collapsing into one pooled result.
+    """
+    accumulator = ServerMetricsAccumulator(
+        run=make_run_from_cli(
+            CLIConfig(
+                model_names=["model"],
+                endpoint_type=EndpointType.CHAT,
+                urls=["http://server:8000/v1/chat/completions"],
+            )
+        )
+    )
+    for record in (
+        _warmup_record(10, 1.0),
+        _warmup_record(20, 2.0),
+        # An intervening profiling phase marks the boundary between the two
+        # warmup instances (mirrors a real multi-phase agentic run).
+        _record(30, phase_index=0, profiling_index=0, phase_name="main"),
+        _warmup_record(40, 3.0),
+        _warmup_record(50, 4.0),
+    ):
+        await accumulator.process_record(record)
+
+    results = await accumulator.export_results(ExportContext(start_ns=10, end_ns=51))
+
+    assert results is not None
+    warmup_results = [
+        result
+        for result in results.phase_results
+        if result.phase_name == AGENTIC_WARMUP_PHASE_NAME
+    ]
+    assert len(warmup_results) == 2, (
+        "expected two distinct agentic-warmup phase_results entries, "
+        f"got {len(warmup_results)}"
+    )
+    assert all(result.phase_index is None for result in warmup_results)
+    assert [result.start_ns for result in warmup_results] == [10, 40]
+    assert [result.end_ns for result in warmup_results] == [20, 50]

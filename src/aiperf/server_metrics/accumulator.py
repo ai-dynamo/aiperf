@@ -63,10 +63,23 @@ _METRIC_DATA_CLASSES: dict[
 
 @dataclass(slots=True)
 class _PhaseCapture:
-    """Identity and observed scrape window for one concrete phase."""
+    """Identity and observed scrape window for one concrete phase.
+
+    ``phase_index`` is the *reported* value (``None`` for synthesized
+    AGENTIC_REPLAY warmup phases, per ``timing/config.py``'s
+    ``_build_agentic_warmup_config`` -- they are not entries in
+    ``cfg.phases``). ``sample_phase_index`` is the internal per-sample
+    key used to filter this instance's stored samples: for a reported
+    ``phase_index`` it is the same value, but for a synthesized warmup
+    (``phase_index is None``) it is a synthesized negative index unique
+    to this *instance* of the warmup, so multiple agentic-warmup
+    instances in one run don't pool their samples together (see
+    ``ServerMetricsAccumulator._resolve_sample_phase_index``).
+    """
 
     phase: CreditPhase
     phase_index: int | None
+    sample_phase_index: int
     profiling_index: int | None
     phase_name: str
     phase_kind: PhaseKind | None
@@ -126,7 +139,13 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         # strictly after warmup_end_ns and would otherwise be excluded from
         # warmup aggregation.
         self._last_warmup_record_ns: int | None = None
-        self._phase_captures: dict[tuple[int | None, str], _PhaseCapture] = {}
+        self._phase_captures: dict[tuple[int, str], _PhaseCapture] = {}
+        # Synthesized-instance tracking for phases with no reported
+        # phase_index (currently just AGENTIC_REPLAY's synthesized warmup,
+        # see _PhaseCapture and _resolve_sample_phase_index).
+        self._last_phase_signature: tuple[CreditPhase, int | None, str] | None = None
+        self._current_synthetic_phase_index: int | None = None
+        self._next_synthetic_phase_index = -2
 
     def get_hierarchy_for_export(self) -> ServerMetricsHierarchy:
         """Get server metrics hierarchy for export purposes.
@@ -153,14 +172,30 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
             self._last_warmup_record_ns = max(
                 self._last_warmup_record_ns or 0, record.timestamp_ns
             )
+        storage_record = record
         if record.benchmark_phase is not None:
             phase_name = record.phase_name or str(record.benchmark_phase)
-            phase_key = (record.phase_index, phase_name)
+            sample_phase_index = self._resolve_sample_phase_index(
+                record.benchmark_phase, record.phase_index, phase_name
+            )
+            if record.phase_index is None:
+                # Storage keys samples by phase_index for filtering
+                # (get_phase_index_mask); give this instance's samples the
+                # synthesized index instead of the record's real (None)
+                # value so distinct synthesized-warmup instances don't
+                # collide in storage. Copy rather than mutate: `record` is
+                # shared with sibling processors (e.g. the JSONL writer) via
+                # the same fan-out call in manager.py.
+                storage_record = record.model_copy(
+                    update={"phase_index": sample_phase_index}
+                )
+            phase_key = (sample_phase_index, phase_name)
             capture = self._phase_captures.get(phase_key)
             if capture is None:
                 self._phase_captures[phase_key] = _PhaseCapture(
                     phase=record.benchmark_phase,
                     phase_index=record.phase_index,
+                    sample_phase_index=sample_phase_index,
                     profiling_index=record.profiling_index,
                     phase_name=phase_name,
                     phase_kind=record.phase_kind,
@@ -170,7 +205,40 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
             else:
                 capture.start_ns = min(capture.start_ns, record.timestamp_ns)
                 capture.end_ns = max(capture.end_ns, record.timestamp_ns)
-        self._server_metrics_hierarchy.add_record(record)
+        self._server_metrics_hierarchy.add_record(storage_record)
+
+    def _resolve_sample_phase_index(
+        self,
+        benchmark_phase: CreditPhase,
+        phase_index: int | None,
+        phase_name: str,
+    ) -> int:
+        """Return the per-sample filter index for a record's concrete phase.
+
+        Reported phase indices are returned unchanged. When ``phase_index``
+        is ``None`` (synthesized AGENTIC_REPLAY warmup phases -- see
+        ``_PhaseCapture``), a synthesized negative index is assigned instead,
+        one per contiguous run of same-identity records. A new synthesized
+        index is minted whenever the (phase, phase_index, phase_name)
+        signature changes from the previous record processed, so a later
+        warmup instance with the same name (separated by an intervening
+        profiling phase) gets its own index rather than pooling with the
+        first. Real (non-negative) phase indices are never reused for this,
+        so synthesized and reported indices can't collide.
+        """
+        if phase_index is not None:
+            self._last_phase_signature = (benchmark_phase, phase_index, phase_name)
+            return phase_index
+
+        signature = (benchmark_phase, phase_index, phase_name)
+        if (
+            signature != self._last_phase_signature
+            or self._current_synthetic_phase_index is None
+        ):
+            self._current_synthetic_phase_index = self._next_synthetic_phase_index
+            self._next_synthetic_phase_index -= 1
+        self._last_phase_signature = signature
+        return self._current_synthetic_phase_index
 
     async def process_record(self, record: ServerMetricsRecord) -> None:
         """``AccumulatorProtocol``-compatible alias for ``process_server_metrics_record``."""
@@ -313,7 +381,7 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
                 capture.phase,
                 self._slice_duration,
                 include_final_collection=False,
-                phase_index=capture.phase_index,
+                phase_index=capture.sample_phase_index,
             )
             if not endpoint_summaries:
                 continue
