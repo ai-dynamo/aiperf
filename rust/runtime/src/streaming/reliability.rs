@@ -1673,6 +1673,12 @@ pub enum StreamingReliabilityError {
     MissingInputSourcePosition,
     /// The reporter owner has terminally closed its adapter endpoint.
     ReporterClosed,
+    /// A restored action frontier crosses sequences no retained gap-closure
+    /// proof covers.
+    UnprovenActionGapClosure,
+    /// A retained or restored gap-closure proof disagrees with the exact
+    /// coverage recomputed from retained terminal membership.
+    ForgedActionGapClosure,
 }
 
 impl fmt::Display for StreamingReliabilityError {
@@ -1704,8 +1710,13 @@ enum CheckedActionSequenceOutcome {
 
 #[allow(dead_code)]
 #[derive(Debug)]
+// The frozen inventory is borrowed only while the proof is minted, so the
+// reporter cannot reconsult it after a restart. The coverage digest is the
+// ledger-recomputable half of the proof: it binds the exact terminal membership
+// the reporter held when the inventory accounted for the gap.
 struct SealedActionGapClosureProof {
     membership_root: ContentDigest,
+    coverage_digest: ContentDigest,
     lease: BudgetLease,
 }
 
@@ -1991,6 +2002,41 @@ struct RetainedActionTerminal {
     entry_lease: BudgetLease,
 }
 
+// The lease is never read; it is retained so an accepted gap closure keeps
+// paying for itself for as long as the frontier it advanced is retained.
+#[allow(dead_code)]
+#[derive(Debug)]
+struct RetainedActionGapClosure {
+    through: GlobalSequence,
+    membership_root: ContentDigest,
+    coverage_digest: ContentDigest,
+    lease: BudgetLease,
+}
+
+/// Strict persisted form of the sole retained action gap-closure proof.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct PersistedActionGapClosure {
+    /// Greatest action sequence the frozen inventory accounted for.
+    pub(crate) through: GlobalSequence,
+    /// Frozen-inventory membership root that authorized the closure.
+    pub(crate) membership_root: ContentDigest,
+    /// Ledger-recomputable digest of the terminal membership it covered.
+    pub(crate) coverage_digest: ContentDigest,
+}
+
+const fn larger_charge(left: usize, right: usize) -> usize {
+    if left > right { left } else { right }
+}
+
+// One constant charge covers both the transient prepared token and the single
+// retained closure, so acceptance moves the lease without shrinking, splitting,
+// or reacquiring capacity.
+const ACTION_GAP_CLOSURE_CHARGE_BYTES: usize = larger_charge(
+    size_of::<CheckedNoMoreActionsBefore>(),
+    size_of::<RetainedActionGapClosure>(),
+);
+
 struct RetainedReceipt {
     receipt: BudgetOwnedStreamingIssueReceipt,
     outcome: StreamingIssueOutcome,
@@ -2189,6 +2235,7 @@ pub struct BudgetOwnedStreamingIssueReporter {
     current_action_attempts: BTreeMap<GlobalSequence, CurrentActionAttempt>,
     action_terminals: BTreeMap<GlobalSequence, RetainedActionTerminal>,
     action_frontier: Option<GlobalSequence>,
+    action_gap_closure: Option<RetainedActionGapClosure>,
     next_reporter_token: u64,
     receipts: BTreeMap<ContentDigest, RetainedReceipt>,
     counters: BTreeMap<StreamingIssueCounterKey, RetainedCounter>,
@@ -2237,6 +2284,7 @@ impl BudgetOwnedStreamingIssueReporter {
             current_action_attempts: BTreeMap::new(),
             action_terminals: BTreeMap::new(),
             action_frontier: None,
+            action_gap_closure: None,
             next_reporter_token: 0,
             receipts: BTreeMap::new(),
             counters: BTreeMap::new(),
@@ -2270,6 +2318,41 @@ impl BudgetOwnedStreamingIssueReporter {
     #[must_use]
     pub fn retained_outcome(&self, issue_id: &ContentDigest) -> Option<StreamingIssueOutcome> {
         self.receipts.get(issue_id).map(|value| value.outcome)
+    }
+
+    /// Project the sole retained action gap-closure proof for checkpoint wire
+    /// encoding. The reporter keeps its lease; only the strict fields leave.
+    pub(crate) fn persisted_action_gap_closure(&self) -> Option<PersistedActionGapClosure> {
+        self.action_gap_closure
+            .as_ref()
+            .map(|retained| PersistedActionGapClosure {
+                through: retained.through,
+                membership_root: retained.membership_root,
+                coverage_digest: retained.coverage_digest,
+            })
+    }
+
+    /// Revalidate a restored proof against restored terminals and frontier,
+    /// then install it under a fresh exact lease.
+    ///
+    /// Every refusal path returns before the single assignment, so a failed
+    /// restore leaves the retained closure at its prior value and charges
+    /// nothing. The checkpoint restore path must call this after installing
+    /// `action_terminals` and `action_frontier` and before marking the
+    /// participant initialized.
+    pub(crate) fn install_restored_action_gap_closure(
+        &mut self,
+        persisted: Option<PersistedActionGapClosure>,
+    ) -> Result<(), StreamingReliabilityError> {
+        let restored = checked_restored_action_gap_closure(
+            &self.run,
+            &self.budget,
+            &self.action_terminals,
+            self.action_frontier,
+            persisted,
+        )?;
+        self.action_gap_closure = restored;
+        Ok(())
     }
 
     /// Terminally close the adapter endpoint and release its queued charges.
@@ -2801,14 +2884,18 @@ impl BudgetOwnedStreamingIssueReporter {
                 return Err(StreamingReliabilityError::InvalidActionTerminalMembership);
             }
         }
+        let membership_root = inventory.membership_root();
+        let coverage_digest =
+            action_gap_coverage_digest(&self.run, &self.action_terminals, through, membership_root);
         let lease = self
             .budget
-            .try_acquire(1, size_of::<CheckedNoMoreActionsBefore>())
+            .try_acquire(1, ACTION_GAP_CLOSURE_CHARGE_BYTES)
             .map_err(state_budget_error)?;
         Ok(CheckedNoMoreActionsBefore {
             through,
             proof: SealedActionGapClosureProof {
-                membership_root: inventory.membership_root(),
+                membership_root,
+                coverage_digest,
                 lease,
             },
         })
@@ -2818,15 +2905,36 @@ impl BudgetOwnedStreamingIssueReporter {
         &mut self,
         closure: CheckedNoMoreActionsBefore,
     ) -> Result<(), StreamingReliabilityError> {
-        let _membership_root = closure.proof.membership_root;
-        let _lease = closure.proof.lease;
+        // Refuse before destructuring so a rejected closure returns its capacity
+        // with the dropped token instead of charging the ledger.
         if self
             .action_frontier
             .is_some_and(|frontier| closure.through < frontier)
         {
             return Err(StreamingReliabilityError::InvalidActionTerminalMembership);
         }
-        self.action_frontier = Some(closure.through);
+        let CheckedNoMoreActionsBefore { through, proof } = closure;
+        let SealedActionGapClosureProof {
+            membership_root,
+            coverage_digest,
+            lease,
+        } = proof;
+        if self.action_gap_closure.as_ref().is_some_and(|existing| {
+            existing.through == through
+                && (existing.membership_root != membership_root
+                    || existing.coverage_digest != coverage_digest)
+        }) {
+            return Err(StreamingReliabilityError::ForgedActionGapClosure);
+        }
+        // Assigning replaces any superseded closure, whose drop returns its
+        // exact charge, so the ledger retains one closure lease at a time.
+        self.action_gap_closure = Some(RetainedActionGapClosure {
+            through,
+            membership_root,
+            coverage_digest,
+            lease,
+        });
+        self.action_frontier = Some(through);
         Ok(())
     }
 
@@ -3372,7 +3480,9 @@ fn is_retryable_submission_error(error: &StreamingReliabilityError) -> bool {
         | StreamingReliabilityError::MissingPendingActionIssue
         | StreamingReliabilityError::ConflictingIssueSubmission
         | StreamingReliabilityError::MissingInputSourcePosition
-        | StreamingReliabilityError::ReporterClosed => false,
+        | StreamingReliabilityError::ReporterClosed
+        | StreamingReliabilityError::UnprovenActionGapClosure
+        | StreamingReliabilityError::ForgedActionGapClosure => false,
     }
 }
 
@@ -4270,6 +4380,108 @@ fn budget_owned_receipt_from_reservation(
         entry_lease,
         reservation,
     ))
+}
+
+// Canonical, restart-stable digest over the terminal membership one gap closure
+// crossed. The reporter can recompute this without the frozen inventory, which
+// no longer exists after a restart.
+fn action_gap_coverage_digest(
+    run: &StreamRunIdentity,
+    action_terminals: &BTreeMap<GlobalSequence, RetainedActionTerminal>,
+    through: GlobalSequence,
+    membership_root: ContentDigest,
+) -> ContentDigest {
+    let mut hasher = blake3::Hasher::new();
+    update_hash_field(
+        &mut hasher,
+        b"aiperf.streaming.action-gap-closure-coverage.v1",
+    );
+    update_hash_field(&mut hasher, run.logical_replay_run().as_bytes());
+    update_hash_field(&mut hasher, &through.get().to_le_bytes());
+    update_hash_field(&mut hasher, membership_root.as_bytes());
+    let mut covered: u64 = 0;
+    for (sequence, retained) in action_terminals.range(..=through) {
+        update_hash_field(&mut hasher, &sequence.get().to_le_bytes());
+        update_hash_field(&mut hasher, retained.fact.membership_digest.as_bytes());
+        covered = covered.saturating_add(1);
+    }
+    update_hash_field(&mut hasher, &covered.to_le_bytes());
+    ContentDigest::from_bytes(*hasher.finalize().as_bytes())
+}
+
+// A restored frontier is provable when every sequence it crosses is either a
+// retained terminal or covered by the retained closure. The walk stops at the
+// first absent sequence, so it is bounded by the retained terminal count.
+fn is_action_frontier_proven(
+    action_terminals: &BTreeMap<GlobalSequence, RetainedActionTerminal>,
+    frontier: GlobalSequence,
+    closure_through: Option<GlobalSequence>,
+) -> bool {
+    let mut next = match closure_through {
+        Some(through) if through >= frontier => return true,
+        Some(through) => match through.get().checked_add(1) {
+            Some(next) => next,
+            None => return true,
+        },
+        None => 0,
+    };
+    while next <= frontier.get() {
+        if !action_terminals.contains_key(&GlobalSequence::new(next)) {
+            return false;
+        }
+        let Some(incremented) = next.checked_add(1) else {
+            return true;
+        };
+        next = incremented;
+    }
+    true
+}
+
+// Restore-side revalidation. This takes borrowed restored state rather than
+// `&mut self` so the caller validates before installing any reporter field.
+fn checked_restored_action_gap_closure(
+    run: &StreamRunIdentity,
+    budget: &StreamingResourceBudget,
+    action_terminals: &BTreeMap<GlobalSequence, RetainedActionTerminal>,
+    action_frontier: Option<GlobalSequence>,
+    persisted: Option<PersistedActionGapClosure>,
+) -> Result<Option<RetainedActionGapClosure>, StreamingReliabilityError> {
+    let Some(persisted) = persisted else {
+        let Some(frontier) = action_frontier else {
+            return Ok(None);
+        };
+        if is_action_frontier_proven(action_terminals, frontier, None) {
+            return Ok(None);
+        }
+        return Err(StreamingReliabilityError::UnprovenActionGapClosure);
+    };
+    let Some(frontier) = action_frontier else {
+        return Err(StreamingReliabilityError::UnprovenActionGapClosure);
+    };
+    if persisted.through > frontier {
+        return Err(StreamingReliabilityError::UnprovenActionGapClosure);
+    }
+    if !is_action_frontier_proven(action_terminals, frontier, Some(persisted.through)) {
+        return Err(StreamingReliabilityError::UnprovenActionGapClosure);
+    }
+    let recomputed = action_gap_coverage_digest(
+        run,
+        action_terminals,
+        persisted.through,
+        persisted.membership_root,
+    );
+    if recomputed != persisted.coverage_digest {
+        return Err(StreamingReliabilityError::ForgedActionGapClosure);
+    }
+    let lease = budget
+        .try_acquire(1, ACTION_GAP_CLOSURE_CHARGE_BYTES)
+        .map_err(state_budget_error)?;
+    Ok(Some(RetainedActionGapClosure {
+        through: persisted.through,
+        membership_root: persisted.membership_root,
+        coverage_digest: persisted.coverage_digest,
+        lease,
+    }))
 }
 
 fn counter_key_for_issue(
