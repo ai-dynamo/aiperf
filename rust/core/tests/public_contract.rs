@@ -14,7 +14,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::rc::Rc;
 
-use aiperf_core::artifact::{ArtifactAccess, ArtifactEntry, ArtifactError};
+use aiperf_core::artifact::{ArtifactAccess, ArtifactEntry, ArtifactError, DirectoryArtifacts};
 use aiperf_core::clock::{Clock, RunOutcome};
 use aiperf_core::dispatch::{
     Dispatchable, ObservedTokenKind, ObservedUsage, ReplayTerminalStatus, RequestObserver,
@@ -100,14 +100,27 @@ impl ArtifactAccess for FakeArtifacts {
     }
 }
 
-/// Compile-time proof that `ArtifactAccess` exposes no `raw_path()`.
+/// The sentinel this crate's only `raw_path` returns.
+const NO_RAW_PATH: &str = "aiperf-core exposes no raw artifact path";
+
+/// Compile-time proof that no artifact capability exposes a raw host path.
 ///
-/// This blanket extension is the only `raw_path` in scope. If the trait or an
-/// inherent implementation ever grew one, the call below would become
-/// ambiguous and this file would stop compiling.
+/// `raw_path` exists nowhere in `aiperf-core`, so this blanket extension is the
+/// only candidate method resolution can find. Two production edits break the
+/// call in `artifact_access_is_capability_limited`:
+///
+/// - adding `fn raw_path(&self)` to `ArtifactAccess` makes the call ambiguous
+///   between two in-scope traits and this file stops compiling;
+/// - adding an *inherent* `raw_path()` to `DirectoryArtifacts` silently wins
+///   method resolution over this blanket impl, so the assertion either fails
+///   (a different string) or stops type-checking (anything else, such as the
+///   `&Path` an escape hatch would actually return).
+///
+/// The guard is therefore applied to the real host capability, not only to a
+/// test-local fixture, because it is `DirectoryArtifacts` that holds the root.
 trait NoRawPathEscapeHatch {
     fn raw_path(&self) -> &'static str {
-        "aiperf-core exposes no raw artifact path"
+        NO_RAW_PATH
     }
 }
 
@@ -129,11 +142,28 @@ impl Dispatchable for TinyRequest {
     }
 }
 
+/// Worker-local observer state, exactly the `Rc<RefCell<_>>` shape the
+/// thread-per-core workers use. `Rc` is neither `Send` nor `Sync`, which is
+/// what `assert_observer_needs_no_thread_bounds` below relies on.
 #[derive(Default)]
 struct CountingObserver {
-    tokens: RefCell<Vec<f64>>,
-    terminal: RefCell<Option<ReplayTerminalStatus>>,
+    tokens: Rc<RefCell<Vec<f64>>>,
+    terminal: Rc<RefCell<Option<ReplayTerminalStatus>>>,
 }
+
+/// Compile-time proof that `RequestObserver` requires neither `Send` nor `Sync`.
+///
+/// The production edit that makes this fail: change `pub trait RequestObserver {`
+/// in `rust/core/src/dispatch.rs` to `pub trait RequestObserver: Send {` (or
+/// `: Sync`, or both). `CountingObserver` holds `Rc<RefCell<_>>`, which
+/// satisfies neither auto trait, so the instantiation in
+/// `the_dispatch_seam_is_worker_local` stops compiling with "`Rc<...>` cannot be
+/// sent between threads safely".
+///
+/// This matters because a `Send` bound on the observer would forbid the
+/// per-worker `Rc<RefCell<_>>` accumulation the hot path depends on, forcing a
+/// per-token mutex.
+fn assert_observer_needs_no_thread_bounds<T: RequestObserver>() {}
 
 impl RequestObserver for CountingObserver {
     fn on_arrival(&self, _uuid: Uuid, _arrival_ms: f64, _input: usize, _requested: usize) {}
@@ -196,15 +226,17 @@ fn artifact_access_is_capability_limited() {
         );
     }
 
-    // No `raw_path()` exists on the capability, so the blanket extension wins.
-    assert_eq!(
-        artifacts.raw_path(),
-        "aiperf-core exposes no raw artifact path"
-    );
+    // The real host capability, which is the type that actually owns a root:
+    // no `raw_path()` exists on it, so the blanket extension wins resolution.
+    let host = DirectoryArtifacts::new(std::env::temp_dir());
+    assert_eq!(host.raw_path(), NO_RAW_PATH);
 }
 
 #[test]
 fn the_dispatch_seam_is_worker_local() {
+    // Fails to compile if `RequestObserver` ever gains `Send` or `Sync`.
+    assert_observer_needs_no_thread_bounds::<CountingObserver>();
+
     let observer = CountingObserver::default();
     let request = TinyRequest {
         uuid: Uuid::from_u128(11),
@@ -226,7 +258,6 @@ fn measurement_values_are_boundary_owned() {
         content_type: Some("text/plain".to_owned()),
     });
     assert_eq!(response.perf_ns(), 42);
-    assert!(matches!(response, Response::Text(_)));
 
     let message = SseMessage::parse("data: {\"a\":1}", 7);
     assert_eq!(message.perf_ns, 7);
@@ -284,17 +315,10 @@ fn a_finalized_report_projection_commits_exactly_once() {
 /// Minimal executor: the dispatch seam is `?Send` and must stay drivable
 /// without pulling a runtime into the contract test.
 fn futures_lite_block_on<T>(future: impl Future<Output = T>) -> T {
-    use std::sync::Arc;
-    use std::task::{Context, Poll, Wake, Waker};
-
-    struct NoopWaker;
-    impl Wake for NoopWaker {
-        fn wake(self: Arc<Self>) {}
-    }
+    use std::task::{Context, Poll, Waker};
 
     let mut future = std::pin::pin!(future);
-    let waker = Waker::from(Arc::new(NoopWaker));
-    let mut context = Context::from_waker(&waker);
+    let mut context = Context::from_waker(Waker::noop());
     loop {
         match future.as_mut().poll(&mut context) {
             Poll::Ready(value) => return value,

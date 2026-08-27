@@ -6,10 +6,21 @@
 //! [`ArtifactAccess`] is the only artifact I/O a plugin is given. It exposes a
 //! scoped listing, scoped reads, and approved relative creates and appends. It
 //! deliberately exposes **no** raw directory path and **no** unchecked join: a
-//! plugin cannot reconstruct the host's artifact root, and cannot address a
-//! path the host did not approve.
+//! plugin cannot reconstruct the host's artifact root, and every path it names
+//! passes [`check_relative`] before it reaches a syscall.
 //!
-//! ```compile_fail
+//! The containment that buys is **lexical, not canonical**. [`check_relative`]
+//! rejects absolute paths, prefixes, `.`, `..`, and interior NUL, so a plugin
+//! cannot *spell* an escape. It does not resolve links: [`DirectoryArtifacts`]
+//! reads and writes through any symlink already present under the host's root.
+//! Artifact roots here are host-provisioned run directories populated by the
+//! host, not an adversarial filesystem; see [`DirectoryArtifacts`] for the
+//! exact per-operation behavior.
+//!
+//! The `E0599` pin below is deliberate: an unpinned `compile_fail` would also
+//! "pass" on a renamed crate, a broken `use`, or a typo.
+//!
+//! ```compile_fail,E0599
 //! use aiperf_core::artifact::ArtifactAccess;
 //! fn escape(access: &dyn ArtifactAccess) -> &std::path::Path {
 //!     // There is no `raw_path` on the capability, by design.
@@ -123,6 +134,17 @@ pub trait ArtifactAccess {
 ///
 /// The root is private: it is never handed back through the trait, so a plugin
 /// holding this as `&dyn ArtifactAccess` cannot recover it.
+///
+/// Symlink behavior, stated because the lexical check cannot cover it:
+/// [`list`](ArtifactAccess::list) uses the non-following
+/// [`DirEntry::file_type`](std::fs::DirEntry::file_type), so a symlink under
+/// the root is neither listed nor descended and the listing never advertises a
+/// path outside the scope. [`read`](ArtifactAccess::read),
+/// [`create`](ArtifactAccess::create), and [`append`](ArtifactAccess::append)
+/// use ordinary `std::fs` calls, which do follow a link the host placed under
+/// the root. Entries whose file name is not valid UTF-8 are omitted from the
+/// listing rather than reported under a lossy name the other methods could not
+/// resolve.
 #[derive(Debug, Clone)]
 pub struct DirectoryArtifacts {
     root: PathBuf,
@@ -144,6 +166,12 @@ impl DirectoryArtifacts {
 ///
 /// Free rather than a method: it recurses on the directory argument alone and
 /// reads nothing from the scope.
+///
+/// `file_type()` does not follow symlinks, so a linked directory is not
+/// descended and a linked file is not listed: the listing cannot advertise a
+/// relative path that resolves outside the scope. Names that are not valid
+/// UTF-8 are skipped because they cannot round-trip through the `&str` the
+/// capability accepts.
 fn walk(
     directory: &Path,
     prefix: &str,
@@ -151,20 +179,21 @@ fn walk(
 ) -> Result<(), ArtifactError> {
     for entry in std::fs::read_dir(directory)? {
         let entry = entry?;
-        let name = entry.file_name();
-        let name = name.to_string_lossy();
+        let Ok(name) = entry.file_name().into_string() else {
+            continue;
+        };
         let relative_path = if prefix.is_empty() {
-            name.to_string()
+            name
         } else {
             format!("{prefix}/{name}")
         };
-        let metadata = entry.metadata()?;
-        if metadata.is_dir() {
+        let file_type = entry.file_type()?;
+        if file_type.is_dir() {
             walk(&entry.path(), &relative_path, into)?;
-        } else if metadata.is_file() {
+        } else if file_type.is_file() {
             into.push(ArtifactEntry {
                 relative_path,
-                len: metadata.len(),
+                len: entry.metadata()?.len(),
             });
         }
     }
@@ -237,6 +266,33 @@ mod tests {
         let listed = artifacts.list().expect("list");
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].relative_path, "nested/report.json");
+    }
+
+    /// The lexical check cannot see a link, so the listing must not follow one.
+    ///
+    /// Production edit that makes this fail: switch `walk` back to
+    /// `entry.metadata()` (which follows symlinks). The linked directory is
+    /// then descended and `outside/secret.txt` is listed as
+    /// `link/secret.txt` — an approved-looking relative path naming a file
+    /// outside the scope.
+    #[cfg(unix)]
+    #[test]
+    fn listing_does_not_descend_a_symlink_out_of_the_scope() {
+        let base = tempfile::tempdir().expect("temporary base");
+        let root = base.path().join("root");
+        let outside = base.path().join("outside");
+        std::fs::create_dir_all(&root).expect("root");
+        std::fs::create_dir_all(&outside).expect("outside");
+        std::fs::write(outside.join("secret.txt"), b"secret").expect("secret");
+        std::fs::write(root.join("inside.txt"), b"ok").expect("inside");
+        std::os::unix::fs::symlink(&outside, root.join("link")).expect("symlink");
+
+        let listed = DirectoryArtifacts::new(&root).list().expect("list");
+        let names: Vec<&str> = listed
+            .iter()
+            .map(|entry| entry.relative_path.as_str())
+            .collect();
+        assert_eq!(names, vec!["inside.txt"]);
     }
 
     #[test]
