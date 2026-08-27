@@ -6,7 +6,6 @@
 use std::{
     cell::{Cell, RefCell},
     fmt,
-    mem::size_of,
     ops::Deref,
     rc::Rc,
     sync::{
@@ -16,7 +15,8 @@ use std::{
 };
 
 use bytes::Bytes;
-use tokio::{sync::Notify, task::JoinHandle};
+use futures::FutureExt;
+use tokio::{sync::watch, task::JoinHandle};
 
 use super::{
     budget::{BudgetError, BudgetLease, BudgetLimits, StreamingResourceBudget},
@@ -61,87 +61,9 @@ pub enum BlockingWorkClass {
 pub struct BlockingWorkBudget {
     /// Bytes retained as inputs for the lifetime of the closure.
     pub input_bytes: usize,
-    /// Maximum retained output allocation bytes.
+    /// Caller-declared retained output allocation reservation.
     pub output_bytes: usize,
 }
-
-/// Explicit retained-allocation sizing contract for a blocking output.
-///
-/// Implementations must include the complete allocation retained by the value,
-/// not merely its logical length. The executor validates this size against the
-/// reservation before returning the value.
-pub trait BlockingOutputSize {
-    /// Return the number of allocation bytes retained by this value.
-    fn retained_allocation_bytes(&self) -> Result<usize, BlockingWorkError>;
-}
-
-mod flat_element {
-    pub trait Sealed {}
-
-    macro_rules! flat_elements {
-        ($($type:ty),+ $(,)?) => {
-            $(impl Sealed for $type {})+
-        };
-    }
-
-    flat_elements!(
-        u8, u16, u32, u64, u128, usize, i8, i16, i32, i64, i128, isize, f32, f64, bool, char
-    );
-}
-
-impl<T: flat_element::Sealed> BlockingOutputSize for Vec<T> {
-    fn retained_allocation_bytes(&self) -> Result<usize, BlockingWorkError> {
-        self.capacity()
-            .checked_mul(size_of::<T>())
-            .ok_or(BlockingWorkError::OutputSizeOverflow)
-    }
-}
-
-impl BlockingOutputSize for String {
-    fn retained_allocation_bytes(&self) -> Result<usize, BlockingWorkError> {
-        Ok(self.capacity())
-    }
-}
-
-impl<T: flat_element::Sealed> BlockingOutputSize for Box<[T]> {
-    fn retained_allocation_bytes(&self) -> Result<usize, BlockingWorkError> {
-        self.len()
-            .checked_mul(size_of::<T>())
-            .ok_or(BlockingWorkError::OutputSizeOverflow)
-    }
-}
-
-macro_rules! fixed_size_outputs {
-    ($($type:ty),+ $(,)?) => {
-        $(
-            impl BlockingOutputSize for $type {
-                fn retained_allocation_bytes(&self) -> Result<usize, BlockingWorkError> {
-                    Ok(size_of::<Self>())
-                }
-            }
-        )+
-    };
-}
-
-fixed_size_outputs!(
-    (),
-    u8,
-    u16,
-    u32,
-    u64,
-    u128,
-    usize,
-    i8,
-    i16,
-    i32,
-    i64,
-    i128,
-    isize,
-    f32,
-    f64,
-    bool,
-    char
-);
 
 /// Cooperative cancellation token passed into a blocking closure.
 #[derive(Clone, Debug)]
@@ -170,15 +92,6 @@ pub enum BlockingWorkError {
     Cancelled,
     /// A streaming resource budget could not be acquired or maintained.
     Budget(BudgetError),
-    /// The output retained more allocation capacity than was reserved.
-    OutputExceedsReservation {
-        /// Capacity reserved before enqueue.
-        reserved_bytes: usize,
-        /// Capacity retained by the returned value.
-        retained_bytes: usize,
-    },
-    /// Retained output allocation size overflowed `usize`.
-    OutputSizeOverflow,
     /// The process exhausted the monotonic accepted-job identity space.
     JobIdExhausted,
     /// The blocking task panicked or was cancelled by Tokio.
@@ -208,7 +121,7 @@ impl From<BudgetError> for BlockingWorkError {
 #[derive(Debug)]
 pub struct BudgetedBlockingOutput<T> {
     value: T,
-    lease: BudgetLease,
+    _lease: BudgetLease,
     class: BlockingWorkClass,
 }
 
@@ -217,12 +130,6 @@ impl<T> BudgetedBlockingOutput<T> {
     #[must_use]
     pub const fn class(&self) -> BlockingWorkClass {
         self.class
-    }
-
-    /// Return the retained allocation capacity charged to this output.
-    #[must_use]
-    pub fn retained_allocation_bytes(&self) -> usize {
-        self.lease.charged_bytes()
     }
 }
 
@@ -314,41 +221,11 @@ pub struct BlockingExecutorSnapshot {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct JobId(u64);
 
-struct JoinStatus {
-    result: RefCell<Option<Result<(), BlockingWorkError>>>,
-    notify: Notify,
-}
-
-impl JoinStatus {
-    fn new() -> Self {
-        Self {
-            result: RefCell::new(None),
-            notify: Notify::new(),
-        }
-    }
-
-    fn complete(&self, result: Result<(), BlockingWorkError>) {
-        *self.result.borrow_mut() = Some(result);
-        self.notify.notify_waiters();
-    }
-
-    async fn wait(&self) -> Result<(), BlockingWorkError> {
-        loop {
-            let notified = self.notify.notified();
-            if let Some(result) = self.result.borrow().clone() {
-                return result;
-            }
-            notified.await;
-        }
-    }
-}
-
 struct AcceptedJob {
     id: JobId,
     cancellation: BlockingCancellation,
-    accepted_lease: BudgetLease,
-    handle: Option<JoinHandle<()>>,
-    join_status: Rc<JoinStatus>,
+    _reaper: JoinHandle<()>,
+    join_status: watch::Receiver<Option<Result<(), BlockingWorkError>>>,
 }
 
 struct ExecutorInner {
@@ -449,7 +326,7 @@ impl StreamingBlockingExecutor {
     ) -> Result<BudgetedBlockingOutput<T>, BlockingWorkError>
     where
         F: FnOnce(BlockingCancellation) -> Result<T, BlockingWorkError> + Send + 'static,
-        T: BlockingOutputSize + Send + 'static,
+        T: Send + 'static,
     {
         self.ensure_accepting()?;
         let input_lease = self
@@ -477,39 +354,32 @@ impl StreamingBlockingExecutor {
             is_cancelled: Arc::new(AtomicBool::new(false)),
         };
         let worker_cancellation = cancellation.clone();
-        let join_status = Rc::new(JoinStatus::new());
-        let run_join_status = Rc::clone(&join_status);
+        self.reap_completed_jobs()?;
         let (sender, receiver) = tokio::sync::oneshot::channel();
         let handle = tokio::task::spawn_blocking(move || {
             let result = work(worker_cancellation);
             drop(input_lease);
-            let result = match result {
-                Ok(value) => match value.retained_allocation_bytes() {
-                    Ok(retained_bytes) if retained_bytes <= budget.output_bytes => {
-                        let mut output_lease = output_lease;
-                        match output_lease.shrink_to(1, retained_bytes) {
-                            Ok(()) => Ok((value, output_lease)),
-                            Err(error) => Err(BlockingWorkError::Budget(error)),
-                        }
-                    }
-                    Ok(retained_bytes) => Err(BlockingWorkError::OutputExceedsReservation {
-                        reserved_bytes: budget.output_bytes,
-                        retained_bytes,
-                    }),
-                    Err(error) => Err(error),
-                },
-                Err(error) => Err(error),
-            };
+            let result = result.map(|value| (value, output_lease));
             let _ = sender.send(result);
         });
+        let (join_sender, join_status) = watch::channel(None);
+        // This bounded driver is the lifetime owner of both join authority and
+        // accepted capacity, so cancellation of any caller cannot detach work.
+        let reaper = tokio::spawn(async move {
+            let result = handle.await.map_err(|error| BlockingWorkError::Join {
+                message: error.to_string(),
+            });
+            drop(accepted_lease);
+            let _ = join_sender.send(Some(result));
+        });
 
-        self.insert_job(id, cancellation, accepted_lease, handle, join_status);
+        self.insert_job(id, cancellation, reaper, join_status.clone());
         let received = receiver.await;
-        self.join_job(id, run_join_status).await?;
+        self.join_job(id, join_status).await?;
         let (value, lease) = received.map_err(|_| BlockingWorkError::MissingResult)??;
         Ok(BudgetedBlockingOutput {
             value,
-            lease,
+            _lease: lease,
             class,
         })
     }
@@ -521,6 +391,7 @@ impl StreamingBlockingExecutor {
         self.inner.accepted_budget.close();
         self.inner.input_budget.close();
         self.inner.output_budget.close();
+        self.inner.checkpoint_budget.close();
 
         let jobs: Vec<_> = self
             .inner
@@ -530,7 +401,7 @@ impl StreamingBlockingExecutor {
             .flatten()
             .map(|job| {
                 job.cancellation.cancel();
-                (job.id, Rc::clone(&job.join_status))
+                (job.id, job.join_status.clone())
             })
             .collect();
         let mut first_error = None;
@@ -571,15 +442,13 @@ impl StreamingBlockingExecutor {
         &self,
         id: JobId,
         cancellation: BlockingCancellation,
-        accepted_lease: BudgetLease,
-        handle: JoinHandle<()>,
-        join_status: Rc<JoinStatus>,
+        reaper: JoinHandle<()>,
+        join_status: watch::Receiver<Option<Result<(), BlockingWorkError>>>,
     ) {
         let job = AcceptedJob {
             id,
             cancellation,
-            accepted_lease,
-            handle: Some(handle),
+            _reaper: reaper,
             join_status,
         };
         let mut jobs = self.inner.jobs.borrow_mut();
@@ -590,61 +459,71 @@ impl StreamingBlockingExecutor {
         }
     }
 
-    async fn join_job(&self, id: JobId, status: Rc<JoinStatus>) -> Result<(), BlockingWorkError> {
-        let handle = self
-            .inner
-            .jobs
-            .borrow_mut()
-            .iter_mut()
-            .flatten()
-            .find(|job| job.id == id)
-            .and_then(|job| job.handle.take());
-        if let Some(handle) = handle {
-            let result = handle.await.map_err(|error| BlockingWorkError::Join {
-                message: error.to_string(),
-            });
-            status.complete(result.clone());
-            self.remove_joined_job(id);
-            result
-        } else {
-            status.wait().await
+    async fn join_job(
+        &self,
+        id: JobId,
+        mut status: watch::Receiver<Option<Result<(), BlockingWorkError>>>,
+    ) -> Result<(), BlockingWorkError> {
+        loop {
+            if let Some(result) = status.borrow().clone() {
+                self.remove_joined_job(id);
+                return result;
+            }
+            status
+                .changed()
+                .await
+                .map_err(|_| BlockingWorkError::MissingResult)?;
         }
     }
 
     fn remove_joined_job(&self, id: JobId) {
         let mut jobs = self.inner.jobs.borrow_mut();
-        if let Some(AcceptedJob { accepted_lease, .. }) = jobs
+        let _ = jobs
             .iter_mut()
             .find(|slot| slot.as_ref().is_some_and(|job| job.id == id))
-            .and_then(Option::take)
-        {
-            drop(accepted_lease);
-        }
+            .and_then(Option::take);
     }
 
-    async fn reap_finished_jobs(&self) -> Result<(), BlockingWorkError> {
+    fn reap_completed_jobs(&self) -> Result<(), BlockingWorkError> {
         let finished: Vec<_> = self
             .inner
             .jobs
             .borrow()
             .iter()
             .flatten()
-            .filter(|job| job.handle.as_ref().is_some_and(JoinHandle::is_finished))
-            .map(|job| (job.id, Rc::clone(&job.join_status)))
+            .filter_map(|job| {
+                job.join_status
+                    .borrow()
+                    .clone()
+                    .map(|result| (job.id, result))
+            })
             .collect();
-        for (id, status) in finished {
-            self.join_job(id, status).await?;
+        let mut first_error = None;
+        for (id, result) in finished {
+            self.remove_joined_job(id);
+            if let Err(error) = result
+                && first_error.is_none()
+            {
+                first_error = Some(error);
+            }
         }
-        Ok(())
+        match first_error {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
     }
 
     async fn prepare_quiescent_view_or_refuse(
         &self,
         barrier: &CheckpointBarrier,
     ) -> Result<PreparedParticipantState, CheckpointError> {
+        if self.inner.is_shutdown.get() {
+            return Err(CheckpointError::ParticipantUnavailable {
+                participant: self.inner.participant_id.clone(),
+            });
+        }
         self.inner.is_accepting.set(false);
-        self.reap_finished_jobs()
-            .await
+        self.reap_completed_jobs()
             .map_err(|error| CheckpointError::Storage {
                 message: error.to_string(),
             })?;
@@ -655,6 +534,7 @@ impl StreamingBlockingExecutor {
                 job_count,
             });
         }
+        self.ensure_horizon_not_regressed(&barrier.cut.decoded)?;
 
         let state = BlockingCheckpointState::new(barrier.cut.decoded.clone(), 0);
         let bytes = Bytes::from(state.encode().to_vec().into_boxed_slice());
@@ -662,10 +542,25 @@ impl StreamingBlockingExecutor {
             .inner
             .checkpoint_budget
             .acquire(1, bytes.len())
-            .await
-            .map_err(|error| CheckpointError::Storage {
-                message: error.to_string(),
+            .now_or_never()
+            .ok_or_else(|| CheckpointError::StateBudget {
+                participant: self.inner.participant_id.clone(),
+                code: super::unit::StateBudgetFailureCode::ItemCapacity,
+            })?
+            .map_err(|error| match error {
+                BudgetError::Closed => CheckpointError::ParticipantUnavailable {
+                    participant: self.inner.participant_id.clone(),
+                },
+                _ => CheckpointError::StateBudget {
+                    participant: self.inner.participant_id.clone(),
+                    code: super::unit::StateBudgetFailureCode::ItemCapacity,
+                },
             })?;
+        if self.inner.is_shutdown.get() {
+            return Err(CheckpointError::ParticipantUnavailable {
+                participant: self.inner.participant_id.clone(),
+            });
+        }
         let payload = BudgetedCheckpointBytes::new(bytes, lease)?;
         let prepared = PreparedParticipantState::new(
             self.inner.participant_id.clone(),
@@ -729,6 +624,7 @@ impl StreamingBlockingExecutor {
                 actual: Some(receipt.generation().clone()),
             });
         }
+        self.ensure_horizon_not_regressed(&receipt.represented_cut().decoded)?;
         {
             let prepared = self.inner.prepared_descriptor.borrow();
             let prepared = prepared
@@ -746,6 +642,22 @@ impl StreamingBlockingExecutor {
         self.inner.prepared_descriptor.borrow_mut().take();
         if !self.inner.is_shutdown.get() {
             self.inner.is_accepting.set(true);
+        }
+        Ok(())
+    }
+
+    fn ensure_horizon_not_regressed(
+        &self,
+        proposed: &DecodeHorizon,
+    ) -> Result<(), CheckpointError> {
+        if let Some(completed) = self.inner.completed_horizon.borrow().as_ref()
+            && proposed.get().get() < completed.get().get()
+        {
+            return Err(CheckpointError::DecodeHorizonRegression {
+                participant: self.inner.participant_id.clone(),
+                completed: completed.clone(),
+                proposed: proposed.clone(),
+            });
         }
         Ok(())
     }
@@ -776,5 +688,107 @@ impl StreamingCheckpointParticipant for StreamingBlockingExecutor {
         receipt: &CommittedParticipantReceipt,
     ) -> Result<(), CheckpointError> {
         self.advance_committed(receipt)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::streaming::{
+        checkpoint::{
+            AcquisitionHorizon, AdmissionHorizon, CheckpointCut, CheckpointEpoch,
+            CheckpointGenerationCandidate, CheckpointGenerationPublicationProof,
+            CheckpointParticipantPlan, DiscoveryHorizon, EventTimeWatermark, OrderedActionHorizon,
+            TerminalActionHorizon,
+        },
+        identity::{ContentDigest, GlobalSequence, SessionCausalFrontier},
+    };
+
+    fn cut_at(value: u64) -> CheckpointCut {
+        CheckpointCut {
+            discovered: DiscoveryHorizon::new(SourcePosition::new(value)),
+            acquired: AcquisitionHorizon::new(SourcePosition::new(value)),
+            decoded: DecodeHorizon::new(SourcePosition::new(value)),
+            ordered: OrderedActionHorizon::new(GlobalSequence::new(value)),
+            admitted: AdmissionHorizon::new(GlobalSequence::new(value)),
+            terminal: TerminalActionHorizon::new(GlobalSequence::new(value)),
+            event_watermark: EventTimeWatermark::Unknown,
+            causal_frontier: SessionCausalFrontier {
+                through_sequence: GlobalSequence::new(value),
+                event_time: None,
+                digest: ContentDigest::from_bytes([value as u8; 32]),
+            },
+        }
+    }
+
+    fn authoritative_receipt(
+        participant_id: CheckpointParticipantId,
+        epoch: u64,
+        previous: Option<ContentDigest>,
+        cut: CheckpointCut,
+    ) -> (
+        CommittedParticipantReceipt,
+        ParticipantStateDescriptor,
+        ContentDigest,
+    ) {
+        let descriptor = ParticipantStateDescriptor {
+            participant_id: participant_id.clone(),
+            schema_id: BLOCKING_CHECKPOINT_SCHEMA_ID.into(),
+            schema_version: BLOCKING_CHECKPOINT_SCHEMA_VERSION,
+            represented_cut: cut.clone(),
+            content_digest: ContentDigest::from_bytes([epoch as u8; 32]),
+            item_count: 1,
+            byte_length: BLOCKING_CHECKPOINT_PAYLOAD_BYTES as u64,
+        };
+        let plan = CheckpointParticipantPlan::new([participant_id]).expect("participant plan");
+        let execution_plan = ContentDigest::from_bytes([0x41; 32]);
+        let result_plan = ContentDigest::from_bytes([0x42; 32]);
+        let candidate = CheckpointGenerationCandidate::new(
+            CheckpointEpoch::new(epoch),
+            previous,
+            cut,
+            &plan,
+            execution_plan,
+            result_plan,
+            vec![descriptor.clone()],
+            ContentDigest::from_bytes([0x43; 32]),
+            false,
+            None,
+        )
+        .expect("candidate");
+        let generation_digest = *candidate.generation().digest();
+        let proof = CheckpointGenerationPublicationProof::for_generation(candidate.generation());
+        let committed = candidate
+            .promote(&plan, &execution_plan, &result_plan, proof)
+            .expect("authoritative generation");
+        let receipt = CommittedParticipantReceipt::new(&committed, &descriptor)
+            .expect("authoritative participant receipt");
+        (receipt, descriptor, generation_digest)
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn greater_epoch_receipt_cannot_regress_committed_decode_horizon() {
+        let mut owner = StreamingBlockingExecutor::for_test(1, 8, 8).expect("executor");
+        let participant_id = owner.participant_id();
+        let (baseline, baseline_descriptor, baseline_digest) =
+            authoritative_receipt(participant_id.clone(), 1, None, cut_at(7));
+        *owner.inner.prepared_descriptor.borrow_mut() = Some(baseline_descriptor);
+        owner
+            .checkpoint_committed(&baseline)
+            .await
+            .expect("baseline commit");
+
+        let (regressing, regressing_descriptor, _) =
+            authoritative_receipt(participant_id, 2, Some(baseline_digest), cut_at(3));
+        *owner.inner.prepared_descriptor.borrow_mut() = Some(regressing_descriptor);
+        assert!(matches!(
+            owner.checkpoint_committed(&regressing).await,
+            Err(CheckpointError::DecodeHorizonRegression {
+                completed,
+                proposed,
+                ..
+            }) if completed == cut_at(7).decoded && proposed == cut_at(3).decoded
+        ));
+        assert_eq!(owner.snapshot().completed_horizon, Some(cut_at(7).decoded));
     }
 }

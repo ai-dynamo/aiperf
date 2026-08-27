@@ -27,9 +27,16 @@ use aiperf_runtime::{
             BudgetedCheckpointBytes, CheckpointError, CommittedParticipantState,
             PreparedParticipantState, StreamingCheckpointParticipant,
         },
+        unit::StateBudgetFailureCode,
     },
 };
 use bytes::Bytes;
+
+#[derive(Debug)]
+struct CustomOutput {
+    logical_len: usize,
+    retained: Vec<u8>,
+}
 
 fn held_work(
     started: tokio::sync::oneshot::Sender<()>,
@@ -82,7 +89,7 @@ async fn committed_blocking_state(
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn output_permit_charges_retained_capacity_until_output_drop() {
+async fn full_authored_output_reservation_lives_with_arbitrary_typed_output() {
     let executor = StreamingBlockingExecutor::for_test(1, 8, 16).expect("executor");
     let output = executor
         .run(
@@ -92,48 +99,19 @@ async fn output_permit_charges_retained_capacity_until_output_drop() {
                 output_bytes: 16,
             },
             |_cancellation| {
-                let mut bytes = Vec::with_capacity(16);
-                bytes.extend_from_slice(&[0_u8; 8]);
-                Ok(bytes)
+                Ok(CustomOutput {
+                    logical_len: 1,
+                    retained: Vec::with_capacity(4),
+                })
             },
         )
         .await
         .expect("output");
 
-    assert_eq!(output.len(), 8);
-    assert_eq!(output.retained_allocation_bytes(), 16);
+    assert_eq!(output.logical_len, 1);
+    assert_eq!(output.retained.capacity(), 4);
     assert_eq!(executor.snapshot().output_bytes, 16);
     drop(output);
-    assert_eq!(executor.snapshot().output_bytes, 0);
-    executor.cancel_and_join().await.expect("clean shutdown");
-}
-
-#[tokio::test(flavor = "current_thread")]
-async fn output_larger_than_its_reserved_capacity_is_rejected() {
-    let executor = StreamingBlockingExecutor::for_test(1, 8, 16).expect("executor");
-    let error = executor
-        .run(
-            BlockingWorkClass::Decode,
-            BlockingWorkBudget {
-                input_bytes: 1,
-                output_bytes: 8,
-            },
-            |_cancellation| {
-                let mut bytes = Vec::with_capacity(16);
-                bytes.extend_from_slice(&[0_u8; 8]);
-                Ok(bytes)
-            },
-        )
-        .await
-        .expect_err("retained capacity exceeds reservation");
-
-    assert_eq!(
-        error,
-        BlockingWorkError::OutputExceedsReservation {
-            reserved_bytes: 8,
-            retained_bytes: 16,
-        }
-    );
     assert_eq!(executor.snapshot().output_bytes, 0);
     executor.cancel_and_join().await.expect("clean shutdown");
 }
@@ -189,6 +167,55 @@ async fn accepted_job_capacity_blocks_before_spawn_blocking_enqueue() {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn dropped_run_is_reaped_and_capacity_one_admits_the_next_job() {
+    let executor = StreamingBlockingExecutor::for_test(1, 8, 8).expect("executor");
+    let release = Arc::new(AtomicBool::new(false));
+    let release_in_work = Arc::clone(&release);
+    let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+    let (finished_tx, finished_rx) = tokio::sync::oneshot::channel();
+    let mut abandoned = Box::pin(executor.run(
+        BlockingWorkClass::Decode,
+        BlockingWorkBudget {
+            input_bytes: 1,
+            output_bytes: 1,
+        },
+        move |_cancellation| {
+            let _ = started_tx.send(());
+            while !release_in_work.load(Ordering::Acquire) {
+                std::thread::yield_now();
+            }
+            let _ = finished_tx.send(());
+            Ok(vec![0_u8])
+        },
+    ));
+    tokio::select! {
+        result = &mut abandoned => panic!("held job completed early: {result:?}"),
+        result = started_rx => result.expect("first job started"),
+    }
+    drop(abandoned);
+    release.store(true, Ordering::Release);
+    finished_rx.await.expect("abandoned worker completed");
+
+    let output = tokio::time::timeout(
+        Duration::from_secs(1),
+        executor.run(
+            BlockingWorkClass::Decode,
+            BlockingWorkBudget {
+                input_bytes: 1,
+                output_bytes: 1,
+            },
+            |_cancellation| Ok(vec![1_u8]),
+        ),
+    )
+    .await
+    .expect("completed abandoned work must release accepted capacity")
+    .expect("second job");
+    drop(output);
+    executor.cancel_and_join().await.expect("clean shutdown");
+    assert_eq!(executor.snapshot().accepted_jobs, 0);
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn cancel_and_join_waits_for_cooperative_worker_exit() {
     let executor = StreamingBlockingExecutor::for_test(1, 8, 8).expect("executor");
     let release_after_cancel = Arc::new(AtomicBool::new(false));
@@ -232,6 +259,52 @@ async fn cancel_and_join_waits_for_cooperative_worker_exit() {
 
     release_after_cancel.store(true, Ordering::Release);
     shutdown.await.expect("joined cancelled worker");
+    assert!(matches!(run.await, Err(BlockingWorkError::Cancelled)));
+    assert_eq!(executor.snapshot().accepted_jobs, 0);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn dropping_cancel_and_join_does_not_lose_later_join_authority() {
+    let executor = StreamingBlockingExecutor::for_test(1, 8, 8).expect("executor");
+    let release_after_cancel = Arc::new(AtomicBool::new(false));
+    let release_in_work = Arc::clone(&release_after_cancel);
+    let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+    let (cancel_seen_tx, cancel_seen_rx) = tokio::sync::oneshot::channel();
+    let mut run = Box::pin(executor.run(
+        BlockingWorkClass::Decode,
+        BlockingWorkBudget {
+            input_bytes: 1,
+            output_bytes: 1,
+        },
+        move |cancellation| {
+            let _ = started_tx.send(());
+            while !cancellation.is_cancelled() {
+                std::thread::yield_now();
+            }
+            let _ = cancel_seen_tx.send(());
+            while !release_in_work.load(Ordering::Acquire) {
+                std::thread::yield_now();
+            }
+            Err::<Vec<u8>, _>(BlockingWorkError::Cancelled)
+        },
+    ));
+    tokio::select! {
+        result = &mut run => panic!("held job completed early: {result:?}"),
+        result = started_rx => result.expect("job started"),
+    }
+
+    let mut abandoned_shutdown = Box::pin(executor.cancel_and_join());
+    tokio::select! {
+        result = &mut abandoned_shutdown => panic!("shutdown returned before cancellation was observed: {result:?}"),
+        result = cancel_seen_rx => result.expect("worker observed cancellation"),
+    }
+    drop(abandoned_shutdown);
+    release_after_cancel.store(true, Ordering::Release);
+
+    tokio::time::timeout(Duration::from_secs(1), executor.cancel_and_join())
+        .await
+        .expect("a later shutdown retains join authority")
+        .expect("joined cancelled worker");
     assert!(matches!(run.await, Err(BlockingWorkError::Cancelled)));
     assert_eq!(executor.snapshot().accepted_jobs, 0);
 }
@@ -293,6 +366,66 @@ async fn restore_rejects_any_claimed_inflight_closure() {
     );
     assert_eq!(owner.snapshot().completed_horizon, None);
     owner.cancel_and_join().await.expect("clean shutdown");
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn restored_horizon_refuses_a_lower_checkpoint_barrier() {
+    let mut owner = StreamingBlockingExecutor::for_test(1, 8, 8).expect("executor");
+    let committed = committed_blocking_state(
+        &owner,
+        BlockingCheckpointState::new(support::cut_at(7).decoded, 0),
+    )
+    .await;
+    owner
+        .initialize(Some(committed))
+        .await
+        .expect("restore completed horizon");
+
+    assert!(matches!(
+        owner.checkpoint_view(&support::barrier_at(3)).await,
+        Err(CheckpointError::DecodeHorizonRegression {
+            completed,
+            proposed,
+            ..
+        }) if completed == support::cut_at(7).decoded && proposed == support::cut_at(3).decoded
+    ));
+    assert_eq!(
+        owner.snapshot().completed_horizon,
+        Some(support::cut_at(7).decoded)
+    );
+    owner.cancel_and_join().await.expect("clean shutdown");
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn checkpoint_clone_contention_is_immediate_and_shutdown_is_terminal() {
+    let mut owner = StreamingBlockingExecutor::for_test(1, 8, 8).expect("executor");
+    let mut duplicate = owner.clone();
+    let barrier = support::barrier_at(4);
+    let prepared = owner
+        .checkpoint_view(&barrier)
+        .await
+        .expect("first prepared view");
+
+    let duplicate_result = tokio::time::timeout(
+        Duration::from_millis(20),
+        duplicate.checkpoint_view(&barrier),
+    )
+    .await
+    .expect("duplicate view must refuse rather than wait");
+    assert!(matches!(
+        duplicate_result,
+        Err(CheckpointError::StateBudget {
+            code: StateBudgetFailureCode::ItemCapacity,
+            ..
+        })
+    ));
+
+    owner.cancel_and_join().await.expect("shutdown");
+    drop(prepared);
+    assert!(matches!(
+        duplicate.checkpoint_view(&barrier).await,
+        Err(CheckpointError::ParticipantUnavailable { .. })
+    ));
 }
 
 #[tokio::test(flavor = "current_thread")]

@@ -1160,6 +1160,20 @@ pub enum CheckpointError {
         /// Stable nested state-budget failure code.
         code: StateBudgetFailureCode,
     },
+    /// A participant was asked to move its completed decode horizon backward.
+    DecodeHorizonRegression {
+        /// Stable owner refusing the regressing horizon.
+        participant: CheckpointParticipantId,
+        /// Greatest already completed decode horizon.
+        completed: DecodeHorizon,
+        /// Lower decode horizon proposed by the view or receipt.
+        proposed: DecodeHorizon,
+    },
+    /// A participant has shut down and cannot prepare more state.
+    ParticipantUnavailable {
+        /// Stable owner that is no longer available.
+        participant: CheckpointParticipantId,
+    },
     /// Immutable object length, digest, or budget ownership did not verify.
     ObjectVerification,
     /// The backend could not retain a generation read lease.
@@ -1205,6 +1219,20 @@ impl fmt::Display for CheckpointError {
             Self::StateBudget { participant, code } => write!(
                 formatter,
                 "checkpoint state budget failed for {:?}: {code:?}",
+                participant.as_str()
+            ),
+            Self::DecodeHorizonRegression {
+                participant,
+                completed,
+                proposed,
+            } => write!(
+                formatter,
+                "checkpoint decode horizon regressed for {:?}: completed {completed:?}, proposed {proposed:?}",
+                participant.as_str()
+            ),
+            Self::ParticipantUnavailable { participant } => write!(
+                formatter,
+                "checkpoint participant {:?} is unavailable",
                 participant.as_str()
             ),
             Self::ObjectVerification => write!(formatter, "checkpoint object verification failed"),
