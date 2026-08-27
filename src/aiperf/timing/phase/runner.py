@@ -1294,10 +1294,17 @@ class PhaseRunner(TaskManagerMixin):
         event_task = asyncio.ensure_future(event.wait())
         try:
             await asyncio.wait({event_task, task}, return_when=asyncio.FIRST_COMPLETED)
+            # A failure wins over a same-tick event completion; FIRST_COMPLETED
+            # only guarantees one of the two is done, so task.done() is checked
+            # explicitly rather than assumed from event_task's state.
+            if (
+                task.done()
+                and not task.cancelled()
+                and (exc := task.exception()) is not None
+            ):
+                raise exc
             if event_task.done():
                 return
-            if not task.cancelled() and (exc := task.exception()) is not None:
-                raise exc
             await event_task
         finally:
             if not event_task.done():

@@ -820,6 +820,31 @@ class TestTimeoutHandling:
                 timeout=5.0,
             )
 
+    async def test_indefinite_wait_prioritizes_task_exception_over_simultaneous_event(
+        self, runner: PhaseRunner, time_traveler: MagicMock
+    ) -> None:
+        """If the event is already set and the raced task has already failed
+        by the time the wait begins, both futures can complete on the same
+        tick; the failure must still win, or the phase reports success on a
+        task that raised (CodeRabbit finding on #1041's own fix)."""
+        event = asyncio.Event()
+        event.set()
+
+        async def boom() -> None:
+            raise RuntimeError("send_credit: no workers available for routing")
+
+        task = asyncio.create_task(boom())
+        await asyncio.sleep(0)
+        assert task.done()
+
+        with pytest.raises(RuntimeError, match="no workers available"):
+            await asyncio.wait_for(
+                runner._wait_for_event_with_timeout(
+                    name="t", event=event, timeout=None, task_to_cancel=task
+                ),
+                timeout=5.0,
+            )
+
     async def test_indefinite_wait_ignores_cancelled_task_and_keeps_waiting(
         self, runner: PhaseRunner, time_traveler: MagicMock
     ) -> None:
