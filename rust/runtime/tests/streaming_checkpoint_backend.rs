@@ -2,9 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use aiperf_runtime::streaming::checkpoint::{
-    CheckpointBackendBudgetFailureCode, CheckpointBackendBudgetKind, CheckpointError,
+    CheckpointBackendBudgetFailureCode, CheckpointBackendBudgetKind, CheckpointEpoch,
+    CheckpointError, CheckpointGeneration,
+};
+use aiperf_runtime::streaming::checkpoint_backend::{
+    CheckpointGenerationStorageVersion, LeasedCheckpointGenerationView, LegacyV3FixtureLimits,
+    LegacyV3FixturePrecharge, VersionedLeasedGenerationReader,
 };
 use aiperf_runtime::streaming::checkpoints::memory::MemoryCheckpointBackend;
+use aiperf_runtime::streaming::failure::StableStreamingFailure;
+use aiperf_runtime::streaming::identity::ContentDigest;
 use aiperf_runtime::streaming::results::{
     ResultIndexReadBudget, ResultProjectionId, ResultSegmentDescriptor,
 };
@@ -22,6 +29,14 @@ fn backend_budget_codes_have_stable_names() {
     assert_eq!(
         serde_json::to_string(&CheckpointBackendBudgetFailureCode::ByteCapacity).unwrap(),
         "\"byte_capacity\"",
+    );
+}
+
+#[test]
+fn legacy_read_only_head_has_stable_failure_code() {
+    assert_eq!(
+        CheckpointError::LegacyReadOnlyHead.code(),
+        "legacy_read_only_head"
     );
 }
 
@@ -148,8 +163,14 @@ async fn fully_staged_after(
     previous: aiperf_runtime::streaming::checkpoint::CheckpointGeneration,
     epoch: u64,
 ) -> aiperf_runtime::streaming::checkpoints::memory::MemoryGenerationTransaction {
+    let opened = backend
+        .open_latest(&run, &support::expectations(run))
+        .await
+        .unwrap()
+        .unwrap();
+    let predecessor = support::current_v4_predecessor(&opened, &previous).unwrap();
     let mut transaction = backend
-        .begin_generation(run, Some(previous), support::expectations(run))
+        .begin_generation(run, Some(predecessor), support::expectations(run))
         .await
         .unwrap();
     transaction
@@ -205,8 +226,7 @@ async fn commit_metadata_must_match_frozen_predecessor_and_exact_next_epoch() {
                 .await
                 .unwrap()
                 .unwrap()
-                .generation()
-                .generation_ref(),
+                .generation(),
             &head,
         );
     }
@@ -251,8 +271,7 @@ async fn empty_generations_and_heads_are_isolated_by_logical_run() {
             .await
             .unwrap()
             .unwrap()
-            .generation()
-            .generation_ref(),
+            .generation(),
         first.generation_ref(),
     );
     assert_eq!(
@@ -261,8 +280,7 @@ async fn empty_generations_and_heads_are_isolated_by_logical_run() {
             .await
             .unwrap()
             .unwrap()
-            .generation()
-            .generation_ref(),
+            .generation(),
         second.generation_ref(),
     );
 }
@@ -445,19 +463,42 @@ async fn oversized_next_descriptor_refuses_before_backend_read_budget() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn maximum_frozen_epoch_refuses_overflow_before_state_access() {
-    use aiperf_runtime::streaming::{
-        checkpoint::{CheckpointEpoch, CheckpointGeneration},
-        identity::ContentDigest,
-    };
-
     let backend = MemoryCheckpointBackend::new(support::backend_limits()).unwrap();
     let run = support::run_id(1);
-    let maximum = CheckpointGeneration::new(
-        CheckpointEpoch::new(u64::MAX),
-        ContentDigest::from_bytes([0xee; 32]),
+    let maximum = backend
+        .seed_nonempty_committed_generation_at_epoch(
+            run,
+            CheckpointEpoch::new(u64::MAX),
+            &support::expectations(run),
+            vec![support::prepared_participant(run, u64::MAX).await],
+        )
+        .await
+        .unwrap()
+        .generation();
+    let inventory = backend.immutable_object_inventory(&run);
+    let usage = backend.live_budget_usage();
+    assert_eq!(
+        backend
+            .seed_nonempty_committed_generation_at_epoch(
+                run,
+                CheckpointEpoch::new(u64::MAX),
+                &support::expectations(run),
+                vec![support::prepared_participant(run, u64::MAX).await],
+            )
+            .await
+            .unwrap_err(),
+        CheckpointError::ObjectVerification,
     );
+    assert_eq!(backend.immutable_object_inventory(&run), inventory);
+    assert_eq!(backend.live_budget_usage(), usage);
+    let opened = backend
+        .open_latest(&run, &support::expectations(run))
+        .await
+        .unwrap()
+        .unwrap();
+    let predecessor = support::current_v4_predecessor(&opened, &maximum).unwrap();
     let mut transaction = backend
-        .begin_generation(run, Some(maximum.clone()), support::expectations(run))
+        .begin_generation(run, Some(predecessor), support::expectations(run))
         .await
         .unwrap();
     transaction
@@ -599,7 +640,14 @@ async fn invalid_cursor_refuses_before_page_or_backend_budget() {
         .await
         .unwrap()
         .unwrap();
-    let root = *reader.generation().result_index_root();
+    let root = match reader.view() {
+        LeasedCheckpointGenerationView::CurrentV4(current) => {
+            *current.generation().result_index_root()
+        }
+        LeasedCheckpointGenerationView::LegacyV3ReadOnly(_) => {
+            panic!("committed fixture is current-v4")
+        }
+    };
     let before = backend.live_budget_usage().reads;
     for cursor in [
         ResultIndexCursor {
@@ -682,8 +730,7 @@ async fn fault_after_prevalidation_occurs_before_publication_and_changes_nothing
             .await
             .unwrap()
             .unwrap()
-            .generation()
-            .generation_ref(),
+            .generation(),
         &head,
     );
     assert_eq!(segment.payload_bytes(), b"result-payload");
@@ -759,10 +806,15 @@ async fn existing_immutable_objects_do_not_grant_cross_generation_or_run_read_au
         assert_eq!(backend.live_budget_usage().reads, reads_before);
     }
     for descriptor in [&superseded_participant, &foreign_participant] {
-        assert_eq!(
-            reader.read_participant(descriptor).await.unwrap_err(),
-            CheckpointError::ObjectVerification,
-        );
+        let error = match reader.view() {
+            LeasedCheckpointGenerationView::CurrentV4(current) => {
+                current.read_participant(descriptor).await.unwrap_err()
+            }
+            LeasedCheckpointGenerationView::LegacyV3ReadOnly(_) => {
+                panic!("committed fixture is current-v4")
+            }
+        };
+        assert_eq!(error, CheckpointError::ObjectVerification);
         assert_eq!(backend.live_budget_usage().reads, reads_before);
     }
 }
@@ -865,10 +917,15 @@ async fn identical_participant_and_result_payloads_retain_distinct_typed_objects
         .await
         .unwrap()
         .unwrap();
-    let participant = reader
-        .read_participant(&committed.participant_descriptors()[0])
-        .await
-        .unwrap();
+    let participant = match reader.view() {
+        LeasedCheckpointGenerationView::CurrentV4(current) => current
+            .read_participant(&committed.participant_descriptors()[0])
+            .await
+            .unwrap(),
+        LeasedCheckpointGenerationView::LegacyV3ReadOnly(_) => {
+            panic!("committed fixture is current-v4")
+        }
+    };
     let segment = reader.read_segment(&result_descriptor).await.unwrap();
     assert_eq!(participant.payload_bytes(), payload.as_ref());
     assert_eq!(segment.payload_bytes(), payload.as_ref());
@@ -908,7 +965,7 @@ async fn generation_reader_owns_exact_logical_byte_charge() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(reader.generation(), &committed);
+    assert_eq!(reader.generation(), committed.generation_ref());
     assert_eq!(exact.live_budget_usage().reads.used_items, 1);
     assert_eq!(exact.live_budget_usage().reads.used_bytes, required);
     drop(reader);
@@ -1062,4 +1119,282 @@ async fn stage_results_binds_the_receipt_partition_to_the_staged_index_root() {
     let binding = prepared.issue_receipt_binding().unwrap();
     assert_eq!(binding.receipt_root(), &receipt_root);
     assert_eq!(binding.result_index_root(), prepared.index_root());
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn open_latest_returns_explicit_current_v4_or_legacy_v3() {
+    let current_backend = MemoryCheckpointBackend::new(support::backend_limits()).unwrap();
+    let current_run = support::run_id(1);
+    let current = support::commit_empty(&current_backend, current_run, None, 1)
+        .await
+        .unwrap();
+    let opened_current = current_backend
+        .open_latest(&current_run, &support::expectations(current_run))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        opened_current.version(),
+        CheckpointGenerationStorageVersion::CurrentV4
+    );
+    assert_eq!(opened_current.generation(), current.generation_ref());
+    assert!(matches!(
+        opened_current.view(),
+        LeasedCheckpointGenerationView::CurrentV4(_)
+    ));
+
+    let legacy_backend = MemoryCheckpointBackend::new(support::backend_limits()).unwrap();
+    let legacy_run = support::run_id(2);
+    let fixture_budget = support::legacy_fixture_budget();
+    let (fixture, expected) = support::legacy_v3_fixture(&fixture_budget, legacy_run).await;
+    legacy_backend
+        .import_legacy_v3_read_only_fixture(fixture)
+        .await
+        .unwrap();
+    let opened_legacy = legacy_backend
+        .open_latest(&legacy_run, &support::expectations(legacy_run))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        opened_legacy.version(),
+        CheckpointGenerationStorageVersion::LegacyV3ReadOnly
+    );
+    assert_eq!(opened_legacy.generation(), &expected.generation);
+    match opened_legacy.view() {
+        LeasedCheckpointGenerationView::LegacyV3ReadOnly(reader) => {
+            let participant = reader
+                .read_legacy_participant(&expected.participant)
+                .await
+                .unwrap();
+            assert_eq!(participant.descriptor(), &expected.participant);
+            assert_eq!(participant.payload_bytes(), b"legacy-participant-state");
+        }
+        LeasedCheckpointGenerationView::CurrentV4(_) => panic!("fixture must remain legacy-v3"),
+    }
+    let page = opened_legacy
+        .scan_result_index(
+            None,
+            ResultIndexReadBudget {
+                max_items: NonZeroUsize::new(1).unwrap(),
+                max_bytes: NonZeroU64::new(1024).unwrap(),
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(page.descriptors(), std::slice::from_ref(&expected.result));
+    assert!(page.next().is_none());
+    let segment = opened_legacy.read_segment(&expected.result).await.unwrap();
+    assert_eq!(segment.payload_bytes(), b"legacy-result-payload");
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn verified_current_reader_publicly_mints_move_only_begin_predecessor() {
+    let backend = MemoryCheckpointBackend::new(support::backend_limits()).unwrap();
+    let run = support::run_id(1);
+    let first = support::commit_empty(&backend, run, None, 1).await.unwrap();
+    let opened = backend
+        .open_latest(&run, &support::expectations(run))
+        .await
+        .unwrap()
+        .unwrap();
+    let predecessor = support::current_v4_predecessor(&opened, first.generation_ref()).unwrap();
+    assert_eq!(predecessor.generation(), first.generation_ref());
+
+    let mut transaction = backend
+        .begin_generation(run, Some(predecessor), support::expectations(run))
+        .await
+        .unwrap();
+    transaction
+        .stage_participant(support::prepared_participant(run, 2).await)
+        .await
+        .unwrap();
+    transaction.stage_results(&mut Vec::new(), &mut None).await.unwrap();
+    let second = transaction
+        .commit(support::metadata_with_lineage(Some(first.generation()), 2))
+        .await
+        .unwrap();
+    assert_eq!(second.generation_ref().epoch(), CheckpointEpoch::new(2));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn stale_expected_identity_refuses_before_predecessor_mint() {
+    let backend = MemoryCheckpointBackend::new(support::backend_limits()).unwrap();
+    let run = support::run_id(1);
+    let first = support::commit_empty(&backend, run, None, 1).await.unwrap();
+    let opened = backend
+        .open_latest(&run, &support::expectations(run))
+        .await
+        .unwrap()
+        .unwrap();
+    let wrong = CheckpointGeneration::new(
+        first.generation_ref().epoch(),
+        ContentDigest::from_bytes([0xed; 32]),
+    );
+    assert!(matches!(
+        support::current_v4_predecessor(&opened, &wrong),
+        Err(CheckpointError::GenerationConflict {
+            expected: Some(expected),
+            actual: Some(actual),
+        }) if expected == wrong && actual == first.generation()
+    ));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn stale_current_authority_refuses_begin_without_adopting_new_head() {
+    let backend = MemoryCheckpointBackend::new(support::backend_limits()).unwrap();
+    let run = support::run_id(1);
+    let first = support::commit_empty(&backend, run, None, 1).await.unwrap();
+    let stale_open = backend
+        .open_latest(&run, &support::expectations(run))
+        .await
+        .unwrap()
+        .unwrap();
+    let stale = support::current_v4_predecessor(&stale_open, first.generation_ref()).unwrap();
+    let second = support::commit_empty(&backend, run, Some(first.generation()), 2)
+        .await
+        .unwrap();
+    assert!(matches!(
+        backend
+            .begin_generation(run, Some(stale), support::expectations(run))
+            .await,
+        Err(CheckpointError::GenerationConflict {
+            expected: Some(expected),
+            actual: Some(actual),
+        }) if expected == first.generation() && actual == second.generation()
+    ));
+    assert_eq!(
+        backend
+            .open_latest(&run, &support::expectations(run))
+            .await
+            .unwrap()
+            .unwrap()
+            .generation(),
+        second.generation_ref()
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn begin_with_none_over_legacy_v3_returns_legacy_read_only_head_without_mutation() {
+    let backend = MemoryCheckpointBackend::new(support::backend_limits()).unwrap();
+    let run = support::run_id(1);
+    let fixture_budget = support::legacy_fixture_budget();
+    let (fixture, expected) = support::legacy_v3_fixture(&fixture_budget, run).await;
+    backend
+        .import_legacy_v3_read_only_fixture(fixture)
+        .await
+        .unwrap();
+    let inventory = backend.immutable_object_inventory(&run);
+    let usage = backend.live_budget_usage();
+
+    assert!(matches!(
+        backend
+            .begin_generation(run, None, support::expectations(run))
+            .await,
+        Err(CheckpointError::LegacyReadOnlyHead)
+    ));
+    assert_eq!(backend.immutable_object_inventory(&run), inventory);
+    assert_eq!(backend.live_budget_usage(), usage);
+    assert_eq!(
+        backend
+            .open_latest(&run, &support::expectations(run))
+            .await
+            .unwrap()
+            .unwrap()
+            .generation(),
+        &expected.generation
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn mixed_v3_v4_run_is_refused_without_replacing_current_head() {
+    let backend = MemoryCheckpointBackend::new(support::backend_limits()).unwrap();
+    let run = support::run_id(1);
+    let current = support::commit_empty(&backend, run, None, 1).await.unwrap();
+    let inventory = backend.immutable_object_inventory(&run);
+    let usage = backend.live_budget_usage();
+    let fixture_budget = support::legacy_fixture_budget();
+    let (fixture, _) = support::legacy_v3_fixture(&fixture_budget, run).await;
+
+    assert_eq!(
+        backend
+            .import_legacy_v3_read_only_fixture(fixture)
+            .await
+            .unwrap_err(),
+        CheckpointError::ObjectVerification
+    );
+    assert_eq!(backend.immutable_object_inventory(&run), inventory);
+    assert_eq!(backend.live_budget_usage(), usage);
+    let opened = backend
+        .open_latest(&run, &support::expectations(run))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(opened.generation(), current.generation_ref());
+    assert_eq!(
+        opened.version(),
+        CheckpointGenerationStorageVersion::CurrentV4
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn oversized_legacy_fixture_refuses_before_backend_budget_or_state_access() {
+    let backend = MemoryCheckpointBackend::new(support::backend_limits()).unwrap();
+    backend.reset_test_state_accesses();
+    let fixture_budget = support::legacy_fixture_budget();
+    let before = fixture_budget.snapshot();
+    let error = LegacyV3FixturePrecharge::acquire(
+        &fixture_budget,
+        LegacyV3FixtureLimits {
+            max_objects: NonZeroUsize::new(2).unwrap(),
+            max_bytes: NonZeroU64::new(1024).unwrap(),
+        },
+        3,
+        16,
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(error, CheckpointError::ObjectVerification);
+    assert_eq!(fixture_budget.snapshot(), before);
+    assert_eq!(backend.test_state_accesses(), 0);
+    assert_eq!(backend.live_budget_usage().storage.used_items, 0);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn dropped_legacy_fixture_releases_exact_payload_and_inventory_precharge() {
+    let fixture_budget = support::legacy_fixture_budget();
+    let (fixture, _) = support::legacy_v3_fixture(&fixture_budget, support::run_id(1)).await;
+    let charged = fixture_budget.snapshot();
+    assert_eq!(charged.used_items, 4);
+    assert!(charged.used_bytes > b"legacy-participant-state".len());
+    drop(fixture);
+    assert_eq!(fixture_budget.snapshot().used_items, 0);
+    assert_eq!(fixture_budget.snapshot().used_bytes, 0);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn cancelled_legacy_import_releases_fixture_and_storage_charges() {
+    let backend = MemoryCheckpointBackend::new(support::backend_limits()).unwrap();
+    let held = backend.hold_all_storage_capacity().await.unwrap();
+    let run = support::run_id(1);
+    let fixture_budget = support::legacy_fixture_budget();
+    let (fixture, _) = support::legacy_v3_fixture(&fixture_budget, run).await;
+    let fixture_charge = fixture_budget.snapshot();
+    let storage_before = backend.live_budget_usage().storage;
+
+    let mut pending = Box::pin(backend.import_legacy_v3_read_only_fixture(fixture));
+    assert!(matches!(
+        futures::poll!(&mut pending),
+        std::task::Poll::Pending
+    ));
+    assert_eq!(backend.immutable_object_inventory(&run).total_count(), 0);
+    assert_eq!(backend.live_budget_usage().storage, storage_before);
+    assert_eq!(fixture_budget.snapshot(), fixture_charge);
+    drop(pending);
+    assert_eq!(fixture_budget.snapshot().used_items, 0);
+    assert_eq!(fixture_budget.snapshot().used_bytes, 0);
+    assert_eq!(backend.immutable_object_inventory(&run).total_count(), 0);
+    assert_eq!(backend.live_budget_usage().storage, storage_before);
+    drop(held);
+    assert_eq!(backend.live_budget_usage().storage.used_items, 0);
 }

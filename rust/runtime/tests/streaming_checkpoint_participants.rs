@@ -9,9 +9,9 @@ use aiperf_runtime::streaming::{
     checkpoint::{
         BudgetedCheckpointBytes, CheckpointCut, CheckpointEpoch, CheckpointGenerationCandidate,
         CheckpointParticipantId, CheckpointParticipantOwners, CheckpointParticipantPlan,
-        CheckpointParticipantPlanError, CheckpointTerminalReason, CommittedParticipantState,
-        ParticipantInitialization, ParticipantStateDescriptor, PreparedParticipantState,
-        RequiredCheckpointOwner, StreamingCheckpointParticipant,
+        CheckpointParticipantPlanError, CheckpointTerminalReason, ParticipantInitialization,
+        ParticipantStateDescriptor, PreparedParticipantState, RequiredCheckpointOwner,
+        StreamingCheckpointParticipant,
     },
     identity::ContentDigest,
 };
@@ -194,40 +194,20 @@ async fn tiny_slice_is_normalized_to_compact_owned_checkpoint_storage() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn committed_state_requires_exact_digest_and_length() {
-    let prepared = PreparedParticipantState::new(
+async fn current_participant_restore_uses_verified_reader_not_public_constructor() {
+    let committed = support::committed_current_v4_participant_state(
         support::run_id(1),
         id("session"),
         "session.v1",
         1,
         support::cut_at(2),
         3,
-        payload(b"state").await,
+        Bytes::from_static(b"state"),
     )
-    .expect("prepared state");
-    let descriptor = prepared.descriptor().clone();
-    let (run, prepared_descriptor, prepared_payload) = prepared.into_parts();
-    assert_eq!(run, support::run_id(1));
-    assert_eq!(prepared_descriptor, descriptor);
-    assert!(CommittedParticipantState::new(run, descriptor.clone(), prepared_payload).is_ok());
-
-    let bad_length = ParticipantStateDescriptor {
-        byte_length: 4,
-        ..descriptor.clone()
-    };
-    assert!(matches!(
-        CommittedParticipantState::new(support::run_id(1), bad_length, payload(b"state").await,),
-        Err(aiperf_runtime::streaming::checkpoint::CheckpointError::ObjectVerification)
-    ));
-
-    let bad_digest = ParticipantStateDescriptor {
-        content_digest: ContentDigest::from_bytes([0xff; 32]),
-        ..descriptor
-    };
-    assert!(matches!(
-        CommittedParticipantState::new(support::run_id(1), bad_digest, payload(b"state").await,),
-        Err(aiperf_runtime::streaming::checkpoint::CheckpointError::ObjectVerification)
-    ));
+    .await;
+    assert_eq!(committed.run(), &support::run_id(1));
+    assert_eq!(committed.descriptor().participant_id, id("session"));
+    assert_eq!(committed.payload_bytes(), b"state");
 }
 
 async fn descriptor_for(
