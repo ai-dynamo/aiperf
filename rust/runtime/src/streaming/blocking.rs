@@ -224,7 +224,7 @@ struct JobId(u64);
 struct AcceptedJob {
     id: JobId,
     cancellation: BlockingCancellation,
-    _reaper: JoinHandle<()>,
+    reaper: JoinHandle<()>,
     join_status: watch::Receiver<Option<Result<(), BlockingWorkError>>>,
 }
 
@@ -242,6 +242,20 @@ struct ExecutorInner {
     completed_horizon: RefCell<Option<DecodeHorizon>>,
     prepared_descriptor: RefCell<Option<ParticipantStateDescriptor>>,
     committed_receipt: RefCell<Option<CommittedParticipantReceipt>>,
+}
+
+impl Drop for ExecutorInner {
+    fn drop(&mut self) {
+        self.is_accepting.set(false);
+        self.is_shutdown.set(true);
+        self.accepted_budget.close();
+        self.input_budget.close();
+        self.output_budget.close();
+        self.checkpoint_budget.close();
+        for job in self.jobs.get_mut().iter().flatten() {
+            job.cancellation.cancel();
+        }
+    }
 }
 
 /// Worker-local owner of a bounded set of Tokio blocking tasks.
@@ -448,7 +462,7 @@ impl StreamingBlockingExecutor {
         let job = AcceptedJob {
             id,
             cancellation,
-            _reaper: reaper,
+            reaper,
             join_status,
         };
         let mut jobs = self.inner.jobs.borrow_mut();
@@ -478,10 +492,13 @@ impl StreamingBlockingExecutor {
 
     fn remove_joined_job(&self, id: JobId) {
         let mut jobs = self.inner.jobs.borrow_mut();
-        let _ = jobs
+        if let Some(AcceptedJob { reaper, .. }) = jobs
             .iter_mut()
             .find(|slot| slot.as_ref().is_some_and(|job| job.id == id))
-            .and_then(Option::take);
+            .and_then(Option::take)
+        {
+            drop(reaper);
+        }
     }
 
     fn reap_completed_jobs(&self) -> Result<(), BlockingWorkError> {

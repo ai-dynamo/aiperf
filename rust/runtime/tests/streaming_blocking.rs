@@ -216,6 +216,39 @@ async fn dropped_run_is_reaped_and_capacity_one_admits_the_next_job() {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn dropping_the_last_owner_cancels_an_abandoned_accepted_job() {
+    let executor = StreamingBlockingExecutor::for_test(1, 8, 8).expect("executor");
+    let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+    let (cancelled_tx, cancelled_rx) = tokio::sync::oneshot::channel();
+    let mut abandoned = Box::pin(executor.run(
+        BlockingWorkClass::Decode,
+        BlockingWorkBudget {
+            input_bytes: 1,
+            output_bytes: 1,
+        },
+        move |cancellation| {
+            let _ = started_tx.send(());
+            while !cancellation.is_cancelled() {
+                std::thread::yield_now();
+            }
+            let _ = cancelled_tx.send(());
+            Err::<Vec<u8>, _>(BlockingWorkError::Cancelled)
+        },
+    ));
+    tokio::select! {
+        result = &mut abandoned => panic!("held job completed early: {result:?}"),
+        result = started_rx => result.expect("job started"),
+    }
+
+    drop(abandoned);
+    drop(executor);
+    tokio::time::timeout(Duration::from_secs(1), cancelled_rx)
+        .await
+        .expect("last owner drop must cancel accepted work")
+        .expect("worker observed cancellation");
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn cancel_and_join_waits_for_cooperative_worker_exit() {
     let executor = StreamingBlockingExecutor::for_test(1, 8, 8).expect("executor");
     let release_after_cancel = Arc::new(AtomicBool::new(false));
