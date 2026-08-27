@@ -5,13 +5,14 @@
 
 use std::path::PathBuf;
 
+use aiperf_xtask::abi_churn::measure;
 use aiperf_xtask::abi_closure::{Baseline, Seeds, compute, compute_in, workspace_root};
 use anyhow::{Context, Result, bail};
 
 fn main() -> Result<()> {
     let mut arguments = std::env::args().skip(1);
     let Some(command) = arguments.next() else {
-        bail!("usage: cargo xtask <abi-closure|abi-gate> [options]");
+        bail!("usage: cargo xtask <abi-closure|abi-churn|abi-gate> [options]");
     };
 
     match command.as_str() {
@@ -53,10 +54,49 @@ fn main() -> Result<()> {
                 );
             }
         }
+        "abi-churn" => {
+            let (since, merges) = churn_options(arguments)?;
+            let workspace = workspace_root();
+            let repository = workspace
+                .parent()
+                .context("Cargo workspace has no repository parent")?;
+            let baseline_path = workspace.join("xtask/abi-baseline.json");
+            let baseline: Baseline = serde_json::from_str(
+                &std::fs::read_to_string(&baseline_path)
+                    .with_context(|| format!("reading {}", baseline_path.display()))?,
+            )
+            .with_context(|| format!("parsing {}", baseline_path.display()))?;
+            let report = measure(repository, &baseline, &since, merges)?;
+            println!("{}", serde_json::to_string(&report)?);
+        }
         other => bail!("unknown xtask subcommand {other:?}"),
     }
 
     Ok(())
+}
+
+fn churn_options(arguments: impl Iterator<Item = String>) -> Result<(String, usize)> {
+    let mut since = "HEAD".to_owned();
+    let mut merges = 120;
+    let mut arguments = arguments.peekable();
+    while let Some(argument) = arguments.next() {
+        match argument.as_str() {
+            "--since" => {
+                since = arguments
+                    .next()
+                    .context("--since requires a Git revision")?;
+            }
+            "--merges" => {
+                merges = arguments
+                    .next()
+                    .context("--merges requires a count")?
+                    .parse()
+                    .context("--merges must be an integer")?;
+            }
+            other => bail!("unknown abi-churn option {other:?}"),
+        }
+    }
+    Ok((since, merges))
 }
 
 fn closure_options(

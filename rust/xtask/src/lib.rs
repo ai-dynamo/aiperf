@@ -3,4 +3,5 @@
 
 //! Repository maintenance measurements that are not part of the product binary.
 
+pub mod abi_churn;
 pub mod abi_closure;
