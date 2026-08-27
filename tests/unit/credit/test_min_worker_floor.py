@@ -145,3 +145,71 @@ class TestWorkerMembershipNotification:
         router._unregister_worker("w-1")
 
         on_worker_count_changed.assert_called_once_with(1)
+
+
+class TestWorkerLostFiresOnlyForUnrecoverableState:
+    """Pin the claim that lets ``_on_worker_lost`` bypass MIN_ALIVE_FRACTION.
+
+    ``timing/manager.py`` treats a worker-loss callback as automatically fatal,
+    skipping the fleet-floor check, and justifies that in a comment: the router
+    only fires it when the departing worker owned in-flight credits or a sticky
+    session, i.e. state that lived in that worker's memory and cannot be
+    recovered by the survivors. That reasoning is load-bearing -- if the
+    callback can fire for a worker that owned neither, an idle worker leaving a
+    healthy fleet would abort the run -- yet it was only ever asserted in prose.
+    These tests make it executable.
+    """
+
+    def _router_with_loss_callback(self) -> tuple[StickyCreditRouter, MagicMock]:
+        router = _router(alive=2, peak=2)
+        on_lost = MagicMock()
+        router._on_worker_lost = on_lost
+        router._terminally_lost_workers = set()
+        router._on_worker_count_changed = None
+        return router, on_lost
+
+    def test_idle_worker_departure_does_not_report_a_loss(self) -> None:
+        """No credits, no sessions: the survivors can carry the run."""
+        router, on_lost = self._router_with_loss_callback()
+
+        assert router._unregister_worker("w-1", reason="shutdown") is False
+        on_lost.assert_not_called()
+
+    def test_worker_with_in_flight_credits_reports_a_loss(self) -> None:
+        router, on_lost = self._router_with_loss_callback()
+        router._workers["w-1"].in_flight_credits = 3
+
+        assert router._unregister_worker("w-1", reason="died") is True
+        on_lost.assert_called_once()
+
+    def test_worker_with_a_sticky_session_reports_a_loss(self) -> None:
+        """Session state was worker-local, so no survivor can continue it."""
+        router, on_lost = self._router_with_loss_callback()
+        router._workers["w-1"].active_session_ids = {"conv-a"}
+
+        assert router._unregister_worker("w-1", reason="died") is True
+        on_lost.assert_called_once()
+
+    def test_teardown_suppresses_the_loss_even_with_in_flight_credits(self) -> None:
+        """Credits outstanding during teardown are expected, not a failure."""
+        router, on_lost = self._router_with_loss_callback()
+        router._workers["w-1"].in_flight_credits = 3
+        router._credits_complete = True
+
+        assert router._unregister_worker("w-1", reason="shutdown") is False
+        on_lost.assert_not_called()
+
+    def test_dropping_orphaned_sessions_does_not_erase_the_loss_signal(self) -> None:
+        """The session set is read for the verdict AFTER it is handed off.
+
+        ``_unregister_worker`` passes ``worker_load.active_session_ids`` to
+        ``_drop_orphaned_sessions`` and only afterwards reads that same set to
+        decide whether a loss occurred. They are the same object, so a cleanup
+        step that emptied it in place would silently downgrade a real,
+        unrecoverable loss to a clean departure.
+        """
+        router, on_lost = self._router_with_loss_callback()
+        router._workers["w-1"].active_session_ids = {"conv-a", "conv-b"}
+
+        assert router._unregister_worker("w-1", reason="died") is True
+        on_lost.assert_called_once()

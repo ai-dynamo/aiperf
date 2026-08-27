@@ -1880,18 +1880,20 @@ class TestPhaseOccurrenceIdReachesEveryScrape:
         await manager._on_credit_phase_start(
             CreditPhaseStartMessage(
                 service_id="timing-manager",
-                stats=CreditPhaseStats(
-                    phase=CreditPhase.WARMUP,
-                    phase_name=str(CreditPhase.WARMUP),
-                    phase_kind="warmup",
-                ),
+                stats=CreditPhaseStats(phase=CreditPhase.WARMUP, phase_index=0),
                 config=CreditPhaseConfig(
                     phase=CreditPhase.WARMUP,
                     timing_mode=TimingMode.REQUEST_RATE,
+                    phase_index=0,
                 ),
             )
         )
         minted = manager._active_phase.instance_id
+        # The two publishers disagree on the display name for this very phase:
+        # the start path falls back to str(phase) -> "warmup", the baseline
+        # path to f"{phase.value}_{phase_index}" -> "warmup_0". Matching on
+        # the label would silently skip stamping here.
+        assert manager._active_phase.phase_name == "warmup"
 
         await manager.collect_baseline(
             PhaseBaselineRequestMessage(
@@ -1899,9 +1901,9 @@ class TestPhaseOccurrenceIdReachesEveryScrape:
                 phase_id="warmup-0",
                 kind=BaselineKind.START,
                 phase_kind="warmup",
-                phase_index=None,
+                phase_index=0,
                 profiling_index=None,
-                phase_name=str(CreditPhase.WARMUP),
+                phase_name=f"{CreditPhase.WARMUP.value}_0",
             )
         )
 
