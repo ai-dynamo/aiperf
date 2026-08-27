@@ -839,11 +839,9 @@ fn continuous_reboots_exhaust_the_five_pair_replacement_cap_and_resume_diagnoses
     let mut fixture = Fixture::new();
     let boot_identity = fixture._directory.path().join("boot-identity");
     std::fs::write(&boot_identity, "boot-original").expect("boot identity fixture is written");
-    let first = run_until_the_replacement_cap(
-        &mut fixture,
-        &boot_identity,
-        &fixture._directory.path().join("cap-attempt-1.jsonl"),
-    );
+    let first_request = fixture._directory.path().join("cap-attempt-1.jsonl");
+    let second_request = fixture._directory.path().join("cap-attempt-2.jsonl");
+    let first = run_until_the_replacement_cap(&mut fixture, &boot_identity, &first_request);
 
     assert_eq!(first.decision, ControlledAttemptDecision::Invalid);
     let replacements = first
@@ -867,11 +865,7 @@ fn continuous_reboots_exhaust_the_five_pair_replacement_cap_and_resume_diagnoses
     // A reboot between invocations is diagnosed from the persisted pair-start
     // context, not from anything the interrupted children reported.
     std::fs::write(&boot_identity, "boot-after-restart").expect("restart boot identity is written");
-    let second = run_until_the_replacement_cap(
-        &mut fixture,
-        &boot_identity,
-        &fixture._directory.path().join("cap-attempt-2.jsonl"),
-    );
+    let second = run_until_the_replacement_cap(&mut fixture, &boot_identity, &second_request);
 
     let resumed = second
         .resumed_pair_context
