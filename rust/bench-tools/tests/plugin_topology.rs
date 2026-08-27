@@ -1299,7 +1299,10 @@ fn witness_from_live_metadata(
         .filter(|dependency| dependency.path.is_some())
         .map(|dependency| WitnessDependency {
             package: dependency.name.clone(),
-            kind: dependency.kind.clone().unwrap_or_else(|| "normal".to_owned()),
+            kind: dependency
+                .kind
+                .clone()
+                .unwrap_or_else(|| "normal".to_owned()),
             justification: None,
         })
         .collect();
@@ -1369,14 +1372,8 @@ fn implemented_witness_validates_against_the_live_workspace() {
             justification: None,
         });
     assert!(
-        validate_implementation_witness(
-            &workspace,
-            &matrix,
-            &metadata,
-            *task,
-            &surplus_dependency
-        )
-        .expect_err("a dependency absent from Cargo metadata must be refused")
-        .contains("dependency census"),
+        validate_implementation_witness(&workspace, &matrix, &metadata, *task, &surplus_dependency)
+            .expect_err("a dependency absent from Cargo metadata must be refused")
+            .contains("dependency census"),
     );
 }
