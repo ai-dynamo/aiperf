@@ -5297,10 +5297,6 @@ fn action_gap_coverage_digest(
 // A restored frontier is provable when every sequence it crosses is either a
 // retained terminal or covered by the retained closure. The walk stops at the
 // first absent sequence, so it is bounded by the retained terminal count.
-//
-// Staged seam: only reachable from `checked_restored_action_gap_closure`, which
-// has no production caller yet.
-#[allow(dead_code)]
 fn is_action_frontier_proven(
     action_terminals: &BTreeMap<GlobalSequence, RetainedActionTerminal>,
     frontier: GlobalSequence,
@@ -5328,9 +5324,6 @@ fn is_action_frontier_proven(
 
 // Restore-side revalidation. This takes borrowed restored state rather than
 // `&mut self` so the caller validates before installing any reporter field.
-//
-// Staged seam: no production caller yet.
-#[allow(dead_code)]
 fn checked_restored_action_gap_closure(
     run: &StreamRunIdentity,
     budget: &StreamingResourceBudget,
