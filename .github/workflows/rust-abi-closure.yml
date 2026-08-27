@@ -25,3 +25,6 @@ jobs:
       - name: Reject ABI-universe growth
         working-directory: rust
         run: cargo xtask abi-gate
+      - name: Reject implementation-heavy ABI files
+        working-directory: rust
+        run: cargo xtask abi-impl-budget

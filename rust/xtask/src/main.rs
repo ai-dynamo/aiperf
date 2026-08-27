@@ -9,12 +9,13 @@ use aiperf_xtask::abi_churn::measure;
 use aiperf_xtask::abi_closure::{
     Baseline, Seeds, compute, compute_in, ensure_no_growth, workspace_root,
 };
+use aiperf_xtask::abi_impl_budget::{ensure_within_budget, measure as measure_impl_budget};
 use anyhow::{Context, Result, bail};
 
 fn main() -> Result<()> {
     let mut arguments = std::env::args().skip(1);
     let Some(command) = arguments.next() else {
-        bail!("usage: cargo xtask <abi-closure|abi-churn|abi-gate> [options]");
+        bail!("usage: cargo xtask <abi-closure|abi-churn|abi-gate|abi-impl-budget> [options]");
     };
 
     match command.as_str() {
@@ -64,6 +65,14 @@ fn main() -> Result<()> {
             .with_context(|| format!("parsing {}", baseline_path.display()))?;
             let report = measure(repository, &baseline, &since, merges)?;
             println!("{}", serde_json::to_string(&report)?);
+        }
+        "abi-impl-budget" => {
+            if arguments.next().is_some() {
+                bail!("abi-impl-budget accepts no options");
+            }
+            let measurement = measure_impl_budget()?;
+            println!("{}", serde_json::to_string(&measurement)?);
+            ensure_within_budget(&measurement)?;
         }
         other => bail!("unknown xtask subcommand {other:?}"),
     }

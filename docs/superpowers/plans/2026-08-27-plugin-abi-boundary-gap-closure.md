@@ -1212,8 +1212,10 @@ git commit -m 'docs(plugins): reject per-request executor erasure'
 digest` (`design.md:488`). That is the digest of the compiled `.rlib`, which
 changes for **any** change to the crate — including a private function body. So
 the universe-bump rate is driven by the ABI crates' whole contents, not just
-their type definitions. Today, 94% of the lines in the 52 would-be ABI files are
-implementation:
+their type definitions. Today, 94% of the lines in the 52 would-be ABI files
+(the superseded regex measurement described under "Baseline Numbers (measured
+2026-08-27 at `110e00321a`)" above; the authoritative rustdoc closure on the
+present tree is 177 types across 56 files) are implementation:
 
 ```
 impl / total   (ABI)  commits/400   file
@@ -1245,6 +1247,17 @@ file keeps a foot in both camps.
 - Modify: `rust/runtime/src/scheduled.rs` → extract `TurnResponseObserver` and
   the observation values to `scheduled/observe.rs`
 - Create: `rust/xtask/src/abi_impl_budget.rs`
+- Create: `rust/xtask/tests/impl_budget.rs`
+- Modify: `rust/xtask/src/lib.rs` and `rust/xtask/src/main.rs` to declare the
+  `abi_impl_budget` module and dispatch the `abi-impl-budget` subcommand
+- Modify: `rust/xtask/abi-baseline.json` — `ensure_no_growth`
+  (`rust/xtask/src/abi_closure.rs:100-114`) keys accepted types on
+  `(name, file)`, so relocating type definitions into `body_plan/model.rs`,
+  `multiturn/model.rs`, `metrics_core/accumulator_model.rs`, and
+  `scheduled/observe.rs` requires refreshing the closure snapshot before
+  `abi-gate` can pass. That refresh cannot launder growth past the pinned
+  177/56: `MAX_ABI_TYPES` and `MAX_ABI_FILES` are compile-time constants checked
+  by `abi-impl-budget`.
 - Modify: `.github/workflows/rust-abi-closure.yml`
 
 **Interfaces:**
@@ -1253,8 +1266,57 @@ file keeps a foot in both camps.
   40-task Task 6.
 - Produces: `cargo xtask abi-impl-budget` printing
   `{"type_lines": <usize>, "impl_lines": <usize>, "ratio": <f64>}` and failing
-  when implementation lines in ABI-contributing files exceed the committed
-  budget.
+  when the live closure violates the committed scoped budget: global
+  implementation lines above `MAX_GLOBAL_IMPL_LINES`, ABI-facing types above
+  `MAX_ABI_TYPES`, ABI-contributing files above `MAX_ABI_FILES`, or any newly
+  isolated boundary model/observe file at or above `MAX_BOUNDARY_IMPL_RATIO`
+  (`0.50`) implementation.
+
+**Acceptance gate (corrected 2026-08-27).** An earlier draft of this task made
+the GREEN criterion one global `measure().ratio < 0.50`. That criterion is
+arithmetically impossible for the four authorized splits and therefore cannot be
+the gate: the splits move implementation out of the four boundary files, but the
+closure's 177 types still live across 56 files whose non-type lines dominate, so
+the global ratio can only fall from `0.9372673079820087` to
+`0.9197676978971705`. Reaching `0.50` would require evicting boundary types this
+task is not authorized to touch. The binding, reviewed, executable criterion is
+scoped, and it is exactly what `ensure_within_budget` in
+`rust/xtask/src/abi_impl_budget.rs` enforces:
+
+1. **Global implementation lines must not exceed 33,417**
+   (`MAX_GLOBAL_IMPL_LINES`). Measured: 43,552 -> 33,417 implementation lines, a
+   reduction of 10,135 (-23.2710%). Implementation lines are contributing-file
+   lines minus type lines, so `46,467 - 2,915 = 43,552` before the splits and
+   `36,332 - 2,915 = 33,417` after. Both pairs come from
+   `rust/xtask/abi-baseline.json` at different revisions: `46,467` is the value
+   recorded by `b99f323acc` and still current at the Task 6 base `e68ca98c9d`,
+   and `36,332` is the same file after the refresh in `da60f2ed14`.
+2. **ABI-facing types must not grow beyond 177** (`MAX_ABI_TYPES`).
+   Measured: 177 -> 177.
+3. **ABI-contributing files must not grow beyond 56** (`MAX_ABI_FILES`).
+   Measured: 56 -> 56.
+4. **Every newly isolated boundary model/observe file must contain at least one
+   ABI-facing type definition and stay strictly below `0.50` implementation**
+   (`MAX_BOUNDARY_IMPL_RATIO`). Measured:
+
+| Boundary file | Type lines | Other lines | Implementation ratio |
+| --- | ---: | ---: | ---: |
+| `runtime/src/body_plan/model.rs` | 90 | 81 | 0.473684 |
+| `runtime/src/multiturn/model.rs` | 169 | 69 | 0.289916 |
+| `runtime/src/metrics_core/accumulator_model.rs` | 41 | 15 | 0.267857 |
+| `runtime/src/scheduled/observe.rs` | 45 | 32 | 0.415584 |
+
+The global ratio is still measured and printed in the command's JSON, but it is
+recorded evidence, not a threshold.
+
+**This scoping weakens nothing.** The stronger artifact rule — a category SDK
+contains **zero** boundary type definitions, per `recompile-boundaries.md:160` —
+remains binding and unweakened. It is owned by Tasks 4 and 6 of
+[`2026-08-26-native-rust-runtime-plugins-implementation.md`](2026-08-26-native-rust-runtime-plugins-implementation.md),
+whose source guards reject duplicate boundary-type definitions in runtime and
+category SDKs. This task pins the source-line reduction the four authorized
+moves actually achieve and forbids regressing it; no performance or
+rebuild-isolation invariant is waived.
 
 - [ ] **Step 1: Write the failing budget test**
 
@@ -1267,20 +1329,55 @@ Add `rust/xtask/tests/impl_budget.rs`:
 //! The universe id hashes the compiled ABI crate artifact, so implementation
 //! co-resident with boundary types is implementation that rebuilds every plugin.
 
-use aiperf_xtask::abi_impl_budget::measure;
+use std::sync::OnceLock;
+
+use aiperf_xtask::abi_impl_budget::{
+    MAX_ABI_FILES, MAX_ABI_TYPES, MAX_GLOBAL_IMPL_LINES, Measurement, ensure_within_budget, measure,
+};
+
+fn measurement() -> Measurement {
+    static MEASUREMENT: OnceLock<Measurement> = OnceLock::new();
+    MEASUREMENT
+        .get_or_init(|| measure().expect("measure"))
+        .clone()
+}
 
 #[test]
-fn abi_files_are_mostly_type_definitions() {
-    let m = measure().expect("measure");
-    assert!(
-        m.ratio < 0.50,
-        "ABI-contributing files are {:.0}% implementation ({} impl lines); \
-         boundary types must not share a file with logic that churns",
-        m.ratio * 100.0,
-        m.impl_lines
-    );
+fn authorized_splits_fit_the_scoped_budget() {
+    let m = measurement();
+    ensure_within_budget(&m).expect("ABI implementation budget");
+}
+
+#[test]
+fn global_implementation_regression_is_rejected() {
+    let mut m = measurement();
+    m.impl_lines = MAX_GLOBAL_IMPL_LINES + 1;
+    assert!(ensure_within_budget(&m).is_err());
+}
+
+#[test]
+fn mixed_boundary_model_is_rejected() {
+    let mut m = measurement();
+    m.boundary_files[0].impl_lines = m.boundary_files[0].type_lines;
+    m.boundary_files[0].ratio = 0.50;
+    assert!(ensure_within_budget(&m).is_err());
+}
+
+#[test]
+fn closure_growth_is_rejected() {
+    let mut type_growth = measurement();
+    type_growth.abi_types = MAX_ABI_TYPES + 1;
+    assert!(ensure_within_budget(&type_growth).is_err());
+
+    let mut file_growth = measurement();
+    file_growth.abi_files = MAX_ABI_FILES + 1;
+    assert!(ensure_within_budget(&file_growth).is_err());
 }
 ```
+
+The three negative tests are part of the gate, not decoration: they prove the
+budget rejects global implementation growth, a boundary model that drifts back
+to the `0.50` mixing boundary, and ABI type or file growth.
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -1290,7 +1387,14 @@ source .venv/bin/activate && cd rust
 cargo test -p aiperf-xtask --test impl_budget
 ```
 
-Expected: FAIL — ratio is 0.94, far above the 0.50 threshold.
+Expected: FAIL. The test target does not compile, because
+`aiperf_xtask::abi_impl_budget` and its `MAX_*` constants, `Measurement` closure
+fields, boundary measurements, and `ensure_within_budget` API do not exist yet,
+so the test's imports do not resolve; nothing runs before that.
+Once the minimal measurement command exists but before the splits land, the test
+fails on the live measurement instead: 177 types, 56 files, 2,915 type lines,
+46,467 contributing-file lines, 43,552 implementation lines, ratio
+`0.9372673079820087`, exit status 101.
 
 - [ ] **Step 3: Split the four hot files**
 
@@ -1314,22 +1418,45 @@ cargo test -p aiperf-runtime && cargo test -p aiperf-runtime --features engine
 
 Expected: PASS, byte-identical report snapshots.
 
+Blocked on this tree (measured 2026-08-27; pre-existing and unrelated to this
+task). `cargo test -p aiperf-runtime` cannot build here. `rust/runtime/Cargo.toml`
+gives `required-features = ["streaming"]` only to the `streaming_feature_inventory`
+target (`:258-261`); the other five auto-discovered `tests/streaming_*.rs` targets
+carry no such gate, so under default features they reference the feature-gated
+`pub mod streaming` (`rust/runtime/src/lib.rs:81-82`) and fail to compile —
+`cargo check -p aiperf-runtime --test streaming_checkpoint_participants` reports 35
+`E0433` errors. This task modifies no Cargo manifest and no streaming source, so
+the expectation above is not weakened: it stands as written, and Step 4 stays
+unchecked until the manifest gates those five targets.
+
 - [ ] **Step 5: Verify the budget and the churn rate together**
 
 Run:
 ```bash
 source .venv/bin/activate && cd rust
 cargo test -p aiperf-xtask --test impl_budget
+cargo run -p aiperf-xtask -- abi-impl-budget
+cargo run -p aiperf-xtask -- abi-gate
 cargo run -p aiperf-xtask -- abi-churn --merges 120
 ```
 
-Expected: budget test PASS, and `abi-churn` reporting file-granular and
-type-granular universe rates that have **converged** — the whole point of the
-split is that the two numbers stop differing. Compare against the rates
-recorded in Task 1 Step 8 on this same tree, not against the historical
-figures: at `110e00321a` the target was 7–8 of 54 code units (13–15%) down
-from 19 (35%), and the expected *shape* is roughly halving the universe-wide
-rate while the two granularities collapse together.
+Expected: budget tests PASS 4/4, `cargo xtask abi-impl-budget` exits 0 printing
+`{"type_lines":2915,"impl_lines":33417,"ratio":0.9197676978971705}`,
+`cargo xtask abi-gate` exits 0 against the refreshed closure snapshot, and
+`abi-churn` exits 0. Compare churn against the rates recorded in Task 1 Step 8
+on this same tree, not against the historical figures. Measured here:
+
+```json
+{"code_units":63,"file_granular":{"universe":20,"one_plugin":1,"host_only":42},"type_granular":{"universe":14,"one_plugin":1,"host_only":48}}
+```
+
+The two granularities have **not** converged, and that residual difference is
+retained honestly as evidence rather than asserted as this task's acceptance
+criterion. Full convergence needs the compiled-artifact separation — zero
+boundary type definitions in any category SDK — which is owned by Tasks 4 and 6
+of the 40-task plan. `abi-churn` is not a gate here: it must exit 0, and its
+output is recorded evidence, not an acceptance criterion. It asserts no
+convergence.
 
 - [ ] **Step 6: Commit and wire the gate**
 
@@ -1342,8 +1469,12 @@ host_abi_universe_id hashes the compiled ABI crate artifact, not its type
 definitions, so implementation co-resident with boundary types rebuilds every
 plugin on every change. The four hottest ABI files were 94% implementation.
 
-Adds an xtask budget gate so the ratio cannot silently regress.
-Universe-bump rate: 35% file-granular -> <paste measured> after the split.
+Adds an xtask budget gate pinning the achieved scoped reduction so it cannot
+silently regress: at most 33417 global implementation lines (down from 43552),
+no growth past 177 ABI-facing types or 56 contributing files, and every newly
+isolated boundary model file strictly below 50% implementation.
+Universe-bump rate: <paste measured file-granular and type-granular> after the
+split.
 EOF
 ```
 
