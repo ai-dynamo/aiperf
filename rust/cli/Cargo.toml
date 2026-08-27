@@ -31,7 +31,7 @@ path = "src/main.rs"
 # dev build silently omitted `profile_export.parquet` and any test driving the
 # real binary — the e2e suite does — failed on a missing artifact that looked
 # like a code bug. Only `dynosim` stays opt-in (heaviest dependency surface).
-default = ["grpc", "cellular", "parquet", "websocket"]
+default = ["streaming", "grpc", "cellular", "parquet", "websocket"]
 
 # Base: embed a CPython interpreter (pyo3 `auto-initialize`) for the opt-in
 # numerical search implementations. Python-owned utilities remain external
@@ -46,6 +46,8 @@ search-pyo3 = ["pyo3-embed"]
 # feature set of the former runner crate. `dynosim` builds the Dynamo mocker from
 # the pinned ai-dynamo/dynamo git dep in `runtime/Cargo.toml` (no sibling checkout).
 dynosim = ["aiperf-runtime/dynosim"]
+streaming = ["aiperf-runtime/streaming"]
+streaming-s3 = ["streaming", "aiperf-runtime/streaming-s3"]
 # Native gRPC transport (Tonic). A first-class transport over the same registry
 # seam as http/dynosim; in the `default` set. A lean HTTP-only binary drops it
 # (`--no-default-features`), which unregisters the `grpc` transport and its Riva
@@ -75,7 +77,7 @@ dynamo-full = [
 ]
 dynamo-parity = ["dynamo-full", "aiperf-runtime/dynamo-parity"]
 # Convenience: the full execution surface (all git-sourced, no sibling checkout).
-full = ["dynosim", "parquet", "cellular", "grpc", "websocket"]
+full = ["streaming-s3", "dynosim", "parquet", "cellular", "grpc", "websocket"]
 
 [dependencies]
 tempfile = "3"

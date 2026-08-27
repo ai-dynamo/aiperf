@@ -15,6 +15,8 @@ default = ["parquet", "cellular", "grpc"]
 # other direct library consumers build without it, so the gated module and its
 # dependency surface stay out of their builds.
 engine = []
+streaming = ["engine", "dep:chacha20poly1305", "dep:zeroize"]
+streaming-s3 = ["streaming", "dep:aws-config", "dep:aws-sdk-s3"]
 # Direct raw-HTTP Graph-IR throughput microbenchmark. It intentionally bypasses
 # the product sink so it measures the low-level path, and is excluded from the
 # default library API.
@@ -78,11 +80,14 @@ anyhow.workspace = true
 arrow = { workspace = true, optional = true }
 async-trait.workspace = true
 axum.workspace = true
+aws-config = { workspace = true, optional = true }
+aws-sdk-s3 = { workspace = true, optional = true }
 base64.workspace = true
 bitflags.workspace = true
 blake3.workspace = true
 bytes.workspace = true
 chrono.workspace = true
+chacha20poly1305 = { workspace = true, optional = true }
 csv.workspace = true
 futures.workspace = true
 half.workspace = true
@@ -125,6 +130,7 @@ tonic = { workspace = true, optional = true }
 tracing.workspace = true
 uuid.workspace = true
 url.workspace = true
+zeroize = { workspace = true, optional = true }
 # External deps not pinned in the workspace: carried inline with the same
 # version/features as the absorbed crates declared them.
 flate2 = "1"
@@ -248,6 +254,11 @@ path = "tests/transport_http/reuse.rs"
 [[test]]
 name = "transport_http_tls"
 path = "tests/transport_http/tls.rs"
+
+[[test]]
+name = "streaming_feature_inventory"
+path = "tests/streaming_feature_inventory.rs"
+required-features = ["streaming"]
 
 [[example]]
 name = "velo_cell_spike"
