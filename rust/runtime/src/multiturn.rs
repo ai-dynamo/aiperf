@@ -31,12 +31,16 @@ use crate::endpoints::{
     CreditPhase, Endpoint, EndpointKey, Media as EndpointMedia, PreparedEndpoint,
     PreparedEndpointTable, ShapeLowerer, Turn as EndpointTurn, TurnMessageLowerer,
 };
+#[cfg(test)]
+use crate::endpoints::EndpointId;
 use crate::rng::RngRoot;
 use crate::timing::{RunState, StopConfig};
 use anyhow::{Result, anyhow, bail};
 use bytes::Bytes;
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
+#[cfg(test)]
+use serde_json::Value;
 use uuid::Uuid;
 
 mod materializer;
