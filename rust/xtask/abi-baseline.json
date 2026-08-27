@@ -1,8 +1,8 @@
 {
-  "types": 175,
-  "files": 54,
-  "type_lines": 3091,
-  "file_lines": 46264,
+  "types": 177,
+  "files": 56,
+  "type_lines": 2915,
+  "file_lines": 46467,
   "entries": [
     {
       "name": "AIPerfExtension",
@@ -145,8 +145,8 @@
     {
       "name": "EffectiveEndpointConfig",
       "file": "runtime/src/endpoints/config.rs",
-      "start": 517,
-      "end": 519
+      "start": 522,
+      "end": 524
     },
     {
       "name": "Endpoint",
@@ -175,20 +175,20 @@
     {
       "name": "EndpointFactory",
       "file": "runtime/src/endpoints/registry.rs",
-      "start": 190,
-      "end": 212
+      "start": 193,
+      "end": 215
     },
     {
       "name": "EndpointKey",
       "file": "runtime/src/endpoints/registry.rs",
-      "start": 1002,
-      "end": 1002
+      "start": 1005,
+      "end": 1005
     },
     {
       "name": "EndpointRegistryError",
       "file": "runtime/src/endpoints/registry.rs",
-      "start": 92,
-      "end": 119
+      "start": 95,
+      "end": 122
     },
     {
       "name": "EndpointResult",
@@ -199,8 +199,14 @@
     {
       "name": "EndpointType",
       "file": "runtime/src/endpoints/metadata.rs",
-      "start": 76,
-      "end": 115
+      "start": 74,
+      "end": 74
+    },
+    {
+      "name": "EndpointTypeId",
+      "file": "runtime/src/endpoints/type_id.rs",
+      "start": 14,
+      "end": 14
     },
     {
       "name": "ErrorDetails",
@@ -361,8 +367,14 @@
     {
       "name": "MetricTag",
       "file": "runtime/src/metrics_core/catalog.rs",
-      "start": 21,
-      "end": 160
+      "start": 19,
+      "end": 19
+    },
+    {
+      "name": "MetricTagId",
+      "file": "runtime/src/metrics_core/tag_id.rs",
+      "start": 13,
+      "end": 13
     },
     {
       "name": "MetricValue",
@@ -505,8 +517,8 @@
     {
       "name": "PreparedEndpoint",
       "file": "runtime/src/endpoints/registry.rs",
-      "start": 452,
-      "end": 575
+      "start": 455,
+      "end": 578
     },
     {
       "name": "PreparedEndpointBinding",
@@ -523,8 +535,8 @@
     {
       "name": "PreparedEndpointTable",
       "file": "runtime/src/endpoints/registry.rs",
-      "start": 1021,
-      "end": 1023
+      "start": 1024,
+      "end": 1026
     },
     {
       "name": "PreparedEndpointTableFactory",
@@ -535,14 +547,14 @@
     {
       "name": "PreparedReadinessRequest",
       "file": "runtime/src/endpoints/registry.rs",
-      "start": 424,
-      "end": 435
+      "start": 427,
+      "end": 438
     },
     {
       "name": "PreparedRequest",
       "file": "runtime/src/endpoints/registry.rs",
-      "start": 258,
-      "end": 267
+      "start": 261,
+      "end": 270
     },
     {
       "name": "PreparedTurn",
@@ -583,20 +595,20 @@
     {
       "name": "ReadinessMethod",
       "file": "runtime/src/endpoints/registry.rs",
-      "start": 404,
-      "end": 409
+      "start": 407,
+      "end": 412
     },
     {
       "name": "ReadinessPolicy",
       "file": "runtime/src/endpoints/registry.rs",
-      "start": 439,
-      "end": 449
+      "start": 442,
+      "end": 452
     },
     {
       "name": "ReadinessSuccess",
       "file": "runtime/src/endpoints/registry.rs",
-      "start": 413,
-      "end": 420
+      "start": 416,
+      "end": 423
     },
     {
       "name": "RealClockAnchor",
@@ -1027,20 +1039,20 @@
     {
       "name": "WebSocketCapabilities",
       "file": "runtime/src/endpoints/registry.rs",
-      "start": 234,
-      "end": 249
+      "start": 237,
+      "end": 252
     },
     {
       "name": "WebSocketConnectionModel",
       "file": "runtime/src/endpoints/registry.rs",
-      "start": 216,
-      "end": 221
+      "start": 219,
+      "end": 224
     },
     {
       "name": "WebSocketDialect",
       "file": "runtime/src/endpoints/registry.rs",
-      "start": 225,
-      "end": 230
+      "start": 228,
+      "end": 233
     },
     {
       "name": "WorkerCreditReport",
