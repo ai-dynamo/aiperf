@@ -78,6 +78,7 @@ struct Metadata {
 struct Package {
     id: String,
     name: String,
+    version: String,
     manifest_path: String,
     publish: Option<Vec<String>>,
     dependencies: Vec<Dependency>,
@@ -88,7 +89,17 @@ struct Package {
 struct Dependency {
     name: String,
     kind: Option<String>,
-    source: Option<String>,
+    rename: Option<String>,
+}
+
+impl Dependency {
+    fn package_name(&self) -> &str {
+        &self.name
+    }
+
+    fn local_name(&self) -> &str {
+        self.rename.as_deref().unwrap_or(&self.name)
+    }
 }
 
 #[derive(Deserialize)]
@@ -98,6 +109,7 @@ struct BaselineTopology {
 #[derive(Deserialize)]
 struct BaselinePackage {
     name: String,
+    version: String,
     direct_dependencies: Vec<BaselineDependency>,
     features: Vec<String>,
 }
@@ -106,6 +118,46 @@ struct BaselineDependency {
     name: String,
     kind: String,
     is_workspace: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ApiAllowlist {
+    schema_version: u32,
+    allowed_dependencies: Vec<String>,
+    allowed_std_modules: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CargoLock {
+    version: u32,
+    package: Vec<CargoLockPackage>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CargoLockPackage {
+    name: String,
+    version: String,
+    source: Option<String>,
+    checksum: Option<String>,
+    #[serde(rename = "dependencies")]
+    _dependencies: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+struct StandaloneCargoLock {
+    version: u32,
+    package: Vec<StandaloneLockPackage>,
+}
+
+#[derive(Debug, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+struct StandaloneLockPackage {
+    name: String,
+    version: String,
 }
 
 fn workspace_root() -> PathBuf {
@@ -157,12 +209,19 @@ fn package_map(metadata: Metadata) -> BTreeMap<String, Package> {
         .workspace_members
         .into_iter()
         .collect::<BTreeSet<_>>();
-    metadata
+    let mut packages = BTreeMap::new();
+    for package in metadata
         .packages
         .into_iter()
         .filter(|package| members.contains(&package.id))
-        .map(|package| (package.name.clone(), package))
-        .collect()
+    {
+        let name = package.name.clone();
+        assert!(
+            packages.insert(name.clone(), package).is_none(),
+            "duplicate workspace package name {name}"
+        );
+    }
+    packages
 }
 
 fn normal_and_build_dependencies(package: &Package) -> BTreeSet<&str> {
@@ -219,41 +278,71 @@ fn workspace_and_template_policy() {
         packages.keys().cloned().collect::<BTreeSet<_>>(),
         expected_names
     );
-    let lock: toml::Value = std::fs::read_to_string(root.join("Cargo.lock"))
-        .expect("parent lock")
-        .parse()
-        .expect("parent lock TOML");
-    let lock_names = lock["package"]
-        .as_array()
-        .expect("parent lock packages")
-        .iter()
-        .filter(|package| package.get("source").is_none())
-        .map(|package| {
-            package["name"]
-                .as_str()
-                .expect("lock package name")
-                .to_owned()
-        })
+    let expected_workspace_identities = packages
+        .values()
+        .map(|package| (package.name.clone(), package.version.clone()))
         .collect::<BTreeSet<_>>();
-    assert_eq!(lock_names, packages.keys().cloned().collect());
+    assert_eq!(expected_workspace_identities.len(), packages.len());
+    let lock: CargoLock =
+        toml::from_str(&std::fs::read_to_string(root.join("Cargo.lock")).expect("parent lock"))
+            .expect("parent lock TOML");
+    assert_eq!(lock.version, 4);
+    let source_less_identities = lock
+        .package
+        .iter()
+        .filter(|package| package.source.is_none())
+        .map(|package| {
+            assert!(
+                package.checksum.is_none(),
+                "source-less package {} must not have a checksum",
+                package.name
+            );
+            (package.name.clone(), package.version.clone())
+        })
+        .collect::<Vec<_>>();
+    let unique_source_less_identities = source_less_identities
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        source_less_identities.len(),
+        unique_source_less_identities.len(),
+        "parent lock contains duplicate source-less package identities"
+    );
+    assert_eq!(
+        unique_source_less_identities, expected_workspace_identities,
+        "parent lock source-less package identities must exactly match the workspace"
+    );
+    // Task 1 classified metadata dependency package names by workspace
+    // membership; source-less external path dependencies are not workspace edges.
+    let workspace_names = packages.keys().map(String::as_str).collect::<BTreeSet<_>>();
     for captured in &baseline.workspace_packages {
         let current = &packages[&captured.name];
-        let expected = captured
+        assert_eq!(
+            current.version, captured.version,
+            "baseline package version drift for {}",
+            captured.name
+        );
+        let mut expected = captured
             .direct_dependencies
             .iter()
             .map(|edge| (edge.name.as_str(), edge.kind.as_str(), edge.is_workspace))
-            .collect::<BTreeSet<_>>();
-        let actual = current
+            .collect::<Vec<_>>();
+        expected.sort_unstable();
+        let mut actual = current
             .dependencies
             .iter()
             .map(|edge| {
+                let package_name = edge.package_name();
+                assert!(!edge.local_name().is_empty());
                 (
-                    edge.name.as_str(),
+                    package_name,
                     edge.kind.as_deref().unwrap_or("normal"),
-                    edge.source.is_none(),
+                    workspace_names.contains(package_name),
                 )
             })
-            .collect::<BTreeSet<_>>();
+            .collect::<Vec<_>>();
+        actual.sort_unstable();
         assert_eq!(actual, expected, "baseline DAG drift for {}", captured.name);
         let mut expected_features = captured.features.iter().cloned().collect::<BTreeSet<_>>();
         if captured.name == "aiperf-e2e-tests" {
@@ -317,61 +406,40 @@ fn workspace_and_template_policy() {
     let standalone_packages = package_map(standalone_metadata);
     assert_eq!(standalone_packages.len(), 1);
     assert!(standalone_packages.contains_key("aiperf-plugin-third-party-example"));
-    let standalone_lock: toml::Value =
-        std::fs::read_to_string(root.join("tests/plugin-third-party/Cargo.lock"))
-            .expect("standalone lock")
-            .parse()
-            .expect("standalone lock TOML");
-    assert_eq!(standalone_lock["version"].as_integer(), Some(4));
     assert_eq!(
-        standalone_lock["package"]
-            .as_array()
-            .expect("standalone packages")
-            .len(),
-        1
+        standalone_packages["aiperf-plugin-third-party-example"].version,
+        "0.0.0"
     );
+    let standalone_lock: StandaloneCargoLock = toml::from_str(
+        &std::fs::read_to_string(root.join("tests/plugin-third-party/Cargo.lock"))
+            .expect("standalone lock"),
+    )
+    .expect("standalone lock must have the exact supported shape");
     assert_eq!(
-        standalone_lock["package"][0]["name"].as_str(),
-        Some("aiperf-plugin-third-party-example")
+        standalone_lock,
+        StandaloneCargoLock {
+            version: 4,
+            package: vec![StandaloneLockPackage {
+                name: "aiperf-plugin-third-party-example".to_owned(),
+                version: "0.0.0".to_owned(),
+            }],
+        }
     );
 
     let api = &packages["aiperf-plugin-api"];
     let allowlist_path = root.join("plugin-api/api-allowlist.toml");
-    let allowlist: toml::Value = std::fs::read_to_string(&allowlist_path)
-        .unwrap_or_else(|error| panic!("cannot read {}: {error}", allowlist_path.display()))
-        .parse()
-        .expect("API allowlist must be valid TOML");
-    assert_eq!(allowlist["schema_version"].as_integer(), Some(1));
-    assert_eq!(
-        allowlist
-            .as_table()
-            .expect("allowlist table")
-            .keys()
-            .map(String::as_str)
-            .collect::<BTreeSet<_>>(),
-        BTreeSet::from([
-            "schema_version",
-            "allowed_dependencies",
-            "allowed_std_modules"
-        ])
-    );
-    let allowed = allowlist["allowed_dependencies"]
-        .as_array()
-        .expect("API allowlist dependencies must be an array")
+    let allowlist: ApiAllowlist = toml::from_str(
+        &std::fs::read_to_string(&allowlist_path)
+            .unwrap_or_else(|error| panic!("cannot read {}: {error}", allowlist_path.display())),
+    )
+    .expect("API allowlist must have the exact supported shape");
+    assert_eq!(allowlist.schema_version, 1);
+    let allowed = allowlist
+        .allowed_dependencies
         .iter()
-        .map(|value| {
-            value
-                .as_str()
-                .expect("allowlist dependency must be a string")
-        })
+        .map(String::as_str)
         .collect::<BTreeSet<_>>();
-    assert_eq!(
-        allowlist["allowed_dependencies"]
-            .as_array()
-            .expect("dependencies")
-            .len(),
-        allowed.len()
-    );
+    assert_eq!(allowlist.allowed_dependencies.len(), allowed.len());
     let api_dependencies = normal_and_build_dependencies(api);
     assert!(api_dependencies.is_subset(&allowed));
     for forbidden in FORBIDDEN {
@@ -383,21 +451,14 @@ fn workspace_and_template_policy() {
         BTreeSet::from(["aiperf-core", "blake3", "serde", "serde_json", "thiserror"])
     );
     assert_eq!(
-        allowlist["allowed_std_modules"]
-            .as_array()
-            .expect("API standard-library allowlist")
+        allowlist
+            .allowed_std_modules
             .iter()
-            .map(|value| value.as_str().expect("standard-library module"))
+            .map(String::as_str)
             .collect::<BTreeSet<_>>(),
         BTreeSet::from(["alloc", "core", "std"])
     );
-    assert_eq!(
-        allowlist["allowed_std_modules"]
-            .as_array()
-            .expect("standard modules")
-            .len(),
-        3
-    );
+    assert_eq!(allowlist.allowed_std_modules.len(), 3);
 
     let host_dependencies = normal_and_build_dependencies(&packages["aiperf-plugin-host"]);
     assert!(host_dependencies.is_subset(&BTreeSet::from([
