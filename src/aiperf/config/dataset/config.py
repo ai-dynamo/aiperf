@@ -30,7 +30,6 @@ from aiperf.common.enums import (
     DatasetType,
     PromptCorpus,
 )
-from aiperf.config.base import BaseConfig
 from aiperf.config.dataset.content import (
     AudioConfig,
     CacheBustConfig,
@@ -40,6 +39,7 @@ from aiperf.config.dataset.content import (
     PromptSelectionConfig,
     RankingsConfig,
 )
+from aiperf.config.dataset.system_prompt import SystemPromptMixin
 from aiperf.config.dataset.trace import (
     SynthesisConfig,
 )
@@ -86,7 +86,7 @@ _DatasetName = Annotated[
 
 
 # Dataset type variants using discriminated unions
-class SyntheticDataset(BaseConfig):
+class SyntheticDataset(SystemPromptMixin):
     """
     Synthetic dataset configuration.
 
@@ -282,7 +282,7 @@ class SyntheticDataset(BaseConfig):
         return self
 
 
-class FileDataset(BaseConfig):
+class FileDataset(SystemPromptMixin):
     """
     File-based dataset configuration.
 
@@ -306,9 +306,9 @@ class FileDataset(BaseConfig):
             description="Path to file or directory containing benchmark dataset. "
             "Can be absolute or relative. Mutually exclusive with `records:`. "
             "Supported formats depend on the format field: "
-            "JSONL for single_turn/multi_turn, JSONL trace files for mooncake_trace/"
-            "bailian_trace, Parquet for baseten_trace, JSON/directory WEKA traces, "
-            "JSONL/gzip/segmented Dynamo captures, and directories for random_pool.",
+            "JSONL for single_turn/multi_turn, JSONL (optionally gzipped) for "
+            "tracelab, JSONL trace files for mooncake_trace/bailian_trace, "
+            "Parquet for baseten_trace, directories for random_pool.",
         ),
     ]
 
@@ -332,9 +332,9 @@ class FileDataset(BaseConfig):
             description="Dataset file format determining parsing logic and expected file structure. "
             "single_turn: JSONL with single prompt-response exchanges. "
             "multi_turn: JSONL with conversation history. "
+            "tracelab: TraceLab agentic-coding corpus, JSONL or gzipped JSONL. "
             "mooncake_trace / bailian_trace / baseten_trace / burst_gpt_trace: "
             "timestamped trace files for replay. "
-            "weka_trace / dynamo_trace: Rust-native recorded graphs. "
             "sagemaker_data_capture: JSONL captured by SageMaker DataCapture. "
             "random_pool: directory of reusable prompts.",
         ),
@@ -356,11 +356,10 @@ class FileDataset(BaseConfig):
         Field(
             default=None,
             description="Trace synthesis/transformation configuration. "
-            "Allows scaling trace replay and configuring Rust-native "
-            "WEKA/Dynamo graph reconstruction. Applies to trace formats such as "
-            "mooncake_trace and baseten_trace, except speedup_ratio, which is "
-            "rejected for baseten_trace (use replay_speedup / --replay-speedup "
-            "to scale replay pacing there).",
+            "Allows scaling timestamps and token lengths before replay. "
+            "Applies to trace formats such as mooncake_trace and baseten_trace, "
+            "except speedup_ratio, which is rejected for baseten_trace "
+            "(use replay_speedup / --replay-speedup to scale replay pacing there).",
         ),
     ]
 
@@ -494,15 +493,59 @@ class FileDataset(BaseConfig):
         ),
     ]
 
+    prompt_batch_size: Annotated[
+        int | None,
+        Field(
+            default=None,
+            ge=0,
+            description="Number of text items per request. "
+            "Only applies to format: random_pool; rejected on other formats. "
+            "Set to 0 to disable text inputs entirely (e.g. image/audio/video-only workloads).",
+        ),
+    ]
+
+    image_batch_size: Annotated[
+        int | None,
+        Field(
+            default=None,
+            ge=0,
+            description="Number of images per request. "
+            "Only applies to format: random_pool; rejected on other formats. "
+            "Set to 0 to disable image inputs entirely.",
+        ),
+    ]
+
+    audio_batch_size: Annotated[
+        int | None,
+        Field(
+            default=None,
+            ge=0,
+            description="Number of audio items per request. "
+            "Only applies to format: random_pool; rejected on other formats. "
+            "Set to 0 to disable audio inputs entirely.",
+        ),
+    ]
+
+    video_batch_size: Annotated[
+        int | None,
+        Field(
+            default=None,
+            ge=0,
+            description="Number of video items per request. "
+            "Only applies to format: random_pool; rejected on other formats. "
+            "Set to 0 to disable video inputs entirely.",
+        ),
+    ]
+
     block_size: Annotated[
         int | None,
         Field(
             default=None,
             ge=1,
             description="Hash-id block granularity for trace replay (--isl-block-size). "
-            "hash-id trace loaders (mooncake_trace, bailian_trace, burst_gpt_trace, "
-            "sagemaker_data_capture) decode each hash_id into a cached block of this "
-            "many tokens; total ISL = (num_hash_ids - 1) * block_size + final_block_size. "
+            "hash-id trace loaders (mooncake_trace, bailian_trace, baseten_trace, "
+            "tracelab) decode each hash_id into a cached block of this many tokens; "
+            "total ISL = (num_hash_ids - 1) * block_size + final_block_size. "
             "When unset, the loader's plugin-metadata default applies (e.g. 512 for "
             "mooncake_trace, 16 for bailian_trace). Not used by weka, which carries its "
             "own inline per-block sizes.",
@@ -603,6 +646,28 @@ class FileDataset(BaseConfig):
             raise ValueError(
                 "--ignore-trace-delays and --use-think-time-only are mutually "
                 "exclusive (each sets Turn.delay differently)."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_batch_sizes_random_pool_only(self) -> FileDataset:
+        """Reject per-modality batch sizes on non-random_pool formats.
+
+        These fields are only consumed by RandomPoolDatasetLoader. Setting them
+        on other formats is an error, not a silent no-op.
+        """
+        batch_fields = {
+            "prompt_batch_size": self.prompt_batch_size,
+            "image_batch_size": self.image_batch_size,
+            "audio_batch_size": self.audio_batch_size,
+            "video_batch_size": self.video_batch_size,
+        }
+        set_fields = {k: v for k, v in batch_fields.items() if v is not None}
+        if set_fields and self.format != DatasetFormat.RANDOM_POOL:
+            names = ", ".join(set_fields)
+            raise ValueError(
+                f"{names} are rejected on formats other than random_pool; "
+                f"got format: {self.format}."
             )
         return self
 
@@ -718,7 +783,7 @@ class FileDataset(BaseConfig):
         return self
 
 
-class PublicDataset(BaseConfig):
+class PublicDataset(SystemPromptMixin):
     """
     Public dataset configuration.
 

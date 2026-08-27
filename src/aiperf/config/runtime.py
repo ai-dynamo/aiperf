@@ -85,24 +85,6 @@ class RuntimeConfig(BaseConfig):
         ),
     ]
 
-    cells: Annotated[
-        int,
-        Field(
-            ge=1,
-            default=1,
-            description="Number of native execution cells the run is partitioned "
-            "across (cellular mode). 1 (default) runs the ordinary single-process "
-            "native path, byte-for-byte unchanged. With cells > 1 the launched "
-            "`aiperf` becomes a controller that spawns that many "
-            "`aiperf --cell` subprocesses over a `(cell_id, cell_count)` "
-            "partition of the request budget, merges their records in global "
-            "dispatch order into one report, and fails the run closed on any "
-            "unsupported shape. Supported only for the scheduled HTTP transport over "
-            "seeded, single-turn synthetic datasets against a single endpoint URL "
-            "with request-bounded phases; see the cellular roadmap spec.",
-        ),
-    ]
-
     record_processors: Annotated[
         int | None,
         Field(

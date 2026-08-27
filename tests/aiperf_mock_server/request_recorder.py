@@ -30,8 +30,7 @@ from pathlib import Path
 from typing import IO, Any
 
 import orjson
-
-from tests.aiperf_mock_server.models import (
+from aiperf_mock_server.models import (
     ChatCompletionRequest,
     CohereRerankRequest,
     CompletionRequest,
@@ -314,7 +313,18 @@ def _encode_chat_prompt_ids(
     tokenizer: Any, request: ChatCompletionRequest
 ) -> tuple[list[int], str]:
     """Mirror trtllm-serve chat prompt tokenization when a chat template exists."""
-    messages = [_message_to_dict(msg) for msg in request.messages]
+    # Normalize multimodal list content to plain strings so apply_chat_template
+    # receives the actual text rather than a Python dict repr. Clients such as
+    # vllm bench serve send content as [{"type":"text","text":"..."}] even for
+    # text-only prompts; without normalization the template renders the list
+    # literal instead of the text, inflating the ISL measurement.
+    raw_messages = [_message_to_dict(msg) for msg in request.messages]
+    messages = [
+        {**m, "content": _content_to_text(m["content"])}
+        if not isinstance(m.get("content"), str)
+        else m
+        for m in raw_messages
+    ]
     add_generation_prompt = bool(getattr(request, "add_generation_prompt", True))
     inner = _unwrap_tokenizer(tokenizer)
     apply_chat_template = getattr(inner, "apply_chat_template", None)

@@ -238,14 +238,7 @@ class ConsoleMetricsExporter(AIPerfLoggerMixin):
 
         if self._endpoint_type is None:
             return "NVIDIA AIPerf"
-        try:
-            metadata = plugins.get_endpoint_metadata(self._endpoint_type)
-        except Exception:
-            # Runner-only endpoint dialects (e.g. ``dynosim``, ``vllm_generate``)
-            # are compiled into the selected aiperf runner and have no Python
-            # metadata entry. The console title degrades to the product default
-            # rather than failing the whole export.
-            return "NVIDIA AIPerf"
+        metadata = plugins.get_endpoint_metadata(self._endpoint_type)
         return f"NVIDIA AIPerf | {metadata.metrics_title}"
 
     def _get_group_title(self, group: MetricConsoleGroup) -> str:

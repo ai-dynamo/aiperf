@@ -2,22 +2,16 @@
 # SPDX-License-Identifier: Apache-2.0
 """AIPerf - AI Benchmarking Tool."""
 
+from importlib.metadata import PackageNotFoundError, version
 
-def __getattr__(name: str):
-    """Resolve package metadata only for consumers that actually request it."""
-    if name == "__version__":
-        from importlib.metadata import PackageNotFoundError, version
+try:
+    __version__ = version("aiperf")
+except PackageNotFoundError:
+    __version__ = "unknown"
 
-        try:
-            value = version("aiperf")
-        except PackageNotFoundError:
-            value = "unknown"
-    elif name == "__commit_sha__":
-        try:
-            from aiperf._build_info import COMMIT_SHA as value
-        except ImportError:
-            value = "unknown"
-    else:
-        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-    globals()[name] = value
-    return value
+# _build_info is generated at wheel-build time by the CI pipeline. Source
+# installs and dev checkouts won't have it — fall back to "unknown".
+try:
+    from aiperf._build_info import COMMIT_SHA as __commit_sha__
+except ImportError:
+    __commit_sha__ = "unknown"

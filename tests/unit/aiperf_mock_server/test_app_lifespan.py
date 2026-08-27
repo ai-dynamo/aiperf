@@ -8,7 +8,7 @@ lifespan teardown steps raises.
 """
 
 import pytest
-from tests.aiperf_mock_server.config import MockServerConfig
+from aiperf_mock_server.config import MockServerConfig
 from fastapi import FastAPI
 
 
@@ -17,14 +17,14 @@ def _restore_dcgm_fakers():
     """Snapshot and restore the module-level ``dcgm_fakers`` list.
 
     ``lifespan`` unconditionally appends two ``DCGMFaker`` entries to the
-    module-level list at ``tests.aiperf_mock_server.app.dcgm_fakers``. Running
+    module-level list at ``aiperf_mock_server.app.dcgm_fakers``. Running
     ``async with lifespan(...)`` here leaks those appends into every
-    subsequent test that imports ``tests.aiperf_mock_server.app`` — e.g.
+    subsequent test that imports ``aiperf_mock_server.app`` — e.g.
     ``tests/unit/server/test_app.py::test_dcgm_metrics_invalid_instance``
     starts seeing ``/dcgm3/metrics`` return 200 instead of 404 because the
     list is no longer length-2.
     """
-    from tests.aiperf_mock_server.app import dcgm_fakers
+    from aiperf_mock_server.app import dcgm_fakers
 
     snapshot = list(dcgm_fakers)
     try:
@@ -44,7 +44,7 @@ async def test_lifespan_closes_recorder_when_scheduler_shutdown_raises(
     Regression test for the prior single-`finally` ordering where any
     scheduler-shutdown exception silently skipped `recorder.close()`.
     """
-    from tests.aiperf_mock_server.app import lifespan
+    from aiperf_mock_server.app import lifespan
 
     rec_path = tmp_path / "rec.jsonl"
     summary_path = tmp_path / "rec.jsonl.summary.json"
@@ -55,7 +55,7 @@ async def test_lifespan_closes_recorder_when_scheduler_shutdown_raises(
         fast=True,
         dcgm_auto_load=False,
     )
-    monkeypatch.setattr("tests.aiperf_mock_server.app.server_config", test_cfg)
+    monkeypatch.setattr("aiperf_mock_server.app.server_config", test_cfg)
 
     async def fake_init_scheduler(_cfg) -> None:
         return None
@@ -63,9 +63,9 @@ async def test_lifespan_closes_recorder_when_scheduler_shutdown_raises(
     async def boom_shutdown_scheduler() -> None:
         raise RuntimeError("simulated scheduler shutdown failure")
 
-    monkeypatch.setattr("tests.aiperf_mock_server.app.init_scheduler", fake_init_scheduler)
+    monkeypatch.setattr("aiperf_mock_server.app.init_scheduler", fake_init_scheduler)
     monkeypatch.setattr(
-        "tests.aiperf_mock_server.app.shutdown_scheduler", boom_shutdown_scheduler
+        "aiperf_mock_server.app.shutdown_scheduler", boom_shutdown_scheduler
     )
 
     assert not summary_path.exists()
@@ -97,8 +97,8 @@ async def test_lifespan_closes_recorder_when_scheduler_init_raises(
     Symmetric to `test_lifespan_closes_recorder_when_scheduler_shutdown_raises`
     above; this one covers the startup side.
     """
-    from tests.aiperf_mock_server.app import lifespan
-    from tests.aiperf_mock_server.request_recorder import get_global_recorder
+    from aiperf_mock_server.app import lifespan
+    from aiperf_mock_server.request_recorder import get_global_recorder
 
     rec_path = tmp_path / "rec.jsonl"
     summary_path = tmp_path / "rec.jsonl.summary.json"
@@ -109,7 +109,7 @@ async def test_lifespan_closes_recorder_when_scheduler_init_raises(
         fast=True,
         dcgm_auto_load=False,
     )
-    monkeypatch.setattr("tests.aiperf_mock_server.app.server_config", test_cfg)
+    monkeypatch.setattr("aiperf_mock_server.app.server_config", test_cfg)
 
     async def boom_init_scheduler(_cfg) -> None:
         raise RuntimeError("simulated scheduler init failure")
@@ -117,9 +117,9 @@ async def test_lifespan_closes_recorder_when_scheduler_init_raises(
     async def noop_shutdown_scheduler() -> None:
         return None
 
-    monkeypatch.setattr("tests.aiperf_mock_server.app.init_scheduler", boom_init_scheduler)
+    monkeypatch.setattr("aiperf_mock_server.app.init_scheduler", boom_init_scheduler)
     monkeypatch.setattr(
-        "tests.aiperf_mock_server.app.shutdown_scheduler", noop_shutdown_scheduler
+        "aiperf_mock_server.app.shutdown_scheduler", noop_shutdown_scheduler
     )
 
     assert not summary_path.exists()

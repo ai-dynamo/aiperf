@@ -17,12 +17,9 @@ Coverage targets the three layers separately:
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 import pytest
 from pytest import param
 
-from aiperf.accuracy.graders import _math_strip as math_strip
 from aiperf.accuracy.graders.math import (
     MathGrader,
     _extract_last_boxed,
@@ -46,51 +43,6 @@ def _make_run():
 @pytest.fixture
 def grader() -> MathGrader:
     return MathGrader(run=_make_run())
-
-
-class TestWordNumberConversion:
-    """Qwen2.5-Math written-number normalization parity."""
-
-    def test_converts_written_integer(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(
-            math_strip,
-            "_word_to_number",
-            SimpleNamespace(word_to_num=lambda text: 42),
-        )
-        assert math_strip._convert_word_number("forty two") == "42"
-
-    def test_preserves_input_when_conversion_fails(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        def reject_expression(_text: str) -> int:
-            raise ValueError("not an English number phrase")
-
-        monkeypatch.setattr(
-            math_strip,
-            "_word_to_number",
-            SimpleNamespace(word_to_num=reject_expression),
-        )
-        assert math_strip._convert_word_number(r"x^2+1") == r"x^2+1"
-
-    @pytest.mark.asyncio
-    async def test_written_boxed_answer_grades_against_numeric_gold(
-        self, grader: MathGrader, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setattr(
-            math_strip,
-            "_word_to_number",
-            SimpleNamespace(word_to_num=lambda text: 42),
-        )
-        result = await grader.grade(r"\boxed{forty two}", "42")
-        assert result.correct is True
-        assert result.extracted_answer == "forty two"
-
-    @pytest.mark.skipif(
-        math_strip._word_to_number is None,
-        reason="requires aiperf[accuracy] word2number dependency",
-    )
-    def test_pinned_package_converts_reference_phrase(self) -> None:
-        assert math_strip._convert_word_number("forty two") == "42"
 
 
 class TestExtractLastBoxed:

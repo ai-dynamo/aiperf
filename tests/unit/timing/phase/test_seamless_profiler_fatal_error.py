@@ -1,11 +1,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""A seamless profiling phase with server-profiler hooks must still fail the run.
+"""A profiling phase followed by a seamless phase must still fail the run.
 
 The reachable shape: a multi-profiling-phase config where a non-final profiling
-phase is seamless AND ``server_profiler`` control hooks are configured, so the
-profiler defers its stop to the phase-complete callback. A fatal request-free
-control-node failure during that phase's detached return-wait must fail the run.
+phase transitions seamlessly to its successor AND ``server_profiler`` control
+hooks are configured, so the profiler defers its stop to the phase-complete
+callback. A fatal request-free control-node failure during that phase's detached
+return-wait must fail the run.
 
 Neither side of the origin/main merge covered this combination: main's seamless
 tests run without profiler hooks, and the control-hook tests never raise a fatal
@@ -76,8 +77,8 @@ async def test_seamless_profiling_fatal_error_fails_run_with_profiler_hooks(
     """The run must raise, not report success, and must release the profiler."""
     orch = create_orchestrator_harness([("c1", 1)]).orchestrator
     orch._ordered_phase_configs = [
-        make_phase_config(phase=CreditPhase.PROFILING, seamless=True),
         make_phase_config(phase=CreditPhase.PROFILING),
+        make_phase_config(phase=CreditPhase.PROFILING, seamless=True),
     ]
     orch._control_hooks = _hooks()
     orch._control_headers = {}
@@ -114,8 +115,8 @@ async def test_seamless_profiling_clean_drain_reports_success_with_profiler_hook
     """The same shape without a fatal error must complete and stop the profiler."""
     orch = create_orchestrator_harness([("c1", 1)]).orchestrator
     orch._ordered_phase_configs = [
-        make_phase_config(phase=CreditPhase.PROFILING, seamless=True),
         make_phase_config(phase=CreditPhase.PROFILING),
+        make_phase_config(phase=CreditPhase.PROFILING, seamless=True),
     ]
     orch._control_hooks = _hooks()
     orch._control_headers = {}

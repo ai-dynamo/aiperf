@@ -122,6 +122,11 @@ class EndpointInfo(AIPerfBaseModel):
         default=EndpointDefaults.USE_SERVER_TOKEN_COUNT,
         description="Use server-reported token counts from API usage fields instead of client-side tokenization.",
     )
+    per_chunk_usage: bool = Field(
+        default=EndpointDefaults.PER_CHUNK_USAGE,
+        description="Request per-chunk token usage via stream_options.continuous_usage_stats so "
+        "the server reports cumulative usage on every streamed chunk.",
+    )
     connection_reuse_strategy: ConnectionReuseStrategy = Field(
         default=EndpointDefaults.CONNECTION_REUSE_STRATEGY,
         description="Transport connection reuse strategy.",
@@ -212,6 +217,7 @@ class ModelEndpointInfo(AIPerfBaseModel):
                 api_key=ep.api_key,
                 use_legacy_max_tokens=ep.use_legacy_max_tokens,
                 use_server_token_count=ep.use_server_token_count,
+                per_chunk_usage=ep.per_chunk_usage,
                 connection_reuse_strategy=ep.connection_reuse,
                 download_video_content=ep.download_video_content,
                 request_content_type=ep.request_content_type,
@@ -222,10 +228,7 @@ class ModelEndpointInfo(AIPerfBaseModel):
                     ep, "uuid_and_strip", EndpointDefaults.UUID_AND_STRIP
                 ),
             ),
-            # EndpointConfig.transport was removed (the axis moved to the
-            # top-level benchmark.transport); the legacy aiohttp stack
-            # auto-detects transport from the URL scheme downstream.
-            transport=getattr(ep, "transport", None),
+            transport=ep.transport,
         )
 
     @property

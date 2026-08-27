@@ -19,6 +19,7 @@ from aiperf.cli_runner._multi_run import _run_multi_benchmark
 from aiperf.cli_runner._preflight import (
     _preflight_accuracy_deps,
     _preflight_artifact_dir,
+    _preflight_endpoint_ready,
     _preflight_fd_limit,
 )
 from aiperf.cli_runner._single_run import _run_single_benchmark
@@ -32,49 +33,6 @@ __all__ = [
     "OnComplete",
     "run_benchmark",
 ]
-
-# Human-facing pointer appended to every native-only rejection message.
-_USE_NATIVE_HINT = (
-    "This configuration is only supported by the native `aiperf` binary. "
-    "Run `aiperf profile ...` directly instead of `python -m aiperf.cli profile ...`."
-)
-
-
-def _reject_native_only_configs(plan: BenchmarkPlan) -> None:
-    """Fail fast if the plan needs a capability the Python service mesh lacks.
-
-    The Python frontend runs only the pure-Python service mesh (HTTP transport,
-    single process). Native-only capabilities are rejected here pointing at the
-    native ``aiperf`` binary rather than silently degrading:
-
-    - non-HTTP transports (gRPC / dynosim) and explicit native workload
-      selection are rejected structurally at config load -- the Config-v2 schema
-      no longer models a ``transport``/``workload`` block, so those keys fail
-      ``extra="forbid"`` validation before this guard runs;
-    - multi-cell partitioning (``runtime.cells > 1``) and bounded-memory metric
-      sketches (``--sketch-metrics``) are still valid config, so they are
-      rejected here.
-
-    This guard lives on the local ``run_benchmark`` entry, NOT in shared
-    ``BenchmarkConfig`` validation, so the native cellular role (which resolves
-    the same config and drives the native binary) is unaffected.
-    """
-    from aiperf.common.environment import Environment
-    from aiperf.config.loader.errors import ConfigurationError
-
-    for config in plan.configs:
-        cells = getattr(config.runtime, "cells", 1) or 1
-        if cells > 1:
-            raise ConfigurationError(
-                f"runtime.cells={cells} (cellular execution) is not supported by the "
-                f"Python engine. {_USE_NATIVE_HINT}"
-            )
-
-    if Environment.METRICS.SKETCH:
-        raise ConfigurationError(
-            "--sketch-metrics (bounded-memory metric retention) is not supported by "
-            f"the Python engine. {_USE_NATIVE_HINT}"
-        )
 
 
 def run_benchmark(plan: BenchmarkPlan) -> None:
@@ -92,8 +50,6 @@ def run_benchmark(plan: BenchmarkPlan) -> None:
             "Set --num-profile-runs to at least 2 to enable adaptive convergence."
         )
 
-    _reject_native_only_configs(plan)
-
     # Register the SIGUSR1 stack-dump handler in the SystemController (main)
     # process; each spawned service subprocess registers it in
     # bootstrap_and_run_service, so `kill -USR1 <pid>` dumps thread tracebacks
@@ -105,9 +61,7 @@ def run_benchmark(plan: BenchmarkPlan) -> None:
     _preflight_artifact_dir(plan)
     _preflight_accuracy_deps(plan)
     _preflight_fd_limit()
-    # Do not probe endpoint readiness here: Python cannot synthesize a valid
-    # request for runner-owned dialect IDs. The selected native adapter owns
-    # validation, normalization, readiness, and the first inference request.
+    _preflight_endpoint_ready(plan)
 
     callbacks: list[OnComplete] = []
     if plan.configs[0].artifacts.auto_plot:

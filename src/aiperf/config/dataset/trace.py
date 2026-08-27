@@ -9,7 +9,7 @@ Trace synthesis config used by file datasets.
 
 from __future__ import annotations
 
-from typing import Annotated, Literal
+from typing import Annotated
 
 from pydantic import (
     ConfigDict,
@@ -23,9 +23,9 @@ class SynthesisConfig(BaseConfig):
     """
     Configuration for trace synthesis/transformation.
 
-    Mooncake fields scale production replay timestamps, token lengths, and
-    radix-tree structure. Recorded WEKA/Dynamo fields bound whole-trace
-    selection, idle-gap warping, canonical native content, and corpus wrapping.
+    Used with mooncake_trace format to transform production trace
+    data before replay. Allows scaling timestamps, token lengths,
+    and radix tree structure.
     """
 
     model_config = ConfigDict(extra="forbid")

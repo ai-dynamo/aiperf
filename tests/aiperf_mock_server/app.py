@@ -13,19 +13,14 @@ from time import perf_counter
 from typing import Any
 
 import orjson
-from fastapi import FastAPI, File, Form, HTTPException, Response, UploadFile
-from fastapi.responses import ORJSONResponse, PlainTextResponse, StreamingResponse
-from prometheus_client import CONTENT_TYPE_LATEST, CollectorRegistry, generate_latest
-from starlette.requests import Request
-from starlette.types import ASGIApp, Receive, Scope, Send
-
-from tests.aiperf_mock_server.config import (
+from aiperf_mock_server.config import (
     MockServerConfig,
     public_config_dump,
     server_config,
 )
-from tests.aiperf_mock_server.dcgm_faker import DCGMFaker
-from tests.aiperf_mock_server.metrics import (
+from aiperf_mock_server.control_state import control_state
+from aiperf_mock_server.dcgm_faker import DCGMFaker
+from aiperf_mock_server.metrics import (
     AIPERF_MOCK_REGISTRY,
     DYNAMO_DECODE_REGISTRY,
     DYNAMO_FRONTEND_REGISTRY,
@@ -36,7 +31,7 @@ from tests.aiperf_mock_server.metrics import (
     TRTLLM_REGISTRY,
     VLLM_REGISTRY,
 )
-from tests.aiperf_mock_server.metrics_utils import (
+from aiperf_mock_server.metrics_utils import (
     async_track_llm_request,
     async_track_request,
     init_model_config,
@@ -49,7 +44,7 @@ from tests.aiperf_mock_server.metrics_utils import (
     track_llm_request,
     track_request,
 )
-from tests.aiperf_mock_server.models import (
+from aiperf_mock_server.models import (
     AnthropicMessagesRequest,
     ChatCompletionRequest,
     CohereRerankRequest,
@@ -63,15 +58,12 @@ from tests.aiperf_mock_server.models import (
     SolidoRAGRequest,
     TGIGenerateRequest,
 )
-from tests.aiperf_mock_server.node_exporter_faker import (
+from aiperf_mock_server.node_exporter_faker import (
     render_default as render_node_exporter,
 )
-from tests.aiperf_mock_server.request_recorder import (
-    RequestRecorder,
-    set_global_recorder,
-)
-from tests.aiperf_mock_server.scheduler import init_scheduler, shutdown_scheduler
-from tests.aiperf_mock_server.utils import (
+from aiperf_mock_server.request_recorder import RequestRecorder, set_global_recorder
+from aiperf_mock_server.scheduler import init_scheduler, shutdown_scheduler
+from aiperf_mock_server.utils import (
     RequestCtx,
     anthropic_stop_reason,
     make_ctx,
@@ -82,6 +74,11 @@ from tests.aiperf_mock_server.utils import (
     stream_tgi_completion,
     with_error_injection,
 )
+from fastapi import FastAPI, File, Form, HTTPException, Response, UploadFile
+from fastapi.responses import ORJSONResponse, PlainTextResponse, StreamingResponse
+from prometheus_client import CONTENT_TYPE_LATEST, CollectorRegistry, generate_latest
+from starlette.requests import Request
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 dcgm_fakers: list[DCGMFaker] = []
 server_start_time: float = 0.0
@@ -119,7 +116,7 @@ async def lifespan(_: FastAPI):
         random.seed(server_config.random_seed)
 
     if not server_config.no_tokenizer:
-        from tests.aiperf_mock_server.tokens import _load_corpus
+        from aiperf_mock_server.tokens import _load_corpus
 
         _load_corpus()
 
@@ -216,6 +213,7 @@ _AUTH_PROTECTED_PATHS: frozenset[str] = frozenset(
         "/generate_stream",
         "/rag/api/prompt",
         "/rerank",
+        "/v1/audio/transcriptions",
         "/v1/chat/completions",
         "/v1/chat/embeddings",
         "/v1/completions",
@@ -1303,6 +1301,51 @@ async def image_edits(
             body["true_cfg_scale"] = true_cfg_scale
         if seed is not None:
             body["seed"] = seed
+        return ORJSONResponse(body)
+
+
+# ============================================================================
+# AUDIO TRANSCRIPTION
+# ============================================================================
+
+
+@app.post("/v1/audio/transcriptions", response_model=None)
+@with_error_injection
+async def audio_transcriptions(
+    request: Request,
+    file: UploadFile = File(...),  # noqa: B008
+    model: str = Form("mock-model"),  # noqa: B008
+    language: str | None = Form(None),  # noqa: B008
+    temperature: float | None = Form(None),  # noqa: B008
+    response_format: str = Form("json"),  # noqa: B008
+) -> ORJSONResponse:
+    """Mock OpenAI Audio Transcription endpoint.
+
+    Drains the uploaded audio file so multipart parsing is exercised, then
+    returns a deterministic transcript as ``{"text": ...}`` with usage.
+    """
+    endpoint = "/v1/audio/transcriptions"
+    upload_bytes = await file.read()
+
+    start_time = request.state.start_time
+    mock_req = ChatCompletionRequest(
+        model=model, messages=[{"role": "user", "content": "transcribe"}]
+    )
+    ctx = make_ctx(mock_req, endpoint, start_time)
+
+    with track_llm_request(ctx, model, endpoint):
+        await ctx.latency_sim.wait_for_tokens(len(ctx.tokens))
+        body: dict[str, Any] = {
+            "text": ctx.content,
+            "input_audio_bytes": len(upload_bytes),
+            "usage": {
+                "prompt_tokens": 0,
+                "completion_tokens": len(ctx.tokens),
+                "total_tokens": len(ctx.tokens),
+            },
+        }
+        if language is not None:
+            body["language"] = language
         return ORJSONResponse(body)
 
 

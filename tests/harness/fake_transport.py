@@ -17,6 +17,40 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, TypeAlias
 
 import orjson
+from aiperf_mock_server.app import (
+    _build_chat_response_data,
+    _build_cohere_ranking_response_data,
+    _build_completion_response_data,
+    _build_embedding_response_data,
+    _build_hf_tei_ranking_response_data,
+    _build_image_response_data,
+    _build_image_retrieval_response_data,
+    _build_nim_ranking_response_data,
+    _build_solido_rag_response_data,
+    _build_tgi_response_data,
+    _compute_ranked_scores,
+    _wait_for_processing,
+)
+from aiperf_mock_server.config import MockServerConfig
+from aiperf_mock_server.models import (
+    ChatCompletionRequest,
+    CohereRerankRequest,
+    CompletionRequest,
+    EmbeddingRequest,
+    HFTEIRerankRequest,
+    ImageGenerationRequest,
+    ImageRetrievalRequest,
+    RankingRequest,
+    SolidoRAGRequest,
+    TGIGenerateRequest,
+)
+from aiperf_mock_server.utils import (
+    RequestCtx,
+    make_ctx,
+    stream_chat_completion,
+    stream_text_completion,
+    stream_tgi_completion,
+)
 from pydantic import BaseModel
 
 from aiperf.common.constants import NANOS_PER_SECOND
@@ -33,40 +67,6 @@ from aiperf.plugin import plugins
 from aiperf.plugin.enums import EndpointType, PluginType, TransportType
 from aiperf.plugin.schema.schemas import TransportMetadata
 from aiperf.transports.base_transports import BaseTransport, FirstTokenCallback
-from tests.aiperf_mock_server.app import (
-    _build_chat_response_data,
-    _build_cohere_ranking_response_data,
-    _build_completion_response_data,
-    _build_embedding_response_data,
-    _build_hf_tei_ranking_response_data,
-    _build_image_response_data,
-    _build_image_retrieval_response_data,
-    _build_nim_ranking_response_data,
-    _build_solido_rag_response_data,
-    _build_tgi_response_data,
-    _compute_ranked_scores,
-    _wait_for_processing,
-)
-from tests.aiperf_mock_server.config import MockServerConfig
-from tests.aiperf_mock_server.models import (
-    ChatCompletionRequest,
-    CohereRerankRequest,
-    CompletionRequest,
-    EmbeddingRequest,
-    HFTEIRerankRequest,
-    ImageGenerationRequest,
-    ImageRetrievalRequest,
-    RankingRequest,
-    SolidoRAGRequest,
-    TGIGenerateRequest,
-)
-from tests.aiperf_mock_server.utils import (
-    RequestCtx,
-    make_ctx,
-    stream_chat_completion,
-    stream_text_completion,
-    stream_tgi_completion,
-)
 
 if TYPE_CHECKING:
     from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
@@ -365,6 +365,8 @@ class FakeTransport(BaseTransport):
                 )
             case EndpointType.IMAGE_RETRIEVAL:
                 return await self._do_image_retrieval(payload)
+            case EndpointType.AUDIO_TRANSCRIPTION:
+                return await self._do_audio_transcription(payload)
             case EndpointType.HUGGINGFACE_GENERATE:
                 return await self._dispatch(
                     payload,
@@ -461,6 +463,27 @@ class FakeTransport(BaseTransport):
             start_perf_ns,
             start_timestamp_ns,
             _build_image_retrieval_response_data(req),
+        )
+
+    async def _do_audio_transcription(self, payload: RequestInputT) -> RequestRecord:
+        """Handle audio transcription requests (bypasses _dispatch; the audio
+        input is multipart, not a tokenized text prompt). Returns a plain-text
+        transcript as ``{"text": ...}``, matching the OpenAI response shape the
+        AudioTranscriptionEndpoint parses."""
+        start_perf_ns = time.perf_counter_ns()
+        start_timestamp_ns = time.time_ns()
+        await _wait_for_processing(self.config.audio_transcription_base_latency, 0.0, 1)
+        return self._make_json_record(
+            start_perf_ns,
+            start_timestamp_ns,
+            {
+                "text": "the quick brown fox",
+                "usage": {
+                    "prompt_tokens": 0,
+                    "completion_tokens": 4,
+                    "total_tokens": 4,
+                },
+            },
         )
 
 

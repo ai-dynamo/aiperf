@@ -15,18 +15,18 @@ from time import perf_counter
 from typing import TYPE_CHECKING, Any
 
 import orjson
-from tests.aiperf_mock_server.config import server_config
+from aiperf_mock_server.config import server_config
 
 if TYPE_CHECKING:
-    from tests.aiperf_mock_server.config import MockServerConfig
-from tests.aiperf_mock_server.metrics import DYNAMO_FRONTEND_DISCONNECTED_CLIENTS
-from tests.aiperf_mock_server.metrics_utils import (
+    from aiperf_mock_server.config import MockServerConfig
+from aiperf_mock_server.metrics import DYNAMO_FRONTEND_DISCONNECTED_CLIENTS
+from aiperf_mock_server.metrics_utils import (
     get_inflight_count,
     record_itl,
     record_streamed_token,
     record_ttft,
 )
-from tests.aiperf_mock_server.models import (
+from aiperf_mock_server.models import (
     AnthropicMessagesRequest,
     ChatCompletionRequest,
     CohereRerankRequest,
@@ -40,8 +40,8 @@ from tests.aiperf_mock_server.models import (
     SolidoRAGRequest,
     TGIGenerateRequest,
 )
-from tests.aiperf_mock_server.request_recorder import get_global_recorder
-from tests.aiperf_mock_server.tokens import (
+from aiperf_mock_server.request_recorder import get_global_recorder
+from aiperf_mock_server.tokens import (
     TokenizedText,
     _extract_osl_fingerprint,
     tokenize_request,
@@ -190,7 +190,7 @@ class LatencySimulator:
         self._cancelled = True
         cfg = self._cfg
         if cfg.scheduler_enabled:
-            from tests.aiperf_mock_server.scheduler import get_scheduler
+            from aiperf_mock_server.scheduler import get_scheduler
 
             sched = get_scheduler()
             if sched is not None:
@@ -226,7 +226,7 @@ class LatencySimulator:
         """Wait for TTFT (first token) or ITL (subsequent tokens)."""
         cfg = self._cfg
         if cfg.scheduler_enabled:
-            from tests.aiperf_mock_server.scheduler import get_scheduler
+            from aiperf_mock_server.scheduler import get_scheduler
 
             sched = get_scheduler()
             if sched is not None:
@@ -299,7 +299,7 @@ class LatencySimulator:
         """Wait for entire completion (TTFT + ITL * num_tokens)."""
         cfg = self._cfg
         if cfg.scheduler_enabled:
-            from tests.aiperf_mock_server.scheduler import get_scheduler
+            from aiperf_mock_server.scheduler import get_scheduler
 
             sched = get_scheduler()
             if sched is not None:
@@ -371,6 +371,12 @@ class RequestCtx:
     latency_sim: LatencySimulator
     """Latency simulator for TTFT and ITL timing."""
 
+    continuous_usage: bool = False
+    """Emit cumulative usage on every streamed chunk (continuous_usage_stats)."""
+
+    first_chunk_tokens: int = 1
+    """Number of output tokens to bundle into the first streamed content chunk."""
+
     @property
     def tokens(self) -> list[str]:
         return self.tokenized.tokens
@@ -424,6 +430,8 @@ def make_ctx(
             isl=tokenized.prompt_token_count,
             osl=len(tokenized.tokens),
         ),
+        continuous_usage=getattr(request, "continuous_usage_stats", False),
+        first_chunk_tokens=max(1, getattr(request, "mock_first_chunk_tokens", 1)),
     )
 
 
@@ -493,6 +501,26 @@ def _sse(data: dict[str, Any]) -> bytes:
     return _SSE_DATA_PREFIX + orjson.dumps(data) + _SSE_NEWLINES
 
 
+def _bundle_first_chunk(tokens: list[str], first_chunk_tokens: int) -> list[list[str]]:
+    """Group output tokens into streamed chunks, bundling the first
+    ``first_chunk_tokens`` tokens into the first chunk; the rest stream one per
+    chunk. ``first_chunk_tokens=1`` reproduces one-token-per-chunk streaming."""
+    if first_chunk_tokens <= 1 or len(tokens) <= 1:
+        return [[t] for t in tokens]
+    n = min(first_chunk_tokens, len(tokens))
+    return [tokens[:n], *([t] for t in tokens[n:])]
+
+
+def _partial_usage(ctx: "RequestCtx", completion_tokens: int) -> dict[str, Any]:
+    """Cumulative per-chunk usage in OpenAI shape (continuous_usage_stats)."""
+    prompt = ctx.usage.get("prompt_tokens", 0)
+    return {
+        "prompt_tokens": prompt,
+        "completion_tokens": completion_tokens,
+        "total_tokens": prompt + completion_tokens,
+    }
+
+
 async def stream_chat_completion(
     ctx: RequestCtx, endpoint: str, include_usage: bool
 ) -> AsyncGenerator[bytes, None]:
@@ -501,47 +529,54 @@ async def stream_chat_completion(
 
     try:
         # Stream reasoning tokens first (if any)
+        completion_so_far = 0
         for token in ctx.reasoning_content_tokens:
             await ctx.latency_sim.wait_for_next_token()
             record_streamed_token(endpoint, ctx.model)
-            yield _sse(
-                {
-                    "id": ctx.request_id,
-                    "object": "chat.completion.chunk",
-                    "created": int(time.time()),
-                    "model": ctx.model,
-                    "choices": [
-                        {
-                            "index": 0,
-                            "delta": {"role": "assistant", "reasoning_content": token},
-                        }
-                    ],
-                }
-            )
+            completion_so_far += 1
+            chunk: dict[str, Any] = {
+                "id": ctx.request_id,
+                "object": "chat.completion.chunk",
+                "created": int(time.time()),
+                "model": ctx.model,
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {"role": "assistant", "reasoning_content": token},
+                    }
+                ],
+            }
+            if ctx.continuous_usage:
+                chunk["usage"] = _partial_usage(ctx, completion_so_far)
+            yield _sse(chunk)
 
-        # Stream output tokens
-        num_tokens = len(ctx.tokens)
-        for i, token in enumerate(ctx.tokens):
-            await ctx.latency_sim.wait_for_next_token()
-            record_streamed_token(endpoint, ctx.model)
+        # Stream output tokens, bundling the first chunk when requested.
+        groups = _bundle_first_chunk(ctx.tokens, ctx.first_chunk_tokens)
+        num_groups = len(groups)
+        for gi, group in enumerate(groups):
+            for _ in group:
+                await ctx.latency_sim.wait_for_next_token()
+                record_streamed_token(endpoint, ctx.model)
+            completion_so_far += len(group)
 
-            delta: dict[str, Any] = {"content": token}
-            if i == 0 and not has_reasoning:
+            delta: dict[str, Any] = {"content": "".join(group)}
+            if gi == 0 and not has_reasoning:
                 delta["role"] = "assistant"
 
             choice: dict[str, Any] = {"index": 0, "delta": delta}
-            if i == num_tokens - 1:
+            if gi == num_groups - 1:
                 choice["finish_reason"] = ctx.finish_reason
 
-            yield _sse(
-                {
-                    "id": ctx.request_id,
-                    "object": "chat.completion.chunk",
-                    "created": int(time.time()),
-                    "model": ctx.model,
-                    "choices": [choice],
-                }
-            )
+            chunk = {
+                "id": ctx.request_id,
+                "object": "chat.completion.chunk",
+                "created": int(time.time()),
+                "model": ctx.model,
+                "choices": [choice],
+            }
+            if ctx.continuous_usage:
+                chunk["usage"] = _partial_usage(ctx, completion_so_far)
+            yield _sse(chunk)
 
         # Final usage chunk (if requested)
         if include_usage:

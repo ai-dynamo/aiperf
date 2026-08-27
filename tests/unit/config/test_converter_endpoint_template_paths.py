@@ -10,9 +10,9 @@ safety check fails (missing path, symlink, non-regular file), the converter
 falls back to treating the original string as a literal template body — the
 pre-existing behavior for non-file inputs.
 
-Covers the endpoint-neutral ``_endpoint_template_from_extra`` compatibility
-projection that reads a user-supplied template path. Endpoint-ID-specific
-template requirements and normalization belong to the selected runner.
+Covers both call sites that read a user-supplied template path:
+``_endpoint_template_from_extra`` (line 33) and ``_endpoint_template_fallback``
+(line 53).
 """
 
 from __future__ import annotations
@@ -25,7 +25,13 @@ import pytest
 from pytest import param
 
 from aiperf.common.path_safety import safe_read_template_path
-from aiperf.config.flags._converter_endpoint import _endpoint_template_from_extra
+from aiperf.config.flags._converter_endpoint import (
+    _endpoint_template_fallback,
+    _endpoint_template_from_extra,
+    build_endpoint,
+)
+from aiperf.config.flags.cli_config import CLIConfig
+from aiperf.plugin.enums import EndpointType
 
 
 def _try_symlink_or_skip(link: Path, target: Path) -> None:
@@ -99,6 +105,70 @@ class TestEndpointTemplateFromExtraPathSafety:
         _endpoint_template_from_extra(endpoint, extra)
 
         assert endpoint["template"]["body"] == str(tmp_path)
+
+
+class TestEndpointTemplateFallbackPathSafety:
+    """Fallback path through ``endpoint['extra']`` must read files safely."""
+
+    def test_regular_file_is_read_as_body(self, tmp_path: Path) -> None:
+        template = tmp_path / "tmpl.json"
+        template.write_text('{"hello": "world"}', encoding="utf-8")
+        endpoint: dict = {
+            "type": EndpointType.TEMPLATE,
+            "extra": {"payload_template": str(template)},
+        }
+
+        _endpoint_template_fallback(endpoint)
+
+        assert endpoint["template"]["body"] == '{"hello": "world"}'
+
+    def test_symlink_is_rejected_and_string_used_as_literal_body(
+        self, tmp_path: Path
+    ) -> None:
+        target = tmp_path / "target.json"
+        target.write_text('{"sensitive": "do-not-read"}', encoding="utf-8")
+        link = tmp_path / "link.json"
+        _try_symlink_or_skip(link, target)
+        endpoint: dict = {
+            "type": EndpointType.TEMPLATE,
+            "extra": {"payload_template": str(link)},
+        }
+
+        _endpoint_template_fallback(endpoint)
+
+        assert endpoint["template"]["body"] == str(link)
+
+    def test_missing_path_falls_back_to_literal_body(self, tmp_path: Path) -> None:
+        missing = tmp_path / "nonexistent.json"
+        endpoint: dict = {
+            "type": EndpointType.TEMPLATE,
+            "extra": {"payload_template": str(missing)},
+        }
+
+        _endpoint_template_fallback(endpoint)
+
+        assert endpoint["template"]["body"] == str(missing)
+
+    @pytest.mark.parametrize(
+        "ep_type",
+        [
+            param(EndpointType.CHAT, id="chat"),
+            param(EndpointType.COMPLETIONS, id="completions"),
+        ],
+    )  # fmt: skip
+    def test_non_template_endpoints_skip_fallback(
+        self, tmp_path: Path, ep_type: EndpointType
+    ) -> None:
+        template = tmp_path / "tmpl.json"
+        template.write_text("body", encoding="utf-8")
+        endpoint: dict = {
+            "type": ep_type,
+            "extra": {"payload_template": str(template)},
+        }
+
+        _endpoint_template_fallback(endpoint)
+
+        assert "template" not in endpoint
 
 
 class TestSafeReadTemplatePathReadFailures:
@@ -204,3 +274,25 @@ class TestSafeReadTemplatePathDecodeFailures:
         bad.write_bytes(b"\xff\xfe binary template body")
 
         assert safe_read_template_path(str(bad)) is None
+
+
+class TestEndpointFieldPropagation:
+    """Regression: fields set on CLIConfig must reach the endpoint config.
+
+    A field can be wired on CLIConfig, the endpoint model, and the converter map
+    yet still be silently dropped if it is missing from ``ENDPOINT_FIELDS`` (which
+    ``build_endpoint`` intersects against ``model_fields_set``). These tests
+    exercise the full CLI-to-endpoint hop so such a gap fails loudly.
+    """
+
+    def test_per_chunk_usage_propagates_to_endpoint(self) -> None:
+        cli = CLIConfig(per_chunk_usage=True, use_server_token_count=True)
+        endpoint = build_endpoint(cli)
+
+        assert endpoint["per_chunk_usage"] is True
+        assert endpoint["use_server_token_count"] is True
+
+    def test_per_chunk_usage_absent_when_not_set(self) -> None:
+        endpoint = build_endpoint(CLIConfig())
+
+        assert "per_chunk_usage" not in endpoint

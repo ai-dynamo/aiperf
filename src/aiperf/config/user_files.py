@@ -4,9 +4,6 @@
 
 from __future__ import annotations
 
-import os
-import re
-import time
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Annotated, Any, Literal
@@ -31,11 +28,6 @@ _logger = AIPerfLogger(__name__)
 _FORBIDDEN_PATH_CHARS = frozenset(chr(c) for c in range(32)) | {"\x7f"}
 
 _JINJA_MARKERS = ("{{", "{%", "{#")
-
-# 9-11 digits covers epoch-seconds from 1973 through 5138. Inlined from the
-# operator results layout so config/user-file rendering has no Kubernetes
-# dependency.
-_EPOCH_RE = re.compile(r"^\d{9,11}$")
 
 
 # Strict-undefined env duplicated from loader/jinja.py: that one is for load-time
@@ -144,42 +136,6 @@ class RunMeta:
     """K8s namespace; empty string locally."""
 
 
-@dataclass(frozen=True, slots=True)
-class RenderedUserFile:
-    """One fully rendered and serialized UTF-8 user file.
-
-    This is the direct handoff shape for native execution: Python owns Jinja
-    semantics and JSON/YAML serialization exactly once, while the runner owns
-    path-safe artifact materialization.
-    """
-
-    path: str
-    format: Literal["json", "yaml", "text"]
-    content: str
-
-
-def derive_run_meta(artifact_dir: Path) -> RunMeta:
-    """Derive the canonical user-file run identity from an artifact target.
-
-    Operator targets use ``<base>/<namespace>/<job>/<epoch>``. Local targets
-    use their leaf as ``job_name`` and current epoch seconds. The legacy
-    operator sentinel remains an accepted epoch leaf.
-    """
-    leaf = artifact_dir.name
-    namespace = os.environ.get("AIPERF_NAMESPACE", "")
-    if _EPOCH_RE.match(leaf) or leaf == "legacy":
-        return RunMeta(
-            epoch=leaf,
-            job_name=artifact_dir.parent.name,
-            namespace=namespace,
-        )
-    return RunMeta(
-        epoch=str(int(time.time())),
-        job_name=leaf,
-        namespace=namespace,
-    )
-
-
 def build_user_file_context(
     config: BenchmarkConfig,
     run_meta: RunMeta,
@@ -252,9 +208,9 @@ def materialize_user_files(
     """
     if not files:
         return
-    rendered_files = render_user_files(files, context)
     run_dir_resolved = run_dir.resolve()
-    for entry in rendered_files:
+    for entry in files:
+        rendered = _render_content(entry, context)
         target = run_dir / entry.path
         # Resolve and check parent BEFORE mkdir so a symlinked intermediate
         # directory cannot cause us to create directories outside run_dir.
@@ -282,37 +238,12 @@ def materialize_user_files(
                 f"which is outside run dir {run_dir_resolved}"
             ) from exc
         try:
-            target_resolved.write_bytes(entry.content.encode("utf-8"))
+            _write(entry, target_resolved, rendered)
         except OSError as exc:
             raise UserFileError(
                 f"user_files write failed: path={entry.path!r} "
                 f"resolved={target_resolved} errno={exc!s}"
             ) from exc
-
-
-def render_user_files(
-    files: list[UserFile],
-    context: dict[str, Any],
-) -> list[RenderedUserFile]:
-    """Render and serialize user files without touching the filesystem.
-
-    The returned UTF-8 strings are the sole conversion result consumed by both
-    the legacy Python writer and the protocol-v2 runner projection. This keeps
-    Jinja/coercion/JSON/YAML behavior Python-owned without asking Rust to
-    reinterpret authored structured content.
-    """
-    rendered_files: list[RenderedUserFile] = []
-    for entry in files:
-        assert entry.format is not None  # resolved by UserFile model validation
-        rendered = _render_content(entry, context)
-        rendered_files.append(
-            RenderedUserFile(
-                path=entry.path,
-                format=entry.format,
-                content=_serialize(entry, rendered),
-            )
-        )
-    return rendered_files
 
 
 def _render_content(entry: UserFile, context: dict[str, Any]) -> Any:
@@ -372,16 +303,21 @@ def _coerce_scalar(rendered: str) -> Any:
     return rendered
 
 
-def _serialize(entry: UserFile, rendered: Any) -> str:
+def _write(entry: UserFile, target: Path, rendered: Any) -> None:
     if entry.format == "json":
-        return orjson.dumps(rendered, option=orjson.OPT_INDENT_2).decode("utf-8")
+        target.write_bytes(orjson.dumps(rendered, option=orjson.OPT_INDENT_2))
+        return
     if entry.format == "yaml":
-        return yaml.safe_dump(
-            rendered,
-            sort_keys=False,
-            default_flow_style=False,
+        target.write_text(
+            yaml.safe_dump(
+                rendered,
+                sort_keys=False,
+                default_flow_style=False,
+            )
         )
+        return
     # text: write rendered string verbatim. _USER_FILES_ENV has
     # keep_trailing_newline=True so the user's exact content (including or
     # excluding a trailing newline) round-trips unchanged.
-    return rendered if isinstance(rendered, str) else str(rendered)
+    text = rendered if isinstance(rendered, str) else str(rendered)
+    target.write_text(text)

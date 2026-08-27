@@ -39,9 +39,8 @@ benchmark:
   dataset:
     type: synthetic
     entries: 3000
-    prompts:
-      isl: {mean: 256, stddev: 50}
-      osl: {mean: 128, stddev: 25}
+    isl: {mean: 256, stddev: 50}
+    osl: {mean: 128, stddev: 25}
 
   # "profiling:" is shorthand for phases: [{name: profiling, ...}]
   # (warmup/profiling under benchmark auto-wrap into phases)

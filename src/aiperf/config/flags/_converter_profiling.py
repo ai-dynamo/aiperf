@@ -5,8 +5,14 @@
 
 from __future__ import annotations
 
+import gzip
 import math
+import zlib
 from typing import TYPE_CHECKING, Any
+
+from aiperf.common.aiperf_logger import AIPerfLogger
+
+_logger = AIPerfLogger(__name__)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -409,23 +415,6 @@ def _apply_profiling_rate_series(prof: dict[str, Any], cli: CLIConfig) -> None:
     prof["rate_series"] = series.model_dump(exclude_none=True, exclude={"path"})
 
 
-def _apply_profiling_rate_series(prof: dict[str, Any], cli: CLIConfig) -> None:
-    if "request_rate_series" not in cli.model_fields_set:
-        return
-    if "request_rate" in cli.model_fields_set:
-        raise ValueError(
-            "--request-rate and --request-rate-series are mutually exclusive."
-        )
-    if cli.user_centric_rate is not None:
-        raise ValueError(
-            "--request-rate-series is not supported with --user-centric-rate."
-        )
-    from aiperf.config.rate_series import RateSeriesConfig
-
-    series = RateSeriesConfig(path=str(cli.request_rate_series))
-    prof["rate_series"] = series.model_dump(exclude_none=True, exclude={"path"})
-
-
 def _reject_orphan_load_generator_flags(prof: dict[str, Any], cli: CLIConfig) -> None:
     """Reject CLI flags whose load-generator partner wasn't supplied.
 
@@ -563,22 +552,11 @@ def _validate_profiling(prof: dict[str, Any], cli: CLIConfig) -> None:
     if (
         not any(k in prof for k in ("requests", "duration", "sessions"))
         and prof["type"] != PhaseType.FIXED_SCHEDULE
-        and cli.scenario is None
     ):
         # Why: when no bound is given for an unbounded run, default to
         # 10 requests so the run terminates in a reasonable time.
         # Deliberate override of the PhaseConfig default (which would
         # leave it unbounded).
-        #
-        # Skipped when a ``--scenario`` is active: the scenario owns the
-        # benchmark invariants and auto-fills the REAL stop condition (e.g.
-        # the profiling ``duration``) at resolution time. Applying a
-        # 10-*request* default here would defeat that -- and for a
-        # recorded-graph/agentic scenario it is actively wrong: a "request"
-        # is a single turn, one weka trace carries hundreds, and the native
-        # ``CyclingGraphTraceSource`` reads ``requests`` as a whole-trace
-        # static-node budget, so a value below the first trace's node count
-        # admits no trace at all and dispatches nothing.
         prof.setdefault("requests", 10)
     delay_set = "request_cancellation_delay" in cli.model_fields_set
     if cli.request_cancellation_rate:
@@ -643,25 +621,36 @@ def _maybe_auto_promote_trace(
     prof["type"] = PhaseType.FIXED_SCHEDULE
 
 
-def _uses_runner_owned_graph_input(cli: CLIConfig) -> bool:
-    """Return whether Rust directly parses the complete authored graph input."""
-    return str(cli.custom_dataset_type) in {
-        "dag_jsonl",
-        "dynamo_trace",
-        "weka_trace",
-    }
+def _maybe_set_dag_root_sessions(
+    prof: dict[str, Any], cli: CLIConfig, file_path: Path | None
+) -> None:
+    """For dag_jsonl with no stop condition, set ``sessions`` from root count."""
+    from aiperf.plugin.enums import CustomDatasetType
+
+    dataset_type = cli.custom_dataset_type
+    is_dag = dataset_type is not None and str(dataset_type) == str(
+        CustomDatasetType.DAG_JSONL
+    )
+    if not is_dag or file_path is None:
+        return
+    if any(k in prof for k in ("requests", "duration", "sessions")):
+        return
+
+    from aiperf.config.dataset.resolver import _collect_dag_session_and_fork_ids
+
+    try:
+        all_ids, referenced = _collect_dag_session_and_fork_ids(str(file_path))
+    except (OSError, FileNotFoundError):
+        return
+    roots = len(all_ids - referenced)
+    if roots > 0:
+        prof["sessions"] = roots
 
 
 def _apply_dataset_aware_autodefaults(prof: dict[str, Any], cli: CLIConfig) -> None:
-    """Apply dataset-sensitive defaults only to Python-owned linear inputs."""
+    """Apply dataset-sensitive CLI defaults for trace/fixed/dag datasets."""
 
     from aiperf.config.phases import PhaseType
-
-    if _uses_runner_owned_graph_input(cli):
-        # Direct graph adapters receive the authored file unchanged. Python
-        # must not probe timing, count rows/roots, or derive a stop condition
-        # from formats whose complete semantics are owned by Rust.
-        return
 
     file_path: Path | None = cli.input_file if cli.input_file is not None else None
 
@@ -677,17 +666,13 @@ def _apply_dataset_aware_autodefaults(prof: dict[str, Any], cli: CLIConfig) -> N
         if records > 0:
             prof["requests"] = records
 
+    _maybe_set_dag_root_sessions(prof, cli, file_path)
 
-def _first_record_has_timestamp(file_path: object) -> bool:
-    """Return True when a trace file carries timestamp data."""
-    from pathlib import Path
 
-    from aiperf.common.utils import load_json_str
-
-    path = Path(file_path)
-    if not path.is_file():
-        return False
-    if path.suffix.lower() == ".parquet":
+def _columnar_file_has_timestamp(path: Path) -> bool | None:
+    """Probe known columnar formats, or return None for another format."""
+    suffix = path.suffix.lower()
+    if suffix == ".parquet":
         try:
             import pyarrow as pa
             import pyarrow.parquet as pq
@@ -698,8 +683,36 @@ def _first_record_has_timestamp(file_path: object) -> bool:
             return "timestamp_start_unix_ms" in set(pq.read_schema(path).names)
         except (OSError, pa.ArrowException):
             return False
+    if suffix in {".arrow", ".ipc"}:
+        from aiperf.dataset.loader.baseten_trace import BasetenTraceDatasetLoader
+
+        return BasetenTraceDatasetLoader.can_load(filename=path)
+    return None
+
+
+def _has_timing_events_timestamp(data: dict) -> bool:
+    events = data.get("timing_events")
+    return bool(
+        events
+        and isinstance(events, list)
+        and isinstance(events[0], dict)
+        and events[0].get("timestamp") is not None
+    )
+
+
+def _first_record_has_timestamp(file_path: object) -> bool:
+    """Return True when a trace file carries timestamp data."""
+    from pathlib import Path
+
+    from aiperf.common.utils import load_json_str, open_text_maybe_gzip
+
+    path = Path(file_path)
+    if not path.is_file():
+        return False
+    if (columnar_result := _columnar_file_has_timestamp(path)) is not None:
+        return columnar_result
     try:
-        with open(path, encoding="utf-8") as f:
+        with open_text_maybe_gzip(path) as f:
             for line in f:
                 if not (stripped := line.strip()):
                     continue
@@ -709,15 +722,22 @@ def _first_record_has_timestamp(file_path: object) -> bool:
                     return False
                 if not isinstance(data, dict):
                     return False
-                return data.get("timestamp") is not None
-    except OSError:
+                return data.get(
+                    "timestamp"
+                ) is not None or _has_timing_events_timestamp(data)
+    except (EOFError, gzip.BadGzipFile, zlib.error) as e:
+        _logger.warning(f"Truncated or corrupt gzip in '{file_path}': {e}")
+        return False
+    except (OSError, UnicodeDecodeError):
         return False
     return False
 
 
 def _count_dataset_records(file_path: object) -> int:
-    """Count records across a JSONL file/directory or Parquet trace file."""
+    """Count records across JSONL, Parquet, or Arrow IPC input."""
     from pathlib import Path
+
+    from aiperf.common.utils import open_text_maybe_gzip
 
     path = Path(file_path)
     try:
@@ -738,9 +758,18 @@ def _count_dataset_records(file_path: object) -> int:
                 return pq.ParquetFile(path).metadata.num_rows
             except (OSError, pa.ArrowException):
                 return 0
+        if path.suffix.lower() in {".arrow", ".ipc"} and path.is_file():
+            from aiperf.dataset.loader.baseten_trace import (
+                count_baseten_records,
+            )
+
+            return count_baseten_records(str(path))
         if path.is_file():
-            with open(path, encoding="utf-8") as f:
+            with open_text_maybe_gzip(path) as f:
                 return sum(1 for line in f if line.strip())
+    except (EOFError, gzip.BadGzipFile, zlib.error) as e:
+        _logger.warning(f"Truncated or corrupt gzip in '{file_path}': {e}")
+        return 0
     except (OSError, UnicodeDecodeError):
         return 0
     return 0

@@ -65,6 +65,7 @@ class MockServerConfig(BaseSettings):
             self.ranking_per_passage_latency = 0.0
             self.image_retrieval_base_latency = 0.0
             self.image_retrieval_per_image_latency = 0.0
+            self.audio_transcription_base_latency = 0.0
         if self.record_requests is not None:
             if self.no_tokenizer:
                 raise ValueError(
@@ -354,6 +355,13 @@ class MockServerConfig(BaseSettings):
         Field(description="Image retrieval latency per image (ms)", ge=0.0),
         Parameter(name="--image-retrieval-per-image-latency"),
     ] = 5.0
+
+    # Audio transcription latency (base only; ASR responds once per request)
+    audio_transcription_base_latency: Annotated[
+        float,
+        Field(description="Audio transcription base latency (ms)", ge=0.0),
+        Parameter(name="--audio-transcription-base-latency"),
+    ] = 10.0
 
     log_level: Annotated[
         Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],

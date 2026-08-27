@@ -153,25 +153,3 @@ class TestSuccessPaths:
         assert out["tags"] == [("team", "perf")]
         assert out["parent_run_id"] == "parent-1"
         assert out["artifact_globs"] == ["*.json"]
-
-    @pytest.mark.parametrize(
-        "raw,expected",
-        [
-            # Single key:value token (cyclopts hands a one-element list).
-            (["team:perf"], [("team", "perf")]),
-            # consume_multiple hands several key:value tokens.
-            (["team:perf", "env:staging"], [("team", "perf"), ("env", "staging")]),
-            # JSON object form.
-            (['{"team": "perf"}'], [("team", "perf")]),
-        ],
-        ids=["single", "multiple", "json"],
-    )
-    def test_tag_cli_string_forms_parse(self, raw, expected):
-        """The CLI-realistic `--mlflow-tag` inputs (key:value tokens and JSON)
-        parse into a tuple list. Regression: the flag was previously typed
-        `list[tuple[str, Any]]`, so a single `key:value` was rejected as
-        "requires 2 positional arguments" and multiple tokens as "must be in
-        'key:value' format"."""
-        cli = _make_cli(mlflow_tracking_uri="http://mlflow:5000", mlflow_tags=raw)
-        out = build_mlflow(cli)
-        assert out["tags"] == expected

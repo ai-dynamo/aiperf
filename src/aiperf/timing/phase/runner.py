@@ -494,6 +494,7 @@ class PhaseRunner(TaskManagerMixin):
     async def run(
         self,
         is_final_phase: bool,
+        seamless_to_next: bool = False,
     ) -> CreditPhaseStats:
         """Execute phase with full lifecycle management.
 
@@ -504,6 +505,8 @@ class PhaseRunner(TaskManagerMixin):
         Args:
             is_final_phase: True if this is the last phase. Non-final seamless phases
                 spawn background return-wait task; final phases wait synchronously.
+            seamless_to_next: True when the next phase should start before this
+                phase's in-flight requests finish returning.
 
         Returns:
             CreditPhaseStats snapshot of final phase state.
@@ -511,7 +514,9 @@ class PhaseRunner(TaskManagerMixin):
         strategy = self._build_strategy()
         try:
             self._register_strategy_with_callback_handler(strategy)
-            return await self._run_strategy(strategy, is_final_phase)
+            return await self._run_strategy(
+                strategy, is_final_phase, seamless_to_next=seamless_to_next
+            )
         except Exception as e:
             await self._publish_phase_failure_lifecycle()
             raise e
@@ -594,7 +599,10 @@ class PhaseRunner(TaskManagerMixin):
         )
 
     async def _run_strategy(
-        self, strategy: TimingStrategyProtocol, is_final_phase: bool
+        self,
+        strategy: TimingStrategyProtocol,
+        is_final_phase: bool,
+        seamless_to_next: bool = False,
     ) -> CreditPhaseStats:
         """Drive the strategy through its execute → sending-complete →
         returning-complete pipeline. The exception path (publishing partial
@@ -669,7 +677,7 @@ class PhaseRunner(TaskManagerMixin):
 
         # Seamless mode: phase flows into next without waiting for returns.
         # Progress task continues in background until phase complete.
-        if self._config.seamless and not is_final_phase:
+        if seamless_to_next and not is_final_phase:
             self._return_wait_task = self.execute_async(
                 self._wait_for_returning_complete(strategy, phase_id=phase_id)
             )

@@ -59,16 +59,11 @@ def build_artifacts(cli: CLIConfig) -> dict[str, Any]:
     cli_set = cli.model_fields_set
     if "slice_duration" in cli_set and cli.slice_duration is not None:
         artifacts["slice_duration"] = cli.slice_duration
-    # Only touch the records/raw formats when the user explicitly set
-    # `--export-level`. Emitting them off the default (RECORDS) clobbered a
-    # richer YAML `artifacts.records` (e.g. `[jsonl, parquet]`) whenever ANY
-    # output flag — including the always-appended `--artifact-dir` — was set,
-    # and contradicts this builder's "only explicitly-set fields" contract. On
-    # the CLI-only path the ArtifactsConfig Pydantic default (`["jsonl"]`)
-    # supplies the per-record JSONL, so gating here is behavior-preserving.
+    # Only emit records/raw when the user explicitly set --export-level.
+    # The CLIConfig default is RECORDS, but we must not override a YAML
+    # config that set `artifacts.records: false` just because the default
+    # value happens to be RECORDS.
     if "export_level" in cli_set:
-        # Only JSONL is wired up for the CLI export-level shorthand today; the
-        # Parquet sidecar is selected through the YAML `records` format list.
         if cli.export_level in (ExportLevel.RECORDS, ExportLevel.RAW):
             artifacts["records"] = [ExportFormat.JSONL]
         elif cli.export_level == ExportLevel.SUMMARY:
@@ -90,8 +85,6 @@ def _apply_runtime_basics(runtime_dict: dict[str, Any], cli: CLIConfig) -> None:
         runtime_dict["ui"] = cli.ui_type
     if "workers_max" in cli_set and cli.workers_max is not None:
         runtime_dict["workers"] = cli.workers_max
-    if "cells" in cli_set and cli.cells is not None:
-        runtime_dict["cells"] = cli.cells
     if (
         "record_processor_service_count" in cli_set
         and cli.record_processor_service_count is not None

@@ -55,7 +55,7 @@ def test_benchmark_otel_and_mlflow_groups_load_without_flat_forwarders() -> None
 
     benchmark = config.benchmark
     assert benchmark.artifacts.export_outputs_json is True
-    assert benchmark.otel.metrics_url == "http://localhost:4318/v1/metrics"
+    assert benchmark.otel.metrics_url == "http://localhost:4318"
     assert benchmark.otel.stream_timing_enabled is False
     assert benchmark.otel.custom_resource_attributes == {
         "deployment.environment": "local"

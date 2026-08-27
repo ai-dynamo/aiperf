@@ -6,7 +6,7 @@ This package provides mock server infrastructure for testing AIPerf without
 requiring actual HTTP servers.
 """
 
-from tests.aiperf_mock_server.__main__ import main, serve
-from tests.aiperf_mock_server.config import MockServerConfig
+from aiperf_mock_server.__main__ import main, serve
+from aiperf_mock_server.config import MockServerConfig
 
 __all__ = ["MockServerConfig", "main", "serve"]

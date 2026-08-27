@@ -497,7 +497,9 @@ class TestBenchmarkPlanSweepAttachments:
 
     def test_construct_with_failure_policy_and_convergence_round_trips(self) -> None:
         """Constructor accepts failure_policy + multi_run.convergence."""
-        from aiperf.config.resolution.plan import FailurePolicy
+        FailurePolicy = pytest.importorskip(
+            "aiperf.kubernetes.sweep_models", reason="kubernetes module not ported"
+        ).FailurePolicy
 
         config = _make_benchmark_config()
         fp = FailurePolicy(on_child_failure="abort", max_failures=2)
@@ -521,7 +523,9 @@ class TestBenchmarkPlanSweepAttachments:
 
     def test_assigning_failure_policy_after_construction_does_not_raise(self) -> None:
         """Plain assignment must not raise."""
-        from aiperf.config.resolution.plan import FailurePolicy
+        FailurePolicy = pytest.importorskip(
+            "aiperf.kubernetes.sweep_models", reason="kubernetes module not ported"
+        ).FailurePolicy
 
         config = _make_benchmark_config()
         plan = BenchmarkPlan(

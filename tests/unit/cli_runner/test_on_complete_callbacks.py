@@ -9,7 +9,7 @@ Covers:
     ``BenchmarkConfig.artifacts.auto_plot`` is True, and threads it through
     to the dispatch path.
   * ``_run_single_benchmark`` invokes callbacks in list order on success and
-    skips them when the native child fails.
+    skips them on bootstrap failure.
   * ``_run_multi_benchmark`` invokes callbacks in list order on successful
     orchestrator run and skips them when the orchestrator raises.
   * Callback failures are isolated: subsequent callbacks still run, the
@@ -90,27 +90,6 @@ def _make_plan(
     )
 
 
-@pytest.fixture(autouse=True)
-def _native_single_success():
-    """Keep callback tests focused on callback policy, not process startup."""
-    with patch("aiperf.cli_runner._single_run._execute_python_run") as execute:
-        execute.return_value = RunResult(
-            label="native",
-            success=True,
-            artifacts_path=Path("/tmp/native-callback-test"),
-        )
-        yield execute
-
-
-@pytest.fixture(autouse=True)
-def _no_real_native_process():
-    """Callback policy tests inject the mesh subprocess executor instead of spawning it."""
-    with patch(
-        "aiperf.orchestrator.local_executor.LocalSubprocessExecutor"
-    ) as executor:
-        yield executor
-
-
 class TestCompletedRunDataclass:
     """CompletedRun is the public payload type passed to OnComplete."""
 
@@ -139,6 +118,7 @@ class TestCompletedRunDataclass:
 class TestRunBenchmarkAutoPlotWiring:
     """run_benchmark builds the auto-plot callback only when configured."""
 
+    @patch("aiperf.cli_runner._preflight_endpoint_ready")
     @patch("aiperf.cli_runner._preflight_fd_limit")
     @patch("aiperf.cli_runner._preflight_artifact_dir")
     @patch("aiperf.cli_runner._run_single_benchmark")
@@ -147,6 +127,7 @@ class TestRunBenchmarkAutoPlotWiring:
         mock_single: Mock,
         _mock_artifact: Mock,
         _mock_fd: Mock,
+        _mock_endpoint: Mock,
     ):
         from aiperf.cli_runner import run_benchmark
 
@@ -159,6 +140,7 @@ class TestRunBenchmarkAutoPlotWiring:
         on_complete = mock_single.call_args.kwargs["on_complete"]
         assert on_complete == []
 
+    @patch("aiperf.cli_runner._preflight_endpoint_ready")
     @patch("aiperf.cli_runner._preflight_fd_limit")
     @patch("aiperf.cli_runner._preflight_artifact_dir")
     @patch("aiperf.cli_runner._run_single_benchmark")
@@ -167,6 +149,7 @@ class TestRunBenchmarkAutoPlotWiring:
         mock_single: Mock,
         _mock_artifact: Mock,
         _mock_fd: Mock,
+        _mock_endpoint: Mock,
     ):
         from aiperf.cli_runner import run_benchmark
 
@@ -187,6 +170,7 @@ class TestRunBenchmarkAutoPlotWiring:
         on_complete = mock_single.call_args.kwargs["on_complete"]
         assert on_complete == [sentinel]
 
+    @patch("aiperf.cli_runner._preflight_endpoint_ready")
     @patch("aiperf.cli_runner._preflight_fd_limit")
     @patch("aiperf.cli_runner._preflight_artifact_dir")
     @patch("aiperf.cli_runner._run_multi_benchmark")
@@ -195,6 +179,7 @@ class TestRunBenchmarkAutoPlotWiring:
         mock_multi: Mock,
         _mock_artifact: Mock,
         _mock_fd: Mock,
+        _mock_endpoint: Mock,
     ):
         from aiperf.cli_runner import run_benchmark
 
@@ -251,24 +236,18 @@ class TestRunSingleBenchmarkCallbacks:
     @patch("aiperf.config.resolution.resolvers.build_default_resolver_chain")
     @patch("aiperf.common.bootstrap.bootstrap_and_run_service")
     @patch("aiperf.common.logging.setup_rich_logging")
-    def test_callbacks_skipped_when_native_run_fails(
+    def test_callbacks_skipped_when_bootstrap_raises(
         self,
         _mock_setup: Mock,
-        _mock_bootstrap: Mock,
+        mock_bootstrap: Mock,
         mock_chain: Mock,
         mock_exit: Mock,
-        _native_single_success: Mock,
     ):
         from aiperf.cli_runner import _run_single_benchmark
 
         run = _make_run(_make_config(runtime={"ui": UIType.SIMPLE}))
         mock_chain.return_value = MagicMock()
-        _native_single_success.return_value = RunResult(
-            label="native",
-            success=False,
-            error="Rust child failed",
-            artifacts_path=run.artifact_dir,
-        )
+        mock_bootstrap.side_effect = RuntimeError("Bootstrap failed")
 
         cb = Mock()
 

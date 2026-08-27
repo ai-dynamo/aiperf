@@ -53,7 +53,6 @@ from aiperf.common.enums.enums import (
     SSEFieldType,
     SubagentType,
     SweepMode,
-    SweepType,
     SystemState,
     TurnInputKind,
     VideoAudioCodec,
@@ -61,9 +60,6 @@ from aiperf.common.enums.enums import (
     VideoJobStatus,
     VideoSynthType,
     WorkerStatus,
-)
-from aiperf.common.enums.lifecycle_enums import (
-    WorkerStartupState,
 )
 from aiperf.common.enums.metric_enums import (
     AggregationKind,
@@ -170,7 +166,6 @@ __all__ = [
     "ServiceRegistrationStatus",
     "SubagentType",
     "SweepMode",
-    "SweepType",
     "SystemState",
     "TemperatureMetricUnit",
     "TemperatureMetricUnitInfo",
@@ -179,7 +174,6 @@ __all__ = [
     "VideoFormat",
     "VideoJobStatus",
     "VideoSynthType",
-    "WorkerStartupState",
     "WorkerStatus",
     "make_result_producer_capability",
     "parse_result_producer_capability",

@@ -10,7 +10,6 @@ Structure:
     Environment.ACCURACY.*       - Accuracy benchmark settings
     Environment.API_SERVER.*     - API server settings
     Environment.COMPRESSION.*    - Compression settings for streaming file transfers
-    Environment.CONTENT_SERVER.* - Generated multimodal content serving
     Environment.DATASET.*        - Dataset management
     Environment.DEV.*            - Development and debugging settings
     Environment.ENDPOINT.*       - Endpoint wire-format settings
@@ -208,45 +207,6 @@ class _APIServerSettings(BaseSettings):
     )
 
 
-class _ContentServerSettings(BaseSettings):
-    """Run-owned native HTTP serving for generated multimodal content.
-
-    When enabled with a non-empty directory, synthetic image and video
-    generators write files and place HTTP URLs in requests instead of inline
-    base64 data. Audio remains inline. See
-    [Serve Synthetic Multimodal Content over HTTP](tutorials/content-server.md).
-    """
-
-    model_config = SettingsConfigDict(env_prefix="AIPERF_CONTENT_SERVER_")
-
-    ENABLED: bool = Field(
-        default=False,
-        description="Enable the run-owned HTTP content server.",
-    )
-    HOST: str = Field(
-        default="0.0.0.0",
-        min_length=1,
-        description="Host/interface to bind and advertise in generated media URLs.",
-    )
-    PORT: int = Field(
-        ge=1,
-        le=65535,
-        default=8090,
-        description="TCP port for /healthz and /content/*.",
-    )
-    CONTENT_DIR: str = Field(
-        default="",
-        description="Existing directory to serve. Empty uses a temporary serving root, "
-        "but synthetic media remains inline.",
-    )
-    MAX_TRACKED_RECORDS: int = Field(
-        ge=100,
-        le=1_000_000,
-        default=10_000,
-        description="Maximum recent content-request records retained in Rust.",
-    )
-
-
 class _ChatSettings(BaseSettings):
     """Settings for the interactive ``aiperf chat`` command."""
 
@@ -326,83 +286,6 @@ class _CLIRunnerSettings(BaseSettings):
     )
 
 
-class _RuntimeSettings(BaseSettings):
-    """Selects which execution engine runs a single benchmark.
-
-    ``rust`` (default) dispatches through the Rust ``aiperf``; that is
-    the only Rust executable on the product path. ``python`` routes the same
-    ``BenchmarkRun`` through the pre-Rust pure-Python service mesh
-    (SystemController + Worker / TimingManager / RecordsManager children) so the
-    legacy hot path can be A/B benchmarked against the Rust core. Both consume
-    an identical ``BenchmarkRun``; only the execution engine differs.
-    """
-
-    model_config = SettingsConfigDict(
-        env_prefix="AIPERF_RUNTIME_",
-    )
-
-    ENGINE: Literal["rust", "python"] = Field(
-        default="rust",
-        description="Execution engine for a single benchmark: `rust` (the "
-        "aiperf runner, default) or `python` (the legacy pure-Python "
-        "service mesh, for A/B benchmarking against the Rust core). "
-        "Set via AIPERF_RUNTIME_ENGINE.",
-    )
-
-    NATIVE_EXPORT: bool = Field(
-        default=True,
-        description="Whether the native Rust `aiperf::export` sink plane is the "
-        "sole emitter for every report artifact (profile_export_aiperf.{json,csv}, "
-        "timeslices, server_metrics.{json,csv,parquet}, accuracy_results.csv, "
-        "profile_export_console.txt, and the OTel/MLflow/W&B network sinks). When "
-        "true (default) the frontend projects cfg.export for the runner, suppresses "
-        "the Python live-streaming sidecar, and skips the Python ExporterManager + "
-        "post-run uploaders entirely so each destination receives a single native "
-        "emission. Set AIPERF_RUNTIME_NATIVE_EXPORT=0 to restore the legacy Python "
-        "emitters (ExporterManager, mlflow/wandb uploaders, OTel sidecar) for A/B "
-        "verification, mirroring AIPERF_RUNTIME_ENGINE=python. Reversible.",
-    )
-
-    EXACT_FOLD: bool = Field(
-        default=True,
-        description="Whether the native aiperf runner folds each completed record's "
-        "metric scalars into the EXACT accumulator (keeping exact NaN-sparse columns "
-        "for exact percentiles/timeslices/series) and drops the heavy per-record data "
-        "during the run, instead of retaining every record until end-of-run. When true "
-        "(default) an eligible run — the single-thread scheduled online path with a "
-        "supported dataset shape and no adaptive, live-sink, heartbeat, accuracy, "
-        "cellular, sketch, or sharded disqualifier — streams its per-record artifacts "
-        "and folds-and-drops, bounding coordinator peak memory; every other run falls back unchanged "
-        "to the retain-then-batch path. This is purely a memory optimization: the "
-        "report and all artifacts are byte-identical to the retain path. Set "
-        "AIPERF_RUNTIME_EXACT_FOLD=0 (also off/false/no) to force the legacy retain "
-        "path for A/B verification, mirroring AIPERF_RUNTIME_ENGINE=python. Read only "
-        "by the runner (no wire projection): unlike sketch, exact-fold retains exact "
-        "per-record values, so it needs no artifact-path stripping. Reversible.",
-    )
-
-
-class _RngSettings(BaseSettings):
-    """Selects which random-number backend seeds AIPerf's reproducible streams.
-
-    ``python`` uses ``random.Random`` and NumPy draws with SHA-256 seed
-    derivation. ``rust`` uses Pcg64 draws and BLAKE3 seed derivation so
-    seeded Python and Rust produce identical streams.
-    """
-
-    model_config = SettingsConfigDict(
-        env_prefix="AIPERF_RNG_",
-    )
-
-    BACKEND: Literal["python", "rust"] = Field(
-        default="python",
-        description="Random-number backend: `python` (Python MT + NumPy with SHA-256 "
-        "derivation, default) or `rust` (Pcg64 with BLAKE3 derivation for "
-        "cross-language parity). "
-        "Set via AIPERF_RNG_BACKEND.",
-    )
-
-
 class _DatasetSettings(BaseSettings):
     """Dataset loading and configuration.
 
@@ -419,6 +302,14 @@ class _DatasetSettings(BaseSettings):
         le=100000.0,
         default=300.0,
         description="Timeout in seconds for dataset configuration operations",
+    )
+    BASETEN_SESSION_COLUMN: Literal["provided_session_id", "poor_man_session_id"] = (
+        Field(
+            default="provided_session_id",
+            description="Session column used by the Baseten trace loader when both "
+            "supported columns exist. Set to poor_man_session_id for legacy traces. "
+            "If the selected column is absent, the loader uses the available column.",
+        )
     )
     MMAP_BASE_PATH: Path | None = Field(
         default=None,
@@ -440,6 +331,16 @@ class _DatasetSettings(BaseSettings):
         "~/.cache/aiperf/dataset_mmap. Each cache entry lives under a `dir/key` subpath and contains "
         "dataset.dat, index.dat, manifest.json, and (when produced) inputs.json. "
         "No automatic eviction is implemented yet -- delete the directory to reclaim disk.",
+    )
+    MMAP_PREFAULT: bool = Field(
+        default=True,
+        description="If True, each memory-mapped dataset client walks every page of the "
+        "data file at open time (after madvise(MADV_WILLNEED)) to force-populate the OS "
+        "page cache. Reads afterwards are served warm, so no request pays a major page "
+        "fault mid-benchmark -- which would otherwise land in the measured latency. "
+        "Workers share the kernel page cache, so the disk read happens once regardless of "
+        "worker count. Costs a one-time startup pass proportional to dataset size; set to "
+        "False to trade predictable tail latency for faster startup on very large datasets.",
     )
     PREFORMAT_PAYLOADS: bool = Field(
         default=False,
@@ -479,6 +380,33 @@ class _DatasetSettings(BaseSettings):
         "entries on a `FileDataset`. When total inline records exceed this "
         "value, the config loader logs a warning suggesting the user move the "
         "dataset to a JSONL file. No hard cap.",
+    )
+
+    TRACELAB_SUBAGENT_JOIN: bool = Field(
+        default=True,
+        description="When True (default), TraceLabTraceDatasetLoader recovers "
+        "subagent parent/child links by timing containment and nests each "
+        "recovered child as a subagent entry inside its parent trace. Set to "
+        "False to emit every recorded session as an independent flat trace, "
+        "which is the shape the corpus literally records.",
+    )
+    TRACELAB_CODEX_SUBAGENT_JOIN: bool = Field(
+        default=True,
+        description="When True (default), the TraceLab subagent join also "
+        "runs over codex sessions. Codex uses an async spawn/wait/close agent "
+        "lifecycle whose handles are stripped from the released corpus, so "
+        "only a coarse session-level window is available there and a session "
+        "fanning out several agents collapses them into one window. Set to "
+        "False to keep only the precise blocking-tool-call join.",
+    )
+    TRACELAB_MIN_SPAWN_MS: int = Field(
+        ge=0,
+        default=10000,
+        description="Minimum wall latency, in milliseconds, for a spawning "
+        "tool call to be treated as a subagent round-trip by the TraceLab "
+        "join. Short calls are overwhelmingly no-op or error returns, and "
+        "admitting them widens the containment window enough to start "
+        "capturing unrelated concurrent sessions.",
     )
 
     WEKA_PARALLEL_WORKERS: int = Field(
@@ -908,21 +836,16 @@ class _HTTPSettings(BaseSettings):
         "When enabled, aiohttp will read proxy settings from HTTP_PROXY, HTTPS_PROXY, "
         "and NO_PROXY environment variables.",
     )
-    X_SESSION_AFFINITY: bool = Field(
-        default=True,
-        description="Derive the router-facing X-Session-Affinity header from the stable "
-        "per-session correlation identifier. Unlike the other X_* transport settings "
-        "here this is ON by default, so it acts as a kill switch: set it to 0 to stop "
-        "AIPerf deriving the header and return the field to whatever the endpoint "
-        "authored. Disabling it removes a routing hint some gateways rely on for "
-        "session locality, which changes cache behavior at the server.",
-    )
     X_SESSION_ID_FROM_CORRELATION_ID: bool = Field(
         default=False,
         description="Also send X-Session-ID with the stable X-Correlation-ID value. "
         "This transport setting is the supported way to enable generic HTTP session "
         "affinity. It is ADDITIVE (both headers are sent); --session-header only "
         "RENAMES the single correlation header.",
+    )
+    X_SESSION_AFFINITY_FROM_CORRELATION_ID: bool = Field(
+        default=True,
+        description="Also send X-Session-Affinity with the stable X-Correlation-ID value.",
     )
     X_SMG_ROUTING_KEY_FROM_CORRELATION_ID: bool = Field(
         default=False,
@@ -1009,11 +932,7 @@ class _MetricsSettings(BaseSettings):
         ge=20,
         le=10000,
         default=500,
-        description="t-digest sketch compression for list-valued record metric aggregation. Higher = more centroids, tighter percentile accuracy, larger sketch. Default 500 measured to keep worst-case relative percentile error under 0.05% on 50M-sample workloads (40x under the 0.5% claimed accuracy band) at ~4 KB sketch size. Also the compression used by the whole-run sketch metrics mode (AIPERF_METRICS_SKETCH).",
-    )
-    SKETCH: bool = Field(
-        default=False,
-        description="Opt-in bounded-memory metrics mode (--sketch-metrics). Stream every per-record metric value into a t-digest sketch (compression TDIGEST_COMPRESSION) instead of retaining each value, so the native aiperf runner's metric memory stays O(1) in the request count at very high request rates. Counts, sums, averages, and min/max stay exact; percentiles become approximate. Per-record artifacts (records/raw/outputs JSONL, per-record OTLP histograms) and the per-row-only trend outputs (timeslices, per-model/endpoint inference series, sweep curves) are unavailable in this mode and are dropped from the run request. Off by default.",
+        description="t-digest sketch compression for list-valued record metric aggregation. Higher = more centroids, tighter percentile accuracy, larger sketch. Default 500 measured to keep worst-case relative percentile error under 0.05% on 50M-sample workloads (40x under the 0.5% claimed accuracy band) at ~4 KB sketch size.",
     )
     LIST_BACKEND: Literal["ragged", "tdigest"] = Field(
         default="ragged",
@@ -1318,6 +1237,24 @@ class _TimingSettings(BaseSettings):
         le=10.0,
         default=0.1,
         description="Update interval in seconds for continuous rate ramping (default 0.1s = 100ms)",
+    )
+    HIGH_RES_TIMER: bool = Field(
+        default=True,
+        description="Use high-resolution rate-loop pacing instead of event-loop timers, which "
+        "quantize sub-millisecond sleeps to ~1ms granularity. Restores exact rate delivery and "
+        "arrival-distribution fidelity at high request rates. Uses a Linux timerfd (kernel "
+        "hrtimer, ~50us wakeup precision) when available, and a dedicated sleep thread on other "
+        "platforms (~100us POSIX, ~0.5ms Windows). Set to false to force event-loop timer pacing.",
+    )
+    MAX_CATCHUP_SECONDS: float = Field(
+        ge=0.0,
+        le=10.0,
+        default=0.01,
+        description="Maximum schedule backlog in seconds the rate loop is allowed to catch up on "
+        "before re-anchoring to the current time. Event-loop timers oversleep sub-millisecond "
+        "waits (~1ms granularity under uvloop/libuv); without a catch-up window every oversleep "
+        "permanently forfeits schedule and high request rates silently under-deliver. Bounded so "
+        "a genuine multi-second stall still re-anchors instead of firing a burst storm.",
     )
 
 
@@ -1720,14 +1657,6 @@ class _WorkerSettings(BaseSettings):
         default=32,
         description="Absolute maximum number of workers to spawn, regardless of CPU count",
     )
-    DEFAULT_WORKERS_PER_POD: int = Field(
-        ge=1,
-        le=10000,
-        default=32,
-        description="Default worker count per pod used by the Kubernetes memory "
-        "estimator and JobSet sizing when runtime.workers_per_pod is unset. "
-        "Sizing-only heuristic; the native cellular path partitions by cells.",
-    )
     STALE_TIME: float = Field(
         ge=0.1,
         le=1000.0,
@@ -1906,21 +1835,9 @@ class _Environment(BaseSettings):
         default_factory=_CompressionSettings,
         description="Compression settings for streaming file transfers",
     )
-    CONTENT_SERVER: _ContentServerSettings = Field(
-        default_factory=_ContentServerSettings,
-        description="Native generated-content HTTP server settings",
-    )
     CLI_RUNNER: _CLIRunnerSettings = Field(
         default_factory=_CLIRunnerSettings,
         description="CLI runner post-run callback isolation settings",
-    )
-    RUNTIME: _RuntimeSettings = Field(
-        default_factory=_RuntimeSettings,
-        description="Execution-engine selector (rust runner vs legacy Python mesh)",
-    )
-    RNG: _RngSettings = Field(
-        default_factory=_RngSettings,
-        description="Random-number backend selector (python vs rust)",
     )
     DATASET: _DatasetSettings = Field(
         default_factory=_DatasetSettings,

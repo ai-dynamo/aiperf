@@ -5,7 +5,7 @@
 The thin command-definition module lives at `aiperf.cli_commands.config`; the
 heavy logic (template scaffolding, sweep expansion, output formatting) is here
 so it is only imported when the command actually runs. This mirrors the
-domain-package layout used by `aiperf.plugin.cli` for `aiperf-python plugins`.
+domain-package layout used by `aiperf.plugin.cli` for `aiperf plugins`.
 """
 
 from __future__ import annotations

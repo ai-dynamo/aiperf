@@ -30,7 +30,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
-from tests.aiperf_mock_server.node_exporter_faker import NodeExporterFaker
+from aiperf_mock_server.node_exporter_faker import NodeExporterFaker
 
 from aiperf.common.accumulator_protocols import ExportContext
 from aiperf.common.enums import PrometheusMetricType

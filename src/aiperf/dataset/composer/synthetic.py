@@ -215,7 +215,6 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
             )
 
         text = Text(name="text")
-        total_input_tokens = 0
 
         # Sample ISL/OSL pair for this request (cached for consistency)
         turn_id = id(turn)
@@ -251,16 +250,14 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
 
         for _ in range(self._prompt_batch_size):
             # Generate prompt content using the sampled input sequence length
-            content = self.prompt_generator.generate(
-                mean=isl,
-                stddev=stddev,
-                with_prefix=with_prefix,
-                exact_length=exact_length,
+            text.contents.append(
+                self.prompt_generator.generate(
+                    mean=isl,
+                    stddev=stddev,
+                    with_prefix=with_prefix,
+                    exact_length=exact_length,
+                )
             )
-            text.contents.append(content)
-            total_input_tokens += len(self.tokenizer.encode(content))
-
-        turn.input_tokens = total_input_tokens
 
         return text
 

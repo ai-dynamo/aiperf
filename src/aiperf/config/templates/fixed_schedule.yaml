@@ -25,16 +25,13 @@
 # Schedule file format (one JSON object per line, .jsonl):
 #   {"timestamp": 0,    "input_length": 100, "output_length": 200, "hash_ids": [3001]}
 #   {"timestamp": 500,  "input_length": 200, "output_length": 400, "hash_ids": [3002]}
-#   {"timestamp": 1500, "input_length": 800, "output_length": 256, "hash_ids": [3005, 3050]}
-#   {"timestamp": 5000, "input_length": 800, "output_length": 400, "hash_ids": [3005, 3050]}
+#   {"timestamp": 1500, "input_length": 800, "output_length": 256, "hash_ids": [3003, 3050]}
 #
 # Fields:
 #   timestamp     : ms from schedule start when the request fires
 #   input_length  : tokens of synthetic prompt (or use input_text for exact text)
 #   output_length : max tokens in response (optional)
-#   hash_ids      : block IDs for prefix-cache simulation (optional, 512-token blocks).
-#                   Reused IDs must always map to the same token count; the last ID in
-#                   the list is a partial block sized input_length - (N-1)*512.
+#   hash_ids      : block IDs for prefix-cache simulation (optional, 512-token blocks)
 #
 # Run: aiperf profile --config fixed_schedule.yaml
 #

@@ -91,7 +91,6 @@ class SyntheticRankingsDatasetComposer(BaseDatasetComposer):
             )
         )
         query = Text(name="query", contents=[query_text])
-        total_input_tokens = len(self.tokenizer.encode(query_text))
 
         # Generate passages with rankings-specific token counts (per passage)
         passages = Text(name="passages")
@@ -105,10 +104,8 @@ class SyntheticRankingsDatasetComposer(BaseDatasetComposer):
                 )
             )
             passages.contents.append(passage_text)
-            total_input_tokens += len(self.tokenizer.encode(passage_text))
 
         turn.texts.extend([query, passages])
-        turn.input_tokens = total_input_tokens
         self._finalize_turn(turn)
 
         self.debug(

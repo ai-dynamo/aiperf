@@ -11,8 +11,8 @@ cannot perturb generated content.
 
 from __future__ import annotations
 
-from aiperf.common.rng_parity.derive import derive_seed_parts
-from aiperf.common.rng_parity.generator import ParityRandomGenerator
+from aiperf.rust_shims.rng_parity.derive import derive_seed_parts
+from aiperf.rust_shims.rng_parity.generator import ParityRandomGenerator
 
 __all__ = ["HashIdRandomGenerator"]
 

@@ -40,11 +40,3 @@ app.command("aiperf.cli_commands.service:app", name="service")
 app.command("aiperf.cli_commands.speed_bench_report:app", name="speed-bench-report")
 app.command("aiperf.cli_commands.synthesize:app", name="synthesize")
 app.command("aiperf.cli_commands.validate:app", name="validate")
-
-
-if __name__ == "__main__":
-    # `python -m aiperf.cli` — dispatch the Cyclopts command tree directly, the
-    # same target as `aiperf.entrypoint:main`. Used by the e2e harness to drive
-    # the legacy Python execution engine (`AIPERF_RUNTIME_ENGINE=python`) without
-    # depending on a console-script shim.
-    raise SystemExit(app())

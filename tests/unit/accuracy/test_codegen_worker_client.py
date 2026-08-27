@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import sys
 import textwrap
@@ -22,6 +23,35 @@ def _write_worker(tmp_path: Path, body: str) -> list[str]:
     return [sys.executable, str(script)]
 
 
+# Receives a request, signals receipt via a file, then blocks until a "go"
+# file appears before responding.  Used to guarantee fut is unresolved when
+# we cancel, working around a Python 3.11 asyncio.wait_for bug where an
+# already-resolved future silently absorbs the CancelledError.
+_GATED_OK = """
+    import sys, orjson, pathlib, time
+    gate_dir = pathlib.Path(sys.argv[1])
+    for line in sys.stdin.buffer:
+        line = line.strip()
+        if not line:
+            continue
+        req = orjson.loads(line)
+        (gate_dir / f"recv_{req['id']}").touch()
+        while not (gate_dir / "go").exists():
+            time.sleep(0.005)
+        resp = {"id": req["id"], "ok": True, "metrics": {"pass@1": 1.0}}
+        sys.stdout.buffer.write(orjson.dumps(resp) + b"\\n")
+        sys.stdout.buffer.flush()
+"""
+
+
+def _write_gated_worker(tmp_path: Path) -> tuple[list[str], Path]:
+    gate_dir = tmp_path / "gate"
+    gate_dir.mkdir()
+    script = tmp_path / "gated_worker.py"
+    script.write_text(textwrap.dedent(_GATED_OK))
+    return [sys.executable, str(script), str(gate_dir)], gate_dir
+
+
 # Echoes pass@1=1.0 for every request, correlating id.
 _ECHO_OK = """
     import sys, orjson
@@ -35,40 +65,23 @@ _ECHO_OK = """
         sys.stdout.buffer.flush()
 """
 
-_ECHO_DETAIL = """
+# Buffers the first 4 requests and responds in REVERSE id order to exercise
+# the demux table (correct demux requires id matching, not position matching).
+_REVERSE_BATCH_OF_4 = """
     import sys, orjson
+    buf = []
     for line in sys.stdin.buffer:
         line = line.strip()
         if not line:
             continue
         req = orjson.loads(line)
-        resp = {
-            "id": req["id"],
-            "ok": True,
-            "metrics": {"pass@1": 0.5, "detail": {"pass@1": {"0": 1.0}}},
-        }
-        sys.stdout.buffer.write(orjson.dumps(resp) + b"\\n")
-        sys.stdout.buffer.flush()
-"""
-
-
-# Worker that records overlap: writes "BUSY" markers around a small delay so a
-# second concurrent request would interleave if not serialized.
-_ECHO_TRACKED = """
-    import sys, orjson, time
-    inflight = 0
-    for line in sys.stdin.buffer:
-        line = line.strip()
-        if not line:
-            continue
-        req = orjson.loads(line)
-        inflight += 1
-        overlap = inflight > 1
-        time.sleep(0.05)
-        inflight -= 1
-        resp = {"id": req["id"], "ok": True, "metrics": {"pass@1": 1.0}, "overlap": overlap}
-        sys.stdout.buffer.write(orjson.dumps(resp) + b"\\n")
-        sys.stdout.buffer.flush()
+        buf.append(req)
+        if len(buf) == 4:
+            for r in reversed(buf):
+                resp = {"id": r["id"], "ok": True, "metrics": {"pass@1": r["id"] * 0.1}}
+                sys.stdout.buffer.write(orjson.dumps(resp) + b"\\n")
+                sys.stdout.buffer.flush()
+            buf = []
 """
 
 
@@ -93,32 +106,111 @@ class TestHappyPath:
         finally:
             await worker.aclose()
 
-    async def test_grade_preserves_nested_detail_from_real_worker_boundary(
-        self, tmp_path
-    ) -> None:
-        worker = CodegenGradingWorker(worker_cmd=_write_worker(tmp_path, _ECHO_DETAIL))
-        try:
-            metrics = await worker.grade_codegen(
-                [{"input_output": "{}"}], [["x"]], timeout=30
-            )
-            assert metrics["detail"]["pass@1"] == {"0": 1.0}
-        finally:
-            await worker.aclose()
 
-
-class TestSerialization:
-    async def test_concurrent_grades_do_not_interleave(self, tmp_path) -> None:
-        worker = CodegenGradingWorker(worker_cmd=_write_worker(tmp_path, _ECHO_TRACKED))
+class TestConcurrency:
+    async def test_concurrent_grades_all_complete(self, tmp_path) -> None:
+        w = CodegenGradingWorker(worker_cmd=_write_worker(tmp_path, _ECHO_OK))
         try:
             results = await asyncio.gather(
                 *[
-                    worker.grade_codegen([{"input_output": "{}"}], [["x"]], timeout=30)
+                    w.grade_codegen([{"input_output": "{}"}], [["x"]], timeout=30)
+                    for _ in range(5)
+                ]
+            )
+            assert all(r == {"pass@1": 1.0} for r in results)
+        finally:
+            await w.aclose()
+
+    async def test_concurrent_grades_demux_by_id_not_position(self, tmp_path) -> None:
+        # 4 concurrent grades; mock responds in reverse order.
+        # If demux were position-based, callers would get wrong metrics.
+        w = CodegenGradingWorker(
+            worker_cmd=_write_worker(tmp_path, _REVERSE_BATCH_OF_4)
+        )
+        try:
+            results = await asyncio.gather(
+                *[
+                    w.grade_codegen([{"input_output": "{}"}], [["x"]], timeout=30)
+                    for _ in range(4)
+                ]
+            )
+            # IDs 1-4 → pass@1 values 0.1, 0.2, 0.3, 0.4 (one per caller)
+            values = sorted(r["pass@1"] for r in results)
+            assert values == pytest.approx([0.1, 0.2, 0.3, 0.4])
+        finally:
+            await w.aclose()
+
+    async def test_fault_cancels_all_pending_futures(self, tmp_path) -> None:
+        # Worker dies immediately after the first line — all concurrent callers
+        # should raise CodegenWorkerError, not hang.
+        w = CodegenGradingWorker(
+            worker_cmd=_write_worker(
+                tmp_path,
+                """
+                import sys
+                sys.stdin.buffer.readline()  # consume one line then exit
+                """,
+            )
+        )
+        try:
+            with pytest.raises(CodegenWorkerError):
+                await asyncio.gather(
+                    *[
+                        w.grade_codegen([{"input_output": "{}"}], [["x"]], timeout=10)
+                        for _ in range(3)
+                    ],
+                    return_exceptions=False,
+                )
+        finally:
+            await w.aclose()
+
+    async def test_stale_id_after_timeout_does_not_crash(self, tmp_path) -> None:
+        # Reader receives a response for an id that the caller already timed out on.
+        # The stale future was already removed from _pending; the reader must skip it.
+        # Use _ECHO_OK with a very short timeout so the grade times out, then send
+        # a second grade to prove the worker (if restarted) still works.
+        w = CodegenGradingWorker(worker_cmd=_write_worker(tmp_path, _ECHO_OK))
+        try:
+            with pytest.raises(CodegenWorkerError):
+                await w.grade_codegen(
+                    [{"input_output": "{}"}], [["x"]], timeout=0.000001
+                )
+            # If stale id handling is broken, the second grade would hang or crash.
+            result = await w.grade_codegen(
+                [{"input_output": "{}"}], [["x"]], timeout=10
+            )
+            assert result == {"pass@1": 1.0}
+        finally:
+            await w.aclose()
+
+    async def test_aclose_with_pending_futures_does_not_hang(self, tmp_path) -> None:
+        hang_worker = """
+            import sys, time
+            for line in sys.stdin.buffer:
+                time.sleep(3600)
+        """
+        w = CodegenGradingWorker(worker_cmd=_write_worker(tmp_path, hang_worker))
+        grade_task = asyncio.create_task(
+            w.grade_codegen([{"input_output": "{}"}], [["x"]], timeout=60)
+        )
+        await asyncio.sleep(0.05)  # let grade_task start and block
+        await w.aclose()  # must not hang even with grade_task pending
+        grade_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError, CodegenWorkerError):
+            await grade_task
+
+    async def test_concurrent_grades_return_correct_results(self, tmp_path) -> None:
+        w = CodegenGradingWorker(worker_cmd=_write_worker(tmp_path, _ECHO_OK))
+        try:
+            results = await asyncio.gather(
+                *[
+                    w.grade_codegen([{"input_output": "{}"}], [["x"]], timeout=30)
                     for _ in range(4)
                 ]
             )
             assert all(r == {"pass@1": 1.0} for r in results)
         finally:
-            await worker.aclose()
+            await w.aclose()
 
 
 # The very first grade (client request id==1) hangs forever to trigger a
@@ -208,22 +300,39 @@ class TestTimeoutRestart:
 
 
 class TestCancellation:
-    async def test_cancellation_kills_worker_and_propagates(self, tmp_path) -> None:
-        """A cancel while awaiting the worker (e.g. shutdown) kills the worker and
-        re-raises, rather than leaving it running with a pending request."""
-        worker = CodegenGradingWorker(worker_cmd=_write_worker(tmp_path, _HANG_THEN_OK))
+    async def test_cancellation_propagates_without_killing_worker(
+        self, tmp_path
+    ) -> None:
+        # Cancellation removes the request from _pending and re-raises; it does
+        # not fault the worker because the protocol is not desynced (the late
+        # response is dropped as a stale id by _dispatch_response). Concurrent
+        # grades continue unaffected.
+        #
+        # Uses a gated worker (not _ECHO_OK) so fut is guaranteed unresolved
+        # when grade.cancel() fires.  On Python 3.11, asyncio.wait_for silently
+        # absorbs CancelledError if the inner future already has a result, so
+        # we must ensure the worker has not yet responded at cancel time.
+        worker_cmd, gate_dir = _write_gated_worker(tmp_path)
+        worker = CodegenGradingWorker(worker_cmd=worker_cmd)
         try:
             grade = asyncio.create_task(
                 worker.grade_codegen([{"input_output": "{}"}], [["x"]], timeout=30)
             )
-            for _ in range(200):  # wait until the request is in flight (worker up)
-                if worker._proc is not None:
+            for _ in range(200):  # wait until the worker received the request
+                if (gate_dir / "recv_1").exists():
                     break
                 await asyncio.sleep(0.01)
+            # Worker holds at the gate — fut is unresolved — cancel is safe.
             grade.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await grade
-            assert worker._proc is None  # cancellation killed the worker
+            assert worker._proc is not None  # worker stays alive after cancel
+            # Release the gate so the stale response drains and the next grade works.
+            (gate_dir / "go").touch()
+            result = await worker.grade_codegen(
+                [{"input_output": "{}"}], [["x"]], timeout=10
+            )
+            assert result == {"pass@1": 1.0}
         finally:
             await worker.aclose()
 
@@ -297,7 +406,8 @@ _EMIT_OVERSIZED_LINE = """
 
 
 # Always echoes a fixed WRONG id regardless of the request id, simulating a
-# worker whose responses no longer correlate to requests (a desync).
+# worker whose responses no longer correlate to requests (a desync). With the
+# demux reader, the stale id is silently dropped and the caller times out.
 _ECHO_WRONG_ID = """
     import sys, orjson
     for line in sys.stdin.buffer:
@@ -328,13 +438,16 @@ class TestOversizedResponse:
 
 class TestResponseIdMismatch:
     async def test_wrong_id_faults_and_kills_worker(self, tmp_path) -> None:
+        # With the demux reader, a wrong id is treated as a stale response and
+        # silently dropped. The caller's future is never resolved, so it times out
+        # and calls _handle_fault, which kills the worker.
         worker = CodegenGradingWorker(
             worker_cmd=_write_worker(tmp_path, _ECHO_WRONG_ID)
         )
         try:
             with pytest.raises(CodegenWorkerError):
                 await worker.grade_codegen(
-                    [{"input_output": "{}"}], [["x"]], timeout=30
+                    [{"input_output": "{}"}], [["x"]], timeout=0.5
                 )
             assert worker._proc is None
         finally:
@@ -431,4 +544,204 @@ class TestDeathPipe:
             assert worker._death_w is not None
         finally:
             await worker.aclose()
-        assert worker._death_w is None
+
+
+class TestCoverageGaps:
+    """Targeted tests for previously uncovered branches."""
+
+    async def test_grade_codegen_proc_is_none_raises(self) -> None:
+        # Covers the proc-is-None guard added after _ensure_worker (line 107-109).
+        w = CodegenGradingWorker.__new__(CodegenGradingWorker)
+        w._cmd = ["python", "-c", ""]
+        w._max_start_failures = 3
+        w._proc = None
+        w._spawn_lock = asyncio.Lock()
+        w._pending = {}
+        w._reader_task = None
+        w._next_id = 0
+        w._start_failures = 0
+        w._worker_proven = False
+        from collections import deque
+
+        w._stderr_tail = deque(maxlen=64)
+        w._stderr_task = None
+        w._death_w = None
+        # Manually set _proc to a sentinel with returncode=None so _ensure_worker returns,
+        # then null out stdin so the None-stdin branch is hit.
+
+        class _FakeStdin:
+            pass
+
+        class _FakeProc:
+            returncode = None
+            stdin = None
+            stdout = None
+            stderr = None
+            pid = 99999
+
+        w._proc = _FakeProc()  # type: ignore[assignment]
+        with pytest.raises(CodegenWorkerError, match="not running"):
+            await w.grade_codegen([{"input_output": "{}"}], [["x"]], timeout=5)
+
+    async def test_grade_codegen_write_error_raises_worker_error(
+        self, tmp_path: Path
+    ) -> None:
+        # Covers OSError from write/drain (lines 113-117).
+        # Use _ECHO_OK but close stdin immediately after spawn to force BrokenPipeError.
+        broken_worker = """
+            import sys
+            sys.stdin.close()
+            import time; time.sleep(10)
+        """
+        w = CodegenGradingWorker(worker_cmd=_write_worker(tmp_path, broken_worker))
+        try:
+            with pytest.raises(CodegenWorkerError):
+                await w.grade_codegen([{"input_output": "{}"}], [["x"]], timeout=5)
+        finally:
+            await w.aclose()
+
+    async def test_ensure_worker_respawns_after_worker_exits(
+        self, tmp_path: Path
+    ) -> None:
+        # Worker serves one request then exits. The second grade_codegen() call
+        # must detect the dead worker via returncode, respawn, and succeed.
+        die_after_one = """
+            import sys, orjson
+            line = sys.stdin.buffer.readline()
+            req = orjson.loads(line)
+            resp = {"id": req["id"], "ok": True, "metrics": {"pass@1": 1.0}}
+            sys.stdout.buffer.write(orjson.dumps(resp) + b"\\n")
+            sys.stdout.buffer.flush()
+            sys.exit(0)
+        """
+        w = CodegenGradingWorker(worker_cmd=_write_worker(tmp_path, die_after_one))
+        try:
+            result1 = await w.grade_codegen(
+                [{"input_output": "{}"}], [["x"]], timeout=10
+            )
+            assert result1 == {"pass@1": 1.0}
+            first_proc = w._proc
+            # Let the worker finish exiting so _ensure_worker sees returncode != None.
+            if first_proc is not None:
+                await first_proc.wait()
+            result2 = await w.grade_codegen(
+                [{"input_output": "{}"}], [["x"]], timeout=10
+            )
+            assert result2 == {"pass@1": 1.0}
+            assert w._proc is not first_proc, (
+                "expected a new worker process after respawn"
+            )
+        finally:
+            await w.aclose()
+
+    async def test_aclose_with_pending_futures_sets_exception(
+        self, tmp_path: Path
+    ) -> None:
+        # Covers lines 316-317: aclose() sets CodegenWorkerError on pending futures.
+        hang_worker = """
+            import sys, time
+            for line in sys.stdin.buffer:
+                time.sleep(3600)
+        """
+        w = CodegenGradingWorker(worker_cmd=_write_worker(tmp_path, hang_worker))
+        grade_task = asyncio.create_task(
+            w.grade_codegen([{"input_output": "{}"}], [["x"]], timeout=60)
+        )
+        await asyncio.sleep(0.1)
+        await w.aclose()
+        with pytest.raises((CodegenWorkerError, asyncio.CancelledError)):
+            await grade_task
+
+    async def test_dispatch_response_null_id_faults(self, tmp_path: Path) -> None:
+        # Covers the req_id is None guard in _dispatch_response (line 209-212).
+        null_id_worker = """
+            import sys, orjson
+            for line in sys.stdin.buffer:
+                line = line.strip()
+                if not line:
+                    continue
+                resp = {"id": None, "ok": False, "error": "bad parse"}
+                sys.stdout.buffer.write(orjson.dumps(resp) + b"\\n")
+                sys.stdout.buffer.flush()
+        """
+        w = CodegenGradingWorker(worker_cmd=_write_worker(tmp_path, null_id_worker))
+        try:
+            with pytest.raises(CodegenWorkerError):
+                await w.grade_codegen([{"input_output": "{}"}], [["x"]], timeout=5)
+        finally:
+            await w.aclose()
+
+    async def test_run_reader_json_decode_error_faults(self, tmp_path: Path) -> None:
+        # Covers the JSONDecodeError path in _run_reader (line 254).
+        garbage_worker = """
+            import sys
+            for line in sys.stdin.buffer:
+                sys.stdout.buffer.write(b"not json at all\\n")
+                sys.stdout.buffer.flush()
+        """
+        w = CodegenGradingWorker(worker_cmd=_write_worker(tmp_path, garbage_worker))
+        try:
+            with pytest.raises(CodegenWorkerError):
+                await w.grade_codegen([{"input_output": "{}"}], [["x"]], timeout=5)
+        finally:
+            await w.aclose()
+
+    async def test_aclose_sets_exception_on_unfulfilled_pending_futures(
+        self, tmp_path: Path
+    ) -> None:
+        # Covers lines 316-317: aclose() calls set_exception on pending futures
+        # that are still waiting. The test injects a future manually to guarantee
+        # _pending is non-empty when aclose() runs (avoids looptime timing issues).
+        w = CodegenGradingWorker(worker_cmd=_write_worker(tmp_path, _ECHO_OK))
+        loop = asyncio.get_running_loop()
+        fut: asyncio.Future[dict] = loop.create_future()
+        w._pending[99] = fut
+        await w.aclose()
+        assert fut.done()
+        with pytest.raises(CodegenWorkerError, match="closed"):
+            fut.result()
+
+    async def test_dispatch_response_ok_false_sets_exception_and_marks_proven(
+        self, tmp_path: Path
+    ) -> None:
+        # Covers lines 221-225: ok=False dispatch path.
+        error_worker = """
+            import sys, orjson
+            for line in sys.stdin.buffer:
+                req = orjson.loads(line.strip())
+                resp = {"id": req["id"], "ok": False, "error": "deliberate error"}
+                sys.stdout.buffer.write(orjson.dumps(resp) + b"\\n")
+                sys.stdout.buffer.flush()
+        """
+        w = CodegenGradingWorker(worker_cmd=_write_worker(tmp_path, error_worker))
+        try:
+            with pytest.raises(CodegenWorkerError, match="deliberate error"):
+                await w.grade_codegen([{"input_output": "{}"}], [["x"]], timeout=10)
+            assert w._worker_proven  # ok=False counts as proven (worker responded)
+        finally:
+            await w.aclose()
+
+    async def test_dispatch_response_unhashable_id_faults(self, tmp_path: Path) -> None:
+        # Covers lines 215-217: TypeError on _pending.pop(unhashable_id).
+        list_id_worker = """
+            import sys, orjson
+            for line in sys.stdin.buffer:
+                resp = {"id": [1, 2], "ok": True, "metrics": {"pass@1": 1.0}}
+                sys.stdout.buffer.write(orjson.dumps(resp) + b"\\n")
+                sys.stdout.buffer.flush()
+        """
+        w = CodegenGradingWorker(worker_cmd=_write_worker(tmp_path, list_id_worker))
+        try:
+            with pytest.raises(CodegenWorkerError):
+                await w.grade_codegen([{"input_output": "{}"}], [["x"]], timeout=5)
+        finally:
+            await w.aclose()
+
+    async def test_drain_stderr_none_reader_is_noop(self) -> None:
+        # Covers line 194: _drain_stderr returns immediately when reader is None.
+        w = CodegenGradingWorker.__new__(CodegenGradingWorker)
+        from collections import deque
+
+        w._stderr_tail = deque(maxlen=64)
+        # Should complete without error
+        await w._drain_stderr(None)

@@ -78,32 +78,6 @@ class TestFlatShapeRejection:
         msg = str(excinfo.value).lower()
         assert "benchmark" in msg
 
-    def test_misplaced_body_key_at_top_hints_benchmark_nesting(self):
-        """A benchmark-body key (mlflow/otel/endpoint/…) placed at the envelope
-        root is rejected with an explicit hint to nest it under `benchmark:`,
-        rather than the generic "unknown key" message. Regression for the
-        confusing failure when export sinks were put at the top level."""
-        yaml_str = textwrap.dedent("""
-            benchmark:
-              models: [test/model]
-              endpoint:
-                type: chat
-                urls: ["http://localhost:8000/v1/chat/completions"]
-              datasets:
-                - {name: main, type: synthetic, entries: 100}
-              phases:
-                - {name: profiling, type: concurrency, requests: 10, concurrency: 1}
-            mlflow:
-              tracking_uri: http://localhost:5000
-        """).strip()
-
-        with pytest.raises(Exception) as excinfo:
-            load_config_from_string(yaml_str, substitute_env=False)
-        msg = str(excinfo.value)
-        assert "mlflow" in msg
-        # The hint must point the user at the correct nesting.
-        assert "benchmark:" in msg
-
 
 class TestScenarioRunValidation:
     """Sweep scenario `runs[i]` allow only {name, variables, benchmark}."""

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from aiperf.common.constants import SYSTEM_PROMPT_JOIN_SEP
 from aiperf.common.models import (
     BaseResponseData,
     Image,
@@ -18,6 +19,21 @@ from aiperf.common.models import (
 )
 from aiperf.common.types import JsonObject
 from aiperf.endpoints.base_endpoint import BaseEndpoint
+
+
+def _prepend_system_text(prefix: str, content: Any) -> Any:
+    """Return ``content`` with ``prefix`` prepended, preserving its shape.
+
+    System-message content is normally a plain string, but the OpenAI schema
+    also permits a list of content parts; a raw-payload dataset may author
+    either. Returns a new object in both cases -- callers pass content that
+    aliases reusable turn state.
+    """
+    if isinstance(content, list):
+        return [{"type": "text", "text": prefix}, *content]
+    if isinstance(content, str) and content:
+        return f"{prefix}{SYSTEM_PROMPT_JOIN_SEP}{content}"
+    return prefix
 
 
 class ChatEndpoint(BaseEndpoint):
@@ -70,11 +86,22 @@ class ChatEndpoint(BaseEndpoint):
         if extra_body:
             payload.update(extra_body)
 
-        if (
-            model_endpoint.endpoint.streaming
-            and model_endpoint.endpoint.use_server_token_count
-        ):
-            self._ensure_include_usage(payload)
+        # Read the merged payload, not endpoint.streaming: the extras above can
+        # override "stream", and a server rejects stream_options when stream is
+        # false ("Stream options can only be defined when stream=True").
+        if payload.get("stream"):
+            # Requested for every streaming run, not just server-token-count
+            # ones: vLLM rides per-request metrics (including
+            # metrics.speculative_decoding) on the trailing usage chunk and
+            # only emits that chunk when include_usage is set, so gating it on
+            # an unrelated flag would silently drop those metrics. Authors who
+            # want it off can set stream_options.include_usage explicitly.
+            # continuous_usage_stats stays opt-in regardless: per_chunk_usage
+            # implies use_server_token_count (enforced by the endpoint config
+            # validator), so widening this gate cannot turn it on by itself.
+            self._ensure_include_usage(
+                payload, continuous=model_endpoint.endpoint.per_chunk_usage
+            )
 
         self.trace(lambda: f"Formatted payload: {payload}")
         return payload
@@ -83,15 +110,35 @@ class ChatEndpoint(BaseEndpoint):
     def _format_messages(
         request_info: RequestInfo, rendered: list[dict[str, Any]]
     ) -> list[dict[str, Any]]:
-        """Build chat messages with RequestInfo-level prompts applied."""
+        """Build chat messages with RequestInfo-level prompts applied.
+
+        When the dataset already rendered a leading system message, the
+        conversation-level ``system_message`` is merged into it rather than
+        dropped, so a verbatim ``--system-prompt`` still reaches the wire on
+        raw-payload/DAG datasets. The two are joined into one message because
+        repeated system roles are mishandled by many OpenAI-compatible servers.
+        """
         messages: list[dict[str, Any]] = []
         first_is_system = (
             bool(rendered)
             and isinstance(rendered[0], dict)
             and rendered[0].get("role") == "system"
         )
-        if request_info.system_message and not first_is_system:
-            messages.append({"role": "system", "content": request_info.system_message})
+        if request_info.system_message:
+            if first_is_system:
+                # Copy rather than mutate: ``rendered`` aliases the turn's
+                # raw_messages, which are reused across credits in a session, so
+                # an in-place edit would restack the prefix on every replay.
+                merged = dict(rendered[0])
+                merged["content"] = _prepend_system_text(
+                    request_info.system_message, merged.get("content")
+                )
+                messages.append(merged)
+                rendered = rendered[1:]
+            else:
+                messages.append(
+                    {"role": "system", "content": request_info.system_message}
+                )
         if request_info.user_context_message:
             messages.append(
                 {"role": "user", "content": request_info.user_context_message}
@@ -118,18 +165,33 @@ class ChatEndpoint(BaseEndpoint):
                 )
 
     @staticmethod
-    def _ensure_include_usage(payload: dict[str, Any]) -> None:
-        """Force ``stream_options.include_usage = True`` while preserving any
-        author-supplied stream_options keys (and any explicit ``include_usage``
-        the author already set)."""
-        if "stream_options" not in payload:
-            payload["stream_options"] = {"include_usage": True}
+    def _ensure_include_usage(
+        payload: dict[str, Any], *, continuous: bool = False
+    ) -> None:
+        """Force ``stream_options.include_usage = True`` (and, when ``continuous``,
+        ``stream_options.continuous_usage_stats = True``) while preserving any
+        author-supplied stream_options keys (and any explicit values the author
+        already set).
+
+        ``continuous_usage_stats`` asks the server to report cumulative usage on
+        every streamed chunk, not just the final one. It is a vLLM/TRT-LLM
+        extension (strict OpenAI rejects it), so it is only injected when the
+        caller opts in via ``--per-chunk-usage``.
+        """
+        stream_options = payload.get("stream_options")
+        if stream_options is None:
+            stream_options = {}
+        elif not isinstance(stream_options, dict):
             return
-        if (
-            isinstance(payload["stream_options"], dict)
-            and "include_usage" not in payload["stream_options"]
-        ):
-            payload["stream_options"]["include_usage"] = True
+        # Copy rather than mutate: the payload merge aliases endpoint.extra /
+        # turn.extra_body, which are long-lived config reused across every
+        # request, so an in-place edit would rewrite the author's config and
+        # leak into every subsequent request.
+        merged = {**stream_options}
+        merged.setdefault("include_usage", True)
+        if continuous:
+            merged.setdefault("continuous_usage_stats", True)
+        payload["stream_options"] = merged
 
     def parse_response(
         self, response: InferenceServerResponse

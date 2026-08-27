@@ -38,6 +38,22 @@ def _endpoint_template_from_extra(
     }
 
 
+def _endpoint_template_fallback(endpoint: dict[str, Any]) -> None:
+    from aiperf.plugin.enums import EndpointType
+
+    if endpoint.get("type") != EndpointType.TEMPLATE or "template" in endpoint:
+        return
+    extra_raw = endpoint.get("extra")
+    if not extra_raw:
+        return
+    ex = dict(extra_raw) if isinstance(extra_raw, list) else extra_raw
+    ts = ex.get("payload_template")
+    if ts is None:
+        return
+    body = safe_read_template_path(ts)
+    endpoint["template"] = {"body": body if body is not None else ts}
+
+
 # Map (CLIConfig endpoint field name) -> (AIPerfConfig endpoint key).
 _ENDPOINT_FIELD_MAP: dict[str, str] = {
     "url_selection_strategy": "url_strategy",
@@ -52,6 +68,7 @@ _ENDPOINT_FIELD_MAP: dict[str, str] = {
     "transport": "transport",
     "use_legacy_max_tokens": "use_legacy_max_tokens",
     "use_server_token_count": "use_server_token_count",
+    "per_chunk_usage": "per_chunk_usage",
     "connection_reuse_strategy": "connection_reuse",
     "download_video_content": "download_video_content",
     "request_content_type": "request_content_type",
@@ -123,6 +140,15 @@ def build_endpoint(cli: CLIConfig) -> dict[str, Any]:
         extra = dict(cli.extra_inputs)
         _endpoint_template_from_extra(endpoint, extra)
         endpoint["extra"] = extra
+    _endpoint_template_fallback(endpoint)
+
+    reset = _maybe_build_reset_kv_cache(cli)
+    if reset is not None:
+        endpoint["reset_kv_cache"] = reset
+    profiler = _maybe_build_server_profiler(cli)
+    if profiler is not None:
+        endpoint["server_profiler"] = profiler
+
     return endpoint
 
 

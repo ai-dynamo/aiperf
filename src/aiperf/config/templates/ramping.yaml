@@ -44,9 +44,8 @@ benchmark:
   dataset:
     type: synthetic
     entries: 5000
-    prompts:
-      isl: {mean: 512, stddev: 50}
-      osl: {mean: 256, stddev: 25}
+    isl: {mean: 512, stddev: 50}
+    osl: {mean: 256, stddev: 25}
 
   phases:
     - name: warmup

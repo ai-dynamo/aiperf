@@ -156,14 +156,6 @@ class TestCliConvergenceStrategyWiring:
         with patch("os._exit") as mock:
             yield mock
 
-    @pytest.fixture(autouse=True)
-    def mock_native_runner(self):
-        """Keep strategy-wiring tests independent of the mesh subprocess executor."""
-        with patch(
-            "aiperf.orchestrator.local_executor.LocalSubprocessExecutor"
-        ) as mock:
-            yield mock
-
     @patch("aiperf.orchestrator.orchestrator.MultiRunOrchestrator")
     @patch("aiperf.common.logging.setup_rich_logging")
     @patch("aiperf.config.resolution.resolvers.ArtifactDirResolver")

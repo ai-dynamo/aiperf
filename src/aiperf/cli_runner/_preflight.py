@@ -4,10 +4,9 @@
 
 These run before any service bootstrap so misconfiguration surfaces as a
 clean ``ConfigurationError`` instead of a stack trace from deep inside the
-controller. The endpoint-neutral checks are: artifact-dir creatable+writable,
-accuracy benchmark/grader optional dependencies present, and file descriptor
-soft limit raised (and hard limit large enough). Endpoint validation and
-readiness belong to the selected native runner and its compiled adapter.
+controller. The checks are: artifact-dir creatable+writable, accuracy
+benchmark/grader optional dependencies present, file descriptor soft limit
+raised (and hard limit large enough), and the target endpoint reachable.
 """
 
 from __future__ import annotations

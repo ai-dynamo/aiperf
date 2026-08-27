@@ -8,9 +8,9 @@ from pathlib import Path
 
 import orjson
 import pytest
+from aiperf_mock_server.config import MockServerConfig
 
 from aiperf.timing.strategies.adaptive_scale import AdaptiveScaleStrategy
-from tests.aiperf_mock_server.config import MockServerConfig
 from tests.component_integration.timing.conftest import defaults
 from tests.harness.fake_transport import FakeTransport
 from tests.harness.utils import AIPerfCLI

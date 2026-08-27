@@ -8,13 +8,13 @@ from pathlib import Path
 
 import orjson
 import pytest
-from tests.aiperf_mock_server.models import (
+from aiperf_mock_server.models import (
     ChatCompletionRequest,
     CompletionRequest,
     Message,
     ResponsesRequest,
 )
-from tests.aiperf_mock_server.request_recorder import (
+from aiperf_mock_server.request_recorder import (
     RequestRecorder,
     _build_summary,
     _compute_shape_80,
@@ -810,9 +810,9 @@ class TestMaybeRecordRequest:
     """
 
     def test_generate_stream_endpoint_records_stream_true(self, tmp_path) -> None:
-        from tests.aiperf_mock_server.models import TGIGenerateRequest
-        from tests.aiperf_mock_server.request_recorder import set_global_recorder
-        from tests.aiperf_mock_server.utils import _maybe_record_request
+        from aiperf_mock_server.models import TGIGenerateRequest
+        from aiperf_mock_server.request_recorder import set_global_recorder
+        from aiperf_mock_server.utils import _maybe_record_request
 
         tok = _FakeTokenizer(vocab_size=100, encodings={"hi": [1, 2, 3]})
         r = _make_recorder(tmp_path, tok)
@@ -833,9 +833,9 @@ class TestMaybeRecordRequest:
         """Sanity check: the non-streaming `/generate` endpoint stays falsy
         (TGIGenerateRequest has no `stream` field so it records as `None`).
         """
-        from tests.aiperf_mock_server.models import TGIGenerateRequest
-        from tests.aiperf_mock_server.request_recorder import set_global_recorder
-        from tests.aiperf_mock_server.utils import _maybe_record_request
+        from aiperf_mock_server.models import TGIGenerateRequest
+        from aiperf_mock_server.request_recorder import set_global_recorder
+        from aiperf_mock_server.utils import _maybe_record_request
 
         tok = _FakeTokenizer(vocab_size=100, encodings={"hi": [1, 2, 3]})
         r = _make_recorder(tmp_path, tok)

@@ -250,11 +250,39 @@ def _normalize_otel_metrics_url(url: str) -> str:
     the path ends in ``/v1/metrics`` so users don't have to spell out the
     full OTLP/HTTP endpoint.
     """
-    from aiperf.config.otel import normalize_otel_metrics_url
+    from urllib.parse import urlparse, urlunparse
 
-    normalized = normalize_otel_metrics_url(url, field_name="--otel-url")
-    assert normalized is not None
-    return normalized
+    normalized_url = url.strip()
+    if not normalized_url:
+        raise ValueError("--otel-url cannot be empty.")
+
+    if "://" not in normalized_url:
+        normalized_url = f"http://{normalized_url}"
+
+    parsed = urlparse(normalized_url)
+    # ``urlparse("http://:4318")`` yields netloc=":4318" but hostname=None —
+    # netloc truthiness alone is not enough. Require a non-empty hostname so
+    # bare-port values don't slip through and produce a malformed endpoint.
+    if not parsed.scheme or not parsed.netloc or not parsed.hostname:
+        raise ValueError(
+            f"Invalid --otel-url value: {url!r}. Expected host[:port] or a full URL."
+        )
+    if parsed.scheme.lower() not in ("http", "https"):
+        raise ValueError(
+            f"Invalid --otel-url value: {url!r}. "
+            f"Only http and https schemes are supported (got {parsed.scheme!r}). "
+            "OTLP/gRPC is not supported; use the OTLP/HTTP exporter endpoint."
+        )
+
+    path = parsed.path.rstrip("/")
+    if path.endswith("/v1/metrics"):
+        normalized_path = path
+    elif not path:
+        normalized_path = "/v1/metrics"
+    else:
+        normalized_path = f"{path}/v1/metrics"
+
+    return urlunparse(parsed._replace(path=normalized_path))
 
 
 def _parse_otel_resource_attributes(items: list[str] | None) -> dict[str, str]:

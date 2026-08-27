@@ -1,9 +1,17 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Single-benchmark execution through the pure-Python service mesh."""
+"""Single-benchmark execution path for aiperf.cli_runner.
+
+One ``_run_single_benchmark`` call runs one BenchmarkRun under a fresh
+SystemController, then ``os._exit``-s to bypass Python's normal teardown
+(multiprocessing atexit + leftover ZMQ contexts can otherwise hang the
+interpreter under pytest-xdist).
+"""
 
 from __future__ import annotations
 
+import asyncio
+import sys
 from typing import TYPE_CHECKING
 
 from aiperf.cli_runner._callbacks import (
@@ -11,32 +19,21 @@ from aiperf.cli_runner._callbacks import (
     OnComplete,
     _invoke_callbacks,
 )
+from aiperf.cli_runner._process_setup import (
+    _configure_multiprocessing_start_method,
+    _configure_tokenizer_preload,
+    _setup_ui_queues,
+)
+from aiperf.cli_utils import raise_startup_error_and_exit
+from aiperf.common.control_hooks import (
+    prepare_endpoint_control_hooks,
+    run_reset_kv_cache,
+)
+from aiperf.common.endpoint_auth import auth_headers_for_endpoint
+from aiperf.plugin.enums import ServiceType, UIType
 
 if TYPE_CHECKING:
     from aiperf.config import BenchmarkRun
-    from aiperf.orchestrator.models import RunResult
-
-
-def _execute_python_run(run: BenchmarkRun) -> RunResult:
-    """Resolve and execute one run on the in-process Python service mesh.
-
-    The Python frontend never launches the native ``aiperf`` binary. Resolution
-    must complete before the SystemController starts because the service mesh
-    consumes the resolved ``BenchmarkRun`` directly.
-    """
-    from aiperf.common.bootstrap import bootstrap_and_run_service
-    from aiperf.config.resolution.resolvers import build_default_resolver_chain
-    from aiperf.orchestrator.models import RunResult
-    from aiperf.plugin.enums import ServiceType
-
-    build_default_resolver_chain().resolve_all(run)
-    bootstrap_and_run_service(ServiceType.SYSTEM_CONTROLLER, run=run)
-
-    return RunResult(
-        label=run.label or f"run_{run.trial:04d}",
-        success=True,
-        artifacts_path=run.artifact_dir,
-    )
 
 
 async def maybe_reset_kv_cache_before_run(run: BenchmarkRun) -> None:
@@ -66,33 +63,69 @@ def _run_single_benchmark(
             still run. ``AIPERF_RAISE_ON_CALLBACK_ERROR=true`` opts into
             re-raising the first failure after all callbacks have run.
     """
-    from aiperf.common.aiperf_logger import AIPerfLogger
-    from aiperf.common.logging import setup_rich_logging
+    config = run.cfg
+    using_dashboard = config.ui_type == UIType.DASHBOARD
 
-    setup_rich_logging(run)
+    _configure_multiprocessing_start_method(using_dashboard)
+    _configure_tokenizer_preload(run)
+
+    from aiperf.common.aiperf_logger import AIPerfLogger
+    from aiperf.common.bootstrap import bootstrap_and_run_service
+    from aiperf.config.resolution.resolvers import build_default_resolver_chain
+
     logger = AIPerfLogger(__name__)
 
-    logger.info("Starting Python AIPerf run")
+    # Create queues before UI initialization to minimize FD inheritance issues.
+    log_queue = _setup_ui_queues(using_dashboard, run, logger)
+
+    logger.info("Starting AIPerf System")
+
     try:
-        result = _execute_python_run(run)
+        chain = build_default_resolver_chain()
+        chain.resolve_all(run)
+    except Exception as e:  # resolver chain wraps every user-input error type
+        # ``logger.error`` over ``.exception``: user-input errors carry their
+        # own context; tracebacks trip chaos-harness crash heuristics.
+        logger.error(f"Configuration resolution failed: {e}")
+        raise_startup_error_and_exit(
+            f"Configuration resolution failed: {e}",
+            title="Configuration Error",
+        )
+
+    try:
+        asyncio.run(maybe_reset_kv_cache_before_run(run))
+    except Exception as e:
+        logger.error(f"reset_kv_cache failed: {e}")
+        raise_startup_error_and_exit(
+            f"reset_kv_cache failed before benchmark start: {e}",
+            title="Control Hook Error",
+        )
+
+    exit_code = 0
+    try:
+        bootstrap_and_run_service(
+            service_type=ServiceType.SYSTEM_CONTROLLER,
+            run=run,
+            log_queue=log_queue,
+        )
+    except SystemExit as e:
+        exit_code = int(e.code) if e.code is not None else 0
     except Exception:
-        logger.exception("Python AIPerf runner could not be started")
+        logger.exception("Error running AIPerf System")
         exit_code = 1
-    else:
-        exit_code = 0 if result.success else 1
-        if result.success:
-            logger.info("Python AIPerf run completed")
-        else:
-            logger.error(f"Python AIPerf run failed: {result.error or 'unknown error'}")
+    finally:
+        logger.debug("AIPerf System exited")
 
     if exit_code == 0 and on_complete:
         completed = CompletedRun(artifact_dir=run.artifact_dir)
         exit_code = _invoke_callbacks(on_complete, completed, exit_code, logger)
 
-    # Keep the established CLI termination contract after the Python service mesh
-    # has completed and all callbacks are flushed.
+    # Bypass Python's normal teardown: multiprocessing atexit handlers,
+    # leftover ZMQ contexts, and daemon threads can otherwise block the
+    # interpreter from exiting — which is fatal under pytest-xdist where
+    # the parent waits on communicate(). The controller already flushed
+    # logs and wrote artifacts; killing the interpreter here is safe.
     import os as _os
-    import sys
 
     sys.stdout.flush()
     sys.stderr.flush()

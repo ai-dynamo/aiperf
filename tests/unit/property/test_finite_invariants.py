@@ -109,6 +109,8 @@ def _iter_aiperf_modules() -> list[str]:
     skip_prefixes = (
         # Heavy optional deps that fail to import on some envs.
         "aiperf.dataset.agentic_code_gen.reporting",
+        # K8s controller code: imports kopf at import time.
+        "aiperf.kubernetes",
         # Generated / autoflakey
         "aiperf.cli_commands._generated",
     )
@@ -381,6 +383,11 @@ NUMERIC_BOUNDS_WHITELIST: set[str] = {
     # _Environment.ENDPOINT: nested _EndpointSettings object, not a numeric
     # leaf. The heuristic fires because "int" appears in "_EndpointSettings".
     "_Environment.ENDPOINT",
+    # VLLMRatioConfig.range_ratio / SGLangRatioConfig.range_ratio: tuple[float, float]
+    # container — a field-level ge/lt cannot apply to the tuple; bounds [0.0, 1.0)
+    # are enforced by the field_validator on each component.
+    "VLLMRatioConfig.range_ratio",
+    "SGLangRatioConfig.range_ratio",
 }
 
 

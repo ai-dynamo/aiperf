@@ -543,10 +543,10 @@ custom_dataset_loader:
   baseten_trace:
     class: aiperf.dataset.loader.baseten_trace:BasetenTraceDatasetLoader
     description: |
-      Baseten completion trace dataset loader for Parquet exports that include
-      prompts, timestamps, session identifiers, output tokens, and optional
-      hash-based KV-cache metadata. Supports fixed_schedule timing replay for
-      /v1/completions workloads.
+      Baseten completion trace dataset loader for Parquet or Arrow IPC exports
+      that include prompts, timestamps, session identifiers, output tokens, and
+      optional hash-based KV-cache metadata. Arrow IPC files are memory-mapped.
+      Supports fixed_schedule timing replay for /v1/completions workloads.
     metadata:
       is_trace: true
       default_block_size: 64
@@ -582,14 +582,6 @@ custom_dataset_loader:
       DAG-shaped benchmark loader. Each JSONL line is a Conversation;
       supports forks: and spawns: shorthand at the turn level; topology
       walk validates and stamps agent_depth and TurnMetadata.has_forks.
-
-  dynamo_trace:
-    class: aiperf.dataset.loader.recorded_graph:DynamoTraceNativeLoader
-    description: |
-      Dynamo request-trace capture compiled directly to Graph-IR by the native
-      runner. Python retains only the configuration/plugin identity.
-    metadata:
-      is_trace: true
 
   sagemaker_data_capture:
     class: aiperf.dataset.loader.sagemaker_data_capture:SageMakerDataCaptureLoader
@@ -853,6 +845,23 @@ custom_dataset_loader:
       SPEED-Bench throughput ~32K ISL, high entropy tier (512 prompts). Creative writing and dialogue.
     metadata:
       category: high_entropy
+
+  tracelab:
+    class: aiperf.dataset.loader.tracelab_trace:TraceLabTraceDatasetLoader
+    description: |
+      TraceLab agentic coding trace loader for the uw-syfi corpus published at
+      https://github.com/uw-syfi/TraceLab. Input is a single JSONL file, gzipped
+      or plain, holding one row per LLM round. Rounds are grouped into sessions,
+      per-request hash_ids are synthesized from the engine-reported prefix /
+      append token split, and subagent parent-child links are recovered by
+      timing containment before reconstruction is delegated to the Weka trace
+      loader. Subagent entries spawn concurrent child sessions via SPAWN +
+      SPAWN_JOIN prerequisites.
+      Usage: --custom-dataset-type tracelab --input-file syfi_coding_trace.jsonl.gz
+    metadata:
+      is_trace: true
+      default_block_size: 64
+      default_prompt_corpus: coding
 
   weka_trace:
     class: aiperf.dataset.loader.weka_trace:WekaTraceLoader
@@ -1557,10 +1566,11 @@ spec_decode_adapter:
   vllm:
     class: aiperf.spec_decode.vllm_adapter:VLLMSpecDecodeAdapter
     description: |
-      Reads vLLM's per-choice ``speculative_decoding_stats`` (emitted when the
-      server runs with ``--per-request-spec-decode-stats``) and fills the
+      Reads vLLM's response-root ``metrics.speculative_decoding`` (emitted when
+      the server runs with ``--per-request-spec-decode-metrics``) and fills the
       engine-neutral SpecDecodeAcceptanceRecord. Handles chat and completions,
-      streaming and non-streaming; int-casts the string histogram keys.
+      streaming and non-streaming; inflates the dense ``acceptance_histogram``
+      list into the record's sparse map.
     metadata: {}
 
 accuracy_grader:
@@ -1874,17 +1884,6 @@ communication_client:
 # local file. Selected via --public-dataset configuration option.
 # =============================================================================
 public_dataset_loader:
-  weka_cc_traces_062126:
-    class: aiperf.dataset.loader.recorded_graph:WekaTraceNativeLoader
-    description: |
-      Revision-pinned SemiAnalysis nested-agent WEKA traces. Rust loads the
-      selected Hugging Face rows and compiles each trace directly to Graph-IR.
-    metadata:
-      hf_dataset_name: semianalysisai/cc-traces-weka-062126
-      hf_split: train
-      streaming: true
-      has_timing_data: true
-
   exgentic_v2:
     class: aiperf.dataset.loader.exgentic_v2:ExgenticV2DatasetLoader
     description: |

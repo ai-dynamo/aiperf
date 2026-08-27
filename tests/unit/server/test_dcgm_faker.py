@@ -3,16 +3,16 @@
 """Unit tests for DCGMFaker using real telemetry parsing logic."""
 
 import pytest
-from pytest import approx
-
-from aiperf.gpu_telemetry.dcgm_collector import DCGMTelemetryCollector
-from tests.aiperf_mock_server.dcgm_faker import (
+from aiperf_mock_server.dcgm_faker import (
     GPU_CONFIGS,
     METRIC_MAPPINGS,
     DCGMFaker,
     FakeGPU,
     GPUConfig,
 )
+from pytest import approx
+
+from aiperf.gpu_telemetry.dcgm_collector import DCGMTelemetryCollector
 
 
 class TestGPUConfig:

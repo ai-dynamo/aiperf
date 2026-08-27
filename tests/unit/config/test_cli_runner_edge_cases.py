@@ -27,7 +27,6 @@ from aiperf.cli_runner import (
 from aiperf.cli_runner._aggregate import print_aggregate_summary
 from aiperf.config import AIPerfConfig, BenchmarkConfig, BenchmarkPlan, BenchmarkRun
 from aiperf.config.loader import build_benchmark_plan
-from aiperf.orchestrator.models import RunResult
 
 _MINIMAL_CONFIG_KWARGS = {
     "models": ["test-model"],
@@ -58,15 +57,6 @@ def _make_config(**overrides) -> AIPerfConfig:
 def _make_plan(**overrides) -> BenchmarkPlan:
     config = _make_config(**overrides)
     return build_benchmark_plan(config)
-
-
-@pytest.fixture(autouse=True)
-def _no_real_native_process():
-    """CLI policy tests inject the mesh subprocess executor instead of spawning it."""
-    with patch(
-        "aiperf.orchestrator.local_executor.LocalSubprocessExecutor"
-    ) as executor:
-        yield executor
 
 
 # ============================================================
@@ -214,14 +204,17 @@ class TestSingleRunErrorPaths:
         with patch("os._exit") as mock_exit:
             yield mock_exit
 
-    @patch("aiperf.cli_runner._single_run._execute_python_run")
+    @patch("aiperf.config.resolution.resolvers.build_default_resolver_chain")
     @patch("aiperf.common.logging.setup_rich_logging")
-    def test_native_runner_start_failure_exits(
+    def test_resolver_chain_failure_exits(
         self,
         mock_setup_rich: Mock,
-        mock_execute: Mock,
+        mock_chain_factory: Mock,
     ) -> None:
-        mock_execute.side_effect = RuntimeError("runner missing")
+        """When the resolver chain raises, raise_startup_error_and_exit is called (-> SystemExit)."""
+        mock_chain = MagicMock()
+        mock_chain.resolve_all.side_effect = RuntimeError("tokenizer not found")
+        mock_chain_factory.return_value = mock_chain
 
         run = BenchmarkRun(
             benchmark_id="test",
@@ -232,24 +225,22 @@ class TestSingleRunErrorPaths:
         with pytest.raises(SystemExit):
             _run_single_benchmark(run)
 
-    @patch("aiperf.cli_runner._single_run._execute_python_run")
+    @patch("aiperf.config.resolution.resolvers.build_default_resolver_chain")
+    @patch("aiperf.common.bootstrap.bootstrap_and_run_service")
     @patch("aiperf.common.logging.setup_rich_logging")
-    def test_native_terminal_failure_exits_nonzero(
+    def test_bootstrap_exception_logged_and_exits_nonzero(
         self,
         mock_setup_rich: Mock,
-        mock_execute: Mock,
+        mock_bootstrap: Mock,
+        mock_chain_factory: Mock,
         _mock_os_exit: Mock,
     ) -> None:
+        mock_bootstrap.side_effect = RuntimeError("Bootstrap failed")
+
         run = BenchmarkRun(
             benchmark_id="test",
             cfg=BenchmarkConfig(**_MINIMAL_CONFIG_KWARGS),
             artifact_dir=Path("/tmp/test"),
-        )
-        mock_execute.return_value = RunResult(
-            label="native",
-            success=False,
-            error="Rust child failed",
-            artifacts_path=run.artifact_dir,
         )
 
         # Production terminates via os._exit; the harness mocks it to a

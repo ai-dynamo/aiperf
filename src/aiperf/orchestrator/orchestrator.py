@@ -20,7 +20,6 @@ from aiperf.orchestrator.models import RunResult, _variation_key
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from aiperf.config import BenchmarkConfig
     from aiperf.config.resolution.plan import BenchmarkPlan, BenchmarkRun
     from aiperf.config.sweep import SweepVariation
     from aiperf.orchestrator.executor import RunExecutor
@@ -100,27 +99,6 @@ def _resolve_artifact_dir(
     return (
         base_dir / variation.dir_name / "profile_runs" / f"trial_{trial_index + 1:04d}"
     )
-
-
-def _bind_artifact_dir(cfg: BenchmarkConfig, artifact_dir: Path) -> BenchmarkConfig:
-    """Return a per-run config whose ``artifacts.dir`` matches ``artifact_dir``.
-
-    The multi-run orchestrator assigns every run its own ``artifact_dir`` (see
-    :func:`_resolve_artifact_dir`) but ``strategy.get_next_config`` may hand back
-    the shared per-variation base config unchanged. Every artifact output path -
-    the Rust runner's relative projections in ``orchestrator.rust_wire`` and
-    Python's compatibility exporters (``profile_export_aiperf.json`` / ``.csv``)
-    alike - resolves against ``cfg.artifacts.dir``. Without this sync a sweep
-    run's artifacts land in the shared base directory instead of its own
-    ``run_NNNN`` subdirectory, so the per-run relative projection raises (the
-    output is outside the per-run dir) or the exporter overwrites a sibling
-    run's files. Mirror the invariant ``ArtifactDirResolver`` establishes for
-    single runs (``run.artifact_dir == cfg.artifacts.dir``) on a fresh copy so
-    the shared base config is never mutated across cells or trials.
-    """
-    run_cfg = cfg.model_copy()
-    run_cfg.artifacts = cfg.artifacts.model_copy(update={"dir": artifact_dir})
-    return run_cfg
 
 
 def _plan_cooldown_seconds(plan: BenchmarkPlan) -> float:
@@ -454,7 +432,7 @@ class MultiRunOrchestrator:
             run = BenchmarkRun(
                 benchmark_id=executor.derive_id(plan, var_idx, trial),
                 sweep_id=plan.sweep_id,
-                cfg=_bind_artifact_dir(next_cfg, artifact_dir),
+                cfg=next_cfg,
                 variation=variation,
                 trial=trial,
                 label=label,
@@ -583,14 +561,6 @@ class MultiRunOrchestrator:
         strategies, per_variation_history = self._build_repeated_state(plan)
 
         for trial in range(plan.trials):
-            if not any(
-                strategy.should_continue(history)
-                for strategy, history in zip(
-                    strategies, per_variation_history, strict=True
-                )
-            ):
-                logger.info("All repeated-mode cells reached their stopping criteria")
-                break
             if cancel_check is not None and cancel_check():
                 logger.info(f"Sweep cancelled at trial {trial}; aborting")
                 return all_results
@@ -605,12 +575,7 @@ class MultiRunOrchestrator:
             )
             if cancelled:
                 return all_results
-            if trial + 1 < plan.trials and any(
-                strategy.should_continue(history)
-                for strategy, history in zip(
-                    strategies, per_variation_history, strict=True
-                )
-            ):
+            if trial + 1 < plan.trials:
                 cooldown = strategies[0].get_cooldown_seconds()
                 if cooldown > 0:
                     logger.info(f"Inter-trial cooldown: {cooldown}s")
@@ -685,8 +650,6 @@ class MultiRunOrchestrator:
                 )
                 return True
             strategy = strategies[var_idx]
-            if not strategy.should_continue(per_variation_history[var_idx]):
-                continue
             next_cfg = strategy.get_next_config(cfg, per_variation_history[var_idx])
             label = strategy.get_run_label(trial)
             artifact_dir = _resolve_artifact_dir(self.base_dir, plan, variation, trial)
@@ -694,7 +657,7 @@ class MultiRunOrchestrator:
             run = BenchmarkRun(
                 benchmark_id=executor.derive_id(plan, var_idx, trial),
                 sweep_id=plan.sweep_id,
-                cfg=_bind_artifact_dir(next_cfg, artifact_dir),
+                cfg=next_cfg,
                 variation=variation,
                 trial=trial,
                 label=label,
@@ -707,14 +670,12 @@ class MultiRunOrchestrator:
             self._stamp_variation_metadata(result, run, trial)
             all_results.append(result)
             per_variation_history[var_idx].append(result)
-            # Fixed-trial cells finish at plan.trials; adaptive cells finish
-            # as soon as their criterion fires. Emit exactly at that boundary
-            # so repeated mode does not hide a converged cell until the hard cap.
-            if len(
-                per_variation_history[var_idx]
-            ) >= plan.trials or not strategy.should_continue(
-                per_variation_history[var_idx]
-            ):
+            # Fire the cell callback when this variation has gathered all its
+            # trials (under trials-outer/variations-inner this is detectable
+            # by ``len(per_variation_history[var_idx]) == plan.trials``).
+            # Firing earlier would emit a partial cell; firing only at the
+            # last trial keeps a single canonical event per variation.
+            if len(per_variation_history[var_idx]) >= plan.trials:
                 self._fire_cell_callback(
                     plan, variation, list(per_variation_history[var_idx])
                 )

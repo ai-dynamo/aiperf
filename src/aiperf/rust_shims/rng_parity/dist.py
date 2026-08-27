@@ -14,15 +14,15 @@ Two layers, both byte-exact:
 2. **Configured distributions** — the ``SamplingDistribution`` family and
    ``SequenceLengthDistribution`` ported from ``rust/aiperf/src/rng/dist.rs``.
 
-The ziggurat tables live in the generated :mod:`aiperf.common.rng_parity.ziggurat_tables`.
+The ziggurat tables live in the generated :mod:`aiperf.rust_shims.rng_parity.ziggurat_tables`.
 """
 
 from __future__ import annotations
 
 import math
 
-from aiperf.common.rng_parity import ziggurat_tables as zt
-from aiperf.common.rng_parity.errors import RngError
+from aiperf.rust_shims.rng_parity import ziggurat_tables as zt
+from aiperf.rust_shims.rng_parity.errors import RngError
 
 __all__ = [
     "EmpiricalDistribution",

@@ -456,30 +456,34 @@ class TestDatasetResolver:
         with pytest.raises(FileNotFoundError, match="Dataset 'main' file not found"):
             DatasetResolver().resolve(run)
 
-    @pytest.mark.parametrize(
-        ("format_name", "dataset_type"),
-        [
-            ("dag_jsonl", "DAG_JSONL"),
-            ("dynamo_trace", "DYNAMO_TRACE"),
-            ("weka_trace", "WEKA_TRACE"),
-        ],
-    )
-    def test_format_map_includes_direct_graph_adapters(self, format_name, dataset_type):
+    def test_format_map_includes_dag_jsonl(self):
         from aiperf.plugin.enums import CustomDatasetType
 
-        assert DatasetResolver._build_format_map()[format_name] == getattr(
-            CustomDatasetType, dataset_type
+        assert (
+            DatasetResolver._build_format_map()["dag_jsonl"]
+            == CustomDatasetType.DAG_JSONL
         )
 
-    @pytest.mark.parametrize("format_name", ["dag_jsonl", "dynamo_trace", "weka_trace"])
-    def test_direct_graph_files_are_opaque_to_python_resolution(
-        self, tmp_path, format_name
-    ):
-        """Malformed, large graph bytes pass untouched to the Rust adapter."""
-        from aiperf.plugin.enums import CustomDatasetType
+    def test_counts_dag_roots_for_dag_jsonl(self, tmp_path):
+        """Forking datasets (dag_jsonl) should populate dataset_root_count.
 
-        dataset_file = tmp_path / f"{format_name}.opaque"
-        dataset_file.write_bytes(b"\xffnot-python-json\x00" + b"x" * (2 * 1024 * 1024))
+        File: s1 (root), s2 (child of s1.forks), s3 (child of s2.spawns),
+        s4 (root, referenced by no one). Roots = {s1, s4} -> count=2.
+        Non-roots = {s2, s3}.
+        """
+        import json
+
+        dataset_file = tmp_path / "dag.jsonl"
+        lines = [
+            {"session_id": "s1", "turns": [{"forks": ["s2"]}]},
+            {
+                "session_id": "s2",
+                "turns": [{"spawns": [{"children": ["s3"]}]}],
+            },
+            {"session_id": "s3", "turns": []},
+            {"session_id": "s4", "turns": []},
+        ]
+        dataset_file.write_text("\n".join(json.dumps(line) for line in lines) + "\n")
 
         config = BenchmarkConfig(
             models=["test-model"],
@@ -489,7 +493,7 @@ class TestDatasetResolver:
                     "name": "profiling",
                     "type": "file",
                     "path": str(dataset_file),
-                    "format": format_name,
+                    "format": "dag_jsonl",
                 }
             ],
             phases=[
@@ -503,83 +507,10 @@ class TestDatasetResolver:
         )
         run = _make_run(config, artifact_dir=tmp_path / "out")
 
-        with (
-            patch("builtins.open", side_effect=AssertionError("graph payload opened")),
-            patch.object(
-                DatasetResolver,
-                "_detect_type",
-                side_effect=AssertionError("graph payload auto-detected"),
-            ),
-            patch.object(
-                DatasetResolver,
-                "_resolve_sampling",
-                side_effect=AssertionError("Python graph loader consulted"),
-            ),
-            patch.object(
-                DatasetResolver,
-                "_check_timing_data",
-                side_effect=AssertionError("graph timing probed"),
-            ),
-            patch.object(
-                DatasetResolver,
-                "_count_records_and_sessions",
-                side_effect=AssertionError("graph rows counted"),
-            ),
-        ):
-            DatasetResolver().resolve(run)
+        DatasetResolver().resolve(run)
 
-        expected_type = {
-            "dag_jsonl": CustomDatasetType.DAG_JSONL,
-            "dynamo_trace": CustomDatasetType.DYNAMO_TRACE,
-            "weka_trace": CustomDatasetType.WEKA_TRACE,
-        }[format_name]
-        assert run.resolved.dataset_file_paths == {"profiling": dataset_file.resolve()}
-        assert run.resolved.dataset_types == {"profiling": expected_type}
-        assert run.resolved.dataset_sampling_strategies is None
-        assert run.resolved.dataset_has_timing_data is None
-        assert run.resolved.dataset_total_records is None
-        assert run.resolved.dataset_session_count is None
-        assert run.resolved.dataset_root_count is None
-        assert run.resolved.dataset_is_forking == {
-            "profiling": format_name == "dag_jsonl"
-        }
-
-    @pytest.mark.parametrize("format_name", ["dag_jsonl", "dynamo_trace", "weka_trace"])
-    def test_direct_graph_path_existence_is_validated_only_by_rust(
-        self, tmp_path, format_name
-    ):
-        dataset_file = tmp_path / f"missing-{format_name}"
-        config = BenchmarkConfig(
-            models=["test-model"],
-            endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
-            datasets=[
-                {
-                    "name": "profiling",
-                    "type": "file",
-                    "path": str(dataset_file),
-                    "format": format_name,
-                }
-            ],
-            phases=[
-                {
-                    "name": "profiling",
-                    "type": "concurrency",
-                    "requests": 1,
-                    "concurrency": 1,
-                }
-            ],
-        )
-        run = _make_run(config, artifact_dir=tmp_path / "out")
-
-        with patch.object(
-            Path,
-            "exists",
-            side_effect=AssertionError("Python validated graph path existence"),
-        ):
-            DatasetResolver().resolve(run)
-
-        assert run.resolved.dataset_file_paths == {"profiling": dataset_file.resolve()}
-        assert run.resolved.dataset_total_records is None
+        assert run.resolved.dataset_is_forking == {"profiling": True}
+        assert run.resolved.dataset_root_count == {"profiling": 2}
 
     def test_non_forking_dataset_marks_is_forking_false(self, tmp_path):
         """Non-DAG file datasets get is_forking=False, root_count unset."""
@@ -839,8 +770,6 @@ class TestBuildDefaultResolverChain:
         assert len(chain._resolvers) == 7
 
     def test_resolver_order(self):
-        from aiperf.config.resolution.resolvers import ScenarioResolver
-
         chain = build_default_resolver_chain()
         types = [type(r) for r in chain._resolvers]
         # ScenarioResolver sits AFTER DatasetResolver (needs resolved
@@ -874,7 +803,7 @@ class TestDeriveRunMeta:
     """Cover the EPOCH_RE-gated branch in ``_derive_run_meta``.
 
     Operator layout is ``<base>/<ns>/<name>/<epoch>``; an epoch-shaped leaf
-    means the parent
+    (matched by ``aiperf.operator.results_layout.EPOCH_RE``) means the parent
     is the AIPerfJob name. A non-epoch leaf is treated as a local-CLI run.
     """
 

@@ -6,10 +6,10 @@ import asyncio
 import time
 
 import pytest
-from tests.aiperf_mock_server import scheduler as scheduler_module
-from tests.aiperf_mock_server.config import MockServerConfig
-from tests.aiperf_mock_server.scheduler import BatchScheduler
-from tests.aiperf_mock_server.utils import LatencySimulator
+from aiperf_mock_server import scheduler as scheduler_module
+from aiperf_mock_server.config import MockServerConfig
+from aiperf_mock_server.scheduler import BatchScheduler
+from aiperf_mock_server.utils import LatencySimulator
 
 
 @pytest.mark.asyncio

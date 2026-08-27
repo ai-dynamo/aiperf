@@ -103,12 +103,6 @@ def _assemble_plan_from_aiperf_config(
     reads them directly. The full `multi_run` and `sweep` objects ride
     along for downstream readers that need the typed structure.
     """
-    artifacts = config.benchmark.artifacts
-    records_path = (
-        str(artifacts.profile_export_jsonl_file.relative_to(artifacts.dir))
-        if artifacts.records is not False or artifacts.raw
-        else None
-    )
     plan = BenchmarkPlan(
         configs=configs,
         variations=variations,
@@ -124,8 +118,6 @@ def _assemble_plan_from_aiperf_config(
         failure_policy=None,
         variables=dict(config.variables),
         plot=config.plot,
-        export_level=str(artifacts.export_level),
-        export_jsonl_file=records_path,
     )
     _apply_sweep_seed_derivation(plan, config)
     return plan

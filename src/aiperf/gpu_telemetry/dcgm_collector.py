@@ -93,31 +93,11 @@ class DCGMTelemetryCollector(BaseMetricsCollectorMixin[TelemetryRecord]):
         Raises:
             Exception: Any exception from fetch or parse is logged and re-raised
         """
-        records, duplicate = await self.collect_records_once()
-        if duplicate:
-            return
-        await self._send_records_via_callback(records)
-
-    async def collect_records_once(
-        self, *, bypass_dedup: bool = False
-    ) -> tuple[list[TelemetryRecord], bool]:
-        """Fetch and parse one snapshot without routing it through callbacks.
-
-        The Rust-owned phase driver uses this public control-plane seam for
-        mandatory start/end counter barriers. Ordinary cadence calls preserve
-        response-body deduplication; a boundary sets ``bypass_dedup`` so an
-        unchanged body still yields the exact current counter values.
-
-        Returns:
-            ``(records, duplicate)``. ``duplicate`` remains true when the body
-            matches the prior fetch even if ``bypass_dedup`` requested records.
-        """
         fetch_result = await self._fetch_metrics_text()
-        if fetch_result.is_duplicate and not bypass_dedup:
-            return [], True
-        return self._parse_metrics_to_records(fetch_result.text or ""), bool(
-            fetch_result.is_duplicate
-        )
+        if fetch_result.is_duplicate:
+            return
+        records = self._parse_metrics_to_records(fetch_result.text)
+        await self._send_records_via_callback(records)
 
     def _parse_metrics_to_records(self, metrics_data: str) -> list[TelemetryRecord]:
         """Parse DCGM metrics text into TelemetryRecord objects using prometheus_client.

@@ -33,8 +33,10 @@ ENDPOINT_FIELDS: frozenset[str] = frozenset(
         "session_header",
         "streaming",
         "timeout_seconds",
+        "transport",
         "endpoint_type",
         "url_selection_strategy",
+        "per_chunk_usage",
         "urls",
         "use_legacy_max_tokens",
         "use_server_token_count",
@@ -134,7 +136,6 @@ INPUT_FIELDS: frozenset[str] = frozenset(
         "synthesis_output_len_multiplier",
         "synthesis_max_isl",
         "synthesis_max_osl",
-        "synthesis_idle_gap_cap",
     }
 )
 
@@ -196,7 +197,6 @@ LOADGEN_FIELDS: frozenset[str] = frozenset(
         "warmup_request_count",
         "warmup_request_rate",
         "warmup_request_rate_ramp_duration",
-        "agentic_cache_warmup_duration",
     }
 )
 

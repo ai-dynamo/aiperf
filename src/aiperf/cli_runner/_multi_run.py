@@ -147,8 +147,6 @@ def _execute_multi_benchmark(
         else None
     )
     orchestrator = MultiRunOrchestrator(base_dir=base_dir, cell_callback=table_logger)
-    # The Python frontend runs each variation/trial on the pure-Python service
-    # mesh via a fresh subprocess (never bridges to the native `aiperf` binary).
     executor = LocalSubprocessExecutor(base_dir=base_dir)
     search_planner = _build_search_planner(plan)
     _log_search_planner_active(plan, search_planner, logger)

@@ -81,18 +81,10 @@ def _make_plan(
     )
 
 
-@pytest.fixture(autouse=True)
-def _no_real_native_process():
-    """CLI policy tests inject the mesh subprocess executor instead of spawning it."""
-    with patch(
-        "aiperf.orchestrator.local_executor.LocalSubprocessExecutor"
-    ) as executor:
-        yield executor
-
-
 class TestRunBenchmark:
     """Test run_benchmark routing for BenchmarkPlan inputs."""
 
+    @patch("aiperf.cli_runner._preflight_endpoint_ready")
     @patch("aiperf.cli_runner._preflight_fd_limit")
     @patch("aiperf.cli_runner._preflight_artifact_dir")
     @patch("aiperf.cli_runner._run_single_benchmark")
@@ -101,6 +93,7 @@ class TestRunBenchmark:
         mock_single: Mock,
         mock_artifact: Mock,
         mock_fd: Mock,
+        mock_endpoint: Mock,
     ):
         from aiperf.cli_runner import run_benchmark
 
@@ -114,7 +107,9 @@ class TestRunBenchmark:
         assert run.cfg is plan.configs[0]
         mock_artifact.assert_called_once_with(plan)
         mock_fd.assert_called_once_with()
+        mock_endpoint.assert_called_once_with(plan)
 
+    @patch("aiperf.cli_runner._preflight_endpoint_ready")
     @patch("aiperf.cli_runner._preflight_fd_limit")
     @patch("aiperf.cli_runner._preflight_artifact_dir")
     @patch("aiperf.cli_runner._run_multi_benchmark")
@@ -123,6 +118,7 @@ class TestRunBenchmark:
         mock_multi: Mock,
         mock_artifact: Mock,
         mock_fd: Mock,
+        mock_endpoint: Mock,
     ):
         from aiperf.cli_runner import run_benchmark
 
@@ -133,7 +129,9 @@ class TestRunBenchmark:
         mock_multi.assert_called_once_with(plan, on_complete=[])
         mock_artifact.assert_called_once_with(plan)
         mock_fd.assert_called_once_with()
+        mock_endpoint.assert_called_once_with(plan)
 
+    @patch("aiperf.cli_runner._preflight_endpoint_ready")
     @patch("aiperf.cli_runner._preflight_fd_limit")
     @patch("aiperf.cli_runner._preflight_artifact_dir")
     @patch("aiperf.cli_runner._run_multi_benchmark")
@@ -142,6 +140,7 @@ class TestRunBenchmark:
         mock_multi: Mock,
         mock_artifact: Mock,
         mock_fd: Mock,
+        mock_endpoint: Mock,
     ):
         from aiperf.cli_runner import run_benchmark
 
@@ -164,80 +163,54 @@ class TestRunBenchmark:
         mock_multi.assert_called_once_with(plan, on_complete=[])
         mock_artifact.assert_called_once_with(plan)
         mock_fd.assert_called_once_with()
-
-    @pytest.mark.parametrize("endpoint_type", ["messages", "acme_chat"])
-    @patch("aiperf.cli_runner._preflight_fd_limit")
-    @patch("aiperf.cli_runner._preflight_artifact_dir")
-    @patch("aiperf.cli_runner._run_single_benchmark")
-    def test_native_path_never_enters_python_endpoint_readiness_probe(
-        self,
-        mock_single: Mock,
-        _mock_artifact: Mock,
-        _mock_fd: Mock,
-        endpoint_type: str,
-    ) -> None:
-        from aiperf.cli_runner import run_benchmark
-
-        config = _make_config(
-            endpoint={
-                "urls": ["http://localhost:8000"],
-                "type": endpoint_type,
-                "wait_for_model_timeout": 60,
-            }
-        )
-        plan = _make_plan(config=config)
-
-        with patch(
-            "aiperf.common.readiness_probe.wait_for_endpoint"
-        ) as readiness_probe:
-            run_benchmark(plan)
-
-        mock_single.assert_called_once()
-        readiness_probe.assert_not_called()
+        mock_endpoint.assert_called_once_with(plan)
 
 
 class TestRunSingleBenchmark:
     """Test the _run_single_benchmark function."""
 
     @patch("os._exit")
+    @patch("aiperf.config.resolution.resolvers.build_default_resolver_chain")
+    @patch("aiperf.common.bootstrap.bootstrap_and_run_service")
     @patch("aiperf.common.logging.setup_rich_logging")
-    @patch("aiperf.cli_runner._single_run._execute_python_run")
-    def test_simple_ui_runs_native_subprocess(
+    def test_simple_ui_uses_rich_logging(
         self,
-        mock_execute: Mock,
         mock_setup_rich: Mock,
+        mock_bootstrap: Mock,
+        mock_resolver_chain: Mock,
         mock_exit: Mock,
     ):
         from aiperf.cli_runner import _run_single_benchmark
 
         config = _make_config(runtime={"ui": UIType.SIMPLE})
         run = _make_run(config)
-        mock_execute.return_value = RunResult(
-            label="native", success=True, artifacts_path=run.artifact_dir
-        )
+        chain = MagicMock()
+        mock_resolver_chain.return_value = chain
 
         _run_single_benchmark(run)
 
         mock_setup_rich.assert_called_once_with(run)
-        mock_execute.assert_called_once_with(run)
+        chain.resolve_all.assert_called_once_with(run)
+        mock_bootstrap.assert_called_once()
+        call_kwargs = mock_bootstrap.call_args.kwargs
+        assert call_kwargs["run"] is run
+        assert call_kwargs.get("log_queue") is None
         mock_exit.assert_called_once_with(0)
 
     @patch("os._exit")
-    @patch("aiperf.cli_runner._single_run._execute_python_run")
-    def test_native_failure_exits_nonzero(
+    @patch("aiperf.config.resolution.resolvers.build_default_resolver_chain")
+    @patch("aiperf.common.bootstrap.bootstrap_and_run_service")
+    def test_bootstrap_exception_exits_nonzero(
         self,
-        mock_execute: Mock,
+        mock_bootstrap: Mock,
+        mock_resolver_chain: Mock,
         mock_exit: Mock,
     ):
         from aiperf.cli_runner import _run_single_benchmark
 
         run = _make_run(_make_config(runtime={"ui": UIType.SIMPLE}))
-        mock_execute.return_value = RunResult(
-            label="native",
-            success=False,
-            error="Rust child failed",
-            artifacts_path=run.artifact_dir,
-        )
+        mock_resolver_chain.return_value = MagicMock()
+        mock_bootstrap.side_effect = RuntimeError("Bootstrap failed")
 
         # Production: os._exit terminates the process. With os._exit mocked
         # to a no-op the runner falls through to sys.exit(exit_code) so the
@@ -246,7 +219,6 @@ class TestRunSingleBenchmark:
             _run_single_benchmark(run)
 
         assert excinfo.value.code == 1
-        mock_execute.assert_called_once_with(run)
         mock_exit.assert_called_once_with(1)
 
 
@@ -382,139 +354,3 @@ class TestRunMultiBenchmark:
 
         with pytest.raises(ValueError, match="Dashboard UI is not supported"):
             _run_multi_benchmark(plan)
-
-
-class TestNativeOnlyGuard:
-    """The local Python frontend rejects native-only configs (SP-B).
-
-    ``python -m aiperf.cli profile`` runs only the pure-Python service mesh
-    (HTTP, single process). Configs requesting a native-only capability must
-    fail fast pointing at the native ``aiperf`` binary, never silently degrade.
-    """
-
-    def test_transport_key_rejected_by_schema(self):
-        """`transport` is no longer a Config-v2 field (the native runner owns the
-        transport axis); ``extra='forbid'`` rejects grpc/dynosim configs at load."""
-        import pydantic
-
-        with pytest.raises(pydantic.ValidationError):
-            _make_config(transport={"type": "grpc"})
-        with pytest.raises(pydantic.ValidationError):
-            _make_config(transport={"type": "dynosim_offline"})
-
-    def test_workload_key_rejected_by_schema(self):
-        """`workload` is no longer a Config-v2 field; ``extra='forbid'`` rejects it."""
-        import pydantic
-
-        with pytest.raises(pydantic.ValidationError):
-            _make_config(workload={"type": "scheduled"})
-
-    @patch("aiperf.cli_runner._preflight_fd_limit")
-    @patch("aiperf.cli_runner._preflight_artifact_dir")
-    @patch("aiperf.cli_runner._run_single_benchmark")
-    def test_multi_cell_rejected(
-        self, mock_single: Mock, _mock_artifact: Mock, _mock_fd: Mock
-    ):
-        from aiperf.cli_runner import run_benchmark
-        from aiperf.config.loader.errors import ConfigurationError
-
-        plan = _make_plan(
-            config=_make_config(runtime={"ui": UIType.SIMPLE, "cells": 4})
-        )
-
-        with pytest.raises(ConfigurationError, match="runtime.cells=4"):
-            run_benchmark(plan)
-        mock_single.assert_not_called()
-
-    @patch("aiperf.cli_runner._preflight_fd_limit")
-    @patch("aiperf.cli_runner._preflight_artifact_dir")
-    @patch("aiperf.cli_runner._run_single_benchmark")
-    def test_sketch_metrics_rejected(
-        self, mock_single: Mock, _mock_artifact: Mock, _mock_fd: Mock
-    ):
-        from aiperf.cli_runner import run_benchmark
-        from aiperf.common.environment import Environment
-        from aiperf.config.loader.errors import ConfigurationError
-
-        plan = _make_plan()
-        original = Environment.METRICS.SKETCH
-        Environment.METRICS.SKETCH = True
-        try:
-            with pytest.raises(ConfigurationError, match="--sketch-metrics"):
-                run_benchmark(plan)
-        finally:
-            Environment.METRICS.SKETCH = original
-        mock_single.assert_not_called()
-
-    @patch("aiperf.cli_runner._preflight_fd_limit")
-    @patch("aiperf.cli_runner._preflight_artifact_dir")
-    @patch("aiperf.cli_runner._run_single_benchmark")
-    def test_default_http_config_allowed(
-        self, mock_single: Mock, _mock_artifact: Mock, _mock_fd: Mock
-    ):
-        from aiperf.cli_runner import run_benchmark
-
-        # The default (HTTP, single cell, no explicit workload) passes the guard.
-        run_benchmark(_make_plan())
-
-        mock_single.assert_called_once()
-
-
-class TestLocalPathUsesMesh:
-    """The local execution path runs the pure-Python mesh, not the Rust bridge."""
-
-    def test_single_run_executes_on_service_mesh(self, tmp_path: Path):
-        """``_execute_python_run`` boots the SystemController mesh in-process."""
-        from aiperf.cli_runner import _single_run
-
-        run = _make_run(_make_config(), artifact_dir=tmp_path)
-
-        with (
-            patch("aiperf.config.resolution.resolvers.build_default_resolver_chain"),
-            patch(
-                "aiperf.common.bootstrap.bootstrap_and_run_service"
-            ) as mock_bootstrap,
-        ):
-            result = _single_run._execute_python_run(run)
-
-        from aiperf.plugin.enums import ServiceType
-
-        mock_bootstrap.assert_called_once()
-        assert mock_bootstrap.call_args.args[0] == ServiceType.SYSTEM_CONTROLLER
-        assert mock_bootstrap.call_args.kwargs["run"] is run
-        assert result.success is True
-
-    def test_multi_run_executor_is_local_subprocess(self, tmp_path: Path):
-        """The multi-run path constructs the mesh subprocess executor and hands it
-        to the orchestrator (never the deleted native bridge executor)."""
-        captured = {}
-
-        class _Recorder:
-            def __init__(self, **kwargs):
-                pass
-
-            async def execute(self, plan, executor, *, search_planner=None):
-                captured["executor"] = executor
-                return []
-
-        sentinel = object()
-        with (
-            patch("aiperf.orchestrator.orchestrator.MultiRunOrchestrator", _Recorder),
-            # Override the autouse fixture's opaque patch with one that records
-            # construction and returns a recognizable sentinel instance.
-            patch(
-                "aiperf.orchestrator.local_executor.LocalSubprocessExecutor",
-                return_value=sentinel,
-            ) as ctor,
-            patch("aiperf.cli_runner._multi_run._estimate_and_log_duration") as est,
-        ):
-            est.return_value = tmp_path
-            from aiperf.cli_runner._multi_run import _execute_multi_benchmark
-            from aiperf.common.aiperf_logger import AIPerfLogger
-
-            _execute_multi_benchmark(
-                _make_plan(trials=2), tmp_path, AIPerfLogger(__name__)
-            )
-
-        ctor.assert_called_once_with(base_dir=tmp_path)
-        assert captured["executor"] is sentinel

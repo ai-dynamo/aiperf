@@ -3,7 +3,7 @@
 """Unit tests for FakeTransport."""
 
 import pytest
-from tests.aiperf_mock_server.config import MockServerConfig
+from aiperf_mock_server.config import MockServerConfig
 
 from aiperf.common.enums import CreditPhase, ModelSelectionStrategy
 from aiperf.common.models import RequestInfo, RequestRecord, SSEMessage, TextResponse

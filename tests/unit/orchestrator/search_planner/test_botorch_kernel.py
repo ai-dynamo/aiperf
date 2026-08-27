@@ -80,13 +80,13 @@ class TestDspKernelBatchShape:
         train_x = torch.rand(6, 1, dtype=torch.float64)
         train_y = torch.rand(6, n_outputs, dtype=torch.float64)
 
-        _, batch_shape = SingleTaskGP.get_batch_dimensions(
-            train_X=train_x, train_Y=train_y
-        )
         model = SingleTaskGP(
             train_x,
             train_y,
-            covar_module=make_dsp_kernel(d=1, batch_shape=batch_shape),
+            covar_module=make_dsp_kernel(
+                d=1,
+                batch_shape=torch.Size([n_outputs]) if n_outputs > 1 else None,
+            ),
             outcome_transform=Standardize(m=n_outputs),
         )
         fit_gpytorch_mll(ExactMarginalLogLikelihood(model.likelihood, model))

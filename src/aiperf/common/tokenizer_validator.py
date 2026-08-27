@@ -230,8 +230,7 @@ def validate_tokenizer_early(
 
     Returns:
         Mapping of ``{model_name: resolved_tokenizer_name}``, or ``None``
-        if tokenizer validation was skipped for authoritative server token
-        counts on a non-synthetic dataset.
+        if tokenizer validation was skipped (e.g. server token counts).
 
     Raises:
         SystemExit: If alias resolution, ambiguity check, or caching fails.
@@ -243,12 +242,19 @@ def validate_tokenizer_early(
         BUILTIN_TOKENIZER_NAME,
         TIKTOKEN_ENCODING_NAMES,
     )
+    from aiperf.plugin import plugins
+
+    endpoint_meta = plugins.get_endpoint_metadata(config.endpoint.type)
 
     # Skip if using server token counts with non-synthetic data
     default_dataset = config.get_default_dataset()
     is_synthetic = getattr(default_dataset, "type", None) == DatasetType.SYNTHETIC
     if config.endpoint.use_server_token_count and not is_synthetic:
         logger.debug("Using server token counts, skipping tokenizer validation")
+        return None
+
+    if not endpoint_meta.produces_tokens and not endpoint_meta.tokenizes_input:
+        logger.debug("Endpoint doesn't require tokenizer, skipping validation")
         return None
 
     tokenizer_cfg = config.tokenizer

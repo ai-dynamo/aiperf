@@ -131,7 +131,7 @@ class BasePhaseConfig(AdaptiveScalePhaseMixin, BaseConfig):
     ]
 
     # -------------------------------------------------------------------------
-    # Stop Conditions (the owning workload decides whether one is required)
+    # Stop Conditions (at least one required unless _stop_condition_required=False)
     # -------------------------------------------------------------------------
 
     requests: Annotated[
@@ -158,19 +158,6 @@ class BasePhaseConfig(AdaptiveScalePhaseMixin, BaseConfig):
             ge=1,
             default=None,
             description="Stop after this many sessions completed (must be >= 1).",
-        ),
-    ]
-
-    agentic_cache_warmup_duration: Annotated[
-        float | None,
-        Field(
-            default=None,
-            gt=0,
-            description="Extended cache-pressure warmup duration, in seconds, for "
-            "recorded-graph (agentic/weka) replay. When set on a warmup phase, the "
-            "native runner drives cache-pressure warmup traffic for this many "
-            "seconds to prime the server's prefix/KV cache before profiling begins. "
-            "None (the default) disables the extended cache-pressure warmup.",
         ),
     ]
 
@@ -450,16 +437,15 @@ class BasePhaseConfig(AdaptiveScalePhaseMixin, BaseConfig):
         if self.exclude_from_results != required:
             self.exclude_from_results = required
         if (
-            "exclude_from_results" in self.model_fields_set
-            and self.exclude_from_results != required
+            self._stop_condition_required
+            and self.requests is None
+            and self.duration is None
+            and self.sessions is None
         ):
             raise ValueError(
-                f"Phase '{self.name}': exclude_from_results must be "
-                f"{required} for kind '{self.kind}' (warmup is always "
-                "excluded; profiling is always included)"
+                f"Phase '{self.name}': at least one of "
+                "'requests', 'duration', or 'sessions' must be specified"
             )
-        if self.exclude_from_results != required:
-            self.exclude_from_results = required
         if (
             self.prefill_concurrency is not None
             and self.concurrency is not None

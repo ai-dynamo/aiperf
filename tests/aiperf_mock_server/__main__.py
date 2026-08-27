@@ -7,7 +7,7 @@ import sys
 
 import cyclopts
 import uvicorn
-from tests.aiperf_mock_server.config import (
+from aiperf_mock_server.config import (
     MockServerConfig,
     public_config_dump,
     set_server_config,
@@ -41,7 +41,7 @@ def serve(config: MockServerConfig | None = None) -> None:
     logger.info("Config: %s", public_config_dump(config))
 
     uvicorn.run(
-        "tests.aiperf_mock_server.app:asgi_app",
+        "aiperf_mock_server.app:asgi_app",
         host=config.host,
         port=config.port,
         log_level=config.log_level.lower(),

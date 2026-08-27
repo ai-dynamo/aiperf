@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -21,7 +20,6 @@ from aiperf.config.loader.jinja import (
 
 if TYPE_CHECKING:
     from aiperf.config.config import AIPerfConfig
-    from aiperf.config.resolution.plan import BenchmarkPlan
 
 _logger = AIPerfLogger(__name__)
 
@@ -605,10 +603,8 @@ def save_config(
     file_path.write_text(yaml_content, encoding="utf-8")
 
 
-def _build_validation_plan(
-    config: AIPerfConfig, file_path: Path | str
-) -> BenchmarkPlan:
-    """Build the execution-shaped plan so expansion errors surface at validate time.
+def _validate_sweep_expansion(config: AIPerfConfig, file_path: Path | str) -> None:
+    """Exercise sweep expansion so path/shape errors surface at validate time.
 
     ``aiperf profile`` runs the same pipeline; doing it here gives the cheap
     pre-flight check parity. ``pydantic.ValidationError`` (extra-field rejects
@@ -622,7 +618,7 @@ def _build_validation_plan(
     from aiperf.config.loader.plan import build_benchmark_plan
 
     try:
-        return build_benchmark_plan(config)
+        build_benchmark_plan(config)
     except ConfigurationError:
         raise
     except (ValidationError, ValueError, TypeError) as e:
@@ -632,11 +628,7 @@ def _build_validation_plan(
         ) from e
 
 
-def validate_config_file(
-    file_path: Path | str,
-    *,
-    plan_validator: Callable[[BenchmarkPlan], None] | None = None,
-) -> list[str]:
+def validate_config_file(file_path: Path | str) -> list[str]:
     """
     Validate a configuration file and return any warnings.
 
@@ -645,10 +637,6 @@ def validate_config_file(
 
     Args:
         file_path: Path to the YAML configuration file.
-        plan_validator: Optional side-effect-free validation hook invoked with
-            the same expanded ``BenchmarkPlan`` used by execution. The config
-            CLI uses this seam for exact-image native protocol validation;
-            library callers that omit it retain Python-only validation.
 
     Returns:
         List of warning messages (empty if no issues).
@@ -666,9 +654,8 @@ def validate_config_file(
     # Load the config (will raise on fatal errors)
     config = load_config(file_path)
 
-    plan = None
-    if config.sweep is not None or plan_validator is not None:
-        plan = _build_validation_plan(config, file_path)
+    if config.sweep is not None:
+        _validate_sweep_expansion(config, file_path)
 
     # Check for potential issues
 
@@ -710,12 +697,6 @@ def validate_config_file(
                 f"Load config '{phase.name}' has prefill_concurrency set but "
                 "streaming is disabled. Prefill concurrency requires streaming=true."
             )
-
-    # Preserve Python schema/lint error priority. The optional external
-    # validator sees the exact plan only after all in-process checks pass.
-    if plan_validator is not None:
-        assert plan is not None
-        plan_validator(plan)
 
     return warnings
 

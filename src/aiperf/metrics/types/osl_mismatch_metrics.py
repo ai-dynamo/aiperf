@@ -87,7 +87,7 @@ class OSLMismatchDiffMetric(BaseRecordMetric[float]):
     """
 
     tag = "osl_mismatch_diff_pct"
-    header = "OSL Mismatch Diff"
+    header = "OSL Mismatch Diff %"
     short_header = "OSL Diff"
     short_header_hide_unit = True
     unit = GenericMetricUnit.PERCENT

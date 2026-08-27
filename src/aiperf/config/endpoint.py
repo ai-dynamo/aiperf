@@ -10,7 +10,7 @@ Endpoint - Server connection and API configuration
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Annotated, Any, Literal, Self, TypeAlias
+from typing import Annotated, Any, Literal, Self
 from urllib.parse import urlparse
 
 from pydantic import (
@@ -43,32 +43,15 @@ from aiperf.plugin.enums import (
 __all__ = [
     "EndpointConfig",
     "EndpointDefaults",
-    "EndpointId",
     "TemplateConfig",
 ]
-
-
-def _normalize_endpoint_id(value: str) -> str:
-    """Strip presentation whitespace while preserving runner-owned identity."""
-    normalized = value.strip()
-    if not normalized:
-        raise ValueError("endpoint type must be a non-empty string")
-    return normalized
-
-
-EndpointId: TypeAlias = Annotated[
-    str,
-    Field(min_length=1),
-    AfterValidator(_normalize_endpoint_id),
-]
-"""Portable endpoint identifier resolved against the selected native runner."""
 
 
 @dataclass(frozen=True)
 class EndpointDefaults:
     MODEL_SELECTION_STRATEGY = ModelSelectionStrategy.ROUND_ROBIN
     CUSTOM_ENDPOINT = None
-    TYPE = "chat"
+    TYPE = EndpointType.CHAT
     STREAMING = False
     URL = "http://localhost:8000"
     URL_STRATEGY = URLSelectionStrategy.ROUND_ROBIN
@@ -76,11 +59,8 @@ class EndpointDefaults:
     API_KEY = None
     USE_LEGACY_MAX_TOKENS = False
     USE_SERVER_TOKEN_COUNT = False
+    PER_CHUNK_USAGE = False
     CONNECTION_REUSE_STRATEGY = ConnectionReuseStrategy.POOLED
-    HTTP2 = False
-    SSL_VERIFY = True
-    CONNECTION_LIMIT = 2500
-    KEEPALIVE_TIMEOUT = 300.0
     DOWNLOAD_VIDEO_CONTENT = False
     REQUEST_CONTENT_TYPE = None
     # Readiness probe defaults. Timeout 0 disables the probe (the default);
@@ -94,7 +74,12 @@ class EndpointDefaults:
 
 
 class TemplateConfig(BaseConfig):
-    """Optional request/response template policy for a runner adapter."""
+    """
+    Configuration for custom template-based endpoints.
+
+    When endpoint type is "template", this configures how requests
+    are formatted and responses are parsed.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -134,8 +119,7 @@ class EndpointConfig(BaseConfig):
             description="List of server URLs to benchmark. "
             "Requests distributed according to url_strategy. "
             "URLs without a scheme have ``http://`` prepended automatically. "
-            "Protocol-v2 native gRPC backends accept explicit ``grpc://`` or "
-            "``grpcs://`` targets. Example: ['http://localhost:8000']",
+            "Example: ['http://localhost:8000/v1/chat/completions']",
             json_schema_extra={"x-kubernetes-preserve-unknown-fields": True},
         ),
         AfterValidator(normalize_http_urls),
@@ -161,12 +145,14 @@ class EndpointConfig(BaseConfig):
     ]
 
     type: Annotated[
-        EndpointId,
+        EndpointType,
         Field(
-            default=EndpointDefaults.TYPE,
-            description="Endpoint dialect identifier compiled into the selected "
-            "aiperf runner. The portable config accepts any non-empty string; "
-            "execution validates availability against that exact runner.",
+            default=EndpointType.CHAT,
+            description="API endpoint type determining request/response format. "
+            "chat: OpenAI chat completions, completions: OpenAI completions, "
+            "embeddings: vector embeddings, rankings: reranking, "
+            "template: custom format, and others — see `aiperf plugins` "
+            "for the full list.",
         ),
     ]
 
@@ -192,11 +178,8 @@ class EndpointConfig(BaseConfig):
     ]
 
     @field_serializer("api_key", when_used="json")
-    def _redact_api_key(self, value: str | None, info: Any) -> str | None:
+    def _redact_api_key(self, value: str | None) -> str | None:
         """Never serialize the raw API key into exported JSON artifacts."""
-        context = getattr(info, "context", None)
-        if isinstance(context, dict) and context.get("include_secrets"):
-            return value
         from aiperf.common.redact import REDACTED_VALUE
 
         if value is None:
@@ -247,59 +230,6 @@ class EndpointConfig(BaseConfig):
         ),
     ]
 
-    http2: Annotated[
-        bool,
-        Field(
-            default=EndpointDefaults.HTTP2,
-            description="Force HTTP/2 for this endpoint profile. Cleartext HTTP "
-            "uses h2c prior knowledge; HTTPS requires HTTP/2 over TLS.",
-        ),
-    ]
-
-    ssl_verify: Annotated[
-        bool,
-        Field(
-            default=EndpointDefaults.SSL_VERIFY,
-            description="Verify HTTPS certificate chains and hostnames. Disabling "
-            "verification is insecure and intended only for explicitly trusted "
-            "test environments.",
-        ),
-    ]
-
-    uds_path: Annotated[
-        str | None,
-        Field(
-            default=None,
-            description="Connect over this Unix-domain socket path instead of TCP. "
-            "The endpoint URL still supplies the request path and Host header, so "
-            "keep it a normal http:// value (the socket carries the transport). "
-            "HTTP/1.1 only; intended for local co-located inference servers.",
-        ),
-    ]
-
-    connection_limit: Annotated[
-        int,
-        Field(
-            ge=1,
-            le=65000,
-            default=EndpointDefaults.CONNECTION_LIMIT,
-            description="Maximum simultaneous HTTP/1 connections per origin and "
-            "runner worker. HTTP/2 multiplexes concurrent streams over one "
-            "connection.",
-        ),
-    ]
-
-    keepalive_timeout: Annotated[
-        float,
-        Field(
-            ge=0.0,
-            le=10000.0,
-            default=EndpointDefaults.KEEPALIVE_TIMEOUT,
-            description="Maximum seconds an idle pooled connection remains "
-            "eligible for reuse. Zero disables idle connection reuse.",
-        ),
-    ]
-
     use_legacy_max_tokens: Annotated[
         bool,
         Field(
@@ -319,12 +249,28 @@ class EndpointConfig(BaseConfig):
         ),
     ]
 
+    per_chunk_usage: Annotated[
+        bool,
+        Field(
+            default=False,
+            description="Request per-chunk token usage on streaming responses by "
+            "setting stream_options.continuous_usage_stats. When true, the server "
+            "reports cumulative usage on every chunk (not just the final one), which "
+            "lets inter-token latency subtract the first content chunk's real token "
+            "count instead of assuming one token. Requires a server that supports "
+            "continuous_usage_stats (e.g. vLLM, TRT-LLM); strict OpenAI rejects it. "
+            "Requires use_server_token_count so OSL and the first-chunk count share "
+            "the server source.",
+        ),
+    ]
+
     template: Annotated[
         TemplateConfig | None,
         Field(
             default=None,
-            description="Optional request/response template configuration "
-            "forwarded unchanged for interpretation by the selected runner adapter.",
+            description="Custom template configuration for template endpoint type. "
+            "Only used when type='template'. "
+            "Defines request body format and response parsing.",
         ),
     ]
 
@@ -339,16 +285,13 @@ class EndpointConfig(BaseConfig):
     ]
 
     @field_serializer("headers", when_used="json")
-    def _redact_headers(self, value: dict[str, str], info: Any) -> dict[str, str]:
+    def _redact_headers(self, value: dict[str, str]) -> dict[str, str]:
         """Redact credential-bearing header values in exported JSON artifacts.
 
         Mirrors the api_key serializer above: profile_export_aiperf.json and
         server_metrics_export.json otherwise leak Authorization / X-API-Key /
         api-key etc. verbatim into on-disk artifacts.
         """
-        context = getattr(info, "context", None)
-        if isinstance(context, dict) and context.get("include_secrets"):
-            return value
         from aiperf.common.redact import redact_headers
 
         return redact_headers(value) or {}
@@ -484,7 +427,8 @@ class EndpointConfig(BaseConfig):
 
         Handles:
             - url → urls (singular to plural, wrapped in list)
-            - Preserve endpoint policy for validation by the selected runner
+            - Auto-set type to 'template' when template field is provided
+            - Disable streaming when endpoint type does not support it
         """
         if not isinstance(data, dict):
             return data
@@ -499,6 +443,30 @@ class EndpointConfig(BaseConfig):
             url = data.pop("url")
             if "urls" not in data:
                 data["urls"] = [url] if isinstance(url, str) else url
+
+        # Auto-detect template type
+        if "template" in data and data["template"] is not None and "type" not in data:
+            data["type"] = EndpointType.TEMPLATE
+
+        # Disable streaming when the endpoint type does not support it
+        if data.get("streaming"):
+            try:
+                from aiperf.plugin import plugins
+
+                endpoint_type = data.get("type", EndpointType.CHAT)
+                metadata = plugins.get_endpoint_metadata(endpoint_type)
+                if not metadata.supports_streaming:
+                    import warnings
+
+                    warnings.warn(
+                        f"Streaming is not supported for endpoint type '{endpoint_type}'. "
+                        "Streaming will be disabled.",
+                        UserWarning,
+                        stacklevel=2,
+                    )
+                    data["streaming"] = False
+            except ImportError:
+                pass
 
         return data
 
@@ -540,18 +508,12 @@ class EndpointConfig(BaseConfig):
             if not parsed.scheme or not parsed.netloc or not parsed.hostname:
                 raise ValueError(
                     f"URL {url!r} is missing scheme or host. "
-                    f"Expected an http(s) or grpc(s) URL with a host."
+                    f"Expected 'http://host:port' or 'https://host:port'."
                 )
-            if parsed.scheme.lower() not in (
-                "http",
-                "https",
-                "grpc",
-                "grpcs",
-                "dynosim",
-            ):
+            if parsed.scheme.lower() not in ("http", "https"):
                 raise ValueError(
                     f"URL {url!r} has unsupported scheme {parsed.scheme!r}. "
-                    f"Expected 'http', 'https', 'grpc', 'grpcs', or 'dynosim'."
+                    f"Expected 'http' or 'https'."
                 )
             # Validate the port if one is present. urlparse.port raises
             # ValueError on access for non-numeric or out-of-range ports
@@ -587,6 +549,33 @@ class EndpointConfig(BaseConfig):
         return self
 
     @model_validator(mode="after")
+    def _validate_per_chunk_usage(self) -> Self:
+        """Require server token counts when per-chunk usage is requested.
+
+        The first content chunk's token count is read only from server-reported
+        per-chunk usage (in the server-token-count path). Without
+        ``--use-server-token-count`` the client-tokenization path never populates
+        it, so ``--per-chunk-usage`` would silently have no effect on inter-token
+        latency."""
+        if self.per_chunk_usage and not self.use_server_token_count:
+            raise ValueError(
+                "--per-chunk-usage requires --use-server-token-count "
+                "(the first-chunk token count comes from server-reported per-chunk usage)"
+            )
+        if self.per_chunk_usage and self.type != EndpointType.CHAT:
+            raise ValueError(
+                "--per-chunk-usage requires endpoint type 'chat' "
+                "(continuous_usage_stats is only injected on the chat endpoint)"
+            )
+        if self.per_chunk_usage and not self.streaming:
+            raise ValueError(
+                "--per-chunk-usage requires --streaming "
+                "(continuous_usage_stats and inter-token latency apply only to "
+                "streaming responses)"
+            )
+        return self
+
+    @model_validator(mode="after")
     def _validate_wait_for_model_coherent(self) -> Self:
         """Reject configurations where probe sub-options are set to non-default
         values without enabling the probe itself (timeout > 0). Catches typos like
@@ -615,5 +604,62 @@ class EndpointConfig(BaseConfig):
                 f"{shown} has no effect unless --wait-for-model-timeout is set "
                 f"to a positive value. Set --wait-for-model-timeout to enable "
                 f"the readiness probe."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_request_content_type(self) -> Self:
+        """Auto-select multipart for endpoints that declare requires_form_data."""
+        from aiperf.plugin import plugins
+
+        metadata = plugins.get_endpoint_metadata(self.type)
+        requires_form_data = getattr(metadata, "requires_form_data", False)
+
+        if self.request_content_type is None:
+            if requires_form_data:
+                self.request_content_type = RequestContentType.MULTIPART_FORM_DATA
+            return self
+
+        if self.request_content_type == RequestContentType.APPLICATION_JSON:
+            if requires_form_data:
+                raise ValueError(
+                    f"endpoint type {self.type} requires multipart/form-data; "
+                    "application/json is not supported."
+                )
+            return self
+
+        if not requires_form_data:
+            raise ValueError(
+                f"request_content_type={self.request_content_type} is only supported for "
+                f"endpoint types that accept form-data (e.g. image_edit, "
+                f"video_generation); endpoint type {self.type} does not."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_control_hook_paths(self) -> Self:
+        if self.reset_kv_cache is not None:
+            self.reset_kv_cache.path = require_relative_path(
+                self.reset_kv_cache.path, "endpoint.reset_kv_cache.path"
+            )
+        if self.server_profiler is not None:
+            self.server_profiler.start_path = require_relative_path(
+                self.server_profiler.start_path, "endpoint.server_profiler.start_path"
+            )
+            self.server_profiler.stop_path = require_relative_path(
+                self.server_profiler.stop_path, "endpoint.server_profiler.stop_path"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_control_hooks_require_http(self) -> Self:
+        if self.reset_kv_cache is None and self.server_profiler is None:
+            return self
+        # Transport None means auto-detect HTTP from URL — allowed.
+        if self.transport is not None and self.transport != TransportType.HTTP:
+            raise ValueError(
+                "endpoint.reset_kv_cache and endpoint.server_profiler require "
+                "HTTP transport; unsupported transport "
+                f"{self.transport!r}"
             )
         return self

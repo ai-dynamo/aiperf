@@ -60,7 +60,7 @@ from aiperf.common.enums import (
 from aiperf.config.artifacts import OutputDefaults
 from aiperf.config.base import BaseConfig
 from aiperf.config.cli_parameter import CLIParameter, Groups
-from aiperf.config.endpoint import EndpointDefaults, EndpointId
+from aiperf.config.endpoint import EndpointDefaults
 from aiperf.config.loader.parsing import (
     normalize_http_urls,
     parse_file,
@@ -80,9 +80,11 @@ from aiperf.plugin.enums import (
     ConvergenceCriterionType,
     CustomDatasetType,
     DatasetSamplingStrategy,
+    EndpointType,
     GPUTelemetryCollectorType,
     PublicDatasetType,
     SearchPlannerType,
+    TransportType,
     UIType,
     URLSelectionStrategy,
 )
@@ -152,11 +154,11 @@ class CLIConfig(BaseConfig):
     ] = EndpointDefaults.CUSTOM_ENDPOINT
 
     endpoint_type: Annotated[
-        EndpointId,
+        EndpointType,
         Field(
-            description="Endpoint dialect identifier compiled into the selected "
-            "aiperf runner. Common stock identifiers include `chat`, "
-            "`messages`, and `responses`; custom runner distributions may add more.",
+            description="The API endpoint type to benchmark. Determines request/response format and supported features. "
+            "Common types: `chat` (multi-modal conversations), `embeddings` (vector generation), `completions` (text completion). "
+            "See enum documentation for all supported endpoint types.",
         ),
         CLIParameter(
             name=("--endpoint-type",),  # GenAI-Perf
@@ -168,7 +170,7 @@ class CLIConfig(BaseConfig):
         bool,
         Field(
             description="Enable streaming responses. When enabled, the server streams tokens incrementally "
-            "as they are generated. The selected runner validates and normalizes endpoint support. "
+            "as they are generated. Automatically disabled if the selected endpoint type does not support streaming. "
             "Enables measurement of time-to-first-token (TTFT) and inter-token latency (ITL) metrics.",
         ),
         CLIParameter(
@@ -334,6 +336,19 @@ class CLIConfig(BaseConfig):
         ),
     ] = EndpointDefaults.API_KEY
 
+    transport: Annotated[
+        TransportType | None,
+        Field(
+            description="Transport protocol to use for API requests. If not specified, auto-detected from the URL scheme "
+            "(`http`/`https` -> `TransportType.HTTP`). Currently supports `http` transport using aiohttp with connection pooling, "
+            "TCP optimization, and Server-Sent Events (SSE) for streaming. Explicit override rarely needed.",
+        ),
+        CLIParameter(
+            name=("--transport", "--transport-type"),
+            group=Groups.ENDPOINT,
+        ),
+    ] = None
+
     use_legacy_max_tokens: Annotated[
         bool,
         Field(
@@ -364,6 +379,26 @@ class CLIConfig(BaseConfig):
             group=Groups.ENDPOINT,
         ),
     ] = EndpointDefaults.USE_SERVER_TOKEN_COUNT
+
+    per_chunk_usage: Annotated[
+        bool,
+        Field(
+            description=(
+                "Request per-chunk token usage on streaming responses by setting "
+                "stream_options.continuous_usage_stats, so the server reports "
+                "cumulative usage on every chunk instead of only the final one. "
+                "This lets inter-token latency subtract the first content chunk's "
+                "real token count (fixing TPS/user inflation when a server bundles "
+                "multiple tokens into the first streamed chunk). Requires a server "
+                "that supports continuous_usage_stats (e.g. vLLM, TRT-LLM); strict "
+                "OpenAI rejects it. Requires --use-server-token-count."
+            ),
+        ),
+        CLIParameter(
+            name=("--per-chunk-usage",),
+            group=Groups.ENDPOINT,
+        ),
+    ] = EndpointDefaults.PER_CHUNK_USAGE
 
     connection_reuse_strategy: Annotated[
         ConnectionReuseStrategy,
@@ -572,7 +607,7 @@ class CLIConfig(BaseConfig):
         Field(
             description="Pre-configured public dataset to download and use for benchmarking (e.g., `sharegpt`). "
             "AIPerf automatically downloads and parses these datasets. Mutually exclusive with `--custom-dataset-type`. "
-            "Run `aiperf-python plugins public_dataset_loader` to list available datasets. "
+            "Run `aiperf plugins public_dataset_loader` to list available datasets. "
             "Use `--hf-subset` to override the HuggingFace subset/config for HF-backed datasets.",
         ),
         CLIParameter(
@@ -626,6 +661,7 @@ class CLIConfig(BaseConfig):
         Field(
             description="Format specification for custom dataset provided via `--input-file`. Determines parsing logic and expected file structure. "
             "Options: `single_turn` (JSONL with single exchanges), `multi_turn` (JSONL with conversation history), "
+            "`tracelab` (TraceLab agentic-coding corpus, JSONL or gzipped JSONL), "
             "`mooncake_trace`/`bailian_trace`/`baseten_trace` (timestamped trace files), `random_pool` (directory of reusable prompts; "
             "when using `random_pool`, `--conversation-num` defaults to 100 if not specified; "
             "batch sizes > 1 sample each modality independently from a flat pool and do not preserve "
@@ -1184,6 +1220,46 @@ class CLIConfig(BaseConfig):
     ##############################################################################
     # Prefix Prompt
     ##############################################################################
+    system_prompt: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description=(
+                "Verbatim system prompt text, identical across every conversation.\n"
+                "Sent as a system-role message ahead of all turns. Works with both\n"
+                "synthetic and file/public datasets; when the dataset already carries\n"
+                "its own system message, this text is prepended to it.\n"
+                "Tokens are additive: `--isl` continues to size the generated user prompt only.\n"
+                "Mutually exclusive with `--system-prompt-file`, "
+                "`--shared-system-prompt-length`, and `--num-prefix-prompts`/`--prefix-prompt-length`."
+            ),
+        ),
+        CLIParameter(
+            name=("--system-prompt",),
+            group=Groups.PREFIX_PROMPT,
+        ),
+    ] = None
+
+    system_prompt_file: Annotated[
+        Path | None,
+        Field(
+            default=None,
+            description=(
+                "Path to a UTF-8 text file holding the verbatim system prompt.\n"
+                "Preferred over `--system-prompt` for real production prompts, which are\n"
+                "long enough that shell quoting mangles them. Read once at startup, so a\n"
+                "missing or unreadable file fails immediately rather than mid-run.\n"
+                "Mutually exclusive with `--system-prompt`, "
+                "`--shared-system-prompt-length`, and "
+                "`--num-prefix-prompts`/`--prefix-prompt-length`."
+            ),
+        ),
+        CLIParameter(
+            name=("--system-prompt-file",),
+            group=Groups.PREFIX_PROMPT,
+        ),
+    ] = None
+
     prompt_prefix_pool_size: Annotated[
         int,
         Field(
@@ -2015,69 +2091,6 @@ class CLIConfig(BaseConfig):
         CLIParameter(name=("--synthesis-max-osl",), group=Groups.SYNTHESIS),
     ] = None
 
-    synthesis_idle_gap_cap: Annotated[
-        float | None,
-        Field(
-            default=None,
-            ge=0.0,
-            description="True-idle gap cap in seconds for weka_trace/dynamo_trace "
-            "replay; caps long idle gaps between recorded turns so replay does not "
-            "stall on multi-minute think times. Null disables warping (recorded "
-            "gaps replay verbatim). Unset selects the 60s default.",
-        ),
-        CLIParameter(name=("--synthesis-idle-gap-cap",), group=Groups.SYNTHESIS),
-    ] = None
-
-    scenario: Annotated[
-        str | None,
-        Field(
-            description="Lock all benchmark invariants for a named scenario "
-            "(e.g. 'inferencex-agentx-mvp'). Conflicts with the locked "
-            "invariants raise ScenarioLockError at startup unless "
-            "--unsafe-override is also passed. Distinct from the sweep "
-            "``scenarios`` strategy (hand-picked named runs).",
-        ),
-        CLIParameter(name=("--scenario",), group=Groups.SCENARIO),
-    ] = None
-
-    unsafe_override: Annotated[
-        bool,
-        Field(
-            description="Convert scenario lock errors to warnings; stamps "
-            "submission_valid=false in the resolved scenario outcome. No-op "
-            "without --scenario.",
-        ),
-        CLIParameter(name=("--unsafe-override",), group=Groups.SCENARIO),
-    ] = False
-
-    trajectory_start_min_ratio: Annotated[
-        float | None,
-        Field(
-            default=None,
-            ge=0.0,
-            le=1.0,
-            description="Lower bound of the recorded-graph trajectory-start (t*) "
-            "snapshot window, as a fraction of each trace's total duration. Replay "
-            "begins at a per-trace offset sampled in [min, max] of the trace's "
-            "duration (an active t* window) rather than at t=0. 0/0 disables it.",
-        ),
-        CLIParameter(name=("--trajectory-start-min-ratio",), group=Groups.SYNTHESIS),
-    ] = None
-
-    trajectory_start_max_ratio: Annotated[
-        float | None,
-        Field(
-            default=None,
-            ge=0.0,
-            le=1.0,
-            description="Upper bound of the recorded-graph trajectory-start (t*) "
-            "snapshot window, as a fraction of each trace's total duration. Paired "
-            "with --trajectory-start-min-ratio; must be >= it. 0 disables the "
-            "window (every trace starts at t=0).",
-        ),
-        CLIParameter(name=("--trajectory-start-max-ratio",), group=Groups.SYNTHESIS),
-    ] = None
-
     ##############################################################################
     # Load Generator
     ##############################################################################
@@ -2588,26 +2601,6 @@ class CLIConfig(BaseConfig):
         ),
     ] = None
 
-    agentic_cache_warmup_duration: Annotated[
-        float | None,
-        Field(
-            gt=0,
-            description="Extended cache-pressure warmup duration in seconds for "
-            "recorded-graph (agentic/weka) replay. When set, the native runner "
-            "drives cache-pressure warmup traffic for this many seconds to prime "
-            "the server's prefix/KV cache before profiling begins. This flag is "
-            "self-triggering: it auto-builds a self-bounding CONCURRENCY_BURST "
-            "warmup phase carrying only this duration. Do NOT combine it with a "
-            "manual warmup trigger (--warmup-request-count / --num-warmup-sessions "
-            "/ --warmup-duration); a session/request/duration cap cancels the "
-            "cache-pressure recycle and is rejected.",
-        ),
-        CLIParameter(
-            name=("--agentic-cache-warmup-duration",),
-            group=Groups.WARMUP,
-        ),
-    ] = None
-
     ##############################################################################
     # User-Centric Rate
     ##############################################################################
@@ -2861,18 +2854,13 @@ class CLIConfig(BaseConfig):
     ] = None
 
     mlflow_tags: Annotated[
-        # `Any` (not `list[tuple[str, Any]]`) with a `[]` default: mirrors the
-        # working `--header`/`--extra-inputs` flags exactly. A tuple element type
-        # makes the parser demand two positional args per flag, and a `None`
-        # default makes cyclopts treat the flag as scalar (consuming only the
-        # first `key:value` token and leaving the rest as "unused tokens"); a
-        # list default restores multi-value `consume_multiple` behavior.
-        Any,
+        list[tuple[str, Any]] | None,
         Field(
+            default=None,
             description=(
-                "Additional MLflow run tags to attach on upload. Specify as "
-                "key:value pairs (e.g., --mlflow-tag team:perf env:staging) "
-                "or as a JSON string."
+                "Additional MLflow run tags to attach on upload. "
+                "Specify as key:value pairs (e.g., --mlflow-tag team:perf) "
+                "or as JSON string."
             ),
         ),
         BeforeValidator(parse_str_or_dict_as_tuple_list),
@@ -2881,7 +2869,7 @@ class CLIConfig(BaseConfig):
             consume_multiple=True,
             group=Groups.OUTPUT,
         ),
-    ] = []
+    ] = None
 
     mlflow_parent_run_id: Annotated[
         str | None,
@@ -4293,50 +4281,6 @@ class CLIConfig(BaseConfig):
             group=Groups.WORKERS,
         ),
     ] = None
-
-    cells: Annotated[
-        int | None,
-        Field(
-            ge=1,
-            description=(
-                "Number of native execution cells to partition the run across "
-                "(cellular mode). 1 (default) runs the ordinary single-process native "
-                "path, byte-for-byte unchanged. With cells > 1 the launched "
-                "aiperf runner becomes a controller that spawns that many "
-                "`aiperf --cell` subprocesses over a (cell_id, cell_count) "
-                "partition of the request budget and merges their records in global "
-                "dispatch order into one report. Supported only for the scheduled HTTP "
-                "transport over seeded, single-turn synthetic datasets against a single "
-                "endpoint URL with request-bounded phases; the run fails closed on any "
-                "other shape."
-            ),
-        ),
-        CLIParameter(
-            name=("--cells",),
-            group=Groups.WORKERS,
-        ),
-    ] = None
-
-    sketch_metrics: Annotated[
-        bool,
-        Field(
-            description=(
-                "Opt-in bounded-memory metrics mode (equivalent to "
-                "AIPERF_METRICS_SKETCH=1). Stream each per-record metric value into a "
-                "t-digest sketch instead of retaining every value, so the native "
-                "aiperf runner's metric memory stays O(1) in the request count at "
-                "very high request rates. Counts, sums, averages, and min/max stay "
-                "exact; percentiles become approximate. Per-record artifacts "
-                "(records/raw/outputs JSONL, per-record OTLP) and per-row-only "
-                "trend outputs (timeslices, per-model/endpoint inference series, "
-                "sweep curves) are unavailable and are dropped from the run request."
-            ),
-        ),
-        CLIParameter(
-            name=("--sketch-metrics",),
-            group=Groups.WORKERS,
-        ),
-    ] = False
 
     ##############################################################################
     # ZMQ Communication

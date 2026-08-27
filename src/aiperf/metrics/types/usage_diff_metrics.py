@@ -48,7 +48,7 @@ class UsagePromptTokensDiffMetric(BaseRecordMetric[float]):
     """
 
     tag = "usage_prompt_tokens_diff_pct"
-    header = "Usage Prompt Diff"
+    header = "Usage Prompt Diff %"
     short_header = "Prompt Diff"
     short_header_hide_unit = True
     unit = GenericMetricUnit.PERCENT
@@ -110,7 +110,7 @@ class UsageCompletionTokensDiffMetric(BaseRecordMetric[float]):
     """
 
     tag = "usage_completion_tokens_diff_pct"
-    header = "Usage Completion Diff"
+    header = "Usage Completion Diff %"
     short_header = "Completion Diff"
     short_header_hide_unit = True
     unit = GenericMetricUnit.PERCENT
@@ -175,7 +175,7 @@ class UsageReasoningTokensDiffMetric(BaseRecordMetric[float]):
     """
 
     tag = "usage_reasoning_tokens_diff_pct"
-    header = "Usage Reasoning Diff"
+    header = "Usage Reasoning Diff %"
     short_header = "Reasoning Diff"
     short_header_hide_unit = True
     unit = GenericMetricUnit.PERCENT

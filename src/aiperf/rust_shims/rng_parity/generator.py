@@ -3,9 +3,9 @@
 
 """``ParityRandomGenerator`` — byte-exact port of ``rng/generator.rs``.
 
-One :class:`~aiperf.common.rng_parity.pcg64.Pcg64` drives every draw; the wrapper
+One :class:`~aiperf.rust_shims.rng_parity.pcg64.Pcg64` drives every draw; the wrapper
 reproduces ``rand`` 0.9.4's uniform/int/float conversions and ``rand_distr`` 0.5.1's
-continuous distributions bit-for-bit (see :mod:`aiperf.common.rng_parity.dist`).
+continuous distributions bit-for-bit (see :mod:`aiperf.rust_shims.rng_parity.dist`).
 
 Ported from ``rust/aiperf/src/rng/generator.rs``:
 - float ``[0,1)`` — ``rand-0.9.4/src/distr/float.rs`` StandardUniform for ``f64``.
@@ -22,14 +22,14 @@ from __future__ import annotations
 import math
 import os
 
-from aiperf.common.rng_parity.dist import (
+from aiperf.rust_shims.rng_parity.dist import (
     positive_integer_from_f64,
     sample_exp1,
     sample_gamma,
     sample_standard_normal,
 )
-from aiperf.common.rng_parity.errors import RngError
-from aiperf.common.rng_parity.pcg64 import Pcg64
+from aiperf.rust_shims.rng_parity.errors import RngError
+from aiperf.rust_shims.rng_parity.pcg64 import Pcg64
 
 __all__ = ["ParityRandomGenerator"]
 

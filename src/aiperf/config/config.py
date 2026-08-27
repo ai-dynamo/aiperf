@@ -195,18 +195,6 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
         ),
     ]
 
-    endpoint_profiles: Annotated[
-        dict[str, EndpointConfig],
-        Field(
-            default_factory=dict,
-            description=(
-                "Additional named protocol-v2 endpoint profiles. The existing "
-                "endpoint section remains the required 'default' profile; evaluation "
-                "routes reference either 'default' or one of these names."
-            ),
-        ),
-    ]
-
     datasets: Annotated[
         list[DatasetConfig],
         Field(
@@ -375,19 +363,6 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
         ),
     ]
 
-    failure_policy: Annotated[
-        Literal["continue", "abort"] | None,
-        Field(
-            default=None,
-            description="How the run reacts to a failed request. 'continue' "
-            "records the failure and keeps running (resilient); 'abort' fails "
-            "the whole benchmark on the first non-cancellation failure "
-            "(fail-fast). When unset, each execution path applies its historical "
-            "default: scheduled runs are resilient, graph (DAG) runs are "
-            "fail-fast. Cancellations are never treated as failures.",
-        ),
-    ]
-
     logging: Annotated[
         LoggingConfig,
         Field(
@@ -510,42 +485,6 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
         return self
 
     @model_validator(mode="after")
-    def validate_phase_stops(self) -> Self:
-        """Require each phase to declare a generic stop condition.
-
-        Every profiling phase needs at least one of ``requests`` / ``duration`` /
-        ``sessions`` (or a self-bounding agentic-cache warmup), unless a named
-        ``--scenario`` supplies the bound at resolution time.
-        """
-        # A named ``--scenario`` owns the benchmark invariants and auto-fills the
-        # phase stop condition (e.g. profiling ``duration``) at resolution time
-        # (``ScenarioResolver`` / ``apply_scenario``), which runs AFTER this
-        # construction-time validator. Requiring a bound here would reject a
-        # valid scenario run whose bound is supplied a step later — the exact gap
-        # the removed ``requests=10`` converter default used to paper over. The
-        # scenario (and the runner's own graph-phase validation) enforce the real
-        # bound; do not double-require a generic one before the scenario has run.
-        if self.scenario is not None:
-            return self
-        for phase in self.phases:
-            if (
-                phase._stop_condition_required
-                and phase.requests is None
-                and phase.duration is None
-                and phase.sessions is None
-                # The recorded-graph cache-pressure warmup is self-bounding: its
-                # sole deadline is agentic_cache_warmup_duration, and a generic
-                # stop cap would cancel the cache-pressure recycle. Treat that
-                # duration as the phase's stop condition.
-                and phase.agentic_cache_warmup_duration is None
-            ):
-                raise ValueError(
-                    f"Phase '{phase.name}': at least one of "
-                    "'requests', 'duration', or 'sessions' must be specified"
-                )
-        return self
-
-    @model_validator(mode="after")
     def validate_seamless_not_on_first_phase(self) -> Self:
         """Ensure seamless is not enabled on the first phase config."""
         if self.phases and self.phases[0].seamless:
@@ -581,26 +520,6 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
                 raise ValueError(
                     f"Phase '{phase.name}': prefill_concurrency requires "
                     "endpoint.streaming=true"
-                )
-        return self
-
-    @model_validator(mode="after")
-    def validate_endpoint_profile_names(self) -> Self:
-        """Keep named endpoint-profile references structural and side-effect free.
-
-        Python checks only identities that are already present in Config v2;
-        endpoint dialect capability remains a runner-factory rule.
-        """
-        for profile_id in self.endpoint_profiles:
-            if not profile_id.strip() or profile_id != profile_id.strip():
-                raise ValueError(
-                    "endpoint_profiles keys must be non-empty and contain no "
-                    "surrounding whitespace"
-                )
-            if profile_id == "default":
-                raise ValueError(
-                    "endpoint_profiles cannot redefine reserved profile 'default'; "
-                    "use benchmark.endpoint for that profile"
                 )
         return self
 
@@ -642,6 +561,60 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
                 "cache-bust is not supported by endpoint "
                 f"{self.endpoint.type}; select an endpoint whose plugin metadata "
                 "sets supports_cache_bust=true"
+            )
+
+        return self
+
+    @model_validator(mode="after")
+    def validate_system_prompt_compatibility(self) -> Self:
+        """Reject a verbatim system prompt that would conflict or be silently dropped.
+
+        A custom system prompt is the content-valued replacement for
+        ``prefix_prompts.shared_system_length``: both fill
+        ``Conversation.system_message``. It therefore inherits that field's
+        exclusivity with the prefix pool rather than defining its own rule.
+
+        Endpoints opt into receiving a system message via the
+        ``consumes_system_message`` plugin metadata flag. On the others the text
+        would never reach the wire, so the benchmark would silently measure
+        something other than what was asked for.
+        """
+        from aiperf.plugin import plugins
+        from aiperf.plugin.enums import PluginType
+
+        if self.get_system_prompt() is None:
+            return self
+
+        prefix_prompts = getattr(self.get_default_dataset(), "prefix_prompts", None)
+        if prefix_prompts is not None:
+            if prefix_prompts.shared_system_length is not None:
+                raise ValueError(
+                    "--system-prompt/--system-prompt-file and "
+                    "--shared-system-prompt-length are mutually exclusive: both fill "
+                    "the system message. Use the first for verbatim text, the second "
+                    "for synthetic filler of a target token length."
+                )
+            if prefix_prompts.pool_size or prefix_prompts.length:
+                raise ValueError(
+                    "--system-prompt/--system-prompt-file and "
+                    "--num-prefix-prompts/--prefix-prompt-length are mutually "
+                    "exclusive, matching --shared-system-prompt-length, which fills "
+                    "the same system-message slot."
+                )
+
+        endpoint_metadata = plugins.get_endpoint_metadata(self.endpoint.type)
+        if not endpoint_metadata.consumes_system_message:
+            supported = ", ".join(
+                sorted(
+                    entry.name
+                    for entry, _ in plugins.iter_all(PluginType.ENDPOINT)
+                    if plugins.get_endpoint_metadata(entry.name).consumes_system_message
+                )
+            )
+            raise ValueError(
+                f"--system-prompt/--system-prompt-file is not supported by endpoint "
+                f"type '{self.endpoint.type}' (no system role), so the text would "
+                f"never reach the wire. Supported endpoint types: {supported}."
             )
 
         return self
@@ -704,6 +677,10 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
         silently falls through to the user turn, making it indistinguishable from
         ``warmup_isolation_first_turn``.
 
+        A verbatim ``--system-prompt``/``--system-prompt-file`` satisfies this
+        requirement exactly as ``shared_system_length`` does: both statically
+        guarantee a system message, so the marker has a real slot to land in.
+
         This check is scoped to synthetic datasets where system-message presence is
         statically known. File and trace datasets may carry system messages inside
         their content, which cannot be inspected at config time.
@@ -717,6 +694,9 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
         if dataset.type != DatasetType.SYNTHETIC:
             return self
 
+        if self.get_system_prompt() is not None:
+            return self
+
         prefix_prompts = getattr(dataset, "prefix_prompts", None)
         has_shared_system = (
             prefix_prompts is not None
@@ -725,10 +705,12 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
         if not has_shared_system:
             raise ValueError(
                 "cache_bust=warmup_isolation_system requires a shared system prompt, "
-                "but no shared_system_length is configured on the synthetic dataset. "
+                "but no shared_system_length or verbatim system prompt is configured "
+                "on the synthetic dataset. "
                 "The marker would silently fall through to the user turn, making it "
                 "indistinguishable from warmup_isolation_first_turn. "
-                "Either set prefix_prompts.shared_system_length (--shared-system-prompt-length) "
+                "Either set prefix_prompts.shared_system_length (--shared-system-prompt-length), "
+                "pass --system-prompt/--system-prompt-file, "
                 "or switch to cache_bust=warmup_isolation_first_turn."
             )
         return self
@@ -923,27 +905,9 @@ class AIPerfConfig(BaseConfig):
         unknown = [k for k in data if isinstance(k, str) and k not in known]
         if not unknown:
             return data
-        # Body fields (endpoint, mlflow, otel, gpuTelemetry, …) live under
-        # ``benchmark:``, not at the envelope root. A misplaced body key is a
-        # common mistake, so point the user at the right nesting explicitly.
-        body_keys: set[str] = set()
-        for name, field in BenchmarkConfig.model_fields.items():
-            body_keys.add(name)
-            if field.alias:
-                body_keys.add(field.alias)
         suggestions = []
         for key in unknown:
-            if key in body_keys:
-                suggestions.append(f"{key!r} (nest it under 'benchmark:')")
-                continue
             close = difflib.get_close_matches(key, known, n=1, cutoff=0.6)
-            if not close:
-                close = difflib.get_close_matches(key, body_keys, n=1, cutoff=0.6)
-                if close:
-                    suggestions.append(
-                        f"{key!r} (did you mean 'benchmark.{close[0]}'?)"
-                    )
-                    continue
             if close:
                 suggestions.append(f"{key!r} (did you mean {close[0]!r}?)")
             else:

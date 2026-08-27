@@ -289,6 +289,9 @@ class MMLUBenchmark(AIPerfLoggerMixin):
         )
         query = f"Question: {row['question']}{choices_str}\nAnswer:"
 
+        if enable_cot:
+            query = f"Question: {row['question']}{choices_str}\nLet's think step by step.\nAnswer:"
+
         return instruction + few_shot_text + query
 
     def _build_chat_messages(
@@ -334,7 +337,10 @@ class MMLUBenchmark(AIPerfLoggerMixin):
             for key, choice in zip(ascii_uppercase, row["choices"], strict=False)
         )
 
-        main_q = f"Question: {row['question']}{choices_str}\nAnswer:"
+        if enable_cot:
+            main_q = f"Question: {row['question']}{choices_str}\nLet's think step by step.\nAnswer:"
+        else:
+            main_q = f"Question: {row['question']}{choices_str}\nAnswer:"
 
         if not few_shots:
             main_q = instruction + main_q

@@ -10,15 +10,14 @@ evaluation utilities. The intent is character-for-character output
 parity with that pipeline so the math grader behaves identically to the
 trt-llm reference.
 
-One minor deviation from the upstream remains:
+Two minor deviations from the upstream:
+- ``convert_word_number`` is a no-op stub here; the recipe pulls in the
+  optional ``word2number`` package, but AIME answers are bounded
+  integers (0-999) for which word-number conversion never fires. If a
+  caller needs it, install ``word2number`` and replace the stub.
 - The ``_fix_a_slash_b`` helper is only invoked on strings that look
   like simple ratios; we skip the recipe's blanket ``\\frac`` rewrite
   for non-numeric a/b strings.
-
-Written-number conversion uses the same guarded ``word2number`` call as
-Qwen2.5-Math. The import remains optional so importing the inherited Python
-package without ``aiperf[accuracy]`` is safe; the Rust-launched worker pins
-and verifies the dependency before loading a benchmark.
 
 Reference:
     trt-llm-benchmark-recipe/src/accuracy/aime/parser.py:212 (strip_string)
@@ -27,12 +26,6 @@ Reference:
 from __future__ import annotations
 
 import re
-from typing import Any
-
-try:
-    from word2number import w2n as _word_to_number
-except ImportError:  # pragma: no cover - default install omits accuracy extras
-    _word_to_number: Any | None = None
 
 # MathQA-derived unit list. The trt-llm strip_string strips these
 # tokens from MATH-style answers (e.g. "5 mph" → "5"). For AIME (pure
@@ -228,28 +221,25 @@ def _fix_sqrt(string: str) -> str:
 
 
 def _convert_word_number(text: str) -> str:
-    """Convert an English number phrase using Qwen2.5-Math semantics.
+    """No-op stub for the recipe's word2number conversion.
 
-    ``word_to_num`` raises for non-number expressions. The reference parser
-    deliberately preserves the authored text on every conversion failure, so
-    symbolic and LaTeX inputs continue through the remaining normalizers.
+    The recipe imports ``word2number.w2n`` and turns "two" into "2".
+    For AIME (integer answers) and most MATH-500 cases this never
+    triggers, so we skip the dependency. If a caller needs it, swap
+    this implementation for one that uses ``w2n.word_to_num``.
     """
-    if _word_to_number is None:
-        return text
-    try:
-        return str(_word_to_number.word_to_num(text))
-    except Exception:  # the reference evaluator intentionally catches all failures
-        return text
+    return text
 
 
 def strip_string(string: str) -> str:
     """Normalize a math/LaTeX answer string for downstream comparison.
 
     Mirrors trt-llm-benchmark-recipe/src/accuracy/aime/parser.py
-    line-for-line, with one documented deviation in ``_fix_a_slash_b``.
-    The recipe's ``string.replace("'", "")`` / ``string.replace('"', "")``
-    calls are no-ops there too (they don't reassign), and we keep
-    them as no-ops for parity.
+    line-for-line, with two documented deviations:
+    1. ``_convert_word_number`` is a no-op (no ``word2number`` dep).
+    2. The recipe's ``string.replace("'", "")`` / ``string.replace('"', "")``
+       calls are no-ops there too (they don't reassign), and we keep
+       them as no-ops for parity.
 
     Returns an empty string when input is empty after normalization.
     """
@@ -300,7 +290,7 @@ def strip_string(string: str) -> str:
     string = string.replace("$", "")
     string = string.replace("\\(", "").replace("\\)", "")
 
-    # Word-number conversion from the canonical Qwen2.5-Math parser.
+    # Word-number conversion (no-op stub)
     string = _convert_word_number(string)
 
     # \text{x} → x

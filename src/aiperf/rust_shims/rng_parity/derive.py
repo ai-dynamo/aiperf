@@ -118,7 +118,7 @@ class RngRoot:
 
         Imported lazily to avoid a module import cycle with ``generator``.
         """
-        from aiperf.common.rng_parity.generator import ParityRandomGenerator
+        from aiperf.rust_shims.rng_parity.generator import ParityRandomGenerator
 
         return ParityRandomGenerator.from_seed(self.derive_seed(identifier))
 

@@ -19,8 +19,8 @@ from typing import Any
 import aiohttp
 import pytest
 import pytest_asyncio
-from tests.aiperf_mock_server import MockServerConfig
-from tests.aiperf_mock_server import serve as aiperf_mock_server_serve
+from aiperf_mock_server import MockServerConfig
+from aiperf_mock_server import serve as aiperf_mock_server_serve
 
 from aiperf.common.logging import AIPerfLogger
 from tests.harness.subprocess import _new_process_group_kwargs

@@ -46,12 +46,10 @@ def test_endpoint_config_normalizes_schemeless_localhost() -> None:
         param("http://localhost:18765", id="http-localhost-port"),
         param("https://api.example.com/v1", id="https-with-path"),
         param("http://10.0.0.1:8000", id="http-ip-port"),
-        param("grpc://localhost:8001", id="grpc-localhost-port"),
-        param("grpcs://inference.example.com:8443", id="grpcs-host-port"),
     ],
 )
 def test_endpoint_config_accepts_valid_urls(url: str) -> None:
-    """Native online URL schemes with explicit hosts pass endpoint validation."""
+    """Standard http(s) URLs with explicit host pass validation."""
     cfg = EndpointConfig(urls=[url])
     assert cfg.urls == [url]
 

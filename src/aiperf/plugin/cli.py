@@ -57,7 +57,7 @@ def show_packages_detailed() -> None:
         )
 
     console.print(table)
-    _hint("Usage: aiperf-python plugins --all to see all categories and plugins")
+    _hint("Usage: aiperf plugins --all to see all categories and plugins")
 
 
 def show_categories_overview() -> None:
@@ -75,7 +75,7 @@ def show_categories_overview() -> None:
         table.add_row(_title(cat), names)
     console.print(table)
 
-    _hint("Usage: aiperf-python plugins <category> to see available types")
+    _hint("Usage: aiperf plugins <category> to see available types")
 
 
 def show_category_types(category: str) -> None:
@@ -96,7 +96,7 @@ def show_category_types(category: str) -> None:
         desc = (entry.description or "").strip() or "[dim]-[/dim]"
         table.add_row(entry.name, desc)
     console.print(table)
-    _hint(f"Usage: aiperf-python plugins {category} <type> for details")
+    _hint(f"Usage: aiperf plugins {category} <type> for details")
 
 
 def show_type_details(category: str, name: str) -> None:

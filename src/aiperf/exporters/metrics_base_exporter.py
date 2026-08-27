@@ -77,15 +77,6 @@ class MetricsBaseExporter(AIPerfLoggerMixin, ABC):
             f"{self.__class__.__name__} must implement _generate_content()"
         )
 
-    def render(self) -> str:
-        """Render the complete report without choosing an I/O runtime.
-
-        The service lifecycle uses :meth:`export`; the native subprocess
-        orchestrator uses this synchronous seam after Rust has returned its
-        authoritative metrics. Both paths execute the same format generator.
-        """
-        return self._generate_content()
-
     async def export(self) -> None:
         """Export inference and telemetry data to file.
 
@@ -102,7 +93,7 @@ class MetricsBaseExporter(AIPerfLoggerMixin, ABC):
         self.debug(lambda: f"Exporting data to file: {self._file_path}")
 
         try:
-            content = self.render()
+            content = self._generate_content()
 
             async with aiofiles.open(
                 self._file_path, "w", newline="", encoding="utf-8"

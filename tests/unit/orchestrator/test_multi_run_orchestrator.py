@@ -436,9 +436,6 @@ async def test_repeated_mode_passes_growing_prior_results_to_strategy(
         def get_cooldown_seconds(self):
             return 0.0
 
-        def should_continue(self, prior):
-            return len(prior) < 3
-
     def _fake_build(plan, logger):
         s = _SpyStrategy(counter["n"])
         counter["n"] += 1

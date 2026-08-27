@@ -16,7 +16,6 @@ from aiperf.config.user_files import (
     UserFileError,
     build_user_file_context,
     materialize_user_files,
-    render_user_files,
 )
 
 
@@ -198,25 +197,6 @@ def test_materialize_yaml_round_trip(tmp_path):
     materialize_user_files(files, run_dir=tmp_path, context={"v": "hello"})
     data = yaml.safe_load((tmp_path / "a.yaml").read_text())
     assert data == {"k": "hello"}
-
-
-def test_render_user_files_is_the_exact_materialization_handoff(tmp_path):
-    files = [
-        UserFile(path="a.json", format="json", content={"n": "{{ n }}"}),
-        UserFile(path="a.yaml", format="yaml", content={"name": "{{ name }}"}),
-        UserFile(path="notes.txt", format="text", content="hello {{ name }}\n"),
-    ]
-    rendered = render_user_files(files, {"n": 7, "name": "Ada"})
-
-    materialize_user_files(files, run_dir=tmp_path, context={"n": 7, "name": "Ada"})
-
-    assert [(item.path, item.format) for item in rendered] == [
-        ("a.json", "json"),
-        ("a.yaml", "yaml"),
-        ("notes.txt", "text"),
-    ]
-    for item in rendered:
-        assert (tmp_path / item.path).read_bytes() == item.content.encode("utf-8")
 
 
 def test_materialize_text_preserves_newlines(tmp_path):

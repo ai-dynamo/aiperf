@@ -50,15 +50,6 @@ def profile(
     from aiperf.cli_utils import exit_on_error
     from aiperf.config.loader.errors import ConfigurationError
 
-    # `--sketch-metrics` toggles the `AIPERF_METRICS_SKETCH` runtime setting. It
-    # is a native-only feature; on the Python frontend the `run_benchmark` guard
-    # reads `Environment.METRICS.SKETCH` and rejects the run pointing at the
-    # native `aiperf` binary.
-    if cli_config.sketch_metrics:
-        from aiperf.common.environment import Environment
-
-        Environment.METRICS.SKETCH = True
-
     with exit_on_error(title="Error Running AIPerf System", show_traceback=False):
         from aiperf.config.flags.resolver import resolve_config
         from aiperf.config.loader import build_benchmark_plan

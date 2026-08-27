@@ -3,7 +3,7 @@
 """Unit tests for models module."""
 
 import pytest
-from tests.aiperf_mock_server.models import (
+from aiperf_mock_server.models import (
     ChatCompletionRequest,
     CompletionRequest,
     EmbeddingRequest,

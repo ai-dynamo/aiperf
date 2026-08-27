@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 
 import orjson
@@ -14,6 +15,7 @@ from pydantic import ValidationError
 from aiperf.common.enums import RequestContentType
 from aiperf.config.config import AIPerfConfig
 from aiperf.config.endpoint import EndpointConfig
+from aiperf.plugin.enums import EndpointType
 
 _ENVELOPE_KEYS = {"sweep", "multi_run", "variables", "random_seed"}
 
@@ -403,7 +405,7 @@ class TestEndpointBoundaryValidation:
 
 
 # =============================================================================
-# Runner-owned endpoint policy
+# Request content type validation
 # =============================================================================
 
 
@@ -415,24 +417,20 @@ def test_generated_schema_includes_otel_and_mlflow_sections():
     assert "mlflow" in benchmark_props
 
 
-class TestRunnerOwnedEndpointPolicy:
-    def test_generated_schema_endpoint_type_is_open_string(self):
+class TestRequestContentTypeValidation:
+    def test_image_edit_is_in_generated_schema_endpoint_enum(self):
         schema_path = Path("src/aiperf/config/schema/aiperf-config.schema.json")
         schema = orjson.loads(schema_path.read_bytes())
-        endpoint_type = schema["$defs"]["EndpointConfig"]["properties"]["type"]
-        assert endpoint_type["type"] == "string"
-        assert endpoint_type["minLength"] == 1
-        assert endpoint_type["default"] == "chat"
-        assert "enum" not in endpoint_type
+        assert "image_edit" in schema["$defs"]["EndpointType"]["enum"]
 
-    def test_request_encoding_default_is_left_for_runner(self):
+    def test_image_edit_defaults_to_multipart(self):
         endpoint = EndpointConfig(
             urls=["http://localhost:8000/v1/images/edits"],
-            type="image_edit",
+            type=EndpointType.IMAGE_EDIT,
         )
-        assert endpoint.request_content_type is None
+        assert endpoint.request_content_type == RequestContentType.MULTIPART_FORM_DATA
 
-    def test_request_encoding_default_is_left_for_runner_via_aiperf_config(self):
+    def test_image_edit_defaults_to_multipart_via_aiperf_config(self):
         config = AIPerfConfig(
             **_base_config(
                 endpoint={
@@ -441,32 +439,65 @@ class TestRunnerOwnedEndpointPolicy:
                 }
             )
         )
-        assert config.benchmark.endpoint.request_content_type is None
+        assert (
+            config.benchmark.endpoint.request_content_type
+            == RequestContentType.MULTIPART_FORM_DATA
+        )
 
-    def test_explicit_json_is_preserved_for_runner_validation(self):
+    def test_video_generation_defaults_to_multipart(self):
         endpoint = EndpointConfig(
-            urls=["http://localhost:8000/v1/images/edits"],
-            type="image_edit",
+            urls=["http://localhost:8000/v1/videos/generations"],
+            type=EndpointType.VIDEO_GENERATION,
+        )
+        assert endpoint.request_content_type == RequestContentType.MULTIPART_FORM_DATA
+
+    def test_chat_endpoint_keeps_default_none(self):
+        endpoint = EndpointConfig(
+            urls=["http://localhost:8000/v1/chat/completions"],
+            type=EndpointType.CHAT,
+        )
+        assert endpoint.request_content_type is None
+
+    def test_explicit_json_on_multipart_endpoint_rejected(self):
+        with pytest.raises(ValidationError, match="requires multipart/form-data"):
+            EndpointConfig(
+                urls=["http://localhost:8000/v1/images/edits"],
+                type=EndpointType.IMAGE_EDIT,
+                request_content_type=RequestContentType.APPLICATION_JSON,
+            )
+
+    def test_explicit_multipart_on_chat_rejected(self):
+        with pytest.raises(ValidationError, match="does not"):
+            EndpointConfig(
+                urls=["http://localhost:8000/v1/chat/completions"],
+                type=EndpointType.CHAT,
+                request_content_type=RequestContentType.MULTIPART_FORM_DATA,
+            )
+
+    def test_explicit_json_on_chat_passes_through(self):
+        endpoint = EndpointConfig(
+            urls=["http://localhost:8000/v1/chat/completions"],
+            type=EndpointType.CHAT,
             request_content_type=RequestContentType.APPLICATION_JSON,
         )
         assert endpoint.request_content_type == RequestContentType.APPLICATION_JSON
 
-    def test_explicit_multipart_is_preserved_for_runner_validation(self):
+    def test_explicit_multipart_on_image_edit_passes_through(self):
         endpoint = EndpointConfig(
-            urls=["http://localhost:8000/v1/chat/completions"],
-            type="chat",
+            urls=["http://localhost:8000/v1/images/edits"],
+            type=EndpointType.IMAGE_EDIT,
             request_content_type=RequestContentType.MULTIPART_FORM_DATA,
         )
         assert endpoint.request_content_type == RequestContentType.MULTIPART_FORM_DATA
 
 
 # =============================================================================
-# Streaming policy is runner-owned
+# Streaming normalization for unsupported endpoint types
 # =============================================================================
 
 
-class TestStreamingPolicyProjection:
-    """EndpointConfig preserves authored streaming for runner validation."""
+class TestStreamingNormalization:
+    """EndpointConfig silently disables streaming for types that don't support it."""
 
     def test_streaming_true_with_chat_endpoint_preserved(self):
         endpoint = EndpointConfig(
@@ -482,23 +513,46 @@ class TestStreamingPolicyProjection:
         )
         assert endpoint.streaming is False
 
-    def test_streaming_true_with_embeddings_is_preserved(self):
-        endpoint = EndpointConfig(
-            urls=["http://localhost:8000/v1/embeddings"],
-            type="embeddings",
-            streaming=True,
-        )
-        assert endpoint.streaming is True
+    def test_streaming_true_with_embeddings_disabled_with_warning(self):
+        from aiperf.config.endpoint import EndpointConfig
 
-    def test_streaming_policy_via_aiperf_config(self):
-        """AIPerfConfig also leaves endpoint semantics to native preparation."""
-        config = AIPerfConfig(
-            **_base_config(
-                endpoint={
-                    "urls": ["http://localhost:8000/v1/embeddings"],
-                    "type": "embeddings",
-                    "streaming": True,
-                }
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            endpoint = EndpointConfig(
+                urls=["http://localhost:8000/v1/embeddings"],
+                type="embeddings",
+                streaming=True,
             )
-        )
-        assert config.benchmark.endpoint.streaming is True
+
+        assert endpoint.streaming is False
+        assert any("streaming" in str(w.message).lower() for w in caught)
+
+    def test_streaming_false_with_embeddings_no_warning(self):
+        from aiperf.config.endpoint import EndpointConfig
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            endpoint = EndpointConfig(
+                urls=["http://localhost:8000/v1/embeddings"],
+                type="embeddings",
+                streaming=False,
+            )
+
+        assert endpoint.streaming is False
+        assert not any("streaming" in str(w.message).lower() for w in caught)
+
+    def test_streaming_normalization_via_aiperf_config(self):
+        """streaming=True on an embeddings endpoint is normalized to False in AIPerfConfig."""
+
+        with warnings.catch_warnings(record=True):
+            warnings.simplefilter("always")
+            config = AIPerfConfig(
+                **_base_config(
+                    endpoint={
+                        "urls": ["http://localhost:8000/v1/embeddings"],
+                        "type": "embeddings",
+                        "streaming": True,
+                    }
+                )
+            )
+        assert config.benchmark.endpoint.streaming is False

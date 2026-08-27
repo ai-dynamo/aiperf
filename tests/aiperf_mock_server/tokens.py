@@ -8,7 +8,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-from tests.aiperf_mock_server.models import (
+from aiperf_mock_server.models import (
     AnthropicMessagesRequest,
     ChatCompletionRequest,
     CohereRerankRequest,
@@ -547,7 +547,7 @@ def _load_corpus() -> tuple[str, ...] | None:
     global CORPUS_TOKENS
     if CORPUS_TOKENS is not None:
         return CORPUS_TOKENS
-    from tests.aiperf_mock_server.config import server_config
+    from aiperf_mock_server.config import server_config
 
     try:
         import aiperf.dataset.generator.prompt as prompt_module

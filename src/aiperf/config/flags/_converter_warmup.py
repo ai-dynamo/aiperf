@@ -106,58 +106,13 @@ def _warmup_ramps(w: dict[str, Any], cli: CLIConfig, s: set[str]) -> None:
         w["rate_ramp"] = {"duration": rr}
 
 
-def _build_agentic_cache_warmup(cli: CLIConfig, s: set[str]) -> dict[str, Any]:
-    """Build the auto CONCURRENCY_BURST cache-pressure warmup phase dict.
-
-    The recorded-graph cache-pressure warmup (``--agentic-cache-warmup-duration``)
-    is a self-triggering, self-bounding warmup: its ONLY deadline is the
-    cache-pressure duration itself, carried on the phase as
-    ``agentic_cache_warmup_duration``. It must NOT carry any generic warmup stop
-    condition (``requests`` / ``sessions`` / ``duration``) — the native graph
-    phase runtime recycles the recorded corpus under pressure until the duration
-    elapses, and a competing stop condition ends the phase after the first pass
-    and cancels the recycle (see the E3d cache-pressure e2e finding). Concurrency
-    is inherited from the profiling concurrency (the width the profiling phase
-    will run) so the warmup primes at the same width. No ``grace_period`` is set
-    here: the phase has no ``duration``, and the runner derives its own
-    pressure-drain grace from the cache-pressure duration.
-    """
-    w: dict[str, Any] = {
-        "exclude_from_results": True,
-        "type": PhaseType.CONCURRENCY,
-    }
-    warmup_concurrency = (
-        cli.warmup_concurrency if "warmup_concurrency" in s else cli.concurrency
-    )
-    # A swept --concurrency list must not leak into the single-shot warmup.
-    if isinstance(warmup_concurrency, list):
-        warmup_concurrency = None
-    w["concurrency"] = warmup_concurrency if warmup_concurrency is not None else 1
-    _warmup_ramps(w, cli, s)
-    if "warmup_prefill_concurrency" in s:
-        w["prefill_concurrency"] = cli.warmup_prefill_concurrency
-    elif "prefill_concurrency" in s:
-        w["prefill_concurrency"] = cli.prefill_concurrency
-    w["agentic_cache_warmup_duration"] = cli.agentic_cache_warmup_duration
-    return w
-
-
 def build_warmup(cli: CLIConfig) -> dict[str, Any] | None:
     """Build a warmup phase dict from CLIConfig, or return None.
 
-    Two ways a warmup phase is emitted:
-
-    * A manual trigger — one of ``warmup_request_count`` / ``warmup_num_sessions``
-      / ``warmup_duration`` was explicitly set — builds a normal warmup phase
-      with that stop condition.
-    * ``--agentic-cache-warmup-duration`` is set — auto-builds the recorded-graph
-      cache-pressure warmup, a CONCURRENCY_BURST phase carrying ONLY the
-      cache-pressure duration (no session/request/duration stop cap). The
-      agentic duration is itself the trigger; a manual warmup trigger is NOT
-      required and is in fact rejected (a session/request/duration cap cancels
-      the cache-pressure recycle and deadlocks the warmup).
-
-    Other warmup_* flags without any trigger are intentionally ignored.
+    The warmup phase is only emitted when the caller explicitly set one of the
+    "trigger" fields (warmup_request_count / warmup_num_sessions /
+    warmup_duration) on CLIConfig. Other warmup_* fields without a
+    trigger are intentionally ignored.
 
     Example::
 
@@ -169,40 +124,6 @@ def build_warmup(cli: CLIConfig) -> dict[str, Any] | None:
         #     "concurrency": 10, "requests": 50}
     """
     s = cli.model_fields_set
-    agentic = cli.agentic_cache_warmup_duration is not None
-
-    # Forbid --agentic-cache-warmup-duration with any manual warmup stop cap: the
-    # cache-pressure warmup must carry ONLY its duration (a session/request/
-    # duration cap ends the phase after the first pass and cancels the recycle).
-    if agentic:
-        cap_flags = {
-            "warmup_request_count": "--warmup-request-count",
-            "warmup_num_sessions": "--num-warmup-sessions",
-            "warmup_duration": "--warmup-duration",
-        }
-        offending = [
-            flag for field, flag in cap_flags.items() if getattr(cli, field) is not None
-        ]
-        if offending:
-            raise ValueError(
-                "--agentic-cache-warmup-duration cannot be combined with a "
-                f"manual warmup stop condition ({', '.join(offending)}); the "
-                "cache-pressure warmup must carry ONLY its duration. A "
-                "session/request/duration cap ends the warmup after the first "
-                "pass and cancels the cache-pressure recycle, deadlocking the "
-                "run. Drop the manual warmup flag and let "
-                "--agentic-cache-warmup-duration drive the warmup."
-            )
-        if cli.warmup_grace_period is not None:
-            raise ValueError(
-                "--warmup-grace-period cannot be combined with "
-                "--agentic-cache-warmup-duration; the cache-pressure warmup "
-                "has no generic duration to attach a grace period to (the "
-                "runner derives its drain grace from the cache-pressure "
-                "duration). Drop --warmup-grace-period."
-            )
-        return _build_agentic_cache_warmup(cli, s)
-
     if not ({"warmup_request_count", "warmup_num_sessions", "warmup_duration"} & s):
         # No warmup trigger -> no warmup phase. Refuse to silently drop
         # secondary warmup-only flags the user supplied — except under a
@@ -248,7 +169,4 @@ def build_warmup(cli: CLIConfig) -> dict[str, Any] | None:
                 "when using --warmup-request-count / --warmup-num-sessions."
             )
         w["grace_period"] = cli.warmup_grace_period
-    # NOTE: --agentic-cache-warmup-duration never reaches this manual-trigger
-    # path; it is handled (and its self-contained CONCURRENCY_BURST warmup built)
-    # in the early ``agentic`` branch above, which returns before here.
     return w

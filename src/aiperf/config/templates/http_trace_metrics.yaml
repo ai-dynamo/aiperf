@@ -55,9 +55,8 @@ benchmark:
   dataset:
     type: synthetic
     entries: 500
-    prompts:
-      isl: {mean: 256, stddev: 50}
-      osl: {mean: 256, stddev: 25}
+    isl: {mean: 256, stddev: 50}
+    osl: {mean: 256, stddev: 25}
 
   profiling:
     type: poisson

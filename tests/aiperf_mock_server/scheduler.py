@@ -19,7 +19,7 @@ import logging
 from collections import deque
 from dataclasses import dataclass, field
 
-from tests.aiperf_mock_server.config import MockServerConfig
+from aiperf_mock_server.config import MockServerConfig
 
 logger = logging.getLogger(__name__)
 
