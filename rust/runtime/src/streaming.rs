@@ -12,6 +12,7 @@ pub mod checkpoints;
 pub mod failure;
 pub mod format;
 pub mod identity;
+pub mod reliability;
 pub mod results;
 pub mod session;
 pub mod source;
