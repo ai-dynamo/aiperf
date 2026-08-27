@@ -364,6 +364,12 @@ impl GenAiClientHistogramsV1 {
 /// The value is whatever projection the run finalized, carried opaquely: an
 /// exporter reads it, and the host commits the identical bytes through
 /// [`crate::report::write_finalized_report_json`].
+///
+// The typed finalized report is still runtime-private: `NativeReport` and the
+// `ReportView` exporter projection live in `runtime/src/metrics_core/`. Until
+// that move lands, `report` carries the same JSON value the host commits, so an
+// exporter authored against this field keeps working when the typed projection
+// replaces it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FinalReportV1 {
     /// Always [`CAPTURE_PROJECTION_SCHEMA`].

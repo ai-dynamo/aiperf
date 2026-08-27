@@ -15,6 +15,10 @@ use std::pin::Pin;
 use std::rc::Rc;
 
 use aiperf_core::artifact::{ArtifactAccess, ArtifactEntry, ArtifactError, DirectoryArtifacts};
+use aiperf_core::capture::{
+    CaptureError, ExactRecordV1, ExactRecordsV1, ExplicitHistogramV1, FinalReportV1,
+    GenAiClientHistogramsV1, HistogramDimensionV1, HistogramSeriesV1, MetricValueV1,
+};
 use aiperf_core::clock::{Clock, RunOutcome};
 use aiperf_core::dispatch::{
     Dispatchable, ObservedTokenKind, ObservedUsage, ReplayTerminalStatus, RequestObserver,
@@ -25,7 +29,12 @@ use aiperf_core::endpoint::{
     PreparedWsOperation, SegmentReader,
 };
 use aiperf_core::measure::{ErrorDetails, ErrorKind, Response, SseMessage, TextResponse};
+use aiperf_core::histogram::{GenAiHistogramMetric, TokenDirection, seconds_scale};
 use aiperf_core::report::write_finalized_report_json;
+use aiperf_core::services::{
+    ArtifactService, CancellationService, ClockService, DirectTransportServices, GraphService,
+    MetricsService,
+};
 use bytes::Bytes;
 use uuid::Uuid;
 
@@ -310,6 +319,132 @@ fn a_finalized_report_projection_commits_exactly_once() {
     assert!(write_finalized_report_json(&serde_json::json!({}), &path).is_err());
 
     let _ = std::fs::remove_dir_all(&directory);
+}
+
+#[test]
+fn the_capture_projections_are_boundary_owned() {
+    // An exporter plugin composes the projections it requires without naming a
+    // runtime type, and the vocabulary it buckets with is the same one core owns.
+    let mut histogram =
+        ExplicitHistogramV1::new(GenAiHistogramMetric::OperationDuration.bounds());
+    histogram.observe(0.01);
+    assert!(histogram.validate().is_ok());
+    // The first-upper-bound rule admits the boundary value into its own bucket.
+    assert_eq!(histogram.bucket_counts[0], 1);
+    assert_eq!(histogram.count, 1);
+
+    let series = HistogramSeriesV1 {
+        histogram,
+        ..HistogramSeriesV1::new(
+            GenAiHistogramMetric::OperationDuration,
+            HistogramDimensionV1::success(),
+        )
+    };
+    let folded = GenAiClientHistogramsV1::from_series(vec![
+        HistogramSeriesV1::new(
+            GenAiHistogramMetric::TokenUsage,
+            HistogramDimensionV1::token(TokenDirection::Input),
+        ),
+        series,
+    ]);
+    // Canonical order is metric emission order, not construction order.
+    assert_eq!(
+        folded.series[0].metric,
+        GenAiHistogramMetric::OperationDuration.spec_name()
+    );
+    assert!(folded.validate().is_ok());
+
+    let records = ExactRecordsV1::from_records(vec![ExactRecordV1 {
+        record_index: 0,
+        conversation_id: None,
+        turn_index: 0,
+        model: Some("m".to_owned()),
+        start_ns: 1,
+        end_ns: Some(2),
+        error_type: None,
+        metrics: BTreeMap::from([(
+            "request_latency".to_owned(),
+            MetricValueV1 {
+                value: 10.0,
+                unit: "ms".to_owned(),
+            },
+        )]),
+    }]);
+    assert!(records.validate().is_ok());
+    assert!(records.records[0].is_success());
+    assert_eq!(seconds_scale("ms"), 1e-3);
+
+    // A projection tagged with a schema this crate does not define is refused
+    // rather than reinterpreted.
+    let mut wrong = FinalReportV1::new(serde_json::json!({}));
+    wrong.version = 99;
+    assert!(matches!(
+        wrong.validate(),
+        Err(CaptureError::UnsupportedVersion { found: 99 })
+    ));
+}
+
+#[test]
+fn direct_transport_services_replace_an_aggregate_run_context() {
+    // A direct transport receives five narrow capabilities, each satisfiable by
+    // worker-local state with no synchronization and no runtime type.
+    struct Services {
+        clock: Rc<FakeClock>,
+        artifacts: FakeArtifacts,
+        recorded: RefCell<Vec<(String, f64, String)>>,
+    }
+
+    impl ClockService for Services {
+        fn clock(&self) -> Rc<dyn Clock> {
+            self.clock.clone()
+        }
+    }
+
+    impl MetricsService for Services {
+        fn record_metric(&self, name: &str, value: f64, unit: &str) {
+            self.recorded
+                .borrow_mut()
+                .push((name.to_owned(), value, unit.to_owned()));
+        }
+
+        fn increment_counter(&self, _name: &str, _delta: u64) {}
+    }
+
+    impl ArtifactService for Services {
+        fn artifacts(&self) -> &dyn ArtifactAccess {
+            &self.artifacts
+        }
+    }
+
+    impl CancellationService for Services {
+        fn is_cancelled(&self) -> bool {
+            false
+        }
+
+        fn deadline_ns(&self) -> Option<i64> {
+            None
+        }
+    }
+
+    impl DirectTransportServices for Services {
+        fn graph(&self) -> Option<&dyn GraphService> {
+            None
+        }
+    }
+
+    let services = Services {
+        clock: Rc::new(FakeClock {
+            now_ns: RefCell::new(7),
+        }),
+        artifacts: FakeArtifacts::default(),
+        recorded: RefCell::new(Vec::new()),
+    };
+    assert_eq!(services.clock().now_ns(), 7);
+    services.record_metric("request_latency", 1.5, "ms");
+    assert_eq!(services.recorded.borrow().len(), 1);
+    assert!(services.artifacts().list().unwrap().is_empty());
+    assert!(!services.is_cancelled());
+    assert!(services.graph().is_none());
 }
 
 /// Minimal executor: the dispatch seam is `?Send` and must stay drivable
