@@ -337,19 +337,21 @@ async def test_k3_resource_quota_exhaustion_fails_fast_unified(
             manifest=manifest,
         ),
     ):
-        # Poll for up to 120 s: quota admission rejection must now
+        # Poll for up to 180 s: quota admission rejection must now
         # surface on the CR as Failed, not only in namespace events.
+        # PENDING_CRITICAL_THRESHOLD_SECONDS=90s + kopf timer scheduling
+        # means the operator can take 90-120s; 180s gives adequate margin.
         try:
             observed_phase = await wait_for_aiperfjob_phase(
                 kubectl,
                 operator_job_namespace,
                 name,
                 ("Failed",),
-                timeout=120.0,
+                timeout=180.0,
             )
         except TimeoutError as exc:
             pytest.fail(
-                f"K3: CR did not reach Failed within 120 s after "
+                f"K3: CR did not reach Failed within 180 s after "
                 f"ResourceQuota {quota_name!r} rejected pod admission "
                 f"({exc!s})"
             )

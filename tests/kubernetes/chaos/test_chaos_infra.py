@@ -316,9 +316,11 @@ async def test_k3_resource_quota_exhaustion_fails_fast(
             config=config, name=name, namespace=operator_job_namespace
         )
 
-        # Poll for up to 120 s: quota admission rejection must now surface
+        # Poll for up to 180 s: quota admission rejection must now surface
         # on the CR as Failed, not only in namespace events.
-        deadline = time.monotonic() + 120.0
+        # PENDING_CRITICAL_THRESHOLD_SECONDS=90s + kopf timer scheduling means
+        # the operator can take 90-120s; 180s gives adequate margin on kind.
+        deadline = time.monotonic() + 180.0
         observed_phase = ""
         while time.monotonic() < deadline:
             observed_phase = await _phase(kubectl, operator_job_namespace, name)
@@ -327,7 +329,7 @@ async def test_k3_resource_quota_exhaustion_fails_fast(
             await asyncio.sleep(2.0)
 
         assert observed_phase == "Failed", (
-            f"K3: CR did not reach Failed within 120 s after ResourceQuota "
+            f"K3: CR did not reach Failed within 180 s after ResourceQuota "
             f"{quota_name!r} rejected pod admission (observed phase="
             f"{observed_phase!r})"
         )
