@@ -3,8 +3,11 @@
 
 //! Atomic generation backend contract and shared publication prevalidation.
 
+use std::any::Any;
+
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use serde_json::value::RawValue;
 
 use super::{
     checkpoint::{
@@ -21,6 +24,109 @@ use super::{
 };
 
 const INITIAL_CHECKPOINT_EPOCH: CheckpointEpoch = CheckpointEpoch::new(1);
+
+/// Immutable registry metadata for one checkpoint backend implementation.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct StreamingCheckpointBackendDescriptor {
+    /// Stable registry identifier.
+    pub id: &'static str,
+    /// Human-readable implementation description.
+    pub description: &'static str,
+    /// Whether the backend durably publishes atomic generations.
+    pub is_durable: bool,
+    /// Whether opened generations remain reachable through explicit read leases.
+    pub has_leased_readers: bool,
+    /// Whether participant and result state publish as one atomic generation.
+    pub has_atomic_generations: bool,
+    /// Whether checkpoint-native result segments are supported.
+    pub has_result_segments: bool,
+    /// Whether sensitive participant state is protected at rest.
+    pub protects_sensitive_state: bool,
+    /// Reachability and collection policy for committed objects.
+    pub retention: CheckpointRetention,
+    /// Backend placement visible to cellular validation.
+    pub placement: CheckpointBackendPlacement,
+    /// Whether backend progress can run under a virtual clock.
+    pub supports_virtual_clock: bool,
+}
+
+/// Committed checkpoint object retention behavior.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CheckpointRetention {
+    /// State is process-local and retained only while its run is active.
+    Ephemeral,
+    /// Objects remain reachable through committed generation roots.
+    GenerationReachability,
+}
+
+/// Checkpoint backend placement behavior.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CheckpointBackendPlacement {
+    /// Backend state is local to the controller process.
+    ControllerLocal,
+    /// One authoritative backend is reachable across cells.
+    SharedAcrossCells,
+}
+
+/// Capabilities required from a selected checkpoint backend.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CheckpointBackendRequirements {
+    /// Whether execution must resume after process replacement.
+    pub needs_restartable_execution: bool,
+    /// Whether partial results must survive process replacement.
+    pub needs_durable_partial_results: bool,
+}
+
+/// Type-erased, strictly validated checkpoint backend configuration.
+pub trait ValidatedCheckpointBackendConfig: std::fmt::Debug + Send + Sync {
+    /// Borrow the concrete startup-only value.
+    fn as_any(&self) -> &dyn Any;
+
+    /// Consume the concrete startup-only value.
+    fn into_any(self: Box<Self>) -> Box<dyn Any + Send + Sync>;
+}
+
+impl<T> ValidatedCheckpointBackendConfig for T
+where
+    T: Any + std::fmt::Debug + Send + Sync,
+{
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn into_any(self: Box<Self>) -> Box<dyn Any + Send + Sync> {
+        self
+    }
+}
+
+/// Host-owned checkpoint backend preparation context.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CheckpointBackendPrepareContext {
+    /// Exact stable logical run namespace.
+    pub run: StreamRunIdentity,
+}
+
+/// Startup checkpoint backend validation and preparation contract.
+pub trait StreamingCheckpointBackendFactory: std::fmt::Debug + Send + Sync {
+    /// Describe the exact compiled backend implementation.
+    fn descriptor(&self) -> &'static StreamingCheckpointBackendDescriptor;
+
+    /// Strictly decode and validate backend-owned configuration.
+    fn validate(
+        &self,
+        authored: &RawValue,
+        requirements: &CheckpointBackendRequirements,
+    ) -> Result<Box<dyn ValidatedCheckpointBackendConfig>, CheckpointError>;
+
+    /// Prepare one run-bound atomic checkpoint backend.
+    fn prepare(
+        &self,
+        config: Box<dyn ValidatedCheckpointBackendConfig>,
+        context: &CheckpointBackendPrepareContext,
+    ) -> Result<Box<dyn StreamingCheckpointBackend>, CheckpointError>;
+}
 
 /// Caller-supplied semantic metadata for one atomic generation publication.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
