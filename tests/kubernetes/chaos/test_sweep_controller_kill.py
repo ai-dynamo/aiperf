@@ -231,6 +231,7 @@ async def _download_sweep_results(
     namespace: str,
     epoch: str,
     kube_context: str,
+    operator_namespace: str = "aiperf-system",
 ) -> None:
     result = await run_command(
         [
@@ -249,6 +250,8 @@ async def _download_sweep_results(
             "--all",
             "--kube-context",
             kube_context,
+            "--operator-namespace",
+            operator_namespace,
         ],
         timeout=300,
     )
