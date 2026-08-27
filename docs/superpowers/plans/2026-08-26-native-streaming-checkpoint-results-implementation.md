@@ -2307,7 +2307,7 @@ async fn legacy_participant_is_export_only_and_cannot_initialize() {
         }
         LeasedCheckpointGenerationView::CurrentV4(_) => panic!("fixture must be legacy"),
     };
-    assert_eq!(legacy.payload(), fixture.expected_payload.as_ref());
+    assert_eq!(legacy.payload_bytes(), fixture.expected_payload.as_ref());
     assert_eq!(fixture.participant_initialize_calls(), 0);
 }
 
@@ -3786,6 +3786,22 @@ subsequent signature/type substitution in `checkpoint_backend.rs`, memory
 support, and backend tests; no 5B validation order or ownership changes:
 
 ```rust
+// Task 1D-R extends the existing private receipt fields with this committed
+// generation authority; the constructor does not accept a caller-supplied root.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CommittedParticipantReceipt {
+    generation: CheckpointGeneration,
+    participant_id: CheckpointParticipantId,
+    descriptor_digest: ContentDigest,
+    represented_cut: CheckpointCut,
+    result_index_root: ContentDigest,
+}
+
+impl CommittedParticipantReceipt {
+    pub const fn generation(&self) -> &CheckpointGeneration { &self.generation }
+    pub fn result_index_root(&self) -> &ContentDigest { &self.result_index_root }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CurrentV4CheckpointGeneration(CheckpointGeneration);
 
@@ -3811,6 +3827,7 @@ pub enum LeasedCheckpointGenerationView<'a> {
     LegacyV3ReadOnly(&'a dyn LegacyV3LeasedGenerationReader),
 }
 
+// Defined in checkpoint.rs, beside CommittedParticipantState.
 pub struct LegacyParticipantState {
     descriptor: ParticipantStateDescriptor,
     payload: BudgetedCheckpointBytes,
@@ -3824,7 +3841,7 @@ pub(crate) struct CurrentV4ParticipantStateContext {
 
 impl LegacyParticipantState {
     pub fn descriptor(&self) -> &ParticipantStateDescriptor { &self.descriptor }
-    pub fn payload(&self) -> &[u8] { self.payload.as_bytes() }
+    pub fn payload_bytes(&self) -> &[u8] { self.payload.as_bytes() }
 }
 
 impl CommittedParticipantState {
@@ -3842,7 +3859,9 @@ pub enum CheckpointGenerationStorageVersion {
 }
 
 #[async_trait(?Send)]
-pub trait VersionedLeasedGenerationReader {
+pub trait VersionedLeasedGenerationReader:
+    sealed::VersionedLeasedGenerationReader
+{
     fn version(&self) -> CheckpointGenerationStorageVersion;
     fn generation(&self) -> &CheckpointGeneration;
     fn view(&self) -> LeasedCheckpointGenerationView<'_>;
@@ -3855,6 +3874,12 @@ pub trait VersionedLeasedGenerationReader {
         &self,
         descriptor: &ResultSegmentDescriptor,
     ) -> Result<ResultSegmentReader, CheckpointError>;
+}
+
+impl LeasedCheckpointGeneration {
+    pub fn version(&self) -> CheckpointGenerationStorageVersion;
+    pub fn generation(&self) -> &CheckpointGeneration;
+    pub fn view(&self) -> LeasedCheckpointGenerationView<'_>;
 }
 
 pub(crate) trait CurrentV4PredecessorProjection {
@@ -3923,8 +3948,9 @@ cannot initialize a participant or be promoted through a public conversion:
 
 ````rust
 /// ```compile_fail
-/// # use aiperf_runtime::streaming::checkpoint::StreamingCheckpointParticipant;
-/// # use aiperf_runtime::streaming::checkpoint_backend::LegacyParticipantState;
+/// # use aiperf_runtime::streaming::checkpoint::{
+/// #     LegacyParticipantState, StreamingCheckpointParticipant,
+/// # };
 /// # async fn cannot_initialize(
 /// #     participant: &mut dyn StreamingCheckpointParticipant,
 /// #     legacy: LegacyParticipantState,
@@ -3934,8 +3960,9 @@ cannot initialize a participant or be promoted through a public conversion:
 /// ```
 ///
 /// ```compile_fail
-/// # use aiperf_runtime::streaming::checkpoint::CommittedParticipantState;
-/// # use aiperf_runtime::streaming::checkpoint_backend::LegacyParticipantState;
+/// # use aiperf_runtime::streaming::checkpoint::{
+/// #     CommittedParticipantState, LegacyParticipantState,
+/// # };
 /// # fn cannot_promote(legacy: LegacyParticipantState) {
 /// let _: CommittedParticipantState = legacy.into();
 /// # }
@@ -3943,11 +3970,12 @@ cannot initialize a participant or be promoted through a public conversion:
 ````
 
 The wrapper and inner fields are private. `VersionedLeasedGenerationReader` is
-implemented only for the opaque wrapper by exhaustive private-inner dispatch.
+sealed and implemented only for the opaque wrapper by exhaustive private-inner dispatch.
 Its common methods expose only generation/result reads; `view()` selects one
 of two non-convertible borrowed reader authorities. Current-v4 participant
 reads remain on `LeasedGenerationReader`. Legacy-v3 participant reads return
-private-field `LegacyParticipantState`, which has borrow-only descriptor/byte
+private-field `LegacyParticipantState` from `checkpoint.rs`, which has
+borrow-only descriptor/byte
 access for export and no conversion into `CommittedParticipantState`.
 Task 1D-R retires the landed public storage constructor
 `CommittedParticipantState::new`: its replacement
@@ -3969,6 +3997,22 @@ Task 1D-R adds `CheckpointError::LegacyReadOnlyHead`; memory/local/object
 `begin_generation(..., None, ...)` must still inspect the actual per-run head
 and return that error rather than treating a present v3 head as fresh. Thus
 neither typed predecessor erasure nor omission can follow or replace v3.
+
+Current-v4 wire bytes contain the strict field `storage_version: "v4"` and a
+handled cut; landed v3 bytes contain neither. The bounded decoder selects once:
+a present version is decoded only as that version, while absence is eligible for
+v3 only with the exact v3 field inventory and no handled cut. Unknown versions,
+failed explicit-v4 verification, a v4-shaped cut without the v4 discriminator,
+or v3 bytes carrying handled roots return `ObjectVerification` and never retry
+the v3 decoder.
+
+Memory integration tests use the doc-hidden checked
+`LegacyV3FixtureObject`, `LegacyV3ReadOnlyFixture::new`, and
+`MemoryCheckpointBackend::import_legacy_v3_read_only_fixture` seam specified by
+`artifacts/streaming-design/task-1dr-implementation-readiness-correction.md`.
+It bounds and verifies the complete fixture, acquires all missing storage before
+one mutation, requires an empty run head, and can install only
+`LegacyV3ReadOnly`; it cannot overwrite a head or mint current authority.
 
 The crate-private projection is tested only beside its implementation:
 
