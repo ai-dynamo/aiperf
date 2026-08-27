@@ -7,7 +7,9 @@
 //! The projection half binds Task 3's reviewed ownership matrix to the exact
 //! Task-1 Cargo census. The witness half is not projection: it derives each
 //! finalizing task's package set, Rust source census, local dependency edges,
-//! and feature map from the live workspace and rejects any drift.
+//! and feature map from the live workspace and rejects any drift. A witness may
+//! mirror its projection row's justification prose, but only the exact
+//! `(package, kind)` edge is ever validated against Cargo.
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -191,14 +193,19 @@ struct ImplementedPackageWitness {
     features: BTreeMap<String, Vec<String>>,
 }
 
-/// A witness dependency edge. Unlike the projection's `OwnedDependency`, a
-/// witness records only what it validates against live Cargo metadata: the
-/// projection owns the justification prose, the witness owns the exact edge.
+/// A witness dependency edge. Only the exact `(package, kind)` pair is
+/// validated against live Cargo metadata; the projection's `OwnedDependency`
+/// owns the reviewed justification prose. The authored witnesses mirror their
+/// projection row verbatim, so the prose is accepted here and carried inert,
+/// with a blank one refused so a mirrored justification cannot rot into an
+/// empty string.
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(deny_unknown_fields)]
 struct WitnessDependency {
     package: String,
     kind: String,
+    #[serde(default)]
+    justification: Option<String>,
 }
 
 fn workspace_root() -> PathBuf {
@@ -372,6 +379,18 @@ fn validate_implementation_witness(
                 )
             })
             .collect::<BTreeSet<_>>();
+        for dependency in &package.dependencies {
+            if dependency
+                .justification
+                .as_ref()
+                .is_some_and(|prose| prose.trim().is_empty())
+            {
+                return Err(format!(
+                    "empty dependency justification in {}",
+                    package.package
+                ));
+            }
+        }
         let declared_dependencies = package
             .dependencies
             .iter()
@@ -1110,6 +1129,7 @@ fn synthetic_core_package() -> SyntheticPackage {
             dependencies: vec![WitnessDependency {
                 package: "aiperf-plugin-api".to_owned(),
                 kind: "normal".to_owned(),
+                justification: None,
             }],
             features,
         }],
