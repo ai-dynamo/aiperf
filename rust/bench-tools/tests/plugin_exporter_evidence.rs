@@ -112,6 +112,119 @@ fn member_record_bytes(
     bytes
 }
 
+fn mutate_receipts(
+    member: ExporterMember,
+    mutate: impl FnOnce(&mut Vec<serde_json::Value>),
+) -> Vec<u8> {
+    let mut receipts: Vec<serde_json::Value> =
+        serde_json::from_slice(&paired_member_receipts(member, RAW_OBSERVABLE_DIGEST))
+            .expect("literal receipts parse");
+    mutate(&mut receipts);
+    let mut bytes = serde_json::to_vec(&receipts).expect("mutated receipts serialize");
+    bytes.push(b'\n');
+    bytes
+}
+
+fn assert_receipts_rejected(label: &str, repetition_receipt_bytes: Vec<u8>) {
+    let mut evidence = member_evidence(ExporterMember::Dynamic);
+    evidence.repetition_receipt_bytes = repetition_receipt_bytes;
+    assert!(
+        validate_exporter_member_evidence(
+            &ExporterSampleContract::normative(),
+            &binding(ExporterMember::Dynamic),
+            &evidence,
+        )
+        .is_err(),
+        "forged receipt vector was accepted: {label}"
+    );
+}
+
+#[test]
+fn repetition_receipts_reject_every_binding_and_shape_substitution() {
+    let field_mutations = [
+        (
+            "identity",
+            "experiment_identity_blake3",
+            serde_json::json!(EMPTY_PROVENANCE_DIGEST),
+        ),
+        ("attempt", "attempt_ordinal", serde_json::json!(1)),
+        ("scenario", "scenario_id", serde_json::json!("other")),
+        ("pair", "pair_id", serde_json::json!("pair-01")),
+        ("member", "member", serde_json::json!("static")),
+        (
+            "class",
+            "observable_kind",
+            serde_json::json!("captured_stream"),
+        ),
+        (
+            "record count",
+            "processed_records",
+            serde_json::json!(99_999),
+        ),
+        (
+            "corpus",
+            "corpus_blake3",
+            serde_json::json!(EMPTY_PROVENANCE_DIGEST),
+        ),
+        (
+            "artifact build",
+            "build_artifact_blake3",
+            serde_json::json!(EMPTY_PROVENANCE_DIGEST),
+        ),
+        (
+            "build receipt",
+            "build_receipt_blake3",
+            serde_json::json!(EMPTY_PROVENANCE_DIGEST),
+        ),
+        ("zero duration", "active_duration_ns", serde_json::json!(0)),
+    ];
+    for (label, field, replacement) in field_mutations {
+        assert_receipts_rejected(
+            label,
+            mutate_receipts(ExporterMember::Dynamic, |receipts| {
+                receipts[0][field] = replacement;
+            }),
+        );
+    }
+
+    assert_receipts_rejected(
+        "missing field",
+        mutate_receipts(ExporterMember::Dynamic, |receipts| {
+            receipts[0]
+                .as_object_mut()
+                .expect("receipt is an object")
+                .remove("corpus_blake3");
+        }),
+    );
+    assert_receipts_rejected(
+        "extra field",
+        mutate_receipts(ExporterMember::Dynamic, |receipts| {
+            receipts[0]["forged"] = serde_json::json!(true);
+        }),
+    );
+    assert_receipts_rejected(
+        "reordered ordinal",
+        mutate_receipts(ExporterMember::Dynamic, |receipts| receipts.swap(0, 1)),
+    );
+    assert_receipts_rejected(
+        "duplicate ordinal",
+        mutate_receipts(ExporterMember::Dynamic, |receipts| {
+            receipts[1]["repetition_ordinal"] = serde_json::json!(0);
+        }),
+    );
+
+    let canonical = paired_member_receipts(ExporterMember::Dynamic, RAW_OBSERVABLE_DIGEST);
+    let duplicate_key = String::from_utf8(canonical)
+        .expect("literal receipt bytes are UTF-8")
+        .replacen(
+            "\"schema_version\":1",
+            "\"schema_version\":1,\"schema_version\":1",
+            1,
+        )
+        .into_bytes();
+    assert_receipts_rejected("duplicate field", duplicate_key);
+}
+
 #[test]
 fn retained_observable_mutation_invalidates_the_exporter_member() {
     let receipt_bytes = paired_member_receipts(ExporterMember::Dynamic, RAW_OBSERVABLE_DIGEST);
