@@ -239,35 +239,37 @@ class TestHelmJobLifecycle:
         """Verify job transitions through expected phases."""
         result = await helm_deployed.create_job(small_helm_config)
         phases_seen = set()
+        status = None
+        try:
+            loop = asyncio.get_event_loop()
+            start = loop.time()
+            timeout = TEST_JOB_TIMEOUT
 
-        loop = asyncio.get_event_loop()
-        start = loop.time()
-        timeout = TEST_JOB_TIMEOUT
+            while loop.time() - start < timeout:
+                status = await helm_deployed.get_job_status(
+                    result.job_name, result.namespace
+                )
+                if status.phase:
+                    phases_seen.add(status.phase)
 
-        while loop.time() - start < timeout:
-            status = await helm_deployed.get_job_status(
-                result.job_name, result.namespace
+                if status.is_terminal:
+                    break
+
+                await asyncio.sleep(2)
+
+            print(f"\n{'=' * 60}")
+            print("PHASE TRANSITIONS")
+            print(f"{'=' * 60}")
+            print(f"  Phases seen: {sorted(phases_seen)}")
+            print(f"  Final phase: {status.phase if status else 'unknown'}")
+            print(f"{'=' * 60}\n")
+
+            assert len(phases_seen) >= 1
+            assert status is not None and status.is_completed, (
+                f"Expected Completed, got {status.phase if status else 'None'}"
             )
-            if status.phase:
-                phases_seen.add(status.phase)
-
-            if status.is_terminal:
-                break
-
-            await asyncio.sleep(2)
-
-        print(f"\n{'=' * 60}")
-        print("PHASE TRANSITIONS")
-        print(f"{'=' * 60}")
-        print(f"  Phases seen: {sorted(phases_seen)}")
-        print(f"  Final phase: {status.phase}")
-        print(f"{'=' * 60}\n")
-
-        assert len(phases_seen) >= 1
-        assert status.is_completed, f"Expected Completed, got {status.phase}"
-
-        # Cleanup
-        await helm_deployed.delete_job(result.job_name, result.namespace)
+        finally:
+            await helm_deployed.delete_job(result.job_name, result.namespace)
 
     def test_job_completes_successfully(
         self,
