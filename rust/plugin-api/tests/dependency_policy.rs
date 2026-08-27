@@ -80,6 +80,7 @@ struct Package {
     manifest_path: String,
     publish: Option<Vec<String>>,
     dependencies: Vec<Dependency>,
+    features: BTreeMap<String, Vec<String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -97,7 +98,7 @@ fn workspace_root() -> PathBuf {
 
 fn metadata(root: &Path) -> Metadata {
     let output = Command::new("cargo")
-        .args(["metadata", "--format-version", "1", "--no-deps"])
+        .args(["metadata", "--locked", "--format-version", "1", "--no-deps"])
         .current_dir(root)
         .output()
         .expect("cargo metadata must execute");
@@ -107,6 +108,29 @@ fn metadata(root: &Path) -> Metadata {
         String::from_utf8_lossy(&output.stderr)
     );
     serde_json::from_slice(&output.stdout).expect("cargo metadata must emit JSON")
+}
+
+fn standalone_metadata(root: &Path) -> Metadata {
+    let manifest = root.join("tests/plugin-third-party/Cargo.toml");
+    let output = Command::new("cargo")
+        .args([
+            "metadata",
+            "--locked",
+            "--format-version",
+            "1",
+            "--no-deps",
+            "--manifest-path",
+        ])
+        .arg(&manifest)
+        .current_dir(root)
+        .output()
+        .expect("standalone cargo metadata must execute");
+    assert!(
+        output.status.success(),
+        "standalone metadata failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout).expect("standalone metadata must emit JSON")
 }
 
 fn package_map(metadata: Metadata) -> BTreeMap<String, Package> {
@@ -147,6 +171,40 @@ fn workspace_and_template_policy() {
     let root = workspace_root();
     let packages = package_map(metadata(&root));
 
+    let baseline: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(
+            root.parent()
+                .expect("repo root")
+                .join("artifacts/native-plugin-baseline/package-topology.json"),
+        )
+        .expect("Task 1 package topology must exist"),
+    )
+    .expect("Task 1 package topology must be JSON");
+    let baseline_names = baseline["workspace_packages"]
+        .as_array()
+        .expect("Task 1 topology packages")
+        .iter()
+        .map(|package| {
+            package["name"]
+                .as_str()
+                .expect("Task 1 package name")
+                .to_owned()
+        })
+        .collect::<BTreeSet<_>>();
+    let expected_names = baseline_names
+        .into_iter()
+        .chain(
+            FOUNDATION_PACKAGES
+                .iter()
+                .chain(DISTRIBUTABLE_PACKAGES)
+                .map(|(name, _)| (*name).to_owned()),
+        )
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        packages.keys().cloned().collect::<BTreeSet<_>>(),
+        expected_names
+    );
+
     for (name, relative_manifest_dir) in FOUNDATION_PACKAGES.iter().chain(DISTRIBUTABLE_PACKAGES) {
         let package = packages
             .get(*name)
@@ -159,11 +217,16 @@ fn workspace_and_template_policy() {
     }
 
     for (name, relative_manifest_dir) in DISTRIBUTABLE_PACKAGES {
+        let template = root.join(relative_manifest_dir).join("plugins.yaml.in");
         assert!(
-            root.join(relative_manifest_dir)
-                .join("plugins.yaml.in")
-                .is_file(),
+            template.is_file(),
             "{name} must retain its distributable template"
+        );
+        assert!(
+            std::fs::read_to_string(template)
+                .expect("template text")
+                .starts_with("# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\n# SPDX-License-Identifier: Apache-2.0\n"),
+            "{name} template must retain its SPDX header"
         );
     }
     for (_, relative_manifest_dir) in FOUNDATION_PACKAGES {
@@ -184,6 +247,9 @@ fn workspace_and_template_policy() {
             .any(|package| Path::new(&package.manifest_path) == standalone),
         "third-party exemplar must remain outside the parent workspace"
     );
+    let standalone_packages = package_map(standalone_metadata(&root));
+    assert_eq!(standalone_packages.len(), 1);
+    assert!(standalone_packages.contains_key("aiperf-plugin-third-party-example"));
 
     let api = &packages["aiperf-plugin-api"];
     let allowlist_path = root.join("plugin-api/api-allowlist.toml");
@@ -208,6 +274,19 @@ fn workspace_and_template_policy() {
         assert!(!api_dependencies.contains(forbidden));
     }
     assert_eq!(api_dependencies, BTreeSet::from(["aiperf-core"]));
+    assert_eq!(
+        allowed,
+        BTreeSet::from(["aiperf-core", "blake3", "serde", "serde_json", "thiserror"])
+    );
+    assert_eq!(
+        allowlist["allowed_std_modules"]
+            .as_array()
+            .expect("API standard-library allowlist")
+            .iter()
+            .map(|value| value.as_str().expect("standard-library module"))
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from(["alloc", "core", "std"])
+    );
 
     let host_dependencies = normal_and_build_dependencies(&packages["aiperf-plugin-host"]);
     assert!(host_dependencies.is_subset(&BTreeSet::from([
@@ -238,6 +317,93 @@ fn workspace_and_template_policy() {
             package.name
         );
     }
+    let exclusions: toml::Value =
+        std::fs::read_to_string(root.join("plugin-conformance/boundary-exclusions.toml"))
+            .expect("boundary exclusions")
+            .parse()
+            .expect("boundary exclusions TOML");
+    assert_eq!(exclusions["schema_version"].as_integer(), Some(1));
+    for inventory in [
+        "native_distribution",
+        "wheel_distribution",
+        "container_distribution",
+        "kubernetes_distribution",
+        "host_universe",
+    ] {
+        let entries = exclusions[inventory]
+            .as_array()
+            .expect("authoritative exclusion inventory");
+        assert!(
+            !entries
+                .iter()
+                .any(|entry| entry.as_str() == Some("aiperf-plugin-test-support"))
+        );
+    }
+    let expected_new_edges = BTreeSet::from([
+        ("aiperf-plugin-api", "aiperf-core", "normal"),
+        ("aiperf-plugin-test-support", "aiperf-core", "normal"),
+        ("aiperf-plugin-test-support", "tempfile", "normal"),
+        ("aiperf-export-sdk", "aiperf-plugin-test-support", "dev"),
+    ]);
+    let new_names = FOUNDATION_PACKAGES
+        .iter()
+        .chain(DISTRIBUTABLE_PACKAGES)
+        .map(|(name, _)| *name)
+        .collect::<BTreeSet<_>>();
+    let new_edges = packages
+        .values()
+        .filter(|package| new_names.contains(package.name.as_str()))
+        .flat_map(|package| {
+            package
+                .dependencies
+                .iter()
+                .filter(|dependency| {
+                    dependency.name.starts_with("aiperf-") || dependency.name == "tempfile"
+                })
+                .map(|dependency| {
+                    (
+                        package.name.as_str(),
+                        dependency.name.as_str(),
+                        dependency.kind.as_deref().unwrap_or("normal"),
+                    )
+                })
+        })
+        .collect::<BTreeSet<_>>();
+    assert_eq!(new_edges, expected_new_edges);
+    assert_eq!(
+        packages["aiperf-e2e-tests"].features.get("grpc"),
+        Some(&vec![
+            "aiperf-runtime/grpc".to_owned(),
+            "aiperf-cli/grpc".to_owned()
+        ])
+    );
+    assert_eq!(
+        packages["aiperf-e2e-tests"].features.get("websocket"),
+        Some(&vec![
+            "aiperf-runtime/websocket".to_owned(),
+            "aiperf-cli/websocket".to_owned()
+        ])
+    );
+    assert_eq!(
+        packages["aiperf-e2e-tests"].features.get("dynosim"),
+        Some(&vec![
+            "aiperf-runtime/dynosim".to_owned(),
+            "aiperf-cli/dynosim".to_owned()
+        ])
+    );
+    for package in packages.values() {
+        let dependencies = normal_and_build_dependencies(package);
+        assert!(
+            package.name == "aiperf-cli"
+                || !(dependencies.contains("aiperf-plugin-host")
+                    && dependencies.contains("aiperf-runtime"))
+        );
+        for dependency in dev_dependencies(package) {
+            if dependency == "aiperf-plugin-test-support" {
+                assert!(package.name == "aiperf-export-sdk" || package.name.contains("plugin"));
+            }
+        }
+    }
 }
 
 #[test]
@@ -259,6 +425,24 @@ fn symbolic_ownership_policy() {
         .iter()
         .zip(["FrozenAIPerfRegistry", "FrozenPluginUniverse"])
     {
+        assert_eq!(
+            row.as_table()
+                .expect("symbol ownership row")
+                .keys()
+                .map(String::as_str)
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from([
+                "symbol",
+                "owner_crate",
+                "source_path",
+                "producer_task",
+                "construction_crate",
+                "consumer_crates",
+                "composition_crate",
+                "state",
+                "composition_state",
+            ])
+        );
         assert_eq!(row["symbol"].as_str(), Some(symbol));
         assert_eq!(row["owner_crate"].as_str(), Some("aiperf-plugin-api"));
         assert_eq!(
@@ -273,9 +457,11 @@ fn symbolic_ownership_policy() {
         assert_eq!(
             row["consumer_crates"]
                 .as_array()
-                .and_then(|values| values.first())
-                .and_then(toml::Value::as_str),
-            Some("aiperf-runtime")
+                .expect("consumer crates")
+                .iter()
+                .map(|value| value.as_str().expect("consumer crate"))
+                .collect::<Vec<_>>(),
+            vec!["aiperf-runtime"]
         );
         assert_eq!(row["composition_crate"].as_str(), Some("aiperf-cli"));
         assert_eq!(row["state"].as_str(), Some("planned"));
@@ -289,6 +475,22 @@ fn candidate_inventory_policy() {
     // byte digest would make later candidate staging non-reproducible.
     let inventory_path =
         workspace_root().join("plugin-conformance/candidate-source-inventory.toml");
+    let source_root = workspace_root();
+    let repository_root = source_root.parent().expect("repository root");
+    let generator = source_root.join("scripts/generate-plugin-candidate-inventory.py");
+    let output = Command::new("python")
+        .args([
+            generator.to_str().expect("generator path"),
+            repository_root.to_str().expect("repository path"),
+            "--check",
+        ])
+        .output()
+        .expect("candidate generator must execute");
+    assert!(
+        output.status.success(),
+        "candidate generator failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let value: toml::Value = std::fs::read_to_string(&inventory_path)
         .unwrap_or_else(|error| panic!("cannot read {}: {error}", inventory_path.display()))
         .parse()
