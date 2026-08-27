@@ -57,9 +57,7 @@ impl RegistryId {
     /// fold under the wrong rules.
     pub fn new(input: &str, version: u8) -> Result<Self, RegistryIdError> {
         if version != REGISTRY_ID_NORMALIZATION_VERSION {
-            return Err(RegistryIdError::UnsupportedVersion {
-                requested: version,
-            });
+            return Err(RegistryIdError::UnsupportedVersion { requested: version });
         }
         if !input.is_ascii() {
             return Err(RegistryIdError::NonAscii);
@@ -81,7 +79,13 @@ impl RegistryId {
 
         let normalized: String = trimmed
             .chars()
-            .map(|c| if c == '-' { '_' } else { c.to_ascii_lowercase() })
+            .map(|c| {
+                if c == '-' {
+                    '_'
+                } else {
+                    c.to_ascii_lowercase()
+                }
+            })
             .collect();
 
         if normalized.len() > REGISTRY_ID_MAX_LEN {

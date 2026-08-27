@@ -522,7 +522,11 @@ fn workspace_and_template_policy() {
                 .chain(DISTRIBUTABLE_PACKAGES)
                 .map(|(name, _)| (*name).to_owned()),
         )
-        .chain(WORKSPACE_TOOLING_PACKAGES.iter().map(|name| (*name).to_owned()))
+        .chain(
+            WORKSPACE_TOOLING_PACKAGES
+                .iter()
+                .map(|name| (*name).to_owned()),
+        )
         .collect::<BTreeSet<_>>();
     assert_eq!(
         packages.keys().cloned().collect::<BTreeSet<_>>(),

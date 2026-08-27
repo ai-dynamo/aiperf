@@ -26,11 +26,20 @@ fn id(input: &str) -> Result<RegistryId, RegistryIdError> {
 #[test]
 fn normalization_version_1_accepts_and_folds_exactly_the_documented_forms() {
     // Trim ASCII space and tab, ASCII-lowercase, fold `-` to `_`.
-    assert_eq!(id(" \tExport-OTLP\t ").map(RegistryId::into_string), Ok("export_otlp".to_owned()));
+    assert_eq!(
+        id(" \tExport-OTLP\t ").map(RegistryId::into_string),
+        Ok("export_otlp".to_owned())
+    );
     // Already-normalized input is a fixed point.
-    assert_eq!(id("export_otlp").map(RegistryId::into_string), Ok("export_otlp".to_owned()));
+    assert_eq!(
+        id("export_otlp").map(RegistryId::into_string),
+        Ok("export_otlp".to_owned())
+    );
     // Digits are legal both leading and interior.
-    assert_eq!(id("H2C-9").map(RegistryId::into_string), Ok("h2c_9".to_owned()));
+    assert_eq!(
+        id("H2C-9").map(RegistryId::into_string),
+        Ok("h2c_9".to_owned())
+    );
     // Two authored spellings that fold to one identifier compare equal.
     assert_eq!(id("Export-OTLP"), id("export_otlp"));
     // The 128-byte maximum is inclusive.
@@ -58,16 +67,28 @@ fn normalization_version_1_rejects_each_violated_rule_distinctly() {
         Err(RegistryIdError::ConsecutiveSeparators { offset: 2 })
     );
     // Leading separator and leading underscore both fail the start rule.
-    assert_eq!(id("-otlp"), Err(RegistryIdError::InvalidStart { character: '_' }));
-    assert_eq!(id("_otlp"), Err(RegistryIdError::InvalidStart { character: '_' }));
+    assert_eq!(
+        id("-otlp"),
+        Err(RegistryIdError::InvalidStart { character: '_' })
+    );
+    assert_eq!(
+        id("_otlp"),
+        Err(RegistryIdError::InvalidStart { character: '_' })
+    );
     // Interior bytes outside [a-z0-9_].
     assert_eq!(
         id("ex.port"),
-        Err(RegistryIdError::InvalidCharacter { character: '.', offset: 2 })
+        Err(RegistryIdError::InvalidCharacter {
+            character: '.',
+            offset: 2
+        })
     );
     assert_eq!(
         id("ex port"),
-        Err(RegistryIdError::InvalidCharacter { character: ' ', offset: 2 })
+        Err(RegistryIdError::InvalidCharacter {
+            character: ' ',
+            offset: 2
+        })
     );
     // One byte past the inclusive maximum.
     assert_eq!(
@@ -131,7 +152,11 @@ fn a_declaration_is_produced_by_the_entry_shape_and_read_through_borrows() {
         .register(&mut registrar)
         .expect("registration must succeed");
 
-    let observed: Vec<&str> = registrar.observed().iter().map(RegistryId::as_str).collect();
+    let observed: Vec<&str> = registrar
+        .observed()
+        .iter()
+        .map(RegistryId::as_str)
+        .collect();
     assert_eq!(observed, ["otel", "otel_console"]);
     assert_eq!(registrar.package().id.as_str(), "aiperf_export_otlp");
 
@@ -187,7 +212,10 @@ fn source_api_version_string_matches_parsed_current_and_rejects_non_canonical() 
         PluginSourceApiVersion::parse(PLUGIN_SOURCE_API_VERSION),
         Ok(PluginSourceApiVersion::CURRENT)
     );
-    assert_eq!(PluginSourceApiVersion::CURRENT.to_string(), PLUGIN_SOURCE_API_VERSION);
+    assert_eq!(
+        PluginSourceApiVersion::CURRENT.to_string(),
+        PLUGIN_SOURCE_API_VERSION
+    );
 
     assert_eq!(
         PluginSourceApiVersion::parse("1.0"),
@@ -209,8 +237,9 @@ fn source_api_version_string_matches_parsed_current_and_rejects_non_canonical() 
 fn every_boundary_item_is_documented_in_the_ownership_spec() {
     let spec_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../docs/specs/plugin-api-ownership.md");
-    let spec = std::fs::read_to_string(&spec_path)
-        .unwrap_or_else(|error| panic!("ownership spec {} must exist: {error}", spec_path.display()));
+    let spec = std::fs::read_to_string(&spec_path).unwrap_or_else(|error| {
+        panic!("ownership spec {} must exist: {error}", spec_path.display())
+    });
 
     let missing: Vec<&str> = GENERATION_1_SURFACE
         .iter()
