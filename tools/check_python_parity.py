@@ -103,9 +103,6 @@ ALLOWED_NEW: dict[str, str] = {
     "src/aiperf/entrypoint.py": (
         "console-script entry for aiperf-python; the native binary owns 'aiperf'"
     ),
-    "src/aiperf/config/templates/dynosim_offline_replay.yaml": (
-        "embedded by Rust via include_str! at cli/src/config/templates_data.rs"
-    ),
 }
 
 TRACKED_ROOTS = ("src/", "tests/")
