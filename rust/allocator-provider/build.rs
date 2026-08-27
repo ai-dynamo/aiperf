@@ -37,21 +37,6 @@ fn main() {
     let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap();
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
 
-    // Compile a C glue object that takes the address of every exported mi_*
-    // symbol.  This prevents --gc-sections from removing them from the cdylib
-    // even though no Rust code references them directly.
-    //
-    // libmimalloc-sys exposes its include directory as DEP_LIBMIMALLOC_SYS_INCLUDE_DIR.
-    // If that env var is unavailable, fall back to a forward-declaration approach
-    // that doesn't need the header.
-    let glue_src = write_glue_c(&out_dir);
-    let mut build = cc::Build::new();
-    build.file(&glue_src);
-    if let Ok(inc) = env::var("DEP_LIBMIMALLOC_SYS_INCLUDE_DIR") {
-        build.include(inc);
-    }
-    build.compile("aiperf_alloc_pull");
-
     match target_os.as_str() {
         "linux" | "android" => export_linux(&out_dir),
         "macos" | "ios" => export_macos(&out_dir),
@@ -72,39 +57,14 @@ fn main() {
     }
 }
 
-/// Writes the C glue file that prevents GC of mimalloc symbols and returns its path.
-///
-/// The file takes the address of each exported symbol into a hidden static array.
-/// `__attribute__((used))` prevents the compiler from eliminating the array,
-/// which in turn keeps the referenced symbols alive through the linker's GC pass.
-fn write_glue_c(out_dir: &PathBuf) -> PathBuf {
-    let glue_path = out_dir.join("aiperf_alloc_pull.c");
-    let mut src = String::new();
-
-    src.push_str("/* Auto-generated: forces mi_* symbol inclusion from libmimalloc.a */\n");
-    src.push_str("#include <stddef.h>\n\n");
-
-    // Forward-declare all exported symbols so we can take their address
-    // without requiring the full mimalloc header.
-    for sym in EXPORTED_SYMBOLS {
-        src.push_str(&format!("extern void* {sym}(void);\n"));
-    }
-
-    src.push_str("\n");
-    src.push_str("#if defined(__GNUC__) || defined(__clang__)\n");
-    src.push_str("__attribute__((used, visibility(\"hidden\")))\n");
-    src.push_str("#endif\n");
-    src.push_str("static const void* _aiperf_alloc_pull[] = {\n");
-    for sym in EXPORTED_SYMBOLS {
-        src.push_str(&format!("    (const void*){sym},\n"));
-    }
-    src.push_str("};\n");
-
-    std::fs::write(&glue_path, src).expect("failed to write aiperf_alloc_pull.c");
-    glue_path
-}
-
 fn export_linux(out_dir: &PathBuf) {
+    // Disable section GC for this cdylib so that all symbols from libmimalloc.a
+    // survive the link.  --gc-sections (which Rust enables by default) would
+    // otherwise remove every unreferenced mi_* symbol because no Rust code in
+    // this crate calls them directly.  The version script below then restricts
+    // the DYNAMIC export table to exactly the boundary surface.
+    println!("cargo:rustc-link-arg=-Wl,--no-gc-sections");
+
     // Write a version script that exports exactly the required symbols and
     // hides everything else.  This gives the cdylib a minimal, stable ABI.
     let script_path = out_dir.join("aiperf_alloc_v1.map");
