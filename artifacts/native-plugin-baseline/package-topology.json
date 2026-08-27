@@ -1,49 +1,351 @@
 {
   "schema_version": 1,
+  "generation": "review1i",
   "host_commit": "caa3ff6fcf20ffe36a7704abe16274bedadbb9fb",
-  "rustc": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
+  "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14) (Arch Linux rust 1:1.97.1-1);LLVM 22.1.8",
   "target": "x86_64-unknown-linux-gnu",
+  "cargo_profile": "release",
   "measurement": {
     "commands": [
       "cargo metadata --locked --format-version 1",
-      "cargo tree --workspace --edges normal,build --prefix depth",
-      "cargo tree -p aiperf-cli --edges normal,build --prefix depth"
+      "cargo tree --locked --workspace --edges normal,build --prefix depth",
+      "cargo tree --locked -p aiperf-cli --edges normal,build --prefix depth"
     ],
-    "cargo_lock_blake3": "cd6d2eeff8002bc6d1e49ad38a2bbaeb68a94b87b23b99d1a4c67ffac3713626",
-    "cargo_metadata_blake3": "0a2b545dbe70f93a9cbd8890ccfa643d8c367346f69707dc1e80e97248a3ed6e",
-    "cargo_tree_blake3": "d218f4465426eaf1c3b62e117187c3f7edf4ac863545b74e536f32c3b1ad4275",
-    "raw_metadata": "artifacts/native-plugin-baseline/raw/cargo-metadata.json",
-    "raw_tree": "artifacts/native-plugin-baseline/raw/cargo-tree.txt",
-    "raw_cli_tree": "artifacts/native-plugin-baseline/raw/cargo-tree-cli.txt"
+    "cargo_lock_blake3": "blake3:1d77e8320f0207f9005eaff539c5ab74cae423ccbe4d9b5c01f0d88d9c039081",
+    "cargo_metadata_blake3": "blake3:4af675a684d2615baedab8ec86d5aee2b1018cc844fe6feb6f858fd91e4f8e85",
+    "cargo_tree_blake3": "blake3:623d3e4ec8b4212b5aade5307503d1f645e3ee0355d62cc15a9971f01d07277e",
+    "cargo_cli_tree_blake3": "blake3:523024637b9e16e442db7e3626ad572150da34450bdca825a391155a3a15e6e0",
+    "raw_metadata": "identity/cargo-metadata.json",
+    "raw_tree": "identity/cargo-tree-workspace.txt",
+    "raw_cli_tree": "identity/cargo-tree-cli.txt"
   },
   "workspace_packages": [
     {
-      "name": "aiperf-runtime",
+      "name": "aiperf-bench-tools",
       "version": "0.12.0",
-      "direct_dependency_count": 83,
+      "direct_dependency_count": 15,
+      "dependency_kind_counts": {
+        "normal": 15
+      },
+      "direct_dependencies": [
+        {
+          "name": "blake3",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "bytes",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "crc32fast",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "flate2",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "http-body-util",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "hyper",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "hyper-util",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "libc",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "serde",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "serde_json",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "serde_yaml",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "tar",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "tempfile",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "tokio",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "tokio-stream",
+          "kind": "normal",
+          "is_workspace": false
+        }
+      ],
       "direct_workspace_dependencies": [],
-      "features": [
-        "cellular",
-        "default",
-        "dynamo-aic-forward-pass",
-        "dynamo-full",
-        "dynamo-kvbm-offload",
-        "dynamo-parity",
-        "dynamo-profile",
-        "dynamo-router-runtime",
-        "dynamo-zmq-events",
-        "dynosim",
-        "engine",
-        "grpc",
-        "parquet",
-        "websocket"
-      ]
+      "features": []
     },
     {
       "name": "aiperf-cli",
       "version": "0.12.0",
       "direct_dependency_count": 45,
-      "direct_workspace_dependencies": ["aiperf-runtime"],
+      "dependency_kind_counts": {
+        "build": 1,
+        "dev": 8,
+        "normal": 36
+      },
+      "direct_dependencies": [
+        {
+          "name": "aiperf-runtime",
+          "kind": "normal",
+          "is_workspace": true
+        },
+        {
+          "name": "anyhow",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "async-trait",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "axum",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "base64",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "base64",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "bytes",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "cc",
+          "kind": "build",
+          "is_workspace": false
+        },
+        {
+          "name": "chrono",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "clap",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "futures",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "http",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "http-body-util",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "hyper",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "hyper",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "hyper-util",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "include_dir",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "jsonschema",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "libc",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "libmimalloc-sys",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "mimalloc",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "minijinja",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "nix",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "prost",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "pyo3",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "regex",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "rustls",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "rustls-pemfile",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "serde",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "serde_json",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "serde_yaml",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "sha2",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "tempfile",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "tempfile",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "tokio",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "tokio-rustls",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "tokio-stream",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "tokio-util",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "toml",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "tonic",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "tracing",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "tracing-subscriber",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "url",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "uuid",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "webpki-roots",
+          "kind": "normal",
+          "is_workspace": false
+        }
+      ],
+      "direct_workspace_dependencies": [
+        "aiperf-runtime"
+      ],
       "features": [
         "cellular",
         "default",
@@ -64,16 +366,151 @@
       ]
     },
     {
-      "name": "aiperf-mock-server",
+      "name": "aiperf-dry-run-tests",
       "version": "0.12.0",
-      "direct_dependency_count": 43,
-      "direct_workspace_dependencies": ["aiperf-runtime"],
-      "features": ["uring"]
+      "direct_dependency_count": 3,
+      "dependency_kind_counts": {
+        "dev": 3
+      },
+      "direct_dependencies": [
+        {
+          "name": "flate2",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "serde_json",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "tempfile",
+          "kind": "dev",
+          "is_workspace": false
+        }
+      ],
+      "direct_workspace_dependencies": [],
+      "features": []
     },
     {
       "name": "aiperf-e2e-tests",
       "version": "0.12.0",
-      "direct_dependency_count": 21,
+      "direct_dependency_count": 22,
+      "dependency_kind_counts": {
+        "dev": 22
+      },
+      "direct_dependencies": [
+        {
+          "name": "aiperf-cli",
+          "kind": "dev",
+          "is_workspace": true
+        },
+        {
+          "name": "aiperf-mock-server",
+          "kind": "dev",
+          "is_workspace": true
+        },
+        {
+          "name": "aiperf-runtime",
+          "kind": "dev",
+          "is_workspace": true
+        },
+        {
+          "name": "arrow",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "axum",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "base64",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "blake3",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "ed25519-dalek",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "glob",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "libc",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "nix",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "opentelemetry-proto",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "parquet",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "prost",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "regex",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "reqwest",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "serde",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "serde_json",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "serde_yaml",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "sha2",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "tempfile",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "tokio",
+          "kind": "dev",
+          "is_workspace": false
+        }
+      ],
       "direct_workspace_dependencies": [
         "aiperf-cli",
         "aiperf-mock-server",
@@ -82,45 +519,679 @@
       "features": []
     },
     {
-      "name": "aiperf-dry-run-tests",
+      "name": "aiperf-mock-server",
       "version": "0.12.0",
-      "direct_dependency_count": 3,
-      "direct_workspace_dependencies": [],
-      "features": []
+      "direct_dependency_count": 43,
+      "dependency_kind_counts": {
+        "dev": 4,
+        "normal": 39
+      },
+      "direct_dependencies": [
+        {
+          "name": "aiperf-runtime",
+          "kind": "normal",
+          "is_workspace": true
+        },
+        {
+          "name": "anyhow",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "async-stream",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "axum",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "base64",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "blake2",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "blake3",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "bytes",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "chrono",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "clap",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "dashmap",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "futures",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "futures",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "http",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "http-body-util",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "httparse",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "hyper",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "hyper-util",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "libc",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "mimalloc",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "monoio",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "num_cpus",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "once_cell",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "parking_lot",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "prometheus",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "prost",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "rcgen",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "reqwest",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "rustls",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "rustls-pemfile",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "serde",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "serde_json",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "socket2",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "tokio",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "tokio",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "tokio-rustls",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "tokio-tungstenite",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "tokio-tungstenite",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "tonic",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "tower",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "tracing",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "tracing-subscriber",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "uuid",
+          "kind": "normal",
+          "is_workspace": false
+        }
+      ],
+      "direct_workspace_dependencies": [
+        "aiperf-runtime"
+      ],
+      "features": [
+        "uring"
+      ]
     },
     {
-      "name": "aiperf-bench-tools",
+      "name": "aiperf-runtime",
       "version": "0.12.0",
-      "direct_dependency_count": 9,
+      "direct_dependency_count": 83,
+      "dependency_kind_counts": {
+        "dev": 9,
+        "normal": 74
+      },
+      "direct_dependencies": [
+        {
+          "name": "aiconfigurator-core",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "anyhow",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "arrow",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "async-trait",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "axum",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "base64",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "bitflags",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "blake3",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "bytes",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "chrono",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "criterion",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "csv",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "dynamo-kv-router",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "dynamo-mocker",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "dynamo-renderer",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "dynamo-tokenizers",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "ed25519-dalek",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "flate2",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "futures",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "half",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "hf-hub",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "http",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "http-body",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "http-body-util",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "hyper",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "hyper",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "hyper-util",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "image",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "insta",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "itoa",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "jmespath",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "libc",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "libloading",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "mimalloc",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "minijinja",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "num-bigint",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "nvml-wrapper",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "nvml-wrapper-sys",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "opentelemetry-proto",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "parking_lot",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "parquet",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "percent-encoding",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "petgraph",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "prost",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "pyo3",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "rand",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "rand_distr",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "rand_pcg",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "rayon",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "rcgen",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "regex",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "rmp-serde",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "rustc-hash",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "rustc-hash",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "rustls",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "serde",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "serde_json",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "serde_json",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "serde_yaml",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "sha2",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "sha2",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "smallvec",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "socket2",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "tar",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "tempfile",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "tiktoken-rs",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "tokenizers",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "tokio",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "tokio-rustls",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "tokio-stream",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "tokio-stream",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "tokio-tungstenite",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "tokio-util",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "toml",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "tonic",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "tonic",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "tower-http",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "tracing",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "url",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "uuid",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "velo",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "webpki-roots",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "zstd",
+          "kind": "normal",
+          "is_workspace": false
+        }
+      ],
       "direct_workspace_dependencies": [],
-      "features": []
-    }
-  ],
-  "coupling_facts": [
-    {
-      "owner": "aiperf-cli",
-      "fact": "the default feature set activates grpc, cellular, parquet, and websocket together",
-      "evidence": "aiperf-cli default features resolved by cargo metadata"
-    },
-    {
-      "owner": "aiperf-runtime",
-      "fact": "engine is a runtime feature while the CLI enables it unconditionally through its dependency declaration",
-      "evidence": "aiperf-cli dependency on aiperf-runtime and runtime feature inventory"
-    },
-    {
-      "owner": "aiperf-runtime",
-      "fact": "all endpoint, transport, exporter, cellular, graph, metrics, and engine implementation dependencies currently converge in one 83-direct-dependency package",
-      "evidence": "cargo metadata direct dependency census"
-    },
-    {
-      "owner": "aiperf-cli",
-      "fact": "grpc and parquet named builds are byte-identical to default because both features are already in the default set",
-      "evidence": "BLAKE3 c07ef62e194baf324eec19ac5b795dc4c3a91acceecb98ae576d717634299ba3 for all three release binaries"
-    },
-    {
-      "owner": "aiperf-cli",
-      "fact": "dynosim changes the release artifact and full changes it again",
-      "evidence": "distinct Dynosim and full BLAKE3 artifact identities"
+      "features": [
+        "cellular",
+        "default",
+        "dynamo-aic-forward-pass",
+        "dynamo-full",
+        "dynamo-kvbm-offload",
+        "dynamo-parity",
+        "dynamo-profile",
+        "dynamo-router-runtime",
+        "dynamo-zmq-events",
+        "dynosim",
+        "engine",
+        "grpc",
+        "parquet",
+        "websocket"
+      ]
     }
   ]
 }

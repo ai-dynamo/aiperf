@@ -111,7 +111,14 @@ fn planned_unit_commands(plan: &str) -> BTreeMap<String, String> {
 
 fn script_commands(script: &str) -> BTreeMap<String, String> {
     let mut commands = BTreeMap::new();
-    for line in script.lines() {
+    let case_body = script
+        .split_once("case \"$task\" in\n")
+        .expect("dispatcher must case-match the task")
+        .1
+        .split_once("\nesac")
+        .expect("dispatcher case must terminate")
+        .0;
+    for line in case_body.lines() {
         let Some((identifier, command)) = line.trim().split_once(") ") else {
             continue;
         };
@@ -153,7 +160,9 @@ fn task_gate_dispatcher_exactly_matches_both_planned_matrices() {
     let expected: BTreeMap<_, _> = tasks.into_iter().chain(units).collect();
     assert_eq!(script_commands(&script), expected);
 
-    assert!(script.starts_with("#!/bin/sh\nset -eu\n\ntask=${1-}\n"));
+    assert!(script.starts_with(
+        "#!/bin/sh\n# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\n# SPDX-License-Identifier: Apache-2.0\n\nset -eu\n\ntask=${1-}\n"
+    ));
     assert!(script.contains("  *) echo \"unknown plugin task gate: $task\" >&2; exit 64 ;;\n"));
     assert!(
         script.ends_with("esac || exit $?\n\ncargo fmt --check\n"),

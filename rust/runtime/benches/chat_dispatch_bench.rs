@@ -24,12 +24,17 @@
 //! cargo test --release -p aiperf-runtime --bench chat_dispatch_bench -- --nocapture --test-threads=1
 //! ```
 //!
-//! `--test-threads=1` is required: the counting allocator is process-global.
+//! `--test-threads=1` is required: the allocator hook is process-global, while
+//! allocation accounting is thread-local and RAII-scoped.
 
-use std::alloc::{GlobalAlloc, Layout, System};
+use std::alloc::{GlobalAlloc, Layout};
+use std::cell::Cell;
+use std::collections::BTreeMap;
+use std::io::{Read, Write};
+use std::net::TcpListener;
 use std::rc::Rc;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::thread;
 use std::time::Instant;
 
 use bytes::Bytes;
@@ -53,44 +58,92 @@ use aiperf_runtime::multiturn::{
     ConversationSource, IssuedCredit, NativeDatasetConversationSource, PreparedEndpointReference,
     TurnResponse,
 };
+use aiperf_runtime::transport::http::RealClock;
+use aiperf_runtime::transport::http::client::http_client::HttpClient;
+use aiperf_runtime::transport::http::config::ClientConfig;
 
 // ---------------------------------------------------------------------------
 // Counting allocator
 // ---------------------------------------------------------------------------
 
-static ALLOC_COUNT: AtomicU64 = AtomicU64::new(0);
-static ALLOC_BYTES: AtomicU64 = AtomicU64::new(0);
-static COUNTING: AtomicBool = AtomicBool::new(false);
+thread_local! {
+    static COUNTING: Cell<bool> = const { Cell::new(false) };
+    static ALLOC_COUNT: Cell<u64> = const { Cell::new(0) };
+    static ALLOC_BYTES: Cell<u64> = const { Cell::new(0) };
+}
 
 struct CountingAlloc;
 
 unsafe impl GlobalAlloc for CountingAlloc {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        if COUNTING.load(Ordering::Relaxed) {
-            ALLOC_COUNT.fetch_add(1, Ordering::Relaxed);
-            ALLOC_BYTES.fetch_add(layout.size() as u64, Ordering::Relaxed);
+        let pointer = unsafe { mimalloc::MiMalloc.alloc(layout) };
+        if !pointer.is_null() && COUNTING.get() {
+            ALLOC_COUNT.with(|count| count.set(count.get().saturating_add(1)));
+            ALLOC_BYTES.with(|total| {
+                total.set(total.get().saturating_add(layout.size() as u64));
+            });
         }
-        unsafe { System.alloc(layout) }
+        pointer
+    }
+
+    unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+        let pointer = unsafe { mimalloc::MiMalloc.alloc_zeroed(layout) };
+        if !pointer.is_null() && COUNTING.get() {
+            ALLOC_COUNT.with(|count| count.set(count.get().saturating_add(1)));
+            ALLOC_BYTES.with(|total| {
+                total.set(total.get().saturating_add(layout.size() as u64));
+            });
+        }
+        pointer
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        unsafe { System.dealloc(ptr, layout) }
+        unsafe { mimalloc::MiMalloc.dealloc(ptr, layout) }
     }
 
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        if COUNTING.load(Ordering::Relaxed) {
-            ALLOC_COUNT.fetch_add(1, Ordering::Relaxed);
-            ALLOC_BYTES.fetch_add(
-                new_size.saturating_sub(layout.size()) as u64,
-                Ordering::Relaxed,
-            );
+        let replacement = unsafe { mimalloc::MiMalloc.realloc(ptr, layout, new_size) };
+        if !replacement.is_null() && COUNTING.get() {
+            ALLOC_COUNT.with(|count| count.set(count.get().saturating_add(1)));
+            ALLOC_BYTES.with(|total| total.set(total.get().saturating_add(new_size as u64)));
         }
-        unsafe { System.realloc(ptr, layout, new_size) }
+        replacement
     }
 }
 
 #[global_allocator]
 static GLOBAL: CountingAlloc = CountingAlloc;
+
+struct AllocationScope {
+    is_active: bool,
+}
+
+impl AllocationScope {
+    fn start() -> Self {
+        assert!(!COUNTING.replace(true), "allocation probes may not nest");
+        ALLOC_COUNT.set(0);
+        ALLOC_BYTES.set(0);
+        Self { is_active: true }
+    }
+
+    fn finish(mut self) -> (u64, u64) {
+        self.disable();
+        (ALLOC_COUNT.get(), ALLOC_BYTES.get())
+    }
+
+    fn disable(&mut self) {
+        if self.is_active {
+            assert!(COUNTING.replace(false), "allocation probe was not active");
+            self.is_active = false;
+        }
+    }
+}
+
+impl Drop for AllocationScope {
+    fn drop(&mut self) {
+        self.disable();
+    }
+}
 
 /// One measured scenario.
 struct Sample {
@@ -112,6 +165,19 @@ impl Sample {
             self.alloc_bytes_per_iter,
         );
     }
+
+    fn print_allocation_json(&self, path: &str, iterations: u64) {
+        println!(
+            "AIPERF_ALLOCATION_SAMPLE {}",
+            serde_json::json!({
+                "path": path,
+                "iterations": iterations,
+                "allocation_count_per_request": self.allocs_per_iter,
+                "allocated_bytes_per_request": self.alloc_bytes_per_iter,
+                "nanoseconds_per_request": self.ns_per_iter,
+            })
+        );
+    }
 }
 
 /// Time and count allocations for `iters` runs of `body`, after a warm-up pass.
@@ -121,22 +187,18 @@ fn measure<T>(
     iters: u64,
     mut body: impl FnMut() -> T,
 ) -> Sample {
-    // Warm caches, lazy statics, and any one-shot interning.
+    // Warm caches, lazy state, and any one-shot interning.
     for _ in 0..(iters / 10).max(16) {
         std::hint::black_box(body());
     }
 
-    ALLOC_COUNT.store(0, Ordering::Relaxed);
-    ALLOC_BYTES.store(0, Ordering::Relaxed);
-    COUNTING.store(true, Ordering::Relaxed);
+    let allocation_scope = AllocationScope::start();
     let start = Instant::now();
     for _ in 0..iters {
         std::hint::black_box(body());
     }
     let elapsed = start.elapsed();
-    COUNTING.store(false, Ordering::Relaxed);
-    let allocs = ALLOC_COUNT.load(Ordering::Relaxed);
-    let bytes = ALLOC_BYTES.load(Ordering::Relaxed);
+    let (allocs, bytes) = allocation_scope.finish();
 
     Sample {
         label: label.into(),
@@ -232,16 +294,60 @@ fn snapshot_turn(pool: &mut SegmentPool, index: usize, per_message: usize) -> Tu
 }
 
 fn prepared_chat_endpoint() -> Box<dyn PreparedEndpoint> {
+    prepared_chat_endpoint_with_streaming(true)
+}
+
+fn prepared_chat_endpoint_with_streaming(streaming: bool) -> Box<dyn PreparedEndpoint> {
     EndpointRegistry::builtin()
         .expect("builtin endpoint registry")
         .prepare(
             &EndpointId::new("chat").expect("chat endpoint id"),
             RawEndpointConfig {
-                streaming: true,
+                streaming,
                 ..RawEndpointConfig::default()
             },
         )
         .expect("prepare chat endpoint")
+}
+
+fn deterministic_http_server(requests: usize) -> (url::Url, thread::JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind allocation-probe server");
+    let address = listener.local_addr().expect("allocation-probe address");
+    let server = thread::spawn(move || {
+        let body = br#"{"id":"chatcmpl-allocation","object":"chat.completion","created":0,"model":"mock-model","choices":[{"index":0,"message":{"role":"assistant","content":"deterministic response"},"finish_reason":"stop"}],"usage":{"prompt_tokens":4,"completion_tokens":2,"total_tokens":6}}"#;
+        for _ in 0..requests {
+            let (mut stream, _) = listener.accept().expect("accept allocation-probe request");
+            let mut request = Vec::new();
+            let mut chunk = [0_u8; 4096];
+            loop {
+                let read = stream
+                    .read(&mut chunk)
+                    .expect("read allocation-probe request");
+                if read == 0 {
+                    break;
+                }
+                request.extend_from_slice(&chunk[..read]);
+                if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            stream
+                .write_all(response.as_bytes())
+                .expect("write allocation-probe response headers");
+            stream
+                .write_all(body)
+                .expect("write allocation-probe response body");
+        }
+    });
+    (
+        url::Url::parse(&format!("http://{address}/v1/chat/completions"))
+            .expect("allocation-probe URL"),
+        server,
+    )
 }
 
 /// Every turn resolves to the one endpoint under measurement.
@@ -384,6 +490,149 @@ fn dispatch_body_and_image_count(
 const SIZES: [(&str, usize); 3] = [("0.5K", 55), ("4K", 490), ("32K", 4000)];
 
 const ITERS: u64 = 20_000;
+
+#[test]
+fn required_plugin_allocation_baselines() {
+    const REQUEST_ITERATIONS: u64 = 10_000;
+    let endpoint_construction = measure("endpoint construction", 0, 10_000, || {
+        prepared_chat_endpoint_with_streaming(false)
+    });
+    endpoint_construction.print_allocation_json("endpoint_preparation", 10_000);
+
+    let formatting_endpoint = prepared_chat_endpoint_with_streaming(false);
+    let mut pool = SegmentPool::new();
+    let formatting_turn = user_turn(&mut pool, "deterministic request".to_owned());
+    let formatting_dataset = build_dataset(
+        ConversationContextMode::MessageArrayWithResponses,
+        vec![formatting_turn],
+        pool,
+        formatting_endpoint.as_ref(),
+        false,
+    );
+    let formatting_session = session_at(formatting_dataset, formatting_endpoint.as_ref(), 0, 0);
+    let formatting_overrides = Overrides::new();
+    let endpoint_formatting = measure("endpoint request formatting", 0, 10_000, || {
+        dispatch_body(
+            &formatting_session,
+            formatting_endpoint.as_ref(),
+            &formatting_overrides,
+        )
+    });
+    endpoint_formatting.print_allocation_json("endpoint_formatting", 10_000);
+
+    let server_requests = usize::try_from(1 + 2 * REQUEST_ITERATIONS)
+        .expect("allocation-probe iteration count fits usize");
+    let (url, server) = deterministic_http_server(server_requests);
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("allocation-probe runtime");
+    let local = tokio::task::LocalSet::new();
+    local.block_on(&runtime, async {
+        let clock: Rc<dyn aiperf_runtime::transport::http::Clock> = RealClock::new();
+        let client = HttpClient::new(clock, ClientConfig::default());
+        let endpoint = prepared_chat_endpoint_with_streaming(false);
+        let mut full_path_pool = SegmentPool::new();
+        let full_path_turn = user_turn(&mut full_path_pool, "deterministic request".to_owned());
+        let full_path_dataset = build_dataset(
+            ConversationContextMode::MessageArrayWithResponses,
+            vec![full_path_turn],
+            full_path_pool,
+            endpoint.as_ref(),
+            false,
+        );
+        let full_path_session = session_at(full_path_dataset, endpoint.as_ref(), 0, 0);
+        let full_path_overrides = Overrides::new();
+        let headers = BTreeMap::from([
+            ("Content-Type".to_owned(), "application/json".to_owned()),
+            ("Accept".to_owned(), "application/json".to_owned()),
+        ]);
+        let body = Bytes::from_static(
+            br#"{"model":"mock-model","stream":false,"max_tokens":2,"messages":[{"role":"user","content":"deterministic request"}]}"#,
+        );
+
+        let warm = client
+            .request(&url, &headers, body.clone(), false, |_| {})
+            .await;
+        assert!(warm.is_valid(), "warm request failed: {:?}", warm.error);
+
+        let allocation_scope = AllocationScope::start();
+        let dispatch_start = Instant::now();
+        for _ in 0..REQUEST_ITERATIONS {
+            let dispatch = client
+                .request(&url, &headers, body.clone(), false, |_| {})
+                .await;
+            assert!(dispatch.is_valid(), "dispatch failed: {:?}", dispatch.error);
+        }
+        let dispatch_elapsed = dispatch_start.elapsed();
+        let (dispatch_allocations, dispatch_bytes) = allocation_scope.finish();
+        println!(
+            "AIPERF_ALLOCATION_SAMPLE {}",
+            serde_json::json!({
+                "path": "transport_dispatch",
+                "iterations": REQUEST_ITERATIONS,
+                "allocation_count": dispatch_allocations,
+                "allocated_bytes": dispatch_bytes,
+                "allocation_count_per_request": dispatch_allocations as f64 / REQUEST_ITERATIONS as f64,
+                "allocated_bytes_per_request": dispatch_bytes as f64 / REQUEST_ITERATIONS as f64,
+                "nanoseconds_per_request": dispatch_elapsed.as_nanos() as f64 / REQUEST_ITERATIONS as f64,
+            })
+        );
+
+        let allocation_scope = AllocationScope::start();
+        let request_start = Instant::now();
+        for _ in 0..REQUEST_ITERATIONS {
+            let body = dispatch_body(
+                &full_path_session,
+                endpoint.as_ref(),
+                &full_path_overrides,
+            );
+            let successful = client
+                .request(&url, &headers, body, false, |_| {})
+                .await;
+            assert!(successful.is_valid(), "request failed: {:?}", successful.error);
+            let endpoint_record = aiperf_runtime::endpoints::RequestRecord {
+                responses: successful
+                    .responses
+                    .iter()
+                    .filter_map(|response| match response {
+                        aiperf_runtime::transport::core::Response::Text(text) => {
+                            Some(aiperf_runtime::endpoints::ServerResponse {
+                                perf_ns: u64::try_from(text.perf_ns).unwrap_or(u64::MAX),
+                                json: text.json(),
+                                raw: Some(text.text.clone()),
+                            })
+                        }
+                        aiperf_runtime::transport::core::Response::Sse(_) => None,
+                    })
+                    .collect(),
+            };
+            let parsed = endpoint
+                .extract_response_data(&endpoint_record)
+                .expect("parse successful response");
+            let assistant = endpoint
+                .build_assistant_turn(&endpoint_record)
+                .expect("build successful assistant turn");
+            assert_eq!(parsed.len(), 1);
+            assert!(assistant.is_some());
+        }
+        let request_elapsed = request_start.elapsed();
+        let (request_allocations, request_bytes) = allocation_scope.finish();
+        println!(
+            "AIPERF_ALLOCATION_SAMPLE {}",
+            serde_json::json!({
+                "path": "full_successful_request",
+                "iterations": REQUEST_ITERATIONS,
+                "allocation_count": request_allocations,
+                "allocated_bytes": request_bytes,
+                "allocation_count_per_request": request_allocations as f64 / REQUEST_ITERATIONS as f64,
+                "allocated_bytes_per_request": request_bytes as f64 / REQUEST_ITERATIONS as f64,
+                "nanoseconds_per_request": request_elapsed.as_nanos() as f64 / REQUEST_ITERATIONS as f64,
+            })
+        );
+    });
+    server.join().expect("allocation-probe server exits");
+}
 
 #[test]
 fn chat_dispatch_body_path_profile() {

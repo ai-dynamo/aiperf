@@ -1,0 +1,8 @@
+review1	invalid	interrupted before canonicalization
+review1b	invalid	overlapped review1 compilation
+review1c	invalid	required timing utility was unavailable
+review1d	superseded	transport and full-path probes used one iteration
+review1e	superseded	published before the final allocation and source-identity contract
+review1f	invalid	locked metadata refused an incomplete measurement projection
+review1g	invalid	engine build exhausted the prior cargo-target volume
+review1h	invalid	owned heredoc producers received dev-null and created no runtime outputs

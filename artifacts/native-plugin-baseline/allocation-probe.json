@@ -1,27 +1,43 @@
 {
   "schema_version": 1,
-  "scenario": "exporter-100k",
-  "command": "MIMALLOC_SHOW_STATS=1 taskset -c 4-71 aiperf profile --model mock-model --url http://127.0.0.1:18080 --endpoint-type chat --streaming true --isl 32 --osl 32 --request-count 100000 --concurrency 64 --export-level records",
   "allocator": "mimalloc 0.1.52 / libmimalloc-sys 0.1.49",
-  "successful_requests": 100000,
-  "exported_record_bytes": 232295392,
-  "elapsed_seconds": 7.462,
-  "user_seconds": 60.321,
-  "system_seconds": 80.399,
-  "allocator_observation": {
-    "peak_pages": 33,
-    "total_pages": 53,
-    "current_pages": 9,
-    "reserved_bytes": 1073741824,
-    "committed_bytes": 16777216,
-    "purged_bytes": 11324621,
-    "peak_rss_bytes": 14260634,
-    "peak_commit_bytes": 16777216,
-    "mmaps": 3,
-    "commits": 33,
-    "purges": 12,
-    "heap_waits": 0
+  "measurement": "TLS-scoped GlobalAlloc counters around warmed single-thread request intervals",
+  "samples": {
+    "endpoint_preparation": {
+      "iterations": 10000,
+      "allocation_count_per_request": 386.0,
+      "allocated_bytes_per_request": 22019.0,
+      "nanoseconds_per_request": 10363.4211
+    },
+    "endpoint_formatting": {
+      "iterations": 10000,
+      "allocation_count_per_request": 31.0,
+      "allocated_bytes_per_request": 4105.0
+    },
+    "transport_dispatch": {
+      "iterations": 10000,
+      "allocation_count_per_request": 55.921,
+      "allocated_bytes_per_request": 41344.836
+    },
+    "response_reduction": {
+      "iterations": 10000,
+      "chunks_per_response": 32,
+      "allocation_count_per_request": 12.0,
+      "allocated_bytes_per_request": 3528.0
+    },
+    "full_successful_request": {
+      "iterations": 10000,
+      "allocation_count_per_request": 141.9176,
+      "allocated_bytes_per_request": 52263.8416
+    },
+    "exporter_capture": {
+      "iterations": 1600000,
+      "allocation_count_per_request": 701.0,
+      "allocated_bytes_per_request": 106582.0,
+      "exporter_interval_nanoseconds": 33955784851,
+      "exporter_nanoseconds_per_record": 21222.365531875,
+      "exported_record_bytes": 1740800000
+    }
   },
-  "raw_log": "artifacts/native-plugin-baseline/raw/runtime/exporter-100k/process.log",
-  "raw_log_blake3": "33341853c4b8374e9e3a66c739fedfa9c31972d5a526ab768448f656e63ae2da"
+  "raw_log": "local focused validation; authoritative paper-rig log pending replacement capture"
 }

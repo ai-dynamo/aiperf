@@ -50,13 +50,19 @@ dependencies = [
 name = "aiperf-bench-tools"
 version = "0.12.0"
 dependencies = [
+ "blake3",
  "bytes",
  "crc32fast",
+ "flate2",
  "http-body-util",
  "hyper 1.10.1",
  "hyper-util",
+ "libc",
  "serde",
  "serde_json",
+ "serde_yaml",
+ "tar",
+ "tempfile",
  "tokio",
  "tokio-stream",
 ]
@@ -138,6 +144,7 @@ dependencies = [
  "prost 0.14.4",
  "regex",
  "reqwest",
+ "serde",
  "serde_json",
  "serde_yaml",
  "sha2",

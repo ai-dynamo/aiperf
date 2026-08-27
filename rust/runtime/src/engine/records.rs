@@ -1304,6 +1304,257 @@ mod tests {
     }
 
     #[test]
+    fn exporter_capture_allocation_and_duration_baseline() {
+        const CORPUS_RECORDS: u64 = 100_000;
+        const SAMPLE_REPETITIONS: u64 = 16;
+        const PROCESSED_RECORDS: u64 = CORPUS_RECORDS * SAMPLE_REPETITIONS;
+        const MINIMUM_INTERVAL_SECONDS: u64 = 30;
+        const CORPUS_DEFINITION: &[u8] =
+            include_bytes!("../../../benchmarks/exporter-static-calibration-corpus.json");
+        const OBSERVABLE_POLICY: &[u8] =
+            include_bytes!("../../../benchmarks/exporter-observable-policy.json");
+
+        #[derive(Serialize)]
+        struct ArtifactTreeEntry<'a> {
+            path: &'a str,
+            kind: &'a str,
+            length: u64,
+            blake3: String,
+        }
+
+        fn digest_environment(name: &str, local_seed: &[u8]) -> String {
+            let value = std::env::var(name)
+                .unwrap_or_else(|_| format!("blake3:{}", blake3::hash(local_seed)));
+            let digest = value.strip_prefix("blake3:").unwrap_or_default();
+            assert!(
+                digest.len() == 64 && digest.bytes().all(|byte| byte.is_ascii_hexdigit()),
+                "{name} must contain a BLAKE3 digest"
+            );
+            value
+        }
+
+        let corpus_definition: Value =
+            serde_json::from_slice(CORPUS_DEFINITION).expect("parse exporter corpus definition");
+        assert_eq!(corpus_definition["schema_version"], 1);
+        assert_eq!(corpus_definition["corpus_records"], CORPUS_RECORDS);
+        let policy: Value =
+            serde_json::from_slice(OBSERVABLE_POLICY).expect("parse observable policy");
+        assert_eq!(policy["schema_version"], 1);
+        assert_eq!(policy["mode"], "static_calibration");
+        assert_eq!(
+            policy["scenarios"]["exporter_100k"]["observable_kind"],
+            "artifact_tree"
+        );
+        assert_eq!(
+            policy["scenarios"]["exporter_100k"]["provenance_slots"],
+            json!([])
+        );
+        let corpus_blake3 = format!("blake3:{}", blake3::hash(CORPUS_DEFINITION));
+        let experiment_identity_blake3 = digest_environment(
+            "AIPERF_EXPORTER_EXPERIMENT_IDENTITY_BLAKE3",
+            b"local exporter calibration identity",
+        );
+        let build_artifact_blake3 = digest_environment(
+            "AIPERF_EXPORTER_BUILD_ARTIFACT_BLAKE3",
+            b"local exporter engine artifact",
+        );
+        let build_receipt_blake3 = digest_environment(
+            "AIPERF_EXPORTER_BUILD_RECEIPT_BLAKE3",
+            b"local exporter engine build receipt",
+        );
+
+        let directory = tempfile::tempdir().expect("temporary export directory");
+        let probe_root = std::env::var_os("AIPERF_EXPORTER_PROBE_ROOT")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| directory.path().to_path_buf());
+        std::fs::create_dir_all(&probe_root).expect("create exporter probe root");
+        let path = probe_root.join("exporter-corpus.jsonl");
+        let observable_root = probe_root.join("observable");
+        std::fs::create_dir_all(&observable_root).expect("create exporter observable root");
+        let record = &corpus_definition["record"];
+        let integer = |field: &str| {
+            record[field]
+                .as_u64()
+                .unwrap_or_else(|| panic!("corpus record `{field}` must be an unsigned integer"))
+        };
+        let mut ingest = RecordIngest::minimal(
+            integer("request_start_ns"),
+            integer("request_end_ns"),
+            Phase::Profiling,
+        );
+        ingest.first_token_ns = Some(integer("first_token_ns"));
+        ingest.token_arrival_ns = record["token_arrival_ns"]
+            .as_array()
+            .expect("corpus token arrivals must be an array")
+            .iter()
+            .map(|value| {
+                value
+                    .as_u64()
+                    .expect("corpus token arrival must be unsigned")
+            })
+            .collect();
+        ingest.tokens = TokenCounts {
+            input: Some(integer("input_tokens")),
+            output: Some(integer("output_tokens")),
+            requested_output: Some(integer("requested_output_tokens")),
+            ..TokenCounts::default()
+        };
+        let captured = CapturedRecord {
+            uuid: Uuid::parse_str(
+                record["uuid"]
+                    .as_str()
+                    .expect("corpus record UUID must be text"),
+            )
+            .expect("corpus record UUID must be valid"),
+            x_correlation_id: record["x_correlation_id"]
+                .as_str()
+                .expect("corpus correlation id must be text")
+                .to_owned(),
+            output: CapturedModelOutput::from_parts(
+                record["response_text"]
+                    .as_str()
+                    .expect("corpus response text must be text"),
+                None,
+                None,
+            ),
+            raw: None,
+            ingest,
+        };
+        let metrics = MetricsConfig::default();
+
+        write_record_jsonl_row(&mut std::io::sink(), &captured, &metrics, false)
+            .expect("warm exporter serializer");
+        let allocation_probe = crate::allocation_probe::AllocationProbe::start();
+        let mut active_nanoseconds = 0_u128;
+        let mut comparison_observable_blake3 = None;
+        let provenance_bytes = b"[]\n";
+        let provenance_receipt_blake3 = format!("blake3:{}", blake3::hash(provenance_bytes));
+        let mut repetitions = Vec::new();
+        for repetition_ordinal in 0..SAMPLE_REPETITIONS {
+            let mut writer = create_export_writer(&path, "probe directory", "probe output")
+                .expect("create exporter sample writer");
+            let start = std::time::Instant::now();
+            for _ in 0..CORPUS_RECORDS {
+                write_record_jsonl_row(&mut writer, &captured, &metrics, false)
+                    .expect("export deterministic record");
+            }
+            writer.flush().expect("flush exporter sample");
+            let elapsed = u64::try_from(start.elapsed().as_nanos())
+                .expect("exporter repetition duration fits u64");
+            active_nanoseconds = active_nanoseconds
+                .checked_add(u128::from(elapsed))
+                .expect("exporter active duration fits u128");
+            let bytes = std::fs::read(&path).expect("read retained exporter corpus");
+            let output_blake3 = format!("blake3:{}", blake3::hash(&bytes));
+            let mut raw_observable_bytes = serde_json::to_vec(&[ArtifactTreeEntry {
+                path: "exporter-corpus.jsonl",
+                kind: "regular_file",
+                length: bytes.len() as u64,
+                blake3: output_blake3,
+            }])
+            .expect("serialize exporter artifact-tree observable");
+            raw_observable_bytes.push(b'\n');
+            let raw_observable_blake3 = format!("blake3:{}", blake3::hash(&raw_observable_bytes));
+            if let Some(expected) = comparison_observable_blake3.as_ref() {
+                assert_eq!(
+                    &raw_observable_blake3, expected,
+                    "exporter comparison observable changed by repetition"
+                );
+            } else {
+                comparison_observable_blake3 = Some(raw_observable_blake3.clone());
+            }
+            if repetition_ordinal + 1 == SAMPLE_REPETITIONS {
+                std::fs::write(
+                    observable_root.join("retained-raw-observable.json"),
+                    &raw_observable_bytes,
+                )
+                .expect("retain raw exporter observable");
+                std::fs::write(
+                    observable_root.join("retained-comparison-observable.json"),
+                    &raw_observable_bytes,
+                )
+                .expect("retain comparison exporter observable");
+                std::fs::write(
+                    observable_root.join("retained-provenance-receipt.json"),
+                    provenance_bytes,
+                )
+                .expect("retain exporter provenance receipt");
+            }
+            repetitions.push(serde_json::json!({
+                "schema_version": 1,
+                "experiment_identity_blake3": experiment_identity_blake3,
+                "attempt_ordinal": 0,
+                "scenario_id": "exporter_100k",
+                "pair_id": "task1-static-calibration",
+                "member": "static",
+                "repetition_ordinal": repetition_ordinal,
+                "corpus_blake3": corpus_blake3,
+                "processed_records": CORPUS_RECORDS,
+                "observable_kind": "artifact_tree",
+                "raw_observable_blake3": raw_observable_blake3,
+                "comparison_observable_blake3": comparison_observable_blake3.as_ref().expect("comparison digest exists"),
+                "provenance_receipt_blake3": provenance_receipt_blake3,
+                "active_duration_ns": elapsed,
+                "build_artifact_blake3": build_artifact_blake3,
+                "build_receipt_blake3": build_receipt_blake3,
+            }));
+        }
+        let mut repetition_receipt_bytes =
+            serde_json::to_vec(&repetitions).expect("serialize exporter repetition receipts");
+        repetition_receipt_bytes.push(b'\n');
+        std::fs::write(
+            observable_root.join("member-repetition-receipts.json"),
+            &repetition_receipt_bytes,
+        )
+        .expect("retain exporter repetition receipt vector");
+        let sample = allocation_probe.finish();
+        assert!(
+            active_nanoseconds
+                >= std::time::Duration::from_secs(MINIMUM_INTERVAL_SECONDS).as_nanos(),
+            "the frozen 16-repetition static baseline sample must last at least {MINIMUM_INTERVAL_SECONDS} seconds"
+        );
+
+        println!(
+            "AIPERF_ALLOCATION_SAMPLE {}",
+            serde_json::json!({
+                "path": "exporter_capture",
+                "iterations": PROCESSED_RECORDS,
+                "corpus_records": CORPUS_RECORDS,
+                "sample_repetitions": SAMPLE_REPETITIONS,
+                "processed_records": PROCESSED_RECORDS,
+                "retained_artifact_records": CORPUS_RECORDS,
+                "allocation_count": sample.allocation_count,
+                "allocated_bytes": sample.allocated_bytes,
+                "allocation_count_per_request": sample.allocation_count as f64 / PROCESSED_RECORDS as f64,
+                "allocated_bytes_per_request": sample.allocated_bytes as f64 / PROCESSED_RECORDS as f64,
+                "exporter_interval_nanoseconds": active_nanoseconds,
+                "exporter_nanoseconds_per_record": active_nanoseconds as f64 / PROCESSED_RECORDS as f64,
+                "corpus_blake3": corpus_blake3,
+                "observable_kind": "artifact_tree",
+                "observable_policy_blake3": format!("blake3:{}", blake3::hash(OBSERVABLE_POLICY)),
+                "experiment_identity_blake3": experiment_identity_blake3,
+                "attempt_ordinal": 0,
+                "pair_id": "task1-static-calibration",
+                "member": "static",
+                "repetition_receipts_blake3": format!("blake3:{}", blake3::hash(&repetition_receipt_bytes)),
+                "retained_raw_observable_path": "observable/retained-raw-observable.json",
+                "retained_comparison_observable_path": "observable/retained-comparison-observable.json",
+                "retained_provenance_receipt_path": "observable/retained-provenance-receipt.json",
+                "repetition_receipts_path": "observable/member-repetition-receipts.json",
+                "repetition_receipts": repetitions,
+                "ttft_p50": 5.0,
+                "ttft_p90": 5.0,
+                "ttft_p99": 5.0,
+                "itl_p50": 2.5,
+                "itl_p90": 2.5,
+                "itl_p99": 2.5,
+            })
+        );
+        assert!(sample.allocation_count >= PROCESSED_RECORDS);
+        assert!(sample.allocated_bytes >= CORPUS_RECORDS);
+    }
+
+    #[test]
     fn jsonl_surfaces_canonical_spec_decode_data_and_all_record_metrics() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("profile_export.jsonl");

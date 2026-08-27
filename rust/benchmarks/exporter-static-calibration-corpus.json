@@ -1,0 +1,1 @@
+{"schema_version":1,"corpus_records":100000,"record":{"uuid":"00000000-0000-0000-0000-000000000011","x_correlation_id":"allocation-probe","request_start_ns":1000000,"request_end_ns":11000000,"first_token_ns":6000000,"token_arrival_ns":[6000000,8000000,11000000],"input_tokens":8,"output_tokens":3,"requested_output_tokens":3,"response_text":"deterministic output"}}
