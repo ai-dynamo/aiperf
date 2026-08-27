@@ -120,6 +120,16 @@ pub enum RatioDirection {
     StaticOverDynamic,
 }
 
+/// Statistical rule applied to one reported metric.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MetricGateKind {
+    /// One-sided bound from the joint max-degradation bootstrap.
+    SimultaneousNonInferiority,
+    /// Exact no-increase rule applied to every retained paired ratio.
+    ExactNoIncrease,
+}
+
 /// Read-only case plan derived from the checked-in Task-1 inventory.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct FrozenCasePlan {
@@ -499,7 +509,7 @@ impl Default for SimultaneousGatePolicy {
     }
 }
 
-/// Per-case/per-metric vectors and simultaneous lower endpoint.
+/// Per-case/per-metric vectors and the explicitly typed gate result.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct SimultaneousMetricReport {
@@ -509,6 +519,8 @@ pub struct SimultaneousMetricReport {
     pub metric: String,
     /// Ratio direction fixed by the metric contract.
     pub ratio_direction: RatioDirection,
+    /// Statistical rule applied to this metric.
+    pub gate_kind: MetricGateKind,
     /// Thirty static member summaries.
     pub static_summaries: Vec<f64>,
     /// Thirty dynamic member summaries.
@@ -523,7 +535,7 @@ pub struct SimultaneousMetricReport {
     pub ratio_coefficient_of_variation: f64,
     /// Arithmetic mean of the paired ratios.
     pub observed_ratio: f64,
-    /// Simultaneous one-sided lower endpoint.
+    /// Simultaneous lower endpoint, or exact minimum retained ratio.
     pub lower_confidence_bound: f64,
     /// Required lower endpoint.
     pub threshold: f64,
@@ -551,7 +563,7 @@ pub struct SimultaneousGateReport {
     pub dynamic_artifact_digest: String,
     /// Reports in scenario then metric order.
     pub metric_reports: Vec<SimultaneousMetricReport>,
-    /// Deterministic maximum-degradation value for every paired resample.
+    /// Non-allocation maximum degradation for every joint paired resample.
     pub maximum_degradation_bootstrap_distribution: Vec<f64>,
     /// Every replaced raw pair, including both members and its reason.
     pub invalidation_attempts: Vec<InvalidationAttempt>,
@@ -559,7 +571,7 @@ pub struct SimultaneousGateReport {
     pub is_invalid: bool,
     /// Stable invalidation diagnosis when the attempt is invalid.
     pub invalidation_reason: Option<String>,
-    /// True only when the valid joint gate passes every simultaneous bound.
+    /// True only when simultaneous non-inferiority and exact gates all pass.
     pub passed: bool,
 }
 
@@ -809,7 +821,9 @@ pub fn evaluate_non_authoritative_paired_fixture(
 /// Evaluate a non-authoritative complete-matrix statistical fixture.
 ///
 /// The frozen inventory is authenticated, but the caller-selected experiment
-/// observations are not. This function cannot establish migration acceptance.
+/// observations are not. Allocation metrics use an exact per-pair no-increase
+/// gate and do not contribute to the joint non-allocation bootstrap. This
+/// function cannot establish migration acceptance.
 #[doc(hidden)]
 pub fn evaluate_non_authoritative_simultaneous_fixture(
     input: &SimultaneousGateInput,
@@ -930,6 +944,9 @@ pub fn evaluate_non_authoritative_simultaneous_fixture(
             }
         }
         for index in 0..vectors.len() {
+            if is_exact_allocation_metric(&vectors[index].metric) {
+                continue;
+            }
             let resampled_ratio = resampled_totals[index] / pair_count as f64;
             if !resampled_ratio.is_finite() {
                 return Err(PluginStatsError::new(
@@ -962,12 +979,27 @@ pub fn evaluate_non_authoritative_simultaneous_fixture(
                 ));
             }
         }
-        let lower_confidence_bound = observed_ratio - critical_degradation;
-        let threshold = metric_threshold(&vector.metric, policy);
+        let is_exact_no_increase = is_exact_allocation_metric(&vector.metric);
+        let gate_kind = if is_exact_no_increase {
+            MetricGateKind::ExactNoIncrease
+        } else {
+            MetricGateKind::SimultaneousNonInferiority
+        };
+        let lower_confidence_bound = if is_exact_no_increase {
+            vector.ratios.iter().copied().fold(f64::INFINITY, f64::min)
+        } else {
+            observed_ratio - critical_degradation
+        };
+        let threshold = if is_exact_no_increase {
+            1.0
+        } else {
+            1.0 - policy.max_relative_regression
+        };
         metric_reports.push(SimultaneousMetricReport {
             scenario: vector.scenario,
             metric: vector.metric,
             ratio_direction: vector.direction,
+            gate_kind,
             static_summaries: vector.static_values,
             dynamic_summaries: vector.dynamic_values,
             positive_paired_ratios: vector.ratios,
@@ -1541,11 +1573,11 @@ fn metric_direction(metric: &str) -> Result<(RatioDirection, bool), PluginStatsE
     }
 }
 
-fn metric_threshold(metric: &str, policy: &SimultaneousGatePolicy) -> f64 {
-    match metric {
-        "allocated_bytes_per_successful_request" | "allocation_count_per_successful_request" => 1.0,
-        _ => 1.0 - policy.max_relative_regression,
-    }
+fn is_exact_allocation_metric(metric: &str) -> bool {
+    matches!(
+        metric,
+        "allocated_bytes_per_successful_request" | "allocation_count_per_successful_request"
+    )
 }
 
 fn collect_metric(

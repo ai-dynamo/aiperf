@@ -6,10 +6,10 @@
 use std::collections::BTreeMap;
 
 use aiperf_bench_tools::plugin_stats::{
-    MachineObservation, NonAuthoritativeExperimentFixture, NonAuthoritativeObservationFixture,
-    PairedCase, PairedSample, RatioDirection, SimultaneousGateInput, SimultaneousGatePolicy,
-    Variant, checked_in_case_plans, checked_in_inventory_digest,
-    evaluate_non_authoritative_simultaneous_fixture,
+    MachineObservation, MetricGateKind, NonAuthoritativeExperimentFixture,
+    NonAuthoritativeObservationFixture, PairedCase, PairedSample, RatioDirection,
+    SimultaneousGateInput, SimultaneousGatePolicy, Variant, checked_in_case_plans,
+    checked_in_inventory_digest, evaluate_non_authoritative_simultaneous_fixture,
 };
 
 const COMMIT: &str = "0123456789abcdef0123456789abcdef01234567";
@@ -400,6 +400,22 @@ fn full_non_authoritative_joint_bootstrap_retains_the_golden_distribution() {
         })
         .expect("patterned metric is retained");
     assert_eq!(patterned.lower_confidence_bound, 0.996383333333333);
+    assert_eq!(
+        patterned.gate_kind,
+        MetricGateKind::SimultaneousNonInferiority
+    );
+    let exact_allocation = report
+        .metric_reports
+        .iter()
+        .find(|metric| {
+            metric.scenario == "http_streaming_c1"
+                && metric.metric == "allocation_count_per_successful_request"
+        })
+        .expect("exact allocation metric is retained");
+    assert_eq!(exact_allocation.threshold, 1.0);
+    assert_eq!(exact_allocation.gate_kind, MetricGateKind::ExactNoIncrease);
+    assert_eq!(exact_allocation.lower_confidence_bound, 1.0);
+    assert!(exact_allocation.passed);
     let distribution_digest = format!(
         "blake3:{}",
         blake3::hash(
@@ -411,6 +427,56 @@ fn full_non_authoritative_joint_bootstrap_retains_the_golden_distribution() {
     assert_eq!(
         distribution_digest,
         "blake3:e9096ef04a23ffe2f9bdeb9495b367611dbe9b796c25acc49b120de924a466fd"
+    );
+
+    let mut allocation_regression = fixture.input.clone();
+    let allocation_case = allocation_regression
+        .cases
+        .iter_mut()
+        .find(|case| case.scenario == "http_streaming_c1")
+        .expect("allocation case exists");
+    let static_value = allocation_case
+        .samples
+        .iter()
+        .find(|sample| {
+            sample.pair_id == "pair-00"
+                && sample.metric == "allocation_count_per_successful_request"
+                && sample.variant == Variant::Static
+        })
+        .expect("static allocation member exists")
+        .value;
+    allocation_case
+        .samples
+        .iter_mut()
+        .find(|sample| {
+            sample.pair_id == "pair-00"
+                && sample.metric == "allocation_count_per_successful_request"
+                && sample.variant == Variant::Dynamic
+        })
+        .expect("dynamic allocation member exists")
+        .value = static_value / 0.99;
+    let allocation_regression_report = evaluate_non_authoritative_simultaneous_fixture(
+        &allocation_regression,
+        &fixture.observed,
+        &SimultaneousGatePolicy::normative(),
+    )
+    .expect("an exact allocation regression is a valid statistical report");
+    let failed_allocation = allocation_regression_report
+        .metric_reports
+        .iter()
+        .find(|metric| {
+            metric.scenario == "http_streaming_c1"
+                && metric.metric == "allocation_count_per_successful_request"
+        })
+        .expect("regressed allocation metric is retained");
+    assert!(failed_allocation.lower_confidence_bound < 1.0);
+    assert_eq!(failed_allocation.gate_kind, MetricGateKind::ExactNoIncrease);
+    assert!(!failed_allocation.passed);
+    assert!(!allocation_regression_report.passed);
+    assert_eq!(
+        allocation_regression_report.maximum_degradation_bootstrap_distribution,
+        report.maximum_degradation_bootstrap_distribution,
+        "exact allocation metrics do not participate in joint resampling"
     );
 
     let mut decorrelated = fixture.input;
