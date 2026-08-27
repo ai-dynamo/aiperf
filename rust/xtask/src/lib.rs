@@ -5,3 +5,4 @@
 
 pub mod abi_churn;
 pub mod abi_closure;
+pub mod abi_impl_budget;
