@@ -26,10 +26,15 @@ prefix and sit directly under `rust/`.
 | `rust/cli` | `aiperf-cli` | `aiperf_cli` |
 | `rust/mock-server` | `aiperf-mock-server` | `aiperf_mock_server` |
 | `rust/e2e-tests` | `aiperf-e2e-tests` | `aiperf_e2e_tests` |
+| `rust/dry-run-tests` | `aiperf-dry-run-tests` | `aiperf_dry_run_tests` |
+| `rust/bench-tools` | `aiperf-bench-tools` | `aiperf_bench_tools` |
 
 Direct dependency direction is `aiperf-cli` → `aiperf-runtime`;
-`aiperf-mock-server` → `aiperf-runtime`. The CLI and mock server are independent
-executables.
+`aiperf-mock-server` → `aiperf-runtime`. `aiperf-e2e-tests` has development
+dependencies on both. `aiperf-dry-run-tests` launches the `aiperf` binary and
+depends on neither. `aiperf-bench-tools` depends on neither and builds
+independently of aiperf's own build state. The CLI, mock server, and bench
+tools are independent executables.
 
 ### Crate responsibilities
 
@@ -45,6 +50,12 @@ executables.
   roles, native searches and sweeps, result rendering, and process signals.
 - `aiperf-mock-server`: standalone HTTP/gRPC inference target.
 - `aiperf-e2e-tests`: product integration harness.
+- `aiperf-dry-run-tests`: standalone socket-free end-to-end suite for the
+  native `--dry-run` transport; launches the `aiperf` binary and has no server
+  dependency.
+- `aiperf-bench-tools`: standalone benchmark-comparison utilities (`logproxy`,
+  `sagemaker-logproxy`) with no dependency on `aiperf-runtime` or
+  `aiperf-mock-server`.
 
 ### Naming rules
 

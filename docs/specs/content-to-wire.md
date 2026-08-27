@@ -365,7 +365,7 @@ Tracked against this path; details and sequencing in
   `ComposeState`, turn finalization.
 - `rust/runtime/src/dataset/segment.rs` — `SegmentPool` (`intern_*`, `thaw`,
   `freeze`) and `InMemorySegmentStore`.
-- `rust/runtime/src/dataset/dataset.rs` — `lower_messages_for_endpoint`,
+- `rust/runtime/src/dataset/runtime_dataset.rs` — `lower_messages_for_endpoint`,
   `precompute_body_plans`, `cached_body_plan`.
 - `rust/runtime/src/multiturn.rs` — `lower_static_messages`, the stage 4-5
   orchestration.

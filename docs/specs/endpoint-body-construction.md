@@ -103,7 +103,7 @@ refcount clones of an already-serialized `Bytes` — no copy, no re-serializatio
 
 ### Content lowering happens at load
 
-`Dataset::lower_messages_for_endpoint` (`dataset/dataset.rs:200`) walks every turn
+`Dataset::lower_messages_for_endpoint` (`dataset/runtime_dataset.rs:200`) walks every turn
 through the endpoint's `ShapeLowerer` (`endpoints/endpoints.rs:943`, implementing
 `TurnMessageLowerer`), which renders the turn to **exactly** the bytes the
 dispatch formatter would emit for that turn in isolation. Those bytes are interned
@@ -280,7 +280,7 @@ off the merged plan to derive the effective request: `model`, `stream`,
 
 A Fields plan for a static turn does not vary between profiling dispatches, so
 eligible plans are built once at bind and cloned per dispatch
-(`Dataset::precompute_body_plans`, `dataset/dataset.rs:342`).
+(`Dataset::precompute_body_plans`, `dataset/runtime_dataset.rs:342`).
 
 ```mermaid
 flowchart TD
@@ -510,7 +510,7 @@ Explicitly planned, not built. Implementation plan:
   (`splice_raw_object`).
 - `rust/runtime/src/dataset/segment.rs` — segment domains, handles, and the frozen
   store (`SegmentStore`, `Payload`, `InMemorySegmentStore`).
-- `rust/runtime/src/dataset/dataset.rs` — load-time lowering
+- `rust/runtime/src/dataset/runtime_dataset.rs` — load-time lowering
   (`lower_messages_for_endpoint`) and the plan cache (`precompute_body_plans`,
   `cached_body_plan`).
 - `rust/runtime/src/dataset/request.rs` — the dispatch materialize paths

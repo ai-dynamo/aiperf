@@ -9,8 +9,10 @@ SPDX-License-Identifier: Apache-2.0
 
 `aiperf_runtime::export` is the native output plane: a typed IO-free native-v2
 report core plus a static set of `Exporter` implementations behind one trait. It
-is the default sole emitter on the native path; `AIPERF_RUNTIME_NATIVE_EXPORT=0`
-selects Python emission instead.
+is the sole emitter on the native path. `AIPERF_RUNTIME_NATIVE_EXPORT` exists
+only in the Python package (`src/aiperf/common/environment.py`) and gates the
+legacy Python mesh's own emission; the native binary never reads it, so it
+cannot redirect native export.
 
 ## Built
 

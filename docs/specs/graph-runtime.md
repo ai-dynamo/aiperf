@@ -10,8 +10,9 @@ SPDX-License-Identifier: Apache-2.0
 `aiperf_runtime::graph` is the Graph-IR runtime and dataflow plane: it compiles
 graph inputs into node programs and executes them as a deterministic async
 dataflow over the shared `Clock` seam. Its sole product entry point is the
-`graph` workload selected when the dataset format is `dag_jsonl`, `weka_trace`, or
-`dynamo_trace`.
+`graph` workload, selected when the dataset graph source is `dag_jsonl`,
+`weka_trace`, `dynamo_trace`, `agent_recording`, `conditional_graph`, or
+`otlp_genai`.
 
 ## Built
 

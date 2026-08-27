@@ -163,8 +163,9 @@ The model has an `AgentContract` vocabulary of:
 - `NativeGraph`: a planned AIPerf-owned planner/tool/delegation topology.
 
 The built CLI execution path accepts external commands and package-installed
-commands. It rejects a lifecycle request selecting `NativeGraph` because no
-native graph-agent executor is wired to the evaluation sandbox yet. The
+commands. A schema-1.1 `native_graph` lifecycle request resolves through
+`eval/import/normalize.rs` and `eval/native_graph/package.rs` and requires an
+explicit `--model-runtime`; unsupported combinations fail closed. The
 existing semantic lowering and paired comparison contracts are fidelity and
 analysis primitives; they do not make a native graph a runnable P0 agent.
 
