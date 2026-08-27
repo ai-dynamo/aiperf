@@ -3,6 +3,9 @@
 
 //! Native streaming dataset contracts and execution support.
 
+pub mod identity;
+pub mod unit;
+
 /// Whether the lightweight native streaming runtime is compiled.
 pub const STREAMING_RUNTIME_COMPILED: bool = true;
 
