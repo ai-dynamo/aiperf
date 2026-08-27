@@ -76,7 +76,7 @@ use crate::clock::Clock;
 use crate::endpoints::PreparedEndpointTable;
 use crate::engine::turn_execution::CreditMaterializerFactory;
 use crate::multiturn::{
-    NativeDatasetConversationSource, WorkerMaterializationRecipe, WorkerMaterializer,
+    CreditMaterializer, NativeDatasetConversationSource, WorkerMaterializationRecipe,
 };
 use crate::phase_runtime::ScheduledPhaseSidecar;
 
@@ -92,8 +92,10 @@ struct NativeCreditMaterializerFactory {
 }
 
 impl CreditMaterializerFactory for NativeCreditMaterializerFactory {
-    fn build_worker(&self, table: PreparedEndpointTable) -> Result<WorkerMaterializer> {
-        Ok(self.recipe.build(self.endpoints.resolver_over(table)?))
+    fn build_worker(&self, table: PreparedEndpointTable) -> Result<Box<dyn CreditMaterializer>> {
+        Ok(Box::new(
+            self.recipe.build(self.endpoints.resolver_over(table)?),
+        ))
     }
 }
 

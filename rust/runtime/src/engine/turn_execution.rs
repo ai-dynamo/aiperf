@@ -22,7 +22,7 @@ use crate::endpoints::{ParsedResponse, PreparedEndpointTable};
 use crate::engine::protocol::HopRouting;
 use crate::metrics::NativeMetricsObserver;
 use crate::metrics_core::{InferenceDimensions, MetricsConfig, RecordIngest};
-use crate::multiturn::{TurnToSend, WorkerMaterializer};
+use crate::multiturn::{CreditMaterializer, TurnToSend};
 use crate::scheduled::TurnResponseObserver;
 use crate::transport::core::{
     ConnectionReuseStrategy, CreditReportKind, DispatchResult, MeasuredContext, MeasuredOutcome,
@@ -167,7 +167,7 @@ pub trait PreparedEndpointTableFactory: Send + Sync {
 /// behind it are shared, not copied.
 pub trait CreditMaterializerFactory: Send + Sync {
     /// Build one worker's materializer over `table`, its own dense-key table.
-    fn build_worker(&self, table: PreparedEndpointTable) -> Result<WorkerMaterializer>;
+    fn build_worker(&self, table: PreparedEndpointTable) -> Result<Box<dyn CreditMaterializer>>;
 }
 
 /// Constructs the request executor for a run.
@@ -264,7 +264,7 @@ pub trait ExecutionSinkBuilder: Send + Sync + 'static {
 
     /// Build this worker's materializer for identity-only credits, if the run
     /// routes them. `None` keeps issuer-side materialization.
-    fn build_credit_materializer(&self) -> Result<Option<WorkerMaterializer>> {
+    fn build_credit_materializer(&self) -> Result<Option<Box<dyn CreditMaterializer>>> {
         Ok(None)
     }
 }
@@ -323,7 +323,7 @@ impl ExecutionSinkBuilder for HttpSinkBuilder {
         )
     }
 
-    fn build_credit_materializer(&self) -> Result<Option<WorkerMaterializer>> {
+    fn build_credit_materializer(&self) -> Result<Option<Box<dyn CreditMaterializer>>> {
         let (Some(credit_materializer), Some(endpoints)) =
             (&self.credit_materializer, &self.prepared_endpoints)
         else {
@@ -1961,7 +1961,7 @@ fn run_worker_thread<B: ExecutionSinkBuilder>(
         }
     };
     let materializer = match builder.build_credit_materializer() {
-        Ok(materializer) => materializer.map(Rc::new),
+        Ok(materializer) => materializer,
         Err(error) => {
             let _ = started.send(Err(error.to_string()));
             return Err(error).context("constructing worker-local credit materializer");
@@ -1988,7 +1988,7 @@ fn run_worker_thread<B: ExecutionSinkBuilder>(
 async fn run_worker<S: WorkerSink + 'static>(
     mut receiver: mpsc::Receiver<WorkerMessage>,
     sink: Rc<S>,
-    materializer: Option<Rc<WorkerMaterializer>>,
+    materializer: Option<Box<dyn CreditMaterializer>>,
     clock: Rc<dyn Clock>,
     record_label: Option<Arc<str>>,
     credit_reports: CreditReportTx,
@@ -2318,7 +2318,7 @@ struct CreditMaterializationFailure {
 /// with an error terminal rather than dropping it: the issuer holds a pending
 /// entry that only a return can close.
 fn materialize_credit(
-    materializer: Option<&WorkerMaterializer>,
+    materializer: Option<&dyn CreditMaterializer>,
     mut command: CreditCommand,
 ) -> std::result::Result<CreditCommand, CreditMaterializationFailure> {
     let Some(identity) = command.turn.deferred.clone() else {
@@ -2341,14 +2341,13 @@ fn materialize_credit(
             "a credit was routed unmaterialized to a worker with no materializer".to_string(),
         ));
     };
-    let turn = match materializer.materialize(&identity) {
-        Ok(turn) => turn,
+    let mut prepared = match materializer.materialize(identity) {
+        Ok(prepared) => prepared,
         Err(error) => return Err(fail(command, format!("{error:#}"))),
     };
     // Keep the issuer's identity — the uuid the whole measurement plane keys on,
     // and the issuance-time policy scalars — and take everything the body
     // determines from what this worker actually built.
-    let mut prepared = PreparedTurn::from_turn(turn, &command.turn.model);
     prepared.request.uuid = uuid;
     prepared.request.cancel_after_ns = command.turn.request.cancel_after_ns;
     prepared.request.url_index = command.turn.request.url_index;
@@ -2594,12 +2593,35 @@ mod tests {
     use crate::dispatch::sink::RequestObserver;
     use crate::endpoints::{EndpointId, EndpointKey, EndpointRegistry, RawEndpointConfig};
     use crate::metrics::RequestMetricMetadata;
-    use crate::multiturn::PreparedEndpointReference;
+    use crate::multiturn::{CreditIdentity, CreditMaterializer, PreparedEndpointReference};
     use crate::scheduled::{ModelResponseMetadata, TurnDispatchOutcome};
     use crate::transport::core::{PreparedEndpointBinding, Request};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     use super::*;
+
+    #[test]
+    fn credit_materializer_is_object_safe_and_dataset_free() {
+        struct FixedMaterializer(PreparedTurn);
+
+        impl CreditMaterializer for FixedMaterializer {
+            fn materialize(&self, _identity: CreditIdentity) -> Result<PreparedTurn> {
+                Ok(self.0.clone())
+            }
+        }
+
+        let turn = streaming_turn();
+        let erased: Box<dyn CreditMaterializer> = Box::new(FixedMaterializer(turn.clone()));
+        let got = erased
+            .materialize(CreditIdentity {
+                conversation_id: "conversation".to_string(),
+                x_correlation_id: "session".to_string(),
+                turn_index: 0,
+                num_turns: 1,
+            })
+            .expect("materialize");
+        assert_eq!(got.model, turn.model);
+    }
 
     #[test]
     fn a_session_releases_its_binding_on_the_final_turn() {
