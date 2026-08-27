@@ -84,18 +84,17 @@ MOCK_SERVER_IMPORT = re.compile(
 )
 MOCK_SERVER_REPLACEMENT = r"\1\2 tests.aiperf_mock_server"
 
-# String literals that name the module without importing it, fixed by hand.
-MOCK_SERVER_LITERALS = (
-    ('"aiperf_mock_server.app:asgi_app"', '"tests.aiperf_mock_server.app:asgi_app"'),
-    ('logger="aiperf_mock_server.', 'logger="tests.aiperf_mock_server.'),
-)
+# String literals that name the module without importing it: monkeypatch.setattr
+# targets, the uvicorn app path, caplog logger names. Matching only a quoted
+# `aiperf_mock_server.` keeps fixture identifiers and prose out of scope.
+MOCK_SERVER_LITERAL = re.compile(r"([\"'])aiperf_mock_server\.")
+MOCK_SERVER_LITERAL_REPLACEMENT = r"\1tests.aiperf_mock_server."
 
 
 def _is_only_mock_server_rewrite(base_text: str, head_text: str) -> bool:
     """Report whether head differs from base solely by the mock-server rewrite."""
     rewritten = MOCK_SERVER_IMPORT.sub(MOCK_SERVER_REPLACEMENT, base_text)
-    for literal, replacement in MOCK_SERVER_LITERALS:
-        rewritten = rewritten.replace(literal, replacement)
+    rewritten = MOCK_SERVER_LITERAL.sub(MOCK_SERVER_LITERAL_REPLACEMENT, rewritten)
     return rewritten == head_text
 
 

@@ -55,7 +55,7 @@ async def test_lifespan_closes_recorder_when_scheduler_shutdown_raises(
         fast=True,
         dcgm_auto_load=False,
     )
-    monkeypatch.setattr("aiperf_mock_server.app.server_config", test_cfg)
+    monkeypatch.setattr("tests.aiperf_mock_server.app.server_config", test_cfg)
 
     async def fake_init_scheduler(_cfg) -> None:
         return None
@@ -63,9 +63,9 @@ async def test_lifespan_closes_recorder_when_scheduler_shutdown_raises(
     async def boom_shutdown_scheduler() -> None:
         raise RuntimeError("simulated scheduler shutdown failure")
 
-    monkeypatch.setattr("aiperf_mock_server.app.init_scheduler", fake_init_scheduler)
+    monkeypatch.setattr("tests.aiperf_mock_server.app.init_scheduler", fake_init_scheduler)
     monkeypatch.setattr(
-        "aiperf_mock_server.app.shutdown_scheduler", boom_shutdown_scheduler
+        "tests.aiperf_mock_server.app.shutdown_scheduler", boom_shutdown_scheduler
     )
 
     assert not summary_path.exists()
@@ -109,7 +109,7 @@ async def test_lifespan_closes_recorder_when_scheduler_init_raises(
         fast=True,
         dcgm_auto_load=False,
     )
-    monkeypatch.setattr("aiperf_mock_server.app.server_config", test_cfg)
+    monkeypatch.setattr("tests.aiperf_mock_server.app.server_config", test_cfg)
 
     async def boom_init_scheduler(_cfg) -> None:
         raise RuntimeError("simulated scheduler init failure")
@@ -117,9 +117,9 @@ async def test_lifespan_closes_recorder_when_scheduler_init_raises(
     async def noop_shutdown_scheduler() -> None:
         return None
 
-    monkeypatch.setattr("aiperf_mock_server.app.init_scheduler", boom_init_scheduler)
+    monkeypatch.setattr("tests.aiperf_mock_server.app.init_scheduler", boom_init_scheduler)
     monkeypatch.setattr(
-        "aiperf_mock_server.app.shutdown_scheduler", noop_shutdown_scheduler
+        "tests.aiperf_mock_server.app.shutdown_scheduler", noop_shutdown_scheduler
     )
 
     assert not summary_path.exists()
