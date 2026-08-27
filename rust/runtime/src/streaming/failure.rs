@@ -10,10 +10,10 @@ use serde::{Deserialize, Serialize};
 use async_trait::async_trait;
 
 use super::{
-    checkpoint::{CheckpointError, StreamingCheckpointParticipant},
+    checkpoint::{CheckpointError, StreamRunIdentity, StreamingCheckpointParticipant},
     identity::{
-        ContentDigest, GlobalSequence, ImmutableObjectIdentity, LogicalReplayRunId, StableActionId,
-        StableRecordId, StableSessionKey,
+        ContentDigest, GlobalSequence, ImmutableObjectIdentity, StableActionId, StableRecordId,
+        StableSessionKey,
     },
     unit::{SourcePosition, StateBudgetFailureCode},
 };
@@ -104,6 +104,8 @@ failure_codes! {
         ObjectLimitExceeded => "object_limit_exceeded",
         /// Retained acquired bytes and their capacity lease disagree.
         BudgetInvariant => "budget_invariant",
+        /// A reader returned an empty, oversized, or discontinuous sequential chunk.
+        InvalidChunk => "invalid_chunk",
     }
 }
 
@@ -448,19 +450,70 @@ impl StableStreamingFailure for CheckpointError {
     }
 }
 
+/// Frozen identity of one stream and its exact immutable source authority.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct StreamingInputDomainIdentity {
+    stream_identity: ContentDigest,
+    source_identity: ImmutableObjectIdentity,
+}
+
+impl StreamingInputDomainIdentity {
+    /// Bind a stream semantic identity to its immutable source authority.
+    #[must_use]
+    pub const fn new(
+        stream_identity: ContentDigest,
+        source_identity: ImmutableObjectIdentity,
+    ) -> Self {
+        Self {
+            stream_identity,
+            source_identity,
+        }
+    }
+
+    /// Borrow the stream semantic identity.
+    #[must_use]
+    pub const fn stream_identity(&self) -> &ContentDigest {
+        &self.stream_identity
+    }
+
+    /// Borrow the immutable source authority identity.
+    #[must_use]
+    pub const fn source_identity(&self) -> &ImmutableObjectIdentity {
+        &self.source_identity
+    }
+}
+
 /// Scope whose ordinary work observed an issue.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum StreamingIssueScope {
     /// Run-wide source or policy work.
     Run,
     /// One immutable partition generation.
-    Partition { partition: ImmutableObjectIdentity },
+    Partition {
+        /// Exact stream/source domain of the partition.
+        input_domain: StreamingInputDomainIdentity,
+        /// Immutable object generation that failed.
+        object: ImmutableObjectIdentity,
+    },
     /// One stable source record.
-    Record { record: StableRecordId },
+    Record {
+        /// Exact stream/source domain of the record.
+        input_domain: StreamingInputDomainIdentity,
+        /// Stable record identity within the domain.
+        record_id: StableRecordId,
+    },
     /// One stable logical session.
-    Session { session: StableSessionKey },
+    Session {
+        /// Exact stream/source domain of the session.
+        input_domain: StreamingInputDomainIdentity,
+        /// Stable session identity within the domain.
+        session_key: StableSessionKey,
+    },
     /// One stable executable action.
-    Action { action: StableActionId },
+    Action {
+        /// Stable action identity in the host action sequence.
+        action_id: StableActionId,
+    },
     /// One checkpoint attempt identified by its successor epoch.
     CheckpointAttempt { epoch: u64 },
 }
@@ -479,14 +532,76 @@ pub enum StreamingIssueClass {
 }
 
 /// Stable order domain for deterministic issue handling.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum StreamingIssueOrderKey {
-    /// Source inventory or record order.
-    Source(SourcePosition),
-    /// Host-assigned global action order.
-    Global(GlobalSequence),
-    /// Checkpoint successor epoch order.
-    Checkpoint(u64),
+    /// Run-scoped diagnostic order.
+    Run {
+        /// Host-assigned retry ordinal.
+        retry_ordinal: u32,
+        /// Stable scope-specific tie breaker.
+        scope_tiebreaker: ContentDigest,
+    },
+    /// Partition, record, or session input-domain order.
+    Input {
+        /// Exact input domain repeated from the issue scope.
+        input_domain: StreamingInputDomainIdentity,
+        /// Stable source-domain position.
+        source_position: SourcePosition,
+        /// Host-assigned retry ordinal.
+        retry_ordinal: u32,
+        /// Stable scope-specific tie breaker.
+        scope_tiebreaker: ContentDigest,
+    },
+    /// Host-assigned action sequence order.
+    Action {
+        /// Dense global action sequence.
+        global_sequence: GlobalSequence,
+        /// Host-assigned retry ordinal.
+        retry_ordinal: u32,
+        /// Stable scope-specific tie breaker.
+        scope_tiebreaker: ContentDigest,
+    },
+    /// Checkpoint-attempt order.
+    Checkpoint {
+        /// Successor checkpoint epoch.
+        epoch: u64,
+        /// Host-assigned retry ordinal.
+        retry_ordinal: u32,
+        /// Stable scope-specific tie breaker.
+        scope_tiebreaker: ContentDigest,
+    },
+}
+
+impl StreamingIssueOrderKey {
+    /// Construct deterministic order within one exact input domain.
+    #[must_use]
+    pub const fn input(
+        input_domain: StreamingInputDomainIdentity,
+        source_position: SourcePosition,
+        retry_ordinal: u32,
+        scope_tiebreaker: ContentDigest,
+    ) -> Self {
+        Self::Input {
+            input_domain,
+            source_position,
+            retry_ordinal,
+            scope_tiebreaker,
+        }
+    }
+
+    /// Construct deterministic action order.
+    #[must_use]
+    pub const fn action(
+        global_sequence: GlobalSequence,
+        retry_ordinal: u32,
+        scope_tiebreaker: ContentDigest,
+    ) -> Self {
+        Self::Action {
+            global_sequence,
+            retry_ordinal,
+            scope_tiebreaker,
+        }
+    }
 }
 
 /// Closed ordinary failures accepted from source, format, session, and action adapters.
@@ -533,6 +648,8 @@ pub enum StreamingIssueValidationError {
     OrderScopeMismatch,
     /// Controlled stop is host control, not an ordinary adapter issue.
     ControlledStopIsNotOrdinary,
+    /// Invariant classification is reserved for the private host classifier.
+    InvariantIsHostOwned,
 }
 
 impl fmt::Display for StreamingIssueValidationError {
@@ -546,7 +663,7 @@ impl std::error::Error for StreamingIssueValidationError {}
 /// Move-only typed ordinary issue submitted to the host reliability owner.
 #[derive(Debug, Eq, PartialEq)]
 pub struct OrdinaryStreamingIssue {
-    run: LogicalReplayRunId,
+    run: StreamRunIdentity,
     scope: StreamingIssueScope,
     class: StreamingIssueClass,
     semantic_context_digest: ContentDigest,
@@ -557,7 +674,7 @@ pub struct OrdinaryStreamingIssue {
 impl OrdinaryStreamingIssue {
     /// Validate and bind typed issue facts without selecting a host disposition.
     pub fn new(
-        run: LogicalReplayRunId,
+        run: StreamRunIdentity,
         scope: StreamingIssueScope,
         class: StreamingIssueClass,
         semantic_context_digest: ContentDigest,
@@ -567,30 +684,38 @@ impl OrdinaryStreamingIssue {
         if matches!(&failure, OrdinaryStreamingFailure::Source(error) if error.is_stopped()) {
             return Err(StreamingIssueValidationError::ControlledStopIsNotOrdinary);
         }
-        let has_compatible_order = matches!(
-            (&scope, order),
-            (StreamingIssueScope::Run, _)
-                | (
-                    StreamingIssueScope::Partition { .. },
-                    StreamingIssueOrderKey::Source(_)
-                )
-                | (
-                    StreamingIssueScope::Record { .. },
-                    StreamingIssueOrderKey::Source(_)
-                )
-                | (
-                    StreamingIssueScope::Session { .. },
-                    StreamingIssueOrderKey::Global(_)
-                )
-                | (
-                    StreamingIssueScope::Action { .. },
-                    StreamingIssueOrderKey::Global(_)
-                )
-                | (
-                    StreamingIssueScope::CheckpointAttempt { .. },
-                    StreamingIssueOrderKey::Checkpoint(_)
-                )
-        );
+        if class == StreamingIssueClass::Invariant {
+            return Err(StreamingIssueValidationError::InvariantIsHostOwned);
+        }
+        let has_compatible_order = match (&scope, &order) {
+            (StreamingIssueScope::Run, StreamingIssueOrderKey::Run { .. })
+            | (StreamingIssueScope::Action { .. }, StreamingIssueOrderKey::Action { .. }) => true,
+            (
+                StreamingIssueScope::Partition {
+                    input_domain: scope_domain,
+                    ..
+                }
+                | StreamingIssueScope::Record {
+                    input_domain: scope_domain,
+                    ..
+                }
+                | StreamingIssueScope::Session {
+                    input_domain: scope_domain,
+                    ..
+                },
+                StreamingIssueOrderKey::Input {
+                    input_domain: order_domain,
+                    ..
+                },
+            ) => scope_domain == order_domain,
+            (
+                StreamingIssueScope::CheckpointAttempt { epoch: scope_epoch },
+                StreamingIssueOrderKey::Checkpoint {
+                    epoch: order_epoch, ..
+                },
+            ) => scope_epoch == order_epoch,
+            _ => false,
+        };
         if !has_compatible_order {
             return Err(StreamingIssueValidationError::OrderScopeMismatch);
         }
@@ -606,7 +731,7 @@ impl OrdinaryStreamingIssue {
 
     /// Borrow the logical run identity.
     #[must_use]
-    pub const fn run(&self) -> &LogicalReplayRunId {
+    pub const fn run(&self) -> &StreamRunIdentity {
         &self.run
     }
     /// Borrow the typed issue scope.
@@ -626,8 +751,8 @@ impl OrdinaryStreamingIssue {
     }
     /// Return the deterministic order key.
     #[must_use]
-    pub const fn order(&self) -> StreamingIssueOrderKey {
-        self.order
+    pub const fn order(&self) -> &StreamingIssueOrderKey {
+        &self.order
     }
     /// Borrow the closed typed failure.
     #[must_use]

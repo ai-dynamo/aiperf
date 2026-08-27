@@ -27,8 +27,8 @@ pub struct StreamingSourceDescriptor {
     pub id: &'static str,
     /// Human-readable implementation description.
     pub description: &'static str,
-    /// Whether the source is finite or follows new objects.
-    pub mode: StreamingSourceMode,
+    /// Inventory lifecycles the source can support concurrently.
+    pub modes: &'static [StreamingSourceMode],
     /// Callable access shapes the source can acquire.
     pub access: &'static [PartitionAccessKind],
     /// Ordering guarantee made by source discovery.
@@ -63,6 +63,10 @@ pub enum StreamingSourceMode {
 pub enum PartitionAccessKind {
     /// Bounded forward byte chunks.
     Sequential,
+    /// Immutable no-follow seekable local snapshot.
+    SeekableLocal,
+    /// Bounded reads against one immutable object generation.
+    RangeReadable,
 }
 
 /// Ordering guaranteed by source discovery.
@@ -311,27 +315,82 @@ pub struct SourceSeal {
 pub enum PartitionAccessRequest {
     /// Begin or resume bounded sequential reads at an exact byte offset.
     Sequential { resume_offset: u64 },
+    /// Acquire an immutable no-follow seekable local snapshot.
+    SeekableLocal,
+    /// Acquire a bounded reader for immutable byte ranges.
+    RangeReadable,
 }
 
 /// Budget authority supplied to immutable partition acquisition.
 #[derive(Clone, Debug)]
 pub struct AcquisitionBudget {
-    budget: StreamingResourceBudget,
+    memory_budget: StreamingResourceBudget,
+    disk_budget: StreamingResourceBudget,
 }
 
 impl AcquisitionBudget {
-    /// Wrap the host-owned acquisition resource budget.
+    /// Wrap distinct host-owned resident-memory and local-snapshot disk budgets.
     #[must_use]
-    pub const fn new(budget: StreamingResourceBudget) -> Self {
-        Self { budget }
+    pub const fn new(
+        memory_budget: StreamingResourceBudget,
+        disk_budget: StreamingResourceBudget,
+    ) -> Self {
+        Self {
+            memory_budget,
+            disk_budget,
+        }
     }
 
-    /// Borrow the exact host-owned resource budget for checked acquisition.
+    /// Borrow the exact host-owned resident-memory budget for handles and chunks.
     #[must_use]
-    pub const fn resource_budget(&self) -> &StreamingResourceBudget {
-        &self.budget
+    pub const fn memory_budget(&self) -> &StreamingResourceBudget {
+        &self.memory_budget
+    }
+
+    /// Borrow the exact host-owned disk budget for immutable local snapshots.
+    #[must_use]
+    pub const fn disk_budget(&self) -> &StreamingResourceBudget {
+        &self.disk_budget
+    }
+
+    /// Acquire typed resident-memory capacity for a handle or returned chunk.
+    pub async fn acquire_memory(
+        &self,
+        items: usize,
+        bytes: usize,
+    ) -> Result<AcquisitionMemoryLease, StreamSourceError> {
+        self.memory_budget
+            .acquire(items, bytes)
+            .await
+            .map(AcquisitionMemoryLease)
+            .map_err(|_| {
+                StreamSourceError::acquisition(AcquisitionFailureCode::ObjectLimitExceeded)
+            })
+    }
+
+    /// Acquire typed local-snapshot disk capacity.
+    pub async fn acquire_disk(
+        &self,
+        items: usize,
+        bytes: usize,
+    ) -> Result<AcquisitionDiskLease, StreamSourceError> {
+        self.disk_budget
+            .acquire(items, bytes)
+            .await
+            .map(AcquisitionDiskLease)
+            .map_err(|_| {
+                StreamSourceError::acquisition(AcquisitionFailureCode::ObjectLimitExceeded)
+            })
     }
 }
+
+/// Move-only resident-memory capacity acquired from an [`AcquisitionBudget`].
+#[derive(Debug)]
+pub struct AcquisitionMemoryLease(BudgetLease);
+
+/// Move-only local-snapshot disk capacity acquired from an [`AcquisitionBudget`].
+#[derive(Debug)]
+pub struct AcquisitionDiskLease(BudgetLease);
 
 /// Opaque immutable partition content supplied by a source implementation.
 #[async_trait(?Send)]
@@ -350,45 +409,341 @@ pub trait SourcePartitionContent {
     ) -> Result<AcquiredPartition, StreamSourceError>;
 }
 
-/// Move-only acquired partition bytes and their exact retained capacity.
+/// Move-only bounded source bytes and their exact resident-memory capacity.
 #[derive(Debug)]
-pub struct AcquiredPartition {
-    position: SourcePosition,
-    identity: ImmutableObjectIdentity,
+pub struct BudgetedSourceChunk {
     bytes: Bytes,
-    cursor: usize,
     lease: BudgetLease,
 }
 
-impl AcquiredPartition {
-    /// Bind immutable bytes to identity and an exact one-item byte charge.
-    pub fn new(
-        position: SourcePosition,
-        identity: ImmutableObjectIdentity,
-        resume_offset: u64,
-        bytes: Bytes,
-        lease: BudgetLease,
-    ) -> Result<Self, StreamSourceError> {
+impl BudgetedSourceChunk {
+    /// Bind compact bytes to an exact one-item resident-memory charge.
+    pub fn new(bytes: Bytes, lease: AcquisitionMemoryLease) -> Result<Self, StreamSourceError> {
+        let lease = lease.0;
         if lease.charged_items() != 1 || lease.charged_bytes() != bytes.len() {
             return Err(StreamSourceError::acquisition(
-                super::failure::AcquisitionFailureCode::BudgetInvariant,
+                AcquisitionFailureCode::BudgetInvariant,
             ));
         }
-        let cursor = usize::try_from(resume_offset)
-            .ok()
-            .filter(|cursor| *cursor <= bytes.len())
-            .ok_or_else(|| {
-                StreamSourceError::acquisition(
-                    super::failure::AcquisitionFailureCode::ObjectLimitExceeded,
-                )
-            })?;
         let bytes = Bytes::from(bytes.as_ref().to_vec().into_boxed_slice());
+        Ok(Self { bytes, lease })
+    }
+
+    /// Borrow the bounded immutable bytes.
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    /// Return the exact resident byte charge.
+    #[must_use]
+    pub fn charged_bytes(&self) -> usize {
+        self.lease.charged_bytes()
+    }
+}
+
+/// Bounded sequential chunk and immutable rolling-integrity receipt.
+#[derive(Debug)]
+pub struct SequentialSourceChunk {
+    bytes: BudgetedSourceChunk,
+    end_offset: u64,
+    rolling_digest: ContentDigest,
+}
+
+impl SequentialSourceChunk {
+    /// Bind one bounded chunk to the offset and digest immediately after it.
+    #[must_use]
+    pub const fn new(
+        bytes: BudgetedSourceChunk,
+        end_offset: u64,
+        rolling_digest: ContentDigest,
+    ) -> Self {
+        Self {
+            bytes,
+            end_offset,
+            rolling_digest,
+        }
+    }
+
+    /// Borrow the bounded immutable bytes.
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
+        self.bytes.as_bytes()
+    }
+
+    /// Return the exact byte offset immediately after this chunk.
+    #[must_use]
+    pub const fn end_offset(&self) -> u64 {
+        self.end_offset
+    }
+
+    /// Borrow the rolling digest through `end_offset`.
+    #[must_use]
+    pub const fn rolling_digest(&self) -> &ContentDigest {
+        &self.rolling_digest
+    }
+}
+
+/// Bounded forward reader for one immutable source-object generation.
+#[async_trait(?Send)]
+pub trait StreamingSequentialReader {
+    /// Read at most `max_bytes`, retaining returned bytes under the memory budget.
+    async fn next_chunk(
+        &mut self,
+        max_bytes: NonZeroUsize,
+        budget: &AcquisitionBudget,
+    ) -> Result<Option<SequentialSourceChunk>, StreamSourceError>;
+}
+
+/// No-follow seekable authority over one immutable local snapshot.
+#[async_trait(?Send)]
+pub trait StreamingSeekableLocalSnapshot {
+    /// Read at most `max_bytes` from an exact offset under the memory budget.
+    async fn read_at(
+        &self,
+        offset: u64,
+        max_bytes: NonZeroUsize,
+        budget: &AcquisitionBudget,
+    ) -> Result<BudgetedSourceChunk, StreamSourceError>;
+}
+
+/// Bounded immutable range-read authority.
+#[async_trait(?Send)]
+pub trait StreamingRangeReader {
+    /// Read one exact bounded range under the resident-memory budget.
+    async fn read_range(
+        &self,
+        offset: u64,
+        length: NonZeroUsize,
+        budget: &AcquisitionBudget,
+    ) -> Result<BudgetedSourceChunk, StreamSourceError>;
+}
+
+/// Acquired bounded sequential reader and its exact handle capacity.
+pub struct AcquiredSequentialPartition {
+    reader: Box<dyn StreamingSequentialReader>,
+    authority_lease: BudgetLease,
+    next_offset: u64,
+    size_bytes: Option<u64>,
+}
+
+impl AcquiredSequentialPartition {
+    /// Pull one bounded chunk without retaining the complete logical object.
+    pub async fn next_chunk(
+        &mut self,
+        max_bytes: NonZeroUsize,
+        budget: &AcquisitionBudget,
+    ) -> Result<Option<SequentialSourceChunk>, StreamSourceError> {
+        let Some(chunk) = self.reader.next_chunk(max_bytes, budget).await? else {
+            return Ok(None);
+        };
+        let length = u64::try_from(chunk.as_bytes().len()).map_err(|_| {
+            StreamSourceError::acquisition(AcquisitionFailureCode::ObjectLimitExceeded)
+        })?;
+        let expected_end = self.next_offset.checked_add(length).ok_or_else(|| {
+            StreamSourceError::acquisition(AcquisitionFailureCode::ObjectLimitExceeded)
+        })?;
+        if length == 0
+            || chunk.as_bytes().len() > max_bytes.get()
+            || chunk.end_offset() != expected_end
+            || self.size_bytes.is_some_and(|size| expected_end > size)
+        {
+            return Err(StreamSourceError::acquisition(
+                AcquisitionFailureCode::InvalidChunk,
+            ));
+        }
+        self.next_offset = expected_end;
+        Ok(Some(chunk))
+    }
+
+    /// Return the exact resident byte charge for the reader handle.
+    #[must_use]
+    pub fn charged_bytes(&self) -> usize {
+        self.authority_lease.charged_bytes()
+    }
+}
+
+/// Acquired no-follow local snapshot and exact disk capacity ownership.
+pub struct AcquiredSeekableLocalPartition {
+    snapshot: Box<dyn StreamingSeekableLocalSnapshot>,
+    disk_lease: BudgetLease,
+    size_bytes: u64,
+}
+
+impl AcquiredSeekableLocalPartition {
+    /// Read bounded bytes at an exact local-snapshot offset.
+    pub async fn read_at(
+        &self,
+        offset: u64,
+        max_bytes: NonZeroUsize,
+        budget: &AcquisitionBudget,
+    ) -> Result<BudgetedSourceChunk, StreamSourceError> {
+        if offset > self.size_bytes {
+            return Err(StreamSourceError::acquisition(
+                AcquisitionFailureCode::ObjectLimitExceeded,
+            ));
+        }
+        let chunk = self.snapshot.read_at(offset, max_bytes, budget).await?;
+        let length = u64::try_from(chunk.as_bytes().len()).map_err(|_| {
+            StreamSourceError::acquisition(AcquisitionFailureCode::ObjectLimitExceeded)
+        })?;
+        if chunk.as_bytes().len() > max_bytes.get()
+            || offset
+                .checked_add(length)
+                .is_none_or(|end| end > self.size_bytes)
+        {
+            return Err(StreamSourceError::acquisition(
+                AcquisitionFailureCode::InvalidChunk,
+            ));
+        }
+        Ok(chunk)
+    }
+
+    /// Return the exact disk byte charge for the immutable snapshot.
+    #[must_use]
+    pub fn charged_disk_bytes(&self) -> usize {
+        self.disk_lease.charged_bytes()
+    }
+}
+
+/// Acquired immutable range reader and exact handle capacity.
+pub struct AcquiredRangeReadablePartition {
+    reader: Box<dyn StreamingRangeReader>,
+    authority_lease: BudgetLease,
+    size_bytes: Option<u64>,
+}
+
+impl AcquiredRangeReadablePartition {
+    /// Read one bounded range, rejecting a known out-of-object request.
+    pub async fn read_range(
+        &self,
+        offset: u64,
+        length: NonZeroUsize,
+        budget: &AcquisitionBudget,
+    ) -> Result<BudgetedSourceChunk, StreamSourceError> {
+        let length_u64 = u64::try_from(length.get()).map_err(|_| {
+            StreamSourceError::acquisition(AcquisitionFailureCode::ObjectLimitExceeded)
+        })?;
+        let end = offset.checked_add(length_u64).ok_or_else(|| {
+            StreamSourceError::acquisition(AcquisitionFailureCode::ObjectLimitExceeded)
+        })?;
+        if self.size_bytes.is_some_and(|size| end > size) {
+            return Err(StreamSourceError::acquisition(
+                AcquisitionFailureCode::ObjectLimitExceeded,
+            ));
+        }
+        let chunk = self.reader.read_range(offset, length, budget).await?;
+        if chunk.as_bytes().len() != length.get() {
+            return Err(StreamSourceError::acquisition(
+                AcquisitionFailureCode::InvalidChunk,
+            ));
+        }
+        Ok(chunk)
+    }
+
+    /// Return the exact resident byte charge for the range authority.
+    #[must_use]
+    pub fn charged_bytes(&self) -> usize {
+        self.authority_lease.charged_bytes()
+    }
+}
+
+/// Callable access authority selected during descriptor agreement.
+pub enum AcquiredPartitionAccess {
+    /// Bounded forward chunk reader.
+    Sequential(AcquiredSequentialPartition),
+    /// Immutable no-follow local snapshot.
+    SeekableLocal(AcquiredSeekableLocalPartition),
+    /// Bounded immutable range reader.
+    RangeReadable(AcquiredRangeReadablePartition),
+}
+
+/// Move-only acquired partition identity, position, and bounded content authority.
+pub struct AcquiredPartition {
+    position: SourcePosition,
+    identity: ImmutableObjectIdentity,
+    size_bytes: Option<u64>,
+    access: AcquiredPartitionAccess,
+}
+
+impl AcquiredPartition {
+    /// Bind a bounded sequential reader to an exact one-item handle charge.
+    pub fn sequential(
+        position: SourcePosition,
+        identity: ImmutableObjectIdentity,
+        size_bytes: Option<u64>,
+        resume_offset: u64,
+        reader: Box<dyn StreamingSequentialReader>,
+        authority_lease: AcquisitionMemoryLease,
+    ) -> Result<Self, StreamSourceError> {
+        if size_bytes.is_some_and(|size| resume_offset > size) {
+            return Err(StreamSourceError::acquisition(
+                AcquisitionFailureCode::ObjectLimitExceeded,
+            ));
+        }
+        let authority_lease = authority_lease.0;
+        validate_memory_authority(&authority_lease)?;
         Ok(Self {
             position,
             identity,
-            bytes,
-            cursor,
-            lease,
+            size_bytes,
+            access: AcquiredPartitionAccess::Sequential(AcquiredSequentialPartition {
+                reader,
+                authority_lease,
+                next_offset: resume_offset,
+                size_bytes,
+            }),
+        })
+    }
+
+    /// Bind an immutable local snapshot to its exact one-item disk charge.
+    pub fn seekable_local(
+        position: SourcePosition,
+        identity: ImmutableObjectIdentity,
+        size_bytes: u64,
+        snapshot: Box<dyn StreamingSeekableLocalSnapshot>,
+        disk_lease: AcquisitionDiskLease,
+    ) -> Result<Self, StreamSourceError> {
+        let disk_lease = disk_lease.0;
+        let expected_bytes = usize::try_from(size_bytes).map_err(|_| {
+            StreamSourceError::acquisition(AcquisitionFailureCode::ObjectLimitExceeded)
+        })?;
+        if disk_lease.charged_items() != 1 || disk_lease.charged_bytes() != expected_bytes {
+            return Err(StreamSourceError::acquisition(
+                AcquisitionFailureCode::BudgetInvariant,
+            ));
+        }
+        Ok(Self {
+            position,
+            identity,
+            size_bytes: Some(size_bytes),
+            access: AcquiredPartitionAccess::SeekableLocal(AcquiredSeekableLocalPartition {
+                snapshot,
+                disk_lease,
+                size_bytes,
+            }),
+        })
+    }
+
+    /// Bind an immutable range reader to an exact one-item handle charge.
+    pub fn range_readable(
+        position: SourcePosition,
+        identity: ImmutableObjectIdentity,
+        size_bytes: Option<u64>,
+        reader: Box<dyn StreamingRangeReader>,
+        authority_lease: AcquisitionMemoryLease,
+    ) -> Result<Self, StreamSourceError> {
+        let authority_lease = authority_lease.0;
+        validate_memory_authority(&authority_lease)?;
+        Ok(Self {
+            position,
+            identity,
+            size_bytes,
+            access: AcquiredPartitionAccess::RangeReadable(AcquiredRangeReadablePartition {
+                reader,
+                authority_lease,
+                size_bytes,
+            }),
         })
     }
 
@@ -404,23 +759,24 @@ impl AcquiredPartition {
         &self.identity
     }
 
-    /// Borrow and advance by at most `max_bytes` without minting retained capacity.
-    pub fn next_chunk(&mut self, max_bytes: NonZeroUsize) -> Option<&[u8]> {
-        if self.cursor == self.bytes.len() {
-            return None;
-        }
-        let end = self
-            .cursor
-            .saturating_add(max_bytes.get())
-            .min(self.bytes.len());
-        let chunk = &self.bytes[self.cursor..end];
-        self.cursor = end;
-        Some(chunk)
+    /// Return the immutable logical object length when known.
+    #[must_use]
+    pub const fn size_bytes(&self) -> Option<u64> {
+        self.size_bytes
     }
 
-    /// Return the exact retained byte charge.
+    /// Consume the common identity wrapper and retain the selected access authority.
     #[must_use]
-    pub fn charged_bytes(&self) -> usize {
-        self.lease.charged_bytes()
+    pub fn into_access(self) -> AcquiredPartitionAccess {
+        self.access
     }
+}
+
+fn validate_memory_authority(lease: &BudgetLease) -> Result<(), StreamSourceError> {
+    if lease.charged_items() != 1 || lease.charged_bytes() != 0 {
+        return Err(StreamSourceError::acquisition(
+            AcquisitionFailureCode::BudgetInvariant,
+        ));
+    }
+    Ok(())
 }

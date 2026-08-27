@@ -14,7 +14,7 @@ use aiperf_runtime::streaming::{
     budget::{BudgetLimits, StreamingResourceBudget},
     checkpoint::{
         CheckpointBackendBudgetFailureCode, CheckpointBackendBudgetKind, CheckpointError,
-        StreamingCheckpointParticipant,
+        StreamRunIdentity, StreamingCheckpointParticipant,
     },
     checkpoint_backend::{
         CheckpointBackendPlacement, CheckpointRetention, LeasedGenerationReader,
@@ -25,9 +25,10 @@ use aiperf_runtime::streaming::{
     failure::{
         AcquisitionFailureCode, DecodeFailureCode, OrderingFailureCode, OrdinaryStreamingFailure,
         OrdinaryStreamingIssue, PlacementFailureCode, StableStreamingFailure, StreamFormatError,
-        StreamSourceError, StreamingFailureStage, StreamingIssueClass, StreamingIssueOrderKey,
-        StreamingIssueReportError, StreamingIssueReportStatus, StreamingIssueReporter,
-        StreamingIssueReporterEndpoint, StreamingIssueReporterHandle, StreamingIssueScope,
+        StreamSourceError, StreamingFailureStage, StreamingInputDomainIdentity,
+        StreamingIssueClass, StreamingIssueOrderKey, StreamingIssueReportError,
+        StreamingIssueReportStatus, StreamingIssueReporter, StreamingIssueReporterEndpoint,
+        StreamingIssueReporterHandle, StreamingIssueScope, StreamingIssueValidationError,
     },
     format::{
         DecoderResumeState, FormatProjection, FormatStateRetention, StreamingDatasetFormat,
@@ -41,9 +42,11 @@ use aiperf_runtime::streaming::{
         StreamingSessionProgramFactory, ValidatedStreamingSessionProgramConfig,
     },
     source::{
-        AcquiredPartition, AcquisitionBudget, PartitionAccessKind, PreparedStreamingDatasetSource,
+        AcquiredPartition, AcquiredPartitionAccess, AcquisitionBudget, BudgetedSourceChunk,
+        PartitionAccessKind, PreparedStreamingDatasetSource, SequentialSourceChunk,
         SourcePartitionContent, StreamingDatasetSource, StreamingDatasetSourceFactory,
-        StreamingResumeGranularity, StreamingSourceDescriptor, StreamingSourceMode,
+        StreamingRangeReader, StreamingResumeGranularity, StreamingSeekableLocalSnapshot,
+        StreamingSequentialReader, StreamingSourceDescriptor, StreamingSourceMode,
         StreamingSourceOrdering, StreamingSourcePlacement, StreamingSourcePrepareContext,
         StreamingSourceRetention, StreamingStopReceiver, ValidatedStreamingSourceConfig,
         streaming_stop_channel,
@@ -98,13 +101,25 @@ async fn cloned_issue_reporter_forwards_closed_typed_facts_to_the_host() {
         calls: Rc::clone(&calls),
     });
     let issue = OrdinaryStreamingIssue::new(
-        LogicalReplayRunId::from_bytes([1; 32]),
+        StreamRunIdentity::new(LogicalReplayRunId::from_bytes([1; 32])),
         StreamingIssueScope::Partition {
-            partition: ImmutableObjectIdentity::from_bytes([2; 32]),
+            input_domain: StreamingInputDomainIdentity::new(
+                ContentDigest::from_bytes([8; 32]),
+                ImmutableObjectIdentity::from_bytes([9; 32]),
+            ),
+            object: ImmutableObjectIdentity::from_bytes([2; 32]),
         },
         StreamingIssueClass::Retryable,
         ContentDigest::from_bytes([3; 32]),
-        StreamingIssueOrderKey::Source(SourcePosition::new(4)),
+        StreamingIssueOrderKey::input(
+            StreamingInputDomainIdentity::new(
+                ContentDigest::from_bytes([8; 32]),
+                ImmutableObjectIdentity::from_bytes([9; 32]),
+            ),
+            SourcePosition::new(4),
+            0,
+            ContentDigest::from_bytes([4; 32]),
+        ),
         OrdinaryStreamingFailure::Source(StreamSourceError::acquisition(
             AcquisitionFailureCode::Read,
         )),
@@ -119,6 +134,60 @@ async fn cloned_issue_reporter_forwards_closed_typed_facts_to_the_host() {
 
     assert_eq!(status, StreamingIssueReportStatus::Accepted);
     assert_eq!(calls.get(), 1);
+}
+
+#[test]
+fn ordinary_issue_rejects_host_owned_invariant_class() {
+    let domain = StreamingInputDomainIdentity::new(
+        ContentDigest::from_bytes([1; 32]),
+        ImmutableObjectIdentity::from_bytes([2; 32]),
+    );
+    let error = OrdinaryStreamingIssue::new(
+        StreamRunIdentity::new(LogicalReplayRunId::from_bytes([3; 32])),
+        StreamingIssueScope::Record {
+            input_domain: domain.clone(),
+            record_id: aiperf_runtime::streaming::identity::StableRecordId::from_bytes([4; 32]),
+        },
+        StreamingIssueClass::Invariant,
+        ContentDigest::from_bytes([5; 32]),
+        StreamingIssueOrderKey::input(
+            domain,
+            SourcePosition::new(6),
+            0,
+            ContentDigest::from_bytes([7; 32]),
+        ),
+        OrdinaryStreamingFailure::Format(StreamFormatError::decode(
+            DecodeFailureCode::BudgetInvariant,
+        )),
+    )
+    .expect_err("ordinary adapters must not mint invariant authority");
+
+    assert_eq!(error, StreamingIssueValidationError::InvariantIsHostOwned);
+}
+
+#[test]
+fn issue_order_distinguishes_equal_positions_in_different_input_domains() {
+    let left = StreamingIssueOrderKey::input(
+        StreamingInputDomainIdentity::new(
+            ContentDigest::from_bytes([1; 32]),
+            ImmutableObjectIdentity::from_bytes([2; 32]),
+        ),
+        SourcePosition::new(7),
+        0,
+        ContentDigest::from_bytes([3; 32]),
+    );
+    let right = StreamingIssueOrderKey::input(
+        StreamingInputDomainIdentity::new(
+            ContentDigest::from_bytes([1; 32]),
+            ImmutableObjectIdentity::from_bytes([4; 32]),
+        ),
+        SourcePosition::new(7),
+        0,
+        ContentDigest::from_bytes([3; 32]),
+    );
+
+    assert_ne!(left, right);
+    assert_ne!(left.cmp(&right), std::cmp::Ordering::Equal);
 }
 
 #[allow(dead_code)]
@@ -220,8 +289,12 @@ fn descriptors_serialize_complete_agreement_facts() {
     let source = StreamingSourceDescriptor {
         id: "source",
         description: "source",
-        mode: StreamingSourceMode::Follow,
-        access: &[PartitionAccessKind::Sequential],
+        modes: &[StreamingSourceMode::Finite, StreamingSourceMode::Follow],
+        access: &[
+            PartitionAccessKind::Sequential,
+            PartitionAccessKind::SeekableLocal,
+            PartitionAccessKind::RangeReadable,
+        ],
         ordering: StreamingSourceOrdering::EventTime,
         resume: &[StreamingResumeGranularity::Byte],
         has_event_time: true,
@@ -281,7 +354,7 @@ fn descriptors_serialize_complete_agreement_facts() {
         (
             serde_json::to_value(source).unwrap_or_else(|error| panic!("source: {error}")),
             &[
-                "mode",
+                "modes",
                 "access",
                 "ordering",
                 "resume",
@@ -432,43 +505,265 @@ async fn cloned_driver_control_delegates_without_borrowing_the_driver() {
     assert_eq!(receipt.cancelled, 7);
 }
 
-#[tokio::test]
-async fn acquired_partition_exposes_bounded_sequential_access_and_holds_its_budget() {
-    let budget = StreamingResourceBudget::new(BudgetLimits {
-        max_items: 1,
-        max_bytes: 6,
+struct GeneratedSequential {
+    remaining: usize,
+    offset: u64,
+}
+
+#[async_trait(?Send)]
+impl StreamingSequentialReader for GeneratedSequential {
+    async fn next_chunk(
+        &mut self,
+        max_bytes: NonZeroUsize,
+        budget: &AcquisitionBudget,
+    ) -> Result<Option<SequentialSourceChunk>, StreamSourceError> {
+        if self.remaining == 0 {
+            return Ok(None);
+        }
+        let length = self.remaining.min(max_bytes.get());
+        let lease = budget.acquire_memory(1, length).await.map_err(|_| {
+            StreamSourceError::acquisition(AcquisitionFailureCode::ObjectLimitExceeded)
+        })?;
+        self.remaining -= length;
+        self.offset += length as u64;
+        let bytes = BudgetedSourceChunk::new(Bytes::from(vec![b'x'; length]), lease)?;
+        Ok(Some(SequentialSourceChunk::new(
+            bytes,
+            self.offset,
+            ContentDigest::from_bytes([self.offset as u8; 32]),
+        )))
+    }
+}
+
+fn resource_budget(max_items: usize, max_bytes: usize) -> StreamingResourceBudget {
+    StreamingResourceBudget::new(BudgetLimits {
+        max_items,
+        max_bytes,
     })
-    .unwrap_or_else(|error| panic!("budget: {error}"));
-    let lease = budget
-        .acquire(1, 6)
+    .unwrap_or_else(|error| panic!("budget: {error}"))
+}
+
+#[tokio::test]
+async fn sequential_acquisition_streams_a_large_object_with_bounded_resident_bytes() {
+    let memory = resource_budget(2, 4);
+    let disk = resource_budget(1, 1);
+    let budget = AcquisitionBudget::new(memory.clone(), disk);
+    let authority = budget
+        .acquire_memory(1, 0)
         .await
-        .unwrap_or_else(|error| panic!("lease: {error}"));
-    let mut partition = AcquiredPartition::new(
+        .unwrap_or_else(|error| panic!("authority: {error}"));
+    let partition = AcquiredPartition::sequential(
         SourcePosition::new(9),
         ImmutableObjectIdentity::from_bytes([9; 32]),
-        1,
-        Bytes::from_static(b"abcdef"),
-        lease,
+        Some(1_000_000),
+        0,
+        Box::new(GeneratedSequential {
+            remaining: 10,
+            offset: 0,
+        }),
+        authority,
     )
     .unwrap_or_else(|error| panic!("partition: {error}"));
-
     assert_eq!(partition.position(), SourcePosition::new(9));
+    assert_eq!(partition.size_bytes(), Some(1_000_000));
+    let AcquiredPartitionAccess::Sequential(mut reader) = partition.into_access() else {
+        panic!("sequential acquisition returned another access shape");
+    };
+
+    let chunk = reader
+        .next_chunk(NonZeroUsize::new(4).unwrap(), &budget)
+        .await
+        .unwrap_or_else(|error| panic!("chunk: {error}"))
+        .unwrap_or_else(|| panic!("missing generated chunk"));
+    assert_eq!(chunk.as_bytes(), b"xxxx");
+    assert_eq!(chunk.end_offset(), 4);
     assert_eq!(
-        partition.next_chunk(NonZeroUsize::new(2).unwrap()),
-        Some(&b"bc"[..])
+        (memory.snapshot().used_items, memory.snapshot().used_bytes),
+        (2, 4)
     );
+    drop(chunk);
     assert_eq!(
-        partition.next_chunk(NonZeroUsize::new(8).unwrap()),
-        Some(&b"def"[..])
+        (memory.snapshot().used_items, memory.snapshot().used_bytes),
+        (1, 0)
     );
-    assert_eq!(partition.next_chunk(NonZeroUsize::new(1).unwrap()), None);
+    drop(reader);
     assert_eq!(
-        (budget.snapshot().used_items, budget.snapshot().used_bytes),
+        (memory.snapshot().used_items, memory.snapshot().used_bytes),
+        (0, 0)
+    );
+}
+
+struct FixedSeekableSnapshot;
+
+#[async_trait(?Send)]
+impl StreamingSeekableLocalSnapshot for FixedSeekableSnapshot {
+    async fn read_at(
+        &self,
+        offset: u64,
+        max_bytes: NonZeroUsize,
+        budget: &AcquisitionBudget,
+    ) -> Result<BudgetedSourceChunk, StreamSourceError> {
+        let bytes = b"abcdef";
+        let start = usize::try_from(offset)
+            .unwrap_or(usize::MAX)
+            .min(bytes.len());
+        let end = start.saturating_add(max_bytes.get()).min(bytes.len());
+        let selected = Bytes::copy_from_slice(&bytes[start..end]);
+        let lease = budget
+            .acquire_memory(1, selected.len())
+            .await
+            .map_err(|_| {
+                StreamSourceError::acquisition(AcquisitionFailureCode::ObjectLimitExceeded)
+            })?;
+        BudgetedSourceChunk::new(selected, lease)
+    }
+}
+
+struct FixedRangeReader;
+
+#[async_trait(?Send)]
+impl StreamingRangeReader for FixedRangeReader {
+    async fn read_range(
+        &self,
+        offset: u64,
+        length: NonZeroUsize,
+        budget: &AcquisitionBudget,
+    ) -> Result<BudgetedSourceChunk, StreamSourceError> {
+        let start = u8::try_from(offset).unwrap_or(u8::MAX);
+        let selected = Bytes::from(
+            (0..length.get())
+                .map(|delta| start.saturating_add(delta as u8))
+                .collect::<Vec<_>>(),
+        );
+        let lease = budget
+            .acquire_memory(1, selected.len())
+            .await
+            .map_err(|_| {
+                StreamSourceError::acquisition(AcquisitionFailureCode::ObjectLimitExceeded)
+            })?;
+        BudgetedSourceChunk::new(selected, lease)
+    }
+}
+
+#[tokio::test]
+async fn seekable_local_and_range_access_are_callable_and_release_authority_leases() {
+    let memory = resource_budget(3, 8);
+    let disk = resource_budget(1, 6);
+    let budget = AcquisitionBudget::new(memory.clone(), disk.clone());
+    let disk_lease = budget
+        .acquire_disk(1, 6)
+        .await
+        .unwrap_or_else(|error| panic!("disk lease: {error}"));
+    let seekable = AcquiredPartition::seekable_local(
+        SourcePosition::new(1),
+        ImmutableObjectIdentity::from_bytes([1; 32]),
+        6,
+        Box::new(FixedSeekableSnapshot),
+        disk_lease,
+    )
+    .unwrap_or_else(|error| panic!("seekable: {error}"));
+    let AcquiredPartitionAccess::SeekableLocal(seekable) = seekable.into_access() else {
+        panic!("seekable acquisition returned another access shape");
+    };
+    let seek_chunk = seekable
+        .read_at(2, NonZeroUsize::new(2).unwrap(), &budget)
+        .await
+        .unwrap_or_else(|error| panic!("seek: {error}"));
+    assert_eq!(seek_chunk.as_bytes(), b"cd");
+    assert_eq!(
+        (disk.snapshot().used_items, disk.snapshot().used_bytes),
         (1, 6)
     );
-    drop(partition);
+    drop(seek_chunk);
+    drop(seekable);
     assert_eq!(
-        (budget.snapshot().used_items, budget.snapshot().used_bytes),
+        (disk.snapshot().used_items, disk.snapshot().used_bytes),
+        (0, 0)
+    );
+
+    let range_authority = budget
+        .acquire_memory(1, 0)
+        .await
+        .unwrap_or_else(|error| panic!("range authority: {error}"));
+    let range = AcquiredPartition::range_readable(
+        SourcePosition::new(2),
+        ImmutableObjectIdentity::from_bytes([2; 32]),
+        Some(100),
+        Box::new(FixedRangeReader),
+        range_authority,
+    )
+    .unwrap_or_else(|error| panic!("range: {error}"));
+    let AcquiredPartitionAccess::RangeReadable(range) = range.into_access() else {
+        panic!("range acquisition returned another access shape");
+    };
+    let range_chunk = range
+        .read_range(5, NonZeroUsize::new(3).unwrap(), &budget)
+        .await
+        .unwrap_or_else(|error| panic!("range read: {error}"));
+    assert_eq!(range_chunk.as_bytes(), &[5, 6, 7]);
+    drop(range_chunk);
+    drop(range);
+    assert_eq!(
+        (memory.snapshot().used_items, memory.snapshot().used_bytes),
+        (0, 0)
+    );
+}
+
+struct PendingSequential;
+
+#[async_trait(?Send)]
+impl StreamingSequentialReader for PendingSequential {
+    async fn next_chunk(
+        &mut self,
+        _max_bytes: NonZeroUsize,
+        budget: &AcquisitionBudget,
+    ) -> Result<Option<SequentialSourceChunk>, StreamSourceError> {
+        let _lease = budget.acquire_memory(1, 4).await.map_err(|_| {
+            StreamSourceError::acquisition(AcquisitionFailureCode::ObjectLimitExceeded)
+        })?;
+        std::future::pending::<()>().await;
+        Ok(None)
+    }
+}
+
+#[tokio::test]
+async fn cancelling_a_pending_chunk_read_releases_its_temporary_lease() {
+    let memory = resource_budget(2, 4);
+    let budget = AcquisitionBudget::new(memory.clone(), resource_budget(1, 1));
+    let authority = budget
+        .acquire_memory(1, 0)
+        .await
+        .unwrap_or_else(|error| panic!("authority: {error}"));
+    let partition = AcquiredPartition::sequential(
+        SourcePosition::new(1),
+        ImmutableObjectIdentity::from_bytes([1; 32]),
+        None,
+        0,
+        Box::new(PendingSequential),
+        authority,
+    )
+    .unwrap_or_else(|error| panic!("partition: {error}"));
+    let AcquiredPartitionAccess::Sequential(mut reader) = partition.into_access() else {
+        panic!("sequential acquisition returned another access shape");
+    };
+    let mut pending = Box::pin(reader.next_chunk(NonZeroUsize::new(4).unwrap(), &budget));
+    tokio::select! {
+        biased;
+        result = &mut pending => panic!("chunk read unexpectedly completed: {result:?}"),
+        () = tokio::task::yield_now() => {}
+    }
+    assert_eq!(
+        (memory.snapshot().used_items, memory.snapshot().used_bytes),
+        (2, 4)
+    );
+    drop(pending);
+    assert_eq!(
+        (memory.snapshot().used_items, memory.snapshot().used_bytes),
+        (1, 0)
+    );
+    drop(reader);
+    assert_eq!(
+        (memory.snapshot().used_items, memory.snapshot().used_bytes),
         (0, 0)
     );
 }
@@ -516,24 +811,19 @@ async fn decoder_resume_lease_mismatch_is_a_decode_invariant() {
 }
 
 #[tokio::test]
-async fn acquired_partition_lease_mismatch_is_an_acquisition_invariant() {
+async fn source_chunk_lease_mismatch_is_an_acquisition_invariant() {
     let budget = StreamingResourceBudget::new(BudgetLimits {
         max_items: 1,
         max_bytes: 2,
     })
     .unwrap_or_else(|error| panic!("budget: {error}"));
-    let lease = budget
-        .acquire(1, 1)
+    let acquisition = AcquisitionBudget::new(budget, resource_budget(1, 1));
+    let lease = acquisition
+        .acquire_memory(1, 1)
         .await
         .unwrap_or_else(|error| panic!("lease: {error}"));
-    let error = AcquiredPartition::new(
-        SourcePosition::new(1),
-        ImmutableObjectIdentity::from_bytes([1; 32]),
-        0,
-        Bytes::from_static(b"xy"),
-        lease,
-    )
-    .expect_err("undercharged acquired content must fail");
+    let error = BudgetedSourceChunk::new(Bytes::from_static(b"xy"), lease)
+        .expect_err("undercharged acquired content must fail");
     assert_eq!(error.stage(), StreamingFailureStage::Acquisition);
     assert_eq!(error.code(), "budget_invariant");
 }
@@ -593,7 +883,7 @@ struct TestSourceFactory;
 static TEST_SOURCE_DESCRIPTOR: StreamingSourceDescriptor = StreamingSourceDescriptor {
     id: "test",
     description: "test source factory",
-    mode: StreamingSourceMode::Finite,
+    modes: &[StreamingSourceMode::Finite],
     access: &[PartitionAccessKind::Sequential],
     ordering: StreamingSourceOrdering::Partition,
     resume: &[StreamingResumeGranularity::Byte],
@@ -684,6 +974,11 @@ async fn source_factory_strictly_validates_downcasts_and_prepares_real_behavior(
             max_bytes: 1,
         })
         .unwrap_or_else(|error| panic!("budget: {error}")),
+        StreamingResourceBudget::new(BudgetLimits {
+            max_items: 1,
+            max_bytes: 1,
+        })
+        .unwrap_or_else(|error| panic!("disk budget: {error}")),
     );
     let prepared = factory
         .prepare(
