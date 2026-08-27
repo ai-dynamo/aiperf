@@ -284,8 +284,8 @@ fn bare_exact_artifact_exporter_metric_is_a_product_failure() {
 
     assert_eq!(report.decision, ControlledAttemptDecision::ValidFailure);
     assert_eq!(report.scenario_count, 12);
-    assert_eq!(report.retained_pair_count, 360);
-    assert_eq!(report.executed_member_count, 840);
+    assert_eq!(report.retained_pair_count, 330);
+    assert_eq!(report.executed_member_count, 771);
     assert_eq!(report.attempt_history.len(), 1);
     assert_eq!(
         report.attempt_history[0].decision,
@@ -318,7 +318,7 @@ fn bare_exact_artifact_exporter_metric_is_a_product_failure() {
             .as_array()
             .expect("terminal output digests are retained")
             .len(),
-        840
+        771
     );
     assert!(report.statistical_report.is_none());
     assert!(

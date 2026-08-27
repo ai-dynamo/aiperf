@@ -711,8 +711,20 @@ fn run_controlled_runtime_internal(
     let artifact_paths = validate_authoritative_build_report_v1(build_report).map_err(|error| {
         ControlledRuntimeError::new(format!("invalid paired build authority: {error}"))
     })?;
-    let cases =
+    let mut cases =
         checked_in_case_plans().map_err(|error| ControlledRuntimeError::new(error.to_string()))?;
+    // Exporter scenarios are the only cases whose admission depends on the
+    // sealed observable policy rather than on the runtime matrix itself. Run
+    // them last, deterministically, so a refusal there cannot hide the runtime
+    // evidence the rest of the sealed matrix already produced.
+    cases.sort_by_key(|case| {
+        u8::from(
+            case.measured_metrics
+                .iter()
+                .any(|metric| metric == "exporter_nanoseconds_per_record"),
+        )
+    });
+    let cases = cases;
     let inventory_blake3 = checked_in_inventory_digest()
         .map_err(|error| ControlledRuntimeError::new(error.to_string()))?;
     let policy =
