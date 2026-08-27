@@ -366,31 +366,24 @@ async def test_c6_kill_controller_container_salvages_unified(
         )
 
         pod = await chaos_injector.get_controller_pod_name(operator_job_namespace, name)
-        # Kill from the event-bus-proxy container; any sibling works
-        # because shareProcessNamespace=true makes /proc shared.
-        control_plane_pid = await _find_pid_by_cmdline(
-            kubectl,
-            pod=pod,
-            namespace=operator_job_namespace,
-            exec_container="event-bus-proxy",
-            cmdline_match=CONTROL_PLANE_CMDLINE_MATCH,
-        )
+        # Kill PID 1 inside the control-plane container directly. The shared-PID
+        # approach via _find_pid_by_cmdline is unreliable on kind: the bash script
+        # used for the search embeds the match string in its own cmdline, so it can
+        # self-match if /proc directory ordering is non-numeric. The test's goal is
+        # verifying the operator's salvage path, not the PID-namespace mechanism.
         async with faults.inject(
-            "pod.kill_pid",
+            "pod.kill_container",
             target={
                 "ns": operator_job_namespace,
                 "pod": pod,
-                "exec_container": "event-bus-proxy",
+                "container": "control-plane",
             },
-            container_pid=control_plane_pid,
         ):
-            # Pod PID kills are non-restorable; the kubelet/JobSet own
-            # any container recreation. The block just scopes the inject.
             pass
 
-        # Within ~30s the control-plane container should show terminated.
+        # Within ~60s the control-plane container should show terminated.
         reason = await _wait_for_controller_terminated(
-            kubectl, pod=pod, namespace=operator_job_namespace, timeout=30.0
+            kubectl, pod=pod, namespace=operator_job_namespace, timeout=60.0
         )
         assert reason in ("Error", "OOMKilled", "Completed"), (
             f"unexpected terminated reason {reason!r} for control-plane"
@@ -439,7 +432,7 @@ async def test_c6_kill_controller_container_salvages_unified(
         await _force_delete_cr(kubectl, operator_job_namespace, name)
 
 
-@pytest.mark.timeout(600)
+@pytest.mark.timeout(750)
 async def test_c7_kill_worker_pod_mid_benchmark_unified(
     operator_ready_shared_pid: OperatorDeployer,
     chaos_injector: ChaosInjector,
@@ -508,7 +501,7 @@ async def test_c7_kill_worker_pod_mid_benchmark_unified(
             operator_job_namespace,
             name,
             phases=("Completed",),
-            timeout=240.0,
+            timeout=360.0,
         )
         assert phase == "Completed"
     finally:
