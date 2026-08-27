@@ -242,34 +242,6 @@ pub async fn prepared_participant_with_bytes(
     .expect("valid prepared participant")
 }
 
-/// Build one verified committed participant state for a current-schema owner.
-///
-/// The name and signature match the checkpoint branch's helper exactly, so the
-/// rebase resolves in one hunk rather than at every call site.
-pub async fn committed_current_v4_participant_state(
-    run: StreamRunIdentity,
-    participant_id: CheckpointParticipantId,
-    schema_id: &str,
-    schema_version: u32,
-    cut: CheckpointCut,
-    item_count: u64,
-    bytes: Bytes,
-) -> CommittedParticipantState {
-    let byte_length = bytes.len() as u64;
-    let content_digest = ContentDigest::from_bytes(*blake3::hash(&bytes).as_bytes());
-    let descriptor = ParticipantStateDescriptor {
-        participant_id,
-        schema_id: schema_id.to_owned(),
-        schema_version,
-        represented_cut: cut,
-        content_digest,
-        item_count,
-        byte_length,
-    };
-    CommittedParticipantState::new(run, descriptor, checkpoint_payload(bytes).await)
-        .expect("verified committed participant state")
-}
-
 pub async fn result_partition(run: StreamRunIdentity, epoch: u64) -> ResultPartition {
     result_partition_with_projection_for(run, epoch, "projection")
         .await
@@ -556,8 +528,8 @@ pub async fn legacy_v3_fixture(
     let result = ResultSegmentDescriptor {
         run,
         epoch: CheckpointEpoch::new(1),
-        cell: CellId::new(0),
-        worker: WorkerId::new(0),
+        cell_id: CellId::new(0),
+        worker_id: WorkerId::new(0),
         projection: ResultProjectionId::new("legacy").expect("valid legacy projection"),
         schema: ResultSchemaVersion::new(1),
         first_sequence: GlobalSequence::new(1),
