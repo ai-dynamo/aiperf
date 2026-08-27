@@ -333,7 +333,20 @@ class TimingManager(BaseComponentService):
             self.info("Phase orchestrator cancelled")
 
     def _on_worker_lost(self, reason: str) -> None:
-        """Fail the active benchmark when a worker's sticky state is lost."""
+        """Fail the active benchmark immediately when a worker's sticky state is lost.
+
+        Unlike ``_on_dispatchable_worker_count_changed``, this path ignores
+        ``Environment.WORKER.MIN_ALIVE_FRACTION`` and the ``STALE_TIME`` grace
+        period entirely, by design. The router only invokes the worker-lost
+        callback (see ``StickyCreditRouter._unregister_worker`` and
+        ``_drop_orphaned_sessions``) when the departing worker owned in-flight
+        credits or an active sticky session. That state lived exclusively in
+        the dead worker's memory - no other worker can resume it, and a late
+        heartbeat cannot restore it - so the affected request(s) are lost no
+        matter how healthy the rest of the fleet is. A floor-fraction check
+        would be meaningless here: even one such loss is unrecoverable, so it
+        is always terminal regardless of how many workers remain alive.
+        """
         if not self._profiling_active or self._worker_floor_abort_started:
             return
         self._worker_floor_abort_started = True
@@ -354,6 +367,10 @@ class TimingManager(BaseComponentService):
 
     def _on_dispatchable_worker_count_changed(self, worker_count: int) -> None:
         """Schedule a local worker-floor check after membership changes.
+
+        This path covers idle-capacity churn only: workers that leave without
+        losing in-flight credits or sticky sessions (see ``_on_worker_lost``
+        for the unconditional, terminal counterpart that fires when they do).
 
         The router owns the dispatchable set. TimingManager owns the benchmark
         decision, with a grace period that lets a Kubernetes replacement finish
