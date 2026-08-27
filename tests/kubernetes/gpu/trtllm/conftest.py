@@ -17,6 +17,7 @@ from aiperf.common.aiperf_logger import AIPerfLogger
 from tests.kubernetes.gpu.conftest import (
     GPUTestSettings,
     _dump_diagnostics,
+    _ensure_hf_token_secret,
     _ensure_user_pull_secrets,
     _log_container_logs,
     _log_pod_statuses,
@@ -72,6 +73,7 @@ async def trtllm_server(
         return
 
     await _ensure_user_pull_secrets(kubectl, s, trtllm_config.namespace)
+    await _ensure_hf_token_secret(kubectl, s, trtllm_config.namespace)
     await _release_gpu(kubectl, trtllm_config.namespace)
     deployer = TRTLLMDeployer(kubectl=kubectl, config=trtllm_config)
 

@@ -22,6 +22,7 @@ from tests.kubernetes.gpu.conftest import (
     LocalCluster,
     _build_dynamo_from_source,
     _dump_diagnostics,
+    _ensure_hf_token_secret,
     _ensure_user_pull_secrets,
     _log_events,
     _log_pod_statuses,
@@ -479,6 +480,7 @@ async def dynamo_server(
         return
 
     await _ensure_user_pull_secrets(kubectl, s, dynamo_config.namespace)
+    await _ensure_hf_token_secret(kubectl, s, dynamo_config.namespace)
     await _release_gpu(kubectl, dynamo_config.namespace)
     deployer = DynamoDeployer(kubectl=kubectl, config=dynamo_config)
 

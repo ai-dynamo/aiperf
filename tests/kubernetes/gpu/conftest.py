@@ -554,6 +554,54 @@ async def _release_gpu(kubectl: KubectlClient, keep_namespace: str) -> None:
             await kubectl.delete_namespace(ns, wait=True)
 
 
+async def _ensure_hf_token_secret(
+    kubectl: KubectlClient,
+    settings: GPUTestSettings,
+    namespace: str,
+) -> None:
+    """Copy the HuggingFace token secret to *namespace* if it is not already there.
+
+    Searches a priority-ordered list of candidate source namespaces.  This is
+    needed because the secret is typically pre-seeded in one namespace (e.g.
+    the vLLM namespace) and must be propagated to each backend namespace before
+    the server pod starts.
+    """
+    if not settings.hf_token_secret:
+        return
+    existing = await kubectl.run(
+        "get", "secret", settings.hf_token_secret, "-n", namespace, check=False
+    )
+    if existing.returncode == 0:
+        return
+    candidates = [
+        settings.vllm_namespace,
+        settings.benchmark_namespace,
+    ]
+    for src in candidates:
+        if not src:
+            continue
+        result = await kubectl.run(
+            "get", "secret", settings.hf_token_secret, "-n", src, check=False
+        )
+        if result.returncode == 0:
+            import re
+
+            manifest = result.stdout
+            # Strip namespace so the secret adopts the target namespace on apply
+            for field in ("namespace", "resourceVersion", "uid", "creationTimestamp"):
+                manifest = re.sub(rf"\n\s+{field}:.*", "", manifest)
+            await kubectl.apply(manifest, namespace=namespace)
+            logger.info(
+                f"Copied HF token secret '{settings.hf_token_secret}' "
+                f"from {src} → {namespace}"
+            )
+            return
+    logger.warning(
+        f"HF token secret '{settings.hf_token_secret}' not found in any candidate "
+        f"namespace {candidates}; server pod may fail to start."
+    )
+
+
 async def _ensure_user_pull_secrets(
     kubectl: KubectlClient,
     settings: GPUTestSettings,
