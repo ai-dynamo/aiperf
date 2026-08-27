@@ -128,7 +128,11 @@ pub struct PluginPackageDescriptor {
 
 impl PluginPackageDescriptor {
     /// Build a package descriptor from an already-normalized identifier.
-    pub const fn new(id: RegistryId, version: &'static str, description: &'static str) -> Self {
+    ///
+    /// Not `const`: `RegistryId` owns a `Box<str>`, so no value of this type
+    /// can be produced in a const context. Plugins build their descriptor once
+    /// in a `LazyLock` instead.
+    pub fn new(id: RegistryId, version: &'static str, description: &'static str) -> Self {
         Self {
             id,
             version,
@@ -172,7 +176,10 @@ pub struct PluginCategoryDescriptor {
 
 impl PluginCategoryDescriptor {
     /// Bind a normalized capability identifier to its owning package.
-    pub const fn new(id: RegistryId, package: &'static PluginPackageDescriptor) -> Self {
+    ///
+    /// Not `const` for the same reason as
+    /// [`PluginPackageDescriptor::new`]: the identifier is heap-backed.
+    pub fn new(id: RegistryId, package: &'static PluginPackageDescriptor) -> Self {
         Self { id, package }
     }
 
