@@ -20,6 +20,8 @@ mod extraction;
 mod implementation;
 mod kserve;
 mod metadata;
+#[cfg(test)]
+mod type_id;
 mod models;
 mod registry;
 mod riva;

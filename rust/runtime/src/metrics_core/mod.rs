@@ -17,6 +17,8 @@ pub mod report_view;
 pub mod sidecar;
 pub mod steady_state;
 pub mod store;
+#[cfg(test)]
+mod tag_id;
 pub mod sweepline;
 pub mod units;
 pub mod value;
