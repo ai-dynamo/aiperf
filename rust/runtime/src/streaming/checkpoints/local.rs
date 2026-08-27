@@ -37,19 +37,18 @@ use crate::{
         },
         budget::{BudgetLease, BudgetLimits, BudgetSnapshot},
         checkpoint::{
-            BudgetedCheckpointBytes, CheckpointBackendBudgetKind, CheckpointEpoch,
-            CheckpointError, CheckpointGeneration,
-            CommittedCheckpointGeneration, CommittedParticipantState,
+            BudgetedCheckpointBytes, CheckpointBackendBudgetKind, CheckpointEpoch, CheckpointError,
+            CheckpointGeneration, CommittedCheckpointGeneration, CommittedParticipantState,
             CurrentV4ParticipantStateContext, DecodedCheckpointGeneration, LegacyParticipantState,
             LegacyV3CheckpointGeneration, ParticipantStateDescriptor, PreparedParticipantState,
             StreamRunIdentity, decode_versioned_checkpoint_generation,
         },
         checkpoint_backend::{
-            CheckpointCommitMetadata, CheckpointGenerationExpectations, CurrentV4CheckpointGeneration,
-            FrozenGenerationTransactionInputs, LeasedCheckpointGeneration, LeasedGenerationReader,
-            LegacyV3LeasedGenerationReader, StreamingCheckpointBackend,
-            StreamingGenerationTransaction, build_prevalidated_candidate, sealed,
-            validate_commit_metadata,
+            CheckpointCommitMetadata, CheckpointGenerationExpectations,
+            CurrentV4CheckpointGeneration, FrozenGenerationTransactionInputs,
+            LeasedCheckpointGeneration, LeasedGenerationReader, LegacyV3LeasedGenerationReader,
+            StreamingCheckpointBackend, StreamingGenerationTransaction,
+            build_prevalidated_candidate, sealed, validate_commit_metadata,
         },
         checkpoints::budget::{BackendBudget, map_budget_error},
         identity::ContentDigest,
@@ -312,11 +311,9 @@ fn read_optional_blocking(path: &Path, max_bytes: u64) -> std::io::Result<Option
             "checkpoint object exceeds its accepted length",
         ));
     }
-    let mut buffer = Vec::with_capacity(
-        usize::try_from(metadata.len()).map_err(|_| {
-            std::io::Error::new(ErrorKind::InvalidData, "unrepresentable object length")
-        })?,
-    );
+    let mut buffer = Vec::with_capacity(usize::try_from(metadata.len()).map_err(|_| {
+        std::io::Error::new(ErrorKind::InvalidData, "unrepresentable object length")
+    })?);
     file.read_to_end(&mut buffer)?;
     Ok(Some(buffer))
 }
@@ -357,7 +354,10 @@ fn list_dir_page_blocking(
         let Some(name) = name.to_str().map(str::to_owned) else {
             continue;
         };
-        if after.as_deref().is_some_and(|cursor| name.as_str() <= cursor) {
+        if after
+            .as_deref()
+            .is_some_and(|cursor| name.as_str() <= cursor)
+        {
             continue;
         }
         names.push(name);
@@ -397,7 +397,8 @@ fn try_lock_exclusive_blocking(path: &Path) -> std::io::Result<Option<std::fs::F
 impl LocalCheckpointFilesystem for BlockingLocalFilesystem {
     async fn create_private_dir(&self, path: &Path) -> Result<(), CheckpointError> {
         let path = path.to_path_buf();
-        self.run(0, move || create_private_dir_blocking(&path)).await
+        self.run(0, move || create_private_dir_blocking(&path))
+            .await
     }
 
     async fn write_new(&self, path: &Path, bytes: &[u8]) -> Result<bool, CheckpointError> {
@@ -439,9 +440,10 @@ impl LocalCheckpointFilesystem for BlockingLocalFilesystem {
     ) -> Result<Option<Bytes>, CheckpointError> {
         let path = path.to_path_buf();
         let bytes = self
-            .run(usize::try_from(max_bytes).unwrap_or(usize::MAX), move || {
-                read_optional_blocking(&path, max_bytes)
-            })
+            .run(
+                usize::try_from(max_bytes).unwrap_or(usize::MAX),
+                move || read_optional_blocking(&path, max_bytes),
+            )
             .await?;
         Ok(bytes.map(|bytes| Bytes::from(bytes.into_boxed_slice())))
     }
@@ -1198,13 +1200,18 @@ impl LocalCheckpointBackend {
         let Some(lock) = self.fs().try_lock_exclusive(&lease_path).await? else {
             return Err(storage_error("transaction lease is already held"));
         };
-        let expires_ns = self
-            .inner
-            .clock
-            .now_ns()
-            .saturating_add(i64::try_from(self.inner.limits.prepare_lease_ns).unwrap_or(i64::MAX));
-        self.write_lease_record(&lease_path, run, LeaseKind::Prepare, writer.holder, expires_ns)
-            .await?;
+        let expires_ns =
+            self.inner.clock.now_ns().saturating_add(
+                i64::try_from(self.inner.limits.prepare_lease_ns).unwrap_or(i64::MAX),
+            );
+        self.write_lease_record(
+            &lease_path,
+            run,
+            LeaseKind::Prepare,
+            writer.holder,
+            expires_ns,
+        )
+        .await?;
         let directory = paths.transaction_dir(&name);
         self.fs().create_private_dir(&directory).await?;
         Ok((
@@ -1267,9 +1274,9 @@ impl LocalCheckpointBackend {
                 .checked_add(1)
                 .ok_or(CheckpointError::ObjectVerification)?;
             bytes = bytes
-                .checked_add(usize::try_from(length).map_err(|_| {
-                    CheckpointError::ObjectVerification
-                })?)
+                .checked_add(
+                    usize::try_from(length).map_err(|_| CheckpointError::ObjectVerification)?,
+                )
                 .ok_or(CheckpointError::ObjectVerification)?;
         }
         let lease = self.inner.budgets.storage.acquire(items, bytes).await?;
@@ -1422,7 +1429,10 @@ impl LocalCheckpointBackend {
         let mut removed = 0usize;
         let mut retained = 0usize;
         for name in &page.names {
-            match self.classify_transaction_lease(&paths, name, now_ns).await? {
+            match self
+                .classify_transaction_lease(&paths, name, now_ns)
+                .await?
+            {
                 TransactionLeaseState::Live => retained += 1,
                 TransactionLeaseState::Reclaimable => {
                     self.fs()
@@ -1445,7 +1455,9 @@ impl LocalCheckpointBackend {
         Ok(TmpReclaimPage {
             removed,
             retained,
-            next: page.next.map(|after| TmpReclaimCursor { after: Some(after) }),
+            next: page
+                .next
+                .map(|after| TmpReclaimCursor { after: Some(after) }),
         })
     }
 
@@ -2051,13 +2063,14 @@ impl LocalGenerationTransaction {
 
         // Phase C: one aggregate storage acquisition for the genuinely new set.
         let missing = backend.filter_absent_objects(&paths, objects).await?;
-        let storage_bytes = missing
-            .iter()
-            .try_fold(generation_bytes.len(), |total, (_, bytes)| {
-                total
-                    .checked_add(bytes.len())
-                    .ok_or(CheckpointError::ObjectVerification)
-            })?;
+        let storage_bytes =
+            missing
+                .iter()
+                .try_fold(generation_bytes.len(), |total, (_, bytes)| {
+                    total
+                        .checked_add(bytes.len())
+                        .ok_or(CheckpointError::ObjectVerification)
+                })?;
         let storage_lease = backend
             .inner
             .budgets
@@ -2284,7 +2297,11 @@ impl LocalResultReadAuthority<'_> {
         self.verify_head().await?;
         let bytes = self
             .backend
-            .read_object(self.paths, &descriptor.payload_digest, descriptor.byte_length)
+            .read_object(
+                self.paths,
+                &descriptor.payload_digest,
+                descriptor.byte_length,
+            )
             .await?;
         if bytes.len() != length {
             return Err(CheckpointError::ObjectVerification);
@@ -2302,7 +2319,11 @@ impl LocalResultReadAuthority<'_> {
         self.verify_head().await?;
         let bytes = self
             .backend
-            .read_object(self.paths, &descriptor.content_digest, descriptor.byte_length)
+            .read_object(
+                self.paths,
+                &descriptor.content_digest,
+                descriptor.byte_length,
+            )
             .await?;
         if bytes.len() != length {
             return Err(CheckpointError::ObjectVerification);
@@ -2495,9 +2516,9 @@ mod tests {
 
     #[test]
     fn generation_paths_order_lexicographically_by_epoch() {
-        let run = StreamRunIdentity::new(crate::streaming::identity::LogicalReplayRunId::from_bytes(
-            [9; 32],
-        ));
+        let run = StreamRunIdentity::new(
+            crate::streaming::identity::LogicalReplayRunId::from_bytes([9; 32]),
+        );
         let paths = RunPaths::for_run(Path::new("/store"), &run);
         let digest = ContentDigest::from_bytes([0x11; 32]);
         let low = paths.generation_path(CheckpointEpoch::new(2), &digest);

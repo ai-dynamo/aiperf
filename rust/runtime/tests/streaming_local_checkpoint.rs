@@ -98,12 +98,11 @@ async fn commit_generation(
         .stage_participant(support::prepared_participant(run, epoch).await)
         .await?;
     let mut partitions = vec![support::result_partition(run, epoch).await];
-    transaction.stage_results(&mut partitions, &mut None).await?;
     transaction
-        .commit(support::metadata_with_lineage(
-            previous.cloned(),
-            epoch,
-        ))
+        .stage_results(&mut partitions, &mut None)
+        .await?;
+    transaction
+        .commit(support::metadata_with_lineage(previous.cloned(), epoch))
         .await
 }
 
@@ -272,7 +271,10 @@ async fn two_writers_cannot_both_commit() {
         matches!(error, CheckpointError::GenerationConflict { .. }),
         "unexpected refusal: {error:?}"
     );
-    assert_eq!(objects_before, object_names(&directory.path().to_path_buf(), run));
+    assert_eq!(
+        objects_before,
+        object_names(&directory.path().to_path_buf(), run)
+    );
     assert_eq!(head_of(&first, run).await, Some(baseline.generation()));
 }
 
