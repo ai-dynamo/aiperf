@@ -10,3 +10,4 @@
 /// Baseten literal-prompt Parquet trace decoding requires the Arrow/Parquet readers.
 #[cfg(feature = "parquet")]
 pub mod baseten;
+pub mod synthesis;
