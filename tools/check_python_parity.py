@@ -75,13 +75,28 @@ ALLOWED_MODIFIED_PREFIXES: dict[str, str] = {}
 # Rather than exempt all of tests/, this permits exactly that rewrite: a modified
 # test file passes only if applying the substitution to origin/main's content
 # reproduces this branch's content byte for byte. Any other edit still fails.
-MOCK_SERVER_IMPORT = re.compile(r"(?<!tests\.)\baiperf_mock_server\b")
-MOCK_SERVER_REPLACEMENT = "tests.aiperf_mock_server"
+#
+# The rule is anchored to import statements. `aiperf_mock_server` is also the
+# name of a pytest fixture, so a bare word-boundary match rewrites parameter
+# lists into invalid syntax -- which is exactly what happened once.
+MOCK_SERVER_IMPORT = re.compile(
+    r"^(\s*)(from|import) aiperf_mock_server\b", re.MULTILINE
+)
+MOCK_SERVER_REPLACEMENT = r"\1\2 tests.aiperf_mock_server"
+
+# String literals that name the module without importing it, fixed by hand.
+MOCK_SERVER_LITERALS = (
+    ('"aiperf_mock_server.app:asgi_app"', '"tests.aiperf_mock_server.app:asgi_app"'),
+    ('logger="aiperf_mock_server.', 'logger="tests.aiperf_mock_server.'),
+)
 
 
 def _is_only_mock_server_rewrite(base_text: str, head_text: str) -> bool:
     """Report whether head differs from base solely by the mock-server rewrite."""
-    return MOCK_SERVER_IMPORT.sub(MOCK_SERVER_REPLACEMENT, base_text) == head_text
+    rewritten = MOCK_SERVER_IMPORT.sub(MOCK_SERVER_REPLACEMENT, base_text)
+    for literal, replacement in MOCK_SERVER_LITERALS:
+        rewritten = rewritten.replace(literal, replacement)
+    return rewritten == head_text
 
 
 def _blob_text(ref: str, path: str) -> str | None:
