@@ -28,6 +28,8 @@ Documents:
   gates.
 - `implementation-plan-review-record.md` records the exact approved executable
   plan-set commit and its three independent approval gates.
+- `implementation-progress.md` is the durable task/merge/evidence ledger while
+  the approved plan is being implemented.
 
 Implementation and review records remain in this directory while the normative
 design is implemented through the linked durable plan.
