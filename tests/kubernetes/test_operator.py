@@ -434,6 +434,10 @@ class TestOperatorCancellation:
             benchmark_duration=120.0,  # Run for 2 minutes
             warmup_request_count=5,
             image=k8s_settings.aiperf_image,
+            image_pull_policy=k8s_settings.image_pull_policy,
+            image_pull_secrets=[k8s_settings.image_pull_secret]
+            if k8s_settings.image_pull_secret
+            else [],
         )
 
         result = await operator_ready.create_job(cancel_test_config)
@@ -500,6 +504,7 @@ class TestOperatorErrorHandling:
     async def test_invalid_config_fails_with_error(
         self,
         operator_ready: OperatorDeployer,
+        k8s_settings: K8sTestSettings,
     ) -> None:
         """Verify invalid config results in failure with error message.
 
@@ -509,6 +514,11 @@ class TestOperatorErrorHandling:
             endpoint_url="http://aiperf-mock-server.default.svc.cluster.local:8000/v1",
             concurrency=5,
             request_count=10,
+            image=k8s_settings.aiperf_image,
+            image_pull_policy=k8s_settings.image_pull_policy,
+            image_pull_secrets=[k8s_settings.image_pull_secret]
+            if k8s_settings.image_pull_secret
+            else [],
         )
 
         # The config must pass the CRD schema and fail the operator's own
@@ -618,6 +628,7 @@ class TestOperatorErrorHandling:
     async def test_unreachable_endpoint_fails_gracefully(
         self,
         operator_ready: OperatorDeployer,
+        k8s_settings: K8sTestSettings,
     ) -> None:
         """Verify unreachable endpoint is handled gracefully.
 
@@ -627,6 +638,11 @@ class TestOperatorErrorHandling:
             endpoint_url="http://nonexistent-service:8000/v1",
             concurrency=2,
             request_count=5,
+            image=k8s_settings.aiperf_image,
+            image_pull_policy=k8s_settings.image_pull_policy,
+            image_pull_secrets=[k8s_settings.image_pull_secret]
+            if k8s_settings.image_pull_secret
+            else [],
         )
 
         result = await operator_ready.create_job(

@@ -485,12 +485,18 @@ class TestHelmErrorHandling:
     async def test_unreachable_endpoint_fails_gracefully(
         self,
         helm_deployed: HelmDeployer,
+        k8s_settings: K8sTestSettings,
     ) -> None:
         """Verify unreachable endpoint is handled gracefully."""
         config = AIPerfJobConfig(
             endpoint_url="http://nonexistent-service:8000/v1",
             concurrency=2,
             request_count=5,
+            image=k8s_settings.aiperf_image,
+            image_pull_policy=k8s_settings.image_pull_policy,
+            image_pull_secrets=[k8s_settings.image_pull_secret]
+            if k8s_settings.image_pull_secret
+            else [],
         )
 
         result = await helm_deployed.create_job(
