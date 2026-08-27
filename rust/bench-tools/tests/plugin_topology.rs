@@ -997,6 +997,60 @@ fn implementation_task_map_assigns_every_projected_package_once() {
     );
 }
 
+/// Every authored witness under `plugin-api/implemented-topology/` has to load
+/// under this file's witness DTOs. The authored corpus mirrors the projection
+/// matrix's dependency rows verbatim, justification prose included, so both the
+/// mirrored and the bare edge shape must load. The inline fixtures keep that
+/// binding non-vacuous on a checkout that carries no authored witness yet.
+#[test]
+fn authored_implemented_topology_witnesses_load_under_the_witness_schema() {
+    const MIRRORED: &str = r#"
+schema_version = 1
+task = 5
+packages = [
+  { package = "aiperf-plugin-api", source_files = ["plugin-api/src/lib.rs"], dependencies = [{ package = "aiperf-core", kind = "normal", justification = "API boundary values are owned by aiperf-core" }], features = {} }
+]
+"#;
+    const BARE: &str = r#"
+schema_version = 1
+task = 5
+packages = [
+  { package = "aiperf-plugin-api", source_files = ["plugin-api/src/lib.rs"], dependencies = [{ package = "aiperf-core", kind = "normal" }], features = {} }
+]
+"#;
+    for text in [MIRRORED, BARE] {
+        let witness: ImplementationWitness =
+            toml::from_str(text).expect("both authored dependency-row shapes load");
+        assert_eq!(witness.packages[0].dependencies.len(), 1);
+    }
+
+    let directory = workspace_root().join("plugin-api/implemented-topology");
+    for (task, packages) in IMPLEMENTATION_TASK_PACKAGES {
+        let path = directory.join(format!("task-{task}.toml"));
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let witness: ImplementationWitness = toml::from_str(&text)
+            .unwrap_or_else(|error| panic!("cannot load {}: {error}", path.display()));
+        assert_eq!(
+            (witness.schema_version, witness.task),
+            (1, *task),
+            "{} must declare schema 1 and its own task",
+            path.display()
+        );
+        assert_eq!(
+            witness
+                .packages
+                .iter()
+                .map(|row| row.package.as_str())
+                .collect::<BTreeSet<_>>(),
+            packages.iter().copied().collect::<BTreeSet<_>>(),
+            "{} must witness exactly its task's packages",
+            path.display()
+        );
+    }
+}
+
 /// A self-contained `aiperf-core` package tree, Cargo projection, and exact
 /// witness. Witness validation is behavior, so its positive and negative arms
 /// are asserted here rather than against the live workspace, whose contents 36
