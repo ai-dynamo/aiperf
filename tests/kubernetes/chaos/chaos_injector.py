@@ -41,8 +41,15 @@ class ChaosTimings:
     cr_cleanup_seconds: float = 60.0
     """How long we wait for a deleted CR + JobSet + pods to vanish."""
 
-    pod_termination_grace: float = 45.0
-    """Pods can hold for ~30 s after JobSet delete (graceful SIGTERM)."""
+    pod_termination_grace: float = 90.0
+    """Pods can hold for ~30 s after SIGTERM + GC cascade latency on kind.
+
+    Decomposed: 30 s terminationGracePeriodSeconds (default Kubernetes) +
+    up to 60 s for the owner-reference GC controller to propagate the
+    CR→JobSet→Job→Pod deletion cascade on a loaded kind cluster.  45 s
+    was sufficient on idle clusters but failed intermittently when other
+    chaos tests ran back-to-back and left the GC controller backlogged.
+    """
 
     operator_recovery_seconds: float = 30.0
     """How long a new operator pod has to become Ready after a kill."""

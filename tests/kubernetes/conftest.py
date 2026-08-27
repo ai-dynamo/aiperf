@@ -626,6 +626,11 @@ def pytest_collection_modifyitems(
             item.add_marker(pytest.mark.xdist_group("kubernetes-chaos"))
             if "@kubernetes-chaos" not in item.nodeid:
                 item._nodeid = f"{item.nodeid}@kubernetes-chaos"
+        elif "tests/kubernetes" in path:
+            # Non-chaos k8s tests must always run on the non-chaos worker so
+            # they are never co-located with fault-injection tests that stress
+            # the same kind cluster.
+            item.add_marker(pytest.mark.xdist_group("kubernetes"))
 
 
 @pytest.fixture(scope="package")
