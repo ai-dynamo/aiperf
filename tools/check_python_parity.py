@@ -55,6 +55,10 @@ ALLOWED_MODIFIED: dict[str, str] = {
     "src/aiperf/common/random_generator.py": (
         "selects the rust RNG backend and routes to aiperf.rust_shims.rng_parity"
     ),
+    "src/aiperf/common/environment.py": (
+        "adds the _RngSettings group (AIPERF_RNG_BACKEND) that random_generator "
+        "reads. Project convention puts tunables here rather than in service code."
+    ),
 }
 
 # Directory prefixes from origin/main this branch is permitted to modify. Prefer

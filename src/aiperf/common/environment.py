@@ -1790,6 +1790,27 @@ class _ZMQSettings(BaseSettings):
     )
 
 
+class _RngSettings(BaseSettings):
+    """Selects which random-number backend seeds AIPerf's reproducible streams.
+
+    ``python`` uses ``random.Random`` and NumPy draws with SHA-256 seed
+    derivation. ``rust`` uses Pcg64 draws and BLAKE3 seed derivation so
+    seeded Python and Rust produce identical streams.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="AIPERF_RNG_",
+    )
+
+    BACKEND: Literal["python", "rust"] = Field(
+        default="python",
+        description="Random-number backend: `python` (Python MT + NumPy with SHA-256 "
+        "derivation, default) or `rust` (Pcg64 with BLAKE3 derivation for "
+        "cross-language parity). "
+        "Set via AIPERF_RNG_BACKEND.",
+    )
+
+
 class _Environment(BaseSettings):
     """
     Root environment configuration with nested subsystem settings.
@@ -1838,6 +1859,10 @@ class _Environment(BaseSettings):
     CLI_RUNNER: _CLIRunnerSettings = Field(
         default_factory=_CLIRunnerSettings,
         description="CLI runner post-run callback isolation settings",
+    )
+    RNG: _RngSettings = Field(
+        default_factory=_RngSettings,
+        description="Random-number backend selector (python vs rust)",
     )
     DATASET: _DatasetSettings = Field(
         default_factory=_DatasetSettings,
