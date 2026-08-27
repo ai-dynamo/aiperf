@@ -153,6 +153,10 @@ pub struct ControlledRuntimeReportV1 {
     pub raw_pair_history: Vec<crate::plugin_stats::ControlledPairAttemptRecord>,
     /// Pair-start context retained from an invocation a different boot instance ran.
     pub resumed_pair_context: Option<PairStartContextV1>,
+    /// Hash-chain identity of this invocation's terminal ledger entry.
+    pub ledger_entry_blake3: String,
+    /// Complete ordered ledger history, including every retained evidence tree.
+    pub retained_attempt_evidence: Vec<RetainedAttemptEvidenceV1>,
     /// Canonical evidence binding identity, ledger, report, and raw outputs.
     pub runtime_evidence_bytes: Vec<u8>,
     /// Digest of the canonical runtime evidence bytes.
@@ -181,6 +185,9 @@ struct RuntimeEvidenceV1<'a> {
     raw_pair_history: &'a [crate::plugin_stats::ControlledPairAttemptRecord],
     exporter_pair_history: &'a [ControlledExporterPairRecord],
     resumed_pair_context: Option<&'a PairStartContextV1>,
+    ledger_entry_blake3: &'a str,
+    ledger_previous_entry_blake3: Option<&'a str>,
+    retained_ledger_entry_blake3: &'a [&'a str],
 }
 
 #[derive(Serialize)]
@@ -397,6 +404,23 @@ pub struct BoundedChildOutput {
     pub was_truncated: bool,
 }
 
+/// One retained ledger entry, complete enough to reconstruct its attempt.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct RetainedAttemptEvidenceV1 {
+    /// Attempt this entry retains.
+    pub attempt_ordinal: u8,
+    /// Terminal decision of that attempt.
+    pub decision: ControlledAttemptDecision,
+    /// Reason retained with that decision.
+    pub reason: Option<String>,
+    /// Hash-chain identity of this entry.
+    pub entry_blake3: String,
+    /// Hash-chain identity of the entry before it.
+    pub previous_entry_blake3: Option<String>,
+    /// Exact canonical evidence-tree bytes retained for that attempt.
+    pub evidence_tree_bytes: Vec<u8>,
+}
+
 /// Complete bounded terminal evidence for one runtime member.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct TerminalMemberEvidenceV1 {
@@ -470,6 +494,12 @@ struct AttemptLedgerEntryV1 {
     attempt: ControlledAttemptRecord,
     evidence_tree_bytes: Vec<u8>,
     entry_blake3: String,
+}
+
+/// Hash-chain identity of one appended ledger entry.
+struct AppendedLedgerEntry {
+    entry_blake3: String,
+    previous_entry_blake3: Option<String>,
 }
 
 struct AttemptLedger {
@@ -617,11 +647,16 @@ impl AttemptLedger {
             .map_err(|_| ControlledRuntimeError::new("attempt ledger ordinal overflow"))
     }
 
+    /// Complete ordered ledger history, including every retained evidence tree.
+    fn entries(&self) -> &[AttemptLedgerEntryV1] {
+        &self.entries
+    }
+
     fn append_attempt(
         &mut self,
         attempt: ControlledAttemptRecord,
         evidence_tree_bytes: &[u8],
-    ) -> Result<(), ControlledRuntimeError> {
+    ) -> Result<AppendedLedgerEntry, ControlledRuntimeError> {
         if attempt.ordinal != self.next_attempt_ordinal()? {
             return Err(ControlledRuntimeError::new(
                 "attempt ledger append ordinal is not next",
@@ -663,8 +698,12 @@ impl AttemptLedger {
         self.file.sync_all().map_err(|error| {
             ControlledRuntimeError::new(format!("cannot sync attempt ledger: {error}"))
         })?;
+        let appended = AppendedLedgerEntry {
+            entry_blake3: entry.entry_blake3.clone(),
+            previous_entry_blake3: entry.previous_entry_blake3.clone(),
+        };
         self.entries.push(entry);
-        Ok(())
+        Ok(appended)
     }
 }
 
@@ -1248,6 +1287,7 @@ fn run_controlled_runtime_internal(
                         warmup_expectation.as_ref(),
                     )?;
                     executed_member_count += 1;
+                    retain_member_evidence(&mut evaluator, &terminal_evidence)?;
                     terminal_output_blake3.push(terminal_evidence.stdout.blake3.clone());
                     terminal_member_evidence.push(terminal_evidence);
                     if outcome != MemberTerminalOutcome::Completed {
@@ -1360,6 +1400,7 @@ fn run_controlled_runtime_internal(
                         }
                         executed_member_count += 1;
                         let terminal_evidence_index = terminal_member_evidence.len();
+                        retain_member_evidence(&mut evaluator, &terminal_evidence)?;
                         terminal_output_blake3.push(terminal_evidence.stdout.blake3.clone());
                         terminal_member_evidence.push(terminal_evidence);
                         member_records.push(RawMemberTerminalRecord {
@@ -2282,7 +2323,19 @@ fn runtime_report(
         ControlledRuntimeError::new("controlled runtime report lacks exact attempt evidence bytes")
     })?;
     let attempt_evidence_tree_blake3 = digest(attempt_evidence_tree_bytes);
-    attempt_ledger.append_attempt(terminal_attempt, attempt_evidence_tree_bytes)?;
+    let appended = attempt_ledger.append_attempt(terminal_attempt, attempt_evidence_tree_bytes)?;
+    let retained_attempt_evidence = attempt_ledger
+        .entries()
+        .iter()
+        .map(|entry| RetainedAttemptEvidenceV1 {
+            attempt_ordinal: entry.attempt.ordinal,
+            decision: entry.attempt.decision,
+            reason: entry.attempt.reason.clone(),
+            entry_blake3: entry.entry_blake3.clone(),
+            previous_entry_blake3: entry.previous_entry_blake3.clone(),
+            evidence_tree_bytes: entry.evidence_tree_bytes.clone(),
+        })
+        .collect::<Vec<_>>();
     let retained_pair_count = evaluator
         .raw_pair_history()
         .iter()
@@ -2309,6 +2362,12 @@ fn runtime_report(
         raw_pair_history: evaluator.raw_pair_history(),
         exporter_pair_history: evaluator.exporter_pair_history(),
         resumed_pair_context: context.resumed_pair_context,
+        ledger_entry_blake3: &appended.entry_blake3,
+        ledger_previous_entry_blake3: appended.previous_entry_blake3.as_deref(),
+        retained_ledger_entry_blake3: &retained_attempt_evidence
+            .iter()
+            .map(|entry| entry.entry_blake3.as_str())
+            .collect::<Vec<_>>(),
     })
     .map_err(|error| {
         ControlledRuntimeError::new(format!("cannot canonicalize runtime evidence: {error}"))
@@ -2339,9 +2398,24 @@ fn runtime_report(
         exporter_pair_history: parts.exporter_pair_history,
         raw_pair_history: parts.raw_pair_history,
         resumed_pair_context: context.resumed_pair_context.cloned(),
+        ledger_entry_blake3: appended.entry_blake3,
+        retained_attempt_evidence,
         runtime_evidence_bytes,
         runtime_evidence_blake3,
     })
+}
+
+/// Retain one member's terminal evidence inside the active attempt's tree.
+fn retain_member_evidence(
+    evaluator: &mut ControlledMeasurementEvaluator,
+    evidence: &TerminalMemberEvidenceV1,
+) -> Result<(), ControlledRuntimeError> {
+    let value = serde_json::to_value(evidence).map_err(|error| {
+        ControlledRuntimeError::new(format!("cannot retain member terminal evidence: {error}"))
+    })?;
+    evaluator
+        .retain_terminal_member_evidence(value)
+        .map_err(|error| ControlledRuntimeError::new(error.to_string()))
 }
 
 fn artifact_for(variant: Variant, paths: &[PathBuf; 2]) -> &Path {

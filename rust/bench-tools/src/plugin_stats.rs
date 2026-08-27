@@ -788,6 +788,7 @@ pub struct ControlledMeasurementEvaluator {
     exporter_pair_history: Vec<ControlledExporterPairRecord>,
     last_statistical_report: Option<SimultaneousGateReport>,
     last_attempt_evidence_bytes: Option<Vec<u8>>,
+    terminal_member_evidence: Vec<(u8, serde_json::Value)>,
 }
 
 pub(crate) struct ControlledMeasurementReportParts {
@@ -816,6 +817,7 @@ impl ControlledMeasurementEvaluator {
             exporter_pair_history: Vec::new(),
             last_statistical_report: None,
             last_attempt_evidence_bytes: None,
+            terminal_member_evidence: Vec::new(),
         })
     }
 
@@ -862,6 +864,23 @@ impl ControlledMeasurementEvaluator {
     /// Most recent report derived from complete controlled measurements.
     pub fn last_statistical_report(&self) -> Option<&SimultaneousGateReport> {
         self.last_statistical_report.as_ref()
+    }
+
+    /// Retain one member's complete terminal evidence for the active attempt.
+    ///
+    /// The evidence tree is the only thing a later invocation can read, so the
+    /// raw child output is retained there rather than summarized away.
+    pub(crate) fn retain_terminal_member_evidence(
+        &mut self,
+        evidence: serde_json::Value,
+    ) -> Result<(), PluginStatsError> {
+        let ordinal = self
+            .active
+            .as_ref()
+            .ok_or_else(|| PluginStatsError::new("no controlled experiment attempt is active"))?
+            .ordinal;
+        self.terminal_member_evidence.push((ordinal, evidence));
+        Ok(())
     }
 
     pub(crate) fn last_attempt_evidence_bytes(&self) -> Option<&[u8]> {
@@ -1639,6 +1658,12 @@ impl ControlledMeasurementEvaluator {
             .iter()
             .filter(|record| record.experiment_attempt == active.ordinal)
             .collect::<Vec<_>>();
+        let terminal_members = self
+            .terminal_member_evidence
+            .iter()
+            .filter(|(ordinal, _)| *ordinal == active.ordinal)
+            .map(|(_, evidence)| evidence)
+            .collect::<Vec<_>>();
         let evidence_tree = serde_json::json!({
             "decision": decision,
             "experiment_attempt": active.ordinal,
@@ -1646,7 +1671,8 @@ impl ControlledMeasurementEvaluator {
             "raw_pair_history": raw_pairs,
             "reason": reason,
             "report_blake3": report_blake3,
-            "schema_version": 1
+            "schema_version": 1,
+            "terminal_member_evidence": terminal_members
         });
         let evidence_tree_bytes =
             serde_json_canonicalizer::to_vec(&evidence_tree).map_err(|error| {
