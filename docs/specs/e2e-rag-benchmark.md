@@ -498,11 +498,24 @@ Directly reusable for this design, and not to be rebuilt:
   is `on_admit` inside the HTTP sink
   (`rust/runtime/src/transport/http/sink/endpoint_dispatch.rs:289`), which fires
   *after* it. Client-side work is already excluded from request latency for free.
-- **`ParsedResponse.sources`.** An existing, plumbed, untyped carrier for
-  retrieved-document identities (`rust/runtime/src/endpoints/tier2.rs:1128`),
-  introduced by `solido_rag` — which is itself a chat-shaped dialect with
-  server-side opaque retrieval, not a RAG capability. Nothing consumes `sources`
-  for metrics today.
+- **`ParsedResponse.sources` — not usable, and this record previously said
+  otherwise.** It is defined at `rust/runtime/src/endpoints/models.rs:391`-`:402`
+  as an untyped `Option<Value>`, written by exactly one endpoint
+  (`SolidoRagEndpoint::parse_response`, `rust/runtime/src/endpoints/tier2.rs:1129`
+  -`:1132`) and, as a full-workspace search establishes, **read by nothing**:
+  `reduce_parsed_response` (`rust/runtime/src/transport/reduce.rs:61`-`:101`) reads
+  only `data`, `usage`, and `perf_ns`, and the value dies with its local at
+  `rust/runtime/src/transport/http/sink/endpoint_dispatch.rs:683`-`:697`. Every
+  other construction site writes `None`. Calling it "plumbed" was wrong — it is
+  write-only.
+
+  The disqualifier that matters most is not the missing plumbing: a local `flat` or
+  `hnsw` retrieval node never constructs a `ParsedResponse` at all. `ParsedResponse`
+  does not appear anywhere under `rust/runtime/src/graph/` or `.../eval/`; a
+  non-dispatching node returns `GraphReply` (`rust/runtime/src/graph/sink.rs:84`-`:93`,
+  `:138`-`:145`) and produces no inference record by rule
+  (`requires_native_request_record`, `sink.rs:46`-`:51`). A design anchored on
+  `sources` would have covered zero hops of the default path.
 - **Large binary artifacts.** A registered `Exporter` writing into the run's
   `artifact_dir` (`rust/runtime/src/export/mod.rs:310`, `:397`), with
   `ParquetExporter` as the existing multi-hundred-megabyte precedent and no size
@@ -997,8 +1010,17 @@ Both are post-run passes over recorded artifacts, native, and off the timed path
 - **Retrieval integrity** compares each task's retrieved document identities
   against the ground-truth identities shipped with the query set and reports
   recall/precision/F1. It is a database-integrity check on the built index, not a
-  scored metric, and is reported as such. `ParsedResponse.sources` is the existing
-  carrier for those identities.
+  scored metric, and is reported as such.
+
+  The identities are carried on the **passage-set graph channel** the retrieval
+  node writes — the same channel `rerank` and `grade` already read, so no second
+  source of truth exists — accumulated per task and sealed into a per-run
+  retrieval-evidence artifact using the content-addressed shape T7 already reuses
+  for the index (`rust/runtime/src/eval/native_graph/artifacts.rs:64`-`:84`,
+  `:135`-`:147`, minus its quota model). This is uniform across local `flat`/`hnsw`
+  hops and any future remote index, because it sits above the transport
+  distinction. `ParsedResponse.sources` is explicitly **not** used: it is
+  write-only and absent on the local path (see `## Built`).
 - **Output-length compliance** (`aiperf rag compliance`) re-reads a pinned run's
   records and asserts the answer-role mean OSL falls inside an authored band around
   an authored reference (the MLPerf analogue is 273.81 tokens ±10%). The check is a
@@ -1036,6 +1058,7 @@ protects.
 | `--steady-state` on a `rag_qna` run, unless the task-level curve is available | I13 |
 | `aiperf rag compliance` before per-record role attribution exists | I16 |
 | `aiperf rag compliance` against a sketch-mode run | I17 |
+| Retrieval integrity reported from a run that did not retain the retrieval-evidence artifact | I18 |
 | A `retrieval` node in a non-RAG workload | node-kind soundness |
 | A multi-endpoint `rag_qna` run over gRPC | transport limit (`grpc_execution.rs:130`) |
 
