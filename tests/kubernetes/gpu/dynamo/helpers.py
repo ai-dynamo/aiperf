@@ -839,23 +839,8 @@ class DynamoDeployer:
                 if dynamo_pods and all(p.is_ready for p in dynamo_pods):
                     logger.info(f"[DYNAMO] All pods ready (took {elapsed:.1f}s)")
                     remaining = deadline - time.perf_counter()
-                    model_ready = await self._wait_for_http_model_ready(remaining)
-                    if model_ready:
-                        return
-                    # DynamoModel CRs were lost — restart pods and loop back
-                    logger.warning(
-                        "[DYNAMO] Restarting pods to recover lost model registration"
-                    )
-                    await self.kubectl.run(
-                        "delete",
-                        "pods",
-                        "--all",
-                        "-n",
-                        self.config.namespace,
-                        check=False,
-                    )
-                    await asyncio.sleep(poll_interval)
-                    continue
+                    await self._wait_for_http_model_ready(remaining)
+                    return
 
                 if not dynamo_pods and elapsed > 30:
                     operator_pods = await self.kubectl.run(
@@ -905,23 +890,25 @@ class DynamoDeployer:
         self,
         timeout: float,
         poll_interval: float = 10.0,
-        empty_models_restart_after: float = 180.0,
-    ) -> bool:
+    ) -> None:
         """Wait for the model to finish loading by polling /v1/chat/completions.
 
         After pod readiness probes pass, the vLLM workers still need time to
         download and load the model into GPU memory. Until loading completes,
         the Dynamo frontend returns HTTP 404 for all inference endpoints.
 
-        If /v1/models stays empty beyond empty_models_restart_after seconds, the
-        DynamoModel CRs were likely cleared by an operator reconciliation (e.g.
-        a spec update).  In that case we restart the pods so the workers
-        re-register, then resume polling.
+        A model is listed in /v1/models only when some namespace's worker set is
+        *complete* (`is_displayable() && has_ready_workers()` in
+        `lib/llm/src/discovery/model_manager.rs`). For a disaggregated
+        deployment that means every declared worker type must be present: a
+        decode worker with no prefill peer serves nothing and is hidden by
+        design. On timeout we therefore report the per-role breakdown from
+        `GET /v1/models/{model}/ready` so the missing worker type is named
+        rather than inferred.
         """
         frontend_svc = f"svc/{self._deployment_name()}-frontend"
         start = time.perf_counter()
         deadline = start + timeout
-        empty_models_since: float | None = None
 
         logger.info(
             f"[DYNAMO] Waiting for model to load (HTTP readiness, timeout={timeout:.0f}s)"
@@ -932,8 +919,8 @@ class DynamoDeployer:
             remote_port=_FRONTEND_PORT,
             namespace=self.config.namespace,
         ) as local_port:
-            models_url = f"http://localhost:{local_port}/v1/models"
-            chat_url = f"http://localhost:{local_port}/v1/chat/completions"
+            base_url = f"http://localhost:{local_port}"
+            chat_url = f"{base_url}/v1/chat/completions"
             payload = {
                 "model": self.config.model_name,
                 "messages": [{"role": "user", "content": "hi"}],
@@ -944,66 +931,76 @@ class DynamoDeployer:
             while True:
                 elapsed = time.perf_counter() - start
                 if time.perf_counter() > deadline:
+                    readiness = await self._describe_model_readiness(base_url)
                     raise TimeoutError(
                         f"Dynamo model failed to load within {timeout:.0f}s "
-                        f"(still returning non-200 after {elapsed:.0f}s)"
+                        f"(still returning non-200 after {elapsed:.0f}s).\n"
+                        f"{readiness}"
                     )
 
                 try:
-                    async with aiohttp.ClientSession() as session:
-                        # Check /v1/models to detect lost registration
-                        try:
-                            async with session.get(
-                                models_url,
-                                timeout=aiohttp.ClientTimeout(total=10),
-                            ) as models_resp:
-                                if models_resp.status == 200:
-                                    models_body = await models_resp.json()
-                                    models_data = models_body.get("data", [])
-                                    if models_data:
-                                        empty_models_since = None
-                                    else:
-                                        if empty_models_since is None:
-                                            empty_models_since = time.perf_counter()
-                                        empty_for = (
-                                            time.perf_counter() - empty_models_since
-                                        )
-                                        logger.info(
-                                            f"[DYNAMO] /v1/models empty at {elapsed:.0f}s "
-                                            f"(empty for {empty_for:.0f}s)"
-                                        )
-                                        if empty_for > empty_models_restart_after:
-                                            logger.warning(
-                                                f"[DYNAMO] DynamoModel CRs lost after "
-                                                f"{empty_for:.0f}s — restarting pods to "
-                                                f"force re-registration"
-                                            )
-                                            return False  # signal wait_for_ready to restart
-                        except Exception as e:
-                            logger.info(f"[DYNAMO] /v1/models probe failed: {e!r}")
-
-                        # Poll the actual inference endpoint
-                        async with session.post(
+                    async with (
+                        aiohttp.ClientSession() as session,
+                        session.post(
                             chat_url,
                             json=payload,
                             timeout=aiohttp.ClientTimeout(total=30),
-                        ) as resp:
-                            if resp.status == 200:
-                                logger.info(
-                                    f"[DYNAMO] Model ready — HTTP 200 in {elapsed:.1f}s"
-                                )
-                                return True
-                            body = (await resp.text())[:300]
+                        ) as resp,
+                    ):
+                        if resp.status == 200:
                             logger.info(
-                                f"[DYNAMO] Model not ready yet: HTTP {resp.status} "
-                                f"at {elapsed:.0f}s — {body!r}"
+                                f"[DYNAMO] Model ready — HTTP 200 in {elapsed:.1f}s"
                             )
+                            return
+                        body = (await resp.text())[:300]
+                        logger.info(
+                            f"[DYNAMO] Model not ready yet: HTTP {resp.status} "
+                            f"at {elapsed:.0f}s — {body!r}"
+                        )
                 except Exception as e:
                     logger.info(
                         f"[DYNAMO] HTTP readiness poll failed at {elapsed:.0f}s: {e!r}"
                     )
 
                 await asyncio.sleep(poll_interval)
+
+    async def _describe_model_readiness(self, base_url: str) -> str:
+        """Summarize GET /v1/models/{model}/ready for a readiness failure.
+
+        The endpoint is backed by the same `evaluate_namespace` facts as the
+        serving gate, so the reported missing worker types cannot disagree with
+        why the model is absent from /v1/models. Returns a human-readable block
+        for the TimeoutError; never raises.
+        """
+        url = f"{base_url}/v1/models/{self.config.model_name}/ready"
+        try:
+            async with (
+                aiohttp.ClientSession() as session,
+                session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as resp,
+            ):
+                if resp.status != 200:
+                    body = (await resp.text())[:300]
+                    return (
+                        f"Model readiness probe returned HTTP {resp.status}: {body!r}"
+                    )
+                data = await resp.json()
+        except Exception as e:
+            return f"Model readiness probe failed: {e!r}"
+
+        lines = [
+            f"Model readiness: model={data.get('model')!r} ready={data.get('ready')}"
+        ]
+        if reason := data.get("reason"):
+            lines.append(f"  reason: {reason}")
+        for ns, ns_data in (data.get("namespaces") or {}).items():
+            lines.append(f"  namespace {ns}: ready={ns_data.get('ready')}")
+            if ns_reason := ns_data.get("reason"):
+                lines.append(f"    reason: {ns_reason}")
+            if present := ns_data.get("present"):
+                lines.append(f"    present: {', '.join(present)}")
+            if missing := ns_data.get("missing_worker_types"):
+                lines.append(f"    MISSING worker types: {', '.join(missing)}")
+        return "\n".join(lines)
 
     async def get_logs(self, tail: int | None = 100) -> str:
         """Get logs from all Dynamo pods.
