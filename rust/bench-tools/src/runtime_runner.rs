@@ -918,6 +918,16 @@ fn run_controlled_runtime_internal(
                         );
                     }
                 } else {
+                    let warmup_expectation = if is_exporter_case {
+                        Some(exporter_expectation(
+                            case,
+                            &pair_id,
+                            variant,
+                            &expectation_context,
+                        )?)
+                    } else {
+                        None
+                    };
                     let MemberExecution {
                         outcome,
                         samples: _,
@@ -931,16 +941,7 @@ fn run_controlled_runtime_internal(
                         build_report,
                         &experiment_identity_blake3,
                         &inherited_environment,
-                        if is_exporter_case {
-                            Some(&exporter_expectation(
-                                case,
-                                &pair_id,
-                                variant,
-                                &expectation_context,
-                            )?)
-                        } else {
-                            None
-                        },
+                        warmup_expectation.as_ref(),
                     )?;
                     executed_member_count += 1;
                     terminal_output_blake3.push(terminal_evidence.stdout.blake3.clone());
@@ -1012,6 +1013,16 @@ fn run_controlled_runtime_internal(
                             }
                         }
                     } else {
+                        let pair_expectation = if is_exporter_case {
+                            Some(exporter_expectation(
+                                case,
+                                &scheduled.pair_id,
+                                variant,
+                                &expectation_context,
+                            )?)
+                        } else {
+                            None
+                        };
                         let MemberExecution {
                             outcome,
                             samples,
@@ -1025,16 +1036,7 @@ fn run_controlled_runtime_internal(
                             build_report,
                             &experiment_identity_blake3,
                             &inherited_environment,
-                            if is_exporter_case {
-                                Some(&exporter_expectation(
-                                    case,
-                                    &scheduled.pair_id,
-                                    variant,
-                                    &expectation_context,
-                                )?)
-                            } else {
-                                None
-                            },
+                            pair_expectation.as_ref(),
                         )?;
                         if let Some(artifact_bound) = artifact_bound {
                             admitted_exporters.push((variant, artifact_bound));
