@@ -1542,13 +1542,70 @@ connection pools, dispatchers, and request executors using the existing
 worker-local `Rc` and `LocalSet` discipline.
 
 The boundary MUST sit above the request/token worker loop. A frozen transport
-selection may make one trait-object call while starting each worker, but the
-selected plugin then owns that worker's complete monomorphized loop. The host
-MUST NOT erase a transport sink behind `Box<dyn WorkerSinkExec>` and invoke it
-once per request. Host scheduling and measurement semantics remain normative;
-the replacement worker-start contract must preserve them without adding a new
-per-request callback, wrapper, allocation, lock, channel hop, or serialization
-step.
+selection makes one native-Rust trait call when constructing a placement's
+request executor. The selected plugin then calls the transport SDK's generic
+executor constructor with its concrete sink builder. The constructor,
+`ThreadPerCoreExecutor<B>`, the co-located executor, `run_worker_thread<B>`,
+`run_worker<B::Sink>`, and every request/credit command helper are compiled and
+monomorphized into that plugin's `cdylib`; neither `B` nor `B::Sink` crosses the
+library boundary.
+
+The host receives the same `Rc<dyn RequestExecutor>` shape used by the current
+monolithic runtime. Its existing request-level `RequestExecutor` dispatch is
+part of the frozen baseline and is not duplicated. In particular, the host
+MUST NOT erase a transport sink behind `Box<dyn WorkerSinkExec>`, invoke a new
+sink vtable from `execute_worker_command`, or insert a host/plugin adapter around
+the returned executor. Host scheduling, admission, routing, phase policy,
+clock ownership, observation, reduction, measurement, cancellation, drain,
+credit recovery, and record semantics remain normative. The relocated generic
+kernel must preserve them without adding any per-request callback, wrapper,
+allocation, lock, channel hop, future box, buffer conversion, or serialization
+step relative to the same-source monolithic baseline.
+
+The source-level contracts are:
+
+```rust,ignore
+pub trait RequestTransportExecution: Send + Sync {
+    fn build_executor(
+        &self,
+        context: RequestExecutionBuildContextV1,
+    ) -> Result<Rc<dyn RequestExecutor>>;
+}
+
+pub fn build_native_request_executor<B>(
+    builder: B,
+    context: RequestExecutionBuildContextV1,
+) -> Result<Rc<dyn RequestExecutor>>
+where
+    B: ExecutionSinkBuilder;
+```
+
+`RequestTransportExecution`, `RequestExecutionBuildContextV1`, and
+`RequestExecutor` are boundary-owned native Rust API/core contracts.
+`ExecutionSinkBuilder`, `WorkerSink`, the generic constructor, and the complete
+placement kernel are transport-SDK implementation contracts statically linked
+into each request-transport plugin. A plugin implementation of
+`RequestTransportExecution::build_executor` must do no more than validate its
+already-bound opaque configuration, construct its concrete builder, and call
+`build_native_request_executor`. It MUST NOT copy, fork, or replace the SDK
+placement kernel.
+
+`RequestExecutionBuildContextV1` is an owned, narrow build context containing
+only the exact clock/service handles, endpoint table factory, routing policy,
+worker labels, model/base-URL/config values, and materializer factory consumed
+by the existing executor construction path. It is not `RunContext`, does not
+expose the Tokio runtime or host registries, and grants no artifact, filesystem,
+network-discovery, or generic orchestration authority. The host transfers it
+once to the winning factory. The returned executor and every object reachable
+from it are dropped before the process-lifetime plugin library residency guard.
+
+For `workers == 1`, the plugin-owned generic constructor selects the existing
+co-located executor and preserves the zero-channel `LocalSet` path. For
+`workers > 1`, it selects the existing thread-per-core executor and preserves
+the exact bounded mailboxes, routing, streaming, cancellation, drain, recovery,
+and global-push credit rules. `global-hop` and `global-push` do not receive a
+second plugin boundary. `DirectTransportExecution` remains a separate one-shot
+shape and does not use this constructor.
 
 The currently closed built-in transport configuration becomes an open
 registry-selected record:
@@ -1856,11 +1913,36 @@ or callback:
 | `RequestExecutor::execute_measured` control | 104.08-104.76 ns | 116.92-117.57 ns | +12.27% |
 
 Both intervals are disjoint. This is a valid performance-gate failure, not a
-waiver or an invitation to rerun until noise produces a pass. The required
-replacement direction is to move dynamic selection above the request/token
-loop: dispatch once at frozen worker startup, then keep the complete plugin-
-owned worker loop monomorphized. That replacement requires a separate reviewed
-design and is not specified or implemented by the rejected experiment.
+waiver or an invitation to rerun until noise produces a pass. The accepted
+replacement is the plugin-owned generic execution capsule specified in
+**Transports**: dynamic selection occurs only during executor construction;
+the complete sink-specialized worker kernel remains monomorphized in the
+plugin; the host retains only its pre-existing `RequestExecutor` call. The
+rejected experiment implements none of that replacement.
+
+The replacement is accepted only when all of the following evidence agrees:
+
+1. A same-source, same-profile monolithic HTTP build and a real-loaded HTTP
+   capsule build both execute the exact production worker kernel.
+2. LLVM IR and final disassembly locate concrete
+   `run_worker::<HttpWorkerSink>` and command/credit specializations inside the
+   plugin and show no `dyn WorkerSink`, indirect sink dispatch, or added wrapper
+   between `execute_worker_command` and `dispatch_measured`.
+3. Call-count, allocation, lock, bounded-channel, and future-allocation
+   instrumentation is exactly equal by operation class and count. The only
+   permitted indirect request call is the same pre-existing
+   `RequestExecutor` call present in both builds.
+4. Behavioral tests cover co-located `workers == 1`, sharded/global,
+   global-hop, global-push, streaming, prewarm, cancellation, drain, worker
+   failure/recovery, and worker-local measurement with byte-identical records.
+5. The normative 30-pair HTTP and gRPC runtime gates pass simultaneously; a
+   structural proof cannot waive the measured gate, and a measured pass cannot
+   waive the structural proof.
+6. Rebuild-isolation fixtures prove that a private sink change rebuilds only
+   its plugin, a transport-SDK kernel change rebuilds all request-transport
+   plugins but not the host or unrelated category plugins, and a boundary API
+   or core change creates a new ABI universe and rebuilds the host plus every
+   plugin.
 
 Separate shared libraries prevent fat LTO from optimizing across their
 boundaries, so literal machine-code identity is not promised. Instead, a

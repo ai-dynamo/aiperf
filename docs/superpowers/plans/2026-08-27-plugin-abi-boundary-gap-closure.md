@@ -15,8 +15,10 @@ grounded in this codebase.
 **Architecture:** Five independent refactors of `rust/runtime` plus one
 hot-path experiment, each addressing a measured leak edge that drags
 host-private implementation into the plugin ABI closure. Task 5's proposed
-per-request erasure was rejected by its performance gate and leaves that edge
-open for a replacement design. Every accepted task is behavior-preserving;
+per-request erasure was rejected by its performance gate. Its replacement is
+the plugin-owned generic execution capsule now specified by the hardened design
+and assigned to Task 6 of the 40-task plan, after API/core types exist. Every
+accepted task is behavior-preserving;
 Task 1 builds the measurement first so every later task proves its own effect.
 
 **Tech Stack:** Rust 2024 / resolver 3, `cargo`, `rustdoc --output-format json`,
@@ -33,7 +35,7 @@ cover, verified by grep against it:
 
 | Gap | Mentions in the 40-task plan | Status |
 |---|---:|---|
-| `ExecutionSinkBuilder::Sink` associated-type erasure / `ThreadPerCoreExecutor<B>` | 0 | **open — per-request erasure rejected by Task 5** |
+| `ExecutionSinkBuilder::Sink` associated-type boundary | 0 in the original text | **designed — per-request erasure rejected; plugin-owned generic capsule assigned to 40-task Task 6** |
 | `WorkerMaterializer` concrete-struct-at-boundary leak | 0 | **gap** |
 | `MetricTag` closed 60-variant enum in the ABI | 0 | **gap** |
 | ABI-closure / universe-bump churn measurement and gate | 0 | **gap** |
@@ -42,11 +44,13 @@ cover, verified by grep against it:
 | Closed `ExportConfig` aggregate at the boundary | 3 (Task 6 forbids it explicitly) | already covered — **not in this plan** |
 | `RunContext` forbidden at the boundary | 8 | already covered — **not in this plan** |
 
-**Sequencing:** Tasks 1–6 here land **before** Task 4 ("Extract boundary-owned
-core values and host service traits") of the 40-task plan. Task 4 moves
-definitions into `aiperf-core`; every type this plan evicts first is a type Task
-4 then never has to move. Running these after Task 4 means moving the same code
-twice.
+**Sequencing:** Accepted Tasks 1–4 and Task 6 here land **before** Task 4
+("Extract boundary-owned core values and host service traits") of the 40-task
+plan. Task 4 moves definitions into `aiperf-core`; every type this plan evicts
+first is a type Task 4 then never has to move. Rejected Task 5 contributes only
+benchmark/rejection evidence. Its accepted replacement cannot be extracted
+before the boundary crates exist and therefore lands in 40-task Task 6, which
+contains the exact capsule contracts and structural fixtures.
 
 ## Global Constraints
 
@@ -107,13 +111,16 @@ is not a pool of independent tickets.
   must never infer a base from a branch name." Record this base commit in the
   tracker before starting, per per-feature gate item 3.
 - **Exclusive ownership:** this agent owns the entire ABI gap-closure sequence.
-  The 40-task plan's Task 4 MUST NOT start until all six tasks here have landed.
+  The 40-task plan's Task 4 MUST NOT start until accepted Tasks 1–4 and 6 plus
+  Task 5's benchmark/rejection record have landed.
 - **Order:**
   - Task 1 (measurement) may start immediately.
   - Tasks 2, 3, and 4 fan out in parallel **only after** Task 1's measurement is
     validated as trustworthy (both checks in Task 1 Step 5). Fanning out against
     an unvalidated tool produces three unfalsifiable "closure shrank" claims.
-  - Task 5, then Task 6, strictly sequential.
+  - Task 5's benchmark/rejection record, then Task 6, strictly sequential. The
+    replacement implementation is a dependency of 40-task Task 6, not of this
+    plan's implementation-budget refactor.
 - **Overlap with concurrently active work:** this plan touches `rust/Cargo.toml`
   and `rust/Cargo.lock` (Task 1 adds a workspace member),
   `rust/runtime/src/endpoints/` (Task 4), and `metrics_core/report*` (Tasks 3
@@ -1180,10 +1187,11 @@ implementing a design already rejected by its same-build static-vs-erased A/B.
 **The statistically significant loss rejects this design.** Do not commit the
 hot-path refactor and do not re-run until a pass appears. The replacement
 direction is fixed: move the dynamic boundary above the request/token loop so a
-trait-object dispatch occurs once at frozen worker startup, while the selected
-plugin owns the complete monomorphized worker loop. That redesign requires a
-separate reviewed task; this task does not implement it and does not waive the
-performance goal.
+native-Rust trait call occurs once during placement construction, while the
+selected plugin owns the complete monomorphized worker loop. The normative
+contract is specified in the hardened design's **Transports** section and is
+implemented by 40-task Task 6. This rejected experiment does not implement it
+and does not waive the performance goal.
 
 - [x] **Step 7: Commit benchmark and rejection evidence only**
 
@@ -1240,7 +1248,9 @@ file keeps a foot in both camps.
 - Modify: `.github/workflows/rust-abi-closure.yml`
 
 **Interfaces:**
-- Consumes: the closure tool from Task 1 and every eviction from Tasks 2–5.
+- Consumes: the closure tool from Task 1 and every accepted eviction from Tasks
+  2–4. Task 5 made no production eviction; its replacement is implemented by
+  40-task Task 6.
 - Produces: `cargo xtask abi-impl-budget` printing
   `{"type_lines": <usize>, "impl_lines": <usize>, "ratio": <f64>}` and failing
   when implementation lines in ABI-contributing files exceed the committed
@@ -1347,8 +1357,9 @@ and `RunContext` (Tasks 4/5) are covered there and intentionally absent here.
 Every other measured leak edge from the 2026-08-27 audit has a task or explicit
 gate disposition:
 `WorkerMaterializer` → Task 2, `NativeReport` → Task 3, `EndpointType` and
-`MetricTag` → Task 4, `ExecutionSinkBuilder` → Task 5 (rejected and still
-open), implementation co-residency → Task 6, measurement → Task 1.
+`MetricTag` → Task 4, `ExecutionSinkBuilder` → Task 5 (per-request erasure
+rejected) plus the 40-task Task-6 generic capsule, implementation co-residency
+→ Task 6, measurement → Task 1.
 
 **Known gap, deliberately not closed.** Leak 5 from the audit — `config::model`
 types reaching the boundary via `HopRouting <- ExecutionBackendConfig` and
@@ -1363,7 +1374,9 @@ amendment to Task 18 rather than implementing it here.
 **Type consistency.** `CreditMaterializer` (Task 2) remains consumed by the
 existing generic `ExecutionSinkBuilder`. `ReportView` (Task 3) is amended by
 Task 4's `MetricTagId`. `WorkerSinkExec` appears only as the rejected Task 5
-proposal and is not introduced into production.
+proposal and is not introduced into production. The accepted
+`RequestTransportExecution` plus plugin-owned generic execution capsule is
+fully specified in the hardened design and 40-task Task 6.
 
 **Sequencing.** Task 1 first — measurement before change. Tasks 2, 3, and 4 are
 mutually independent and may run in parallel worktrees. Task 5 ran last among

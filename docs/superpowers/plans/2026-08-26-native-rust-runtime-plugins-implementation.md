@@ -1094,6 +1094,7 @@ misleading names, and orchestration leakage; commit as
 - Modify: `rust/runtime/src/dynosim.rs`
 - Modify: `rust/runtime/src/endpoints/dynosim.rs`
 - Modify: `rust/runtime/src/engine/execution_factories.rs`
+- Modify: `rust/runtime/src/engine/turn_execution.rs`
 - Modify: `rust/runtime/src/engine/online_execution.rs`
 - Modify: `rust/runtime/src/engine/ws_execution.rs`
 - Modify: `rust/runtime/src/engine/dry_run.rs`
@@ -1145,8 +1146,10 @@ misleading names, and orchestration leakage; commit as
   and other category-specific boundary vocabulary. This ownership explicitly
   excludes the transport-neutral product/service values assigned to core below,
   even when an API-owned trait method references them. In particular,
-  `aiperf-plugin-api::transport` owns `ExecutionSinkBuilder`, `WorkerSink`, and
-  the boundary request/terminal contexts. `aiperf-core` solely owns the
+  `aiperf-plugin-api::transport` owns `RequestTransportExecution`,
+  `RequestExecutor`, and the boundary request/terminal traits. It does **not**
+  own `ExecutionSinkBuilder`, `WorkerSink`, or a sink-erasure trait.
+  `aiperf-core` solely owns the
   transport-neutral product and service values used by those contracts,
   including
   `RawEndpointConfig`, `EffectiveEndpointConfig`, reset/profiler/content-type
@@ -1172,9 +1175,26 @@ misleading names, and orchestration leakage; commit as
   are selectively rebuilt only for actual consumers.
 - The transport SDK owns reusable implementation helpers for the API-owned
   transport traits and core-owned services, not their boundary type identities.
-  Runtime retains scheduling, admission, phase orchestration, capture, and
-  adapters, but no plugin implementation leaf names `RunContext`,
-  `aiperf-runtime`, or a private engine/metrics/scheduled/multiturn type.
+  It also owns the plugin-private generic execution capsule:
+  `ExecutionSinkBuilder` with its concrete associated `Sink`, `WorkerSink`,
+  `build_native_request_executor<B>`, the co-located executor,
+  `ThreadPerCoreExecutor<B>`, `run_worker_thread<B>`, `run_worker<B::Sink>`, and
+  the request/credit command helpers. These are statically linked and
+  monomorphized into each request-transport plugin. No concrete builder or sink
+  type crosses the dynamic-library boundary. Runtime retains scheduling,
+  admission, phase orchestration, capture, and host adapters, but no plugin
+  implementation leaf names `RunContext`, `aiperf-runtime`, or a private
+  engine/metrics/scheduled/multiturn type.
+- `RequestTransportExecution::build_executor` receives one owned
+  `RequestExecutionBuildContextV1` and returns the same
+  `Rc<dyn RequestExecutor>` shape used by the monolithic baseline. The call is
+  made once per placement construction. The host adds no adapter around the
+  result and the worker command path adds no `dyn WorkerSink`, callback,
+  allocation, lock, channel hop, future box, buffer conversion, or
+  serialization step. `workers == 1` remains co-located and channel-free;
+  `workers > 1`, global-hop, global-push, streaming, cancellation, drain,
+  recovery, prewarm, and worker-local measurement reuse the exact generic SDK
+  kernel. Direct transports remain a separate execution shape.
 - This task performs the behavior-preserving production source split required
   for later equality copies. HTTP and gRPC sink leaves are rewritten against
   SDK/core contexts while host adapters map existing scheduling state. WebSocket
@@ -1271,6 +1291,14 @@ using only plugin API/core/category SDK dependencies. `leaf-ownership.toml` clas
 every source as `host_adapter` or `plugin_leaf`, pins its candidate owner and
 BLAKE3, and rejects an unclassified leaf, private runtime import, `RunContext`,
 or duplicate shared reduction/measurement/retry implementation.
+Compile a standalone request-transport fixture whose concrete sink type is
+private to the fixture and whose exported factory returns only
+`Rc<dyn RequestExecutor>`. Compile-fail fixtures reject a boundary signature
+that names `ExecutionSinkBuilder`, `WorkerSink`, `B::Sink`,
+`Box<dyn WorkerSink>`, or `Box<dyn WorkerSinkExec>`. A structural inspection
+fixture must locate the concrete worker-loop specialization in the fixture
+artifact and reject an indirect sink dispatch between
+`execute_worker_command` and `dispatch_measured`.
 Compile every post-split exporter implementation leaf from the central
 candidate inventory in standalone package-shaped fixtures using only its own
 backend dependencies plus API/core/export SDK. The export ownership test rejects
@@ -1302,10 +1330,15 @@ compatibility re-exports so downstream product migration can be staged without
 a second type family. Category SDK files MUST NOT define the boundary factory
 traits.
 Move shared transport boundary contracts once into API/core and reusable
-reduction/measurement/retry logic into transport SDK, split the concrete leaves
-and host adapters at the exact paths listed above, and preserve runtime
-compatibility re-exports. The runtime continues to execute the same static
-factories until Task 39.
+reduction/measurement/retry logic plus the complete generic execution capsule
+into transport SDK. Keep `ExecutionSinkBuilder` and `WorkerSink` private to the
+SDK/plugin side; expose only `RequestTransportExecution`,
+`RequestExecutionBuildContextV1`, and `RequestExecutor` at the API/core
+boundary. Split the concrete leaves and host adapters at the exact paths listed
+above, and preserve runtime compatibility re-exports. Each first-party static
+factory must use `build_native_request_executor<B>` immediately so Task 6
+proves one authoritative worker kernel before dynamic loading exists. The
+runtime continues to execute those same static factories until Task 39.
 Likewise, move the shared exporter helpers once into export SDK, rewrite each
 listed exporter leaf around its implementation-owned config plus finalized
 core report/capture and `ArtifactAccess`, and leave legacy static registry,
@@ -1319,8 +1352,11 @@ topology, not production authority.
 Run:
 `cargo test -p aiperf-plugin-api --test category_contracts && cargo test -p aiperf-core --test histogram_contract && cargo test -p aiperf-endpoint-sdk -p aiperf-transport-sdk -p aiperf-export-sdk -p aiperf-plugin-test-support && cargo test -p aiperf-transport-sdk --test independent_leaves && cargo test -p aiperf-export-sdk --test independent_leaves && cargo test -p aiperf-runtime --features engine`
 
-Expected: positive fixtures compile/run and negative fixtures fail for the
-expected type-system reason.
+Expected: positive fixtures compile/run, negative fixtures fail for the
+expected type-system reason, and structural inspection proves the sink call is
+still statically dispatched in the fixture artifact. The final real-loader
+disassembly, operation-count equality, and 30-pair performance verdict remain
+mandatory Task-38 gates and cannot be waived by this compile-time proof.
 
 - [ ] **Step 5: Graham review, bundle, and integrate**
 
