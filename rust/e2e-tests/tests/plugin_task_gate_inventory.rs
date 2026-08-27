@@ -164,9 +164,16 @@ fn task_gate_dispatcher_exactly_matches_both_planned_matrices() {
         "#!/bin/sh\n# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\n# SPDX-License-Identifier: Apache-2.0\n\nset -eu\n\ntask=${1-}\n"
     ));
     assert!(script.contains("  *) echo \"unknown plugin task gate: $task\" >&2; exit 64 ;;\n"));
+    const TOPOLOGY_GATE: &str = "case \"$task\" in\n  [4-9]|[1-3][0-9]|40) AIPERF_PLUGIN_TOPOLOGY_TASK=\"$task\" cargo test -p aiperf-bench-tools --test plugin_topology ;;\n  *) ;;\nesac || exit $?\n\ncargo fmt --check\n";
     assert!(
-        script.ends_with("esac || exit $?\n\ncargo fmt --check\n"),
-        "formatting must follow every successful task or unit gate"
+        script.ends_with(TOPOLOGY_GATE),
+        "Tasks 4-40 must revalidate current topology and task-owned implementation witnesses before formatting"
     );
+    assert_eq!(script.matches(TOPOLOGY_GATE).count(), 1);
     assert_eq!(script.matches("cargo fmt --check").count(), 1);
+    assert_eq!(
+        script.matches("\nesac || exit $?\n").count(),
+        2,
+        "both dispatchers must propagate failure through the same idiom"
+    );
 }

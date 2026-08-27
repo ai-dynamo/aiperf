@@ -74,4 +74,9 @@ case "$task" in
   *) echo "unknown plugin task gate: $task" >&2; exit 64 ;;
 esac || exit $?
 
+case "$task" in
+  [4-9]|[1-3][0-9]|40) AIPERF_PLUGIN_TOPOLOGY_TASK="$task" cargo test -p aiperf-bench-tools --test plugin_topology ;;
+  *) ;;
+esac || exit $?
+
 cargo fmt --check
