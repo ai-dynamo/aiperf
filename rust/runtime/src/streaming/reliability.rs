@@ -1462,6 +1462,16 @@ pub enum StreamingReliabilityError {
     DerivedExportReceiptUnreachable,
     /// Export receipt encoded or parsed state could not obtain exact capacity.
     ExportReceiptBudget(StateBudgetFailureCode),
+    /// The current-attempt index names a reporter token with no retained action.
+    ///
+    /// The ledger refuses rather than panicking so a corrupt or partially
+    /// restored index is reported to its owner with every lease intact.
+    CorruptActionAttemptIndex,
+    /// An undecided retained action failure no longer owns its reserved issue.
+    ///
+    /// The retained entry is returned to the ledger before this is reported, so
+    /// its reporter token stays addressable and no charge is released twice.
+    MissingPendingActionIssue,
 }
 
 impl fmt::Display for StreamingReliabilityError {
@@ -2016,7 +2026,7 @@ impl BudgetOwnedStreamingIssueReporter {
             let current = self
                 .pending_actions
                 .get(&current_token)
-                .unwrap_or_else(|| unreachable!("current action attempt remains retained"));
+                .ok_or(StreamingReliabilityError::CorruptActionAttemptIndex)?;
             if current.action_id != action_id
                 || current
                     .decision
@@ -2070,9 +2080,12 @@ impl BudgetOwnedStreamingIssueReporter {
             .ok_or(StreamingReliabilityError::InvalidActionTerminalMembership)?;
         let sequence = entry.sequence;
         if let Some(decision) = entry.decision {
-            let disposition = action_disposition(&entry, decision)?;
+            // The entry is reinserted before returning either way: a refused
+            // disposition must not strand its token in the current-attempt
+            // index or silently release the charge the entry still owns.
+            let disposition = action_disposition(&entry, decision);
             self.pending_actions.insert(queued.reporter_token, entry);
-            return Ok(disposition);
+            return disposition;
         }
         let is_ready = sequence.get() == 0
             || self
@@ -2082,10 +2095,10 @@ impl BudgetOwnedStreamingIssueReporter {
             self.pending_actions.insert(queued.reporter_token, entry);
             return Ok(ActionFailureDisposition::Pending(queued));
         }
-        let pending = entry
-            .pending
-            .take()
-            .unwrap_or_else(|| unreachable!("undecided action retains pending issue"));
+        let Some(pending) = entry.pending.take() else {
+            self.pending_actions.insert(queued.reporter_token, entry);
+            return Err(StreamingReliabilityError::MissingPendingActionIssue);
+        };
         let outcome = match self.classify_pending(pending) {
             Ok(outcome) => outcome,
             Err((error, pending)) => {
@@ -2101,9 +2114,9 @@ impl BudgetOwnedStreamingIssueReporter {
             issue_id: outcome.issue_id,
         };
         entry.decision = Some(decision);
-        let disposition = action_disposition(&entry, decision)?;
+        let disposition = action_disposition(&entry, decision);
         self.pending_actions.insert(queued.reporter_token, entry);
-        Ok(disposition)
+        disposition
     }
 
     fn prepare_checked_action_terminal(
@@ -2223,7 +2236,7 @@ impl BudgetOwnedStreamingIssueReporter {
             let current = self
                 .pending_actions
                 .get(token)
-                .unwrap_or_else(|| unreachable!("current action attempt remains retained"));
+                .ok_or(StreamingReliabilityError::CorruptActionAttemptIndex)?;
             if current.sequence != *sequence || !self.action_terminals.contains_key(sequence) {
                 return Err(StreamingReliabilityError::InvalidActionTerminalMembership);
             }
@@ -2271,21 +2284,18 @@ impl BudgetOwnedStreamingIssueReporter {
         }
 
         loop {
-            let next_key = self.pending_inputs.get(&input_domain).and_then(|pending| {
-                pending
-                    .keys()
-                    .next()
-                    .filter(|key| key.position <= through)
-                    .cloned()
-            });
-            let Some(next_key) = next_key else {
+            // Selection and removal share one borrow, so no second lookup can
+            // observe a different map and no absent-key branch exists.
+            let Some(domain_pending) = self.pending_inputs.get_mut(&input_domain) else {
                 break;
             };
-            let pending = self
-                .pending_inputs
-                .get_mut(&input_domain)
-                .and_then(|pending| pending.remove(&next_key))
-                .unwrap_or_else(|| unreachable!("selected pending issue remains present"));
+            let Some(first) = domain_pending.first_entry() else {
+                break;
+            };
+            if first.key().position > through {
+                break;
+            }
+            let (next_key, pending) = first.remove_entry();
             if let Err((error, pending)) = self.classify_pending(pending) {
                 self.pending_inputs
                     .entry(input_domain.clone())
@@ -2507,10 +2517,7 @@ impl BudgetOwnedStreamingIssueReporter {
             )
             .await
             .map_err(|error| {
-                let StreamingReliabilityError::StateBudget(code) = state_budget_error(error) else {
-                    unreachable!("budget errors map to state budget")
-                };
-                StreamingReliabilityError::QuarantineInstallBudget(code)
+                StreamingReliabilityError::QuarantineInstallBudget(budget_failure_code(error))
             })?;
         let payload = BudgetedCheckpointBytes::new(Bytes::copy_from_slice(entries), payload_lease)
             .map_err(|_| StreamingReliabilityError::CorruptCheckpointState)?;
@@ -3524,8 +3531,10 @@ fn increment_summary_counter<K: Ord + Copy>(
     Ok(())
 }
 
-fn state_budget_error(error: BudgetError) -> StreamingReliabilityError {
-    let code = match error {
+// The classification is exposed as the bare code so scope-specific budget
+// errors can wrap it directly instead of narrowing a wider error back down.
+const fn budget_failure_code(error: BudgetError) -> StateBudgetFailureCode {
+    match error {
         BudgetError::CapacityUnavailable | BudgetError::RequestExceedsCapacity => {
             StateBudgetFailureCode::ByteCapacity
         }
@@ -3536,15 +3545,15 @@ fn state_budget_error(error: BudgetError) -> StreamingReliabilityError {
         | BudgetError::InvalidFragmentItemCharge { .. }
         | BudgetError::ActionPayloadUndercharged { .. }
         | BudgetError::AccountingOverflow => StateBudgetFailureCode::ItemCapacity,
-    };
-    StreamingReliabilityError::StateBudget(code)
+    }
+}
+
+fn state_budget_error(error: BudgetError) -> StreamingReliabilityError {
+    StreamingReliabilityError::StateBudget(budget_failure_code(error))
 }
 
 fn export_budget_error(error: BudgetError) -> StreamingReliabilityError {
-    let StreamingReliabilityError::StateBudget(code) = state_budget_error(error) else {
-        unreachable!("budget errors map to state budget")
-    };
-    StreamingReliabilityError::ExportReceiptBudget(code)
+    StreamingReliabilityError::ExportReceiptBudget(budget_failure_code(error))
 }
 
 /// Sole mutable host reliability owner and checkpoint participant.
@@ -5225,5 +5234,247 @@ mod tests {
         assert_eq!(restored.issue_id(), issue_id);
         drop(restored);
         assert_eq!(stored_budget.snapshot().used_items, 0);
+    }
+
+    fn typed_error_action_reporter(
+        budget: StreamingResourceBudget,
+        exhausted: StreamingIssueDisposition,
+    ) -> BudgetOwnedStreamingIssueReporter {
+        let run = StreamRunIdentity::new(LogicalReplayRunId::from_bytes([0x81; 32]));
+        let policy = PreparedStreamingIssuePolicy::new([action_rule(
+            "action_default",
+            0,
+            exhausted,
+        )])
+        .unwrap_or_else(|error| panic!("valid action policy: {error}"));
+        BudgetOwnedStreamingIssueReporter::new(run, policy, budget)
+    }
+
+    fn typed_error_action_evidence(
+        issue: &OrdinaryStreamingIssue,
+    ) -> CheckedActionFailureTerminalEvidence {
+        CheckedActionFailureTerminalEvidence::for_test(
+            issue.run,
+            issue
+                .scope()
+                .action_id()
+                .unwrap_or_else(|| panic!("action ID")),
+            issue
+                .order
+                .global_sequence
+                .unwrap_or_else(|| panic!("action sequence")),
+            ContentDigest::from_bytes([0x91; 32]),
+        )
+    }
+
+    #[test]
+    fn missing_retained_action_attempt_returns_typed_error() {
+        let budget = StreamingResourceBudget::new(super::super::budget::BudgetLimits {
+            max_items: 64,
+            max_bytes: 64 * 1024,
+        })
+        .unwrap_or_else(|error| panic!("valid action budget: {error}"));
+        let mut reporter = typed_error_action_reporter(
+            budget.clone(),
+            StreamingIssueDisposition::TerminalActionReceipt,
+        );
+
+        // Exactly the corruption the removed panic asserted away: an index
+        // entry whose reporter token no longer resolves to a retained action.
+        let issue = action_issue(1, 0);
+        let evidence = typed_error_action_evidence(&issue);
+        reporter
+            .current_action_attempts
+            .insert(GlobalSequence::new(1), 4242);
+        assert!(!reporter.pending_actions.contains_key(&4242));
+
+        let before = budget.snapshot();
+        let error = reporter
+            .enqueue_failed_action(&evidence, issue)
+            .expect_err("stale current-attempt index must refuse");
+        assert_eq!(error, StreamingReliabilityError::CorruptActionAttemptIndex);
+
+        let after = budget.snapshot();
+        assert_eq!(after.used_items, before.used_items);
+        assert_eq!(after.used_bytes, before.used_bytes);
+    }
+
+    #[test]
+    fn absent_current_attempt_returns_typed_error_and_keeps_lease() {
+        let budget = StreamingResourceBudget::new(super::super::budget::BudgetLimits {
+            max_items: 64,
+            max_bytes: 64 * 1024,
+        })
+        .unwrap_or_else(|error| panic!("valid action budget: {error}"));
+        let reporter = {
+            let mut reporter = typed_error_action_reporter(
+                budget.clone(),
+                StreamingIssueDisposition::TerminalActionReceipt,
+            );
+            reporter
+                .current_action_attempts
+                .insert(GlobalSequence::new(1), 4242);
+            reporter
+        };
+        let inventory = FrozenActionInventory::for_test(
+            StreamRunIdentity::new(LogicalReplayRunId::from_bytes([0x81; 32])),
+            GlobalSequence::new(1),
+            ContentDigest::from_bytes([0xa3; 32]),
+            BTreeMap::new(),
+        );
+
+        let before = budget.snapshot();
+        let error = reporter
+            .prepare_no_more_actions_before(&inventory, GlobalSequence::new(1))
+            .expect_err("stale current-attempt index must refuse gap closure");
+        assert_eq!(error, StreamingReliabilityError::CorruptActionAttemptIndex);
+
+        // The refusal precedes the proof acquisition, so no lease is minted and
+        // none can be leaked.
+        let after = budget.snapshot();
+        assert_eq!(after.used_items, before.used_items);
+        assert_eq!(after.used_bytes, before.used_bytes);
+    }
+
+    #[test]
+    fn undecided_action_without_pending_issue_returns_typed_error() {
+        let budget = StreamingResourceBudget::new(super::super::budget::BudgetLimits {
+            max_items: 64,
+            max_bytes: 64 * 1024,
+        })
+        .unwrap_or_else(|error| panic!("valid action budget: {error}"));
+        let mut reporter = typed_error_action_reporter(
+            budget.clone(),
+            StreamingIssueDisposition::TerminalActionReceipt,
+        );
+
+        let issue = action_issue(0, 0);
+        let evidence = typed_error_action_evidence(&issue);
+        let queued = reporter
+            .enqueue_failed_action(&evidence, issue)
+            .unwrap_or_else(|error| panic!("queue action failure: {error}"));
+        let token = queued.reporter_token;
+
+        // Release the reservation exactly once, leaving an undecided entry with
+        // no pending issue. The charge is already returned by the lease drop,
+        // so a second release would be a double free.
+        let entry = reporter
+            .pending_actions
+            .get_mut(&token)
+            .unwrap_or_else(|| panic!("entry is retained"));
+        assert!(entry.decision.is_none());
+        drop(entry.pending.take());
+        let after_release = budget.snapshot();
+
+        let error = reporter
+            .poll_failed_action(queued)
+            .expect_err("missing reservation must refuse");
+        assert_eq!(error, StreamingReliabilityError::MissingPendingActionIssue);
+
+        // The entry is returned to the ledger, so its token stays addressable
+        // and the current-attempt index is still consistent.
+        assert!(reporter.pending_actions.contains_key(&token));
+        let settled = budget.snapshot();
+        assert_eq!(settled.used_items, after_release.used_items);
+        assert_eq!(settled.used_bytes, after_release.used_bytes);
+    }
+
+    #[test]
+    fn refused_action_disposition_retains_its_pending_entry() {
+        let budget = StreamingResourceBudget::new(super::super::budget::BudgetLimits {
+            max_items: 64,
+            max_bytes: 64 * 1024,
+        })
+        .unwrap_or_else(|error| panic!("valid action budget: {error}"));
+        // `Quarantine` is illegal for the Action scope, so `action_disposition`
+        // refuses after the decision is recorded.
+        let mut reporter =
+            typed_error_action_reporter(budget.clone(), StreamingIssueDisposition::Quarantine);
+
+        let issue = action_issue(0, 0);
+        let evidence = typed_error_action_evidence(&issue);
+        let queued = reporter
+            .enqueue_failed_action(&evidence, issue)
+            .unwrap_or_else(|error| panic!("queue action failure: {error}"));
+        let token = queued.reporter_token;
+
+        let error = reporter
+            .poll_failed_action(queued)
+            .expect_err("illegal action disposition must refuse");
+        assert_eq!(error, StreamingReliabilityError::IllegalDisposition);
+
+        // Before the fix the entry was dropped here and the current-attempt
+        // index named a token no lookup could resolve.
+        assert!(reporter.pending_actions.contains_key(&token));
+        assert_eq!(
+            reporter
+                .current_action_attempts
+                .get(&GlobalSequence::new(0))
+                .copied(),
+            Some(token)
+        );
+        // The refusal is stable: polling again reports the same typed error
+        // from the retained decision rather than panicking.
+        let repeat = reporter
+            .poll_failed_action(QueuedActionFailure {
+                reporter_token: token,
+            })
+            .expect_err("retained refusal repeats");
+        assert_eq!(repeat, StreamingReliabilityError::IllegalDisposition);
+    }
+
+    #[test]
+    fn budget_failure_code_is_total_over_budget_error() {
+        use super::super::budget::BudgetError;
+
+        let cases = [
+            (
+                BudgetError::ZeroCapacity,
+                StateBudgetFailureCode::ItemCapacity,
+            ),
+            (
+                BudgetError::PermitCountTooLarge,
+                StateBudgetFailureCode::ItemCapacity,
+            ),
+            (
+                BudgetError::RequestExceedsCapacity,
+                StateBudgetFailureCode::ByteCapacity,
+            ),
+            (
+                BudgetError::CapacityUnavailable,
+                StateBudgetFailureCode::ByteCapacity,
+            ),
+            (BudgetError::Closed, StateBudgetFailureCode::ItemCapacity),
+            (
+                BudgetError::CannotGrowLease,
+                StateBudgetFailureCode::ItemCapacity,
+            ),
+            (
+                BudgetError::InvalidFragmentItemCharge { charged_items: 3 },
+                StateBudgetFailureCode::ItemCapacity,
+            ),
+            (
+                BudgetError::ActionPayloadUndercharged {
+                    required_bytes: 4,
+                    retained_bytes: 1,
+                },
+                StateBudgetFailureCode::ItemCapacity,
+            ),
+            (
+                BudgetError::AccountingOverflow,
+                StateBudgetFailureCode::ItemCapacity,
+            ),
+        ];
+        for (error, expected) in cases {
+            assert_eq!(budget_failure_code(error), expected);
+            assert_eq!(
+                state_budget_error(error),
+                StreamingReliabilityError::StateBudget(expected)
+            );
+            assert_eq!(
+                export_budget_error(error),
+                StreamingReliabilityError::ExportReceiptBudget(expected)
+            );
+        }
     }
 }
