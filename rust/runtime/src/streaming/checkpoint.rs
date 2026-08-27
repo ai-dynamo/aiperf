@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use super::{
     budget::BudgetLease,
     identity::{ContentDigest, GlobalSequence, LogicalReplayRunId, SessionCausalFrontier},
+    reliability::HandledIssueCut,
     unit::{EventTimeUtc, SourcePosition, StateBudgetFailureCode},
 };
 
@@ -157,6 +158,8 @@ pub struct CheckpointCut {
     pub event_watermark: EventTimeWatermark,
     /// Session-causal completeness at this cut.
     pub causal_frontier: SessionCausalFrontier,
+    /// Detailed reliability roots handled by this cut.
+    pub handled_issues: HandledIssueCut,
 }
 
 /// Monotonic checkpoint epoch number.
@@ -276,6 +279,30 @@ impl BudgetedCheckpointBytes {
         }
         let bytes = Bytes::from(bytes.as_ref().to_vec().into_boxed_slice());
         Ok(Self { bytes, lease })
+    }
+
+    /// Bind an already-compact, already-charged buffer with no additional copy.
+    ///
+    /// Unlike [`BudgetedCheckpointBytes::new`], this does not re-copy. The
+    /// caller must have produced the buffer at exactly its charged size — the
+    /// `LeasedByteBuffer` seam in `budget.rs` is the only supported producer —
+    /// so binding is a move rather than a transient second allocation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CheckpointError::ObjectVerification`] unless the lease charges
+    /// exactly one item and exactly the buffer's length.
+    pub(crate) fn from_compact(
+        bytes: Box<[u8]>,
+        lease: BudgetLease,
+    ) -> Result<Self, CheckpointError> {
+        if lease.charged_items() != 1 || lease.charged_bytes() != bytes.len() {
+            return Err(CheckpointError::ObjectVerification);
+        }
+        Ok(Self {
+            bytes: Bytes::from(bytes),
+            lease,
+        })
     }
 
     /// Borrow the exact immutable participant payload.
@@ -993,6 +1020,7 @@ pub struct CheckpointBarrier {
 pub struct CommittedParticipantReceipt {
     run: StreamRunIdentity,
     generation: CheckpointGeneration,
+    result_index_root: ContentDigest,
     participant_id: CheckpointParticipantId,
     descriptor_digest: ContentDigest,
     represented_cut: CheckpointCut,
@@ -1010,6 +1038,7 @@ impl CommittedParticipantReceipt {
         Ok(Self {
             run: *generation.run(),
             generation: generation.generation(),
+            result_index_root: *generation.result_index_root(),
             participant_id: descriptor.participant_id.clone(),
             descriptor_digest: descriptor.digest()?,
             represented_cut: descriptor.represented_cut.clone(),
@@ -1026,6 +1055,12 @@ impl CommittedParticipantReceipt {
     #[must_use]
     pub const fn generation(&self) -> &CheckpointGeneration {
         &self.generation
+    }
+
+    /// Borrow the exact reachable result-index root committed with the participant.
+    #[must_use]
+    pub const fn result_index_root(&self) -> &ContentDigest {
+        &self.result_index_root
     }
 
     /// Borrow the stable participant receiving this notification.
@@ -1478,6 +1513,7 @@ mod tests {
                 event_time: None,
                 digest: ContentDigest::from_bytes([value as u8; 32]),
             },
+            handled_issues: HandledIssueCut::empty(),
         }
     }
 
@@ -1652,9 +1688,9 @@ mod tests {
         assert_eq!(
             candidate.generation().digest(),
             &ContentDigest::from_bytes([
-                0x51, 0x9b, 0xf1, 0x92, 0x51, 0x8f, 0x43, 0xe9, 0xd4, 0xac, 0xcd, 0x6b, 0xd8, 0xed,
-                0x38, 0xe8, 0x85, 0xa1, 0xdc, 0xe0, 0x6d, 0x8d, 0x35, 0x57, 0x9b, 0xf5, 0xf9, 0x9b,
-                0x79, 0x4d, 0x10, 0xf1,
+                0x74, 0x81, 0x44, 0x6c, 0x4a, 0x43, 0x37, 0x3d, 0x89, 0x42, 0x2d, 0x5a, 0x6a, 0x3d,
+                0x1b, 0xda, 0x4f, 0x84, 0x13, 0xf3, 0x52, 0xd5, 0x76, 0xd1, 0xdb, 0x96, 0xd2, 0x56,
+                0xfd, 0x8e, 0xaf, 0x52,
             ])
         );
     }
@@ -1865,5 +1901,34 @@ mod tests {
 
         fn requires_committed(_: CommittedCheckpointGeneration) {}
         requires_committed(prevalidated.into_committed_after_publication_fence());
+    }
+
+    #[test]
+    fn from_compact_charges_exact_encoded_length() {
+        use crate::streaming::budget::{BudgetLimits, StreamingResourceBudget};
+
+        let budget = StreamingResourceBudget::new(BudgetLimits {
+            max_items: 4,
+            max_bytes: 64,
+        })
+        .unwrap_or_else(|error| panic!("valid budget: {error}"));
+        let lease = budget
+            .try_acquire(1, 5)
+            .unwrap_or_else(|error| panic!("available lease: {error}"));
+        let payload = BudgetedCheckpointBytes::from_compact(Box::from(&b"abcde"[..]), lease)
+            .unwrap_or_else(|error| panic!("exact compact payload: {error}"));
+
+        assert_eq!(payload.as_bytes(), b"abcde");
+        assert_eq!(payload.retained_allocation_bytes(), payload.charged_bytes());
+
+        let mismatched = budget
+            .try_acquire(1, 4)
+            .unwrap_or_else(|error| panic!("available lease: {error}"));
+        assert!(matches!(
+            BudgetedCheckpointBytes::from_compact(Box::from(&b"abcde"[..]), mismatched),
+            Err(CheckpointError::ObjectVerification)
+        ));
+        drop(payload);
+        assert_eq!(budget.snapshot().used_bytes, 0);
     }
 }

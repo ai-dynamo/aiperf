@@ -24,6 +24,11 @@ mod reliability_view_seal {
     pub trait SessionQuarantineTombstoneView {}
 }
 
+mod host;
+
+#[cfg(test)]
+pub(crate) use host::CheckedSessionQuarantineTombstoneView;
+
 /// Borrowed checked view of the session owner's retained quarantine tombstones.
 ///
 /// Implementations are sealed to session-host child modules. An adapter cannot
@@ -42,6 +47,13 @@ mod reliability_view_seal {
 ///     fn revision(&self) -> u64 { 0 }
 ///     fn canonical_encoded_entries(&self) -> &[u8] { &[] }
 /// }
+/// ```
+///
+/// The concrete host proof is not nameable outside the session-host subtree:
+///
+/// ```compile_fail
+/// # use aiperf_runtime::streaming::session::host::CheckedSessionQuarantineTombstoneView;
+/// fn main() {}
 /// ```
 pub trait SessionQuarantineTombstoneView:
     reliability_view_seal::SessionQuarantineTombstoneView

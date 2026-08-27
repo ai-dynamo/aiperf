@@ -28,6 +28,13 @@ mod reliability_view_seal {
     pub trait FrozenActionInventoryView {}
 }
 
+mod host;
+
+#[cfg(test)]
+pub(crate) use host::{
+    CheckedActionFailureTerminalEvidence, CheckedActionTerminalMembership, FrozenActionInventory,
+};
+
 /// Borrowed checked evidence that one failed action attempt reached terminal.
 ///
 /// Implementations are sealed to action-host child modules. An adapter cannot
@@ -46,6 +53,13 @@ mod reliability_view_seal {
 ///     fn sequence(&self) -> GlobalSequence { unimplemented!() }
 ///     fn terminal_evidence_digest(&self) -> ContentDigest { unimplemented!() }
 /// }
+/// ```
+///
+/// The concrete host proof is not nameable outside the action-host subtree:
+///
+/// ```compile_fail
+/// # use aiperf_runtime::streaming::action::host::CheckedActionFailureTerminalEvidence;
+/// fn main() {}
 /// ```
 pub trait CheckedActionFailureTerminalEvidenceView:
     reliability_view_seal::CheckedActionFailureTerminalEvidenceView

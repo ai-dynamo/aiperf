@@ -155,6 +155,8 @@ pub enum StateBudgetFailureCode {
     SpillCapacity,
     /// No provisional-state capacity remains.
     ProvisionalCapacity,
+    /// A permanent budget error that is not resolvable by retrying.
+    PermanentError,
 }
 
 /// Source and format receipt carried by one canonical unit.

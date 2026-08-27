@@ -17,6 +17,7 @@ use super::{
         PreparedParticipantState, PrevalidatedCheckpointGenerationCandidate, StreamRunIdentity,
     },
     identity::ContentDigest,
+    reliability::PreparedIssueReceiptResultPartition,
     results::{
         PreparedResultEpoch, ResultIndexCursor, ResultIndexPage, ResultIndexReadBudget,
         ResultPartition, ResultSegmentDescriptor, ResultSegmentReader,
@@ -216,9 +217,14 @@ pub trait StreamingGenerationTransaction {
     ) -> Result<(), CheckpointError>;
 
     /// Stage exactly one complete result epoch.
+    ///
+    /// The optional detailed-receipt partition is staged beside the ordinary
+    /// partitions and is taken only when the whole epoch is prepared, so a
+    /// refused staging leaves the caller's move-only handoff intact.
     async fn stage_results(
         &mut self,
         partitions: &mut Vec<ResultPartition>,
+        issue_receipts: &mut Option<PreparedIssueReceiptResultPartition>,
     ) -> Result<PreparedResultEpoch, CheckpointError>;
 
     /// Atomically publish the fully staged generation.

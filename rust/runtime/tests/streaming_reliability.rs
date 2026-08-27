@@ -1,10 +1,20 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#[allow(dead_code)]
+#[path = "support/streaming_checkpoint.rs"]
+mod support;
+
 use std::num::NonZeroU64;
 
 use aiperf_runtime::streaming::{
-    checkpoint::{CheckpointEpoch, CheckpointGeneration, StreamRunIdentity},
+    budget::{BudgetLimits, StreamingResourceBudget},
+    checkpoint::{
+        AcquisitionHorizon, AdmissionHorizon, CheckpointBarrier, CheckpointCut, CheckpointEpoch,
+        CheckpointGeneration, CheckpointParticipantId, DecodeHorizon, DiscoveryHorizon,
+        EventTimeWatermark, OrderedActionHorizon, StreamRunIdentity,
+        StreamingCheckpointParticipant, TerminalActionHorizon,
+    },
     failure::{
         AcquisitionFailureCode, ActionExecutionError, ActionFailureCode, CheckpointAttemptError,
         CheckpointAttemptFailureCode, DecodeFailureCode, OrdinaryStreamingFailure,
@@ -12,17 +22,22 @@ use aiperf_runtime::streaming::{
         StreamFormatError, StreamSourceError, StreamingFailureStage,
     },
     identity::{
-        ContentDigest, GlobalSequence, ImmutableObjectIdentity, LogicalReplayRunId, StableActionId,
-        StableRecordId, StableSessionKey,
+        ContentDigest, GlobalSequence, ImmutableObjectIdentity, LogicalReplayRunId,
+        SessionCausalFrontier, StableActionId, StableRecordId, StableSessionKey,
     },
     reliability::{
-        ActionFailureDisposition, OrdinaryStreamingIssue, PreparedActionFailureIdentity,
+        ActionFailureDisposition, BudgetOwnedStreamingIssueReporter, HandledIssueCut,
+        IssueSequenceUpdate, OrdinaryStreamingIssue, PreparedActionFailureIdentity,
         PreparedStreamingIssuePolicy, StreamingInputDomainIdentity, StreamingIssueClass,
         StreamingIssueComponentId, StreamingIssueDisposition, StreamingIssueOrderKey,
-        StreamingIssueScope, StreamingIssueScopeKind, StreamingIssueThresholdRule,
-        StreamingIssueValidationError,
+        StreamingIssueReporter, StreamingIssueScope, StreamingIssueScopeKind,
+        StreamingIssueThresholdRule, StreamingIssueValidationError, submission_queue_charge_bytes,
     },
-    unit::{SourcePosition, StateBudgetFailureCode},
+    results::{
+        BudgetedResultDescriptor, CellId, ResultProjectionId, ResultSchemaVersion,
+        ResultSegmentDescriptor, WorkerId,
+    },
+    unit::{EventTimeUtc, SourcePosition, StateBudgetFailureCode},
 };
 
 fn component(value: &str) -> StreamingIssueComponentId {
@@ -80,6 +95,48 @@ fn exact_record_rule() -> StreamingIssueThresholdRule {
         None,
     )
     .unwrap_or_else(|error| panic!("valid exact rule: {error}"))
+}
+
+fn budget(items: usize, bytes: usize) -> StreamingResourceBudget {
+    StreamingResourceBudget::new(BudgetLimits {
+        max_items: items,
+        max_bytes: bytes,
+    })
+    .unwrap_or_else(|error| panic!("valid reliability budget: {error}"))
+}
+
+fn record_policy() -> PreparedStreamingIssuePolicy {
+    PreparedStreamingIssuePolicy::new(vec![exact_record_rule(), wildcard_record_rule()])
+        .unwrap_or_else(|error| panic!("valid record policy: {error}"))
+}
+
+fn barrier(run: StreamRunIdentity, epoch: u64) -> CheckpointBarrier {
+    CheckpointBarrier {
+        run,
+        epoch: CheckpointEpoch::new(epoch),
+        cut: CheckpointCut {
+            discovered: DiscoveryHorizon::new(SourcePosition::new(20)),
+            acquired: AcquisitionHorizon::new(SourcePosition::new(20)),
+            decoded: DecodeHorizon::new(SourcePosition::new(20)),
+            ordered: OrderedActionHorizon::new(GlobalSequence::new(20)),
+            admitted: AdmissionHorizon::new(GlobalSequence::new(20)),
+            terminal: TerminalActionHorizon::new(GlobalSequence::new(20)),
+            event_watermark: EventTimeWatermark::Hard {
+                through: EventTimeUtc::new(20)
+                    .unwrap_or_else(|error| panic!("valid event time: {error}")),
+            },
+            causal_frontier: SessionCausalFrontier {
+                through_sequence: GlobalSequence::new(20),
+                event_time: Some(
+                    EventTimeUtc::new(20)
+                        .unwrap_or_else(|error| panic!("valid event time: {error}")),
+                ),
+                digest: ContentDigest::from_bytes([0x71; 32]),
+            },
+            handled_issues: HandledIssueCut::empty(),
+        },
+        plan_digest: ContentDigest::from_bytes([0x72; 32]),
+    }
 }
 
 #[test]
@@ -422,6 +479,212 @@ fn persisted_scope_rejects_unknown_fields() {
     assert!(serde_json::from_value::<StreamingIssueScope>(value).is_err());
 }
 
+#[tokio::test(flavor = "current_thread")]
+async fn ordered_reporter_is_arrival_invariant_and_replay_counts_once() {
+    let input_domain = domain(0x31, 0x32);
+    let make_issue = |position: u64, tie: u8| {
+        OrdinaryStreamingIssue::record(
+            run(0x11),
+            input_domain.clone(),
+            StableRecordId::from_bytes([tie; 32]),
+            StreamingIssueClass::Permanent,
+            ContentDigest::from_bytes([0x41; 32]),
+            SourcePosition::new(position),
+            0,
+            ContentDigest::from_bytes([tie; 32]),
+            OrdinaryStreamingFailure::Format(StreamFormatError::decode(DecodeFailureCode::Syntax)),
+        )
+        .unwrap_or_else(|error| panic!("valid ordered issue: {error}"))
+    };
+
+    let mut reverse = BudgetOwnedStreamingIssueReporter::new(
+        run(0x11),
+        record_policy(),
+        budget(65, submission_queue_charge_bytes() + 64 * 1024),
+    )
+    .unwrap_or_else(|error| panic!("budget-owned reporter: {error}"));
+    assert_eq!(
+        reverse
+            .report(IssueSequenceUpdate::Issue(make_issue(9, 9)))
+            .await
+            .unwrap_or_else(|error| panic!("retain later issue: {error}")),
+        None
+    );
+    assert_eq!(
+        reverse
+            .report(IssueSequenceUpdate::Issue(make_issue(7, 7)))
+            .await
+            .unwrap_or_else(|error| panic!("retain earlier issue: {error}")),
+        None
+    );
+    reverse
+        .report(IssueSequenceUpdate::NoMoreBefore {
+            input_domain: input_domain.clone(),
+            through: SourcePosition::new(9),
+        })
+        .await
+        .unwrap_or_else(|error| panic!("advance reverse frontier: {error}"));
+
+    let replay_id = make_issue(7, 7).issue_id();
+    let replay = reverse
+        .report(IssueSequenceUpdate::Issue(make_issue(7, 7)))
+        .await
+        .unwrap_or_else(|error| panic!("replay retained issue: {error}"))
+        .unwrap_or_else(|| panic!("replay returns prior outcome"));
+    assert_eq!(replay.issue_id(), replay_id);
+    assert_eq!(reverse.summary().unwrap().total, 2);
+
+    let mut forward = BudgetOwnedStreamingIssueReporter::new(
+        run(0x11),
+        record_policy(),
+        budget(65, submission_queue_charge_bytes() + 64 * 1024),
+    )
+    .unwrap_or_else(|error| panic!("budget-owned reporter: {error}"));
+    for (position, tie) in [(7, 7), (9, 9)] {
+        forward
+            .report(IssueSequenceUpdate::Issue(make_issue(position, tie)))
+            .await
+            .unwrap_or_else(|error| panic!("retain forward issue: {error}"));
+    }
+    forward
+        .report(IssueSequenceUpdate::NoMoreBefore {
+            input_domain,
+            through: SourcePosition::new(9),
+        })
+        .await
+        .unwrap_or_else(|error| panic!("advance forward frontier: {error}"));
+
+    let reverse_view = reverse
+        .receipt_partition_view(&barrier(run(0x11), 1))
+        .await
+        .unwrap_or_else(|error| panic!("reverse receipt view: {error}"));
+    let forward_view = forward
+        .receipt_partition_view(&barrier(run(0x11), 1))
+        .await
+        .unwrap_or_else(|error| panic!("forward receipt view: {error}"));
+    assert_eq!(reverse_view.receipt_root(), forward_view.receipt_root());
+    assert_eq!(reverse_view.payload_bytes(), forward_view.payload_bytes());
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn tiny_reporter_budget_refuses_without_frontier_or_counter_mutation() {
+    // The budget admits the reporter's charged submission queue and nothing
+    // more: every later charge must refuse without mutating retained state.
+    let shared_budget = budget(2, submission_queue_charge_bytes() + 8);
+    let mut reporter =
+        BudgetOwnedStreamingIssueReporter::new(run(0x11), record_policy(), shared_budget.clone())
+            .unwrap_or_else(|error| panic!("budget-owned reporter: {error}"));
+    let error = reporter
+        .report(IssueSequenceUpdate::Issue(record_issue(
+            DecodeFailureCode::Syntax,
+        )))
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        aiperf_runtime::streaming::reliability::StreamingReliabilityError::StateBudget(_)
+    ));
+    assert_eq!(reporter.summary().unwrap().total, 0);
+    assert_eq!(reporter.counters().iter().count(), 0);
+    // Only the construction-time queue lease is held; the refused report left
+    // no frontier, counter, or receipt charge behind.
+    assert_eq!(shared_budget.snapshot().used_items, 1);
+    assert_eq!(
+        shared_budget.snapshot().used_bytes,
+        submission_queue_charge_bytes()
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn receipt_partition_handoff_moves_payload_and_view_leases_without_copy() {
+    let reporter_budget = budget(65, submission_queue_charge_bytes() + 64 * 1024);
+    let descriptor_budget = budget(4, 4096);
+    let mut reporter =
+        BudgetOwnedStreamingIssueReporter::new(run(0x11), record_policy(), reporter_budget.clone())
+            .unwrap_or_else(|error| panic!("budget-owned reporter: {error}"));
+    let input_domain = domain(0x21, 0x20);
+    reporter
+        .report(IssueSequenceUpdate::Issue(record_issue(
+            DecodeFailureCode::Syntax,
+        )))
+        .await
+        .unwrap_or_else(|error| panic!("retain issue: {error}"));
+    reporter
+        .report(IssueSequenceUpdate::NoMoreBefore {
+            input_domain,
+            through: SourcePosition::new(7),
+        })
+        .await
+        .unwrap_or_else(|error| panic!("advance issue: {error}"));
+    let view = reporter
+        .receipt_partition_view(&barrier(run(0x11), 4))
+        .await
+        .unwrap_or_else(|error| panic!("prepare issue partition: {error}"));
+    // A run with no accepted quarantine acknowledgement emits byte-identical
+    // pre-fix cut bytes, which is the invariant the checkpoint golden depends on.
+    assert_eq!(
+        view.handled_cut().quarantine_tombstone_root(),
+        HandledIssueCut::empty().quarantine_tombstone_root()
+    );
+    let payload_ptr = view.payload_bytes().as_ptr();
+    let payload_len = view.payload_bytes().len();
+    let receipt_root = *view.receipt_root();
+    let projection = ResultProjectionId::new("streaming_issue_receipts")
+        .unwrap_or_else(|error| panic!("valid issue projection: {error}"));
+    let descriptor = ResultSegmentDescriptor {
+        run: run(0x11),
+        epoch: CheckpointEpoch::new(4),
+        cell_id: CellId::new(0),
+        worker_id: WorkerId::new(0),
+        projection,
+        schema: ResultSchemaVersion::new(2),
+        first_sequence: GlobalSequence::new(0),
+        last_sequence: GlobalSequence::new(0),
+        item_count: 1,
+        byte_length: payload_len as u64,
+        membership_root: receipt_root,
+        payload_digest: ContentDigest::from_bytes(*blake3::hash(view.payload_bytes()).as_bytes()),
+    };
+    let descriptor_bytes = std::mem::size_of::<ResultSegmentDescriptor>()
+        + descriptor.projection.retained_allocation_bytes();
+    let descriptor_lease = descriptor_budget
+        .acquire(1, descriptor_bytes)
+        .await
+        .unwrap_or_else(|error| panic!("charge issue descriptor: {error}"));
+    let descriptor = BudgetedResultDescriptor::new(descriptor, descriptor_lease)
+        .unwrap_or_else(|error| panic!("budgeted issue descriptor: {error}"));
+    let handoff = view
+        .into_result_partition(descriptor)
+        .unwrap_or_else(|error| panic!("move issue partition: {error}"));
+    assert_eq!(handoff.partition().payload_bytes().as_ptr(), payload_ptr);
+    assert_eq!(handoff.receipt_root(), &receipt_root);
+    assert_eq!(reporter.retained_receipt_count(), 1);
+    drop(handoff);
+    assert_eq!(descriptor_budget.snapshot().used_items, 0);
+    assert_eq!(reporter.retained_receipt_count(), 1);
+}
+
+#[test]
+fn handled_issue_cut_is_clone_safe_and_strictly_decoded() {
+    let empty = HandledIssueCut::empty();
+    assert_eq!(empty.clone(), empty);
+    assert_ne!(empty.receipt_root(), &ContentDigest::from_bytes([0; 32]));
+
+    let encoded = serde_json::to_value(&empty)
+        .unwrap_or_else(|error| panic!("serialize handled cut: {error}"));
+    assert_eq!(
+        serde_json::from_value::<HandledIssueCut>(encoded.clone())
+            .unwrap_or_else(|error| panic!("strict handled cut: {error}")),
+        empty
+    );
+    let mut unknown = encoded;
+    unknown
+        .as_object_mut()
+        .unwrap_or_else(|| panic!("handled cut object"))
+        .insert("unexpected".to_owned(), serde_json::Value::Bool(true));
+    assert!(serde_json::from_value::<HandledIssueCut>(unknown).is_err());
+}
+
 #[allow(dead_code)]
 fn only_terminal_action_disposition_carries_failure_identity(
     disposition: ActionFailureDisposition,
@@ -432,4 +695,147 @@ fn only_terminal_action_disposition_carries_failure_identity(
         | ActionFailureDisposition::Backpressure(_) => None,
         ActionFailureDisposition::TerminalActionReceipt(identity) => Some(identity),
     }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn ledger_participant_state_is_budget_owned() {
+    let reporter_budget = budget(64, submission_queue_charge_bytes() + 64 * 1024);
+    let mut reporter =
+        BudgetOwnedStreamingIssueReporter::new(run(0x11), record_policy(), reporter_budget)
+            .unwrap_or_else(|error| panic!("budget-owned reporter: {error}"));
+    reporter
+        .initialize(None)
+        .await
+        .unwrap_or_else(|error| panic!("fresh initialize: {error}"));
+    reporter
+        .report(IssueSequenceUpdate::Issue(record_issue(
+            DecodeFailureCode::Syntax,
+        )))
+        .await
+        .unwrap_or_else(|error| panic!("retain issue: {error}"));
+    reporter
+        .report(IssueSequenceUpdate::NoMoreBefore {
+            input_domain: domain(0x21, 0x20),
+            through: SourcePosition::new(7),
+        })
+        .await
+        .unwrap_or_else(|error| panic!("advance frontier: {error}"));
+
+    let at = barrier(run(0x11), 4);
+    // Capture the pre-restart frontier root so the restored ledger is compared
+    // against it rather than against itself.
+    let pre_frontier_root = {
+        let view = reporter
+            .receipt_partition_view(&at)
+            .await
+            .unwrap_or_else(|error| panic!("prepare pre-restart partition: {error}"));
+        *view.handled_cut().input_frontier_root()
+    };
+    let prepared = reporter
+        .checkpoint_view(&at)
+        .await
+        .unwrap_or_else(|error| panic!("wire ledger state: {error}"));
+    assert_eq!(
+        prepared.descriptor().schema_id,
+        "aiperf.streaming.issue-ledger"
+    );
+    assert_eq!(prepared.descriptor().schema_version, 1);
+    assert_eq!(prepared.descriptor().represented_cut, at.cut);
+    assert_eq!(prepared.descriptor().item_count, 2);
+
+    let committed = support::committed_current_v4_participant_state(
+        run(0x11),
+        CheckpointParticipantId::new("streaming_issue_ledger"),
+        "aiperf.streaming.issue-ledger",
+        1,
+        at.cut.clone(),
+        2,
+        bytes::Bytes::copy_from_slice(prepared.payload_bytes()),
+    )
+    .await;
+
+    let mut resumed = BudgetOwnedStreamingIssueReporter::new(
+        run(0x11),
+        record_policy(),
+        budget(64, submission_queue_charge_bytes() + 64 * 1024),
+    )
+    .unwrap_or_else(|error| panic!("resumed reporter: {error}"));
+    resumed
+        .initialize(Some(committed))
+        .await
+        .unwrap_or_else(|error| panic!("restore ledger state: {error}"));
+    assert_eq!(resumed.retained_receipt_count(), 0);
+    assert_eq!(
+        resumed
+            .summary()
+            .unwrap_or_else(|error| panic!("restored summary: {error}"))
+            .total,
+        1
+    );
+    // The restored ledger keeps the committed receipt root, so its next cut is
+    // not the empty cut even though no detailed receipt is retained.
+    let resumed_view = resumed
+        .receipt_partition_view(&barrier(run(0x11), 5))
+        .await
+        .unwrap_or_else(|error| panic!("prepare resumed partition: {error}"));
+    assert_ne!(
+        resumed_view.handled_cut().receipt_root(),
+        HandledIssueCut::empty().receipt_root()
+    );
+    assert_eq!(
+        resumed_view.handled_cut().input_frontier_root(),
+        &pre_frontier_root
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn participant_state_prepare_releases_on_error() {
+    let mut reporter = BudgetOwnedStreamingIssueReporter::new(
+        run(0x11),
+        record_policy(),
+        budget(64, submission_queue_charge_bytes() + 64 * 1024),
+    )
+    .unwrap_or_else(|error| panic!("budget-owned reporter: {error}"));
+
+    // A foreign-run state cannot restore, and the refusal must leave the
+    // one-shot guard untouched so a fresh start is still reachable.
+    let foreign = support::committed_current_v4_participant_state(
+        run(0x12),
+        CheckpointParticipantId::new("streaming_issue_ledger"),
+        "aiperf.streaming.issue-ledger",
+        1,
+        barrier(run(0x12), 1).cut,
+        0,
+        bytes::Bytes::from_static(b"{}"),
+    )
+    .await;
+    assert!(reporter.initialize(Some(foreign)).await.is_err());
+    reporter
+        .initialize(None)
+        .await
+        .unwrap_or_else(|error| panic!("retry after refused restore: {error}"));
+    assert!(reporter.initialize(None).await.is_err());
+
+    // A foreign-run barrier refuses the participant view and installs no
+    // retirement authority, so a later commit notification retires nothing.
+    assert!(
+        reporter
+            .checkpoint_view(&barrier(run(0x12), 4))
+            .await
+            .is_err()
+    );
+    reporter
+        .report(IssueSequenceUpdate::Issue(record_issue(
+            DecodeFailureCode::Syntax,
+        )))
+        .await
+        .unwrap_or_else(|error| panic!("retain issue: {error}"));
+    reporter
+        .report(IssueSequenceUpdate::NoMoreBefore {
+            input_domain: domain(0x21, 0x20),
+            through: SourcePosition::new(7),
+        })
+        .await
+        .unwrap_or_else(|error| panic!("advance frontier: {error}"));
+    assert_eq!(reporter.retained_receipt_count(), 1);
 }
