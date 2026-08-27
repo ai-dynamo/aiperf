@@ -20,6 +20,7 @@ use aiperf_bench_tools::runtime_runner::{
     ControlledExporterWorkloadFactory, ControlledRuntimeReportV1, ExporterWorkloadAcquisitionError,
     ExporterWorkloadRequest, HostLivenessSourceV1, controlled_attempt_ledger_path,
     run_controlled_runtime_v1, run_controlled_runtime_with_exporters_v1,
+    run_controlled_runtime_with_exporters_and_liveness_v1,
     run_controlled_runtime_with_ledger_v1,
     run_controlled_runtime_with_liveness_v1,
 };
@@ -518,9 +519,15 @@ fn controller_owned_exporter_adapter_seals_history_without_invoking_exporter_chi
     let mut factory = FakeExporterFactory {
         mode: FakeExporterMode::Complete,
     };
+    let ledger = fixture._directory.path().join("controlled-attempts.jsonl");
 
-    let report = run_controlled_runtime_with_exporters_v1(&build_report, &mut factory)
-        .expect("controller-owned exporter execution completes");
+    let report = run_controlled_runtime_with_exporters_and_liveness_v1(
+        &build_report,
+        &mut factory,
+        &ledger,
+        &HostLivenessSourceV1::host_default(),
+    )
+    .expect("controller-owned exporter execution completes");
 
     assert_eq!(report.decision, ControlledAttemptDecision::ValidFailure);
     assert_eq!(report.exporter_pair_history.len(), 30);

@@ -724,8 +724,13 @@ impl AttemptLedger {
 
 /// Execute both build-bound members across the complete checked-in matrix.
 pub fn run_controlled_runtime_v1(
-    _build_report: &BuildPairReportV1,
+    build_report: &BuildPairReportV1,
 ) -> Result<ControlledRuntimeReportV1, ControlledRuntimeError> {
+    // Validate source tree before refusing for missing ledger so callers
+    // distinguish a stale build report from a missing ledger path argument.
+    validate_authoritative_build_report_v1(build_report).map_err(|error| {
+        ControlledRuntimeError::new(format!("invalid paired build authority: {error}"))
+    })?;
     Err(ControlledRuntimeError::new(
         "authoritative runtime execution requires a persistent attempt ledger",
     ))
@@ -785,6 +790,30 @@ pub fn run_controlled_runtime_with_liveness_v1(
     run_controlled_runtime_internal(
         build_report,
         None,
+        PAIRED_POLICY_BYTES,
+        attempt_ledger_path,
+        liveness,
+    )
+}
+
+/// Execute both members with an in-process exporter factory under an explicit
+/// controller-owned liveness source.
+///
+/// The factory is invoked only for scenarios the artifact accepts; artifact
+/// rejection by non-zero exit suppresses factory invocation and records a
+/// `ValidFailure`. This is the correct path for controller-owned exporter
+/// measurement where the factory implementation is co-located with the harness;
+/// [`run_controlled_runtime_with_exporters_v1`] is intentionally refused because
+/// an in-process factory cannot prove it was loaded from the audited artifact.
+pub fn run_controlled_runtime_with_exporters_and_liveness_v1(
+    build_report: &BuildPairReportV1,
+    exporter_factory: &mut dyn ControlledExporterWorkloadFactory,
+    attempt_ledger_path: &Path,
+    liveness: &HostLivenessSourceV1,
+) -> Result<ControlledRuntimeReportV1, ControlledRuntimeError> {
+    run_controlled_runtime_internal(
+        build_report,
+        Some(exporter_factory),
         PAIRED_POLICY_BYTES,
         attempt_ledger_path,
         liveness,
