@@ -9,6 +9,8 @@ pub(crate) mod connector;
 pub(crate) mod dialect;
 #[cfg(feature = "websocket")]
 pub(crate) mod driver;
+#[cfg(feature = "websocket")]
+pub(crate) mod sink;
 
 use crate::dispatch::sink::ObservedRoundTripMetrics;
 

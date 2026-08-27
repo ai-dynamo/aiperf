@@ -1,0 +1,327 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Ownership of every exporter source in the workspace.
+#
+# `classification` is one of:
+#   host_adapter        - stays in `aiperf-runtime`; legacy registry, closed config,
+#                         built-in ordering, and the compatibility adapters that call
+#                         the split leaves. Never equality-copied into a candidate.
+#   shared_sdk_helper   - the one implementation of a behavior several exporters share.
+#                         Compiled once in `aiperf-export-sdk` and never copied into a
+#                         candidate package.
+#   plugin_leaf         - an exporter entrypoint a candidate package equality-copies.
+#   package_internal_leaf - a source private to one candidate package: submodules,
+#                         tests, and golden assets that travel with their entrypoint.
+#
+# `state = "present"` rows pin the post-split BLAKE3 of the exact bytes a later task
+# equality-copies. `state = "planned"` rows name their final owner but are not yet
+# pinned: the exporter source split has not reached them, so a digest recorded here
+# would pin pre-split bytes. This file is reconciled with
+# `plugin-conformance/candidate-source-inventory.toml`.
+
+schema = "aiperf.export-leaf-ownership"
+version = 1
+producer_task = 6
+
+[[leaf]]
+source_path = "export-sdk/src/artifact_helpers.rs"
+classification = "shared_sdk_helper"
+candidate_owner = "aiperf-export-sdk"
+owner_task = 6
+state = "present"
+blake3 = "b418155fdbdb38a1ad2d5767f68c6accffc1f5d5cac7d6070ab58c2c9513bb10"
+
+[[leaf]]
+source_path = "export-sdk/src/capture_helpers.rs"
+classification = "shared_sdk_helper"
+candidate_owner = "aiperf-export-sdk"
+owner_task = 6
+state = "present"
+blake3 = "2cb62ebc4abf555a154a3beea83ec140ba4ea341d9bda03313eb0cf7d422b087"
+
+[[leaf]]
+source_path = "export-sdk/src/helpers.rs"
+classification = "shared_sdk_helper"
+candidate_owner = "aiperf-export-sdk"
+owner_task = 6
+state = "present"
+blake3 = "30ea3d91861b63680250fb70196ef4e22079a9daf010e324da2c056510484b00"
+
+[[leaf]]
+source_path = "export-sdk/src/lib.rs"
+classification = "shared_sdk_helper"
+candidate_owner = "aiperf-export-sdk"
+owner_task = 6
+state = "present"
+blake3 = "bc4e08795328c3b0a767b9728453f53708a40ed173b83077aa35f022f724e617"
+
+[[leaf]]
+source_path = "export-sdk/src/prepared_helpers.rs"
+classification = "shared_sdk_helper"
+candidate_owner = "aiperf-export-sdk"
+owner_task = 6
+state = "present"
+blake3 = "c5793050b40fc328b7fed4a994fea1c99385f97da6376bf4f299ed5946f999f2"
+
+[[leaf]]
+source_path = "runtime/src/export/mod.rs"
+classification = "host_adapter"
+candidate_owner = "aiperf-runtime"
+owner_task = 18
+state = "present"
+blake3 = "9439d9158cd3e151bc746fb2752d39c7b6f9c20a3c660040ceb844347c89ca0f"
+note = "Legacy ExportConfig, the static Exporter trait, ExporterRegistry, and built-in ordering. Host-owned until Task 18/39."
+
+[[leaf]]
+source_path = "runtime/src/export/adapters.rs"
+classification = "host_adapter"
+candidate_owner = "aiperf-runtime"
+owner_task = 6
+state = "planned"
+note = "Compatibility adapters mapping the legacy registry onto the split leaves."
+
+[[leaf]]
+source_path = "runtime/src/export/accuracy_csv.rs"
+classification = "plugin_leaf"
+candidate_owner = "export-basic"
+owner_task = 24
+state = "planned"
+
+[[leaf]]
+source_path = "runtime/src/export/accuracy_csv/tests.rs"
+classification = "package_internal_leaf"
+candidate_owner = "export-basic"
+owner_task = 24
+state = "planned"
+
+[[leaf]]
+source_path = "runtime/src/export/analysis_html.rs"
+classification = "plugin_leaf"
+candidate_owner = "export-basic"
+owner_task = 24
+state = "planned"
+
+[[leaf]]
+source_path = "runtime/src/export/analysis_txt.rs"
+classification = "plugin_leaf"
+candidate_owner = "export-basic"
+owner_task = 24
+state = "planned"
+
+[[leaf]]
+source_path = "runtime/src/export/console_txt.rs"
+classification = "plugin_leaf"
+candidate_owner = "export-basic"
+owner_task = 24
+state = "planned"
+
+[[leaf]]
+source_path = "runtime/src/export/console_txt/cell_widths.rs"
+classification = "package_internal_leaf"
+candidate_owner = "export-basic"
+owner_task = 24
+state = "planned"
+
+[[leaf]]
+source_path = "runtime/src/export/console_txt/tests.rs"
+classification = "package_internal_leaf"
+candidate_owner = "export-basic"
+owner_task = 24
+state = "planned"
+
+[[leaf]]
+source_path = "runtime/src/export/dataset_analysis.rs"
+classification = "plugin_leaf"
+candidate_owner = "export-basic"
+owner_task = 24
+state = "planned"
+
+[[leaf]]
+source_path = "runtime/src/export/genai_perf.rs"
+classification = "plugin_leaf"
+candidate_owner = "export-basic"
+owner_task = 24
+state = "planned"
+
+[[leaf]]
+source_path = "runtime/src/export/genai_perf/tests.rs"
+classification = "package_internal_leaf"
+candidate_owner = "export-basic"
+owner_task = 24
+state = "planned"
+
+[[leaf]]
+source_path = "runtime/src/export/server_metrics/mod.rs"
+classification = "plugin_leaf"
+candidate_owner = "export-basic"
+owner_task = 24
+state = "planned"
+
+[[leaf]]
+source_path = "runtime/src/export/server_metrics/tests.rs"
+classification = "package_internal_leaf"
+candidate_owner = "export-basic"
+owner_task = 24
+state = "planned"
+
+[[leaf]]
+source_path = "runtime/src/export/timeslice.rs"
+classification = "plugin_leaf"
+candidate_owner = "export-basic"
+owner_task = 24
+state = "planned"
+
+[[leaf]]
+source_path = "runtime/src/export/timeslice/tests.rs"
+classification = "package_internal_leaf"
+candidate_owner = "export-basic"
+owner_task = 24
+state = "planned"
+
+[[leaf]]
+source_path = "runtime/src/export/console_txt/golden/api_dynamo_session_control.txt"
+classification = "package_internal_leaf"
+candidate_owner = "export-basic"
+owner_task = 24
+state = "planned"
+
+[[leaf]]
+source_path = "runtime/src/export/console_txt/golden/api_max_completion_tokens.txt"
+classification = "package_internal_leaf"
+candidate_owner = "export-basic"
+owner_task = 24
+state = "planned"
+
+[[leaf]]
+source_path = "runtime/src/export/console_txt/golden/error_summary_table.regression.txt"
+classification = "package_internal_leaf"
+candidate_owner = "export-basic"
+owner_task = 24
+state = "planned"
+
+[[leaf]]
+source_path = "runtime/src/export/console_txt/golden/full_render.regression.txt"
+classification = "package_internal_leaf"
+candidate_owner = "export-basic"
+owner_task = 24
+state = "planned"
+
+[[leaf]]
+source_path = "runtime/src/export/console_txt/golden/osl_mismatch.txt"
+classification = "package_internal_leaf"
+candidate_owner = "export-basic"
+owner_task = 24
+state = "planned"
+
+[[leaf]]
+source_path = "runtime/src/export/console_txt/golden/unicode_cjk_metric.regression.txt"
+classification = "package_internal_leaf"
+candidate_owner = "export-basic"
+owner_task = 24
+state = "planned"
+
+[[leaf]]
+source_path = "runtime/src/export/console_txt/golden/unicode_emoji_wrap.regression.txt"
+classification = "package_internal_leaf"
+candidate_owner = "export-basic"
+owner_task = 24
+state = "planned"
+
+[[leaf]]
+source_path = "runtime/src/export/console_txt/golden/usage_discrepancy.txt"
+classification = "package_internal_leaf"
+candidate_owner = "export-basic"
+owner_task = 24
+state = "planned"
+
+[[leaf]]
+source_path = "runtime/src/export/parquet.rs"
+classification = "plugin_leaf"
+candidate_owner = "export-parquet"
+owner_task = 25
+state = "planned"
+
+[[leaf]]
+source_path = "runtime/src/export/parquet/tests.rs"
+classification = "package_internal_leaf"
+candidate_owner = "export-parquet"
+owner_task = 25
+state = "planned"
+
+[[leaf]]
+source_path = "runtime/src/export/parquet/units.rs"
+classification = "package_internal_leaf"
+candidate_owner = "export-parquet"
+owner_task = 25
+state = "planned"
+
+[[leaf]]
+source_path = "runtime/src/export/parquet_util.rs"
+classification = "package_internal_leaf"
+candidate_owner = "export-parquet"
+owner_task = 25
+state = "planned"
+
+[[leaf]]
+source_path = "runtime/src/export/per_record_parquet.rs"
+classification = "plugin_leaf"
+candidate_owner = "export-parquet"
+owner_task = 25
+state = "planned"
+
+[[leaf]]
+source_path = "runtime/src/export/mlflow.rs"
+classification = "plugin_leaf"
+candidate_owner = "export-mlflow"
+owner_task = 26
+state = "planned"
+
+[[leaf]]
+source_path = "runtime/src/export/mlflow/tests.rs"
+classification = "package_internal_leaf"
+candidate_owner = "export-mlflow"
+owner_task = 26
+state = "planned"
+
+[[leaf]]
+source_path = "runtime/src/export/wandb/mod.rs"
+classification = "plugin_leaf"
+candidate_owner = "export-wandb"
+owner_task = 27
+state = "planned"
+
+[[leaf]]
+source_path = "runtime/src/export/wandb/datastore.rs"
+classification = "package_internal_leaf"
+candidate_owner = "export-wandb"
+owner_task = 27
+state = "planned"
+
+[[leaf]]
+source_path = "runtime/src/export/wandb/proto.rs"
+classification = "package_internal_leaf"
+candidate_owner = "export-wandb"
+owner_task = 27
+state = "planned"
+
+[[leaf]]
+source_path = "runtime/src/export/wandb/tests.rs"
+classification = "package_internal_leaf"
+candidate_owner = "export-wandb"
+owner_task = 27
+state = "planned"
+
+[[leaf]]
+source_path = "runtime/src/export/otel.rs"
+classification = "plugin_leaf"
+candidate_owner = "export-otel"
+owner_task = 28
+state = "planned"
+
+[[leaf]]
+source_path = "runtime/src/export/otel/tests.rs"
+classification = "package_internal_leaf"
+candidate_owner = "export-otel"
+owner_task = 28
+state = "planned"

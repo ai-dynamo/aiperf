@@ -14,15 +14,32 @@ ROOT = Path(sys.argv[1]).resolve()
 IS_CHECK_MODE = "--check" in sys.argv[2:]
 RUST = ROOT / "rust"
 
+# Task 6 (Phase 3) created these four files as new module-path entries. They are
+# `present` in the inventory but do not exist in the pinned base commit. Their
+# BLAKE3 digest is validated against the current worktree file rather than a
+# git object, because no git object for them exists at BASE.
+TASK6_NEW = frozenset(
+    [
+        "runtime/src/transport/grpc/kserve_binding.rs",
+        "runtime/src/transport/ws/sink.rs",
+        "runtime/src/transport/dry_run.rs",
+        "runtime/src/dynosim/direct.rs",
+    ]
+)
+
 rows = []
 
 
-def source(path, package, owner, classification="implementation_leaf", is_planned=False):
+def source(
+    path, package, owner, classification="implementation_leaf", is_planned=False
+):
     path = Path(path).as_posix()
     if path.startswith("runtime/src/"):
         candidate = f"plugins/{package}/src/{path.removeprefix('runtime/src/')}"
     elif path.startswith("runtime/tests/"):
-        candidate = f"plugins/{package}/tests/baseline/{path.removeprefix('runtime/tests/')}"
+        candidate = (
+            f"plugins/{package}/tests/baseline/{path.removeprefix('runtime/tests/')}"
+        )
     elif path.startswith("dry-run-tests/tests/"):
         candidate = f"plugins/{package}/tests/baseline/{path.removeprefix('dry-run-tests/tests/')}"
     else:
@@ -49,77 +66,150 @@ def tree(package, owner, prefix, classification="implementation_leaf"):
         source(path.decode().removeprefix("rust/"), package, owner, classification)
 
 
-leaves("export-basic", 24, [
-    "runtime/src/export/accuracy_csv.rs", "runtime/src/export/accuracy_csv/tests.rs",
-    "runtime/src/export/analysis_html.rs", "runtime/src/export/analysis_txt.rs",
-    "runtime/src/export/console_txt.rs", "runtime/src/export/console_txt/cell_widths.rs",
-    "runtime/src/export/console_txt/tests.rs", "runtime/src/export/dataset_analysis.rs",
-    "runtime/src/export/genai_perf.rs", "runtime/src/export/genai_perf/tests.rs",
-    "runtime/src/export/server_metrics/mod.rs", "runtime/src/export/server_metrics/tests.rs",
-    "runtime/src/export/timeslice.rs", "runtime/src/export/timeslice/tests.rs",
-])
+leaves(
+    "export-basic",
+    24,
+    [
+        "runtime/src/export/accuracy_csv.rs",
+        "runtime/src/export/accuracy_csv/tests.rs",
+        "runtime/src/export/analysis_html.rs",
+        "runtime/src/export/analysis_txt.rs",
+        "runtime/src/export/console_txt.rs",
+        "runtime/src/export/console_txt/cell_widths.rs",
+        "runtime/src/export/console_txt/tests.rs",
+        "runtime/src/export/dataset_analysis.rs",
+        "runtime/src/export/genai_perf.rs",
+        "runtime/src/export/genai_perf/tests.rs",
+        "runtime/src/export/server_metrics/mod.rs",
+        "runtime/src/export/server_metrics/tests.rs",
+        "runtime/src/export/timeslice.rs",
+        "runtime/src/export/timeslice/tests.rs",
+    ],
+)
 tree("export-basic", 24, "runtime/src/export/console_txt/golden", "asset")
-leaves("export-parquet", 25, [
-    "runtime/src/export/parquet.rs", "runtime/src/export/parquet/tests.rs",
-    "runtime/src/export/parquet/units.rs", "runtime/src/export/parquet_util.rs",
-    "runtime/src/export/per_record_parquet.rs",
-])
-leaves("export-mlflow", 26, ["runtime/src/export/mlflow.rs", "runtime/src/export/mlflow/tests.rs"])
-leaves("export-wandb", 27, [
-    "runtime/src/export/wandb/mod.rs", "runtime/src/export/wandb/datastore.rs",
-    "runtime/src/export/wandb/proto.rs", "runtime/src/export/wandb/tests.rs",
-])
-leaves("export-otel", 28, ["runtime/src/export/otel.rs", "runtime/src/export/otel/tests.rs"])
-leaves("endpoints", 29, [
-    "runtime/src/endpoints/anthropic.rs", "runtime/src/endpoints/chat.rs",
-    "runtime/src/endpoints/chat_chunk.rs", "runtime/src/endpoints/extraction.rs",
-    "runtime/src/endpoints/implementation.rs", "runtime/src/endpoints/kserve.rs",
-    "runtime/src/endpoints/riva.rs", "runtime/src/endpoints/sagemaker.rs",
-    "runtime/src/endpoints/spec_decode.rs", "runtime/src/endpoints/tier2.rs",
-    "runtime/src/endpoints/tier2/flexible.rs", "runtime/src/endpoints/usage.rs",
-    "runtime/src/endpoints/vllm_generate.rs",
-])
+leaves(
+    "export-parquet",
+    25,
+    [
+        "runtime/src/export/parquet.rs",
+        "runtime/src/export/parquet/tests.rs",
+        "runtime/src/export/parquet/units.rs",
+        "runtime/src/export/parquet_util.rs",
+        "runtime/src/export/per_record_parquet.rs",
+    ],
+)
+leaves(
+    "export-mlflow",
+    26,
+    ["runtime/src/export/mlflow.rs", "runtime/src/export/mlflow/tests.rs"],
+)
+leaves(
+    "export-wandb",
+    27,
+    [
+        "runtime/src/export/wandb/mod.rs",
+        "runtime/src/export/wandb/datastore.rs",
+        "runtime/src/export/wandb/proto.rs",
+        "runtime/src/export/wandb/tests.rs",
+    ],
+)
+leaves(
+    "export-otel",
+    28,
+    ["runtime/src/export/otel.rs", "runtime/src/export/otel/tests.rs"],
+)
+leaves(
+    "endpoints",
+    29,
+    [
+        "runtime/src/endpoints/anthropic.rs",
+        "runtime/src/endpoints/chat.rs",
+        "runtime/src/endpoints/chat_chunk.rs",
+        "runtime/src/endpoints/extraction.rs",
+        "runtime/src/endpoints/implementation.rs",
+        "runtime/src/endpoints/kserve.rs",
+        "runtime/src/endpoints/riva.rs",
+        "runtime/src/endpoints/sagemaker.rs",
+        "runtime/src/endpoints/spec_decode.rs",
+        "runtime/src/endpoints/tier2.rs",
+        "runtime/src/endpoints/tier2/flexible.rs",
+        "runtime/src/endpoints/usage.rs",
+        "runtime/src/endpoints/vllm_generate.rs",
+    ],
+)
 source("runtime/src/endpoints/mod.rs", "endpoints", 29, "facade")
-leaves("endpoints", 29, [
-    "runtime/tests/endpoints_anthropic_messages.rs", "runtime/tests/endpoints_endpoints.rs",
-    "runtime/tests/endpoints_kserve.rs", "runtime/tests/endpoints_registry.rs",
-    "runtime/tests/endpoints_riva.rs", "runtime/tests/endpoints_tier2.rs",
-    "runtime/tests/endpoints_vllm_generate.rs", "runtime/tests/tier2_endpoints_online.rs",
-])
+leaves(
+    "endpoints",
+    29,
+    [
+        "runtime/tests/endpoints_anthropic_messages.rs",
+        "runtime/tests/endpoints_endpoints.rs",
+        "runtime/tests/endpoints_kserve.rs",
+        "runtime/tests/endpoints_registry.rs",
+        "runtime/tests/endpoints_riva.rs",
+        "runtime/tests/endpoints_tier2.rs",
+        "runtime/tests/endpoints_vllm_generate.rs",
+        "runtime/tests/tier2_endpoints_online.rs",
+    ],
+)
 tree("transport-http", 31, "runtime/src/transport/http")
 tree("transport-http", 31, "runtime/tests/transport_http")
 for path in [
-    "runtime/src/transport/grpc/kserve_binding.rs", "runtime/src/transport/grpc/proto.rs",
-    "runtime/src/transport/grpc/riva_binding.rs", "runtime/src/transport/grpc/riva_codec.rs",
+    "runtime/src/transport/grpc/kserve_binding.rs",
+    "runtime/src/transport/grpc/proto.rs",
+    "runtime/src/transport/grpc/riva_binding.rs",
+    "runtime/src/transport/grpc/riva_codec.rs",
     "runtime/src/transport/grpc/riva_proto.rs",
 ]:
-    source(path, "endpoints", 30, is_planned=path.endswith("kserve_binding.rs"))
-leaves("transport-grpc", 32, [
-    "runtime/src/transport/grpc/codec.rs", "runtime/src/transport/grpc/models.rs",
-    "runtime/src/transport/grpc/raw_codec.rs", "runtime/src/transport/grpc/sink.rs",
-    "runtime/src/transport/grpc/transport.rs",
-])
+    source(path, "endpoints", 30)
+leaves(
+    "transport-grpc",
+    32,
+    [
+        "runtime/src/transport/grpc/codec.rs",
+        "runtime/src/transport/grpc/models.rs",
+        "runtime/src/transport/grpc/raw_codec.rs",
+        "runtime/src/transport/grpc/sink.rs",
+        "runtime/src/transport/grpc/transport.rs",
+    ],
+)
 source("runtime/tests/proto/grpc_predict_v2.proto", "transport-grpc", 32, "asset")
 source("runtime/src/transport/grpc/mod.rs", "transport-grpc", 32, "facade")
-leaves("transport-grpc", 32, [
-    "runtime/tests/transport_grpc_codec.rs", "runtime/tests/transport_grpc_riva.rs",
-    "runtime/tests/transport_grpc_riva_transport.rs", "runtime/tests/transport_grpc_transport.rs",
-])
+leaves(
+    "transport-grpc",
+    32,
+    [
+        "runtime/tests/transport_grpc_codec.rs",
+        "runtime/tests/transport_grpc_riva.rs",
+        "runtime/tests/transport_grpc_riva_transport.rs",
+        "runtime/tests/transport_grpc_transport.rs",
+    ],
+)
 for path in [
-    "runtime/src/transport/ws.rs", "runtime/src/transport/ws/connector.rs",
-    "runtime/src/transport/ws/dialect.rs", "runtime/src/transport/ws/driver.rs",
+    "runtime/src/transport/ws.rs",
+    "runtime/src/transport/ws/connector.rs",
+    "runtime/src/transport/ws/dialect.rs",
+    "runtime/src/transport/ws/driver.rs",
     "runtime/src/transport/ws/sink.rs",
 ]:
-    source(path, "transport-websocket", 33, is_planned=path.endswith("ws/sink.rs"))
+    source(path, "transport-websocket", 33)
 source("runtime/tests/websocket_transport_config.rs", "transport-websocket", 33)
-source("runtime/src/transport/dry_run.rs", "transport-dry-run", 33, is_planned=True)
-leaves("transport-dry-run", 33, [
-    "dry-run-tests/tests/common/mod.rs", "dry-run-tests/tests/component_packages.rs",
-    "dry-run-tests/tests/dry_run.rs", "dry-run-tests/tests/random_pool_batches.rs",
-    "dry-run-tests/tests/timing.rs", "dry-run-tests/tests/timing_extended.rs",
-    "dry-run-tests/tests/tracelab.rs", "dry-run-tests/tests/virtual_workers.rs",
-])
-source("runtime/src/dynosim/direct.rs", "transport-dynosim", 34, is_planned=True)
+source("runtime/src/transport/dry_run.rs", "transport-dry-run", 33)
+leaves(
+    "transport-dry-run",
+    33,
+    [
+        "dry-run-tests/tests/common/mod.rs",
+        "dry-run-tests/tests/component_packages.rs",
+        "dry-run-tests/tests/dry_run.rs",
+        "dry-run-tests/tests/random_pool_batches.rs",
+        "dry-run-tests/tests/timing.rs",
+        "dry-run-tests/tests/timing_extended.rs",
+        "dry-run-tests/tests/tracelab.rs",
+        "dry-run-tests/tests/virtual_workers.rs",
+    ],
+)
+source("runtime/src/dynosim/direct.rs", "transport-dynosim", 34)
 source("runtime/src/endpoints/dynosim.rs", "transport-dynosim", 34)
 
 if len(rows) != 126:
@@ -137,14 +227,16 @@ output = [
     "",
 ]
 for path, candidate, owner, classification, is_planned in rows:
-    output.extend([
-        "[[source]]",
-        f'source_path = "{path}"',
-        f'candidate_path = "{candidate}"',
-        f"owner_task = {owner}",
-        f'classification = "{classification}"',
-        f'state = "{("planned" if is_planned else "present")}"',
-    ])
+    output.extend(
+        [
+            "[[source]]",
+            f'source_path = "{path}"',
+            f'candidate_path = "{candidate}"',
+            f"owner_task = {owner}",
+            f'classification = "{classification}"',
+            f'state = "{("planned" if is_planned else "present")}"',
+        ]
+    )
     if is_planned:
         source_path = ROOT / "rust" / path
         if source_path.exists():
@@ -161,8 +253,18 @@ for path, candidate, owner, classification, is_planned in rows:
         if base_probe.returncode != 128:
             raise SystemExit(f"cannot inspect planned source in pinned base: {path}")
         output.append("producer_task = 6")
+    elif path in TASK6_NEW:
+        # Task-6-new files exist in the worktree but not in the pinned base commit.
+        # Compute the digest from the worktree file instead of a git object.
+        worktree_file = ROOT / "rust" / path
+        if not worktree_file.exists():
+            raise SystemExit(f"task6_new source missing from worktree: {path}")
+        content = worktree_file.read_bytes()
+        output.append(f'blake3 = "{blake3.blake3(content).hexdigest()}"')
     else:
-        expected_blob = subprocess.check_output(["git", "show", f"{BASE}:rust/{path}"], cwd=ROOT)
+        expected_blob = subprocess.check_output(
+            ["git", "show", f"{BASE}:rust/{path}"], cwd=ROOT
+        )
         output.append(f'blake3 = "{blake3.blake3(expected_blob).hexdigest()}"')
     output.append("")
 

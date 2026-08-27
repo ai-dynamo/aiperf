@@ -11,3 +11,10 @@ license.workspace = true
 aiperf-core.workspace = true
 aiperf-endpoint-sdk.workspace = true
 aiperf-plugin-api.workspace = true
+anyhow.workspace = true
+async-trait.workspace = true
+bytes.workspace = true
+smallvec.workspace = true
+tokio = { workspace = true }
+tracing.workspace = true
+uuid.workspace = true
