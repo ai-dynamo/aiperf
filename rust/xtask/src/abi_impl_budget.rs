@@ -62,7 +62,7 @@ pub fn measure() -> Result<Measurement> {
     let seeds = Seeds::load(crate_root.join("abi-seeds.toml"))?;
     let closure = compute(&seeds)?;
     let impl_lines = closure.file_lines.saturating_sub(closure.type_lines);
-    let ratio = ratio(closure.type_lines, impl_lines);
+    let ratio = implementation_ratio(closure.type_lines, impl_lines);
     let boundary_files = BOUNDARY_FILES
         .iter()
         .map(|file| {
@@ -81,7 +81,7 @@ pub fn measure() -> Result<Measurement> {
                 file: (*file).to_owned(),
                 type_lines,
                 impl_lines,
-                ratio: ratio(type_lines, impl_lines),
+                ratio: implementation_ratio(type_lines, impl_lines),
             })
         })
         .collect::<Result<Vec<_>>>()?;
@@ -136,7 +136,7 @@ pub fn ensure_within_budget(measurement: &Measurement) -> Result<()> {
     Ok(())
 }
 
-fn ratio(type_lines: usize, impl_lines: usize) -> f64 {
+fn implementation_ratio(type_lines: usize, impl_lines: usize) -> f64 {
     let total_lines = type_lines + impl_lines;
     if total_lines == 0 {
         0.0
