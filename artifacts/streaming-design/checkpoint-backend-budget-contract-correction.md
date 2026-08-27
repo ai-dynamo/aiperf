@@ -28,6 +28,38 @@ capacity wins deterministically. A closed budget maps to `Closed`;
 unrepresentable permit counts or accounting map to `Unrepresentable`.
 Temporary contention is not an error and waits cancellation-safely.
 
+`MemoryCheckpointBackend` has one constructor only:
+`new(limits: MemoryCheckpointLimits) -> Result<Self, CheckpointError>`. It
+validates the five transaction, prepared-index, storage, result-summary, and
+read item/byte limits in that order before retaining backend state. Zero item or
+byte capacity maps to the matching kind plus `ItemCapacity` or `ByteCapacity`;
+an unrepresentable semaphore limit maps to that kind plus `Unrepresentable`.
+RED covers both dimensions and both failure classes for all five kinds.
+
+## Move-only DTO ruling
+
+Every lease-bearing result wrapper has private fields. `ResultPartition`,
+`PreparedResultEpoch`, `BudgetedResultDescriptors`, `ResultSegmentReader`, and
+`ResultIndexPage` expose checked construction and borrow-only accessors. Where
+an enclosing wrapper has a consuming `into_parts`, it returns the allocation
+and its authority together. No public field or accessor returns a `BudgetLease`
+independently.
+`BudgetedResultDescriptors` itself exposes no consuming separation method; the
+enclosing wrappers move it intact.
+
+`ResultProjectionId` stores compact `Box<str>`. A budgeted descriptor slice
+charges its boxed inline allocation plus every nested projection byte, using
+checked arithmetic. The descriptor slice and exact lease remain inseparable
+until the wrapper is consumed.
+
+One aggregate immutable-storage acquisition cannot be divided among objects by
+the existing move-only `BudgetLease`. The memory backend therefore stores one
+private `Rc<StorageCommitBundle>` owning that aggregate lease, and every object
+newly introduced by the commit retains a clone of that bundle handle. The full
+charge remains until the last object from the bundle is reclaimed; it may
+over-retain but cannot undercharge. Sequential per-object acquisition while
+earlier leases are held is forbidden.
+
 ## Non-looping result-index ruling
 
 `ResultIndexReadBudget.max_bytes` bounds the actual retained allocation of a
@@ -48,7 +80,14 @@ backend budget snapshots, and authoritative generation unchanged.
 
 - A commit whose one aggregate immutable storage reservation exceeds only the
   storage byte limit returns `BackendBudget { Storage, ByteCapacity }`, publishes
-  no head or object, and releases every transaction/prepared charge.
+  no head or object, leaves the exact typed immutable-object inventory unchanged,
+  preserves its exact object count, and releases every transaction/prepared
+  charge.
+- Zero or unrepresentable capacity in each `MemoryCheckpointLimits` field is
+  rejected by the sole fallible constructor with the exact budget kind/code.
+- Moving or borrowing a lease independently from any lease-bearing result
+  wrapper does not type-check; compact nested projection bytes participate in
+  exact descriptor-summary charging.
 - A valid next descriptor one byte larger than the caller page limit returns
   `ResultIndexReadBudgetTooSmall` with exact required and maximum values, does
   not acquire backend read capacity, and succeeds when retried with the exact

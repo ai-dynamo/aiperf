@@ -779,27 +779,27 @@ pub struct WorkerId(u32);
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(transparent)]
-pub struct ResultProjectionId(String);
+pub struct ResultProjectionId(Box<str>);
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct ResultSchemaVersion(u32);
 
 pub struct ResultPartition {
-    pub descriptor: ResultSegmentDescriptor,
-    pub payload: BudgetedCheckpointBytes,
+    descriptor: ResultSegmentDescriptor,
+    payload: BudgetedCheckpointBytes,
 }
 
 pub struct PreparedResultEpoch {
-    pub index_root: ContentDigest,
-    pub descriptors: BudgetedResultDescriptors,
-    pub item_count: u64,
-    pub byte_length: u64,
+    index_root: ContentDigest,
+    descriptors: BudgetedResultDescriptors,
+    item_count: u64,
+    byte_length: u64,
 }
 
 pub struct BudgetedResultDescriptors {
-    pub descriptors: Box<[ResultSegmentDescriptor]>,
-    pub lease: BudgetLease,
+    descriptors: Box<[ResultSegmentDescriptor]>,
+    lease: BudgetLease,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -820,8 +820,8 @@ pub struct ResultSegmentDescriptor {
 }
 
 pub struct ResultSegmentReader {
-    pub descriptor: ResultSegmentDescriptor,
-    pub payload: BudgetedCheckpointBytes,
+    descriptor: ResultSegmentDescriptor,
+    payload: BudgetedCheckpointBytes,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -839,9 +839,8 @@ pub struct ResultIndexReadBudget {
 }
 
 pub struct ResultIndexPage {
-    pub descriptors: BudgetedResultDescriptors,
-    pub next: Option<ResultIndexCursor>,
-    pub charged_bytes: u64,
+    descriptors: BudgetedResultDescriptors,
+    next: Option<ResultIndexCursor>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -862,6 +861,19 @@ pub struct CheckpointGenerationExpectations {
     pub participant_plan: CheckpointParticipantPlan,
     pub execution_plan_digest: ContentDigest,
     pub result_plan_digest: ContentDigest,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MemoryCheckpointLimits {
+    pub transactions: BudgetLimits,
+    pub prepared_indexes: BudgetLimits,
+    pub storage: BudgetLimits,
+    pub result_summaries: BudgetLimits,
+    pub reads: BudgetLimits,
+}
+
+impl MemoryCheckpointBackend {
+    pub fn new(limits: MemoryCheckpointLimits) -> Result<Self, CheckpointError>;
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -893,6 +905,113 @@ pub enum CheckpointError {
         required_bytes: u64,
         max_bytes: u64,
     },
+}
+```
+
+The snippets above show private fields intentionally. Implement these exact
+checked ownership APIs in `results.rs`:
+
+```rust
+impl ResultProjectionId {
+    pub fn new(value: impl Into<String>) -> Result<Self, CheckpointError>;
+    pub fn as_str(&self) -> &str;
+    pub fn retained_allocation_bytes(&self) -> usize;
+}
+
+impl ResultPartition {
+    pub fn new(
+        descriptor: ResultSegmentDescriptor,
+        payload: BudgetedCheckpointBytes,
+    ) -> Result<Self, CheckpointError>;
+    pub fn descriptor(&self) -> &ResultSegmentDescriptor;
+    pub fn payload_bytes(&self) -> &[u8];
+    pub fn into_parts(self) -> (ResultSegmentDescriptor, BudgetedCheckpointBytes);
+}
+
+impl BudgetedResultDescriptors {
+    pub(crate) fn new(
+        descriptors: Box<[ResultSegmentDescriptor]>,
+        lease: BudgetLease,
+    ) -> Result<Self, CheckpointError>;
+    pub fn descriptors(&self) -> &[ResultSegmentDescriptor];
+    pub fn charged_bytes(&self) -> usize;
+}
+
+impl PreparedResultEpoch {
+    pub(crate) fn new(
+        index_root: ContentDigest,
+        descriptors: BudgetedResultDescriptors,
+        item_count: u64,
+        byte_length: u64,
+    ) -> Result<Self, CheckpointError>;
+    pub fn index_root(&self) -> &ContentDigest;
+    pub fn descriptors(&self) -> &[ResultSegmentDescriptor];
+    pub fn item_count(&self) -> u64;
+    pub fn byte_length(&self) -> u64;
+    pub fn into_parts(
+        self,
+    ) -> (ContentDigest, BudgetedResultDescriptors, u64, u64);
+}
+
+impl ResultSegmentReader {
+    pub(crate) fn new(
+        descriptor: ResultSegmentDescriptor,
+        payload: BudgetedCheckpointBytes,
+    ) -> Result<Self, CheckpointError>;
+    pub fn descriptor(&self) -> &ResultSegmentDescriptor;
+    pub fn payload_bytes(&self) -> &[u8];
+    pub fn into_parts(self) -> (ResultSegmentDescriptor, BudgetedCheckpointBytes);
+}
+
+impl ResultIndexPage {
+    pub(crate) fn new(
+        descriptors: BudgetedResultDescriptors,
+        next: Option<ResultIndexCursor>,
+    ) -> Result<Self, CheckpointError>;
+    pub fn descriptors(&self) -> &[ResultSegmentDescriptor];
+    pub fn next(&self) -> Option<&ResultIndexCursor>;
+    pub fn charged_bytes(&self) -> u64;
+    pub fn into_parts(
+        self,
+    ) -> (BudgetedResultDescriptors, Option<ResultIndexCursor>);
+}
+```
+
+`ResultProjectionId::new` rejects an empty value and compacts the accepted text
+with `String::into_boxed_str`. `ResultPartition::new` and
+`ResultSegmentReader::new` verify exact payload length and raw BLAKE3 digest
+against the descriptor. `BudgetedResultDescriptors::new` requires lease items
+equal to descriptor count and lease bytes equal to the checked sum of
+`descriptors.len() * size_of::<ResultSegmentDescriptor>()` plus every compact
+`descriptor.projection.as_str().len()`. Empty descriptor slices use an exact
+`(0, 0)` lease. `PreparedResultEpoch::new` checked-adds descriptor item/byte
+totals and requires those computed totals to equal its supplied `item_count`
+and `byte_length`. `ResultIndexPage::new` checked-converts the inseparable
+descriptor lease charge rather than retaining a second caller-supplied value.
+No accessor or consuming method exposes `BudgetLease` or an unbudgeted
+descriptor allocation. `BudgetedResultDescriptors` has no `into_parts` method;
+the enclosing wrappers' consuming methods move that wrapper intact. The other
+`into_parts` methods are consuming and keep each payload or descriptor lease
+inside its existing budgeted wrapper.
+
+`MemoryCheckpointBackend::new` is the only backend constructor. Validate all
+five `MemoryCheckpointLimits` entries in field order before retaining state or
+budgets. For each kind, zero `max_items` maps to `ItemCapacity`, zero
+`max_bytes` maps to `ByteCapacity`, and either value beyond Tokio semaphore
+representation maps to `Unrepresentable`. Direct RED calls use `.unwrap()`;
+support fixture constructors perform that same unwrap internally and return a
+fully initialized backend. Do not add an infallible `new`, `new_unchecked`, or
+alternate `try_new`.
+
+`support::invalid_backend_limits()` is an exact 20-case matrix: for each of the
+five budget kinds, mutate only that kind to zero items, zero bytes, items above
+`tokio::sync::Semaphore::MAX_PERMITS`, or bytes above that limit while every
+other field remains valid. The expected tuple names that kind and respectively
+uses `ItemCapacity`, `ByteCapacity`, `Unrepresentable`, or `Unrepresentable`.
+
+```rust
+fn memory_backend(limits: MemoryCheckpointLimits) -> MemoryCheckpointBackend {
+    MemoryCheckpointBackend::new(limits).unwrap()
 }
 ```
 
@@ -1000,9 +1119,40 @@ fn backend_budget_codes_have_stable_names() {
     );
 }
 
+#[test]
+fn backend_constructor_rejects_invalid_limits_with_exact_kind_and_code() {
+    let cases = support::invalid_backend_limits();
+    assert_eq!(cases.len(), 20);
+    for (limits, budget, code) in cases {
+        assert!(matches!(
+            MemoryCheckpointBackend::new(limits),
+            Err(CheckpointError::BackendBudget {
+                budget: actual_budget,
+                code: actual_code,
+            }) if actual_budget == budget && actual_code == code
+        ));
+    }
+}
+
+/// ```compile_fail
+/// # use aiperf_runtime::streaming::results::BudgetedResultDescriptors;
+/// # fn cannot_separate(value: BudgetedResultDescriptors) {
+/// let _descriptors = value.descriptors;
+/// let _lease = value.lease;
+/// # }
+/// ```
+
+/// ```compile_fail
+/// # use aiperf_runtime::streaming::results::{ResultIndexPage, ResultPartition};
+/// # fn cannot_separate(page: ResultIndexPage, partition: ResultPartition) {
+/// let _page_descriptors = page.descriptors;
+/// let _partition_payload = partition.payload;
+/// # }
+/// ```
+
 #[tokio::test(flavor = "current_thread")]
 async fn stale_writer_cannot_merge_or_replace_head() {
-    let backend = MemoryCheckpointBackend::new(support::backend_limits());
+    let backend = MemoryCheckpointBackend::new(support::backend_limits()).unwrap();
     let run = support::run_id(1);
     let first = support::commit_empty(&backend, run, None, 1).await.unwrap();
     let stale = backend.begin_generation(run, None, support::expectations(run)).await.unwrap();
@@ -1014,7 +1164,7 @@ async fn stale_writer_cannot_merge_or_replace_head() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn dropped_transaction_publishes_nothing_and_releases_budget() {
-    let backend = MemoryCheckpointBackend::new(support::backend_limits());
+    let backend = MemoryCheckpointBackend::new(support::backend_limits()).unwrap();
     let run = support::run_id(1);
     let transaction = backend.begin_generation(run, None, support::expectations(run)).await.unwrap();
     assert_eq!(backend.prepared_transactions(), 1);
@@ -1025,7 +1175,7 @@ async fn dropped_transaction_publishes_nothing_and_releases_budget() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn empty_generations_and_heads_are_isolated_by_logical_run() {
-    let backend = MemoryCheckpointBackend::new(support::backend_limits());
+    let backend = MemoryCheckpointBackend::new(support::backend_limits()).unwrap();
     let first_run = support::run_id(1);
     let second_run = support::run_id(2);
     let first = support::commit_empty(&backend, first_run, None, 1).await.unwrap();
@@ -1043,7 +1193,7 @@ async fn empty_generations_and_heads_are_isolated_by_logical_run() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn explicit_expectation_and_result_runs_must_match_transaction_run() {
-    let backend = MemoryCheckpointBackend::new(support::backend_limits());
+    let backend = MemoryCheckpointBackend::new(support::backend_limits()).unwrap();
     let run = support::run_id(1);
     let other = support::run_id(2);
     assert!(matches!(
@@ -1067,7 +1217,7 @@ async fn explicit_expectation_and_result_runs_must_match_transaction_run() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn commit_requires_exact_participants_and_one_canonical_result_epoch() {
-    let backend = MemoryCheckpointBackend::new(support::backend_limits());
+    let backend = MemoryCheckpointBackend::new(support::backend_limits()).unwrap();
     let run = support::run_id(1);
 
     let mut omitted_results = support::transaction_with_all_participants(&backend, run).await;
@@ -1093,7 +1243,7 @@ async fn commit_requires_exact_participants_and_one_canonical_result_epoch() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn result_epoch_and_reader_reachability_are_generation_scoped() {
-    let backend = MemoryCheckpointBackend::new(support::backend_limits());
+    let backend = MemoryCheckpointBackend::new(support::backend_limits()).unwrap();
     let run = support::run_id(1);
     let mut transaction = support::transaction_with_all_participants(&backend, run).await;
     transaction
@@ -1129,6 +1279,8 @@ async fn storage_capacity_refusal_is_typed_and_publishes_nothing() {
     let backend = MemoryCheckpointBackend::new(limits).unwrap();
     let run = support::run_id(1);
     let before = backend.budget_snapshots();
+    let objects_before = backend.immutable_object_inventory(&run);
+    let object_count_before = objects_before.total_count();
     let transaction = support::transaction_with_one_segment(&backend, run).await;
 
     assert!(matches!(
@@ -1143,6 +1295,11 @@ async fn storage_capacity_refusal_is_typed_and_publishes_nothing() {
         .await
         .unwrap()
         .is_none());
+    assert_eq!(backend.immutable_object_inventory(&run), objects_before);
+    assert_eq!(
+        backend.immutable_object_inventory(&run).total_count(),
+        object_count_before,
+    );
     assert_eq!(backend.budget_snapshots().storage, before.storage);
     assert_eq!(backend.budget_snapshots().transactions.used_items, 0);
     assert_eq!(backend.budget_snapshots().prepared_indexes.used_items, 0);
@@ -1235,7 +1392,14 @@ struct MemoryState {
     heads: BTreeMap<StreamRunIdentity, MemoryRunHead>,
 }
 
-struct BudgetedStoredObject { bytes: Bytes, storage_lease: BudgetLease }
+struct StorageCommitBundle {
+    _storage_lease: BudgetLease,
+}
+
+struct BudgetedStoredObject {
+    bytes: Bytes,
+    _storage_bundle: Rc<StorageCommitBundle>,
+}
 
 fn compare_expected(
     head: Option<CheckpointGeneration>,
@@ -1252,11 +1416,13 @@ Keep storage behind `Rc<RefCell<MemoryState>>`; it is test/reference state on on
 local runtime, not a shared hot-path lock. Resolve the `MemoryRunHead` by the
 transaction's exact `StreamRunIdentity` before comparing or publishing the head.
 Never compare a writer against a global or different-run generation. The
-transaction owns prepared permits and releases them in `Drop` unless commit
-transfers them into `BudgetedStoredObject`. Each reader method acquires a
-separate read-budget lease before cheaply cloning underlying `Bytes`; the
-returned wrapper owns that full logical-byte charge, so storage and concurrent
-readers remain independently bounded.
+transaction owns its transaction and prepared-index permits and releases both
+through RAII on abort, failed commit, and successful commit; neither lease is
+transferred into immutable objects. A successful commit acquires the separate
+aggregate storage lease described below before publication. Each reader method
+acquires a separate read-budget lease before cheaply cloning underlying
+`Bytes`; the returned wrapper owns that full logical-byte charge, so storage and
+concurrent readers remain independently bounded.
 
 Keep transaction, prepared-index, immutable-storage, returned-summary, and read
 budgets distinct. A returned `PreparedResultEpoch` owns a summary lease separate
@@ -1267,6 +1433,9 @@ not sequentially await per-object reservations while retaining earlier ones.
 The memory reference may attach that aggregate charge through one shared
 commit-bundle owner to every newly inserted object. It safely over-retains until
 the last object from that bundle is reclaimed and cannot undercharge storage.
+Concretely, create one private `Rc<StorageCommitBundle>` after the aggregate
+acquisition and clone only that handle into each `BudgetedStoredObject` inserted
+by the commit. Never clone, expose, or attempt to split `BudgetLease` itself.
 
 Validate cursor root, block reachability, and offset before inspecting page or
 backend capacity. Validate the one-descriptor page limit next, and acquire the
