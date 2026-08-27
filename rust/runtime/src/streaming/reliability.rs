@@ -5018,22 +5018,25 @@ fn parsed_receipt_bound_bytes() -> Result<usize, BudgetError> {
     ])
 }
 
-/// Return the exact structural charge of one pending-input ordered-map entry.
+/// Return the upper-bound structural charge of one pending-input ordered-map
+/// entry.
 fn pending_input_entry_bytes() -> Result<usize, BudgetError> {
     super::budget::ordered_map_entry_bytes::<PendingInputKey, PendingIssue>()
 }
 
-/// Return the exact structural charge of one retained-receipt ordered-map entry.
+/// Return the upper-bound structural charge of one retained-receipt ordered-map
+/// entry.
 fn receipt_entry_bytes() -> Result<usize, BudgetError> {
     super::budget::ordered_map_entry_bytes::<ContentDigest, RetainedReceipt>()
 }
 
-/// Return the exact structural charge of one input-frontier ordered-map entry.
+/// Return the upper-bound structural charge of one input-frontier ordered-map
+/// entry.
 fn input_frontier_entry_bytes() -> Result<usize, BudgetError> {
     super::budget::ordered_map_entry_bytes::<StreamingInputDomainIdentity, RetainedInputFrontier>()
 }
 
-/// Return the exact structural charge of one counter ordered-map entry,
+/// Return the upper-bound structural charge of one counter ordered-map entry,
 /// including the checked identifiers owned by its key.
 fn counter_entry_bytes(key: &StreamingIssueCounterKey) -> Result<usize, BudgetError> {
     super::budget::checked_sum([

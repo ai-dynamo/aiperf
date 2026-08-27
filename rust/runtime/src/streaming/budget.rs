@@ -392,16 +392,30 @@ impl BudgetLease {
     }
 }
 
+/// Worst-case node-occupancy factor applied to an ordered-map entry's key and
+/// value bytes.
+///
+/// `alloc::collections::BTreeMap` splits a full `CAPACITY == 11` node into
+/// halves that retain `MIN_LEN_AFTER_SPLIT == 5` entries, so one live entry can
+/// hold down `ceil(11 / 5) == 3` slots of node storage.
+const ORDERED_MAP_NODE_OCCUPANCY_FACTOR: usize = 3;
+
 /// Structural bytes one ordered-map entry retains beyond its key and value.
 ///
 /// `BTreeMap` exposes no capacity API, so its node storage cannot be measured
 /// the way a `Vec` or `String` capacity can. This is the authored per-entry
-/// structural overhead used for exact charging, derived from the std B-tree
-/// node shape and rounded up so a computed charge can only exceed, never
-/// understate, the true retained node bytes.
+/// structural overhead used for charging, derived from the std B-tree node
+/// shape as an upper bound accounting for worst-case BTreeMap node occupancy
+/// after splits.
 pub const ORDERED_MAP_ENTRY_OVERHEAD_BYTES: usize = 32;
 
-/// Return the exact structural charge for one ordered-map entry of `K` and `V`.
+/// Upper-bound structural charge for one ordered-map entry of `K` and `V`.
+///
+/// A `BTreeMap` node holds `CAPACITY == 11` key/value slots but retains as few
+/// as `MIN_LEN_AFTER_SPLIT == 5` live entries immediately after a split, so a
+/// single live entry can retain up to `ceil(11 / 5) == 3` slots' worth of node
+/// storage. The key/value term is scaled by that factor so the charge bounds
+/// worst-case node occupancy rather than assuming a densely packed node.
 ///
 /// This covers the inline key, the inline value, and the authored per-entry
 /// node overhead. Heap owned *behind* `K` or `V` is not included; add it with
@@ -413,6 +427,7 @@ pub const ORDERED_MAP_ENTRY_OVERHEAD_BYTES: usize = 32;
 pub fn ordered_map_entry_bytes<K, V>() -> Result<usize, BudgetError> {
     std::mem::size_of::<K>()
         .checked_add(std::mem::size_of::<V>())
+        .and_then(|bytes| bytes.checked_mul(ORDERED_MAP_NODE_OCCUPANCY_FACTOR))
         .and_then(|bytes| bytes.checked_add(ORDERED_MAP_ENTRY_OVERHEAD_BYTES))
         .ok_or(BudgetError::AccountingOverflow)
 }
@@ -584,7 +599,10 @@ mod tests {
     fn ordered_map_entry_bytes_is_checked() {
         let bytes = ordered_map_entry_bytes::<u64, u64>()
             .unwrap_or_else(|error| panic!("representable entry charge: {error}"));
-        assert_eq!(bytes, 16 + ORDERED_MAP_ENTRY_OVERHEAD_BYTES);
+        assert_eq!(
+            bytes,
+            ORDERED_MAP_NODE_OCCUPANCY_FACTOR * 16 + ORDERED_MAP_ENTRY_OVERHEAD_BYTES
+        );
     }
 
     #[test]
