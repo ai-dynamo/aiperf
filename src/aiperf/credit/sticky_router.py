@@ -337,6 +337,19 @@ class StickyCreditRouter(CommunicationMixin):
         self._terminally_lost_workers: set[str] = set()
         self._gracefully_shutdown_workers: set[str] = set()
 
+        # Two-strike bookkeeping for evict_stale_workers()'s periodic sweep:
+        # a worker must be observed past the cutoff on two consecutive sweeps
+        # (spaced STALE_TIME apart) before it is actually evicted. Mirrors the
+        # two-strike verification in BaseServiceManager._judge_stale_service,
+        # which additionally has process ground truth to clear a strike
+        # outright. This router has no such ground truth (it runs in a
+        # different process than the service watchdog), so persistence across
+        # two independent sweeps is the closest in-process approximation:
+        # a worker whose event loop stalls and then recovers gets a second
+        # chance instead of being evicted on the same sweep the watchdog
+        # would have protected it on.
+        self._stale_worker_strikes: dict[str, int] = {}
+
         self._cancellation_pending: bool = False
         self._credits_complete: bool = False
 
@@ -865,16 +878,44 @@ class StickyCreditRouter(CommunicationMixin):
         """Periodically drop workers whose heartbeats have stopped.
 
         Sweeps every ``STALE_TIME`` but evicts only workers silent for
-        ``STALE_TIME * 3``, so a dead worker leaves routing within roughly
-        three to four sweeps. The margin keeps a worker that misses one or two
-        heartbeats under load in the pool. Suppressed once credits are
-        complete or a cancellation is in flight: workers legitimately stop
-        talking then, and evicting during teardown would log noise about a
-        normal shutdown.
+        ``STALE_TIME * 3`` on two consecutive sweeps, so a dead worker leaves
+        routing within roughly four to five sweeps. The margin keeps a worker
+        that misses one or two heartbeats under load in the pool. Suppressed
+        once credits are complete or a cancellation is in flight: workers
+        legitimately stop talking then, and evicting during teardown would
+        log noise about a normal shutdown.
+
+        Two-strike gate: a worker past the cutoff on its first sweep is only
+        "suspected" (see ``_stale_worker_strikes``) and is evicted only if it
+        is still past the cutoff on the following sweep. A worker whose
+        heartbeat resumes before that second sweep loses its strike and stays
+        in the pool. This does not require process ground truth (the router
+        has none -- see the class docstring), but it does mean a single
+        transient stall can no longer be evicted on the same sweep where a
+        process-aware watchdog would have protected it.
         """
         if self._credits_complete or self._cancellation_pending:
             return
-        self.evict_stale_workers(Environment.WORKER.STALE_TIME * 3)
+        stale_after_s = Environment.WORKER.STALE_TIME * 3
+        candidates = set(self._stale_worker_candidates(stale_after_s))
+
+        # Workers that heartbeated since the last sweep are no longer
+        # suspected; drop their strike so a later stall starts fresh.
+        for worker_id in list(self._stale_worker_strikes):
+            if worker_id not in candidates:
+                del self._stale_worker_strikes[worker_id]
+
+        confirmed: list[str] = []
+        for worker_id in candidates:
+            strikes = self._stale_worker_strikes.get(worker_id, 0) + 1
+            if strikes < 2:
+                self._stale_worker_strikes[worker_id] = strikes
+                continue
+            self._stale_worker_strikes.pop(worker_id, None)
+            confirmed.append(worker_id)
+
+        if confirmed:
+            self._evict_worker_ids(confirmed, stale_after_s)
 
     def _note_peak_workers(self) -> None:
         """Track the high-water mark of registered workers.
@@ -940,16 +981,39 @@ class StickyCreditRouter(CommunicationMixin):
         missing liveness feed degrades to no eviction rather than to evicting
         everybody.
         """
+        stale = self._stale_worker_candidates(stale_after_s)
+        if stale:
+            self._evict_worker_ids(stale, stale_after_s)
+        return stale
+
+    def _stale_worker_candidates(self, stale_after_s: float) -> list[str]:
+        """Return worker ids whose heartbeat is older than ``stale_after_s``.
+
+        Read-only: does not evict anything. Split out of
+        ``evict_stale_workers`` so the periodic sweep task can peek at who
+        would be evicted and apply its own two-strike confirmation before
+        actually removing anyone -- see ``_evict_stale_workers_task``.
+
+        ``stale_after_s <= 0`` disables the check.
+        """
         if stale_after_s <= 0:
             return []
         cutoff_ns = time.time_ns() - int(stale_after_s * NANOS_PER_SECOND)
-        stale = [
+        return [
             wid
             for wid, load in self._workers.items()
             if load.last_heartbeat_ns and load.last_heartbeat_ns < cutoff_ns
         ]
+
+    def _evict_worker_ids(self, worker_ids: list[str], stale_after_s: float) -> None:
+        """Unregister the given worker ids as stale and report any real loss.
+
+        Shared tail of ``evict_stale_workers`` (immediate, single-sweep
+        eviction) and ``_evict_stale_workers_task`` (two-strike confirmed
+        eviction). ``stale_after_s`` is used only for the log message.
+        """
         lost_active_work = False
-        for worker_id in stale:
+        for worker_id in worker_ids:
             load = self._workers[worker_id]
             in_flight = load.in_flight_credits
             self.warning(
@@ -967,7 +1031,6 @@ class StickyCreditRouter(CommunicationMixin):
             )
         if lost_active_work:
             self._notify_worker_lost("worker_unavailable: worker stopped responding")
-        return stale
 
     def _unregister_worker(
         self,

@@ -66,6 +66,7 @@ def _router(*, workers: dict[str, float], in_flight: int = 1, heartbeat: bool = 
     router._on_worker_lost = None
     router._on_worker_count_changed = None
     router._peak_worker_count = 0
+    router._stale_worker_strikes = {}
     router._worker_available_event = MagicMock()
     router.warning = MagicMock()
     router.error = MagicMock()
@@ -403,3 +404,62 @@ class TestTerminalWorkerLossNotification:
         router._unregister_worker("never-registered")
 
         lost.assert_not_called()
+
+
+class TestPeriodicSweepTwoStrikeConfirmation:
+    """The background sweep (``_evict_stale_workers_task``) must not evict a
+    worker on the same tick where it first crosses the cutoff -- that is
+    exactly the race flagged in review: a worker whose event loop stalls and
+    then recovers should get a second sweep's worth of grace before the
+    router calls it dead, rather than being evicted unconditionally on the
+    first sweep past ``STALE_TIME * 3``.
+    """
+
+    @pytest.mark.asyncio
+    async def test_first_sweep_past_cutoff_only_suspects_the_worker(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from aiperf.common.environment import Environment
+
+        monkeypatch.setattr(Environment.WORKER, "STALE_TIME", 10.0)
+        router = _router(workers={"w-1": 120.0})
+
+        await router._evict_stale_workers_task()
+
+        assert "w-1" in router._workers
+        assert router._stale_worker_strikes.get("w-1") == 1
+
+    @pytest.mark.asyncio
+    async def test_second_consecutive_sweep_past_cutoff_evicts(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from aiperf.common.environment import Environment
+
+        monkeypatch.setattr(Environment.WORKER, "STALE_TIME", 10.0)
+        router = _router(workers={"w-1": 120.0})
+        lost = MagicMock()
+        router.set_worker_lost_callback(lost)
+
+        await router._evict_stale_workers_task()
+        await router._evict_stale_workers_task()
+
+        assert "w-1" not in router._workers
+        lost.assert_called_once_with("worker_unavailable: worker stopped responding")
+
+    @pytest.mark.asyncio
+    async def test_heartbeat_between_sweeps_clears_the_strike(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from aiperf.common.environment import Environment
+
+        monkeypatch.setattr(Environment.WORKER, "STALE_TIME", 10.0)
+        router = _router(workers={"w-1": 120.0})
+
+        await router._evict_stale_workers_task()
+        assert router._stale_worker_strikes.get("w-1") == 1
+
+        router.note_worker_heartbeat("w-1")
+        await router._evict_stale_workers_task()
+
+        assert "w-1" in router._workers
+        assert "w-1" not in router._stale_worker_strikes
