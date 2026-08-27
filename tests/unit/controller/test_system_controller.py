@@ -164,6 +164,34 @@ class TestSystemControllerExitScenarios:
         )
 
     @pytest.mark.asyncio
+    async def test_parse_responses_for_errors_does_not_raise_on_clean_batch_with_stale_exit_errors(
+        self,
+        system_controller: SystemController,
+    ):
+        """A clean batch (no errors) must not raise just because ``_exit_errors``
+        already holds an unrelated entry from an earlier, optional-producer
+        failure. Regression test: the check used to test the accumulated
+        ``_exit_errors`` list instead of this batch's own errors, so a fully
+        successful "Start Profiling" call raised ``LifecycleOperationError``
+        whenever any earlier error (e.g. a reaped optional producer) had been
+        recorded.
+        """
+        system_controller._exit_errors.append(
+            ExitErrorInfo(
+                error_details=ErrorDetails(message="unrelated prior failure"),
+                operation="result_producer_reaped",
+                service_id="gpu_telemetry_manager",
+            )
+        )
+
+        # No exception should be raised for a batch containing zero errors.
+        system_controller._parse_responses_for_errors([], "Start Profiling")
+
+        # The pre-existing error must be untouched, and no new one added.
+        assert len(system_controller._exit_errors) == 1
+        assert system_controller._exit_errors[0].operation == "result_producer_reaped"
+
+    @pytest.mark.asyncio
     async def test_system_controller_exits_on_service_manager_initialize_error(
         self,
         system_controller: SystemController,

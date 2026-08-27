@@ -269,9 +269,52 @@ class TestEvictedProducersReachTheOutcome:
             system_controller.service_manager.service_map[ServiceType.TIMING_MANAGER]
             == []
         )
-        assert "timing_manager" in system_controller._reaped_service_ids
         system_controller._cancel_profiling.assert_awaited_once_with()
         assert system_controller._result_join_coordinator.evicted == {}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "state,should_cancel",
+        [
+            param(SystemState.PROFILING, True, id="profiling"),
+            param(SystemState.PROCESSING, True, id="processing"),
+            param(SystemState.STOPPING, False, id="stopping"),
+            param(SystemState.SHUTDOWN, False, id="shutdown"),
+        ],
+    )  # fmt: skip
+    async def test_a_reaped_required_non_producer_cancel_guard_matches_service_error_guard(
+        self,
+        system_controller: SystemController,
+        state: SystemState,
+        should_cancel: bool,
+    ) -> None:
+        """The reap-triggered cancel guard must cover the same states as the
+        self-reported SERVICE_ERROR guard: anything short of STOPPING/SHUTDOWN,
+        not just PROFILING. A required non-producer reaped while PROCESSING
+        (after credits complete, before results are joined) must still cancel.
+        """
+        system_controller._system_state = state
+        system_controller._cancel_profiling = AsyncMock()
+        info = MagicMock(
+            service_id="timing_manager",
+            service_type=ServiceType.TIMING_MANAGER,
+            first_seen_ns=100,
+        )
+        system_controller.service_manager.service_id_map = {
+            "timing_manager": info,
+        }
+        system_controller.service_manager.service_map = {
+            ServiceType.TIMING_MANAGER: [info]
+        }
+
+        await system_controller._on_service_reaped(
+            "timing_manager", "missed heartbeats", 100
+        )
+
+        if should_cancel:
+            system_controller._cancel_profiling.assert_awaited_once_with()
+        else:
+            system_controller._cancel_profiling.assert_not_awaited()
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -321,7 +364,6 @@ class TestEvictedProducersReachTheOutcome:
         assert manager.service_id_map == {service_id: replacement}
         assert manager.service_map == {service_type: [replacement]}
         assert system_controller._exit_errors == []
-        assert system_controller._reaped_service_ids == set()
         system_controller._cancel_profiling.assert_not_awaited()
         system_controller._check_and_trigger_shutdown.assert_not_awaited()
         assert system_controller._result_join_coordinator.evicted == {}
@@ -396,7 +438,6 @@ class TestEvictedProducersReachTheOutcome:
         assert manager.service_id_map == {service_id: replacement}
         assert manager.service_map == {service_type: [replacement]}
         assert system_controller._exit_errors == []
-        assert system_controller._reaped_service_ids == set()
         system_controller._cancel_profiling.assert_not_awaited()
         system_controller._check_and_trigger_shutdown.assert_not_awaited()
         assert system_controller._result_join_coordinator.evicted == {}
@@ -438,4 +479,3 @@ class TestEvictedProducersReachTheOutcome:
             system_controller.service_manager.service_map[ServiceType.RECORD_PROCESSOR]
             == []
         )
-        assert "record_processor_2" in system_controller._reaped_service_ids

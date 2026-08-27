@@ -97,6 +97,14 @@ class SystemController(SignalHandlerMixin, BaseService):
     It will start, stop, and configure all other services.
     """
 
+    @property
+    def failure_shutdown_timeout(self) -> float | None:
+        """Its on_stop hook exports results, renders the console, and then calls
+        os._exit() itself, so bounding that teardown would cut the export short
+        and skip the terminal exit the zombie-prevention path depends on.
+        """
+        return None
+
     def __init__(
         self,
         run: "BenchmarkRun",
@@ -172,10 +180,6 @@ class SystemController(SignalHandlerMixin, BaseService):
         # error) or reports itself disabled (telemetry/server-metrics status)
         # unregisters, so it stops blocking. Replaces the per-gate boolean flags.
         self._result_join_coordinator = ResultJoinCoordinator()
-        # Services the watchdog confirmed dead. Kept alongside the coordinator
-        # because command fan-out targets must exclude them even after the
-        # barrier has released.
-        self._reaped_service_ids: set[str] = set()
         # A producer that dies abruptly never sends SERVICE_ERROR, so the
         # heartbeat/pod reapers are the only signal. Without this hook they mark
         # the service failed in the registry but leave it in the barrier, and
@@ -396,23 +400,31 @@ class SystemController(SignalHandlerMixin, BaseService):
     def _parse_responses_for_errors(
         self, responses: list[CommandResponse | ErrorDetails], operation: str
     ) -> None:
-        """Parse the responses for errors."""
+        """Parse the responses for errors.
+
+        Raises only when THIS batch contains an error, not when the
+        accumulated ``_exit_errors`` list (which may already hold an
+        unrelated optional-producer failure from earlier in the run) is
+        non-empty.
+        """
+        batch_errors: list[ExitErrorInfo] = []
         for response in responses:
             if isinstance(response, ErrorDetails):
-                self._exit_errors.append(
+                batch_errors.append(
                     ExitErrorInfo(
                         error_details=response, operation=operation, service_id=None
                     )
                 )
             elif isinstance(response, CommandErrorResponse):
-                self._exit_errors.append(
+                batch_errors.append(
                     ExitErrorInfo(
                         error_details=response.error,
                         operation=operation,
                         service_id=response.service_id,
                     )
                 )
-        if self._exit_errors:
+        if batch_errors:
+            self._exit_errors.extend(batch_errors)
             raise LifecycleOperationError(
                 operation=operation,
                 original_exception=None,
@@ -452,10 +464,6 @@ class SystemController(SignalHandlerMixin, BaseService):
             raise RuntimeError(
                 f"Service registry lost registration for '{message.service_id}'"
             )
-
-        # A service re-registering under a reused ID is alive again, so it must
-        # stop being excluded from command fan-out.
-        self._reaped_service_ids.discard(message.service_id)
 
         previous = self.service_manager.service_id_map.get(message.service_id)
         if previous is not None and previous.service_type != message.service_type:
@@ -611,7 +619,6 @@ class SystemController(SignalHandlerMixin, BaseService):
                 f"Evicted '{service_id}' from the result-join barrier ({reason}); "
                 "results for this producer will be missing from the run"
             )
-            self._reaped_service_ids.add(service_id)
             self._exit_errors.append(
                 ExitErrorInfo(
                     error_details=ErrorDetails(
@@ -638,7 +645,6 @@ class SystemController(SignalHandlerMixin, BaseService):
             f"Required service '{service_id}' ({info.service_type}) was reaped "
             f"during the benchmark ({reason})"
         )
-        self._reaped_service_ids.add(service_id)
         self._exit_errors.append(
             ExitErrorInfo(
                 error_details=ErrorDetails(
@@ -650,7 +656,11 @@ class SystemController(SignalHandlerMixin, BaseService):
             )
         )
         self._forget_reaped_service(service_id)
-        if self._system_state == SystemState.PROFILING:
+        # Mirrors _process_service_error_message's guard: cancel for any state
+        # not already winding down, not just PROFILING, so a required
+        # non-producer reaped during PROCESSING (after credits complete,
+        # before results are joined) still aborts the run.
+        if self._system_state not in {SystemState.STOPPING, SystemState.SHUTDOWN}:
             await self._cancel_profiling()
 
     def _forget_reaped_service(self, service_id: str) -> None:
@@ -1307,7 +1317,12 @@ class SystemController(SignalHandlerMixin, BaseService):
 
         Deferred exporters only upload already-complete local artifacts, so a
         remote service outage is warning-worthy but does not make the local
-        result set unsafe to serve.
+        result set unsafe to serve. This is an intentional asymmetry: a
+        non-deferred (local) export failure now appends to ``_exit_errors``
+        and flips the process exit code to non-zero, whereas a deferred
+        exporter (e.g. wandb/mlflow) failure only logs a warning and never
+        sets ``marker_blocking`` -- a CI pipeline relying solely on exit code
+        will not observe a failed remote upload.
         """
         marker_blocking = False
         for failure in failures:
