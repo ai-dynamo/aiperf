@@ -197,11 +197,7 @@ pub(crate) struct RecordedLatency {
 /// Split a recorded total `api_time` (nanoseconds) into `(ttft_ns, itl_ns)` for
 /// a stream of `osl` output tokens so the fabricated request ends exactly at
 /// `total_ns`.
-pub(crate) fn recorded_latencies_ns(
-    total_ns: i64,
-    ttft_ns: Option<i64>,
-    osl: usize,
-) -> (i64, i64) {
+pub(crate) fn recorded_latencies_ns(total_ns: i64, ttft_ns: Option<i64>, osl: usize) -> (i64, i64) {
     let total = total_ns.max(0);
     if osl <= 1 {
         return (total, 0);
