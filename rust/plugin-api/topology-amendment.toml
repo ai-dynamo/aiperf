@@ -1,0 +1,21 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+schema_version = 1
+
+[[matrix]]
+state = "task2_neutral"
+dependency_projection_blake3 = "blake3:abf887c2a5947da0854f0e04c90d17240c978839063e64bcf82f093f3ab783d7"
+test_support_dev_consumers = ["aiperf-export-sdk"]
+
+[[matrix]]
+state = "task3_reviewed"
+dependency_projection_blake3 = "blake3:a194e94568ae4e0dec27d957ee75e8a47f4e94f47e97ca8c9932e0902fdec6f5"
+test_support_dev_consumers = ["aiperf-export-sdk"]
+
+[task3_transition]
+schema_version = 1
+producer_task = 3
+from_state = "task2_neutral"
+to_state = "task3_reviewed"
+ownership_record_path = "plugin-api/feature-ownership.toml"

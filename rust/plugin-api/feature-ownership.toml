@@ -1,0 +1,406 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+schema_version = 2
+
+[topology_amendment]
+schema_version = 1
+producer_task = 3
+from_state = "task2_neutral"
+to_state = "task3_reviewed"
+
+[[symbol_ownership]]
+symbol = "FrozenAIPerfRegistry"
+owner_crate = "aiperf-plugin-api"
+source_path = "plugin-api/src/frozen.rs"
+producer_task = 15
+construction_crate = "aiperf-plugin-host"
+consumer_crates = ["aiperf-runtime"]
+composition_crate = "aiperf-cli"
+state = "planned"
+composition_state = "planned"
+
+[[symbol_ownership]]
+symbol = "FrozenPluginUniverse"
+owner_crate = "aiperf-plugin-api"
+source_path = "plugin-api/src/frozen.rs"
+producer_task = 15
+construction_crate = "aiperf-plugin-host"
+consumer_crates = ["aiperf-runtime"]
+composition_crate = "aiperf-cli"
+state = "planned"
+composition_state = "planned"
+
+[baseline_topology]
+path = "artifacts/native-plugin-baseline/package-topology.json"
+host_commit = "caa3ff6fcf20ffe36a7704abe16274bedadbb9fb"
+blake3 = "blake3:3d22fd2a8a9cf41d9b6af8f1e72c6e5b4be4c650d7d6d4a4afb5211c979cc3d1"
+state = "awaiting_approved_task1_task2_merge"
+
+[[package_ownership]]
+package = "aiperf-core"
+owner = "core-boundary"
+review_state = "reviewed_neutral"
+coupling_evidence = "Task-1 runtime census; core is the dependency root"
+dependencies = []
+
+[[package_ownership]]
+package = "aiperf-plugin-api"
+owner = "plugin-api"
+review_state = "measured"
+source_package = "aiperf-runtime"
+coupling_evidence = "Task-2 public boundary requires the core-owned type identity"
+dependencies = [{ package = "aiperf-core", kind = "normal", justification = "API boundary values are owned by aiperf-core" }]
+
+[[package_ownership]]
+package = "aiperf-plugin-sdk"
+owner = "plugin-authoring"
+review_state = "measured"
+source_package = "aiperf-bench-tools"
+coupling_evidence = "Tasks 8-9 author tools consume core/API records and the entry macro"
+dependencies = [
+  { package = "aiperf-core", kind = "normal", justification = "author tools inspect core-owned boundary artifacts" },
+  { package = "aiperf-plugin-api", kind = "normal", justification = "author tools generate and inspect plugin declarations" },
+  { package = "aiperf-plugin-sdk-macros", kind = "normal", justification = "SDK re-exports the controlled native entry macro" },
+]
+
+[[package_ownership]]
+package = "aiperf-endpoint-sdk"
+owner = "endpoint-boundary"
+review_state = "measured"
+source_package = "aiperf-runtime"
+coupling_evidence = "Task-1 endpoint source inventory and Task-6 boundary ownership"
+dependencies = [
+  { package = "aiperf-core", kind = "normal", justification = "endpoint models and prepared values use core-owned types" },
+  { package = "aiperf-plugin-api", kind = "normal", justification = "endpoint factories implement the plugin API contract" },
+]
+
+[[package_ownership]]
+package = "aiperf-transport-sdk"
+owner = "transport-boundary"
+review_state = "measured"
+source_package = "aiperf-runtime"
+coupling_evidence = "Task-1 transport source inventory and Task-6 boundary ownership"
+dependencies = [
+  { package = "aiperf-core", kind = "normal", justification = "transport sinks use core dispatch and measurement contracts" },
+  { package = "aiperf-endpoint-sdk", kind = "normal", justification = "transport preparation consumes endpoint-owned request values" },
+  { package = "aiperf-plugin-api", kind = "normal", justification = "transport factories implement the plugin API contract" },
+]
+
+[[package_ownership]]
+package = "aiperf-export-sdk"
+owner = "export-boundary"
+review_state = "measured"
+source_package = "aiperf-runtime"
+coupling_evidence = "Task-2 predeclared independent-leaf test seam"
+dependencies = [
+  { package = "aiperf-core", kind = "normal", justification = "exporters consume finalized core report and artifact values" },
+  { package = "aiperf-plugin-api", kind = "normal", justification = "exporter factories implement the plugin API contract" },
+  { package = "aiperf-plugin-test-support", kind = "dev", justification = "independent exporter leaf fixtures are test-only" },
+]
+
+[[package_ownership]]
+package = "aiperf-plugin-test-support"
+owner = "plugin-test-infrastructure"
+review_state = "measured"
+source_package = "aiperf-e2e-tests"
+coupling_evidence = "Task-2 non-published fixture boundary"
+dependencies = [{ package = "aiperf-core", kind = "normal", justification = "fixtures use only core-owned public values" }]
+
+[[package_ownership]]
+package = "aiperf-plugin-sdk-macros"
+owner = "plugin-authoring"
+review_state = "reviewed_neutral"
+coupling_evidence = "Task-2 shell has no source coupling; Task 9 owns macro implementation"
+dependencies = []
+
+[[package_ownership]]
+package = "aiperf-plugin-host"
+owner = "host-composition"
+review_state = "measured"
+source_package = "aiperf-cli"
+coupling_evidence = "Tasks 10-16 host lifecycle consumes only the allowed API/core/SDK layers"
+dependencies = [
+  { package = "aiperf-core", kind = "normal", justification = "host composition owns core boundary services" },
+  { package = "aiperf-plugin-api", kind = "normal", justification = "host constructs and freezes API registries" },
+  { package = "aiperf-plugin-sdk", kind = "normal", justification = "host validates SDK build and artifact records" },
+]
+
+[[package_ownership]]
+package = "aiperf-plugin-conformance"
+owner = "plugin-conformance"
+review_state = "measured"
+source_package = "aiperf-e2e-tests"
+coupling_evidence = "Task-36 conformance spans each published SDK and the host loader"
+dependencies = [
+  { package = "aiperf-core", kind = "normal", justification = "conformance fixtures exercise core boundary values" },
+  { package = "aiperf-endpoint-sdk", kind = "normal", justification = "conformance builds endpoint fixtures" },
+  { package = "aiperf-export-sdk", kind = "normal", justification = "conformance builds exporter fixtures" },
+  { package = "aiperf-plugin-api", kind = "normal", justification = "conformance checks plugin declarations" },
+  { package = "aiperf-plugin-host", kind = "normal", justification = "conformance drives the real host lifecycle" },
+  { package = "aiperf-plugin-sdk", kind = "normal", justification = "conformance consumes SDK artifact tools" },
+  { package = "aiperf-transport-sdk", kind = "normal", justification = "conformance builds transport fixtures" },
+]
+
+[[package_ownership]]
+package = "aiperf-plugin-packaging-tests"
+owner = "plugin-packaging"
+review_state = "measured"
+source_package = "aiperf-e2e-tests"
+coupling_evidence = "Task-35 package lifecycle tests drive SDK output through host installation"
+dependencies = [
+  { package = "aiperf-plugin-host", kind = "normal", justification = "packaging tests exercise host discovery and acquisition" },
+  { package = "aiperf-plugin-sdk", kind = "normal", justification = "packaging tests create controlled SDK artifacts" },
+]
+
+[[package_ownership]]
+package = "aiperf-plugin-perf"
+owner = "plugin-performance"
+review_state = "measured"
+source_package = "aiperf-bench-tools"
+coupling_evidence = "Task-38 execution consumes the canonical Task-3 statistics implementation"
+dependencies = [{ package = "aiperf-bench-tools", kind = "normal", justification = "performance execution and acceptance share one statistics implementation" }]
+
+[[package_ownership]]
+package = "aiperf-plugin-static-comparator"
+owner = "static-comparator"
+review_state = "reviewed_neutral"
+coupling_evidence = "Task-2 shell has no source coupling; Task 37 owns comparator assembly"
+dependencies = []
+
+[[package_ownership]]
+package = "aiperf-allocator-provider"
+owner = "allocator-provider"
+review_state = "reviewed_neutral"
+coupling_evidence = "Task-2 shell/build-script only; Task 7 owns allocator linkage"
+dependencies = []
+
+[[package_ownership]]
+package = "aiperf-allocator-shim"
+owner = "allocator-shim"
+review_state = "reviewed_neutral"
+coupling_evidence = "Task-2 shell has no source coupling; Task 7 owns allocator linkage"
+dependencies = []
+
+[[package_ownership]]
+package = "aiperf-plugin-export-basic"
+owner = "export-basic"
+review_state = "measured"
+source_package = "aiperf-runtime"
+coupling_evidence = "Task-1 basic exporter leaf inventory"
+dependencies = [
+  { package = "aiperf-core", kind = "normal", justification = "basic exporter leaves consume finalized core reports" },
+  { package = "aiperf-export-sdk", kind = "normal", justification = "basic exporter leaves use shared exporter helpers" },
+  { package = "aiperf-plugin-api", kind = "normal", justification = "package registers an exporter factory" },
+]
+
+[[package_ownership]]
+package = "aiperf-plugin-export-parquet"
+owner = "export-parquet"
+review_state = "measured"
+source_package = "aiperf-runtime"
+coupling_evidence = "Task-1 parquet feature and exporter leaf inventory"
+dependencies = [
+  { package = "aiperf-core", kind = "normal", justification = "Parquet leaves consume finalized core reports" },
+  { package = "aiperf-export-sdk", kind = "normal", justification = "Parquet leaves use shared exporter helpers" },
+  { package = "aiperf-plugin-api", kind = "normal", justification = "package registers an exporter factory" },
+]
+
+[[package_ownership]]
+package = "aiperf-plugin-export-mlflow"
+owner = "export-mlflow"
+review_state = "measured"
+source_package = "aiperf-runtime"
+coupling_evidence = "Task-1 MLflow exporter leaf inventory"
+dependencies = [
+  { package = "aiperf-core", kind = "normal", justification = "MLflow leaves consume finalized core reports" },
+  { package = "aiperf-export-sdk", kind = "normal", justification = "MLflow leaves use shared exporter helpers" },
+  { package = "aiperf-plugin-api", kind = "normal", justification = "package registers an exporter factory" },
+]
+
+[[package_ownership]]
+package = "aiperf-plugin-export-wandb"
+owner = "export-wandb"
+review_state = "measured"
+source_package = "aiperf-runtime"
+coupling_evidence = "Task-1 W&B exporter leaf inventory"
+dependencies = [
+  { package = "aiperf-core", kind = "normal", justification = "W&B leaves consume finalized core reports" },
+  { package = "aiperf-export-sdk", kind = "normal", justification = "W&B leaves use shared exporter helpers" },
+  { package = "aiperf-plugin-api", kind = "normal", justification = "package registers an exporter factory" },
+]
+
+[[package_ownership]]
+package = "aiperf-plugin-export-otel"
+owner = "export-otel"
+review_state = "measured"
+source_package = "aiperf-runtime"
+coupling_evidence = "Task-1 OTel exporter leaf inventory"
+dependencies = [
+  { package = "aiperf-core", kind = "normal", justification = "OTel leaves consume finalized core reports" },
+  { package = "aiperf-export-sdk", kind = "normal", justification = "OTel leaves use shared exporter helpers" },
+  { package = "aiperf-plugin-api", kind = "normal", justification = "package registers an exporter factory" },
+]
+
+[[package_ownership]]
+package = "aiperf-plugin-endpoints"
+owner = "endpoints"
+review_state = "measured"
+source_package = "aiperf-runtime"
+coupling_evidence = "Task-1 endpoint implementation and binding inventory"
+dependencies = [
+  { package = "aiperf-core", kind = "normal", justification = "endpoint implementations consume core request/response values" },
+  { package = "aiperf-endpoint-sdk", kind = "normal", justification = "endpoint implementations use the endpoint boundary" },
+  { package = "aiperf-plugin-api", kind = "normal", justification = "package registers endpoint factories" },
+]
+
+[[package_ownership]]
+package = "aiperf-plugin-transport-http"
+owner = "transport-http"
+review_state = "measured"
+source_package = "aiperf-runtime"
+coupling_evidence = "Task-1 HTTP transport leaf inventory"
+dependencies = [
+  { package = "aiperf-core", kind = "normal", justification = "HTTP transport consumes core dispatch values" },
+  { package = "aiperf-endpoint-sdk", kind = "normal", justification = "HTTP transport consumes prepared endpoint values" },
+  { package = "aiperf-plugin-api", kind = "normal", justification = "package registers a transport factory" },
+  { package = "aiperf-transport-sdk", kind = "normal", justification = "HTTP implementation uses shared transport contracts" },
+]
+
+[[package_ownership]]
+package = "aiperf-plugin-transport-grpc"
+owner = "transport-grpc"
+review_state = "measured"
+source_package = "aiperf-runtime"
+coupling_evidence = "Task-1 gRPC feature and transport leaf inventory"
+dependencies = [
+  { package = "aiperf-core", kind = "normal", justification = "gRPC transport consumes core dispatch values" },
+  { package = "aiperf-endpoint-sdk", kind = "normal", justification = "gRPC transport consumes endpoint-owned bindings" },
+  { package = "aiperf-plugin-api", kind = "normal", justification = "package registers a transport factory" },
+  { package = "aiperf-transport-sdk", kind = "normal", justification = "gRPC implementation uses shared transport contracts" },
+]
+
+[[package_ownership]]
+package = "aiperf-plugin-transport-websocket"
+owner = "transport-websocket"
+review_state = "measured"
+source_package = "aiperf-runtime"
+coupling_evidence = "Task-1 WebSocket feature and transport leaf inventory"
+dependencies = [
+  { package = "aiperf-core", kind = "normal", justification = "WebSocket transport consumes core dispatch values" },
+  { package = "aiperf-endpoint-sdk", kind = "normal", justification = "WebSocket transport consumes endpoint operations" },
+  { package = "aiperf-plugin-api", kind = "normal", justification = "package registers a transport factory" },
+  { package = "aiperf-transport-sdk", kind = "normal", justification = "WebSocket implementation uses shared transport contracts" },
+]
+
+[[package_ownership]]
+package = "aiperf-plugin-transport-dry-run"
+owner = "transport-dry-run"
+review_state = "measured"
+source_package = "aiperf-runtime"
+coupling_evidence = "Task-1 dry-run transport leaf inventory"
+dependencies = [
+  { package = "aiperf-core", kind = "normal", justification = "dry-run transport consumes core dispatch values" },
+  { package = "aiperf-plugin-api", kind = "normal", justification = "package registers a transport factory" },
+  { package = "aiperf-transport-sdk", kind = "normal", justification = "dry-run implementation uses shared transport contracts" },
+]
+
+[[package_ownership]]
+package = "aiperf-plugin-transport-dynosim"
+owner = "transport-dynosim"
+review_state = "measured"
+source_package = "aiperf-runtime"
+coupling_evidence = "Task-1 Dynosim feature and direct-execution leaf inventory"
+dependencies = [
+  { package = "aiperf-core", kind = "normal", justification = "Dynosim consumes core graph and measurement values" },
+  { package = "aiperf-endpoint-sdk", kind = "normal", justification = "Dynosim consumes endpoint-owned models" },
+  { package = "aiperf-plugin-api", kind = "normal", justification = "package registers a transport factory" },
+  { package = "aiperf-transport-sdk", kind = "normal", justification = "Dynosim uses direct transport contracts" },
+]
+
+[[feature_ownership]]
+baseline_package = "aiperf-runtime"
+feature = "default"
+baseline_forwarding = ["cellular", "grpc", "parquet"]
+splits = [{ entry = "complete", owner = "aiperf-plugin-host" }]
+
+[[feature_ownership]]
+baseline_package = "aiperf-runtime"
+feature = "engine"
+baseline_forwarding = []
+splits = [{ entry = "complete", owner = "aiperf-plugin-host" }]
+
+[[feature_ownership]]
+baseline_package = "aiperf-runtime"
+feature = "dynamo-aic-forward-pass"
+baseline_forwarding = ["dep:aiconfigurator-core", "dep:dynamo-kv-router", "dep:pyo3", "dynosim"]
+splits = [{ entry = "complete", owner = "aiperf-plugin-host" }]
+
+[[feature_ownership]]
+baseline_package = "aiperf-runtime"
+feature = "dynamo-full"
+baseline_forwarding = ["dynamo-aic-forward-pass", "dynamo-kvbm-offload", "dynamo-profile", "dynamo-router-runtime", "dynamo-zmq-events"]
+splits = [{ entry = "complete", owner = "aiperf-plugin-host" }]
+
+[[feature_ownership]]
+baseline_package = "aiperf-runtime"
+feature = "dynamo-kvbm-offload"
+baseline_forwarding = ["dynamo-mocker/kvbm-offload", "dynosim"]
+splits = [{ entry = "complete", owner = "aiperf-plugin-host" }]
+
+[[feature_ownership]]
+baseline_package = "aiperf-runtime"
+feature = "dynamo-parity"
+baseline_forwarding = ["dynamo-full"]
+splits = [{ entry = "complete", owner = "aiperf-plugin-host" }]
+
+[[feature_ownership]]
+baseline_package = "aiperf-runtime"
+feature = "dynamo-profile"
+baseline_forwarding = ["dynamo-mocker/profile", "dynosim"]
+splits = [{ entry = "complete", owner = "aiperf-plugin-host" }]
+
+[[feature_ownership]]
+baseline_package = "aiperf-runtime"
+feature = "dynamo-router-runtime"
+baseline_forwarding = ["dynosim"]
+splits = [{ entry = "complete", owner = "aiperf-plugin-host" }]
+
+[[feature_ownership]]
+baseline_package = "aiperf-runtime"
+feature = "dynamo-zmq-events"
+baseline_forwarding = ["dynosim"]
+splits = [{ entry = "complete", owner = "aiperf-plugin-host" }]
+
+[[feature_ownership]]
+baseline_package = "aiperf-runtime"
+feature = "grpc"
+baseline_forwarding = ["dep:tonic"]
+splits = [
+  { entry = "endpoint_bindings", owner = "aiperf-plugin-endpoints" },
+  { entry = "transport", owner = "aiperf-plugin-transport-grpc" },
+]
+
+[[feature_ownership]]
+baseline_package = "aiperf-runtime"
+feature = "parquet"
+baseline_forwarding = ["dep:arrow", "dep:parquet"]
+splits = [{ entry = "complete", owner = "aiperf-plugin-export-parquet" }]
+
+[[feature_ownership]]
+baseline_package = "aiperf-runtime"
+feature = "websocket"
+baseline_forwarding = ["dep:tokio-tungstenite"]
+splits = [{ entry = "complete", owner = "aiperf-plugin-transport-websocket" }]
+
+[[feature_ownership]]
+baseline_package = "aiperf-runtime"
+feature = "dynosim"
+baseline_forwarding = ["dep:dynamo-mocker"]
+splits = [{ entry = "complete", owner = "aiperf-plugin-transport-dynosim" }]
+
+[[feature_ownership]]
+baseline_package = "aiperf-runtime"
+feature = "cellular"
+baseline_forwarding = ["dep:velo", "dep:zstd"]
+splits = [{ entry = "complete", owner = "aiperf-plugin-host" }]

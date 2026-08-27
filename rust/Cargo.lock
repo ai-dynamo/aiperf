@@ -57,6 +57,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "aiperf-allocator-provider"
+version = "0.12.0"
+
+[[package]]
+name = "aiperf-allocator-shim"
+version = "0.12.0"
+
+[[package]]
 name = "aiperf-bench-tools"
 version = "0.12.0"
 dependencies = [
@@ -68,6 +76,8 @@ dependencies = [
  "hyper 1.10.1",
  "hyper-util",
  "libc",
+ "rand 0.9.4",
+ "rand_pcg 0.9.0",
  "serde",
  "serde_json",
  "serde_json_canonicalizer",
@@ -76,6 +86,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tokio-stream",
+ "toml",
 ]
 
 [[package]]
@@ -127,6 +138,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "aiperf-core"
+version = "0.12.0"
+
+[[package]]
 name = "aiperf-dry-run-tests"
 version = "0.12.0"
 dependencies = [
@@ -161,6 +176,23 @@ dependencies = [
  "sha2",
  "tempfile",
  "tokio",
+]
+
+[[package]]
+name = "aiperf-endpoint-sdk"
+version = "0.12.0"
+dependencies = [
+ "aiperf-core",
+ "aiperf-plugin-api",
+]
+
+[[package]]
+name = "aiperf-export-sdk"
+version = "0.12.0"
+dependencies = [
+ "aiperf-core",
+ "aiperf-plugin-api",
+ "aiperf-plugin-test-support",
 ]
 
 [[package]]
@@ -207,6 +239,182 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+]
+
+[[package]]
+name = "aiperf-plugin-api"
+version = "0.12.0"
+dependencies = [
+ "aiperf-core",
+ "blake3",
+ "serde",
+ "serde_json",
+ "toml",
+]
+
+[[package]]
+name = "aiperf-plugin-conformance"
+version = "0.12.0"
+dependencies = [
+ "aiperf-core",
+ "aiperf-endpoint-sdk",
+ "aiperf-export-sdk",
+ "aiperf-plugin-api",
+ "aiperf-plugin-host",
+ "aiperf-plugin-sdk",
+ "aiperf-transport-sdk",
+]
+
+[[package]]
+name = "aiperf-plugin-endpoints"
+version = "0.12.0"
+dependencies = [
+ "aiperf-core",
+ "aiperf-endpoint-sdk",
+ "aiperf-plugin-api",
+]
+
+[[package]]
+name = "aiperf-plugin-export-basic"
+version = "0.12.0"
+dependencies = [
+ "aiperf-core",
+ "aiperf-export-sdk",
+ "aiperf-plugin-api",
+]
+
+[[package]]
+name = "aiperf-plugin-export-mlflow"
+version = "0.12.0"
+dependencies = [
+ "aiperf-core",
+ "aiperf-export-sdk",
+ "aiperf-plugin-api",
+]
+
+[[package]]
+name = "aiperf-plugin-export-otel"
+version = "0.12.0"
+dependencies = [
+ "aiperf-core",
+ "aiperf-export-sdk",
+ "aiperf-plugin-api",
+]
+
+[[package]]
+name = "aiperf-plugin-export-parquet"
+version = "0.12.0"
+dependencies = [
+ "aiperf-core",
+ "aiperf-export-sdk",
+ "aiperf-plugin-api",
+]
+
+[[package]]
+name = "aiperf-plugin-export-wandb"
+version = "0.12.0"
+dependencies = [
+ "aiperf-core",
+ "aiperf-export-sdk",
+ "aiperf-plugin-api",
+]
+
+[[package]]
+name = "aiperf-plugin-host"
+version = "0.12.0"
+dependencies = [
+ "aiperf-core",
+ "aiperf-plugin-api",
+ "aiperf-plugin-sdk",
+]
+
+[[package]]
+name = "aiperf-plugin-packaging-tests"
+version = "0.12.0"
+dependencies = [
+ "aiperf-plugin-host",
+ "aiperf-plugin-sdk",
+]
+
+[[package]]
+name = "aiperf-plugin-perf"
+version = "0.12.0"
+dependencies = [
+ "aiperf-bench-tools",
+]
+
+[[package]]
+name = "aiperf-plugin-sdk"
+version = "0.12.0"
+dependencies = [
+ "aiperf-core",
+ "aiperf-plugin-api",
+ "aiperf-plugin-sdk-macros",
+]
+
+[[package]]
+name = "aiperf-plugin-sdk-macros"
+version = "0.12.0"
+
+[[package]]
+name = "aiperf-plugin-static-comparator"
+version = "0.12.0"
+
+[[package]]
+name = "aiperf-plugin-test-support"
+version = "0.12.0"
+dependencies = [
+ "aiperf-core",
+ "tempfile",
+]
+
+[[package]]
+name = "aiperf-plugin-transport-dry-run"
+version = "0.12.0"
+dependencies = [
+ "aiperf-core",
+ "aiperf-plugin-api",
+ "aiperf-transport-sdk",
+]
+
+[[package]]
+name = "aiperf-plugin-transport-dynosim"
+version = "0.12.0"
+dependencies = [
+ "aiperf-core",
+ "aiperf-endpoint-sdk",
+ "aiperf-plugin-api",
+ "aiperf-transport-sdk",
+]
+
+[[package]]
+name = "aiperf-plugin-transport-grpc"
+version = "0.12.0"
+dependencies = [
+ "aiperf-core",
+ "aiperf-endpoint-sdk",
+ "aiperf-plugin-api",
+ "aiperf-transport-sdk",
+]
+
+[[package]]
+name = "aiperf-plugin-transport-http"
+version = "0.12.0"
+dependencies = [
+ "aiperf-core",
+ "aiperf-endpoint-sdk",
+ "aiperf-plugin-api",
+ "aiperf-transport-sdk",
+]
+
+[[package]]
+name = "aiperf-plugin-transport-websocket"
+version = "0.12.0"
+dependencies = [
+ "aiperf-core",
+ "aiperf-endpoint-sdk",
+ "aiperf-plugin-api",
+ "aiperf-transport-sdk",
 ]
 
 [[package]]
@@ -295,6 +503,15 @@ dependencies = [
  "webpki-roots 0.26.11",
  "zeroize",
  "zstd",
+]
+
+[[package]]
+name = "aiperf-transport-sdk"
+version = "0.12.0"
+dependencies = [
+ "aiperf-core",
+ "aiperf-endpoint-sdk",
+ "aiperf-plugin-api",
 ]
 
 [[package]]

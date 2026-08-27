@@ -1,0 +1,12 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+[workspace]
+resolver = "3"
+
+[package]
+name = "aiperf-plugin-third-party-example"
+version = "0.0.0"
+edition = "2024"
+license = "Apache-2.0"
+publish = false
