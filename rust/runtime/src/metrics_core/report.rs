@@ -21,6 +21,7 @@ use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt::{self, Display};
 use std::ops::Deref;
+use std::sync::Arc;
 
 /// Native report schema identifier.
 pub const NATIVE_REPORT_SCHEMA_VERSION: &str = "2.0";
@@ -1168,6 +1169,63 @@ impl NativeReport {
     }
 }
 
+impl crate::metrics_core::report_view::ReportView for NativeReport {
+    fn aiperf_version(&self) -> &str {
+        &self.aiperf_version
+    }
+
+    fn run_summary(&self) -> &ReportSummary {
+        &self.summary
+    }
+
+    fn metric(&self, tag: MetricTag) -> Option<&MetricEntry> {
+        self.metrics.get(tag.as_str())
+    }
+
+    fn metric_names(&self) -> Vec<Arc<str>> {
+        self.metrics
+            .keys()
+            .map(|name| Arc::<str>::from(name.as_str()))
+            .collect()
+    }
+
+    fn metrics(&self) -> &BTreeMap<String, MetricEntry> {
+        &self.metrics
+    }
+
+    fn warmup_metrics(&self) -> Option<&BTreeMap<String, MetricEntry>> {
+        self.warmup_metrics.as_ref()
+    }
+
+    fn server_metrics(&self) -> &BTreeMap<String, MetricEntry> {
+        &self.server_metrics
+    }
+
+    fn warmup_server_metrics(&self) -> &BTreeMap<String, MetricEntry> {
+        &self.warmup_server_metrics
+    }
+
+    fn accuracy(&self) -> Option<&AccuracyAnalysis> {
+        self.accuracy.as_ref()
+    }
+
+    fn errors(&self) -> &[ReportError] {
+        &self.errors
+    }
+
+    fn steady_state(&self) -> Option<&ReportSteadyState> {
+        self.steady_state.as_ref()
+    }
+
+    fn pooled_spec_decode_acceptance_histogram(&self) -> Option<&BTreeMap<u64, u128>> {
+        self.pooled_spec_decode_acceptance_histogram.as_ref()
+    }
+
+    fn per_record(&self) -> Option<&crate::export::otel::OtelRecordAccumulator> {
+        self.otel_per_record.as_ref()
+    }
+}
+
 fn build_metric_map(summary: &AccumulatorSummary) -> BTreeMap<String, MetricEntry> {
     let mut metrics = summary
         .results()
@@ -1412,6 +1470,18 @@ fn console_group_name(group: MetricConsoleGroup) -> &'static str {
         MetricConsoleGroup::SpecDecode => "spec_decode",
         MetricConsoleGroup::Effective => "effective",
         MetricConsoleGroup::Active => "active",
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod test_util {
+    use super::*;
+
+    pub(crate) fn two_metric_report() -> NativeReport {
+        let mut summary = AccumulatorSummary::new();
+        summary.insert_finite(MetricTag::RequestCount, 2.0);
+        summary.insert_finite(MetricTag::BenchmarkDuration, 1.0);
+        NativeReport::new(&summary, None)
     }
 }
 

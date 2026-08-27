@@ -26,7 +26,7 @@ mod cell_widths;
 
 use crate::export::{ExportConfig, Exporter, normalize_endpoint_display};
 use crate::metrics_core::{
-    MetricConsoleGroup, MetricEntry, MetricSeries, NativeReport, ReportStats, ReportValue,
+    MetricConsoleGroup, MetricEntry, MetricSeries, ReportStats, ReportValue, ReportView,
 };
 
 /// Artifact filename.
@@ -127,7 +127,7 @@ impl Exporter for ConsoleTxtExporter {
 
     fn export(
         &self,
-        report: &NativeReport,
+        report: &dyn ReportView,
         artifact_dir: &Path,
         cfg: &ExportConfig,
     ) -> anyhow::Result<()> {
@@ -142,7 +142,7 @@ impl Exporter for ConsoleTxtExporter {
 /// Render the full `profile_export_console.txt` body.
 ///
 /// Render the sections in their artifact order.
-pub(crate) fn render_console_txt(report: &NativeReport, cfg: &ConsoleTxtExportConfig) -> String {
+pub(crate) fn render_console_txt(report: &dyn ReportView, cfg: &ConsoleTxtExportConfig) -> String {
     let width = cfg.width as usize;
     // Panels have one leading blank line; table blocks have two. Grouped metric
     // tables form one block and therefore share one two-line prefix.
@@ -189,8 +189,8 @@ fn value_f64(value: &ReportValue) -> Option<f64> {
 
 /// Aggregate counters add across series; other metric kinds use the first
 /// series' representative value.
-fn metric_avg(report: &NativeReport, tag: &str) -> Option<f64> {
-    let entry = report.metrics.get(tag)?;
+fn metric_avg(report: &dyn ReportView, tag: &str) -> Option<f64> {
+    let entry = report.metrics().get(tag)?;
     let mut counter_sum: Option<f64> = None;
     for series in &entry.series {
         match &series.stats {
@@ -250,7 +250,7 @@ fn g_fmt(v: f64) -> String {
 }
 
 /// Emit the OSL-mismatch warning when both mismatch and request counts are positive.
-pub(crate) fn detect_osl_mismatch(report: &NativeReport) -> Option<Warning> {
+pub(crate) fn detect_osl_mismatch(report: &dyn ReportView) -> Option<Warning> {
     let mismatch_avg = metric_avg(report, "osl_mismatch_count")?;
     if mismatch_avg <= 0.0 {
         return None;
@@ -300,7 +300,7 @@ pub(crate) fn detect_osl_mismatch(report: &NativeReport) -> Option<Warning> {
 }
 
 /// Emit the usage-discrepancy warning when both discrepancy and request counts are positive.
-pub(crate) fn detect_usage_discrepancy(report: &NativeReport) -> Option<Warning> {
+pub(crate) fn detect_usage_discrepancy(report: &dyn ReportView) -> Option<Warning> {
     let discrepancy_avg = metric_avg(report, "usage_discrepancy_count")?;
     if discrepancy_avg <= 0.0 {
         return None;
@@ -340,7 +340,7 @@ pub(crate) fn detect_usage_discrepancy(report: &NativeReport) -> Option<Warning>
 }
 
 /// Detect unsupported completion-token parameters before session-control errors.
-pub(crate) fn detect_api_errors(report: &NativeReport) -> Vec<Warning> {
+pub(crate) fn detect_api_errors(report: &dyn ReportView) -> Vec<Warning> {
     let mut warnings = Vec::new();
     if let Some(warning) = detect_max_completion_tokens(report) {
         warnings.push(warning);
@@ -384,8 +384,8 @@ fn format_insight(
 /// MaxCompletionTokens insight. Trigger: a blob containing all of
 /// `extra_forbidden`, `max_completion_tokens`, and `Extra inputs are not
 /// permitted` (case-sensitive).
-pub(crate) fn detect_max_completion_tokens(report: &NativeReport) -> Option<Warning> {
-    for error in &report.errors {
+pub(crate) fn detect_max_completion_tokens(report: &dyn ReportView) -> Option<Warning> {
+    for error in report.errors() {
         let blob = error_blob(&error.message);
         if blob.contains("extra_forbidden")
             && blob.contains("max_completion_tokens")
@@ -418,8 +418,8 @@ pub(crate) fn detect_max_completion_tokens(report: &NativeReport) -> Option<Warn
 
 /// DynamoSessionControl insight. Trigger: a lowercased blob containing both
 /// `unknown variant` and `bind`.
-pub(crate) fn detect_dynamo_session_control(report: &NativeReport) -> Option<Warning> {
-    for error in &report.errors {
+pub(crate) fn detect_dynamo_session_control(report: &dyn ReportView) -> Option<Warning> {
+    for error in report.errors() {
         let blob = error_blob(&error.message).to_lowercase();
         if blob.contains("unknown variant") && blob.contains("bind") {
             let body = format_insight(
@@ -448,12 +448,12 @@ pub(crate) fn detect_dynamo_session_control(report: &NativeReport) -> Option<War
 }
 
 /// Render `N/A` for missing error codes or types and comma-group counts.
-pub(crate) fn error_summary_table(report: &NativeReport, width: usize) -> Option<String> {
-    if report.errors.is_empty() {
+pub(crate) fn error_summary_table(report: &dyn ReportView, width: usize) -> Option<String> {
+    if report.errors().is_empty() {
         return None;
     }
     let rows: Vec<Vec<String>> = report
-        .errors
+        .errors()
         .iter()
         .map(|error| {
             let code = match error.code {
@@ -557,14 +557,14 @@ struct MetricRow {
 /// configured metadata and filtering; absent tags use their raw names in the
 /// default group, sort last, and carry no filtering flags.
 pub(crate) fn metrics_tables(
-    report: &NativeReport,
+    report: &dyn ReportView,
     cfg: &ConsoleTxtExportConfig,
     width: usize,
 ) -> Option<String> {
     let mut grouped: Vec<(MetricConsoleGroup, Vec<MetricRow>)> =
         GROUP_ORDER.iter().map(|g| (*g, Vec::new())).collect();
 
-    for (tag, entry) in &report.metrics {
+    for (tag, entry) in report.metrics() {
         // Multi-series metrics require one unlabeled aggregate; labeled sidecar
         // series do not enter the primary table.
         let Some(series) = summary_series(entry) else {
@@ -627,8 +627,7 @@ pub(crate) fn metrics_tables(
         let mut block = render_table(&title, &header_refs, &table_rows, &justify, width);
         if *group == MetricConsoleGroup::SpecDecode
             && let Some(histogram) = report
-                .pooled_spec_decode_acceptance_histogram
-                .as_ref()
+                .pooled_spec_decode_acceptance_histogram()
                 .and_then(spec_decode_histogram_line)
         {
             block.push('\n');
@@ -646,7 +645,7 @@ pub(crate) fn metrics_tables(
 
 /// Render active, model-matched SGLang speculative-decoding gauge summaries.
 fn speculative_decoding_table(
-    report: &NativeReport,
+    report: &dyn ReportView,
     cfg: &ConsoleTxtExportConfig,
     width: usize,
 ) -> Option<String> {
@@ -737,11 +736,11 @@ fn speculative_decoding_table(
 
 /// Select SGLang leader series for one server metric family.
 fn select_speculative_series<'a>(
-    report: &'a NativeReport,
+    report: &'a dyn ReportView,
     model_names: &[String],
     source: &str,
 ) -> Vec<SelectedSpeculativeSeries<'a>> {
-    let Some(entry) = report.server_metrics.get(source) else {
+    let Some(entry) = report.server_metrics().get(source) else {
         return Vec::new();
     };
 

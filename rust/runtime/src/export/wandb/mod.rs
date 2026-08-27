@@ -60,7 +60,7 @@ use anyhow::Context;
 use chrono::{Datelike, Timelike, Utc};
 
 use crate::export::{ExportConfig, Exporter, SummarySeries, summary_series};
-use crate::metrics_core::{MetricEntry, NativeReport, ReportStats, ReportValue};
+use crate::metrics_core::{MetricEntry, ReportStats, ReportValue, ReportView};
 
 /// Summary table stat columns.
 const STAT_COLUMN_KEYS: [&str; 7] = ["avg", "min", "max", "p99", "p90", "p50", "std"];
@@ -115,7 +115,7 @@ impl Exporter for WandbExporter {
 
     fn export(
         &self,
-        report: &NativeReport,
+        report: &dyn ReportView,
         artifact_dir: &Path,
         cfg: &ExportConfig,
     ) -> anyhow::Result<()> {
@@ -370,9 +370,9 @@ struct MetricRow {
 }
 
 /// Build one row per profiling metric.
-fn build_metric_rows(report: &NativeReport) -> Vec<MetricRow> {
+fn build_metric_rows(report: &dyn ReportView) -> Vec<MetricRow> {
     report
-        .metrics
+        .metrics()
         .iter()
         .filter_map(|(name, entry)| {
             let stats = match summary_series(&entry.series) {
@@ -488,11 +488,11 @@ fn build_history_items(rows: &[MetricRow]) -> Vec<proto::HistoryItem> {
 }
 
 /// Tags: `aiperf-<version>`, `benchmark-<id8>`, then user tags (`_build_tags`).
-fn build_tags(report: &NativeReport, cfg: &WandbExportConfig) -> Vec<String> {
+fn build_tags(report: &dyn ReportView, cfg: &WandbExportConfig) -> Vec<String> {
     let aiperf_version = cfg
         .aiperf_version
         .clone()
-        .unwrap_or_else(|| report.aiperf_version.clone());
+        .unwrap_or_else(|| report.aiperf_version().to_owned());
     let mut tags = vec![format!("aiperf-{aiperf_version}")];
     if let Some(id) = &cfg.benchmark_id {
         let id8: String = id.chars().take(8).collect();

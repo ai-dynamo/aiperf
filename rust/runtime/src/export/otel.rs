@@ -52,7 +52,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use crate::export::{ExportConfig, Exporter};
-use crate::metrics_core::NativeReport;
+use crate::metrics_core::ReportView;
 use crate::metrics_core::report::{
     MetricSeries, ReportDistributionStats, ReportStats, ReportValue,
 };
@@ -100,7 +100,7 @@ impl Exporter for OtelExporter {
 
     fn export(
         &self,
-        report: &NativeReport,
+        report: &dyn ReportView,
         _artifact_dir: &Path,
         cfg: &ExportConfig,
     ) -> anyhow::Result<()> {
@@ -129,7 +129,7 @@ impl Exporter for OtelExporter {
 
 /// Build the OTLP `ExportMetricsServiceRequest` from the finalized report.
 fn build_request(
-    report: &NativeReport,
+    report: &dyn ReportView,
     cfg: &OtelExportConfig,
 ) -> proto::ExportMetricsServiceRequest {
     let resource = proto::Resource {
@@ -139,8 +139,8 @@ fn build_request(
 
     // Run-timeline timestamps stand in for the OTLP time window. They are the
     // report's own nanosecond marks, never a wall clock read here.
-    let start_ns = report.summary.start_time.unwrap_or(0).max(0) as u64;
-    let end_ns = report.summary.end_time.unwrap_or(0).max(0) as u64;
+    let start_ns = report.run_summary().start_time.unwrap_or(0).max(0) as u64;
+    let end_ns = report.run_summary().end_time.unwrap_or(0).max(0) as u64;
 
     let ctx = EmitContext {
         provider: cfg.provider.clone().unwrap_or_else(|| "_OTHER".to_string()),
@@ -151,11 +151,7 @@ fn build_request(
     };
 
     let mut metrics = Vec::new();
-    match report
-        .otel_per_record
-        .as_ref()
-        .filter(|records| !records.is_empty())
-    {
+    match report.per_record().filter(|records| !records.is_empty()) {
         // Per-record path: populated `bucket_counts` from the merged accumulator.
         Some(records) => {
             for spec in DURATION_METRICS {
@@ -269,11 +265,11 @@ const OUTPUT_TOKEN_KEYS: &[&str] = &["output_token_count", "output_sequence_leng
 /// Build one duration histogram metric (unit `s`), one data point per report
 /// series. Absent, non-distribution, or empty metrics emit nothing.
 fn duration_metric(
-    report: &NativeReport,
+    report: &dyn ReportView,
     spec: &DurationSpec,
     ctx: &EmitContext,
 ) -> Option<proto::Metric> {
-    let entry = report.metrics.get(spec.report_key)?;
+    let entry = report.metrics().get(spec.report_key)?;
     let scale = seconds_scale(&entry.unit);
     let points: Vec<proto::HistogramDataPoint> = entry
         .series
@@ -292,7 +288,7 @@ fn duration_metric(
 
 /// Build the merged `gen_ai.client.token.usage` histogram (unit `{token}`) with
 /// `gen_ai.token.type=input` and `type=output` data points.
-fn token_usage_metric(report: &NativeReport, ctx: &EmitContext) -> Option<proto::Metric> {
+fn token_usage_metric(report: &dyn ReportView, ctx: &EmitContext) -> Option<proto::Metric> {
     let mut points = Vec::new();
     for point in token_points(report, INPUT_TOKEN_KEYS, "input", ctx) {
         points.push(point);
@@ -313,12 +309,12 @@ fn token_usage_metric(report: &NativeReport, ctx: &EmitContext) -> Option<proto:
 /// Data points for one token direction. Token counts are identity-scaled (no
 /// unit conversion, matching `genai_semconv._identity`).
 fn token_points(
-    report: &NativeReport,
+    report: &dyn ReportView,
     keys: &[&str],
     token_type: &str,
     ctx: &EmitContext,
 ) -> Vec<proto::HistogramDataPoint> {
-    let Some(entry) = keys.iter().find_map(|key| report.metrics.get(*key)) else {
+    let Some(entry) = keys.iter().find_map(|key| report.metrics().get(*key)) else {
         return Vec::new();
     };
     entry
