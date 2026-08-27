@@ -1610,6 +1610,358 @@ fn prepare_capture_layout(root: &Path, generation: &str) -> std::path::PathBuf {
     )
 }
 
+fn staged_bundle(capture: &Path, generation: &str) -> std::path::PathBuf {
+    capture.join(format!(
+        "aiperf-native-plugin-baseline-caa3ff6f-{generation}-final.tar.gz"
+    ))
+}
+
+fn run_publication_locator(
+    generation: &str,
+    capture: &Path,
+    output: &Path,
+) -> std::process::Output {
+    Command::new(env!("CARGO_BIN_EXE_evidence_digest"))
+        .arg("publication-locator")
+        .arg(generation)
+        .arg(capture)
+        .arg(output)
+        .output()
+        .expect("publication-locator starts")
+}
+
+fn run_publication_verification(
+    generation: &str,
+    capture: &Path,
+    publishable_locator: &Path,
+    downloaded_bundle: &Path,
+    downloaded_manifest: &Path,
+    downloaded_locator: &Path,
+    extraction_parent: &Path,
+    output: &Path,
+) -> std::process::Output {
+    Command::new(env!("CARGO_BIN_EXE_evidence_digest"))
+        .arg("verify-publication")
+        .arg(generation)
+        .arg(capture)
+        .arg(publishable_locator)
+        .arg(downloaded_bundle)
+        .arg(downloaded_manifest)
+        .arg(downloaded_locator)
+        .arg(extraction_parent)
+        .arg(output)
+        .output()
+        .expect("verify-publication starts")
+}
+
+fn prepare_independent_publication_download(
+    directory: &Path,
+    capture: &Path,
+    generation: &str,
+) -> (
+    std::path::PathBuf,
+    std::path::PathBuf,
+    std::path::PathBuf,
+    std::path::PathBuf,
+) {
+    let publication = directory.join("publication");
+    let download = directory.join("independent-download");
+    fs::create_dir(&publication).expect("publication directory is created");
+    fs::create_dir(&download).expect("independent download directory is created");
+    let publishable_locator = publication.join("bundle-locator.json");
+    let output = run_publication_locator(generation, capture, &publishable_locator);
+    assert!(
+        output.status.success(),
+        "publication locator failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let bundle = staged_bundle(capture, generation);
+    let downloaded_bundle = download.join(bundle.file_name().expect("bundle name exists"));
+    let downloaded_manifest = download.join("evidence-manifest.json");
+    let downloaded_locator = download.join("bundle-locator.json");
+    fs::copy(bundle, &downloaded_bundle).expect("bundle download is copied");
+    fs::copy(capture.join("evidence-manifest.json"), &downloaded_manifest)
+        .expect("manifest download is copied");
+    fs::copy(&publishable_locator, &downloaded_locator).expect("locator download is copied");
+    (
+        publishable_locator,
+        downloaded_bundle,
+        downloaded_manifest,
+        downloaded_locator,
+    )
+}
+
+#[test]
+fn publication_commands_author_verified_artifacts_consumed_by_postpublication() {
+    let directory = tempfile::tempdir().expect("automatic publication fixture root");
+    let capture = directory.path().join("task1-review1i-final");
+    prepare_capture_layout(&capture, "review1i");
+    let (publishable_locator, downloaded_bundle, downloaded_manifest, downloaded_locator) =
+        prepare_independent_publication_download(directory.path(), &capture, "review1i");
+    let extraction_parent = directory.path().join("extraction");
+    fs::create_dir(&extraction_parent).expect("extraction parent is created");
+    let receipt = capture.join("publication-verification.json");
+    let output = run_publication_verification(
+        "review1i",
+        &capture,
+        &publishable_locator,
+        &downloaded_bundle,
+        &downloaded_manifest,
+        &downloaded_locator,
+        &extraction_parent,
+        &receipt,
+    );
+    assert!(
+        output.status.success(),
+        "publication verification failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let locator: serde_json::Value = serde_json::from_slice(
+        &fs::read(&downloaded_locator).expect("downloaded locator is readable"),
+    )
+    .expect("downloaded locator parses");
+    assert_eq!(locator["publication_status"], "published_and_verified");
+    assert_eq!(
+        locator["archive_verification_status"],
+        "downloaded_extracted_manifest_verified"
+    );
+    assert_eq!(
+        locator["manifest_path"],
+        "artifacts/native-plugin-baseline/evidence-manifest.json"
+    );
+    let verification: serde_json::Value =
+        serde_json::from_slice(&fs::read(&receipt).expect("publication receipt is readable"))
+            .expect("publication receipt parses");
+    assert_eq!(verification["schema_version"], 1);
+    assert_eq!(verification["generation"], "review1i");
+    assert_eq!(
+        verification["status"],
+        "independently_downloaded_extracted_manifest_verified"
+    );
+    assert_eq!(
+        verification["downloaded_bundle_path"].as_str(),
+        downloaded_bundle.to_str()
+    );
+    assert_eq!(
+        verification["downloaded_manifest_path"].as_str(),
+        downloaded_manifest.to_str()
+    );
+    assert_eq!(
+        verification["published_locator_path"].as_str(),
+        downloaded_locator.to_str()
+    );
+
+    let inventory = directory.path().join("plugin-parity.yaml");
+    let topology = directory.path().join("compact/package-topology.json");
+    fs::create_dir_all(topology.parent().expect("topology parent exists"))
+        .expect("compact output directory is created");
+    fs::copy(
+        repository_root().join("rust/benchmarks/plugin-parity.yaml"),
+        &inventory,
+    )
+    .expect("inventory fixture is copied");
+    let consumed = run_refresh(
+        "postpublication",
+        "review1i",
+        &inventory,
+        &capture,
+        Some(&topology),
+    );
+    assert!(
+        consumed.status.success(),
+        "postpublication refused authored receipt: {}",
+        String::from_utf8_lossy(&consumed.stderr)
+    );
+}
+
+#[test]
+fn publication_verifier_rejects_tampered_download_without_partial_receipt() {
+    let directory = tempfile::tempdir().expect("tampered publication fixture root");
+    let capture = directory.path().join("task1-review1i-final");
+    prepare_capture_layout(&capture, "review1i");
+    let (publishable_locator, downloaded_bundle, downloaded_manifest, downloaded_locator) =
+        prepare_independent_publication_download(directory.path(), &capture, "review1i");
+    fs::write(&downloaded_bundle, b"tampered downloaded bundle")
+        .expect("downloaded bundle is tampered");
+    let extraction_parent = directory.path().join("extraction");
+    fs::create_dir(&extraction_parent).expect("extraction parent is created");
+    let receipt = capture.join("publication-verification.json");
+    let output = run_publication_verification(
+        "review1i",
+        &capture,
+        &publishable_locator,
+        &downloaded_bundle,
+        &downloaded_manifest,
+        &downloaded_locator,
+        &extraction_parent,
+        &receipt,
+    );
+    assert!(!output.status.success(), "tampered download was admitted");
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("exact staged capture bytes"),
+        "unexpected tamper refusal: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!receipt.exists(), "failed verification left a receipt");
+}
+
+#[cfg(unix)]
+#[test]
+fn publication_verifier_rejects_staged_bundle_alias_without_receipt() {
+    let directory = tempfile::tempdir().expect("publication alias fixture root");
+    let capture = directory.path().join("task1-review1i-final");
+    prepare_capture_layout(&capture, "review1i");
+    let (publishable_locator, _, downloaded_manifest, downloaded_locator) =
+        prepare_independent_publication_download(directory.path(), &capture, "review1i");
+    let staged_bundle = staged_bundle(&capture, "review1i");
+    let extraction_parent = directory.path().join("extraction");
+    fs::create_dir(&extraction_parent).expect("extraction parent is created");
+    let receipt = capture.join("publication-verification.json");
+    let output = run_publication_verification(
+        "review1i",
+        &capture,
+        &publishable_locator,
+        &staged_bundle,
+        &downloaded_manifest,
+        &downloaded_locator,
+        &extraction_parent,
+        &receipt,
+    );
+    assert!(!output.status.success(), "staged bundle alias was admitted");
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("staged bundle alias"),
+        "unexpected alias refusal: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!receipt.exists(), "alias refusal left a receipt");
+}
+
+#[cfg(unix)]
+#[test]
+fn publication_verifier_rejects_publishable_locator_alias_without_receipt() {
+    let directory = tempfile::tempdir().expect("publication locator alias fixture root");
+    let capture = directory.path().join("task1-review1i-final");
+    prepare_capture_layout(&capture, "review1i");
+    let (publishable_locator, downloaded_bundle, downloaded_manifest, _) =
+        prepare_independent_publication_download(directory.path(), &capture, "review1i");
+    let extraction_parent = directory.path().join("extraction");
+    fs::create_dir(&extraction_parent).expect("extraction parent is created");
+    let receipt = capture.join("publication-verification.json");
+    let output = run_publication_verification(
+        "review1i",
+        &capture,
+        &publishable_locator,
+        &downloaded_bundle,
+        &downloaded_manifest,
+        &publishable_locator,
+        &extraction_parent,
+        &receipt,
+    );
+    assert!(
+        !output.status.success(),
+        "publishable locator alias was admitted"
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("downloaded locator alias"),
+        "unexpected locator alias refusal: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!receipt.exists(), "locator alias refusal left a receipt");
+}
+
+#[test]
+fn publication_verifier_rejects_mismatched_locator_identity() {
+    for field in ["recommended_release_tag", "asset_name", "stable_url"] {
+        let directory = tempfile::tempdir().expect("locator mismatch fixture root");
+        let capture = directory.path().join("task1-review1i-final");
+        prepare_capture_layout(&capture, "review1i");
+        let (publishable_locator, downloaded_bundle, downloaded_manifest, downloaded_locator) =
+            prepare_independent_publication_download(directory.path(), &capture, "review1i");
+        let mut locator: serde_json::Value = serde_json::from_slice(
+            &fs::read(&downloaded_locator).expect("downloaded locator is readable"),
+        )
+        .expect("downloaded locator parses");
+        locator[field] = serde_json::json!("mismatched-publication-identity");
+        fs::write(
+            &downloaded_locator,
+            serde_json::to_vec_pretty(&locator).expect("mismatched locator serializes"),
+        )
+        .expect("mismatched locator is written");
+        let extraction_parent = directory.path().join("extraction");
+        fs::create_dir(&extraction_parent).expect("extraction parent is created");
+        let receipt = capture.join("publication-verification.json");
+        let output = run_publication_verification(
+            "review1i",
+            &capture,
+            &publishable_locator,
+            &downloaded_bundle,
+            &downloaded_manifest,
+            &downloaded_locator,
+            &extraction_parent,
+            &receipt,
+        );
+        assert!(
+            !output.status.success(),
+            "mismatched locator field {field} was admitted"
+        );
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("exact publishable locator bytes"),
+            "unexpected {field} refusal: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(!receipt.exists(), "locator refusal left a receipt");
+    }
+}
+
+#[test]
+fn publication_verifier_refuses_overwrite_before_extraction_without_residue() {
+    let directory = tempfile::tempdir().expect("publication overwrite fixture root");
+    let capture = directory.path().join("task1-review1i-final");
+    prepare_capture_layout(&capture, "review1i");
+    let (publishable_locator, downloaded_bundle, downloaded_manifest, downloaded_locator) =
+        prepare_independent_publication_download(directory.path(), &capture, "review1i");
+    let extraction_parent = directory.path().join("extraction");
+    fs::create_dir(&extraction_parent).expect("extraction parent is created");
+    let marker = directory.path().join("extraction-entered");
+    let receipt = capture.join("publication-verification.json");
+    fs::write(&receipt, b"do not overwrite\n").expect("existing output sentinel is written");
+    let output = Command::new(env!("CARGO_BIN_EXE_evidence_digest"))
+        .arg("verify-publication")
+        .arg("review1i")
+        .arg(&capture)
+        .arg(&publishable_locator)
+        .arg(&downloaded_bundle)
+        .arg(&downloaded_manifest)
+        .arg(&downloaded_locator)
+        .arg(&extraction_parent)
+        .arg(&receipt)
+        .env("AIPERF_EVIDENCE_EXTRACTION_MARKER", &marker)
+        .output()
+        .expect("overwrite-refusing publication verification starts");
+    assert!(!output.status.success(), "existing receipt was overwritten");
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("already exists"),
+        "unexpected overwrite refusal: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read(&receipt).expect("existing output remains readable"),
+        b"do not overwrite\n"
+    );
+    assert!(!marker.exists(), "overwrite refusal entered extraction");
+    assert!(
+        fs::read_dir(&capture)
+            .expect("capture root remains readable")
+            .all(|entry| !entry
+                .expect("capture entry is readable")
+                .file_name()
+                .to_string_lossy()
+                .contains("publication-verification.json.tmp")),
+        "overwrite refusal left a partial receipt"
+    );
+}
+
 fn write_publication_verification(
     capture: &Path,
     downloaded_bundle: &Path,
