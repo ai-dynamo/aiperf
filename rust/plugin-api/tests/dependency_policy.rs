@@ -67,6 +67,13 @@ const FOUNDATION_PACKAGES: &[(&str, &str)] = &[
     ("aiperf-allocator-shim", "allocator-shim"),
 ];
 
+// Orchestration-private workspace tooling. These crates are workspace members
+// but are neither plugin shells nor distributable packages: they never appear
+// in the shell projection, the SDK bundle, or a plugin's dependency closure.
+// They are listed only so the workspace-membership assertion can tell "a tool
+// was added" apart from "a plugin package appeared unannounced".
+const WORKSPACE_TOOLING_PACKAGES: &[&str] = &["aiperf-xtask"];
+
 #[derive(Debug, Deserialize)]
 struct Metadata {
     packages: Vec<Package>,
@@ -515,6 +522,7 @@ fn workspace_and_template_policy() {
                 .chain(DISTRIBUTABLE_PACKAGES)
                 .map(|(name, _)| (*name).to_owned()),
         )
+        .chain(WORKSPACE_TOOLING_PACKAGES.iter().map(|name| (*name).to_owned()))
         .collect::<BTreeSet<_>>();
     assert_eq!(
         packages.keys().cloned().collect::<BTreeSet<_>>(),
@@ -529,6 +537,11 @@ fn workspace_and_template_policy() {
                 .iter()
                 .chain(DISTRIBUTABLE_PACKAGES)
                 .map(|(name, _)| ((*name).to_owned(), "0.12.0".to_owned())),
+        )
+        .chain(
+            WORKSPACE_TOOLING_PACKAGES
+                .iter()
+                .map(|name| ((*name).to_owned(), "0.12.0".to_owned())),
         )
         .collect::<BTreeSet<_>>();
     assert_eq!(expected_workspace_identities.len(), expected_names.len());
