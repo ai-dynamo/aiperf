@@ -648,9 +648,11 @@ struct RequestPolicy {
 
 impl RequestPolicy {
     fn read_backoff_ns(&self, round: u32) -> i64 {
-        let shift = round.min(32);
+        // `checked_shl` cannot fail below the width of `i64`; the clamp keeps the
+        // doubling total without reaching for a panicking shift.
+        let factor = 1_i64.checked_shl(round.min(62)).unwrap_or(i64::MAX);
         self.read_backoff_base_ns
-            .saturating_mul(1_i64.saturating_shl(shift))
+            .saturating_mul(factor)
             .min(self.read_backoff_cap_ns)
     }
 }
@@ -1634,7 +1636,7 @@ mod tests {
         }
     }
 
-    #[derive(Default)]
+    #[derive(Debug, Default)]
     struct FakeState {
         revision: Vec<Reply>,
         rows: Vec<Reply>,
@@ -1644,6 +1646,7 @@ mod tests {
         authorized: u32,
     }
 
+    #[derive(Debug)]
     struct FakeTransport {
         state: RefCell<FakeState>,
         is_anonymous: bool,
@@ -1938,7 +1941,7 @@ mod tests {
             Self {
                 transport: FakeTransport::new(revision, rows),
                 reporter: Rc::new(CountingReporter::default()),
-                clock: SimClock::new(),
+                clock: Rc::new(SimClock::new()),
             }
         }
 
