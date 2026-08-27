@@ -26,8 +26,7 @@ use aiperf_runtime::streaming::{
     failure::{StableStreamingFailure, StreamFormatError, StreamSourceError},
     format::{
         DecodeBatchBudget, DecodeStep, DecoderCheckpoint, DecoderResumeState, FormatEvent,
-        FormatEventSink, StreamingDatasetFormat, StreamingDatasetFormatFactory,
-        StreamingFormatPrepareContext,
+        FormatEventSink, StreamingDatasetFormatFactory, StreamingFormatPrepareContext,
     },
     formats::streaming_dynamo::{
         STREAMING_DYNAMO_DESCRIPTOR, STREAMING_DYNAMO_FORMAT_ID, StreamingDynamoFormatFactory,
@@ -131,7 +130,10 @@ async fn acquire(
     budget: &AcquisitionBudget,
 ) -> AcquiredPartition {
     let start = usize::try_from(resume_offset).expect("fixture offsets fit usize");
-    assert!(start <= bytes.len(), "fixture resume offset is inside the object");
+    assert!(
+        start <= bytes.len(),
+        "fixture resume offset is inside the object"
+    );
     let authority = budget
         .acquire_memory(1, 0)
         .await
@@ -203,6 +205,7 @@ impl StreamingIssueReporterEndpoint for RecordingEndpoint {
             StreamingIssueScope::Session { .. } => "session",
             StreamingIssueScope::Action { .. } => "action",
             StreamingIssueScope::Export { .. } => "export",
+            StreamingIssueScope::CheckpointAttempt { .. } => "checkpoint_attempt",
         };
         self.log.facts.borrow_mut().push(IssueFact {
             scope,
@@ -446,8 +449,9 @@ fn request_end_line(
     )
 }
 
-fn deferred(fragment: &StreamingSessionFragment) -> &aiperf_runtime::streaming::unit::DeferredRecordedRequestFragment
-{
+fn deferred(
+    fragment: &StreamingSessionFragment,
+) -> &aiperf_runtime::streaming::unit::DeferredRecordedRequestFragment {
     match &fragment.mutation {
         SessionMutationV1::DeferredRecordedRequest(deferred) => deferred,
         other => panic!("expected a deferred recorded request, got {other:?}"),
@@ -477,13 +481,18 @@ async fn parent_in_later_object_does_not_create_an_early_root() {
         "{}\n",
         r#"{"schema":"dynamo.request.trace.v1","event_type":"request_end","event_time_unix_ms":20,"agent_context":{"session_id":"child","parent_session_id":"parent"},"request":{"request_id":"r-child","replay":{"trace_block_size":16,"input_length":16,"input_sequence_hashes":[7]}}}"#
     );
-    let parent = format!("{}\n", request_end_line("parent", "r-parent", 10, 16, 16, &[5]));
+    let parent = format!(
+        "{}\n",
+        request_end_line("parent", "r-parent", 10, 16, 16, &[5])
+    );
 
     let first = decode_object(&child, authored_config()).await;
     assert!(first.error.is_none());
     assert_eq!(first.fragments.len(), 1);
     assert_eq!(
-        deferred(&first.fragments[0]).parent_producer_session_id.as_deref(),
+        deferred(&first.fragments[0])
+            .parent_producer_session_id
+            .as_deref(),
         Some("parent"),
         "a child names its producer parent even when the parent record is elsewhere"
     );
@@ -491,7 +500,8 @@ async fn parent_in_later_object_does_not_create_an_early_root() {
     let second = decode_object(&parent, authored_config()).await;
     assert!(second.error.is_none());
     assert_eq!(
-        deferred(&second.fragments[0]).parent_producer_session_id, None,
+        deferred(&second.fragments[0]).parent_producer_session_id,
+        None,
         "a root record declares no parent and no root is inferred at object EOF"
     );
 }
@@ -520,11 +530,11 @@ async fn bound_profile_drift_cannot_be_quarantined() {
     assert_eq!(
         decoded.facts,
         vec![IssueFact {
-            scope: "partition",
+            scope: "run",
             code: "synthesis_authority_mismatch".to_owned(),
             class: StreamingIssueClass::Permanent,
         }],
-        "frozen-semantic drift is partition scoped and never a record quarantine"
+        "frozen-semantic drift is never a record quarantine"
     );
     assert!(
         decoded.fragments.is_empty(),
@@ -640,8 +650,9 @@ async fn repeated_request_id_is_idempotent_and_conflicting_content_conflicts() {
     let divergent = request_end_line("s", "r", 10, 16, 32, &[1, 2]);
     let mixed = decode_object(&format!("{line}\n{divergent}\n"), authored_config()).await;
     assert_eq!(mixed.fragments[0].record_id, mixed.fragments[1].record_id);
-    let error = classify_logical_duplicate(&receipt(&mixed.fragments[0]), &receipt(&mixed.fragments[1]))
-        .expect_err("divergent content under one logical identity conflicts");
+    let error =
+        classify_logical_duplicate(&receipt(&mixed.fragments[0]), &receipt(&mixed.fragments[1]))
+            .expect_err("divergent content under one logical identity conflicts");
     assert_eq!(error.code(), "logical_identity_conflict");
 }
 
@@ -690,8 +701,14 @@ async fn cursor_restore_before_and_after_binding_resumes_without_duplicates() {
         .iter()
         .map(|fragment| fragment.record_id)
         .collect();
-    assert_eq!(ids, whole_ids, "resuming replays no duplicate and skips no record");
-    assert_eq!(resumed.cursor[32], 1, "the resumed decode bound the authority");
+    assert_eq!(
+        ids, whole_ids,
+        "resuming replays no duplicate and skips no record"
+    );
+    assert_eq!(
+        resumed.cursor[32], 1,
+        "the resumed decode bound the authority"
+    );
 
     // Resuming again from the bound cursor keeps the same authority bytes.
     let again = decode_object_from(&object, authored_config(), Some(resumed.cursor.clone())).await;
@@ -786,7 +803,11 @@ async fn partition_eof_emits_end_without_close_root_or_tree_receipt() {
         DecodeStep::End(_) => panic!("a nonempty object yields a batch first"),
     };
     drop(batch);
-    match decoder.next_batch(decode_budget).await.expect("second pull") {
+    match decoder
+        .next_batch(decode_budget)
+        .await
+        .expect("second pull")
+    {
         DecodeStep::End(receipt) => assert_eq!(receipt.fragment_count, 1),
         DecodeStep::Batch(_) => panic!("the object holds exactly one record"),
     }

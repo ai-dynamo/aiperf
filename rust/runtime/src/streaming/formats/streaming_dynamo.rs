@@ -55,8 +55,8 @@ use super::super::format::{
     ValidatedStreamingFormatConfig,
 };
 use super::super::identity::{
-    ContentDigest, ImmutableObjectIdentity, StableOrderKey, StableRecordId, StableSessionKey,
-    physical_record_id, stable_record_id_from_key, stable_session_key,
+    ContentDigest, ImmutableObjectIdentity, StableOrderKey, physical_record_id,
+    stable_record_id_from_key, stable_session_key,
 };
 use super::super::reliability::{
     OrdinaryStreamingIssue, StreamingInputDomainIdentity, StreamingIssueClass,
@@ -455,10 +455,7 @@ impl StreamingDynamoFormat {
     ///
     /// A resumed bound cursor with a different block size or digest is drift,
     /// not a fresh binding.
-    fn reconcile_restored_authority(
-        &self,
-        cursor: &DynamoCursor,
-    ) -> Result<(), StreamFormatError> {
+    fn reconcile_restored_authority(&self, cursor: &DynamoCursor) -> Result<(), StreamFormatError> {
         let current = self.authority.get();
         match (current.tag, cursor.authority.tag) {
             (AuthorityTag::Unbound, AuthorityTag::Unbound) => Ok(()),
@@ -523,8 +520,10 @@ impl StreamingDynamoFormat {
             return Err(CheckpointError::ObjectVerification);
         }
         let event_time = read_u64(&bytes[8..16]).ok_or(CheckpointError::ObjectVerification)?;
-        let event_time = i64::try_from(event_time).map_err(|_| CheckpointError::ObjectVerification)?;
-        self.partitions_begun = read_u64(&bytes[0..8]).ok_or(CheckpointError::ObjectVerification)?;
+        let event_time =
+            i64::try_from(event_time).map_err(|_| CheckpointError::ObjectVerification)?;
+        self.partitions_begun =
+            read_u64(&bytes[0..8]).ok_or(CheckpointError::ObjectVerification)?;
         self.latest_event_time.set(if event_time == 0 {
             None
         } else {
@@ -575,7 +574,7 @@ impl StreamingDatasetFormat for StreamingDynamoFormat {
         // and released before the next pull, so this budget is a bound on a
         // single in-flight read rather than on retained decoder state. The
         // sequential access shape never touches a local snapshot, so the disk
-        // budget is deliberately empty.
+        // budget is a one-byte floor that no acquisition ever draws from.
         let acquisition_budget = AcquisitionBudget::new(
             StreamingResourceBudget::new(BudgetLimits {
                 max_items: 1,
@@ -583,8 +582,8 @@ impl StreamingDatasetFormat for StreamingDynamoFormat {
             })
             .map_err(|_| StreamFormatError::decode(DecodeFailureCode::BudgetInvariant))?,
             StreamingResourceBudget::new(BudgetLimits {
-                max_items: 0,
-                max_bytes: 0,
+                max_items: 1,
+                max_bytes: 1,
             })
             .map_err(|_| StreamFormatError::decode(DecodeFailureCode::BudgetInvariant))?,
         );
@@ -837,8 +836,9 @@ impl DynamoPartitionDecoder {
                     DecodeFailureCode::OversizedRecord,
                 ));
             }
-            let max = NonZeroUsize::new(self.config.config.max_chunk_bytes)
-                .ok_or(StreamFormatError::decode(DecodeFailureCode::BudgetInvariant))?;
+            let max = NonZeroUsize::new(self.config.config.max_chunk_bytes).ok_or(
+                StreamFormatError::decode(DecodeFailureCode::BudgetInvariant),
+            )?;
             match self.access.next_chunk(max, &self.acquisition_budget).await {
                 Ok(Some(chunk)) => self.carry.extend_from_slice(chunk.as_bytes()),
                 Ok(None) if self.carry.is_empty() => return Ok(None),
@@ -995,8 +995,15 @@ impl DynamoPartitionDecoder {
             event_ordinal: self.cursor.line_ordinal,
         });
         let retained = agent_event_retained_bytes(&mutation);
-        self.finish_fragment(record, &producer_key, &context.session_id, mutation, retained, permit)
-            .map(|fragment| LineOutcome::Fragment(Box::new(fragment)))
+        self.finish_fragment(
+            record,
+            &producer_key,
+            &context.session_id,
+            mutation,
+            retained,
+            permit,
+        )
+        .map(|fragment| LineOutcome::Fragment(Box::new(fragment)))
     }
 
     /// Bind the first executable positive block size, or refuse later drift.
@@ -1036,20 +1043,19 @@ impl DynamoPartitionDecoder {
         }
     }
 
-    /// Report a frozen-semantic drift at partition scope and return the error.
+    /// Report a frozen-semantic drift without membership loss, and return the error.
     ///
-    /// Partition scope, never record scope: drift invalidates the run's frozen
-    /// semantics, and quarantining it would silently admit a mixed-semantic
-    /// stream. The host classifier maps it to a terminal frozen-semantic drift.
+    /// Never record scope: drift invalidates the run's frozen semantics, and
+    /// quarantining it would silently admit a mixed-semantic stream. Partition
+    /// scope is unavailable — `reliability.rs` pairs partition scope with a
+    /// source-stage failure only — so the fact is reported at run scope, which
+    /// loses no membership and leaves the terminal classification to the host.
     async fn report_authority_drift(&mut self) -> StreamFormatError {
         let failure = StreamFormatError::decode(DecodeFailureCode::SynthesisAuthorityMismatch);
-        if let Ok(issue) = OrdinaryStreamingIssue::partition(
+        if let Ok(issue) = OrdinaryStreamingIssue::run_diagnostic(
             self.run,
-            self.input_domain.clone(),
-            self.identity,
             StreamingIssueClass::Permanent,
             self.cursor.authority.digest,
-            self.position,
             0,
             self.cursor.authority.digest,
             OrdinaryStreamingFailure::Format(failure),
@@ -1125,7 +1131,8 @@ impl DynamoPartitionDecoder {
         permit: super::super::budget::BudgetLease,
     ) -> Result<StreamingSessionFragment, StreamFormatError> {
         let record_id = stable_record_id_from_key(self.stream_identity.as_bytes(), producer_key);
-        let session_key = stable_session_key(self.stream_identity.as_bytes(), session_id.as_bytes());
+        let session_key =
+            stable_session_key(self.stream_identity.as_bytes(), session_id.as_bytes());
         let event_time = record
             .event_time_ms
             .checked_mul(1_000_000)
