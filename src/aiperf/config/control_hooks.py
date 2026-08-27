@@ -63,8 +63,10 @@ class ResetKvCacheConfig(BaseConfig):
             default=None,
             ge=0,
             description="Total time budget in seconds for retrying a "
-            "retryable reset_kv_cache POST failure (timeout/connection "
-            "error only - non-2xx responses are never retried). "
+            "retryable reset_kv_cache POST failure: a timeout/connection "
+            "error, or a response with status in "
+            "RESET_KV_CACHE_RETRYABLE_STATUS_CODES (409/423/429/503). "
+            "Other non-2xx responses are never retried. "
             f"When unset, uses {DEFAULT_RESET_KV_CACHE_MAX_RETRY_SECONDS}s.",
         ),
     ] = None
