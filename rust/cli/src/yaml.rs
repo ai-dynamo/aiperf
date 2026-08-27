@@ -1066,6 +1066,8 @@ struct ResetKvCacheYaml {
     timeout_seconds: Option<f64>,
     #[serde(default)]
     path: Option<String>,
+    #[serde(default, alias = "maxRetrySeconds")]
+    max_retry_seconds: Option<f64>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -1869,6 +1871,7 @@ impl Benchmark {
             enabled_or_config(self.endpoint.reset_kv_cache, |config| ResetKvCacheConfig {
                 timeout_seconds: config.timeout_seconds,
                 path: config.path,
+                max_retry_seconds: config.max_retry_seconds,
             });
         let server_profiler = enabled_or_config(self.endpoint.server_profiler, |config| {
             ServerProfilerConfig {

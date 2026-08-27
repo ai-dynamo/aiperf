@@ -978,6 +978,8 @@ struct ResetKvCacheConfigV2 {
     timeout_seconds: Option<f64>,
     #[serde(default)]
     path: Option<String>,
+    #[serde(default, alias = "maxRetrySeconds")]
+    max_retry_seconds: Option<f64>,
 }
 
 #[derive(Deserialize)]
@@ -1372,6 +1374,7 @@ pub fn validate_endpoint_profiles_v2(
             reset_kv_cache: config.reset_kv_cache.map(|config| ResetKvCacheConfig {
                 timeout_seconds: config.timeout_seconds,
                 path: config.path,
+                max_retry_seconds: config.max_retry_seconds,
             }),
             server_profiler: config.server_profiler.map(|config| ServerProfilerConfig {
                 timeout_seconds: config.timeout_seconds,

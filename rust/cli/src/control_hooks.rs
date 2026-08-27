@@ -147,6 +147,7 @@ mod tests {
             reset_kv_cache: Some(ResetKvCacheConfig {
                 timeout_seconds: None,
                 path: None,
+                max_retry_seconds: None,
             }),
             server_profiler: Some(ServerProfilerConfig {
                 timeout_seconds: None,

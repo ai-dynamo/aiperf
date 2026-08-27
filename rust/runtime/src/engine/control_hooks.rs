@@ -9,14 +9,15 @@ use std::rc::Rc;
 
 use anyhow::{Context, Result, anyhow, ensure};
 use serde::Deserialize;
+use tracing::debug;
 use url::Url;
 
 use crate::clock::Clock;
 use crate::endpoints::{EndpointId, RawEndpointConfig, ResetKvCacheConfig, ServerProfilerConfig};
 use crate::engine::control_plane_http::{
-    ControlPlaneCredentialReference, ControlPlaneHttp, ControlPlaneHttpProvider,
-    ControlPlaneMethod, ControlPlaneRequest, ControlPlaneTlsReference, LocalCancellationSignal,
-    ValidatedControlPlaneProfile,
+    ControlPlaneCredentialReference, ControlPlaneHttp, ControlPlaneHttpErrorKind,
+    ControlPlaneHttpProvider, ControlPlaneMethod, ControlPlaneRequest, ControlPlaneTlsReference,
+    LocalCancellationSignal, ValidatedControlPlaneProfile,
 };
 use crate::engine::registry::ValidatedEndpointProfileV2;
 use crate::graph::replay::ReplayRunIdentity;
@@ -27,6 +28,17 @@ use crate::transport::http::config::ClientConfig;
 use crate::transport::http::models::HttpVersion;
 
 const DEFAULT_CONTROL_HOOK_TIMEOUT_NS: i64 = 30_000_000_000;
+const DEFAULT_RESET_KV_CACHE_MAX_RETRY_NS: i64 = 60_000_000_000;
+const RETRY_BACKOFF_INITIAL_NS: i64 = 1_000_000_000;
+const RETRY_BACKOFF_CAP_NS: i64 = 8_000_000_000;
+const RETRY_BACKOFF_MULTIPLIER: i64 = 2;
+/// HTTP statuses treated as transient for `reset_kv_cache` and retried.
+///
+/// 409 Conflict / 423 Locked / 429 Too Many Requests / 503 Service Unavailable
+/// are the standard "busy with transient state, try again" signals - e.g. a
+/// server reporting a profiler-cleanup race explicitly instead of holding the
+/// socket open. Any other non-2xx status is a real rejection.
+const RESET_KV_CACHE_RETRYABLE_STATUS_CODES: [u16; 4] = [409, 423, 429, 503];
 const DEFAULT_RESET_KV_CACHE_PATH: &str = "/reset_prefix_cache";
 const DEFAULT_SERVER_PROFILER_START_PATH: &str = "/start_profile";
 const DEFAULT_SERVER_PROFILER_STOP_PATH: &str = "/stop_profile";
@@ -56,6 +68,8 @@ pub struct ControlHookOutcome {
 pub struct PreparedResetKvCacheHook {
     pub timeout_ns: i64,
     pub path: String,
+    /// Total budget for retrying a retryable POST against one endpoint origin.
+    pub max_retry_ns: i64,
     pub handles: Vec<Rc<dyn ControlPlaneHttp>>,
     clock: Rc<dyn Clock>,
     target_urls: Vec<String>,
@@ -74,6 +88,7 @@ impl Debug for PreparedResetKvCacheHook {
             .debug_struct("PreparedResetKvCacheHook")
             .field("timeout_ns", &self.timeout_ns)
             .field("path", &self.path)
+            .field("max_retry_ns", &self.max_retry_ns)
             .field("handle_count", &self.handles.len())
             .field("target_urls", &self.target_urls)
             .finish()
@@ -253,15 +268,13 @@ pub fn prepare_endpoint_control_hooks(
         .config
         .reset_kv_cache
         .as_ref()
-        .map(|config| prepare_reset_hook(config, &profile.client, &handles, &target_urls, &clock))
+        .map(|config| prepare_reset_hook(config, &handles, &target_urls, &clock))
         .transpose()?;
     let server_profiler = profile
         .config
         .server_profiler
         .as_ref()
-        .map(|config| {
-            prepare_server_profiler_hook(config, &profile.client, &handles, &target_urls, &clock)
-        })
+        .map(|config| prepare_server_profiler_hook(config, &handles, &target_urls, &clock))
         .transpose()?;
     Ok(PreparedEndpointControlHooks {
         reset_kv_cache,
@@ -283,6 +296,10 @@ pub fn prepare_endpoint_control_hooks_from_profile_value(
 }
 
 /// Execute one prepared reset-kv-cache hook across every endpoint-local handle.
+///
+/// A transport failure, a deadline expiry, or a transient-busy status is
+/// retried per origin with bounded exponential backoff inside
+/// [`PreparedResetKvCacheHook::max_retry_ns`]; any other non-2xx fails fast.
 pub fn run_reset_kv_cache(
     hook: &PreparedResetKvCacheHook,
 ) -> LocalPhaseFuture<Result<ControlHookOutcome>> {
@@ -291,6 +308,7 @@ pub fn run_reset_kv_cache(
     let handles = hook.handles.clone();
     let clock = hook.clock.clone();
     let target_urls = hook.target_urls.clone();
+    let max_retry_ns = hook.max_retry_ns;
     Box::pin(async move {
         execute_control_hook(
             "reset_kv_cache",
@@ -299,6 +317,7 @@ pub fn run_reset_kv_cache(
             handles,
             target_urls,
             clock,
+            max_retry_ns,
         )
         .await
     })
@@ -321,6 +340,7 @@ pub fn start_server_profiler(
             handles,
             target_urls,
             clock,
+            0,
         )
         .await
     })
@@ -343,6 +363,7 @@ pub fn stop_server_profiler(
             handles,
             target_urls,
             clock,
+            0,
         )
         .await
     })
@@ -444,12 +465,15 @@ fn validated_profile_from_value(
     })
 }
 
-fn resolve_timeout_ns(endpoint_client: &ClientConfig, timeout_seconds: Option<f64>) -> Result<i64> {
+/// Resolve one control-hook timeout, in nanoseconds.
+///
+/// An unset `timeout_seconds` deliberately does not inherit `endpoint.timeout`:
+/// that value is tuned for inference requests and defaults to six hours, so a
+/// stalled control-plane POST would appear to hang for the whole run.
+fn resolve_timeout_ns(timeout_seconds: Option<f64>) -> Result<i64> {
     let timeout_ns = match timeout_seconds {
         Some(seconds) => seconds_to_ns(seconds)?,
-        None => endpoint_client
-            .total_timeout_ns
-            .unwrap_or(DEFAULT_CONTROL_HOOK_TIMEOUT_NS),
+        None => DEFAULT_CONTROL_HOOK_TIMEOUT_NS,
     };
     ensure!(
         timeout_ns > 0,
@@ -499,18 +523,24 @@ fn nonnegative_seconds_to_ns(seconds: f64, field: &str) -> Result<i64> {
 
 fn prepare_reset_hook(
     config: &ResetKvCacheConfig,
-    endpoint_client: &ClientConfig,
     handles: &[Rc<dyn ControlPlaneHttp>],
     target_urls: &[String],
     clock: &Rc<dyn Clock>,
 ) -> Result<PreparedResetKvCacheHook> {
     Ok(PreparedResetKvCacheHook {
-        timeout_ns: resolve_timeout_ns(endpoint_client, config.timeout_seconds)?,
+        timeout_ns: resolve_timeout_ns(config.timeout_seconds)?,
         path: normalize_control_path(
             config.path.as_deref(),
             DEFAULT_RESET_KV_CACHE_PATH,
             "endpoint.reset_kv_cache.path",
         )?,
+        max_retry_ns: match config.max_retry_seconds {
+            Some(seconds) => nonnegative_seconds_to_ns(
+                seconds,
+                "endpoint.reset_kv_cache.max_retry_seconds",
+            )?,
+            None => DEFAULT_RESET_KV_CACHE_MAX_RETRY_NS,
+        },
         handles: handles.to_vec(),
         clock: clock.clone(),
         target_urls: target_urls.to_vec(),
@@ -519,13 +549,12 @@ fn prepare_reset_hook(
 
 fn prepare_server_profiler_hook(
     config: &ServerProfilerConfig,
-    endpoint_client: &ClientConfig,
     handles: &[Rc<dyn ControlPlaneHttp>],
     target_urls: &[String],
     clock: &Rc<dyn Clock>,
 ) -> Result<PreparedServerProfilerHook> {
     Ok(PreparedServerProfilerHook {
-        timeout_ns: resolve_timeout_ns(endpoint_client, config.timeout_seconds)?,
+        timeout_ns: resolve_timeout_ns(config.timeout_seconds)?,
         start_path: normalize_control_path(
             config.start_path.as_deref(),
             DEFAULT_SERVER_PROFILER_START_PATH,
@@ -542,6 +571,57 @@ fn prepare_server_profiler_hook(
     })
 }
 
+/// One failed control-hook attempt plus whether waiting could change it.
+struct ControlHookAttemptError {
+    error: anyhow::Error,
+    is_retryable: bool,
+}
+
+async fn attempt_control_request(
+    handle: &dyn ControlPlaneHttp,
+    kind: &'static str,
+    index: usize,
+    path: &str,
+    timeout_ns: i64,
+    target_url: &str,
+    clock: &Rc<dyn Clock>,
+    retryable_status_codes: &[u16],
+) -> std::result::Result<(), ControlHookAttemptError> {
+    let absolute_deadline_ns = clock.now_ns().saturating_add(timeout_ns);
+    let response = handle
+        .execute(
+            ControlPlaneRequest {
+                request_id: format!("control-hook-{kind}-{index}"),
+                method: ControlPlaneMethod::Post,
+                path: path.to_owned(),
+            },
+            absolute_deadline_ns,
+            LocalCancellationSignal::new(),
+        )
+        .await
+        .map_err(|error| ControlHookAttemptError {
+            // A transport failure or an expired per-attempt deadline can clear
+            // on its own; an invalid request or oversized reply cannot.
+            is_retryable: matches!(
+                error.kind,
+                ControlPlaneHttpErrorKind::Transport | ControlPlaneHttpErrorKind::Timeout
+            ),
+            error: anyhow::Error::new(error).context(format!(
+                "executing endpoint-local {kind} hook against {target_url:?} at {path:?}"
+            )),
+        })?;
+    if (200..300).contains(&response.status) {
+        return Ok(());
+    }
+    Err(ControlHookAttemptError {
+        is_retryable: retryable_status_codes.contains(&response.status),
+        error: anyhow!(
+            "endpoint-local {kind} hook against {target_url:?} at {path:?} returned HTTP {}",
+            response.status
+        ),
+    })
+}
+
 async fn execute_control_hook(
     kind: &'static str,
     timeout_ns: i64,
@@ -549,29 +629,52 @@ async fn execute_control_hook(
     handles: Vec<Rc<dyn ControlPlaneHttp>>,
     target_urls: Vec<String>,
     clock: Rc<dyn Clock>,
+    max_retry_ns: i64,
 ) -> Result<ControlHookOutcome> {
+    // Only reset_kv_cache opts into transient-busy status retries; a profiler
+    // hook passes an empty set so every non-2xx stays fatal.
+    let retryable_status_codes: &[u16] = if max_retry_ns > 0 {
+        &RESET_KV_CACHE_RETRYABLE_STATUS_CODES
+    } else {
+        &[]
+    };
     let request_count = handles.len();
     for (index, (handle, target_url)) in handles.into_iter().zip(target_urls).enumerate() {
-        let absolute_deadline_ns = clock.now_ns().saturating_add(timeout_ns);
-        let response = handle
-            .execute(
-                ControlPlaneRequest {
-                    request_id: format!("control-hook-{kind}-{index}"),
-                    method: ControlPlaneMethod::Post,
-                    path: path.clone(),
-                },
-                absolute_deadline_ns,
-                LocalCancellationSignal::new(),
+        let retry_deadline_ns = clock.now_ns().saturating_add(max_retry_ns);
+        let mut backoff_ns = RETRY_BACKOFF_INITIAL_NS;
+        loop {
+            let attempt = attempt_control_request(
+                handle.as_ref(),
+                kind,
+                index,
+                &path,
+                timeout_ns,
+                &target_url,
+                &clock,
+                retryable_status_codes,
             )
-            .await
-            .with_context(|| {
-                format!("executing endpoint-local {kind} hook against {target_url:?} at {path:?}")
-            })?;
-        ensure!(
-            (200..300).contains(&response.status),
-            "endpoint-local {kind} hook against {target_url:?} at {path:?} returned HTTP {}",
-            response.status
-        );
+            .await;
+            let failure = match attempt {
+                Ok(()) => break,
+                Err(failure) => failure,
+            };
+            if !failure.is_retryable
+                || clock.now_ns().saturating_add(backoff_ns) >= retry_deadline_ns
+            {
+                return Err(failure.error);
+            }
+            debug!(
+                kind,
+                target_url,
+                backoff_ns,
+                error = %failure.error,
+                "retrying endpoint-local control hook"
+            );
+            clock.clone().sleep(backoff_ns).await;
+            backoff_ns = backoff_ns
+                .saturating_mul(RETRY_BACKOFF_MULTIPLIER)
+                .min(RETRY_BACKOFF_CAP_NS);
+        }
     }
     Ok(ControlHookOutcome { request_count })
 }
@@ -588,7 +691,7 @@ mod tests {
     use async_trait::async_trait;
     use bytes::Bytes;
     use std::cell::RefCell;
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, VecDeque};
 
     #[derive(Clone, Debug, Eq, PartialEq)]
     struct RecordedRequest {
@@ -602,6 +705,8 @@ mod tests {
     struct RecordingState {
         prepared_urls: Rc<RefCell<Vec<String>>>,
         requests: Rc<RefCell<Vec<RecordedRequest>>>,
+        /// Statuses returned in order; the last one repeats once exhausted.
+        scripted_statuses: Rc<RefCell<VecDeque<u16>>>,
     }
 
     #[derive(Debug)]
@@ -614,6 +719,13 @@ mod tests {
             Self {
                 state: RecordingState::default(),
             }
+        }
+
+        /// Build a provider whose handle replays `statuses` in order.
+        fn with_statuses(statuses: &[u16]) -> Self {
+            let provider = Self::new();
+            *provider.state.scripted_statuses.borrow_mut() = statuses.iter().copied().collect();
+            provider
         }
     }
 
@@ -654,8 +766,14 @@ mod tests {
                 path: request.path,
                 absolute_deadline_ns,
             });
+            let mut scripted = self.state.scripted_statuses.borrow_mut();
+            let status = if scripted.len() > 1 {
+                scripted.pop_front().unwrap_or(204)
+            } else {
+                scripted.front().copied().unwrap_or(204)
+            };
             Ok(ControlPlaneResponse {
-                status: 204,
+                status,
                 headers: BTreeMap::new(),
                 encoded_body: Bytes::new(),
                 timings: ControlPlaneTransportTimings::default(),
@@ -680,6 +798,7 @@ mod tests {
                 reset_kv_cache: Some(ResetKvCacheConfig {
                     timeout_seconds: None,
                     path: Some("/reset_prefix_cache".to_owned()),
+                    max_retry_seconds: None,
                 }),
                 server_profiler: Some(ServerProfilerConfig {
                     timeout_seconds: None,
@@ -745,6 +864,7 @@ mod tests {
         profile.config.reset_kv_cache = Some(ResetKvCacheConfig {
             timeout_seconds: Some(5.0),
             path: Some("/reset_prefix_cache".to_owned()),
+            max_retry_seconds: None,
         });
         profile.config.server_profiler = Some(ServerProfilerConfig {
             timeout_seconds: Some(6.0),
@@ -865,5 +985,57 @@ mod tests {
             provider.state.prepared_urls.borrow().as_slice(),
             &["http://127.0.0.1:8000/"]
         );
+    }
+
+    #[test]
+    fn unset_control_hook_timeouts_use_the_control_default_not_endpoint_timeout() {
+        let clock: Rc<dyn Clock> = Rc::new(SimClock::new());
+        let provider = RecordingProvider::new();
+        let mut profile = validated_profile_with_paths("http://127.0.0.1:8000");
+        // A six-hour inference timeout must not leak into a control POST.
+        profile.client.total_timeout_ns = Some(21_600_000_000_000);
+        let hooks =
+            prepare_endpoint_control_hooks(clock, &provider, &profile).expect("hooks prepare");
+
+        let reset = hooks.reset_kv_cache.expect("reset hook");
+        assert_eq!(reset.timeout_ns, DEFAULT_CONTROL_HOOK_TIMEOUT_NS);
+        assert_eq!(reset.max_retry_ns, DEFAULT_RESET_KV_CACHE_MAX_RETRY_NS);
+        assert_eq!(
+            hooks.server_profiler.expect("profiler hook").timeout_ns,
+            DEFAULT_CONTROL_HOOK_TIMEOUT_NS
+        );
+    }
+
+    #[test]
+    fn transient_reset_statuses_retry_within_budget_and_other_statuses_fail_fast() {
+        for (statuses, expected_attempts, expects_success) in [
+            (vec![503, 503, 204], 3, true),
+            (vec![400], 1, false),
+        ] {
+            let sim_clock = Rc::new(SimClock::new());
+            let clock: Rc<dyn Clock> = sim_clock.clone();
+            let provider = RecordingProvider::with_statuses(&statuses);
+            let hooks = prepare_endpoint_control_hooks(
+                clock,
+                &provider,
+                &validated_profile_with_paths("http://127.0.0.1:8000"),
+            )
+            .expect("hooks prepare");
+            let reset = hooks.reset_kv_cache.expect("reset hook");
+
+            let outcome = Rc::new(RefCell::new(None));
+            let outcome_slot = outcome.clone();
+            sim_clock.drive(Box::pin(async move {
+                *outcome_slot.borrow_mut() = Some(run_reset_kv_cache(&reset).await);
+            }));
+
+            let outcome = outcome.borrow_mut().take().expect("reset hook completes");
+            assert_eq!(outcome.is_ok(), expects_success, "statuses {statuses:?}");
+            assert_eq!(
+                provider.state.requests.borrow().len(),
+                expected_attempts,
+                "statuses {statuses:?}"
+            );
+        }
     }
 }

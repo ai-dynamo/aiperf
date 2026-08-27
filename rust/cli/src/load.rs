@@ -62,10 +62,12 @@ pub(crate) fn export_level_formats(level: Option<&str>) -> anyhow::Result<(Vec<S
 pub(crate) fn reset_kv_cache_from_flags(flags: &ProfileFlags) -> Option<ResetKvCacheConfig> {
     (flags.reset_kv_cache.unwrap_or(false)
         || flags.reset_kv_cache_timeout_seconds.is_some()
-        || flags.reset_kv_cache_path.is_some())
+        || flags.reset_kv_cache_path.is_some()
+        || flags.reset_kv_cache_max_retry_seconds.is_some())
     .then(|| ResetKvCacheConfig {
         timeout_seconds: flags.reset_kv_cache_timeout_seconds,
         path: flags.reset_kv_cache_path.clone(),
+        max_retry_seconds: flags.reset_kv_cache_max_retry_seconds,
     })
 }
 
@@ -95,6 +97,9 @@ pub(crate) fn overlay_reset_kv_cache_config(
             }
             if overlay.path.is_some() {
                 existing.path = overlay.path;
+            }
+            if overlay.max_retry_seconds.is_some() {
+                existing.max_retry_seconds = overlay.max_retry_seconds;
             }
         }
         None => *target = Some(overlay),

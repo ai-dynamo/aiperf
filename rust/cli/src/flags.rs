@@ -78,6 +78,10 @@ pub struct ProfileFlags {
     /// Implies hook enablement.
     #[arg(long = "reset-kv-cache-path")]
     pub reset_kv_cache_path: Option<String>,
+    /// Override the total retry budget, seconds, for a retryable KV-cache reset
+    /// POST (`--reset-kv-cache-max-retry-seconds`). Implies hook enablement.
+    #[arg(long = "reset-kv-cache-max-retry-seconds")]
+    pub reset_kv_cache_max_retry_seconds: Option<f64>,
     /// Enable the endpoint-local server-profiler hooks (`--server-profiler`).
     #[arg(long = "server-profiler", num_args = 0..=1, default_missing_value = "true")]
     pub server_profiler: Option<bool>,

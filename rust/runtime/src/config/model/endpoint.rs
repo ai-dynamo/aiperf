@@ -96,6 +96,13 @@ pub struct ResetKvCacheConfig {
     /// Optional origin-relative request path override.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
+    /// Optional total budget, in seconds, for retrying a retryable reset POST.
+    ///
+    /// A transport failure or a transient-busy status (409/423/429/503) is
+    /// retried with bounded exponential backoff inside this budget; any other
+    /// non-2xx response is a real rejection and fails immediately.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_retry_seconds: Option<f64>,
 }
 
 /// Endpoint-local server-profiler hook policy.
