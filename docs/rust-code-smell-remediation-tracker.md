@@ -61,7 +61,7 @@ Graham review and a commit.
 | E02 | Externally-driven evaluation skips preflight | Complete — `b488309a2c` | Independent Graham approved; RED→GREEN pre-side-effect Docker-capability coverage recorded |
 | E03 | NativeGraph execution ignores agent timeout | Complete — `1ee7587f7b`, `0d4f1b3a79` | Independent Graham r2 approved; exact-deadline, lifecycle, and Docker shared-deadline RED→GREEN evidence recorded |
 | E04 | Abort still starts ready tool nodes | Already fixed — `dfa0043510`, `af44cb48ef` | Duplicate of completed C10; independent Graham approval and behavioral RED→GREEN evidence are recorded in `6bc3f9f988` |
-| E05 | Closed-worker credit return can hang drain | Confirmed; spec ready | Sol implementation plan |
+| E05 | Closed-worker credit return can hang drain | Complete — `4a008d36eb`, `59b32dbe38`, `9a19c3f8c4` | Independent Graham r11 PASS; worker-exit, rescued-TTFT, bounded-recovery, graceful-exit, and panic-ledger RED→GREEN evidence recorded |
 | E06 | Sidecar setup/finish failures leak siblings | Complete | Integrated `bb5e3fe5ff`, `bb23c66b39`; independent Graham PASS |
 | E07 | Global-push cancellation is misclassified as transport failure | Complete | Integrated `82bf74990c`; independent Graham PASS |
 | E08 | Declared terminal outputs cannot execute | Complete | Integrated `dcf1454576`, `caa260e9dc`, `405e54c2b1`; independent Graham PASS |
@@ -357,3 +357,11 @@ Graham review and a commit.
   or transport confidentiality. The review removed a vacuous source-string
   test; real registration/replay and replay/live coverage remain, and the
   independent Graham r2 review passed.
+
+- 2026-08-26: E05 completed and integrated as `4a008d36eb`, `59b32dbe38`,
+  and `9a19c3f8c4`: accepted credits retain an atomic lease through worker
+  loss, recovery is bounded and event-driven, rescued first-token delivery
+  precedes its terminal settlement, and panic bookkeeping is released by task
+  ID. RED→GREEN coverage includes accepted/running/pending-rescue worker loss,
+  bounded recovery, buffered graceful exit, and repeated rescued-token panics;
+  the final focused suite was green and independent Graham r11 passed.
