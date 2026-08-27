@@ -167,11 +167,13 @@ impl DirectoryArtifacts {
 /// Free rather than a method: it recurses on the directory argument alone and
 /// reads nothing from the scope.
 ///
-/// `file_type()` does not follow symlinks, so a linked directory is not
-/// descended and a linked file is not listed: the listing cannot advertise a
-/// relative path that resolves outside the scope. Names that are not valid
-/// UTF-8 are skipped because they cannot round-trip through the `&str` the
-/// capability accepts.
+/// [`DirEntry::file_type`](std::fs::DirEntry::file_type) does not follow
+/// symlinks on any platform, so a linked directory is not descended and a
+/// linked file is not listed: the listing cannot advertise a relative path that
+/// resolves outside the scope. This is stated explicitly rather than inherited
+/// from `DirEntry::metadata`, which happens to be an `lstat` on Unix but is
+/// documented as following links. Names that are not valid UTF-8 are skipped
+/// because they cannot round-trip through the `&str` the capability accepts.
 fn walk(
     directory: &Path,
     prefix: &str,
@@ -270,11 +272,13 @@ mod tests {
 
     /// The lexical check cannot see a link, so the listing must not follow one.
     ///
-    /// Production edit that makes this fail: switch `walk` back to
-    /// `entry.metadata()` (which follows symlinks). The linked directory is
-    /// then descended and `outside/secret.txt` is listed as
-    /// `link/secret.txt` — an approved-looking relative path naming a file
-    /// outside the scope.
+    /// Production edit that makes this fail: resolve the entry kind through a
+    /// following stat, `std::fs::metadata(entry.path())?.file_type()`, instead
+    /// of `entry.file_type()?`. The linked directory is then descended and
+    /// `outside/secret.txt` is listed as `link/secret.txt` — an
+    /// approved-looking relative path naming a file outside the scope.
+    /// Verified: that edit yields
+    /// `left: ["inside.txt", "link/secret.txt"]`.
     #[cfg(unix)]
     #[test]
     fn listing_does_not_descend_a_symlink_out_of_the_scope() {
