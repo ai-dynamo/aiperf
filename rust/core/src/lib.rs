@@ -16,6 +16,7 @@
 //! - [`dispatch`] — the transport-neutral request/observer/sink seam.
 //! - [`endpoint`] — segment handles, the narrow segment reader, authored
 //!   overrides, and store-free WebSocket operation values.
+//! - [`histogram`] — the one GenAI histogram vocabulary every exporter shares.
 //! - [`measure`] — transport-neutral response, record, trace, and framing values.
 //! - [`report`] — the atomic commit of a finalized report projection.
 
@@ -29,6 +30,7 @@ pub mod artifact;
 pub mod clock;
 pub mod dispatch;
 pub mod endpoint;
+pub mod histogram;
 pub mod measure;
 pub mod report;
 
