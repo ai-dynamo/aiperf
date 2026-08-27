@@ -37,13 +37,12 @@ use crate::{
         },
         budget::{BudgetLease, BudgetLimits, BudgetSnapshot},
         checkpoint::{
-            BudgetedCheckpointBytes, CheckpointBackendBudgetFailureCode,
-            CheckpointBackendBudgetKind, CheckpointEpoch, CheckpointError, CheckpointGeneration,
+            BudgetedCheckpointBytes, CheckpointBackendBudgetKind, CheckpointEpoch,
+            CheckpointError, CheckpointGeneration,
             CommittedCheckpointGeneration, CommittedParticipantState,
             CurrentV4ParticipantStateContext, DecodedCheckpointGeneration, LegacyParticipantState,
             LegacyV3CheckpointGeneration, ParticipantStateDescriptor, PreparedParticipantState,
-            PrevalidatedCheckpointGenerationCandidate, StreamRunIdentity,
-            decode_versioned_checkpoint_generation,
+            StreamRunIdentity, decode_versioned_checkpoint_generation,
         },
         checkpoint_backend::{
             CheckpointCommitMetadata, CheckpointGenerationExpectations, CurrentV4CheckpointGeneration,
@@ -52,7 +51,7 @@ use crate::{
             StreamingGenerationTransaction, build_prevalidated_candidate, sealed,
             validate_commit_metadata,
         },
-        checkpoints::budget::{BackendBudget, backend_error, map_budget_error},
+        checkpoints::budget::{BackendBudget, map_budget_error},
         identity::ContentDigest,
         reliability::PreparedIssueReceiptResultPartition,
         results::{
@@ -217,16 +216,16 @@ impl BlockingLocalFilesystem {
             input_bytes: bytes,
             output_bytes: bytes,
         };
+        // An I/O failure is an ordinary outcome of the job, not a failure of the
+        // executor, so it travels as a value and never as a blocking-work error.
         let output = self
             .executor
-            .run(BlockingWorkClass::Checkpoint, budget, move |_cancel| {
-                work().map_err(|error| BlockingWorkError::Job {
-                    message: error.to_string(),
-                })
+            .run(BlockingWorkClass::DurableSync, budget, move |_cancel| {
+                Ok(work().map_err(|error| error.to_string()))
             })
             .await
             .map_err(map_blocking_error)?;
-        Ok(output.into_value())
+        output.into_value().map_err(storage_error)
     }
 }
 
@@ -574,7 +573,7 @@ impl RunPaths {
 }
 
 /// Strict `CURRENT` pointer contents.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CurrentPointer {
     epoch: u64,
