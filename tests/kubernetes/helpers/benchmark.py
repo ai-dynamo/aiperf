@@ -1069,9 +1069,33 @@ class BenchmarkDeployer:
                 container="control-plane",
                 namespace=result.namespace,
             )
-            if result.metrics is None or result.metrics.request_count is None:
+            needs_full_metrics = (
+                result.metrics is None or result.metrics.request_count is None
+            )
+            needs_partial_metrics = (
+                result.metrics is not None
+                and result.metrics.request_count is not None
+                and (
+                    result.metrics.request_throughput is None
+                    or result.metrics.request_latency_avg is None
+                )
+            )
+            if needs_full_metrics:
                 result.metrics = BenchmarkMetrics.from_logs(logs)
-            elif result.metrics is not None:
+            elif needs_partial_metrics:
+                log_metrics = BenchmarkMetrics.from_logs(logs)
+                result.metrics.raw_logs = logs
+                if result.metrics.request_throughput is None:
+                    result.metrics.request_throughput = log_metrics.request_throughput
+                if result.metrics.request_latency_avg is None:
+                    result.metrics.request_latency_avg = log_metrics.request_latency_avg
+                if result.metrics.output_token_throughput is None:
+                    result.metrics.output_token_throughput = (
+                        log_metrics.output_token_throughput
+                    )
+                if result.metrics.request_count is None:
+                    result.metrics.request_count = log_metrics.request_count
+            else:
                 result.metrics.raw_logs = logs
 
         logger.info(
