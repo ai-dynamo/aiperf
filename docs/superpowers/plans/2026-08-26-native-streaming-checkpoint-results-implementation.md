@@ -200,15 +200,11 @@ impl CheckpointGeneration {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct CommittedCheckpointGeneration {
-    pub generation: CheckpointGeneration,
-    pub previous: Option<ContentDigest>,
-    pub cut: CheckpointCut,
-    pub participant_descriptors: Vec<ParticipantStateDescriptor>,
-    pub result_index_root: ContentDigest,
-    pub is_final: bool,
-    pub terminal_reason: Option<CheckpointTerminalReason>,
-}
+pub struct CheckpointGenerationCandidate { /* private canonical fields */ }
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(transparent)]
+pub struct CommittedCheckpointGeneration(CheckpointGenerationCandidate);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -231,27 +227,27 @@ pub struct ParticipantStateDescriptor {
 }
 
 pub struct PreparedParticipantState {
-    pub descriptor: ParticipantStateDescriptor,
-    pub payload: BudgetedCheckpointBytes,
+    descriptor: ParticipantStateDescriptor,
+    payload: BudgetedCheckpointBytes,
 }
 
 pub struct CommittedParticipantState {
-    pub descriptor: ParticipantStateDescriptor,
-    pub payload: BudgetedCheckpointBytes,
+    descriptor: ParticipantStateDescriptor,
+    payload: BudgetedCheckpointBytes,
 }
 
-pub struct BudgetedCheckpointBytes { pub bytes: Bytes, pub lease: BudgetLease }
+pub struct BudgetedCheckpointBytes { bytes: Bytes, lease: BudgetLease }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CommittedParticipantReceipt {
-    pub generation: CheckpointGeneration,
-    pub participant_id: CheckpointParticipantId,
-    pub descriptor_digest: ContentDigest,
-    pub represented_cut: CheckpointCut,
+    generation: CheckpointGeneration,
+    participant_id: CheckpointParticipantId,
+    descriptor_digest: ContentDigest,
+    represented_cut: CheckpointCut,
 }
 
 impl CommittedCheckpointGeneration {
-    pub fn generation(&self) -> CheckpointGeneration { self.generation.clone() }
+    pub fn generation(&self) -> CheckpointGeneration { self.0.generation() }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -274,6 +270,26 @@ pub enum CheckpointError {
     Storage { message: String },
 }
 ```
+
+Review-hardened authority ruling: `CheckpointGenerationCandidate::new`
+canonicalizes descriptors and hashes epoch, predecessor, cut, participant-plan
+digest and exact IDs, execution-plan digest, result-plan digest, result-index
+root, and terminal state. It is serializable/deserializable and self-verifying,
+but it exposes no participant/result state and cannot mint a commit receipt.
+`verify_against` additionally requires the exact frozen participant inventory
+and both semantic plan digests. `CommittedCheckpointGeneration` is an opaque,
+serialize-only authoritative wrapper with no public constructor or
+`Deserialize`; Task 5B promotes a candidate only with an opaque move-only proof
+created after successful CAS or a leased current-root read. Only that wrapper
+can construct `CommittedParticipantReceipt`.
+
+All invariant-bearing state fields are private and checked-construction-only.
+`BudgetedCheckpointBytes::new` compact-copies the visible input into exact-sized
+owned immutable storage before comparing it with the inseparable move-only
+lease; a small `Bytes` slice may not hide a large retained allocation. Restore
+verifies charge, exact byte length, and BLAKE3 before producing
+`CommittedParticipantState`. Borrowing/consuming accessors preserve the lease
+with its bytes.
 
 Implement `Display` and `std::error::Error` directly, following existing runtime library error enums; do not add `thiserror` or another dependency.
 
