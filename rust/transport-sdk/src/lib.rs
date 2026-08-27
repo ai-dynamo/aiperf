@@ -27,9 +27,16 @@
 #![deny(missing_docs)]
 
 pub mod direct;
+pub mod execution;
 
 pub use direct::{
     CreditMaterializer, ExecutionSinkBuilder, WorkerRequest, WorkerSink, WorkerTerminal,
+};
+pub use execution::{
+    HopRouting, NoopObserver, ThreadPerCoreExecutor, WORKER_COMMAND_QUEUE_DEPTH, WorkerClockFactory,
+    WorkerCommand, WorkerLoad, WorkerMessage, WorkerObserverFactory,
+    build_native_request_executor, execute_worker_command, pick_worker, run_worker,
+    run_worker_thread,
 };
 
 /// The source API version exposed by provisional plugin crate shells.
