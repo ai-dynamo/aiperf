@@ -20,7 +20,7 @@ from aiperf.config.loader.parsing import (
 class TestParseFile:
     """Test suite for the parse_file function."""
 
-    def test_accepts_a_path_already_returned_by_itself(self, tmp_path: Path) -> None:
+    def test_parse_file_path_output_returns_same_path(self, tmp_path: Path) -> None:
         """Must be idempotent: re-applying to its own output must not raise.
 
         Regression: CLIConfig.input_file's BeforeValidator only accepted
@@ -36,10 +36,10 @@ class TestParseFile:
         parsed = parse_file(str(target))
         assert parse_file(parsed) == parsed
 
-    def test_none_input_returns_none(self) -> None:
+    def test_parse_file_none_input_returns_none(self) -> None:
         assert parse_file(None) is None
 
-    def test_missing_path_raises(self) -> None:
+    def test_parse_file_missing_path_raises_error(self) -> None:
         with pytest.raises(ValueError, match="not a valid file or directory"):
             parse_file("/no/such/path/here")
 

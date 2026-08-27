@@ -371,14 +371,14 @@ ROUTED_UNDER_CONFIG: frozenset[str] = _build_routed_under_config()
 
 
 def _build_magic_list_only_fields() -> frozenset[str]:
-    """Dataset fields routed under ``--config`` only in their list form.
+    """Dataset fields whose list form routes as a sweep parameter.
 
     ``promote_benchmark_magic_lists`` hoists a list-shaped ``--isl 128 256``
-    into a ``sweep`` parameter, so those invocations resolve correctly. The
-    scalar ``--isl 128`` has no such path and is dropped. Treating the field
-    as routed outright would re-open the silent drop for scalars; rejecting it
-    outright would break working magic-list runs. So the guard decides per
-    value, and these are the fields it decides on.
+    into a ``sweep`` parameter; the scalar form routes onto the dataset block
+    through ``_apply_dataset_overrides``. Both forms take effect, so these
+    fields are routed either way. The set records which fields have the two
+    distinct destinations, so tests (and ``MAGIC_LIST_ONLY_UNDER_CONFIG``
+    consumers generally) can assert against the right one.
     """
     from aiperf.config.flags.converter import _CLI_DATASET_MAGIC_LIST_PATHS
 
@@ -478,13 +478,6 @@ def reject_unrouted_cli_flags(cli: CLIConfig) -> None:
         field
         for field, companions in COMPANION_ROUTED.items()
         if field in cli.model_fields_set and not (companions & cli.model_fields_set)
-    }
-    # Magic-list fields resolve correctly in their list form; only the scalar
-    # form falls through unrouted.
-    unrouted -= {
-        field
-        for field in unrouted & MAGIC_LIST_ONLY_UNDER_CONFIG
-        if isinstance(getattr(cli, field, None), list)
     }
     if not unrouted:
         return

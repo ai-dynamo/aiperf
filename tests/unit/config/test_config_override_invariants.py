@@ -206,10 +206,10 @@ def _require_drivable(field: str) -> None:
 
 # Fields whose emitted shape legitimately carries a constant companion key.
 # Each entry needs a reason; an unexplained entry is a bug being suppressed.
-_CONSTANT_KEY_ALLOWLIST: dict[str, set[str]] = {
-    # --cache-bust emits {"target": <value>}; the wrapper key is structural.
-    "cache_bust": set(),
-}
+# Empty today -- no field currently needs an exemption; add one here (with a
+# reason) if a future field's constant-leaf check is a legitimate structural
+# wrapper key rather than a materialized default.
+_CONSTANT_KEY_ALLOWLIST: dict[str, set[str]] = {}
 
 
 @pytest.mark.parametrize("field", sorted(DATASET_OVERRIDE_FIELDS))
