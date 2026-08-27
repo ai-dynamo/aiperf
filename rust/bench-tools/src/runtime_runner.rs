@@ -1244,4 +1244,26 @@ mod tests {
             Some(libc::ESRCH)
         );
     }
+
+    #[test]
+    fn child_output_spools_are_bounded_and_retain_both_digests() {
+        let mut command = Command::new("/bin/sh");
+        command.args([
+            "-c",
+            "while :; do printf 'stdout-payload'; printf 'stderr-payload' >&2; done",
+        ]);
+
+        let result = execute_bounded_child(&mut command, Duration::from_secs(2), 4096)
+            .expect("chatty member reaches a terminal result");
+
+        assert!(matches!(
+            result.terminal_status,
+            ChildTerminalStatus::Exited(_) | ChildTerminalStatus::Signaled(_)
+        ));
+        assert!(result.stdout.bytes.len() <= 4096);
+        assert!(result.stderr.bytes.len() <= 4096);
+        assert_eq!(result.stdout.blake3, digest(&result.stdout.bytes));
+        assert_eq!(result.stderr.blake3, digest(&result.stderr.bytes));
+        assert!(result.stdout.was_truncated || result.stderr.was_truncated);
+    }
 }
