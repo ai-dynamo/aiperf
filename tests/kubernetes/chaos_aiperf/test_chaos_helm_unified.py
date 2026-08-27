@@ -315,8 +315,8 @@ async def test_h1_install_job_uninstall_reinstall_is_clean_unified(
 # finally. The orphaned coroutine then stays scheduled on the package-scoped
 # loop and resumes during h3/h4, tearing down namespaces mid-test.
 @pytest.mark.timeout(
-    720
-)  # install(3m) + profiling-wait(2m) + upgrade(3m) + observe + completion
+    900
+)  # install(3m) + profiling-wait(5m) + upgrade(3m) + observe + completion
 async def test_h2_upgrade_with_inflight_job_preserves_cr_unified(
     faults: InjectorRegistry,  # noqa: ARG001  (registry presence keeps this in the unified suite)
     kubectl: KubectlClient,
@@ -378,7 +378,7 @@ async def test_h2_upgrade_with_inflight_job_preserves_cr_unified(
             cr_name,
             phases=("Running",),
             current_phase="profiling",
-            timeout=120.0,
+            timeout=300.0,  # stressed kind cluster after prior chaos tests can exceed 120s
         )
 
         # Trivial no-op values tweak: bump monitor interval. This forces a
