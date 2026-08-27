@@ -18,8 +18,9 @@ use aiperf_bench_tools::plugin_stats::{
 };
 use aiperf_bench_tools::runtime_runner::{
     ControlledExporterWorkloadFactory, ExporterWorkloadAcquisitionError, ExporterWorkloadRequest,
-    controlled_attempt_ledger_path, run_controlled_runtime_with_exporters_v1,
-    run_controlled_runtime_with_ledger_v1,
+    ControlledRuntimeReportV1, HostLivenessSourceV1, controlled_attempt_ledger_path,
+    run_controlled_runtime_with_exporters_v1, run_controlled_runtime_with_ledger_v1,
+    run_controlled_runtime_with_liveness_v1,
 };
 
 const COMMIT: &str = "0123456789abcdef0123456789abcdef01234567";
@@ -79,6 +80,50 @@ fn runtime_artifact_with_one_affinity_loss(label: &str, marker: &Path) -> Vec<u8
                 "set -eu\nif [ \"$AIPERF_PARITY_SCENARIO\" = http_non_streaming_c1 ] && [ \"$AIPERF_PARITY_PAIR_ID\" = pair-00 ] && [ ! -e '{}' ]; then touch '{}'; sleep 0.05; /usr/bin/taskset -pc 8 $$ >/dev/null; sleep 0.1; fi\n",
                 marker.display(),
                 marker.display()
+            ),
+            1,
+        )
+        .into_bytes()
+}
+
+fn runtime_artifact_with_one_reboot(label: &str, boot_identity: &Path, marker: &Path) -> Vec<u8> {
+    let script = String::from_utf8(runtime_artifact(label)).expect("fixture script is UTF-8");
+    script
+        .replacen(
+            "set -eu\n",
+            &format!(
+                "set -eu\nif [ \"$AIPERF_PARITY_SCENARIO\" = http_non_streaming_c1 ] && [ \"$AIPERF_PARITY_PAIR_ID\" = pair-00 ] && [ ! -e '{marker}' ]; then touch '{marker}'; printf '%s' \"reboot-$(date +%s%N)\" > '{boot}'; fi\n",
+                marker = marker.display(),
+                boot = boot_identity.display()
+            ),
+            1,
+        )
+        .into_bytes()
+}
+
+fn runtime_artifact_rebooting_every_pair(label: &str, boot_identity: &Path) -> Vec<u8> {
+    let script = String::from_utf8(runtime_artifact(label)).expect("fixture script is UTF-8");
+    script
+        .replacen(
+            "set -eu\n",
+            &format!(
+                "set -eu\ncase \"$AIPERF_PARITY_PAIR_ID\" in pair-*) printf '%s' \"reboot-$(date +%s%N)-$$\" > '{boot}';; esac\n",
+                boot = boot_identity.display()
+            ),
+            1,
+        )
+        .into_bytes()
+}
+
+fn runtime_artifact_killing_the_mock_once(label: &str, mock_pid: &Path, marker: &Path) -> Vec<u8> {
+    let script = String::from_utf8(runtime_artifact(label)).expect("fixture script is UTF-8");
+    script
+        .replacen(
+            "set -eu\n",
+            &format!(
+                "set -eu\nif [ \"$AIPERF_PARITY_SCENARIO\" = http_non_streaming_c1 ] && [ \"$AIPERF_PARITY_PAIR_ID\" = pair-00 ] && [ ! -e '{marker}' ]; then touch '{marker}'; kill -9 \"$(cat '{pid}')\" 2>/dev/null || true; fi\n",
+                marker = marker.display(),
+                pid = mock_pid.display()
             ),
             1,
         )
@@ -654,4 +699,186 @@ fn three_invalid_attempts_block_the_identity_across_requested_output_paths() {
             .count(),
         3
     );
+}
+
+#[test]
+fn controller_observed_host_reboot_replaces_the_whole_pair_in_seeded_order() {
+    let mut fixture = Fixture::new();
+    let boot_identity = fixture._directory.path().join("boot-identity");
+    std::fs::write(&boot_identity, "boot-original").expect("boot identity fixture is written");
+    let marker = fixture._directory.path().join("reboot-once");
+    fixture.static_artifact =
+        runtime_artifact_with_one_reboot("static authority fixture", &boot_identity, &marker);
+    fixture.dynamic_artifact =
+        runtime_artifact_with_one_reboot("dynamic authority fixture", &boot_identity, &marker);
+    write_executable(
+        &fixture.static_source.join("artifact-source"),
+        &fixture.static_artifact,
+    );
+    write_executable(
+        &fixture.dynamic_source.join("artifact-source"),
+        &fixture.dynamic_artifact,
+    );
+    let build_report = fixture.build_report();
+
+    let report = run_controlled_runtime_with_liveness_v1(
+        &build_report,
+        &fixture._directory.path().join("reboot-attempts.jsonl"),
+        &HostLivenessSourceV1::new(boot_identity.clone(), None),
+    )
+    .expect("controller completes after one observed reboot");
+
+    let attempts = report
+        .raw_pair_history
+        .iter()
+        .filter(|record| {
+            record.raw.scenario == "http_non_streaming_c1" && record.raw.pair_id == "pair-00"
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(attempts.len(), 2);
+    assert_eq!(attempts[0].derived_reason, "host_reboot");
+    assert!(matches!(
+        attempts[0].decision,
+        PairAttemptDecision::ReplaceWholePair {
+            replacement_ordinal: 1,
+            ..
+        }
+    ));
+    assert_eq!(attempts[0].raw.member_order, attempts[1].raw.member_order);
+    assert_eq!(attempts[1].decision, PairAttemptDecision::RetainPair);
+}
+
+#[test]
+fn controller_observed_mock_death_replaces_the_whole_pair_in_seeded_order() {
+    let mut fixture = Fixture::new();
+    let boot_identity = fixture._directory.path().join("boot-identity");
+    std::fs::write(&boot_identity, "boot-stable").expect("boot identity fixture is written");
+    let mock_pid_path = fixture._directory.path().join("mock-server.pid");
+    let mut mock = std::process::Command::new("/bin/sh")
+        .args(["-c", "sleep 300"])
+        .spawn()
+        .expect("mock stand-in starts");
+    std::fs::write(&mock_pid_path, mock.id().to_string()).expect("mock pid file is written");
+    let marker = fixture._directory.path().join("mock-death-once");
+    fixture.static_artifact =
+        runtime_artifact_killing_the_mock_once("static authority fixture", &mock_pid_path, &marker);
+    fixture.dynamic_artifact = runtime_artifact_killing_the_mock_once(
+        "dynamic authority fixture",
+        &mock_pid_path,
+        &marker,
+    );
+    write_executable(
+        &fixture.static_source.join("artifact-source"),
+        &fixture.static_artifact,
+    );
+    write_executable(
+        &fixture.dynamic_source.join("artifact-source"),
+        &fixture.dynamic_artifact,
+    );
+    let build_report = fixture.build_report();
+
+    let report = run_controlled_runtime_with_liveness_v1(
+        &build_report,
+        &fixture._directory.path().join("mock-death-attempts.jsonl"),
+        &HostLivenessSourceV1::new(boot_identity.clone(), Some(mock_pid_path.clone())),
+    )
+    .expect("controller completes after one observed mock death");
+    let _ = mock.kill();
+    let _ = mock.wait();
+
+    let attempts = report
+        .raw_pair_history
+        .iter()
+        .filter(|record| {
+            record.raw.scenario == "http_non_streaming_c1" && record.raw.pair_id == "pair-00"
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(attempts.len(), 2);
+    assert_eq!(
+        attempts[0].derived_reason,
+        "mock_death_unrelated_to_member"
+    );
+    assert!(matches!(
+        attempts[0].decision,
+        PairAttemptDecision::ReplaceWholePair {
+            replacement_ordinal: 1,
+            ..
+        }
+    ));
+    assert_eq!(attempts[0].raw.member_order, attempts[1].raw.member_order);
+}
+
+fn run_until_the_replacement_cap(
+    fixture: &mut Fixture,
+    boot_identity: &Path,
+    requested: &Path,
+) -> ControlledRuntimeReportV1 {
+    fixture.static_artifact =
+        runtime_artifact_rebooting_every_pair("static authority fixture", boot_identity);
+    fixture.dynamic_artifact =
+        runtime_artifact_rebooting_every_pair("dynamic authority fixture", boot_identity);
+    write_executable(
+        &fixture.static_source.join("artifact-source"),
+        &fixture.static_artifact,
+    );
+    write_executable(
+        &fixture.dynamic_source.join("artifact-source"),
+        &fixture.dynamic_artifact,
+    );
+    let build_report = fixture.build_report();
+    run_controlled_runtime_with_liveness_v1(
+        &build_report,
+        requested,
+        &HostLivenessSourceV1::new(boot_identity.to_path_buf(), None),
+    )
+    .expect("controller reaches a terminal decision under continuous reboots")
+}
+
+#[test]
+fn continuous_reboots_exhaust_the_five_pair_replacement_cap_and_resume_diagnoses_the_reboot() {
+    let mut fixture = Fixture::new();
+    let boot_identity = fixture._directory.path().join("boot-identity");
+    std::fs::write(&boot_identity, "boot-original").expect("boot identity fixture is written");
+    let first = run_until_the_replacement_cap(
+        &mut fixture,
+        &boot_identity,
+        &fixture._directory.path().join("cap-attempt-1.jsonl"),
+    );
+
+    assert_eq!(first.decision, ControlledAttemptDecision::Invalid);
+    let replacements = first
+        .raw_pair_history
+        .iter()
+        .filter(|record| {
+            matches!(
+                record.decision,
+                PairAttemptDecision::ReplaceWholePair { .. }
+            )
+        })
+        .count();
+    assert_eq!(replacements, 5);
+    assert!(
+        first
+            .raw_pair_history
+            .last()
+            .is_some_and(|record| record.decision == PairAttemptDecision::AttemptInvalid)
+    );
+
+    // A reboot between invocations is diagnosed from the persisted pair-start
+    // context, not from anything the interrupted children reported.
+    std::fs::write(&boot_identity, "boot-after-restart").expect("restart boot identity is written");
+    let second = run_until_the_replacement_cap(
+        &mut fixture,
+        &boot_identity,
+        &fixture._directory.path().join("cap-attempt-2.jsonl"),
+    );
+
+    let resumed = second
+        .resumed_pair_context
+        .as_ref()
+        .expect("the restart diagnoses the interrupted pair");
+    assert_eq!(resumed.attempt_ordinal, 1);
+    assert_eq!(resumed.scenario, "http_non_streaming_c1");
+    assert_eq!(resumed.pair_id, "pair-00");
+    assert_ne!(resumed.observed.boot_identity, "boot-after-restart");
 }
