@@ -393,10 +393,19 @@ pub struct StickySessionPlacement {
     plan_digest: [u8; 32],
     cell_count: u32,
     routes: BTreeMap<StableSessionKey, BudgetOwnedSessionRoute>,
+    pending_reservation: Option<(StableSessionKey, BudgetLease)>,
     route_budget: StreamingResourceBudget,
 }
 
 pub struct BudgetOwnedSessionRoute { pub route: SessionRoute, pub lease: BudgetLease }
+
+#[async_trait(?Send)]
+impl StreamingPlacement for StickySessionPlacement {
+    async fn reserve_route(&mut self, action: &OrderedDatasetAction)
+        -> Result<(), PlacementError> {
+        self.reserve_sticky_route(action).await
+    }
+}
 
 impl StreamingPlacementPolicy for StickySessionPlacement {
     fn place(&mut self, action: &OrderedDatasetAction)
@@ -463,7 +472,30 @@ CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime -
 
 - [ ] **Step 3: Implement sticky routing and fenced cell admission**
 
-Hash `(plan_digest, StableSessionKey)` to the initial cell once. Charge every route entry to an item/byte budget; a terminal session receipt removes its route after the causal frontier and checkpoint participant no longer reference it. `accept_prepare` consumes and stores the non-cloneable `BudgetOwnedPrepareAction` under its original permit through release and terminal/cancel acknowledgement; it cannot call the endpoint action submitter. `release_at_controller_target` uses only `Clock::now_ns`/`Clock::sleep`; `accept_release` validates the exact tuple then submits once. An absent, stale, duplicate-conflicting, or wrong-route release returns a typed failure and leaves the action fenced. Add `million_sequential_closed_sessions_reclaim_routes_with_constant_high_water`.
+Hash `(plan_digest, StableSessionKey)` to the initial cell once. The fused
+pipeline first awaits `reserve_route` and then calls `place` for the same action
+without an intervening `.await`. An existing route needs no new reservation;
+for a new session, `reserve_route` acquires one item plus the exact serialized
+route byte charge and stores the non-cloneable lease in
+`pending_reservation`. `place_sticky` must consume a matching reservation into
+`BudgetOwnedSessionRoute`; a missing or mismatched reservation is the typed
+`PlacementFailureCode::RouteUnavailable` invariant failure. Budget exhaustion
+therefore remains ordinary async backpressure at the admission seam rather
+than blocking or bypassing capacity inside synchronous placement. Only one
+reservation may be pending because the fused worker performs these adjacent
+operations serially.
+
+A terminal session receipt removes its route after the causal frontier and
+checkpoint participant no longer reference it, dropping the lease back to the
+budget. `accept_prepare` consumes and stores the non-cloneable
+`BudgetOwnedPrepareAction` under its original permit through release and
+terminal/cancel acknowledgement; it cannot call the endpoint action submitter.
+`release_at_controller_target` uses only `Clock::now_ns`/`Clock::sleep`;
+`accept_release` validates the exact tuple then submits once. An absent, stale,
+duplicate-conflicting, or wrong-route release returns a typed failure and
+leaves the action fenced. Add
+`route_reservation_backpressures_until_a_terminal_route_retires` and
+`million_sequential_closed_sessions_reclaim_routes_with_constant_high_water`.
 
 - [ ] **Step 4: Verify sticky-session and event-return tests**
 
