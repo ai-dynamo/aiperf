@@ -130,6 +130,18 @@ dependencies = [
 [[package]]
 name = "aiperf-core"
 version = "0.12.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64 0.22.1",
+ "bytes",
+ "serde",
+ "serde_json",
+ "smallvec",
+ "tempfile",
+ "tokio",
+ "uuid",
+]
 
 [[package]]
 name = "aiperf-dry-run-tests"

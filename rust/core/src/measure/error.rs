@@ -22,7 +22,7 @@ pub enum ErrorKind {
     Other,
 }
 
-/// A structured error detail attached to a [`crate::transport::core::RequestRecord`].
+/// A structured error detail attached to a [`crate::measure::RequestRecord`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ErrorDetails {
     /// The failure category.

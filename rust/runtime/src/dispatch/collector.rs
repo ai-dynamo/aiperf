@@ -304,14 +304,11 @@ struct TraceRequestStats {
     terminal_status: Option<ReplayTerminalStatus>,
 }
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ReplayTerminalStatus {
-    Completed,
-    Rejected,
-    Canceled,
-    Failed,
-}
+/// Terminal disposition of one dispatched request.
+///
+/// Boundary-owned: defined in `aiperf_core::dispatch` because the observer seam
+/// reports it.
+pub use aiperf_core::dispatch::ReplayTerminalStatus;
 
 /// Flat record emitted when `artifacts.per_request_jsonl` is configured.
 #[derive(Debug, Clone, Serialize)]

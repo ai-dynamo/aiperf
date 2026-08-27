@@ -21,79 +21,10 @@ use crate::dataset::segment::{Handle, Payload, SegmentStore};
 const MESSAGE_HEAD: &[u8] = b"{\"messages\":[";
 
 /// Per-dispatch top-level request fields spliced after the static message array.
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct Overrides {
-    fields: Map<String, Value>,
-}
-
-impl Overrides {
-    /// Construct an empty override set.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Construct overrides from an insertion-ordered JSON object.
-    pub fn from_map(fields: Map<String, Value>) -> Self {
-        Self { fields }
-    }
-
-    /// Whether no per-dispatch fields will be inserted.
-    pub fn is_empty(&self) -> bool {
-        self.fields.is_empty()
-    }
-
-    /// Number of top-level fields.
-    pub fn len(&self) -> usize {
-        self.fields.len()
-    }
-
-    /// Insert or replace one field; later inserts win within the override tail.
-    pub fn insert(&mut self, key: impl Into<String>, value: Value) -> Option<Value> {
-        self.fields.insert(key.into(), value)
-    }
-
-    /// Set a model override.
-    pub fn set_model(&mut self, model: impl Into<String>) {
-        self.insert("model", Value::String(model.into()));
-    }
-
-    /// Set the endpoint-selected generation-cap field.
-    pub fn set_max_tokens(&mut self, field_name: impl Into<String>, max_tokens: u32) {
-        self.insert(field_name, Value::from(max_tokens));
-    }
-
-    /// Set streaming behavior.
-    pub fn set_stream(&mut self, stream: bool) {
-        self.insert("stream", Value::Bool(stream));
-    }
-
-    /// Request authoritative usage in streaming responses.
-    pub fn set_include_usage(&mut self, include_usage: bool) {
-        let mut stream_options = Map::new();
-        stream_options.insert("include_usage".into(), Value::Bool(include_usage));
-        self.insert("stream_options", Value::Object(stream_options));
-    }
-
-    /// Borrow the decoded fields for endpoint-specific augmentation.
-    pub fn fields(&self) -> &Map<String, Value> {
-        &self.fields
-    }
-
-    /// Serialize the override fields as a spliceable tail with the enclosing
-    /// braces stripped, so callers can insert them into an existing object.
-    /// Public so callers can pre-serialize a reusable tail once and feed it to
-    /// [`build_message_body_from_wire_parts`] instead of re-serializing per
-    /// dispatch.
-    pub fn inner_bytes(&self) -> Result<Vec<u8>> {
-        if self.fields.is_empty() {
-            return Ok(Vec::new());
-        }
-        let encoded = serde_json::to_vec(&self.fields)?;
-        debug_assert_eq!(encoded.first(), Some(&b'{'));
-        debug_assert_eq!(encoded.last(), Some(&b'}'));
-        Ok(encoded[1..encoded.len() - 1].to_vec())
-    }
-}
+///
+/// Boundary-owned: defined in `aiperf_core::endpoint` because endpoint
+/// formatters author the override tail across the plugin boundary.
+pub use aiperf_core::endpoint::Overrides;
 
 /// One instruction in a prompt assembly program.
 #[derive(Debug, Clone, PartialEq, Eq)]

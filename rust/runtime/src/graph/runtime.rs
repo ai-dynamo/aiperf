@@ -124,11 +124,10 @@ impl Handle {
 }
 
 /// The result of driving a graph to quiescence.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RunOutcome {
-    /// Tasks remained parked with no future clock event to wake them.
-    pub deadlocked: bool,
-}
+///
+/// Boundary-owned: defined in `aiperf_core::clock` because the clock driver
+/// returns it.
+pub use aiperf_core::clock::RunOutcome;
 
 /// One externally clocked discrete-event source consumed by the virtual-time
 /// pump. Implementations own their event queue and route any events produced by

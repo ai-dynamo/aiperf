@@ -2,18 +2,20 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Native report persistence for the subprocess runner.
+//!
+//! The atomic write-once commit itself is boundary-owned and lives in
+//! [`aiperf_core::report`]; this module binds it to the runtime's typed
+//! [`NativeReport`] finalization.
 
-use std::fs::OpenOptions;
-use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::metrics_core::{NativeReport, ReportPairRunFacts, ReportRunMetadata};
+use aiperf_core::report::write_finalized_report_json;
 use anyhow::{Context, Result};
-use serde::Serialize;
 
 /// Atomically commit the unified native-v2 report as pretty JSON to `path`.
 pub fn write_native_report_json(report: &NativeReport, path: impl AsRef<Path>) -> Result<()> {
-    write_json(report, path)
+    write_finalized_report_json(report, path)
 }
 
 /// Finalize coordinator-owned and pair-owned run metadata, then perform the
@@ -35,73 +37,8 @@ pub fn finalize_and_write_native_report_json(
     let report = report
         .finalize_run(run_metadata, facts)
         .context("finalizing native report run metadata")?;
-    write_json(&report, path)?;
+    write_finalized_report_json(&report, path)?;
     Ok(report)
-}
-
-fn write_json(value: &impl Serialize, path: impl AsRef<Path>) -> Result<()> {
-    let path = path.as_ref();
-    let json = serde_json::to_string_pretty(value).context("serializing summary report")?;
-    let (temporary_path, mut temporary) = create_temporary_report(path)?;
-    let result = (|| {
-        temporary
-            .write_all(json.as_bytes())
-            .with_context(|| format!("writing temporary report {}", temporary_path.display()))?;
-        temporary
-            .sync_all()
-            .with_context(|| format!("syncing temporary report {}", temporary_path.display()))?;
-        drop(temporary);
-        if path.exists() {
-            anyhow::bail!(
-                "authoritative native report already exists: {}",
-                path.display()
-            );
-        }
-        std::fs::rename(&temporary_path, path).with_context(|| {
-            format!(
-                "committing temporary report {} to {}",
-                temporary_path.display(),
-                path.display()
-            )
-        })?;
-        Ok(())
-    })();
-    if result.is_err() {
-        let _ = std::fs::remove_file(&temporary_path);
-    }
-    result
-}
-
-fn create_temporary_report(path: &Path) -> Result<(PathBuf, std::fs::File)> {
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
-    let file_name = path.file_name().ok_or_else(|| {
-        anyhow::anyhow!("native report path has no file name: {}", path.display())
-    })?;
-    for sequence in 0..1_024_u16 {
-        let temporary_path = parent.join(format!(
-            ".{}.{}.{}.tmp",
-            file_name.to_string_lossy(),
-            std::process::id(),
-            sequence
-        ));
-        match OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temporary_path)
-        {
-            Ok(file) => return Ok((temporary_path, file)),
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(error) => {
-                return Err(error).with_context(|| {
-                    format!("creating temporary report {}", temporary_path.display())
-                });
-            }
-        }
-    }
-    anyhow::bail!(
-        "could not reserve a temporary report beside {}",
-        path.display()
-    )
 }
 
 #[cfg(test)]

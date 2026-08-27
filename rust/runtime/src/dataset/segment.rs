@@ -23,32 +23,10 @@ use crate::dataset::model::MediaKind;
 const HASH_VERSION: &[u8] = b"aiperf-dataset-segment-v1\0";
 
 /// Dense opaque index into a frozen segment arena.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct Handle(u32);
-
-impl Handle {
-    /// Construct a handle from its arena index.
-    pub const fn new(index: u32) -> Self {
-        Self(index)
-    }
-
-    /// Return the underlying arena index.
-    pub const fn index(self) -> u32 {
-        self.0
-    }
-
-    /// Return the arena index as `usize` for slice access.
-    pub const fn as_usize(self) -> usize {
-        self.0 as usize
-    }
-}
-
-impl Display for Handle {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        Display::fmt(&self.0, f)
-    }
-}
+///
+/// Boundary-owned: defined in `aiperf_core::endpoint` because endpoint
+/// formatters name segments by handle across the plugin boundary.
+pub use aiperf_core::endpoint::Handle;
 
 /// Opaque deterministic BLAKE3 content identifier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -271,6 +249,34 @@ pub trait SegmentStore: Send + Sync {
     /// serializing the per-dispatch override tail.
     fn build_body(&self, handles: &[Handle], overrides: &Overrides) -> Result<Bytes> {
         build_body_from_handles(self, handles, overrides)
+    }
+}
+
+/// Adapt a frozen segment store to the boundary's narrow
+/// [`SegmentReader`](aiperf_core::endpoint::SegmentReader) view.
+///
+/// Endpoint formatters resolve handles to exact pre-serialized wire bytes and
+/// never see the arena, its payload kinds, or its interner. Wrapping a store
+/// rather than implementing the trait on `dyn SegmentStore` keeps the adapter
+/// runtime-owned and leaves the boundary trait free of runtime types.
+pub struct SegmentStoreReader<'store, S: SegmentStore + ?Sized>(&'store S);
+
+impl<'store, S: SegmentStore + ?Sized> SegmentStoreReader<'store, S> {
+    /// View `store` through the narrow boundary reader.
+    pub fn new(store: &'store S) -> Self {
+        Self(store)
+    }
+}
+
+impl<S: SegmentStore + ?Sized> aiperf_core::endpoint::SegmentReader for SegmentStoreReader<'_, S> {
+    fn wire(&self, handle: Handle) -> Option<Bytes> {
+        match self.0.segment(handle)?.payload {
+            Payload::Message { ref wire, .. } | Payload::Raw { ref wire } => Some(wire.clone()),
+            Payload::Text { ref bytes, .. } => Some(bytes.clone()),
+            // A payload with no pre-serialized wire (token ids, media) is not
+            // addressable through the narrow formatter view.
+            _ => None,
+        }
     }
 }
 

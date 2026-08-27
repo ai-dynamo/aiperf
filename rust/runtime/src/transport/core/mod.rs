@@ -8,25 +8,19 @@
 //! error, and connection-reuse contracts.
 
 pub mod dispatch;
-pub mod error;
-pub mod eventstream;
-pub mod record;
-pub mod response;
-pub mod reuse;
-pub mod sse;
-pub mod trace;
+
+// The value half of this vocabulary is boundary-owned and lives in
+// `aiperf_core::measure`; these paths remain for runtime code and downstream
+// crates that already import `crate::transport::core::*`.
+pub use aiperf_core::measure::{error, eventstream, record, response, reuse, sse, trace};
 
 pub use dispatch::{
     BoundedDecisionAdmission, BoundedDecisionMode, BoundedDecisionReader, CreditReportKind,
     DecisionAdmissionError, DispatchResult, Dispatcher, MeasuredContext, MeasuredOutcome,
     PreparedEndpointBinding, PreparedTurn, Request, RequestExecutor, WorkerCreditReport,
 };
-pub use error::{ErrorDetails, ErrorKind};
-pub use eventstream::{
-    EventStreamDecodeError, EventStreamDecoder, EventStreamEncodeError, EventStreamMessage,
+pub use aiperf_core::measure::{
+    ConnectionReuseStrategy, ErrorDetails, ErrorKind, EventStreamDecodeError, EventStreamDecoder,
+    EventStreamEncodeError, EventStreamMessage, RequestRecord, Response, SseField, SseFieldName,
+    SseMessage, TextResponse, TraceData, TraceExport, TraceReference,
 };
-pub use record::RequestRecord;
-pub use response::{Response, TextResponse};
-pub use reuse::ConnectionReuseStrategy;
-pub use sse::{SseField, SseFieldName, SseMessage};
-pub use trace::{TraceData, TraceExport, TraceReference};

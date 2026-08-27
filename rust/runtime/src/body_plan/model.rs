@@ -128,42 +128,13 @@ pub enum RequestBody {
     Value(Box<Value>),
 }
 
-/// WebSocket application opcode selected by an endpoint dialect.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum PreparedWsOpcode {
-    /// A UTF-8 text application message.
-    Text,
-    /// An opaque binary application message.
-    Binary,
-}
-
-/// Logical role of one complete WebSocket application message.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum PreparedWsMessageRole {
-    /// Request-scoped input that contributes to application-event timing.
-    MeasuredInput,
-    /// Session or protocol control message excluded from timing.
-    Control,
-    /// Terminal acknowledgement excluded from timing.
-    TerminalAck,
-}
-
-/// One immutable complete application message.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PreparedWsMessage {
-    opcode: PreparedWsOpcode,
-    payload: Bytes,
-    role: PreparedWsMessageRole,
-}
-
-/// Immutable, store-free application messages for one WebSocket operation.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PreparedWsOperation {
-    messages: Box<[PreparedWsMessage]>,
-    http_sse_fallback_body: Option<Bytes>,
-    input_projection: Option<Bytes>,
-    requires_affinity_state: bool,
-}
+// The WebSocket operation values are boundary-owned: they are store-free by
+// construction, so an endpoint dialect prepares a complete operation without
+// the runtime's segment arena.
+pub use aiperf_core::endpoint::{
+    PreparedWsArtifactError, PreparedWsMessage, PreparedWsMessageRole, PreparedWsOpcode,
+    PreparedWsOperation,
+};
 
 #[path = "plan.rs"]
 mod plan;
