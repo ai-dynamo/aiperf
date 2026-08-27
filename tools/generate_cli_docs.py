@@ -274,7 +274,11 @@ def extract_commands(app: Any, *, prefix: str = "") -> list[tuple[str, str]]:
             continue
         full_name = f"{prefix}{name}"
         if hasattr(cmd, "_commands") and getattr(cmd, "default_command", None) is None:
-            _resolve_lazy_commands(cmd)
+            try:
+                _resolve_lazy_commands(cmd)
+            except Exception as e:
+                print_warning(f"Could not extract '{full_name}': {e}")
+                continue
             commands.extend(extract_commands(cmd, prefix=f"{full_name} "))
             continue
         help_text = cmd.help if hasattr(cmd, "help") else ""
