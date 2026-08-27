@@ -2124,6 +2124,9 @@ struct PendingActionFailure {
 
 struct RetainedActionTerminal {
     fact: CheckedActionTerminalFact,
+    /// Retained for its `Drop`, never read: holding the lease is what keeps the
+    /// terminal's ordered-map entry paid for until the entry is removed.
+    #[allow(dead_code)]
     entry_lease: BudgetLease,
 }
 
@@ -2139,6 +2142,10 @@ struct RetainedActionGapClosure {
 }
 
 /// Strict persisted form of the sole retained action gap-closure proof.
+///
+/// Staged seam: minted and revalidated here, but the checkpoint restore path
+/// does not call it yet, so the lib build sees no crate-internal constructor.
+#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct PersistedActionGapClosure {
@@ -2166,6 +2173,8 @@ struct RetainedReceipt {
     receipt: BudgetOwnedStreamingIssueReceipt,
     outcome: StreamingIssueOutcome,
     /// Exact charge for this receipt's ordered-map entry; released on removal.
+    /// Retained for its `Drop`, never read.
+    #[allow(dead_code)]
     entry_lease: BudgetLease,
     /// Monotonic insertion ordinal. A committed generation retires exactly the
     /// receipts whose ordinal is below the barrier's frozen next-ordinal, which
@@ -2191,24 +2200,32 @@ struct PendingParticipantCommit {
 /// One input frontier and the exact lease covering its ordered-map entry.
 struct RetainedInputFrontier {
     through: SourcePosition,
+    /// Retained for its `Drop`, never read.
+    #[allow(dead_code)]
     entry_lease: BudgetLease,
 }
 
 /// One threshold counter and the exact lease covering its ordered-map entry.
 struct RetainedCounter {
     count: u64,
+    /// Retained for its `Drop`, never read.
+    #[allow(dead_code)]
     entry_lease: BudgetLease,
 }
 
 /// One outer pending-input domain bucket and the exact lease covering its entry.
 struct RetainedDomainPending {
     pending: BTreeMap<PendingInputKey, PendingIssue>,
+    /// Retained for its `Drop`, never read.
+    #[allow(dead_code)]
     entry_lease: BudgetLease,
 }
 
 /// One in-flight action attempt token and the lease covering its entry.
 struct CurrentActionAttempt {
     reporter_token: u64,
+    /// Retained for its `Drop`, never read.
+    #[allow(dead_code)]
     entry_lease: BudgetLease,
 }
 
@@ -2478,6 +2495,9 @@ impl BudgetOwnedStreamingIssueReporter {
 
     /// Project the sole retained action gap-closure proof for checkpoint wire
     /// encoding. The reporter keeps its lease; only the strict fields leave.
+    ///
+    /// Staged seam: no production caller wires this yet.
+    #[allow(dead_code)]
     pub(crate) fn persisted_action_gap_closure(&self) -> Option<PersistedActionGapClosure> {
         self.action_gap_closure
             .as_ref()
@@ -2496,6 +2516,9 @@ impl BudgetOwnedStreamingIssueReporter {
     /// nothing. The checkpoint restore path must call this after installing
     /// `action_terminals` and `action_frontier` and before marking the
     /// participant initialized.
+    ///
+    /// Staged seam: that restore path does not call it yet.
+    #[allow(dead_code)]
     pub(crate) fn install_restored_action_gap_closure(
         &mut self,
         persisted: Option<PersistedActionGapClosure>,
@@ -3121,12 +3144,9 @@ impl BudgetOwnedStreamingIssueReporter {
             )
         };
 
-        loop {
-            // Selection and removal share one borrow, so no second lookup can
-            // observe a different map and no absent-key branch exists.
-            let Some(domain) = self.pending_inputs.get_mut(&input_domain) else {
-                break;
-            };
+        // Selection and removal share one borrow, so no second lookup can
+        // observe a different map and no absent-key branch exists.
+        while let Some(domain) = self.pending_inputs.get_mut(&input_domain) {
             let Some(first) = domain.pending.first_entry() else {
                 break;
             };
@@ -5264,6 +5284,10 @@ fn action_gap_coverage_digest(
 // A restored frontier is provable when every sequence it crosses is either a
 // retained terminal or covered by the retained closure. The walk stops at the
 // first absent sequence, so it is bounded by the retained terminal count.
+//
+// Staged seam: only reachable from `checked_restored_action_gap_closure`, which
+// has no production caller yet.
+#[allow(dead_code)]
 fn is_action_frontier_proven(
     action_terminals: &BTreeMap<GlobalSequence, RetainedActionTerminal>,
     frontier: GlobalSequence,
@@ -5291,6 +5315,9 @@ fn is_action_frontier_proven(
 
 // Restore-side revalidation. This takes borrowed restored state rather than
 // `&mut self` so the caller validates before installing any reporter field.
+//
+// Staged seam: no production caller yet.
+#[allow(dead_code)]
 fn checked_restored_action_gap_closure(
     run: &StreamRunIdentity,
     budget: &StreamingResourceBudget,

@@ -39,7 +39,6 @@ pub struct CheckedActionFailureTerminalEvidence {
 }
 
 #[allow(dead_code)]
-#[allow(dead_code)]
 impl CheckedActionFailureTerminalEvidence {
     /// Mint checked terminal evidence from action-host-owned state.
     ///
@@ -108,7 +107,6 @@ pub struct CheckedActionTerminalMembership {
     membership_digest: ContentDigest,
 }
 
-#[allow(dead_code)]
 #[allow(dead_code)]
 impl CheckedActionTerminalMembership {
     /// Mint checked terminal membership from action-host-owned state.
@@ -179,7 +177,6 @@ pub struct FrozenActionInventory {
     terminals: BTreeMap<GlobalSequence, ContentDigest>,
 }
 
-#[allow(dead_code)]
 #[allow(dead_code)]
 impl FrozenActionInventory {
     /// Freeze the host's terminal membership map for gap-closure proof.

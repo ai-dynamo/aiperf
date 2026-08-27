@@ -28,7 +28,6 @@ pub struct CheckedSessionQuarantineTombstoneView<'a> {
 }
 
 #[allow(dead_code)]
-#[allow(dead_code)]
 impl<'a> CheckedSessionQuarantineTombstoneView<'a> {
     /// Borrow the session host's retained tombstone map as a checked proof.
     ///
