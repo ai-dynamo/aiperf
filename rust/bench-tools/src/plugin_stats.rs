@@ -796,7 +796,6 @@ pub(crate) struct ControlledMeasurementReportParts {
     pub(crate) raw_pair_history: Vec<ControlledPairAttemptRecord>,
     pub(crate) exporter_pair_history: Vec<ControlledExporterPairRecord>,
     pub(crate) statistical_report: Option<SimultaneousGateReport>,
-    pub(crate) attempt_evidence_bytes: Vec<u8>,
 }
 
 impl ControlledMeasurementEvaluator {
@@ -883,8 +882,9 @@ impl ControlledMeasurementEvaluator {
         Ok(())
     }
 
-    pub(crate) fn last_attempt_evidence_bytes(&self) -> Option<&[u8]> {
-        self.last_attempt_evidence_bytes.as_deref()
+    /// Take ownership of the active attempt's exact evidence bytes.
+    pub(crate) fn take_last_attempt_evidence_bytes(&mut self) -> Option<Vec<u8>> {
+        self.last_attempt_evidence_bytes.take()
     }
 
     pub(crate) fn into_report_parts(
@@ -895,9 +895,6 @@ impl ControlledMeasurementEvaluator {
             raw_pair_history: self.raw_pair_history,
             exporter_pair_history: self.exporter_pair_history,
             statistical_report: self.last_statistical_report,
-            attempt_evidence_bytes: self.last_attempt_evidence_bytes.ok_or_else(|| {
-                PluginStatsError::new("controlled attempt lacks exact evidence bytes")
-            })?,
         })
     }
 
@@ -1381,7 +1378,7 @@ impl ControlledMeasurementEvaluator {
 
     pub(crate) fn finish_authoritative_measurements(
         &mut self,
-        input: &SimultaneousGateInput,
+        input: SimultaneousGateInput,
         observed: NonAuthoritativeExperimentFixture,
     ) -> Result<ControlledAttemptDecision, PluginStatsError> {
         let active_ordinal = self
@@ -1518,7 +1515,7 @@ impl ControlledMeasurementEvaluator {
     fn derive_authoritative_exporter_rows(
         &self,
         active_ordinal: u8,
-        input: &SimultaneousGateInput,
+        input: SimultaneousGateInput,
         identity: AuthoritativeExporterRowIdentity<'_>,
     ) -> Result<SimultaneousGateInput, PluginStatsError> {
         let exporter_cases = self
@@ -1562,7 +1559,7 @@ impl ControlledMeasurementEvaluator {
         let expected_attempt = u64::from(active_ordinal)
             .checked_sub(1)
             .ok_or_else(|| PluginStatsError::new("experiment attempt ordinal underflow"))?;
-        let mut authoritative = input.clone();
+        let mut authoritative = input;
         for case in &mut authoritative.cases {
             if !exporter_cases
                 .iter()
@@ -3837,7 +3834,7 @@ mod authoritative_exporter_tests {
         let derived = evaluator
             .derive_authoritative_exporter_rows(
                 1,
-                &input,
+                input,
                 AuthoritativeExporterRowIdentity {
                     experiment_identity_blake3: EXPERIMENT,
                     source_commit: COMMIT,

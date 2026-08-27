@@ -652,17 +652,22 @@ impl AttemptLedger {
         &self.entries
     }
 
+    /// Take the complete ordered history; the ledger is finished with it.
+    fn take_entries(&mut self) -> Vec<AttemptLedgerEntryV1> {
+        std::mem::take(&mut self.entries)
+    }
+
     fn append_attempt(
         &mut self,
         attempt: ControlledAttemptRecord,
-        evidence_tree_bytes: &[u8],
+        evidence_tree_bytes: Vec<u8>,
     ) -> Result<AppendedLedgerEntry, ControlledRuntimeError> {
         if attempt.ordinal != self.next_attempt_ordinal()? {
             return Err(ControlledRuntimeError::new(
                 "attempt ledger append ordinal is not next",
             ));
         }
-        if attempt.evidence_tree_blake3 != digest(evidence_tree_bytes) {
+        if attempt.evidence_tree_blake3 != digest(&evidence_tree_bytes) {
             return Err(ControlledRuntimeError::new(
                 "attempt ledger evidence bytes do not match their digest",
             ));
@@ -674,7 +679,7 @@ impl AttemptLedger {
                 experiment_identity_blake3: &self.experiment_identity_blake3,
                 previous_entry_blake3: previous_entry_blake3.as_deref(),
                 attempt: &attempt,
-                evidence_tree_bytes,
+                evidence_tree_bytes: &evidence_tree_bytes,
             },
             "attempt ledger preimage",
         )?;
@@ -683,7 +688,7 @@ impl AttemptLedger {
             experiment_identity_blake3: self.experiment_identity_blake3.clone(),
             previous_entry_blake3,
             attempt,
-            evidence_tree_bytes: evidence_tree_bytes.to_vec(),
+            evidence_tree_bytes,
             entry_blake3,
         };
         let mut line = serde_json_canonicalizer::to_vec(&entry).map_err(|error| {
@@ -1406,10 +1411,12 @@ fn run_controlled_runtime_internal(
                         member_records.push(RawMemberTerminalRecord {
                             variant,
                             outcome,
-                            samples: samples.clone(),
+                            samples,
                             terminal_evidence_index: Some(terminal_evidence_index),
                         });
-                        pair_samples.extend(samples);
+                        if let Some(record) = member_records.last() {
+                            pair_samples.extend_from_slice(&record.samples);
+                        }
                     }
                 }
                 // Both members completing means any disturbance the controller
@@ -1517,7 +1524,7 @@ fn run_controlled_runtime_internal(
 
     evaluator
         .finish_authoritative_measurements(
-            &SimultaneousGateInput {
+            SimultaneousGateInput {
                 cases: measured_cases,
             },
             observed,
@@ -2298,7 +2305,7 @@ fn decode_member_output(
 }
 
 fn runtime_report(
-    evaluator: ControlledMeasurementEvaluator,
+    mut evaluator: ControlledMeasurementEvaluator,
     attempt_ledger: &mut AttemptLedger,
     context: &RuntimeReportContext<'_>,
     executed_member_count: usize,
@@ -2319,23 +2326,34 @@ fn runtime_report(
             "controlled runtime report requires one terminal attempt ledger entry",
         )
     })?;
-    let attempt_evidence_tree_bytes = evaluator.last_attempt_evidence_bytes().ok_or_else(|| {
-        ControlledRuntimeError::new("controlled runtime report lacks exact attempt evidence bytes")
-    })?;
-    let attempt_evidence_tree_blake3 = digest(attempt_evidence_tree_bytes);
+    let attempt_evidence_tree_bytes =
+        evaluator.take_last_attempt_evidence_bytes().ok_or_else(|| {
+            ControlledRuntimeError::new(
+                "controlled runtime report lacks exact attempt evidence bytes",
+            )
+        })?;
+    let attempt_evidence_tree_blake3 = digest(&attempt_evidence_tree_bytes);
     let appended = attempt_ledger.append_attempt(terminal_attempt, attempt_evidence_tree_bytes)?;
+    // The ledger is finished with its entries here, so the retained history
+    // moves out of it instead of copying every evidence tree again.
     let retained_attempt_evidence = attempt_ledger
-        .entries()
-        .iter()
+        .take_entries()
+        .into_iter()
         .map(|entry| RetainedAttemptEvidenceV1 {
             attempt_ordinal: entry.attempt.ordinal,
             decision: entry.attempt.decision,
-            reason: entry.attempt.reason.clone(),
-            entry_blake3: entry.entry_blake3.clone(),
-            previous_entry_blake3: entry.previous_entry_blake3.clone(),
-            evidence_tree_bytes: entry.evidence_tree_bytes.clone(),
+            reason: entry.attempt.reason,
+            entry_blake3: entry.entry_blake3,
+            previous_entry_blake3: entry.previous_entry_blake3,
+            evidence_tree_bytes: entry.evidence_tree_bytes,
         })
         .collect::<Vec<_>>();
+    let attempt_evidence_tree_bytes = retained_attempt_evidence
+        .last()
+        .map(|entry| entry.evidence_tree_bytes.clone())
+        .ok_or_else(|| {
+            ControlledRuntimeError::new("attempt ledger retained no terminal entry")
+        })?;
     let retained_pair_count = evaluator
         .raw_pair_history()
         .iter()
@@ -2382,7 +2400,7 @@ fn runtime_report(
         decision,
         statistical_report: parts.statistical_report,
         attempt_history: parts.history,
-        attempt_evidence_tree_bytes: parts.attempt_evidence_bytes,
+        attempt_evidence_tree_bytes,
         attempt_evidence_tree_blake3,
         paired_build_record_blake3: context.build_report.pair_record_blake3.clone(),
         observable_policy_blake3: context.observable_policy_blake3.to_owned(),
