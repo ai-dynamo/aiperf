@@ -531,6 +531,16 @@ class TestDynamoSweep:
                     if gpu_settings.image_pull_secret
                     else []
                 ),
+                *(
+                    ["--tolerations", str(gpu_settings.tolerations)]
+                    if gpu_settings.tolerations
+                    else []
+                ),
+                *(
+                    ["--node-selector", str(gpu_settings.node_selector)]
+                    if gpu_settings.node_selector
+                    else []
+                ),
                 "--kube-context",
                 kubectl.context,
                 "--detach",

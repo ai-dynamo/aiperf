@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Literal
 
+import aiohttp
 import yaml
 
 from aiperf.common.aiperf_logger import AIPerfLogger
@@ -826,6 +827,8 @@ class DynamoDeployer:
 
                 if dynamo_pods and all(p.is_ready for p in dynamo_pods):
                     logger.info(f"[DYNAMO] All pods ready (took {elapsed:.1f}s)")
+                    remaining = deadline - time.perf_counter()
+                    await self._wait_for_http_model_ready(remaining)
                     return
 
                 if not dynamo_pods and elapsed > 30:
@@ -869,6 +872,72 @@ class DynamoDeployer:
                             f"[DYNAMO] Waiting... {pod.name:<50} phase={pod.phase:<12} ready={str(pod.ready):<5} "
                             f"restarts={pod.restarts} ({elapsed:.0f}s)"
                         )
+
+                await asyncio.sleep(poll_interval)
+
+    async def _wait_for_http_model_ready(
+        self,
+        timeout: float,
+        poll_interval: float = 10.0,
+    ) -> None:
+        """Wait for the model to finish loading by polling /v1/chat/completions.
+
+        After pod readiness probes pass, the vLLM workers still need time to
+        download and load the model into GPU memory. Until loading completes,
+        the Dynamo frontend returns HTTP 404 for all inference endpoints.
+        """
+        frontend_svc = f"svc/{self._deployment_name()}-frontend"
+        start = time.perf_counter()
+        deadline = start + timeout
+
+        logger.info(
+            f"[DYNAMO] Waiting for model to load (HTTP readiness, timeout={timeout:.0f}s)"
+        )
+
+        async with self.kubectl.port_forward(
+            frontend_svc,
+            remote_port=_FRONTEND_PORT,
+            namespace=self.config.namespace,
+        ) as local_port:
+            url = f"http://localhost:{local_port}/v1/chat/completions"
+            payload = {
+                "model": self.config.model_name,
+                "messages": [{"role": "user", "content": "hi"}],
+                "max_tokens": 1,
+                "stream": False,
+            }
+
+            while True:
+                elapsed = time.perf_counter() - start
+                if time.perf_counter() > deadline:
+                    raise TimeoutError(
+                        f"Dynamo model failed to load within {timeout:.0f}s "
+                        f"(still returning non-200 after {elapsed:.0f}s)"
+                    )
+
+                try:
+                    async with (
+                        aiohttp.ClientSession() as session,
+                        session.post(
+                            url,
+                            json=payload,
+                            timeout=aiohttp.ClientTimeout(total=30),
+                        ) as resp,
+                    ):
+                        if resp.status == 200:
+                            logger.info(
+                                f"[DYNAMO] Model ready — HTTP 200 in {elapsed:.1f}s"
+                            )
+                            return
+                        body = (await resp.text())[:300]
+                        logger.info(
+                            f"[DYNAMO] Model not ready yet: HTTP {resp.status} "
+                            f"at {elapsed:.0f}s — {body!r}"
+                        )
+                except Exception as e:
+                    logger.info(
+                        f"[DYNAMO] HTTP readiness poll failed at {elapsed:.0f}s: {e!r}"
+                    )
 
                 await asyncio.sleep(poll_interval)
 
