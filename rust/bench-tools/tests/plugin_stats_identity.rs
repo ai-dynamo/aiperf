@@ -408,7 +408,7 @@ fn controlled_evaluation_rejects_caller_asserted_invalidations_as_a_valid_failur
     evaluator.begin_attempt().expect("attempt starts");
     assert_eq!(
         evaluator
-            .finish_measurements(&fixture.input, &fixture.observed)
+            .finish_non_authoritative_measurements(&fixture.input, &fixture.observed)
             .expect("caller assertions are classified as a product failure"),
         ControlledAttemptDecision::ValidFailure
     );
@@ -456,7 +456,7 @@ fn controlled_evaluation_makes_the_first_statistical_failure_authoritative() {
     evaluator.begin_attempt().expect("attempt starts");
     assert_eq!(
         evaluator
-            .finish_measurements(&fixture.input, &fixture.observed)
+            .finish_non_authoritative_measurements(&fixture.input, &fixture.observed)
             .expect("complete controlled measurements evaluate"),
         ControlledAttemptDecision::ValidFailure
     );
@@ -479,6 +479,24 @@ fn controlled_evaluation_makes_the_first_statistical_failure_authoritative() {
     );
     assert!(attempt.evidence_tree_blake3.starts_with("blake3:"));
     assert!(evaluator.begin_attempt().is_err());
+}
+
+#[test]
+fn non_authoritative_fixture_cannot_create_a_valid_pass() {
+    let fixture = statistical_fixture();
+    let mut evaluator = ControlledMeasurementEvaluator::new().expect("authority validates");
+    evaluator.begin_attempt().expect("attempt starts");
+
+    assert_eq!(
+        evaluator
+            .finish_non_authoritative_measurements(&fixture.input, &fixture.observed)
+            .expect("fixture is classified without granting authority"),
+        ControlledAttemptDecision::ValidFailure
+    );
+    assert_eq!(
+        evaluator.history()[0].reason.as_deref(),
+        Some("non-authoritative measurement fixtures cannot pass a production parity gate")
+    );
 }
 
 #[test]

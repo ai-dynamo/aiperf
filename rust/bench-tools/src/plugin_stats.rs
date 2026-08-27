@@ -961,12 +961,14 @@ impl ControlledMeasurementEvaluator {
         Ok(decision)
     }
 
-    /// Evaluate complete same-process measurements and finish the active attempt.
+    /// Evaluate a caller-built fixture without granting production authority.
     ///
     /// Pair replacement is authorized only through [`Self::record_pair`]. Any
     /// caller-populated [`PairedCase::invalidation_attempts`] is therefore a
-    /// product/protocol failure, regardless of its asserted disposition.
-    pub fn finish_measurements(
+    /// product/protocol failure, regardless of its asserted disposition. Even a
+    /// statistically passing fixture terminates as a valid failure because the
+    /// caller also chose its observation paths and values.
+    pub fn finish_non_authoritative_measurements(
         &mut self,
         input: &SimultaneousGateInput,
         observed: &NonAuthoritativeExperimentFixture,
@@ -1015,7 +1017,13 @@ impl ControlledMeasurementEvaluator {
                 report.invalidation_reason.clone(),
             )
         } else if report.passed {
-            (ControlledAttemptDecision::ValidPass, None)
+            (
+                ControlledAttemptDecision::ValidFailure,
+                Some(
+                    "non-authoritative measurement fixtures cannot pass a production parity gate"
+                        .to_owned(),
+                ),
+            )
         } else {
             (
                 ControlledAttemptDecision::ValidFailure,
