@@ -1302,6 +1302,7 @@ fn execute_monitored_child(
     let pid = libc::pid_t::try_from(owned.child.id())
         .map_err(|_| ControlledRuntimeError::new("runtime member PID does not fit pid_t"))?;
     owned.pid = Some(pid);
+    record_owned_child_pid(pid);
     let stdout = owned
         .child
         .stdout
@@ -1476,7 +1477,25 @@ impl Drop for OwnedChildGroup {
 thread_local! {
     static INJECTED_CHILD_FAULT: std::cell::Cell<Option<&'static str>> =
         const { std::cell::Cell::new(None) };
+    static OWNED_CHILD_PID: std::cell::Cell<Option<libc::pid_t>> =
+        const { std::cell::Cell::new(None) };
 }
+
+/// Publish the group leader the controller took ownership of, so a test that
+/// forces an early return can still assert the group was killed and reaped.
+#[cfg(test)]
+fn record_owned_child_pid(pid: libc::pid_t) {
+    OWNED_CHILD_PID.with(|cell| cell.set(Some(pid)));
+}
+
+#[cfg(test)]
+fn last_owned_child_pid() -> Option<libc::pid_t> {
+    OWNED_CHILD_PID.with(std::cell::Cell::take)
+}
+
+#[cfg(not(test))]
+#[inline]
+fn record_owned_child_pid(_pid: libc::pid_t) {}
 
 /// Arm or disarm a controller-stage fault for the current test thread.
 #[cfg(test)]
@@ -2203,16 +2222,8 @@ mod tests {
     #[test]
     fn injected_stage_failures_still_kill_and_reap_the_owned_group() {
         for stage in ["poll", "affinity", "cleanup", "output"] {
-            let directory = tempfile::tempdir().expect("fault fixture directory");
-            let marker = directory.path().join("pid");
             let mut command = Command::new("/bin/sh");
-            command.args([
-                "-c",
-                &format!(
-                    "echo $$ > '{}'; trap '' TERM; sleep 30",
-                    marker.display()
-                ),
-            ]);
+            command.args(["-c", "trap '' TERM; sleep 30"]);
             set_injected_child_fault(Some(stage));
             let error = execute_monitored_child(
                 &mut command,
@@ -2226,7 +2237,8 @@ mod tests {
                 error.to_string().contains(stage),
                 "stage {stage} produced {error}"
             );
-            assert_reaped(pid_from_marker(&marker));
+            let pid = last_owned_child_pid().expect("the controller took ownership of a leader");
+            assert_reaped(pid);
         }
     }
 
