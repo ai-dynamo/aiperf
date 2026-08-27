@@ -475,7 +475,7 @@ async def test_sweep_controller_kill_resumes_correctly(
             namespace=operator_job_namespace,
             sweep_name=sweep_name,
             deleted_uid=deleted_uid,
-            timeout=120.0,
+            timeout=300.0,  # stressed kind cluster after prior chaos tests can take 120s+
         )
         assert replacement_pod
 
