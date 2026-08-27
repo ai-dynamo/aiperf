@@ -1685,6 +1685,7 @@ fn execute_monitored_child(
     owned.stderr_reader = Some(drain_bounded_output(stderr, output_limit));
     let started = Instant::now();
     let mut baseline_affinity: Option<BTreeSet<usize>> = None;
+    let mut last_escaping_affinity: Option<BTreeSet<usize>> = None;
     let mut infrastructure_event = None;
     let terminal_status = loop {
         injected_child_fault("poll")?;
@@ -1700,23 +1701,17 @@ fn execute_monitored_child(
             if let Some(observed) = process_affinity(pid)? {
                 match baseline_affinity {
                     // The kernel clamps the child against its own cpuset, not
-                    // against the controller's mask, so the first successful
-                    // observation is the only sound baseline.
-                    None => {
-                        if let FirstObservedAffinity::EscapesPin(escaped) =
-                            classify_first_observed_affinity(&observed, pinned)
-                        {
-                            warn!(
-                                pid,
-                                observed = %format_cpu_set(&observed),
-                                pinned = %format_cpu_set(pinned),
-                                escaped = %format_cpu_set(&escaped),
-                                "runtime member landed outside its checked-in CPU pin; \
-                                 monitoring the observed mask instead"
-                            );
+                    // against the controller's mask, so no predicted set is
+                    // sound; the child's own first in-pin mask is the baseline.
+                    // Masks reaching outside the pin are not armed on: the
+                    // spawned `taskset` still carries the inherited mask for
+                    // the moment between fork and its own `sched_setaffinity`.
+                    None => match classify_first_observed_affinity(&observed, pinned) {
+                        FirstObservedAffinity::HonoursPin => baseline_affinity = Some(observed),
+                        FirstObservedAffinity::EscapesPin(_) => {
+                            last_escaping_affinity = Some(observed);
                         }
-                        baseline_affinity = Some(observed);
-                    }
+                    },
                     Some(ref baseline) if observed != *baseline => {
                         infrastructure_event = Some(InfrastructureEvent::AffinityLoss);
                     }
@@ -1735,6 +1730,21 @@ fn execute_monitored_child(
         }
         sleep(Duration::from_millis(5));
     };
+    // Never arming is survivable but not silent: the run continues without
+    // affinity evidence for this member and says so.
+    if let Some(pinned) = pinned_affinity
+        && baseline_affinity.is_none()
+    {
+        warn!(
+            pid,
+            pinned = %format_cpu_set(pinned),
+            last_observed = %last_escaping_affinity
+                .as_ref()
+                .map_or_else(|| "none".to_owned(), format_cpu_set),
+            "runtime member was never observed holding a mask inside its checked-in CPU pin; \
+             affinity monitoring did not arm for it"
+        );
+    }
     let (stdout, stderr) = owned.release()?;
     Ok(BoundedChildResult {
         pid,
@@ -2010,11 +2020,12 @@ enum FirstObservedAffinity {
 /// The controller cannot predict the mask a child will carry: `sched_setaffinity`
 /// clamps the request against the *target's* cpuset-allowed set, not against the
 /// caller's own mask, so a child can hold CPUs disjoint from its parent's. The
-/// monitor therefore arms on whatever the child is first observed holding and
-/// only uses the pin to judge whether that baseline is credible. A baseline that
-/// is a subset of (or equal to) the pin means `taskset` took effect; a baseline
-/// reaching outside the pin is reported and still monitored, because a stable
-/// wider mask is a weaker signal than no affinity monitoring at all.
+/// monitor therefore arms on the child's own mask and uses the pin only to judge
+/// which observation is a credible baseline. A mask inside the pin means
+/// `taskset` took effect and later deviation is real affinity loss. A mask
+/// reaching outside the pin is the inherited one the spawned `taskset` still
+/// holds before it pins itself, so it is not armed on; a member that only ever
+/// escapes the pin is reported and left unmonitored rather than refused.
 fn classify_first_observed_affinity(
     observed: &BTreeSet<usize>,
     pinned: &BTreeSet<usize>,
@@ -2670,8 +2681,8 @@ mod tests {
             classify_first_observed_affinity(&pinned, &pinned),
             FirstObservedAffinity::HonoursPin
         );
-        // Reaching outside the pin is reported with the escaping CPUs named,
-        // and is still a usable baseline rather than a refusal.
+        // Reaching outside the pin is the pre-pin inherited mask, named with
+        // the escaping CPUs; it is not armed on and it is not a refusal.
         assert_eq!(
             classify_first_observed_affinity(&BTreeSet::from([3, 5, 9]), &pinned),
             FirstObservedAffinity::EscapesPin(vec![3, 9])
