@@ -198,8 +198,8 @@ class TestWorkerCleanup:
 
         # Give TTL controller and JobSet deletion time to clean up.
         # On resource-constrained Kind clusters, workers may still be in
-        # a restart loop. Wait up to 30s for cleanup.
-        for _ in range(6):
+        # a restart loop. Wait up to 90s for cleanup.
+        for _ in range(18):
             await asyncio.sleep(5)
             pods = await kubectl.get_pods(job.namespace)
             worker_pods = [
