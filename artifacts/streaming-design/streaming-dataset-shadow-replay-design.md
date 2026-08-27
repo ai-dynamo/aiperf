@@ -1865,7 +1865,7 @@ pub trait StreamingGenerationTransaction {
     ) -> Result<(), CheckpointError>;
     async fn stage_results(
         &mut self,
-        partitions: Vec<ResultPartition>,
+        partitions: &mut Vec<ResultPartition>,
     ) -> Result<PreparedResultEpoch, CheckpointError>;
     async fn commit(
         self: Box<Self>,

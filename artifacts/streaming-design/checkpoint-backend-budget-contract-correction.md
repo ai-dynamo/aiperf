@@ -72,7 +72,7 @@ transaction and inputs unchanged and retryable. No fallible operation or await
 is permitted after the vector or transaction begins to mutate, nor after commit
 publication begins.
 
-Task 6A owns the distinct producer-side singular-descriptor budget and maps its
+Task 6B owns the distinct producer-side singular-descriptor budget and maps its
 refusal to `ResultPlaneError::PartitionDescriptorCapacityExceeded`; it neither
 borrows Task 5B's private budgets nor mislabels the charge as provisional
 capacity.
@@ -90,6 +90,20 @@ newly introduced by the commit retains a clone of that bundle handle. The full
 charge remains until the last object from the bundle is reclaimed; it may
 over-retain but cannot undercharge. Sequential per-object acquisition while
 earlier leases are held is forbidden.
+
+## Infallible publication ruling
+
+Task 5B consumes a candidate through complete run/plan/shape/self-hash
+prevalidation before touching authoritative state. The resulting private
+`PrevalidatedCheckpointGenerationCandidate` has one infallible conversion to a
+committed generation. Under exclusive `MemoryState` access, the backend compares
+the expected head before mutation, performs that conversion, inserts prebuilt
+objects, and replaces the head without any later await or fallible call. The old
+post-CAS fallible promotion path is forbidden for backend commit. A test-only
+fault immediately after prevalidation is evaluated before the state borrow and
+must preserve exact head and object inventory and release all live budget
+charges (high-water telemetry may record the refused attempt); no post-publication
+fault seam exists.
 
 ## Non-looping result-index ruling
 
@@ -142,6 +156,10 @@ backend budget snapshots, and authoritative generation unchanged.
 - Result objects proven present under a superseded generation and another
   logical run remain unreadable from the current generation, with no read-budget
   mutation; mere content-addressed presence is not authority.
+- A fault after candidate prevalidation returns before the publication fence and
+  preserves exact head/object inventory and releases all live charges. The private prevalidated
+  promotion unit test has an infallible committed return type, proving no caller
+  can observe `Err` after authoritative state changes.
 
 The privacy regressions live as `compile_fail` rustdoc directly on the public
 DTOs in `results.rs`; an integration-test comment is not executable coverage.
