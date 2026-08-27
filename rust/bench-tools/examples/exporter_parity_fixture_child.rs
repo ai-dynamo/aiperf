@@ -23,9 +23,7 @@ use aiperf_bench_tools::plugin_stats::{
     ExporterMemberEvidence, ExporterMemberRecord, ExporterRepetitionReceipt,
     ExporterSampleContract, RetainedExporterEvidence, Variant,
 };
-use aiperf_bench_tools::runtime_runner::{
-    ExporterChildExpectationV1, ExporterMemberChildOutputV1,
-};
+use aiperf_bench_tools::runtime_runner::{ExporterChildExpectationV1, ExporterMemberChildOutputV1};
 
 /// Checked-in policy the controlled runner binds into the exporter identity.
 const PAIRED_POLICY_BYTES: &[u8] =

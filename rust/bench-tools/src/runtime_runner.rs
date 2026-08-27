@@ -2712,7 +2712,9 @@ mod tests {
         let (first_error, first_stdout, first_stderr) = owned.cleanup();
         assert!(first_error.is_none(), "{first_error:?}");
         assert_eq!(
-            first_stdout.expect("the first cleanup surfaces stdout").bytes,
+            first_stdout
+                .expect("the first cleanup surfaces stdout")
+                .bytes,
             b"released\n"
         );
         assert!(first_stderr.is_some());

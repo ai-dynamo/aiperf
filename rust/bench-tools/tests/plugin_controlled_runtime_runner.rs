@@ -1194,7 +1194,8 @@ fn assert_authoritative_exporter_pair(
 fn conforming_artifact_bound_exporter_children_are_admitted_as_authoritative_samples() {
     let mut fixture = Fixture::new();
     let child = exporter_fixture_child();
-    fixture.static_artifact = runtime_artifact_with_exporter_child("static authority fixture", &child);
+    fixture.static_artifact =
+        runtime_artifact_with_exporter_child("static authority fixture", &child);
     fixture.dynamic_artifact =
         runtime_artifact_with_exporter_child("dynamic authority fixture", &child);
     install_artifacts(&fixture);
@@ -1237,7 +1238,10 @@ fn conforming_artifact_bound_exporter_children_are_admitted_as_authoritative_sam
 fn an_exporter_pair_that_lost_its_affinity_is_replaced_rather_than_retained() {
     let mut fixture = Fixture::new();
     let child = exporter_fixture_child();
-    let marker = fixture._directory.path().join("exporter-affinity-loss-once");
+    let marker = fixture
+        ._directory
+        .path()
+        .join("exporter-affinity-loss-once");
     fixture.static_artifact = runtime_artifact_with_exporter_child_losing_affinity_once(
         "static authority fixture",
         &child,
@@ -1253,7 +1257,10 @@ fn an_exporter_pair_that_lost_its_affinity_is_replaced_rather_than_retained() {
 
     let report = run_controlled_runtime_with_ledger_v1(
         &build_report,
-        &fixture._directory.path().join("exporter-affinity-attempts.jsonl"),
+        &fixture
+            ._directory
+            .path()
+            .join("exporter-affinity-attempts.jsonl"),
         None,
     )
     .expect("controller completes after one exporter infrastructure replacement");
