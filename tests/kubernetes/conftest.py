@@ -1436,6 +1436,9 @@ def benchmark_config(k8s_settings: K8sTestSettings) -> BenchmarkConfig:
         request_count=50,
         warmup_request_count=5,
         image=k8s_settings.aiperf_image,
+        tolerations=_gpu_node_tolerations()
+        if k8s_settings.tolerate_gpu_nodes
+        else None,
     )
 
 
@@ -1447,6 +1450,9 @@ def small_benchmark_config(k8s_settings: K8sTestSettings) -> BenchmarkConfig:
         request_count=10,
         warmup_request_count=2,
         image=k8s_settings.aiperf_image,
+        tolerations=_gpu_node_tolerations()
+        if k8s_settings.tolerate_gpu_nodes
+        else None,
     )
 
 
@@ -1458,6 +1464,9 @@ def large_benchmark_config(k8s_settings: K8sTestSettings) -> BenchmarkConfig:
         request_count=200,
         warmup_request_count=10,
         image=k8s_settings.aiperf_image,
+        tolerations=_gpu_node_tolerations()
+        if k8s_settings.tolerate_gpu_nodes
+        else None,
     )
 
 
@@ -1517,6 +1526,9 @@ def small_benchmark_config_module(k8s_settings: K8sTestSettings) -> BenchmarkCon
         request_count=10,
         warmup_request_count=2,
         image=k8s_settings.aiperf_image,
+        tolerations=_gpu_node_tolerations()
+        if k8s_settings.tolerate_gpu_nodes
+        else None,
     )
 
 
@@ -1981,6 +1993,7 @@ def small_helm_config(k8s_settings: K8sTestSettings) -> AIPerfJobConfig:
         image_pull_secrets=[k8s_settings.image_pull_secret]
         if k8s_settings.image_pull_secret
         else [],
+        tolerations=_gpu_node_tolerations() if k8s_settings.tolerate_gpu_nodes else [],
     )
 
 
@@ -1996,6 +2009,7 @@ def small_helm_config_module(k8s_settings: K8sTestSettings) -> AIPerfJobConfig:
         image_pull_secrets=[k8s_settings.image_pull_secret]
         if k8s_settings.image_pull_secret
         else [],
+        tolerations=_gpu_node_tolerations() if k8s_settings.tolerate_gpu_nodes else [],
     )
 
 
