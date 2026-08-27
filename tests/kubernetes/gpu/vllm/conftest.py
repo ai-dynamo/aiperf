@@ -167,6 +167,8 @@ def gpu_benchmark_config(
         input_sequence_max=50,
         output_tokens_min=10,
         output_tokens_max=50,
+        tolerations=s.tolerations,
+        node_selector=s.node_selector,
     )
 
 
@@ -191,6 +193,8 @@ def small_gpu_benchmark_config(
         input_sequence_max=30,
         output_tokens_min=5,
         output_tokens_max=20,
+        tolerations=s.tolerations,
+        node_selector=s.node_selector,
     )
 
 
@@ -220,6 +224,8 @@ def _gpu_benchmark_config_module(
         input_sequence_max=30,
         output_tokens_min=5,
         output_tokens_max=20,
+        tolerations=s.tolerations,
+        node_selector=s.node_selector,
     )
 
 

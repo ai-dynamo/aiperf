@@ -773,6 +773,14 @@ class BenchmarkDeployer:
         if config.priority_class is not None:
             cmd.extend(["--priority-class", config.priority_class])
 
+        if config.tolerations or config.node_selector:
+            import json as _json
+
+            if config.tolerations:
+                cmd.extend(["--tolerations", _json.dumps(config.tolerations)])
+            if config.node_selector:
+                cmd.extend(["--node-selector", _json.dumps(config.node_selector)])
+
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
@@ -1164,6 +1172,35 @@ class BenchmarkDeployer:
             except RuntimeError:
                 await asyncio.sleep(min(5, max(0, deadline - loop.time())))
                 continue
+
+            if not cr_status.is_terminal:
+                # Fast-path: benchmark signalled completion and all requests
+                # finished even if the operator hasn't transitioned the phase
+                # yet (e.g. controller pod exited before the kopf handler ran).
+                raw = cr_status.raw_status
+                annotations = (data.get("metadata") or {}).get("annotations") or {}
+                benchmark_signalled = (
+                    annotations.get("aiperf.nvidia.com/benchmark-complete") == "true"
+                )
+                req_done = raw.get("requestsCompleted", 0)
+                req_total = raw.get("requestsTotal", 0)
+                if benchmark_signalled and req_total > 0 and req_done >= req_total:
+                    logger.info(
+                        f"[COLLECT] CR: synthesizing Completed from "
+                        f"requestsCompleted={req_done}/{req_total} "
+                        f"+ benchmark-complete annotation "
+                        f"(phase={cr_status.phase})"
+                    )
+                    cr_results = cr_status.results or cr_status.live_metrics
+                    return _CollectionOutcome(
+                        source="CR",
+                        api_results={
+                            "status": "complete",
+                            **({"results": cr_results} if cr_results else {}),
+                        },
+                        success=True,
+                        error_message=None,
+                    )
 
             if cr_status.is_terminal:
                 cr_results = cr_status.results or cr_status.live_metrics
