@@ -98,6 +98,39 @@ class TestResultsEndpoint:
         assert data["status"] == "running"
         assert data["results"] is None
 
+    @pytest.mark.parametrize(
+        "was_cancelled",
+        [
+            param(False, id="not-cancelled"),
+            param(True, id="cancelled"),
+        ],
+    )  # fmt: skip
+    def test_results_not_complete_before_benchmark_complete(
+        self,
+        results_client: TestClient,
+        results_router: ResultsRouter,
+        was_cancelled: bool,
+    ) -> None:
+        """Final results arriving first must not be reported as COMPLETE.
+
+        PROCESS_ALL_RESULTS (RecordsManager) and BENCHMARK_COMPLETE
+        (SystemController) are published by different services with no ordering
+        guarantee. BENCHMARK_COMPLETE is the export-safety gate: it is the only
+        signal that the controller has finished writing artifacts to disk.
+        Reporting COMPLETE off the results message alone tells a client to go
+        fetch files that may not exist yet.
+        """
+        results_router._final_results = make_process_records_result(
+            completed=100, was_cancelled=was_cancelled
+        )
+        results_router._benchmark_complete = False
+
+        response = results_client.get("/api/results")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "running"
+        assert data["results"] is None
+
     def test_results_complete_with_results(
         self, results_client: TestClient, results_router: ResultsRouter
     ) -> None:

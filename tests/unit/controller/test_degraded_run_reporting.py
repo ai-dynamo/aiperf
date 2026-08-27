@@ -214,6 +214,41 @@ class TestEvictedProducersReachTheOutcome:
         # ...but the run is not reported as a success.
         assert exit_code == 1
 
+    @pytest.mark.asyncio
+    async def test_a_producer_reaped_after_delivering_is_not_reported_degraded(
+        self, system_controller: SystemController
+    ) -> None:
+        """Death after ``complete_domain`` must not mark the run degraded.
+
+        A producer that already delivered every domain it owed is fully
+        represented in the export, so its later death costs the run nothing.
+        Recording the eviction only when it was still pending is not enough on
+        its own: ``_on_service_reaped`` branches on ``evict_service``'s return,
+        which answers barrier *membership*, so the ProducerReaped exit error
+        and its non-zero exit code were still appended for a producer whose
+        results were all in hand -- ``evicted`` said the run was fine while the
+        exit code said it was degraded.
+        """
+        system_controller._system_state = SystemState.PROFILING
+        system_controller._check_and_trigger_shutdown = AsyncMock()
+        coordinator = system_controller._result_join_coordinator
+        coordinator.register("profile", "worker_group_7")
+        coordinator.complete("profile", "worker_group_7")
+        system_controller._profile_results = _records_result()
+        system_controller.service_manager.service_id_map = {
+            "worker_group_7": MagicMock(first_seen_ns=100)
+        }
+
+        await system_controller._on_service_reaped(
+            "worker_group_7", "pod OOMKilled", 100
+        )
+
+        assert coordinator.evicted == {}
+        assert system_controller._exit_errors == []
+
+        exit_code = await _run_stop_hook(system_controller)
+        assert exit_code == 0
+
     def test_evicted_producers_are_named_in_the_console_output(
         self, system_controller: SystemController
     ) -> None:

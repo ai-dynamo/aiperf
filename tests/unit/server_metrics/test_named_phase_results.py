@@ -44,7 +44,9 @@ def _record(
     )
 
 
-def _warmup_record(timestamp_ns: int, value: float) -> ServerMetricsRecord:
+def _warmup_record(
+    timestamp_ns: int, value: float, *, phase_instance_id: int | None = None
+) -> ServerMetricsRecord:
     """A synthesized AGENTIC_REPLAY warmup scrape: phase_index is always None."""
     return ServerMetricsRecord(
         endpoint_url="http://server:8000/metrics",
@@ -54,6 +56,7 @@ def _warmup_record(timestamp_ns: int, value: float) -> ServerMetricsRecord:
         profiling_index=None,
         phase_name=AGENTIC_WARMUP_PHASE_NAME,
         phase_kind="warmup",
+        phase_instance_id=phase_instance_id,
         metrics={
             "vllm:num_requests_running": MetricFamily(
                 type=PrometheusMetricType.GAUGE,
@@ -142,3 +145,84 @@ async def test_export_results_keeps_repeated_agentic_warmup_instances_distinct()
     assert all(result.phase_index is None for result in warmup_results)
     assert [result.start_ns for result in warmup_results] == [10, 40]
     assert [result.end_ns for result in warmup_results] == [20, 50]
+
+
+@pytest.mark.asyncio
+async def test_interleaved_scrapes_keep_one_warmup_instance_together() -> None:
+    """Overlapping scrapes must not split a single warmup instance.
+
+    Scrapes are dispatched fire-and-forget (`_collect_metrics_loop` uses
+    execute_async precisely so a slow scrape doesn't delay the next), and each
+    one carries the phase snapshot taken at *its own* start. When a scrape
+    outlives a phase boundary its records arrive interleaved with the next
+    phase's, so arrival order is not a phase-identity signal.
+
+    Keying synthesized indices off "the signature changed from the previous
+    record" therefore minted a fresh index every time the interleaving
+    alternated, shattering one warmup instance into a phase_results entry per
+    record. `phase_instance_id`, stamped once per CREDIT_PHASE_START, is
+    order-independent and holds the instance together.
+    """
+    accumulator = ServerMetricsAccumulator(
+        run=make_run_from_cli(
+            CLIConfig(
+                model_names=["model"],
+                endpoint_type=EndpointType.CHAT,
+                urls=["http://server:8000/v1/chat/completions"],
+            )
+        )
+    )
+    # One warmup instance (id=1) whose scrapes straddle the start of profiling,
+    # so its records arrive interleaved with the profiling phase's.
+    for record in (
+        _warmup_record(10, 1.0, phase_instance_id=1),
+        _record(20, phase_index=0, profiling_index=0, phase_name="main"),
+        _warmup_record(30, 2.0, phase_instance_id=1),
+        _record(40, phase_index=0, profiling_index=0, phase_name="main"),
+        _warmup_record(50, 3.0, phase_instance_id=1),
+    ):
+        await accumulator.process_record(record)
+
+    results = await accumulator.export_results(ExportContext(start_ns=10, end_ns=51))
+
+    assert results is not None
+    warmup_results = [
+        result
+        for result in results.phase_results
+        if result.phase_name == AGENTIC_WARMUP_PHASE_NAME
+    ]
+    assert len(warmup_results) == 1, (
+        "one warmup instance must stay one phase_results entry regardless of "
+        f"how its scrapes interleave, got {len(warmup_results)}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_stamped_instance_ids_separate_repeated_warmups() -> None:
+    """Distinct occurrences stay distinct even when their records interleave."""
+    accumulator = ServerMetricsAccumulator(
+        run=make_run_from_cli(
+            CLIConfig(
+                model_names=["model"],
+                endpoint_type=EndpointType.CHAT,
+                urls=["http://server:8000/v1/chat/completions"],
+            )
+        )
+    )
+    for record in (
+        _warmup_record(10, 1.0, phase_instance_id=1),
+        _warmup_record(20, 2.0, phase_instance_id=3),
+        _warmup_record(30, 3.0, phase_instance_id=1),
+        _warmup_record(40, 4.0, phase_instance_id=3),
+    ):
+        await accumulator.process_record(record)
+
+    results = await accumulator.export_results(ExportContext(start_ns=10, end_ns=41))
+
+    assert results is not None
+    warmup_results = [
+        result
+        for result in results.phase_results
+        if result.phase_name == AGENTIC_WARMUP_PHASE_NAME
+    ]
+    assert len(warmup_results) == 2

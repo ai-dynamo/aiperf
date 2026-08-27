@@ -1,0 +1,2860 @@
+diff --git a/docs/architecture.md b/docs/architecture.md
+index 831854aa..e00fe35b 100644
+--- a/docs/architecture.md
++++ b/docs/architecture.md
+@@ -50,14 +50,6 @@ Shutdown begins only after profiling has started and every registered domain has
+ either completed or been evicted after a confirmed service failure. This lifecycle
+ gate prevents an empty startup barrier from being mistaken for completed results.
+ 
+-Result publication is a fail-closed filesystem transaction. Before a controller
+-starts benchmark work, and again immediately before export, it durably removes
+-any stale ready marker and atomically installs a processing marker. After every
+-required artifact is flushed and exported, it atomically installs and fsyncs the
+-ready marker before clearing the processing marker. Only then does it publish
+-`ResultsExportedMessage`. A crash or restarted export before that commit leaves
+-top-level artifacts hidden from readers of the ready marker.
+-
+ ### Dataset Manager
+ 
+ The Dataset Manager handles all aspects of input data management during benchmarking runs.
+diff --git a/docs/environment-variables.md b/docs/environment-variables.md
+index dc432184..5528c310 100644
+--- a/docs/environment-variables.md
++++ b/docs/environment-variables.md
+@@ -381,6 +381,8 @@ ZMQ socket and communication configuration. Controls ZMQ socket timeouts, keepal
+ | `AIPERF_ZMQ_SNDTIMEO` | `300000` | ≥ 1, ≤ 10000000 | Socket send timeout in milliseconds (default: 5 minutes) |
+ | `AIPERF_ZMQ_TCP_KEEPALIVE_IDLE` | `60` | ≥ 1, ≤ 100000 | Time in seconds before starting TCP keepalive probes on idle ZMQ connections |
+ | `AIPERF_ZMQ_TCP_KEEPALIVE_INTVL` | `10` | ≥ 1, ≤ 100000 | Interval in seconds between TCP keepalive probes for ZMQ connections |
++| `AIPERF_ZMQ_RECONNECT_IVL` | `100` | ≥ 1, ≤ 100000 | Delay in milliseconds before the first ZMQ reconnect attempt |
++| `AIPERF_ZMQ_RECONNECT_IVL_MAX` | `5000` | ≥ 1, ≤ 100000 | Ceiling in milliseconds on the exponential ZMQ reconnect backoff |
+ | `AIPERF_ZMQ_EVENT_BUS_PROXY_FRONTEND_PORT` | `5663` | ≥ 1, ≤ 65535 | Default TCP port for the event-bus XPUB/XSUB proxy frontend (producers connect here). Single source of truth for the non-k8s comm configs (TCP, dual-bind); k8s pod manifests pull the same value via ``K8sEnvironment.PORTS.EVENT_BUS_PROXY_PUB_FRONTEND`` (defaults match). |
+ | `AIPERF_ZMQ_EVENT_BUS_PROXY_BACKEND_PORT` | `5664` | ≥ 1, ≤ 65535 | Default TCP port for the event-bus XPUB/XSUB proxy backend (subscribers connect here). See ``EVENT_BUS_PROXY_FRONTEND_PORT``. |
+ 
+diff --git a/docs/reference/api-endpoints.md b/docs/reference/api-endpoints.md
+index 5a12115f..bcb7681e 100644
+--- a/docs/reference/api-endpoints.md
++++ b/docs/reference/api-endpoints.md
+@@ -29,6 +29,10 @@ The router classes that back these routes live under [`src/aiperf/api/routers/`]
+ | `GET` | `/readyz` | `text/plain` (`ok` / `not ready`) | Kubernetes readiness probe. 200 only when the service is `RUNNING`. |
+ | `GET` | `/docs`, `/redoc`, `/openapi.json` | (FastAPI defaults) | Auto-generated OpenAPI documentation. |
+ 
++## Breaking change: `/api/progress` `phases` keys
++
++`ProgressResponse.phases` is keyed by each phase's concrete name (`CombinedPhaseStats.phase_name`), falling back to the plain `CreditPhase` value (e.g. `"profiling"`) only when the phase has no explicit name. Prior releases keyed this dict by the closed `CreditPhase` enum, so `progress["phases"]["profiling"]` was always a valid lookup. DAG/multi-instance phases now carry user-assigned names, so that fixed lookup can silently miss. Consumers should iterate `phases.values()` and match on each entry's `phase` field instead of indexing by a hardcoded `CreditPhase` string.
++
+ ## Secret redaction
+ 
+ `cli_command` is captured from `sys.argv` at `BenchmarkRun` construction and redacted by [`build_cli_command()`](https://github.com/ai-dynamo/aiperf/blob/main/src/aiperf/common/redact.py) before it is stored — so the string returned from `/api/run` and written to `profile_export_aiperf.json` is the same redacted form. `--api-key`-shaped flags, credential-bearing `--header` values (e.g. `Authorization: Bearer …`), and userinfo embedded in URL-typed flags (`--url`, `-u`, `--otel-url`, `--mlflow-tracking-uri`) are all scrubbed to `<redacted>`.
+diff --git a/src/aiperf/api/models/responses.py b/src/aiperf/api/models/responses.py
+index 2364301f..a4f4d262 100644
+--- a/src/aiperf/api/models/responses.py
++++ b/src/aiperf/api/models/responses.py
+@@ -22,7 +22,17 @@ class ProgressResponse(AIPerfBaseModel):
+     """Benchmark progress response."""
+ 
+     phases: dict[str, CombinedPhaseStats] = Field(
+-        default_factory=dict, description="Per-phase progress stats"
++        default_factory=dict,
++        description=(
++            "Per-phase progress stats, keyed by the phase's concrete name "
++            "(`CombinedPhaseStats.phase_name`, e.g. a DAG/multi-instance "
++            "phase's user-assigned identity) falling back to the plain "
++            "`CreditPhase` value (e.g. 'profiling') when the phase has no "
++            "explicit name. Breaking change: prior releases keyed this dict "
++            "by the closed `CreditPhase` enum; consumers indexing by a fixed "
++            "enum value should instead iterate the dict or match on each "
++            "stats entry's `phase` field."
++        ),
+     )
+     results_exported: bool = Field(
+         default=False,
+@@ -57,13 +67,15 @@ class BenchmarkStatus(CaseInsensitiveStrEnum):
+     RUNNING = "running"
+     COMPLETE = "complete"
+     CANCELLED = "cancelled"
++    INCOMPLETE = "incomplete"
+ 
+ 
+ class BenchmarkResultsResponse(AIPerfBaseModel):
+     """Final benchmark results response."""
+ 
+     status: BenchmarkStatus = Field(
+-        description="Benchmark status: running, complete, or cancelled"
++        description="Benchmark status: running, complete, cancelled, or incomplete "
++        "(the run terminated without ever publishing final results)"
+     )
+     results: ProcessRecordsResult | None = Field(
+         default=None, description="Final benchmark results if complete"
+diff --git a/src/aiperf/api/routers/progress.py b/src/aiperf/api/routers/progress.py
+index 02bc17f8..c73d4727 100644
+--- a/src/aiperf/api/routers/progress.py
++++ b/src/aiperf/api/routers/progress.py
+@@ -59,7 +59,14 @@ class ProgressRouter(RealtimeMetricsMixin, ProgressTrackerMixin, BaseRouter):
+     async def _on_system_state_changed(
+         self, message: SystemStateChangedMessage
+     ) -> None:
+-        """Record the controller's most-recent outer-lifecycle SystemState."""
++        """Record the controller's most-recent outer-lifecycle SystemState.
++
++        Guards against late/duplicate delivery (e.g. from ZMQ retry/reconnect)
++        walking the reported state backwards, mirroring the monotonicity
++        check ``SystemController._set_system_state`` applies before publishing.
++        """
++        if message.state.rank < self._system_state.rank:
++            return
+         self._system_state = message.state
+ 
+ 
+diff --git a/src/aiperf/api/routers/results.py b/src/aiperf/api/routers/results.py
+index 583881ca..f8e2e900 100644
+--- a/src/aiperf/api/routers/results.py
++++ b/src/aiperf/api/routers/results.py
+@@ -6,6 +6,7 @@
+ from __future__ import annotations
+ 
+ import asyncio
++import time
+ from typing import Annotated, Any
+ 
+ from aiofiles import os as aio_os
+@@ -22,7 +23,7 @@ from aiperf.common.compression import (
+ )
+ from aiperf.common.enums import MessageType
+ from aiperf.common.hooks import on_message
+-from aiperf.common.messages import ProcessAllResultsMessage
++from aiperf.common.messages import BenchmarkCompleteMessage, ProcessAllResultsMessage
+ from aiperf.common.mixins.message_bus_mixin import MessageBusClientMixin
+ from aiperf.common.models.record_models import ProcessRecordsResult
+ 
+@@ -30,6 +31,16 @@ ResultsDep = Annotated["ResultsRouter", component_dependency("results")]
+ 
+ results_router = APIRouter(tags=["Results"])
+ 
++# Grace period after BENCHMARK_COMPLETE for the unified ProcessAllResultsMessage
++# to arrive before we stop waiting on it. RecordsManager publishes its per-stream
++# results first (the actual shutdown trigger the controller reacts to) and only
++# afterwards, as a separate step, publishes ProcessAllResultsMessage. If
++# RecordsManager dies/is reaped between those two steps, that message never
++# arrives even though SystemController still announces BENCHMARK_COMPLETE
++# unconditionally during teardown. Without this bound, /api/results would
++# report RUNNING forever.
++_FINAL_RESULTS_GRACE_SEC: float = 10.0
++
+ 
+ _CONTENT_TYPES: dict[str, str] = {
+     ".json": "application/json",
+@@ -47,6 +58,8 @@ class ResultsRouter(MessageBusClientMixin, BaseRouter):
+         super().__init__(**kwargs)
+         self._final_results: ProcessRecordsResult | None = None
+         self._benchmark_complete: bool = False
++        self._benchmark_complete_was_cancelled: bool = False
++        self._benchmark_complete_at: float | None = None
+ 
+     def get_router(self) -> APIRouter:
+         return results_router
+@@ -56,26 +69,48 @@ class ResultsRouter(MessageBusClientMixin, BaseRouter):
+         self._final_results = message.results
+ 
+     @on_message(MessageType.BENCHMARK_COMPLETE)
+-    async def _on_benchmark_complete(self, message: Any) -> None:
++    async def _on_benchmark_complete(self, message: BenchmarkCompleteMessage) -> None:
+         # Results files have been exported to disk by the time this message
+         # arrives (the controller exports BEFORE publishing this message).
+         # Only now do we report "complete" to external consumers so they
+         # can safely fetch all result files.
+         self._benchmark_complete = True
++        self._benchmark_complete_was_cancelled = message.was_cancelled
++        self._benchmark_complete_at = time.monotonic()
+ 
+ 
+ @results_router.get("/api/results", response_model=BenchmarkResultsResponse)
+ async def get_results(component: ResultsDep) -> BenchmarkResultsResponse:
+     """Get final benchmark results."""
+-    if not component._benchmark_complete or component._final_results is None:
++    if component._final_results is not None:
++        status = (
++            BenchmarkStatus.CANCELLED
++            if component._final_results.results.was_cancelled
++            else BenchmarkStatus.COMPLETE
++        )
++        return BenchmarkResultsResponse(status=status, results=component._final_results)
++
++    if not component._benchmark_complete:
++        return BenchmarkResultsResponse(status=BenchmarkStatus.RUNNING)
++
++    elapsed = time.monotonic() - (component._benchmark_complete_at or 0.0)
++    if elapsed < _FINAL_RESULTS_GRACE_SEC:
++        # BENCHMARK_COMPLETE and PROCESS_ALL_RESULTS are published by
++        # different services with no ordering guarantee between them; give
++        # the unified results message a bounded window to still show up.
+         return BenchmarkResultsResponse(status=BenchmarkStatus.RUNNING)
+ 
++    # The benchmark was announced complete, but RecordsManager never
++    # published the unified results (most likely it died/was reaped between
++    # its per-stream publish and ProcessAllResultsMessage). A cancelled run
++    # is still reported as cancelled; anything else is INCOMPLETE rather than
++    # COMPLETE, so callers are never told a resultless run finished cleanly.
+     status = (
+         BenchmarkStatus.CANCELLED
+-        if component._final_results.results.was_cancelled
+-        else BenchmarkStatus.COMPLETE
++        if component._benchmark_complete_was_cancelled
++        else BenchmarkStatus.INCOMPLETE
+     )
+-    return BenchmarkResultsResponse(status=status, results=component._final_results)
++    return BenchmarkResultsResponse(status=status, results=None)
+ 
+ 
+ @results_router.get("/api/results/list", response_model=ResultsListResponse)
+diff --git a/src/aiperf/common/environment.py b/src/aiperf/common/environment.py
+index a3b33bd8..40ae3220 100644
+--- a/src/aiperf/common/environment.py
++++ b/src/aiperf/common/environment.py
+@@ -1878,6 +1878,18 @@ class _ZMQSettings(BaseSettings):
+         default=10,
+         description="Interval in seconds between TCP keepalive probes for ZMQ connections",
+     )
++    RECONNECT_IVL: int = Field(
++        ge=1,
++        le=100000,
++        default=100,
++        description="Delay in milliseconds before the first ZMQ reconnect attempt",
++    )
++    RECONNECT_IVL_MAX: int = Field(
++        ge=1,
++        le=100000,
++        default=5000,
++        description="Ceiling in milliseconds on the exponential ZMQ reconnect backoff",
++    )
+     EVENT_BUS_PROXY_FRONTEND_PORT: int = Field(
+         ge=1,
+         le=65535,
+@@ -2056,6 +2068,35 @@ class _Environment(BaseSettings):
+             )
+         return self
+ 
++    @model_validator(mode="after")
++    def validate_worker_stale_time_vs_heartbeat(self) -> Self:
++        """Validate the router's stale-worker cutoff outlives the heartbeat cadence.
++
++        ``StickyCreditRouter.evict_stale_workers`` computes its cutoff as
++        ``WORKER.STALE_TIME * 3``, fed only by the generic ``HeartbeatMessage``
++        cadence (``SERVICE.HEARTBEAT_INTERVAL`` /
++        ``SERVICE.HEARTBEAT_MISSED_THRESHOLD``). If the cutoff is shorter than
++        the worst-case gap between heartbeats, every worker looks stale on the
++        very first sweep and gets evicted -- terminal when it owns in-flight
++        credits or sticky sessions, regardless of ``WORKER.MIN_ALIVE_FRACTION``.
++        """
++        heartbeat_worst_case = (
++            self.SERVICE.HEARTBEAT_INTERVAL * self.SERVICE.HEARTBEAT_MISSED_THRESHOLD
++        )
++        stale_cutoff = self.WORKER.STALE_TIME * 3
++        if stale_cutoff <= heartbeat_worst_case:
++            raise ValueError(
++                f"AIPERF_WORKER_STALE_TIME: {self.WORKER.STALE_TIME} "
++                f"(eviction cutoff = STALE_TIME * 3 = {stale_cutoff}) must satisfy "
++                f"STALE_TIME * 3 > AIPERF_SERVICE_HEARTBEAT_INTERVAL * "
++                f"AIPERF_SERVICE_HEARTBEAT_MISSED_THRESHOLD "
++                f"({self.SERVICE.HEARTBEAT_INTERVAL} * "
++                f"{self.SERVICE.HEARTBEAT_MISSED_THRESHOLD} = {heartbeat_worst_case}), "
++                "otherwise workers appear stale to the router before their "
++                "heartbeat cadence could plausibly reach it."
++            )
++        return self
++
+ 
+ # Global singleton instance
+ Environment = _Environment()
+diff --git a/src/aiperf/common/mixins/aiperf_lifecycle_mixin.py b/src/aiperf/common/mixins/aiperf_lifecycle_mixin.py
+index 40908a3b..c6b863f6 100644
+--- a/src/aiperf/common/mixins/aiperf_lifecycle_mixin.py
++++ b/src/aiperf/common/mixins/aiperf_lifecycle_mixin.py
+@@ -94,6 +94,20 @@ class AIPerfLifecycleMixin(TaskManagerMixin, HooksMixin):
+         """Whether the lifecycle's current state is LifecycleState.RUNNING."""
+         return self.state == LifecycleState.RUNNING
+ 
++    @property
++    def failure_shutdown_timeout(self) -> float | None:
++        """Wall-clock cap applied to ``self.stop()`` when ``_fail`` tears down
++        after a failed on_init/on_start transition. Defaults to
++        ``Environment.SERVICE.FAILURE_SHUTDOWN_TIMEOUT``.
++
++        Subclasses whose ``on_stop`` hooks legitimately need longer than the
++        global default (e.g. a terminal hook that exports results and calls
++        ``os._exit()`` itself, which the bound would otherwise cut off mid-export)
++        should override this to return a larger value, or ``None`` to disable
++        the bound entirely and rely on the subclass's own exit path.
++        """
++        return Environment.SERVICE.FAILURE_SHUTDOWN_TIMEOUT
++
+     @property
+     def stop_requested(self) -> bool:
+         """Whether the lifecycle has been requested to stop."""
+@@ -306,14 +320,17 @@ class AIPerfLifecycleMixin(TaskManagerMixin, HooksMixin):
+             # We are already on the failure path, so losing cleanup state
+             # beats never exiting -- but only in a container. See
+             # ``_hard_exit_on_wedged_shutdown``.
+-            timeout = Environment.SERVICE.FAILURE_SHUTDOWN_TIMEOUT
+-            try:
+-                await asyncio.wait_for(self.stop(), timeout=timeout)
+-            except TimeoutError:
+-                self.error(
+-                    f"Shutdown after failure did not complete in {timeout}s; "
+-                    f"continuing teardown and reporting the failure"
+-                )
++            timeout = self.failure_shutdown_timeout
++            if timeout is None:
++                await self.stop()
++            else:
++                try:
++                    await asyncio.wait_for(self.stop(), timeout=timeout)
++                except TimeoutError:
++                    self.error(
++                        f"Shutdown after failure did not complete in {timeout}s; "
++                        f"continuing teardown and reporting the failure"
++                    )
+         await self._set_state(LifecycleState.FAILED)
+         raise asyncio.CancelledError(f"Failed for {self}: {e}") from e
+ 
+diff --git a/src/aiperf/common/mixins/base_metrics_collector_mixin.py b/src/aiperf/common/mixins/base_metrics_collector_mixin.py
+index d902fe7c..8e832d0d 100644
+--- a/src/aiperf/common/mixins/base_metrics_collector_mixin.py
++++ b/src/aiperf/common/mixins/base_metrics_collector_mixin.py
+@@ -29,6 +29,14 @@ from aiperf.transports.http_defaults import AioHttpDefaults
+ JSON_CONTENT_TYPE_PREFIX = "application/json"
+ OPENMETRICS_CONTENT_TYPE_PREFIX = "application/openmetrics-text"
+ 
++# A stalling endpoint (headers sent, then no chunk delivery) is bounded by
++# `sock_read` rather than the collection cadence, so scrapes can pile up
++# in-flight when the read timeout dwarfs the interval between them. This
++# multiplier only flags configurations far outside that relationship -
++# it stays above the built-in defaults' own ratio (~90x) so it doesn't
++# fire on an unmodified install.
++READ_TIMEOUT_TO_INTERVAL_WARN_RATIO = 100
++
+ # `create_tcp_connector` is exposed as a module attribute via __getattr__ to
+ # break a circular import at module-load time:
+ # `aiperf.transports.aiohttp_client` imports `AIPerfLoggerMixin` from
+@@ -287,6 +295,32 @@ class BaseMetricsCollectorMixin(AIPerfLifecycleMixin, ABC, Generic[TRecord]):
+         """
+         return self._collection_interval
+ 
++    def _warn_if_read_timeout_far_exceeds_collection_interval(self) -> None:
++        """Warn when the scrape read timeout dwarfs the collection cadence.
++
++        `sock_read` bounds each inter-chunk gap, not the total scrape, so a
++        stalling endpoint can only ever delay a given scrape by up to
++        ``METRICS_SCRAPE_READ_TIMEOUT``. When that timeout is far above the
++        interval at which new scrapes are issued, a single stall can leave
++        many scrapes in flight simultaneously. This is a sanity check, not a
++        hard failure - it never blocks initialization.
++        """
++        read_timeout = Environment.HTTP.METRICS_SCRAPE_READ_TIMEOUT
++        if (
++            read_timeout
++            > self._collection_interval * READ_TIMEOUT_TO_INTERVAL_WARN_RATIO
++        ):
++            self.warning(
++                lambda: (
++                    f"METRICS_SCRAPE_READ_TIMEOUT ({read_timeout}s) for {self._display_url} "
++                    f"is more than {READ_TIMEOUT_TO_INTERVAL_WARN_RATIO}x the collection "
++                    f"interval ({self._collection_interval}s). A stalling metrics endpoint "
++                    f"could leave many scrapes in flight at once. Consider lowering "
++                    f"AIPERF_HTTP_METRICS_SCRAPE_READ_TIMEOUT or raising the collection "
++                    f"interval."
++                )
++            )
++
+     @on_init
+     async def _initialize_http_client(self) -> None:
+         """Initialize the aiohttp client session with trace config.
+@@ -300,6 +334,7 @@ class BaseMetricsCollectorMixin(AIPerfLifecycleMixin, ABC, Generic[TRecord]):
+         Configures TraceConfig to capture HTTP timing events for precise correlation.
+         Uses create_tcp_connector to apply standard socket settings including IP version.
+         """
++        self._warn_if_read_timeout_far_exceeds_collection_interval()
+         timeout = aiohttp.ClientTimeout(
+             total=None,  # No total timeout for ongoing scrapes
+             connect=self._reachability_timeout,  # Fast connection timeout only
+diff --git a/src/aiperf/common/mixins/buffered_jsonl_writer_mixin.py b/src/aiperf/common/mixins/buffered_jsonl_writer_mixin.py
+index 77c65db9..af9d9867 100644
+--- a/src/aiperf/common/mixins/buffered_jsonl_writer_mixin.py
++++ b/src/aiperf/common/mixins/buffered_jsonl_writer_mixin.py
+@@ -142,8 +142,15 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
+             self._buffer.append(json_bytes)
+             self.lines_written += 1
+ 
+-            # Check if we need to flush
+-            if len(self._buffer) >= self._batch_size:
++            # Check if we need to flush. Once a write has failed, further
++            # batch-size-triggered flushes are skipped: every attempt would
++            # re-detach the (now growing) buffer, fail again on the same
++            # broken handle, and restore it -- unbounded write amplification
++            # for a doomed write. Records still accumulate in ``self._buffer``
++            # so nothing is silently dropped, and ``flush_buffer()`` still
++            # raises from ``_write_error`` at the finalization barrier, so the
++            # failure is not lost -- just no longer retried on every append.
++            if self._write_error is None and len(self._buffer) >= self._batch_size:
+                 buffer_to_flush = self._buffer
+                 self._buffer = []
+ 
+diff --git a/src/aiperf/common/protocols.py b/src/aiperf/common/protocols.py
+index f9f49e8a..b4505ebf 100644
+--- a/src/aiperf/common/protocols.py
++++ b/src/aiperf/common/protocols.py
+@@ -260,6 +260,12 @@ class SubClientProtocol(CommunicationClientProtocol, Protocol):
+ class CommunicationProtocol(AIPerfLifecycleProtocol, Protocol):
+     """Protocol for the base communication layer.
+     see :class:`aiperf.common.comms.base_comms.BaseCommunication` for more details.
++
++    Breaking change note for out-of-tree implementers: ``create_streaming_router_client``,
++    ``create_streaming_dealer_client``, and ``create_pull_client`` take ``bind``,
++    ``identity``, ``socket_ops``, and related options as keyword-only arguments
++    (following the ``*,`` separator). Callers that previously passed these
++    positionally must switch to keyword arguments.
+     """
+ 
+     def get_address(self, address_type: CommAddressType) -> str: ...
+diff --git a/src/aiperf/common/service_registry.py b/src/aiperf/common/service_registry.py
+index cb9140f8..ced9fc60 100644
+--- a/src/aiperf/common/service_registry.py
++++ b/src/aiperf/common/service_registry.py
+@@ -247,9 +247,17 @@ class _ServiceRegistry(AIPerfLoggerMixin):
+     ) -> None:
+         """Mark a service dead, optionally recording a fatal failure.
+ 
+-        Recoverable Kubernetes pod deaths use ``fatal=False`` so a replacement
+-        can register under the same deterministic service ID. The pod-failure
+-        threshold promotes accumulated recoverable deaths to fatal failures.
++        Recoverable Kubernetes pod deaths are meant to use ``fatal=False`` so a
++        replacement can register under the same deterministic service ID, with
++        an accumulated-death threshold later promoting them to fatal via
++        ``escalate_dead_services``. That call site does not exist yet:
++        ``KubernetesServiceManager`` (``controller/kubernetes_service_manager.py``)
++        is still a stub that raises ``NotImplementedError`` on every method, so
++        every current caller of ``fail_service`` (e.g. the heartbeat watchdog in
++        ``BaseServiceManager._judge_stale_service``) uses the default
++        ``fatal=True`` terminal path. ``fatal=False`` and ``escalate_dead_services``
++        are groundwork for the Kubernetes manager and are only exercised by unit
++        tests today.
+         """
+         info = self.services.get(service_id)
+         if info:
+@@ -282,12 +290,24 @@ class _ServiceRegistry(AIPerfLoggerMixin):
+         self._wake_all_waiters()
+ 
+     def escalate_dead_services(self) -> None:
+-        """Promote every recoverable death to a fatal failure."""
++        """Promote every recoverable death to a fatal failure.
++
++        Not yet invoked in production: it exists to be driven by a Kubernetes
++        pod-failure threshold (e.g. polled from ``KubernetesServiceManager``
++        once implemented) that decides a recoverable death has gone on too
++        long without a replacement registering. See ``fail_service`` for the
++        current wiring status.
++        """
+         for service_id, service_type in list(self._dead_services.items()):
+             self.fail_service(service_id, service_type, fatal=True)
+ 
+     def get_dead_services(self) -> dict[str, ServiceTypeT]:
+-        """Return services currently marked as recoverably dead."""
++        """Return services currently marked as recoverably dead.
++
++        Not yet read by any production code path; see ``fail_service`` for the
++        current wiring status. Intended for the future Kubernetes threshold
++        check that drives ``escalate_dead_services``.
++        """
+         return dict(self._dead_services)
+ 
+     def _clear_recorded_death(self, service_id: str) -> None:
+diff --git a/src/aiperf/config/flags/_resolver_server_metrics.py b/src/aiperf/config/flags/_resolver_server_metrics.py
+index d82b10d6..a0adcf8d 100644
+--- a/src/aiperf/config/flags/_resolver_server_metrics.py
++++ b/src/aiperf/config/flags/_resolver_server_metrics.py
+@@ -49,24 +49,43 @@ def normalize_server_metrics_base_for_override(
+     base: dict[str, Any],
+     overrides: dict[str, Any] | None,
+ ) -> dict[str, Any]:
+-    """Normalize YAML server_metrics shorthand before CLI override merging."""
++    """Normalize YAML server_metrics shorthand before CLI override merging.
++
++    The YAML key may be authored under either the canonical ``server_metrics``
++    spelling or its documented ``serverMetrics`` camelCase alias -- gating on
++    the snake_case key alone leaves the camelCase spelling un-normalized, so
++    shorthand fields like ``url`` never get expanded to ``urls`` before
++    ``deep_merge`` adds its own ``urls`` key, leaving both to trip
++    ``extra="forbid"``.
++    """
+     if not _has_benchmark_server_metrics_override(overrides):
+         return base
+ 
+     benchmark = base.get("benchmark")
+-    if not isinstance(benchmark, dict) or "server_metrics" not in benchmark:
++    key = _server_metrics_key(benchmark) if isinstance(benchmark, dict) else None
++    if key is None:
+         return base
+ 
+     from aiperf.config.server_metrics import ServerMetricsConfig
+ 
+     normalized = copy.deepcopy(base)
+     normalized_benchmark = normalized["benchmark"]
+-    normalized_benchmark["server_metrics"] = ServerMetricsConfig.model_validate(
+-        normalized_benchmark["server_metrics"]
++    normalized_benchmark[key] = ServerMetricsConfig.model_validate(
++        normalized_benchmark[key]
+     ).model_dump(mode="python")
+     return normalized
+ 
+ 
++def _server_metrics_key(benchmark: dict[str, Any]) -> str | None:
++    """Return whichever spelling of the server_metrics key is present, if any."""
++    from pydantic.alias_generators import to_camel
++
++    for key in ("server_metrics", to_camel("server_metrics")):
++        if key in benchmark:
++            return key
++    return None
++
++
+ def _has_benchmark_server_metrics_override(overrides: dict[str, Any] | None) -> bool:
+     benchmark = overrides.get("benchmark") if isinstance(overrides, dict) else None
+     return isinstance(benchmark, dict) and "server_metrics" in benchmark
+diff --git a/src/aiperf/config/flags/resolver.py b/src/aiperf/config/flags/resolver.py
+index 6cbcce63..cfa83d0d 100644
+--- a/src/aiperf/config/flags/resolver.py
++++ b/src/aiperf/config/flags/resolver.py
+@@ -1588,8 +1588,18 @@ def _apply_fixed_schedule_offset_overrides(
+         for cli_field, phase_field in fixed_offset_fields.items():
+             if cli_field in fields_set:
+                 target[phase_field] = getattr(cli, cli_field)
+-        if "fixed_schedule_start_offset" in fields_set:
+-            target.setdefault("auto_offset", False)
++        # This runs before _coalesce_phase_aliases, so a YAML-authored
++        # ``autoOffset`` is still under its camelCase spelling here. Checking
++        # only the snake_case key would miss it, write the default under
++        # ``auto_offset``, and let the coalesce step overwrite the user's
++        # camelCase value with this False default (same hazard as
++        # _apply_default_grace_period_override above).
++        if (
++            "fixed_schedule_start_offset" in fields_set
++            and "auto_offset" not in target
++            and to_camel("auto_offset") not in target
++        ):
++            target["auto_offset"] = False
+ 
+ 
+ def _arrival_phase_type(cli: CLIConfig) -> PhaseType:
+diff --git a/src/aiperf/controller/result_join_coordinator.py b/src/aiperf/controller/result_join_coordinator.py
+index a5db2844..f6f5d7ef 100644
+--- a/src/aiperf/controller/result_join_coordinator.py
++++ b/src/aiperf/controller/result_join_coordinator.py
+@@ -63,7 +63,11 @@ class ResultJoinCoordinator:
+         phase").
+ 
+         The eviction is recorded rather than silently satisfying the barrier, so
+-        the run can be reported as degraded and name the member that vanished.
++        the run can be reported as degraded and name the member that vanished --
++        but only when the service was still pending somewhere. A producer that
++        already delivered every domain it was required for (``complete_domain``
++        marks it done) is fully represented in the export, so its later death
++        must not retroactively mark the run degraded.
+ 
+         Returns True if the service was actually required (i.e. the barrier
+         changed), so callers can skip a redundant readiness re-check.
+@@ -71,8 +75,12 @@ class ResultJoinCoordinator:
+         was_required = any(
+             service_id in required for required in self._required.values()
+         )
++        was_pending = any(
++            service_id in required - self._completed.get(domain, set())
++            for domain, required in self._required.items()
++        )
+         self.unregister_service(service_id)
+-        if was_required:
++        if was_pending:
+             self._evicted[service_id] = reason
+         return was_required
+ 
+diff --git a/src/aiperf/controller/system_controller.py b/src/aiperf/controller/system_controller.py
+index 4b7d20e5..b5055c8b 100644
+--- a/src/aiperf/controller/system_controller.py
++++ b/src/aiperf/controller/system_controller.py
+@@ -97,6 +97,14 @@ class SystemController(SignalHandlerMixin, BaseService):
+     It will start, stop, and configure all other services.
+     """
+ 
++    @property
++    def failure_shutdown_timeout(self) -> float | None:
++        """Its on_stop hook exports results, renders the console, and then calls
++        os._exit() itself, so bounding that teardown would cut the export short
++        and skip the terminal exit the zombie-prevention path depends on.
++        """
++        return None
++
+     def __init__(
+         self,
+         run: "BenchmarkRun",
+@@ -172,10 +180,6 @@ class SystemController(SignalHandlerMixin, BaseService):
+         # error) or reports itself disabled (telemetry/server-metrics status)
+         # unregisters, so it stops blocking. Replaces the per-gate boolean flags.
+         self._result_join_coordinator = ResultJoinCoordinator()
+-        # Services the watchdog confirmed dead. Kept alongside the coordinator
+-        # because command fan-out targets must exclude them even after the
+-        # barrier has released.
+-        self._reaped_service_ids: set[str] = set()
+         # A producer that dies abruptly never sends SERVICE_ERROR, so the
+         # heartbeat/pod reapers are the only signal. Without this hook they mark
+         # the service failed in the registry but leave it in the barrier, and
+@@ -396,23 +400,31 @@ class SystemController(SignalHandlerMixin, BaseService):
+     def _parse_responses_for_errors(
+         self, responses: list[CommandResponse | ErrorDetails], operation: str
+     ) -> None:
+-        """Parse the responses for errors."""
++        """Parse the responses for errors.
++
++        Raises only when THIS batch contains an error, not when the
++        accumulated ``_exit_errors`` list (which may already hold an
++        unrelated optional-producer failure from earlier in the run) is
++        non-empty.
++        """
++        batch_errors: list[ExitErrorInfo] = []
+         for response in responses:
+             if isinstance(response, ErrorDetails):
+-                self._exit_errors.append(
++                batch_errors.append(
+                     ExitErrorInfo(
+                         error_details=response, operation=operation, service_id=None
+                     )
+                 )
+             elif isinstance(response, CommandErrorResponse):
+-                self._exit_errors.append(
++                batch_errors.append(
+                     ExitErrorInfo(
+                         error_details=response.error,
+                         operation=operation,
+                         service_id=response.service_id,
+                     )
+                 )
+-        if self._exit_errors:
++        if batch_errors:
++            self._exit_errors.extend(batch_errors)
+             raise LifecycleOperationError(
+                 operation=operation,
+                 original_exception=None,
+@@ -453,10 +465,6 @@ class SystemController(SignalHandlerMixin, BaseService):
+                 f"Service registry lost registration for '{message.service_id}'"
+             )
+ 
+-        # A service re-registering under a reused ID is alive again, so it must
+-        # stop being excluded from command fan-out.
+-        self._reaped_service_ids.discard(message.service_id)
+-
+         previous = self.service_manager.service_id_map.get(message.service_id)
+         if previous is not None and previous.service_type != message.service_type:
+             self.service_manager.service_map[previous.service_type] = [
+@@ -611,7 +619,6 @@ class SystemController(SignalHandlerMixin, BaseService):
+                 f"Evicted '{service_id}' from the result-join barrier ({reason}); "
+                 "results for this producer will be missing from the run"
+             )
+-            self._reaped_service_ids.add(service_id)
+             self._exit_errors.append(
+                 ExitErrorInfo(
+                     error_details=ErrorDetails(
+@@ -638,7 +645,6 @@ class SystemController(SignalHandlerMixin, BaseService):
+             f"Required service '{service_id}' ({info.service_type}) was reaped "
+             f"during the benchmark ({reason})"
+         )
+-        self._reaped_service_ids.add(service_id)
+         self._exit_errors.append(
+             ExitErrorInfo(
+                 error_details=ErrorDetails(
+@@ -650,7 +656,11 @@ class SystemController(SignalHandlerMixin, BaseService):
+             )
+         )
+         self._forget_reaped_service(service_id)
+-        if self._system_state == SystemState.PROFILING:
++        # Mirrors _process_service_error_message's guard: cancel for any state
++        # not already winding down, not just PROFILING, so a required
++        # non-producer reaped during PROCESSING (after credits complete,
++        # before results are joined) still aborts the run.
++        if self._system_state not in {SystemState.STOPPING, SystemState.SHUTDOWN}:
+             await self._cancel_profiling()
+ 
+     def _forget_reaped_service(self, service_id: str) -> None:
+@@ -1307,7 +1317,12 @@ class SystemController(SignalHandlerMixin, BaseService):
+ 
+         Deferred exporters only upload already-complete local artifacts, so a
+         remote service outage is warning-worthy but does not make the local
+-        result set unsafe to serve.
++        result set unsafe to serve. This is an intentional asymmetry: a
++        non-deferred (local) export failure now appends to ``_exit_errors``
++        and flips the process exit code to non-zero, whereas a deferred
++        exporter (e.g. wandb/mlflow) failure only logs a warning and never
++        sets ``marker_blocking`` -- a CI pipeline relying solely on exit code
++        will not observe a failed remote upload.
+         """
+         marker_blocking = False
+         for failure in failures:
+diff --git a/src/aiperf/credit/sticky_router.py b/src/aiperf/credit/sticky_router.py
+index 8de41267..daaa5a46 100644
+--- a/src/aiperf/credit/sticky_router.py
++++ b/src/aiperf/credit/sticky_router.py
+@@ -337,6 +337,19 @@ class StickyCreditRouter(CommunicationMixin):
+         self._terminally_lost_workers: set[str] = set()
+         self._gracefully_shutdown_workers: set[str] = set()
+ 
++        # Two-strike bookkeeping for evict_stale_workers()'s periodic sweep:
++        # a worker must be observed past the cutoff on two consecutive sweeps
++        # (spaced STALE_TIME apart) before it is actually evicted. Mirrors the
++        # two-strike verification in BaseServiceManager._judge_stale_service,
++        # which additionally has process ground truth to clear a strike
++        # outright. This router has no such ground truth (it runs in a
++        # different process than the service watchdog), so persistence across
++        # two independent sweeps is the closest in-process approximation:
++        # a worker whose event loop stalls and then recovers gets a second
++        # chance instead of being evicted on the same sweep the watchdog
++        # would have protected it on.
++        self._stale_worker_strikes: dict[str, int] = {}
++
+         self._cancellation_pending: bool = False
+         self._credits_complete: bool = False
+ 
+@@ -865,16 +878,44 @@ class StickyCreditRouter(CommunicationMixin):
+         """Periodically drop workers whose heartbeats have stopped.
+ 
+         Sweeps every ``STALE_TIME`` but evicts only workers silent for
+-        ``STALE_TIME * 3``, so a dead worker leaves routing within roughly
+-        three to four sweeps. The margin keeps a worker that misses one or two
+-        heartbeats under load in the pool. Suppressed once credits are
+-        complete or a cancellation is in flight: workers legitimately stop
+-        talking then, and evicting during teardown would log noise about a
+-        normal shutdown.
++        ``STALE_TIME * 3`` on two consecutive sweeps, so a dead worker leaves
++        routing within roughly four to five sweeps. The margin keeps a worker
++        that misses one or two heartbeats under load in the pool. Suppressed
++        once credits are complete or a cancellation is in flight: workers
++        legitimately stop talking then, and evicting during teardown would
++        log noise about a normal shutdown.
++
++        Two-strike gate: a worker past the cutoff on its first sweep is only
++        "suspected" (see ``_stale_worker_strikes``) and is evicted only if it
++        is still past the cutoff on the following sweep. A worker whose
++        heartbeat resumes before that second sweep loses its strike and stays
++        in the pool. This does not require process ground truth (the router
++        has none -- see the class docstring), but it does mean a single
++        transient stall can no longer be evicted on the same sweep where a
++        process-aware watchdog would have protected it.
+         """
+         if self._credits_complete or self._cancellation_pending:
+             return
+-        self.evict_stale_workers(Environment.WORKER.STALE_TIME * 3)
++        stale_after_s = Environment.WORKER.STALE_TIME * 3
++        candidates = set(self._stale_worker_candidates(stale_after_s))
++
++        # Workers that heartbeated since the last sweep are no longer
++        # suspected; drop their strike so a later stall starts fresh.
++        for worker_id in list(self._stale_worker_strikes):
++            if worker_id not in candidates:
++                del self._stale_worker_strikes[worker_id]
++
++        confirmed: list[str] = []
++        for worker_id in candidates:
++            strikes = self._stale_worker_strikes.get(worker_id, 0) + 1
++            if strikes < 2:
++                self._stale_worker_strikes[worker_id] = strikes
++                continue
++            self._stale_worker_strikes.pop(worker_id, None)
++            confirmed.append(worker_id)
++
++        if confirmed:
++            self._evict_worker_ids(confirmed, stale_after_s)
+ 
+     def _note_peak_workers(self) -> None:
+         """Track the high-water mark of registered workers.
+@@ -940,16 +981,39 @@ class StickyCreditRouter(CommunicationMixin):
+         missing liveness feed degrades to no eviction rather than to evicting
+         everybody.
+         """
++        stale = self._stale_worker_candidates(stale_after_s)
++        if stale:
++            self._evict_worker_ids(stale, stale_after_s)
++        return stale
++
++    def _stale_worker_candidates(self, stale_after_s: float) -> list[str]:
++        """Return worker ids whose heartbeat is older than ``stale_after_s``.
++
++        Read-only: does not evict anything. Split out of
++        ``evict_stale_workers`` so the periodic sweep task can peek at who
++        would be evicted and apply its own two-strike confirmation before
++        actually removing anyone -- see ``_evict_stale_workers_task``.
++
++        ``stale_after_s <= 0`` disables the check.
++        """
+         if stale_after_s <= 0:
+             return []
+         cutoff_ns = time.time_ns() - int(stale_after_s * NANOS_PER_SECOND)
+-        stale = [
++        return [
+             wid
+             for wid, load in self._workers.items()
+             if load.last_heartbeat_ns and load.last_heartbeat_ns < cutoff_ns
+         ]
++
++    def _evict_worker_ids(self, worker_ids: list[str], stale_after_s: float) -> None:
++        """Unregister the given worker ids as stale and report any real loss.
++
++        Shared tail of ``evict_stale_workers`` (immediate, single-sweep
++        eviction) and ``_evict_stale_workers_task`` (two-strike confirmed
++        eviction). ``stale_after_s`` is used only for the log message.
++        """
+         lost_active_work = False
+-        for worker_id in stale:
++        for worker_id in worker_ids:
+             load = self._workers[worker_id]
+             in_flight = load.in_flight_credits
+             self.warning(
+@@ -967,7 +1031,6 @@ class StickyCreditRouter(CommunicationMixin):
+             )
+         if lost_active_work:
+             self._notify_worker_lost("worker_unavailable: worker stopped responding")
+-        return stale
+ 
+     def _unregister_worker(
+         self,
+diff --git a/src/aiperf/exporters/exporter_manager.py b/src/aiperf/exporters/exporter_manager.py
+index d6a058f5..bf532760 100644
+--- a/src/aiperf/exporters/exporter_manager.py
++++ b/src/aiperf/exporters/exporter_manager.py
+@@ -227,8 +227,10 @@ class ExporterManager(AIPerfLoggerMixin):
+         for phase_result in phase_records:
+             entry = self._phase_manifest_entry(phase_result)
+             try:
+-                await self._export_one_phase(
+-                    phase_result=phase_result, manifest_entry=entry
++                failures.extend(
++                    await self._export_one_phase(
++                        phase_result=phase_result, manifest_entry=entry
++                    )
+                 )
+             except Exception as exc:  # noqa: BLE001 - recorded as a per-phase failure
+                 self.error(
+@@ -285,8 +287,15 @@ class ExporterManager(AIPerfLoggerMixin):
+         *,
+         phase_result: PhaseProfileResults,
+         manifest_entry: dict[str, Any],
+-    ) -> None:
+-        """Write every artifact for one phase, recording paths in the entry."""
++    ) -> list[ExporterFailure]:
++        """Write every artifact for one phase, recording paths in the entry.
++
++        Each of the four artifacts (metrics JSON/CSV, GPU telemetry, server
++        metrics) is independent: a failure writing one must not prevent the
++        other three from being written. Failures are collected and returned
++        rather than raised so the caller can still index the phase in the
++        manifest and report every failed artifact by name.
++        """
+         phase_dir = self._run.cfg.artifacts.dir / "phases" / phase_result.phase_name
+         await asyncio.to_thread(phase_dir.mkdir, parents=True, exist_ok=True)
+         phase_profile = ProfileResults(
+@@ -295,43 +304,77 @@ class ExporterManager(AIPerfLoggerMixin):
+             start_ns=phase_result.start_ns or self._results.start_ns,
+             end_ns=phase_result.end_ns or self._results.end_ns,
+             was_cancelled=phase_result.was_cancelled,
++            is_complete=self._results.is_complete,
++            incomplete_reason=self._results.incomplete_reason,
+             successful_request_count=phase_result.successful_request_count,
+             error_request_count=phase_result.error_request_count,
+             error_summary=phase_result.error_summary,
+             branch_stats=phase_result.branch_stats,
+         )
+-        await self._write_phase_export(
+-            exporter_cls=MetricsJsonExporter,
+-            phase_profile=phase_profile,
+-            file_path=phase_dir / self._run.cfg.artifacts.profile_export_json_file.name,
+-            manifest_entry=manifest_entry,
+-            manifest_key="metrics_json",
+-        )
+-        await self._write_phase_export(
+-            exporter_cls=MetricsCsvExporter,
+-            phase_profile=phase_profile,
+-            file_path=phase_dir / self._run.cfg.artifacts.profile_export_csv_file.name,
+-            manifest_entry=manifest_entry,
+-            manifest_key="metrics_csv",
+-        )
+-        await self._write_phase_observability_export(
+-            phase_result=phase_result,
+-            phase_dir=phase_dir,
+-            manifest_entry=manifest_entry,
+-            attr="telemetry_results",
+-            warnings_attr="telemetry_warnings",
+-            file_name="gpu_telemetry.json",
+-            manifest_key="gpu_telemetry_json",
+-        )
+-        await self._write_phase_observability_export(
+-            phase_result=phase_result,
+-            phase_dir=phase_dir,
+-            manifest_entry=manifest_entry,
+-            attr="server_metrics_results",
+-            warnings_attr="server_metrics_warnings",
+-            file_name="server_metrics.json",
+-            manifest_key="server_metrics_json",
++        artifact_writers: tuple[tuple[str, Any], ...] = (
++            (
++                "metrics_json",
++                self._write_phase_export(
++                    exporter_cls=MetricsJsonExporter,
++                    phase_profile=phase_profile,
++                    file_path=phase_dir
++                    / self._run.cfg.artifacts.profile_export_json_file.name,
++                    manifest_entry=manifest_entry,
++                    manifest_key="metrics_json",
++                ),
++            ),
++            (
++                "metrics_csv",
++                self._write_phase_export(
++                    exporter_cls=MetricsCsvExporter,
++                    phase_profile=phase_profile,
++                    file_path=phase_dir
++                    / self._run.cfg.artifacts.profile_export_csv_file.name,
++                    manifest_entry=manifest_entry,
++                    manifest_key="metrics_csv",
++                ),
++            ),
++            (
++                "gpu_telemetry_json",
++                self._write_phase_observability_export(
++                    phase_result=phase_result,
++                    phase_dir=phase_dir,
++                    manifest_entry=manifest_entry,
++                    attr="telemetry_results",
++                    warnings_attr="telemetry_warnings",
++                    file_name="gpu_telemetry.json",
++                    manifest_key="gpu_telemetry_json",
++                ),
++            ),
++            (
++                "server_metrics_json",
++                self._write_phase_observability_export(
++                    phase_result=phase_result,
++                    phase_dir=phase_dir,
++                    manifest_entry=manifest_entry,
++                    attr="server_metrics_results",
++                    warnings_attr="server_metrics_warnings",
++                    file_name="server_metrics.json",
++                    manifest_key="server_metrics_json",
++                ),
++            ),
+         )
++        failures: list[ExporterFailure] = []
++        for manifest_key, artifact_coro in artifact_writers:
++            try:
++                await artifact_coro
++            except Exception as exc:  # noqa: BLE001 - recorded as a per-artifact failure
++                failures.append(
++                    ExporterFailure(
++                        exporter=(
++                            f"PhaseMetricArtifacts:{phase_result.phase_name}:"
++                            f"{manifest_key}"
++                        ),
++                        error=exc,
++                        is_deferred=False,
++                    )
++                )
++        return failures
+ 
+     async def _write_phase_observability_export(
+         self,
+diff --git a/src/aiperf/exporters/search_history.py b/src/aiperf/exporters/search_history.py
+index 08d6709b..7763c2c3 100644
+--- a/src/aiperf/exporters/search_history.py
++++ b/src/aiperf/exporters/search_history.py
+@@ -51,7 +51,7 @@ from typing import TYPE_CHECKING, Any
+ 
+ import orjson
+ 
+-from aiperf.common.finite import scrub_non_finite
++from aiperf.common.finite import is_finite_value, scrub_non_finite
+ from aiperf.orchestrator.search_planner._sla_helpers import first_failing_filter
+ 
+ if TYPE_CHECKING:
+@@ -151,19 +151,29 @@ def _compute_best_trials(
+     """
+     from aiperf.common.enums import OptimizationDirection
+ 
++    def _primary(h: SearchIteration) -> float | None:
++        return h.objective_values[0] if h.objective_values else h.objective_value
++
+     # An iteration that reports only the scalar mirror is still scored: most
+     # planners populate objective_value and a length-1 vector, but the vector
+     # is Optional and filtering on it alone dropped those iterations entirely
+-    # (best_trials came back null for a fully scored search).
+-    scored = [h for h in history if h.objective_values or h.objective_value is not None]
++    # (best_trials came back null for a fully scored search). A NaN/inf
++    # primary objective is filtered out here, upstream of both the
++    # single-objective max()/min() below and the Pareto front in
++    # _pareto_front/_dominates: every comparison against NaN is False, so an
++    # unfiltered NaN trial could silently win max()/min() outright, or - for
++    # the Pareto path - never be dominated and get stuck in the front forever.
++    scored = [
++        h
++        for h in history
++        if (h.objective_values or h.objective_value is not None)
++        and is_finite_value(_primary(h))
++    ]
+     feasible = [h for h in scored if h.feasible]
+     ranking_pool = feasible if feasible else scored
+     if not ranking_pool:
+         return None
+ 
+-    def _primary(h: SearchIteration) -> float:
+-        return h.objective_values[0] if h.objective_values else h.objective_value
+-
+     n_obj = len(cfg.objectives)
+     if n_obj == 1:
+         direction = cfg.objectives[0].direction
+@@ -198,8 +208,6 @@ def _objective_at(iteration: SearchIteration, index: int) -> float | None:
+     be dominated depending on argument order. See ``docs/dev/patterns.md``
+     "NaN/Inf Discipline Pattern".
+     """
+-    from aiperf.common.finite import is_finite_value
+-
+     values = iteration.objective_values
+     if values is not None and index < len(values):
+         value = values[index]
+diff --git a/src/aiperf/gpu_telemetry/manager.py b/src/aiperf/gpu_telemetry/manager.py
+index 1cfa25c2..649d16c4 100644
+--- a/src/aiperf/gpu_telemetry/manager.py
++++ b/src/aiperf/gpu_telemetry/manager.py
+@@ -536,15 +536,16 @@ class GPUTelemetryManager(BaselineCollectorMixin, BaseComponentService):
+         JSONL stream exporters.
+ 
+         Best-effort: several callers are shutdown paths, so a dead push
+-        transport must not turn a clean teardown into an exception. The
+-        sent-flag is only latched on success, leaving a later caller free to
+-        retry. ``CancelledError`` is not an ``Exception`` and so still
+-        propagates.
++        transport must not turn a clean teardown into an exception. Both the
++        closed-admission flag and the sent-flag are only latched on success,
++        leaving a later caller free to retry. Records/errors that arrive
++        while this call is in flight still see admission open, since the
++        flag flip and the push happen under the same lock they check.
++        ``CancelledError`` is not an ``Exception`` and so still propagates.
+         """
+         async with self._records_push_lock:
+             if self._completion_marker_sent:
+                 return
+-            self._telemetry_records_closed = True
+             try:
+                 await self.records_push_client.push(
+                     TelemetryRecordsMessage(
+@@ -562,6 +563,7 @@ class GPUTelemetryManager(BaselineCollectorMixin, BaseComponentService):
+                     f"GPU Telemetry: Failed to send collection-complete marker: {e!r}"
+                 )
+                 return
++            self._telemetry_records_closed = True
+             self._completion_marker_sent = True
+ 
+     async def _on_telemetry_error(self, error: ErrorDetails, collector_id: str) -> None:
+diff --git a/src/aiperf/orchestrator/search_planner/_botorch_kernel.py b/src/aiperf/orchestrator/search_planner/_botorch_kernel.py
+index a3a43260..a1f197fa 100644
+--- a/src/aiperf/orchestrator/search_planner/_botorch_kernel.py
++++ b/src/aiperf/orchestrator/search_planner/_botorch_kernel.py
+@@ -20,7 +20,7 @@ SAASBO; out of scope for this migration).
+ from __future__ import annotations
+ 
+ import math
+-from typing import TYPE_CHECKING, Any
++from typing import TYPE_CHECKING
+ 
+ if TYPE_CHECKING:
+     import torch
+@@ -56,9 +56,6 @@ def make_dsp_kernel(d: int, batch_shape: torch.Size | None = None) -> ScaleKerne
+         raise ValueError(f"d must be >= 1; got {d}")
+     loc = torch.tensor(math.sqrt(2.0) + 0.5 * math.log(d), dtype=torch.float64)
+     scale = torch.tensor(math.sqrt(3.0), dtype=torch.float64)
+-    batch_kwargs: dict[str, Any] = (
+-        {} if batch_shape is None else {"batch_shape": batch_shape}
+-    )
+     return ScaleKernel(
+         MaternKernel(
+             nu=2.5,
+diff --git a/src/aiperf/server_metrics/accumulator.py b/src/aiperf/server_metrics/accumulator.py
+index 36ef9605..d9c64dca 100644
+--- a/src/aiperf/server_metrics/accumulator.py
++++ b/src/aiperf/server_metrics/accumulator.py
+@@ -63,10 +63,23 @@ _METRIC_DATA_CLASSES: dict[
+ 
+ @dataclass(slots=True)
+ class _PhaseCapture:
+-    """Identity and observed scrape window for one concrete phase."""
++    """Identity and observed scrape window for one concrete phase.
++
++    ``phase_index`` is the *reported* value (``None`` for synthesized
++    AGENTIC_REPLAY warmup phases, per ``timing/config.py``'s
++    ``_build_agentic_warmup_config`` -- they are not entries in
++    ``cfg.phases``). ``sample_phase_index`` is the internal per-sample
++    key used to filter this instance's stored samples: for a reported
++    ``phase_index`` it is the same value, but for a synthesized warmup
++    (``phase_index is None``) it is a synthesized negative index unique
++    to this *instance* of the warmup, so multiple agentic-warmup
++    instances in one run don't pool their samples together (see
++    ``ServerMetricsAccumulator._resolve_sample_phase_index``).
++    """
+ 
+     phase: CreditPhase
+     phase_index: int | None
++    sample_phase_index: int
+     profiling_index: int | None
+     phase_name: str
+     phase_kind: PhaseKind | None
+@@ -126,7 +139,13 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
+         # strictly after warmup_end_ns and would otherwise be excluded from
+         # warmup aggregation.
+         self._last_warmup_record_ns: int | None = None
+-        self._phase_captures: dict[tuple[int | None, str], _PhaseCapture] = {}
++        self._phase_captures: dict[tuple[int, str], _PhaseCapture] = {}
++        # Synthesized-instance tracking for phases with no reported
++        # phase_index (currently just AGENTIC_REPLAY's synthesized warmup,
++        # see _PhaseCapture and _resolve_sample_phase_index).
++        self._last_phase_signature: tuple[CreditPhase, int | None, str] | None = None
++        self._current_synthetic_phase_index: int | None = None
++        self._next_synthetic_phase_index = -2
+ 
+     def get_hierarchy_for_export(self) -> ServerMetricsHierarchy:
+         """Get server metrics hierarchy for export purposes.
+@@ -153,14 +172,30 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
+             self._last_warmup_record_ns = max(
+                 self._last_warmup_record_ns or 0, record.timestamp_ns
+             )
++        storage_record = record
+         if record.benchmark_phase is not None:
+             phase_name = record.phase_name or str(record.benchmark_phase)
+-            phase_key = (record.phase_index, phase_name)
++            sample_phase_index = self._resolve_sample_phase_index(
++                record.benchmark_phase, record.phase_index, phase_name
++            )
++            if record.phase_index is None:
++                # Storage keys samples by phase_index for filtering
++                # (get_phase_index_mask); give this instance's samples the
++                # synthesized index instead of the record's real (None)
++                # value so distinct synthesized-warmup instances don't
++                # collide in storage. Copy rather than mutate: `record` is
++                # shared with sibling processors (e.g. the JSONL writer) via
++                # the same fan-out call in manager.py.
++                storage_record = record.model_copy(
++                    update={"phase_index": sample_phase_index}
++                )
++            phase_key = (sample_phase_index, phase_name)
+             capture = self._phase_captures.get(phase_key)
+             if capture is None:
+                 self._phase_captures[phase_key] = _PhaseCapture(
+                     phase=record.benchmark_phase,
+                     phase_index=record.phase_index,
++                    sample_phase_index=sample_phase_index,
+                     profiling_index=record.profiling_index,
+                     phase_name=phase_name,
+                     phase_kind=record.phase_kind,
+@@ -170,7 +205,40 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
+             else:
+                 capture.start_ns = min(capture.start_ns, record.timestamp_ns)
+                 capture.end_ns = max(capture.end_ns, record.timestamp_ns)
+-        self._server_metrics_hierarchy.add_record(record)
++        self._server_metrics_hierarchy.add_record(storage_record)
++
++    def _resolve_sample_phase_index(
++        self,
++        benchmark_phase: CreditPhase,
++        phase_index: int | None,
++        phase_name: str,
++    ) -> int:
++        """Return the per-sample filter index for a record's concrete phase.
++
++        Reported phase indices are returned unchanged. When ``phase_index``
++        is ``None`` (synthesized AGENTIC_REPLAY warmup phases -- see
++        ``_PhaseCapture``), a synthesized negative index is assigned instead,
++        one per contiguous run of same-identity records. A new synthesized
++        index is minted whenever the (phase, phase_index, phase_name)
++        signature changes from the previous record processed, so a later
++        warmup instance with the same name (separated by an intervening
++        profiling phase) gets its own index rather than pooling with the
++        first. Real (non-negative) phase indices are never reused for this,
++        so synthesized and reported indices can't collide.
++        """
++        if phase_index is not None:
++            self._last_phase_signature = (benchmark_phase, phase_index, phase_name)
++            return phase_index
++
++        signature = (benchmark_phase, phase_index, phase_name)
++        if (
++            signature != self._last_phase_signature
++            or self._current_synthetic_phase_index is None
++        ):
++            self._current_synthetic_phase_index = self._next_synthetic_phase_index
++            self._next_synthetic_phase_index -= 1
++        self._last_phase_signature = signature
++        return self._current_synthetic_phase_index
+ 
+     async def process_record(self, record: ServerMetricsRecord) -> None:
+         """``AccumulatorProtocol``-compatible alias for ``process_server_metrics_record``."""
+@@ -313,7 +381,7 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
+                 capture.phase,
+                 self._slice_duration,
+                 include_final_collection=False,
+-                phase_index=capture.phase_index,
++                phase_index=capture.sample_phase_index,
+             )
+             if not endpoint_summaries:
+                 continue
+diff --git a/src/aiperf/timing/manager.py b/src/aiperf/timing/manager.py
+index ee573b3e..0b27d705 100644
+--- a/src/aiperf/timing/manager.py
++++ b/src/aiperf/timing/manager.py
+@@ -333,7 +333,20 @@ class TimingManager(BaseComponentService):
+             self.info("Phase orchestrator cancelled")
+ 
+     def _on_worker_lost(self, reason: str) -> None:
+-        """Fail the active benchmark when a worker's sticky state is lost."""
++        """Fail the active benchmark immediately when a worker's sticky state is lost.
++
++        Unlike ``_on_dispatchable_worker_count_changed``, this path ignores
++        ``Environment.WORKER.MIN_ALIVE_FRACTION`` and the ``STALE_TIME`` grace
++        period entirely, by design. The router only invokes the worker-lost
++        callback (see ``StickyCreditRouter._unregister_worker`` and
++        ``_drop_orphaned_sessions``) when the departing worker owned in-flight
++        credits or an active sticky session. That state lived exclusively in
++        the dead worker's memory - no other worker can resume it, and a late
++        heartbeat cannot restore it - so the affected request(s) are lost no
++        matter how healthy the rest of the fleet is. A floor-fraction check
++        would be meaningless here: even one such loss is unrecoverable, so it
++        is always terminal regardless of how many workers remain alive.
++        """
+         if not self._profiling_active or self._worker_floor_abort_started:
+             return
+         self._worker_floor_abort_started = True
+@@ -355,6 +368,10 @@ class TimingManager(BaseComponentService):
+     def _on_dispatchable_worker_count_changed(self, worker_count: int) -> None:
+         """Schedule a local worker-floor check after membership changes.
+ 
++        This path covers idle-capacity churn only: workers that leave without
++        losing in-flight credits or sticky sessions (see ``_on_worker_lost``
++        for the unconditional, terminal counterpart that fires when they do).
++
+         The router owns the dispatchable set. TimingManager owns the benchmark
+         decision, with a grace period that lets a Kubernetes replacement finish
+         its startup before a sustained fleet loss becomes fatal.
+diff --git a/src/aiperf/zmq/streaming_dealer_client.py b/src/aiperf/zmq/streaming_dealer_client.py
+index 34227ffa..859bd0cd 100644
+--- a/src/aiperf/zmq/streaming_dealer_client.py
++++ b/src/aiperf/zmq/streaming_dealer_client.py
+@@ -121,7 +121,6 @@ class ZMQStreamingDealerClient(BaseZMQClient):
+         self._decoder = (
+             _decoder if decode_type is None else msgspec.msgpack.Decoder(decode_type)
+         )
+-        # Futures for in-flight request() calls, keyed by the request's rid/cid.
+         self._msg_count: int = 0
+         self._yield_interval: int = Environment.ZMQ.STREAMING_DEALER_YIELD_INTERVAL
+         self._fd_reader: FdEdgeReader | None = None
+@@ -210,10 +209,10 @@ class ZMQStreamingDealerClient(BaseZMQClient):
+         # FD-driver owns both directions of the socket; never touch zmq.asyncio
+         # send here or it corrupts the shared FD edge-trigger. Before the
+         # receiver task has created the driver (early WorkerDispatchable), send
+-        # directly. SNDHWM=0 means the NOBLOCK send never blocks on the queue,
+-        # but IMMEDIATE=1 makes it raise zmq.Again until the ROUTER connection
+-        # has handshaked, so retry the way the PUSH clients do rather than
+-        # dropping the first struct on a startup race.
++        # directly. SNDHWM=0 means the NOBLOCK send never blocks on the queue and
++        # libzmq queues rather than rejects a send before the ROUTER connection
++        # has handshaked, but retry the way the PUSH clients do anyway to guard
++        # against a genuine zmq.Again rather than dropping the first struct.
+         if self._fd_reader is not None:
+             self._fd_reader.send(data)
+         else:
+diff --git a/src/aiperf/zmq/streaming_push_client.py b/src/aiperf/zmq/streaming_push_client.py
+index 70a3f271..94acb546 100644
+--- a/src/aiperf/zmq/streaming_push_client.py
++++ b/src/aiperf/zmq/streaming_push_client.py
+@@ -81,10 +81,11 @@ class ZMQStreamingPushClient(BaseZMQClient):
+ 
+         The fast path is a sync NOBLOCK send straight to libzmq, skipping
+         zmq.asyncio's Future/polling machinery. With ``SNDHWM=0`` the send never
+-        blocks on the high-water mark, but ``IMMEDIATE=1`` makes a send to a
+-        not-yet-connected peer raise ``zmq.Again`` (e.g. a startup race before the
+-        manager's PULL has connected). Retry with backoff so a credit return is
+-        never silently dropped, matching :class:`ZMQPushClient`.
++        blocks on the high-water mark, so libzmq queues rather than rejects a
++        send to a not-yet-connected peer (e.g. a startup race before the
++        manager's PULL has connected). The retry-with-backoff below still
++        guards against genuine ``zmq.Again`` (e.g. a torn-down context), so a
++        credit return is never silently dropped, matching :class:`ZMQPushClient`.
+         """
+         await self._check_initialized()
+         if max_retries is None:
+diff --git a/src/aiperf/zmq/zmq_base_client.py b/src/aiperf/zmq/zmq_base_client.py
+index 486875ab..124bff25 100644
+--- a/src/aiperf/zmq/zmq_base_client.py
++++ b/src/aiperf/zmq/zmq_base_client.py
+@@ -115,6 +115,18 @@ class BaseZMQClient(AIPerfLifecycleMixin):
+             else:
+                 self.socket.connect(self.address)
+ 
++            # Unlike RECONNECT_IVL*/ROUTER_HANDOVER above, IMMEDIATE is deliberately set
++            # AFTER bind/connect, where libzmq's connect-time snapshot makes it a no-op
++            # -- matching its behavior on main. Setting it before connect() instead makes
++            # a send to a not-yet-(re)connected peer raise zmq.Again rather than queueing,
++            # which plain PUSH clients (e.g. RecordProcessor -> RecordsManager) retry only
++            # twice at 100ms apart: far short of the RECONNECT_IVL_MAX backoff above, so a
++            # peer restart can exhaust the retry budget and drop (or, worse, hang on) a
++            # record. Only the streaming credit-return PUSH/DEALER clients are built to
++            # rely on IMMEDIATE's zmq.Again signal; activate it there deliberately via
++            # socket_ops if that behavior is ever needed instead of enabling it globally.
++            self.socket.setsockopt(zmq.IMMEDIATE, ZMQSocketDefaults.IMMEDIATE)
++
+             self.debug(
+                 lambda: f"ZMQ {self.socket_type_name} socket {'BOUND' if self.bind else 'CONNECTED'} to {self.address} ({self.client_id})"
+             )
+@@ -123,7 +135,11 @@ class BaseZMQClient(AIPerfLifecycleMixin):
+             raise InitializationError(f"Failed to initialize ZMQ socket: {e}") from e
+ 
+     def _apply_socket_options(self) -> None:
+-        """Apply every socket option this client needs, in one place."""
++        """Apply the connect-time-sensitive socket options, before bind/connect.
++
++        IMMEDIATE is intentionally not among them; see the setsockopt call after
++        bind/connect in :meth:`_initialize_socket` for why.
++        """
+         self.socket.setsockopt(zmq.RCVTIMEO, ZMQSocketDefaults.RCVTIMEO)
+         self.socket.setsockopt(zmq.SNDTIMEO, ZMQSocketDefaults.SNDTIMEO)
+ 
+@@ -140,7 +156,6 @@ class BaseZMQClient(AIPerfLifecycleMixin):
+         self.socket.setsockopt(
+             zmq.TCP_KEEPALIVE_CNT, ZMQSocketDefaults.TCP_KEEPALIVE_CNT
+         )
+-        self.socket.setsockopt(zmq.IMMEDIATE, ZMQSocketDefaults.IMMEDIATE)
+         self.socket.setsockopt(zmq.LINGER, ZMQSocketDefaults.LINGER)
+ 
+         # When a DEALER reconnects with the same identity, replace the stale
+diff --git a/src/aiperf/zmq/zmq_defaults.py b/src/aiperf/zmq/zmq_defaults.py
+index 3cc0b9d1..f5b8724e 100644
+--- a/src/aiperf/zmq/zmq_defaults.py
++++ b/src/aiperf/zmq/zmq_defaults.py
+@@ -49,8 +49,8 @@ class ZMQSocketDefaults:
+     TCP_KEEPALIVE_CNT = 3
+     IMMEDIATE = 1  # Don't queue messages
+     LINGER = 0  # Don't wait on close
+-    RECONNECT_IVL = 100  # ms before the first reconnect attempt
+-    RECONNECT_IVL_MAX = 5000  # ms ceiling on the exponential reconnect backoff
++    RECONNECT_IVL = Environment.ZMQ.RECONNECT_IVL
++    RECONNECT_IVL_MAX = Environment.ZMQ.RECONNECT_IVL_MAX
+ 
+     # High Water Mark
+     # TODO: Investigate better ways to handle this
+diff --git a/tests/unit/api/routers/test_progress.py b/tests/unit/api/routers/test_progress.py
+index 2143735d..e20e5960 100644
+--- a/tests/unit/api/routers/test_progress.py
++++ b/tests/unit/api/routers/test_progress.py
+@@ -86,6 +86,47 @@ class TestProgressRouterSystemState:
+         data = progress_client.get("/api/progress").json()
+         assert data["system_state"] == SystemState.INITIALIZING.value
+ 
++    @pytest.mark.asyncio
++    async def test_out_of_order_system_state_does_not_regress(
++        self, progress_router: ProgressRouter
++    ) -> None:
++        """A late/duplicate SYSTEM_STATE_CHANGED with a lower rank must not
++        walk the reported state backwards."""
++        await progress_router._on_system_state_changed(
++            SystemStateChangedMessage(
++                service_id="system_controller",
++                state=SystemState.PROFILING,
++            )
++        )
++        # Late-arriving message for an earlier state (e.g. reordered/duplicated
++        # over ZMQ) must be ignored.
++        await progress_router._on_system_state_changed(
++            SystemStateChangedMessage(
++                service_id="system_controller",
++                state=SystemState.CONFIGURING,
++            )
++        )
++        assert progress_router._system_state == SystemState.PROFILING
++
++    @pytest.mark.asyncio
++    async def test_duplicate_system_state_is_idempotent(
++        self, progress_router: ProgressRouter
++    ) -> None:
++        """A duplicate delivery of the current state is a no-op, not a regression."""
++        await progress_router._on_system_state_changed(
++            SystemStateChangedMessage(
++                service_id="system_controller",
++                state=SystemState.PROFILING,
++            )
++        )
++        await progress_router._on_system_state_changed(
++            SystemStateChangedMessage(
++                service_id="system_controller",
++                state=SystemState.PROFILING,
++            )
++        )
++        assert progress_router._system_state == SystemState.PROFILING
++
+     def test_progress_response_reflects_latest_system_state(
+         self, progress_client: TestClient, progress_router: ProgressRouter
+     ) -> None:
+diff --git a/tests/unit/api/routers/test_results.py b/tests/unit/api/routers/test_results.py
+index fd38047d..e5f6c093 100644
+--- a/tests/unit/api/routers/test_results.py
++++ b/tests/unit/api/routers/test_results.py
+@@ -5,6 +5,7 @@
+ 
+ from __future__ import annotations
+ 
++import time
+ from unittest.mock import MagicMock
+ 
+ import pytest
+@@ -13,7 +14,7 @@ from pytest import param
+ from starlette.testclient import TestClient
+ 
+ from aiperf.api.routers.results import ResultsRouter
+-from aiperf.common.messages import ProcessAllResultsMessage
++from aiperf.common.messages import BenchmarkCompleteMessage, ProcessAllResultsMessage
+ from aiperf.common.models import MetricResult
+ from aiperf.common.models.record_models import ProcessRecordsResult, ProfileResults
+ from aiperf.config import BenchmarkRun
+@@ -178,6 +179,54 @@ class TestResultsEndpoint:
+         assert records[0]["p99"] == 250.0
+ 
+ 
++class TestResultsCompleteWithoutFinalResults:
++    """Test /api/results when BENCHMARK_COMPLETE arrives but the unified
++    ProcessAllResultsMessage never does (e.g. RecordsManager died between its
++    per-stream publish and _publish_all_results()).
++    """
++
++    def test_still_running_within_grace_period(
++        self, results_client: TestClient, results_router: ResultsRouter
++    ) -> None:
++        results_router._final_results = None
++        results_router._benchmark_complete = True
++        results_router._benchmark_complete_was_cancelled = False
++        results_router._benchmark_complete_at = time.monotonic()
++
++        response = results_client.get("/api/results")
++        data = response.json()
++        assert data["status"] == "running"
++        assert data["results"] is None
++
++    @pytest.mark.parametrize(
++        "was_cancelled,expected_status",
++        [
++            param(False, "incomplete", id="not-cancelled"),
++            param(True, "cancelled", id="was-cancelled"),
++        ],
++    )  # fmt: skip
++    def test_reports_terminal_status_after_grace_period_expires(
++        self,
++        results_client: TestClient,
++        results_router: ResultsRouter,
++        was_cancelled: bool,
++        expected_status: str,
++    ) -> None:
++        results_router._final_results = None
++        results_router._benchmark_complete = True
++        results_router._benchmark_complete_was_cancelled = was_cancelled
++        # Simulate the grace period having long since elapsed without the
++        # unified results message ever arriving.
++        results_router._benchmark_complete_at = time.monotonic() - 3600
++
++        response = results_client.get("/api/results")
++        assert response.status_code == 200
++        data = response.json()
++        assert data["status"] == expected_status
++        assert data["status"] != "running"
++        assert data["results"] is None
++
++
+ class TestResultsListEndpoint:
+     """Test the /api/results/list endpoint."""
+ 
+@@ -412,6 +461,32 @@ class TestFinalResultsHandler:
+         assert results_router._final_results.results.was_cancelled == was_cancelled
+         assert results_router._benchmark_complete is False
+ 
++    @pytest.mark.parametrize(
++        "was_cancelled",
++        [
++            param(False, id="not-cancelled"),
++            param(True, id="cancelled"),
++        ],
++    )  # fmt: skip
++    @pytest.mark.asyncio
++    async def test_on_benchmark_complete_records_cancellation_and_timestamp(
++        self, results_router: ResultsRouter, was_cancelled: bool
++    ) -> None:
++        assert results_router._benchmark_complete is False
++        assert results_router._benchmark_complete_at is None
++
++        before = time.monotonic()
++        message = BenchmarkCompleteMessage(
++            service_id="system_controller", was_cancelled=was_cancelled
++        )
++        await results_router._on_benchmark_complete(message)
++        after = time.monotonic()
++
++        assert results_router._benchmark_complete is True
++        assert results_router._benchmark_complete_was_cancelled == was_cancelled
++        assert results_router._benchmark_complete_at is not None
++        assert before <= results_router._benchmark_complete_at <= after
++
+     @pytest.mark.asyncio
+     async def test_on_process_all_results_accepts_optional_summary_payloads(
+         self, results_router: ResultsRouter
+diff --git a/tests/unit/common/mixins/test_base_metrics_collector_mixin.py b/tests/unit/common/mixins/test_base_metrics_collector_mixin.py
+index 7f508617..2e1565c8 100644
+--- a/tests/unit/common/mixins/test_base_metrics_collector_mixin.py
++++ b/tests/unit/common/mixins/test_base_metrics_collector_mixin.py
+@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
+ 
+ import pytest
+ 
++from aiperf.common.environment import Environment
+ from aiperf.common.exceptions import IncompatibleMetricsEndpointError
+ from aiperf.common.mixins.base_metrics_collector_mixin import (
+     BaseMetricsCollectorMixin,
+@@ -74,6 +75,60 @@ class TestTrustEnvPassedToSessions:
+                 assert call[1]["trust_env"] == trust_env_value
+ 
+ 
++class TestReadTimeoutSanityWarning:
++    """The collector should warn at init when the socket read timeout is far
++    above the collection cadence, but stay quiet for well-proportioned pairs
++    (including the shipped defaults)."""
++
++    @pytest.mark.asyncio
++    async def test_warns_for_badly_skewed_pair(self, monkeypatch) -> None:
++        monkeypatch.setattr(Environment.HTTP, "METRICS_SCRAPE_READ_TIMEOUT", 60.0)
++        collector = ConcreteCollector(
++            endpoint_url="http://localhost:9400/metrics",
++            collection_interval=0.05,  # 60 / 0.05 = 1200x
++            reachability_timeout=5.0,
++        )
++        try:
++            with patch.object(collector, "warning") as mock_warning:
++                await collector._initialize_http_client()
++
++            assert mock_warning.call_count == 1
++        finally:
++            await collector._session.close()
++
++    @pytest.mark.asyncio
++    async def test_does_not_warn_for_default_read_timeout_and_interval(
++        self,
++    ) -> None:
++        collector = ConcreteCollector(
++            endpoint_url="http://localhost:9400/metrics",
++            collection_interval=Environment.SERVER_METRICS.COLLECTION_INTERVAL,
++            reachability_timeout=5.0,
++        )
++        try:
++            with patch.object(collector, "warning") as mock_warning:
++                await collector._initialize_http_client()
++
++            mock_warning.assert_not_called()
++        finally:
++            await collector._session.close()
++
++    @pytest.mark.asyncio
++    async def test_does_not_warn_for_sane_custom_pair(self) -> None:
++        collector = ConcreteCollector(
++            endpoint_url="http://localhost:9400/metrics",
++            collection_interval=1.0,
++            reachability_timeout=5.0,
++        )
++        try:
++            with patch.object(collector, "warning") as mock_warning:
++                await collector._initialize_http_client()
++
++            mock_warning.assert_not_called()
++        finally:
++            await collector._session.close()
++
++
+ class _RaisingCollector(BaseMetricsCollectorMixin[dict]):
+     """Concrete subclass whose `_collect_and_process_metrics` always raises
+     IncompatibleMetricsEndpointError, simulating the TRT-LLM JSON `/metrics`
+diff --git a/tests/unit/common/mixins/test_buffered_jsonl_writer_mixin.py b/tests/unit/common/mixins/test_buffered_jsonl_writer_mixin.py
+index aec44e47..2ba3df32 100644
+--- a/tests/unit/common/mixins/test_buffered_jsonl_writer_mixin.py
++++ b/tests/unit/common/mixins/test_buffered_jsonl_writer_mixin.py
+@@ -161,6 +161,74 @@ class TestBufferedJSONLWriterMixin:
+         writer._file_handle.write = real_write
+         await writer._close_file()
+ 
++    @pytest.mark.asyncio
++    async def test_buffered_write_stops_retrying_flush_after_write_error(
++        self, temp_output_file
++    ):
++        """Once a write fails, further appends must not re-trigger flush attempts.
++
++        Restoring a failed batch onto ``self._buffer`` and letting every
++        subsequent ``buffered_write`` call re-detach the (growing) buffer
++        would re-attempt a doomed flush on every batch boundary: unbounded
++        write amplification and retained-buffer growth with no back-pressure.
++        The circuit breaker on ``_write_error`` bounds the number of flush
++        attempts regardless of how many records are appended afterward.
++        """
++        batch_size = 10
++        num_records = 300
++        writer = BufferedJSONLWriterMixin[SampleRecord](
++            output_file=temp_output_file,
++            batch_size=batch_size,
++        )
++        await writer.initialize()
++        writer._file_handle.write = AsyncMock(side_effect=OSError("disk full"))
++
++        flush_calls = 0
++        real_flush_buffer = writer._flush_buffer
++
++        async def counting_flush_buffer(buffer_to_flush):
++            nonlocal flush_calls
++            flush_calls += 1
++            return await real_flush_buffer(buffer_to_flush)
++
++        writer._flush_buffer = counting_flush_buffer
++
++        all_tasks: list[asyncio.Task] = []
++        real_execute_async = writer.execute_async
++
++        def tracking_execute_async(coro):
++            task = real_execute_async(coro)
++            all_tasks.append(task)
++            return task
++
++        writer.execute_async = tracking_execute_async
++
++        for i in range(num_records):
++            await writer.buffered_write(SampleRecord(id=i, value=f"record_{i}"))
++            # Yield so a just-detached flush task actually runs and records
++            # ``_write_error`` before the next append checks it -- mirrors
++            # production, where writes interleave with real event-loop I/O
++            # instead of firing every batch synchronously back-to-back.
++            await asyncio.sleep(0)
++        # Retrieve every flush task's result so a failed task's exception
++        # doesn't surface as an "exception was never retrieved" warning.
++        if all_tasks:
++            await asyncio.gather(*all_tasks, return_exceptions=True)
++
++        assert writer._write_error is not None
++        # Exactly one flush attempt: the first batch boundary trips the
++        # breaker, and every later append is gated on ``_write_error``
++        # instead of re-detaching and re-flushing a growing buffer.
++        assert flush_calls == 1
++        assert writer.lines_written == num_records
++        # The one failed flush restores its detached batch onto the buffer,
++        # and every later append is retained rather than dropped: nothing is
++        # silently lost even though flushing stopped being retried.
++        assert len(writer._buffer) == num_records
++
++        writer._file_handle.write = AsyncMock(return_value=None)
++        await writer._close_file()
++
+     @pytest.mark.asyncio
+     async def test_periodic_flush_loop_survives_unexpected_error(
+         self, temp_output_file
+diff --git a/tests/unit/common/test_environment.py b/tests/unit/common/test_environment.py
+index d5fb06f6..e6940811 100644
+--- a/tests/unit/common/test_environment.py
++++ b/tests/unit/common/test_environment.py
+@@ -125,6 +125,56 @@ class TestProfileConfigureTimeout:
+             assert dataset_timeout == env.DATASET.CONFIGURATION_TIMEOUT
+ 
+ 
++class TestWorkerStaleTimeVsHeartbeat:
++    """Pins the cross-field validator between WORKER.STALE_TIME and
++    SERVICE.HEARTBEAT_INTERVAL / HEARTBEAT_MISSED_THRESHOLD.
++
++    StickyCreditRouter.evict_stale_workers() computes its eviction cutoff as
++    STALE_TIME * 3, fed only by the generic HeartbeatMessage cadence. Without
++    this validator, a legal but too-small STALE_TIME (e.g. 0.1s with the
++    default 5s HEARTBEAT_INTERVAL) makes the cutoff shorter than a single
++    real heartbeat interval, so every worker looks stale on the very first
++    sweep.
++    """
++
++    @pytest.mark.parametrize(
++        "stale_time,heartbeat_interval,heartbeat_missed_threshold,should_raise",
++        [
++            param(10.0, 5.0, 3, False, id="defaults_valid"),
++            param(6.0, 5.0, 3, False, id="cutoff_greater_than_worst_case_valid"),
++            param(5.0, 5.0, 3, True, id="cutoff_equal_to_worst_case_invalid"),
++            param(0.1, 5.0, 3, True, id="tiny_stale_time_invalid"),
++            param(100.0, 1.0, 1, False, id="large_stale_time_small_heartbeat_valid"),
++        ],
++    )  # fmt: skip
++    def test_validate_worker_stale_time_vs_heartbeat(
++        self,
++        stale_time,
++        heartbeat_interval,
++        heartbeat_missed_threshold,
++        should_raise,
++        monkeypatch,
++    ):
++        """STALE_TIME * 3 must exceed HEARTBEAT_INTERVAL * HEARTBEAT_MISSED_THRESHOLD."""
++        monkeypatch.setenv("AIPERF_WORKER_STALE_TIME", str(stale_time))
++        monkeypatch.setenv("AIPERF_SERVICE_HEARTBEAT_INTERVAL", str(heartbeat_interval))
++        monkeypatch.setenv(
++            "AIPERF_SERVICE_HEARTBEAT_MISSED_THRESHOLD", str(heartbeat_missed_threshold)
++        )
++
++        if should_raise:
++            with pytest.raises(
++                ValueError,
++                match=r"AIPERF_WORKER_STALE_TIME.*AIPERF_SERVICE_HEARTBEAT_INTERVAL.*AIPERF_SERVICE_HEARTBEAT_MISSED_THRESHOLD",
++            ):
++                _Environment()
++        else:
++            env = _Environment()
++            assert stale_time == env.WORKER.STALE_TIME
++            assert heartbeat_interval == env.SERVICE.HEARTBEAT_INTERVAL
++            assert heartbeat_missed_threshold == env.SERVICE.HEARTBEAT_MISSED_THRESHOLD
++
++
+ class TestAPIServerSettings:
+     """Test _APIServerSettings defaults and env var overrides."""
+ 
+diff --git a/tests/unit/common/test_lifecycle_fail_fast.py b/tests/unit/common/test_lifecycle_fail_fast.py
+index cb7b9448..52ea4975 100644
+--- a/tests/unit/common/test_lifecycle_fail_fast.py
++++ b/tests/unit/common/test_lifecycle_fail_fast.py
+@@ -96,3 +96,79 @@ class TestFailureShutdownIsBounded:
+         from aiperf.common.environment import Environment
+ 
+         assert Environment.SERVICE.FAILURE_SHUTDOWN_TIMEOUT > 0
++
++
++class TestFailureShutdownTimeoutOverride:
++    """A subclass can opt its terminal on_stop teardown out of the global bound.
++
++    Regression coverage for the case where a subclass's on_stop hook does
++    long-running work (result export, console rendering) before its own
++    terminal exit, and the global FAILURE_SHUTDOWN_TIMEOUT would otherwise
++    cut that work off mid-flight.
++    """
++
++    @pytest.mark.asyncio
++    async def test_default_uses_environment_timeout(self) -> None:
++        from aiperf.common.environment import Environment
++
++        component = AIPerfLifecycleMixin()
++        assert (
++            component.failure_shutdown_timeout
++            == Environment.SERVICE.FAILURE_SHUTDOWN_TIMEOUT
++        )
++
++    @pytest.mark.asyncio
++    async def test_none_override_disables_the_bound(self) -> None:
++        """A subclass returning None from the property must not be wrapped in wait_for."""
++        ran: list[str] = []
++
++        class _UnboundedStopper(AIPerfLifecycleMixin):
++            @property
++            def failure_shutdown_timeout(self) -> float | None:
++                return None
++
++            @on_init
++            async def _fail_init(self) -> None:
++                raise RuntimeError("init failed")
++
++            @on_stop
++            async def _slow_stop(self) -> None:
++                # Longer than FAILURE_SHUTDOWN_TIMEOUT would allow, but the
++                # auto-fast-forwarding asyncio.sleep fixture keeps this cheap;
++                # the point is that no wait_for wraps this call at all.
++                await asyncio.sleep(0)
++                ran.append("slow_stop")
++
++        component = _UnboundedStopper()
++        with pytest.raises(asyncio.CancelledError):
++            await component.initialize()
++        assert ran == ["slow_stop"]
++        assert component.state is LifecycleState.FAILED
++
++    @pytest.mark.asyncio
++    async def test_override_value_is_honored_as_the_wait_for_timeout(self) -> None:
++        """A subclass returning a custom float is used as the wait_for bound."""
++        seen_timeouts: list[float | None] = []
++        real_wait_for = asyncio.wait_for
++
++        async def _spy_wait_for(aw, timeout):
++            seen_timeouts.append(timeout)
++            return await real_wait_for(aw, timeout=timeout)
++
++        class _CustomTimeoutStopper(AIPerfLifecycleMixin):
++            @property
++            def failure_shutdown_timeout(self) -> float | None:
++                return 123.0
++
++            @on_init
++            async def _fail_init(self) -> None:
++                raise RuntimeError("init failed")
++
++        component = _CustomTimeoutStopper()
++        with (
++            pytest.MonkeyPatch.context() as mp,
++            pytest.raises(asyncio.CancelledError),
++        ):
++            mp.setattr(asyncio, "wait_for", _spy_wait_for)
++            await component.initialize()
++        assert seen_timeouts == [123.0]
+diff --git a/tests/unit/config/test_resolver_override_fidelity.py b/tests/unit/config/test_resolver_override_fidelity.py
+index 7e6817b0..f581393b 100644
+--- a/tests/unit/config/test_resolver_override_fidelity.py
++++ b/tests/unit/config/test_resolver_override_fidelity.py
+@@ -20,6 +20,7 @@ from __future__ import annotations
+ from pathlib import Path
+ 
+ import pytest
++from pydantic import ValidationError
+ from pytest import param
+ 
+ from aiperf.config.flags import CLIConfig
+@@ -93,6 +94,20 @@ _NETWORK_LATENCY_MEAN_YAML = (
+ )
+ 
+ 
++def _fixed_schedule_auto_offset_yaml(auto_offset_key: str) -> str:
++    return (
++        _PREAMBLE
++        + f"""\
++  phases:
++    - name: measured
++      kind: profiling
++      type: fixed_schedule
++      requests: 10
++      {auto_offset_key}: true
++"""
++    )
++
++
+ def _ramp_yaml(ramp_key: str) -> str:
+     return (
+         _PREAMBLE
+@@ -146,6 +161,31 @@ def test_fixed_schedule_offset_over_templated_phase_type_does_not_raise(
+         assert executed.phases[0].start_offset == 5
+ 
+ 
++@pytest.mark.parametrize(
++    "auto_offset_key",
++    [
++        param("autoOffset", id="camel-case"),
++        param("auto_offset", id="snake-case"),
++    ],
++)  # fmt: skip
++def test_fixed_schedule_start_offset_flag_rejects_yaml_auto_offset_either_spelling(
++    tmp_path: Path, auto_offset_key: str
++) -> None:
++    """``--fixed-schedule-start-offset`` must not silently override a
++    YAML-authored ``auto_offset: true`` regardless of its key spelling.
++
++    The default-``auto_offset=False`` overlay only applies when the phase has
++    no explicit ``auto_offset`` at all; when the YAML already set it (under
++    either spelling), the conflict must surface as the same
++    ``ValidationError`` in both cases instead of the camelCase spelling
++    silently getting overwritten to ``False``.
++    """
++    config_file = _write(tmp_path, _fixed_schedule_auto_offset_yaml(auto_offset_key))
++
++    with pytest.raises(ValidationError, match="auto_offset cannot be True"):
++        resolve_config(CLIConfig(fixed_schedule_start_offset=100), config_file)
++
++
+ @pytest.mark.parametrize(
+     "ramp_key",
+     [
+@@ -166,6 +206,32 @@ def test_ramp_duration_flag_preserves_sibling_strategy(
+     assert ramp.strategy == RampType.EXPONENTIAL
+ 
+ 
++def test_server_metrics_cli_override_over_yaml_camel_case_url_shorthand(
++    tmp_path: Path,
++) -> None:
++    """A CLI ``--server-metrics`` override on top of a YAML ``serverMetrics:
++    {url: ...}`` shorthand must not crash with a duplicate ``url``/``urls``
++    ``extra_forbidden`` error.
++    """
++    config_file = _write(
++        tmp_path,
++        _PREAMBLE
++        + """\
++  phases:
++    - name: measured
++      kind: profiling
++      type: concurrency
++      concurrency: 8
++      requests: 10
++  serverMetrics: {url: "http://localhost:9090/metrics"}
++""",
++    )
++
++    config = resolve_config(CLIConfig(server_metrics=["localhost:9400"]), config_file)
++
++    assert config.benchmark.server_metrics.urls == ["http://localhost:9400/metrics"]
++
++
+ def test_network_latency_automatic_clears_yaml_mean_ms(tmp_path: Path) -> None:
+     """``--network-latency-automatic`` must re-enable active probing."""
+     config_file = _write(tmp_path, _NETWORK_LATENCY_MEAN_YAML)
+diff --git a/tests/unit/config/test_resolver_server_metrics.py b/tests/unit/config/test_resolver_server_metrics.py
+index d8da6fd6..2b644fcd 100644
+--- a/tests/unit/config/test_resolver_server_metrics.py
++++ b/tests/unit/config/test_resolver_server_metrics.py
+@@ -3,8 +3,14 @@
+ 
+ from __future__ import annotations
+ 
++import pytest
++from pytest import param
++
+ from aiperf.common.enums import ServerMetricsFormat
+-from aiperf.config.flags._resolver_server_metrics import build_server_metrics_override
++from aiperf.config.flags._resolver_server_metrics import (
++    build_server_metrics_override,
++    normalize_server_metrics_base_for_override,
++)
+ from aiperf.config.flags.cli_config import CLIConfig
+ 
+ 
+@@ -63,3 +69,33 @@ def test_no_server_metrics_wins_over_formats():
+             server_metrics_formats=["json", "csv", "jsonl"],
+         )
+     ) == {"enabled": False}
++
++
++@pytest.mark.parametrize(
++    "server_metrics_key",
++    [
++        param("serverMetrics", id="camel-case"),
++        param("server_metrics", id="snake-case"),
++    ],
++)  # fmt: skip
++def test_normalize_server_metrics_base_expands_url_shorthand_either_spelling(
++    server_metrics_key: str,
++):
++    """The ``url`` -> ``urls`` shorthand must be expanded before ``deep_merge``
++    regardless of whether the YAML used ``server_metrics`` or its documented
++    ``serverMetrics`` camelCase alias -- otherwise a CLI ``--server-metrics``
++    override adds its own ``urls`` key alongside the un-expanded YAML ``url``
++    key and both survive to the ``extra="forbid"`` model.
++    """
++    base = {
++        "benchmark": {
++            server_metrics_key: {"url": "http://localhost:9090/metrics"},
++        }
++    }
++    overrides = {"benchmark": {"server_metrics": {"enabled": True, "urls": []}}}
++
++    normalized = normalize_server_metrics_base_for_override(base, overrides)
++
++    normalized_section = normalized["benchmark"][server_metrics_key]
++    assert "url" not in normalized_section
++    assert normalized_section["urls"] == ["http://localhost:9090/metrics"]
+diff --git a/tests/unit/controller/test_degraded_run_reporting.py b/tests/unit/controller/test_degraded_run_reporting.py
+index c930597a..5f6f7bc3 100644
+--- a/tests/unit/controller/test_degraded_run_reporting.py
++++ b/tests/unit/controller/test_degraded_run_reporting.py
+@@ -269,10 +269,53 @@ class TestEvictedProducersReachTheOutcome:
+             system_controller.service_manager.service_map[ServiceType.TIMING_MANAGER]
+             == []
+         )
+-        assert "timing_manager" in system_controller._reaped_service_ids
+         system_controller._cancel_profiling.assert_awaited_once_with()
+         assert system_controller._result_join_coordinator.evicted == {}
+ 
++    @pytest.mark.asyncio
++    @pytest.mark.parametrize(
++        "state,should_cancel",
++        [
++            param(SystemState.PROFILING, True, id="profiling"),
++            param(SystemState.PROCESSING, True, id="processing"),
++            param(SystemState.STOPPING, False, id="stopping"),
++            param(SystemState.SHUTDOWN, False, id="shutdown"),
++        ],
++    )  # fmt: skip
++    async def test_a_reaped_required_non_producer_cancel_guard_matches_service_error_guard(
++        self,
++        system_controller: SystemController,
++        state: SystemState,
++        should_cancel: bool,
++    ) -> None:
++        """The reap-triggered cancel guard must cover the same states as the
++        self-reported SERVICE_ERROR guard: anything short of STOPPING/SHUTDOWN,
++        not just PROFILING. A required non-producer reaped while PROCESSING
++        (after credits complete, before results are joined) must still cancel.
++        """
++        system_controller._system_state = state
++        system_controller._cancel_profiling = AsyncMock()
++        info = MagicMock(
++            service_id="timing_manager",
++            service_type=ServiceType.TIMING_MANAGER,
++            first_seen_ns=100,
++        )
++        system_controller.service_manager.service_id_map = {
++            "timing_manager": info,
++        }
++        system_controller.service_manager.service_map = {
++            ServiceType.TIMING_MANAGER: [info]
++        }
++
++        await system_controller._on_service_reaped(
++            "timing_manager", "missed heartbeats", 100
++        )
++
++        if should_cancel:
++            system_controller._cancel_profiling.assert_awaited_once_with()
++        else:
++            system_controller._cancel_profiling.assert_not_awaited()
++
+     @pytest.mark.asyncio
+     @pytest.mark.parametrize(
+         "service_type,is_producer",
+@@ -321,7 +364,6 @@ class TestEvictedProducersReachTheOutcome:
+         assert manager.service_id_map == {service_id: replacement}
+         assert manager.service_map == {service_type: [replacement]}
+         assert system_controller._exit_errors == []
+-        assert system_controller._reaped_service_ids == set()
+         system_controller._cancel_profiling.assert_not_awaited()
+         system_controller._check_and_trigger_shutdown.assert_not_awaited()
+         assert system_controller._result_join_coordinator.evicted == {}
+@@ -396,7 +438,6 @@ class TestEvictedProducersReachTheOutcome:
+         assert manager.service_id_map == {service_id: replacement}
+         assert manager.service_map == {service_type: [replacement]}
+         assert system_controller._exit_errors == []
+-        assert system_controller._reaped_service_ids == set()
+         system_controller._cancel_profiling.assert_not_awaited()
+         system_controller._check_and_trigger_shutdown.assert_not_awaited()
+         assert system_controller._result_join_coordinator.evicted == {}
+@@ -438,4 +479,3 @@ class TestEvictedProducersReachTheOutcome:
+             system_controller.service_manager.service_map[ServiceType.RECORD_PROCESSOR]
+             == []
+         )
+-        assert "record_processor_2" in system_controller._reaped_service_ids
+diff --git a/tests/unit/controller/test_result_join_eviction.py b/tests/unit/controller/test_result_join_eviction.py
+index 483a803b..00aed0c3 100644
+--- a/tests/unit/controller/test_result_join_eviction.py
++++ b/tests/unit/controller/test_result_join_eviction.py
+@@ -99,3 +99,31 @@ def test_eviction_leaves_other_producers_required() -> None:
+     assert coord.pending_domains == (DOMAIN,)
+     coord.complete(DOMAIN, "records-1")
+     assert coord.ready is True
++
++
++def test_evicting_a_completed_producer_is_not_degraded() -> None:
++    """A telemetry pod that delivered results and is then OOMKilled must not
++    be reported as a missing producer: its results are already present and
++    correct in the export, so eviction must not degrade the run.
++    """
++    coord = ResultJoinCoordinator()
++    coord.register(OTHER_DOMAIN, "tm-1")
++    coord.register(DOMAIN, "records-1")
++    coord.complete_domain(OTHER_DOMAIN)
++
++    assert coord.evict_service("tm-1", "pod OOMKilled") is True
++    assert coord.evicted == {}
++    assert coord.pending_domains == (DOMAIN,)
++
++
++def test_evicting_a_producer_still_pending_in_another_domain_still_degrades() -> None:
++    """A producer that completed one domain but is still pending in another
++    must still be reported as degraded if it dies before finishing.
++    """
++    coord = ResultJoinCoordinator()
++    coord.register(DOMAIN, "svc-1")
++    coord.register(OTHER_DOMAIN, "svc-1")
++    coord.complete_domain(DOMAIN)
++
++    assert coord.evict_service("svc-1", "missed heartbeats") is True
++    assert coord.evicted == {"svc-1": "missed heartbeats"}
+diff --git a/tests/unit/controller/test_system_controller.py b/tests/unit/controller/test_system_controller.py
+index 54fd0f81..f3bf1142 100644
+--- a/tests/unit/controller/test_system_controller.py
++++ b/tests/unit/controller/test_system_controller.py
+@@ -163,6 +163,34 @@ class TestSystemControllerExitScenarios:
+             error_responses[0].service_id,
+         )
+ 
++    @pytest.mark.asyncio
++    async def test_parse_responses_for_errors_does_not_raise_on_clean_batch_with_stale_exit_errors(
++        self,
++        system_controller: SystemController,
++    ):
++        """A clean batch (no errors) must not raise just because ``_exit_errors``
++        already holds an unrelated entry from an earlier, optional-producer
++        failure. Regression test: the check used to test the accumulated
++        ``_exit_errors`` list instead of this batch's own errors, so a fully
++        successful "Start Profiling" call raised ``LifecycleOperationError``
++        whenever any earlier error (e.g. a reaped optional producer) had been
++        recorded.
++        """
++        system_controller._exit_errors.append(
++            ExitErrorInfo(
++                error_details=ErrorDetails(message="unrelated prior failure"),
++                operation="result_producer_reaped",
++                service_id="gpu_telemetry_manager",
++            )
++        )
++
++        # No exception should be raised for a batch containing zero errors.
++        system_controller._parse_responses_for_errors([], "Start Profiling")
++
++        # The pre-existing error must be untouched, and no new one added.
++        assert len(system_controller._exit_errors) == 1
++        assert system_controller._exit_errors[0].operation == "result_producer_reaped"
++
+     @pytest.mark.asyncio
+     async def test_system_controller_exits_on_service_manager_initialize_error(
+         self,
+diff --git a/tests/unit/credit/test_min_worker_floor.py b/tests/unit/credit/test_min_worker_floor.py
+index a13d44ca..c21f74e1 100644
+--- a/tests/unit/credit/test_min_worker_floor.py
++++ b/tests/unit/credit/test_min_worker_floor.py
+@@ -2,12 +2,14 @@
+ # SPDX-License-Identifier: Apache-2.0
+ """Dispatchable-worker floor and membership-notification tests."""
+ 
++import time
+ from collections import defaultdict
+ from collections.abc import Iterator
+ from unittest.mock import MagicMock, patch
+ 
+ import pytest
+ 
++from aiperf.common.constants import NANOS_PER_SECOND
+ from aiperf.credit.sticky_router import StickyCreditRouter, WorkerLoad
+ 
+ 
+@@ -31,6 +33,7 @@ def _router(alive: int, peak: int) -> StickyCreditRouter:
+     r._cancellation_pending = False
+     r._credits_complete = False
+     r._on_worker_lost = None
++    r._stale_worker_strikes = {}
+     r._worker_available_event = MagicMock()
+     r.warning = MagicMock()
+     r.trace = MagicMock()
+@@ -81,17 +84,30 @@ class TestWorkerFloor:
+ 
+ class TestRouterDoesNotDecideTheBreach:
+     @pytest.mark.asyncio
+-    async def test_breach_is_left_for_timing_manager(
++    async def test_evict_stale_workers_task_stale_heartbeat_evicts_via_warning_not_error(
+         self, monkeypatch: pytest.MonkeyPatch
+     ) -> None:
++        """Eviction is reported at WARNING; the floor breach is left for TimingManager (never ERROR)."""
+         from aiperf.common.environment import Environment
+ 
+         router = _router(alive=1, peak=10)
+         monkeypatch.setattr(Environment.WORKER, "MIN_ALIVE_FRACTION", 0.5)
++        stale_after_s = Environment.WORKER.STALE_TIME * 3
++        router._workers["w-0"].last_heartbeat_ns = time.time_ns() - int(
++            (stale_after_s + 5) * NANOS_PER_SECOND
++        )
+ 
++        # First sweep only suspects the worker (two-strike gate).
+         await router._evict_stale_workers_task()
++        assert "w-0" in router._workers, "first sweep must not evict on one strike"
++
++        # Second consecutive sweep confirms and evicts it.
+         await router._evict_stale_workers_task()
++        assert "w-0" not in router._workers, (
++            "stale worker must be evicted on the second consecutive sweep"
++        )
+ 
++        router.warning.assert_called()
+         router.error.assert_not_called()
+ 
+     @pytest.mark.asyncio
+@@ -101,11 +117,21 @@ class TestRouterDoesNotDecideTheBreach:
+         """Workers legitimately stop reporting once credits are complete."""
+         from aiperf.common.environment import Environment
+ 
+-        router = _router(alive=0, peak=10)
++        router = _router(alive=1, peak=10)
+         router._credits_complete = True
+         monkeypatch.setattr(Environment.WORKER, "MIN_ALIVE_FRACTION", 0.5)
++        stale_after_s = Environment.WORKER.STALE_TIME * 3
++        router._workers["w-0"].last_heartbeat_ns = time.time_ns() - int(
++            (stale_after_s + 5) * NANOS_PER_SECOND
++        )
+ 
+         await router._evict_stale_workers_task()
++        await router._evict_stale_workers_task()
++
++        assert "w-0" in router._workers, (
++            "eviction must be suppressed once credits are complete"
++        )
++        router.warning.assert_not_called()
+         router.error.assert_not_called()
+ 
+ 
+diff --git a/tests/unit/credit/test_stale_worker_eviction.py b/tests/unit/credit/test_stale_worker_eviction.py
+index b9103df3..a0be79a5 100644
+--- a/tests/unit/credit/test_stale_worker_eviction.py
++++ b/tests/unit/credit/test_stale_worker_eviction.py
+@@ -66,6 +66,7 @@ def _router(*, workers: dict[str, float], in_flight: int = 1, heartbeat: bool =
+     router._on_worker_lost = None
+     router._on_worker_count_changed = None
+     router._peak_worker_count = 0
++    router._stale_worker_strikes = {}
+     router._worker_available_event = MagicMock()
+     router.warning = MagicMock()
+     router.error = MagicMock()
+@@ -403,3 +404,62 @@ class TestTerminalWorkerLossNotification:
+         router._unregister_worker("never-registered")
+ 
+         lost.assert_not_called()
++
++
++class TestPeriodicSweepTwoStrikeConfirmation:
++    """The background sweep (``_evict_stale_workers_task``) must not evict a
++    worker on the same tick where it first crosses the cutoff -- that is
++    exactly the race flagged in review: a worker whose event loop stalls and
++    then recovers should get a second sweep's worth of grace before the
++    router calls it dead, rather than being evicted unconditionally on the
++    first sweep past ``STALE_TIME * 3``.
++    """
++
++    @pytest.mark.asyncio
++    async def test_first_sweep_past_cutoff_only_suspects_the_worker(
++        self, monkeypatch: pytest.MonkeyPatch
++    ) -> None:
++        from aiperf.common.environment import Environment
++
++        monkeypatch.setattr(Environment.WORKER, "STALE_TIME", 10.0)
++        router = _router(workers={"w-1": 120.0})
++
++        await router._evict_stale_workers_task()
++
++        assert "w-1" in router._workers
++        assert router._stale_worker_strikes.get("w-1") == 1
++
++    @pytest.mark.asyncio
++    async def test_second_consecutive_sweep_past_cutoff_evicts(
++        self, monkeypatch: pytest.MonkeyPatch
++    ) -> None:
++        from aiperf.common.environment import Environment
++
++        monkeypatch.setattr(Environment.WORKER, "STALE_TIME", 10.0)
++        router = _router(workers={"w-1": 120.0})
++        lost = MagicMock()
++        router.set_worker_lost_callback(lost)
++
++        await router._evict_stale_workers_task()
++        await router._evict_stale_workers_task()
++
++        assert "w-1" not in router._workers
++        lost.assert_called_once_with("worker_unavailable: worker stopped responding")
++
++    @pytest.mark.asyncio
++    async def test_heartbeat_between_sweeps_clears_the_strike(
++        self, monkeypatch: pytest.MonkeyPatch
++    ) -> None:
++        from aiperf.common.environment import Environment
++
++        monkeypatch.setattr(Environment.WORKER, "STALE_TIME", 10.0)
++        router = _router(workers={"w-1": 120.0})
++
++        await router._evict_stale_workers_task()
++        assert router._stale_worker_strikes.get("w-1") == 1
++
++        router.note_worker_heartbeat("w-1")
++        await router._evict_stale_workers_task()
++
++        assert "w-1" in router._workers
++        assert "w-1" not in router._stale_worker_strikes
+diff --git a/tests/unit/exporters/test_exporter_manager.py b/tests/unit/exporters/test_exporter_manager.py
+index 5d14c875..ce7b00f4 100644
+--- a/tests/unit/exporters/test_exporter_manager.py
++++ b/tests/unit/exporters/test_exporter_manager.py
+@@ -348,10 +348,161 @@ class TestExporterManager:
+         ).exists()
+ 
+         assert len(failures) == 1
+-        assert failures[0].exporter == "PhaseMetricArtifacts:beta"
++        assert failures[0].exporter == "PhaseMetricArtifacts:beta:metrics_csv"
+         assert failures[0].is_deferred is False
+         assert "csv boom" in repr(failures[0].error)
+ 
++    @pytest.mark.asyncio
++    async def test_phase_artifact_writes_are_isolated_within_a_phase(
++        self, output_config, mock_cfg
++    ) -> None:
++        """A failing metrics-JSON write must not abort the other three
++        independent artifacts (CSV, GPU telemetry, server metrics) for the
++        same phase -- each of the four writes is isolated from the others.
++        """
++        phase_records = [
++            PhaseProfileResults(
++                phase_index=0,
++                profiling_index=0,
++                phase_name="storm",
++                phase_kind="profiling",
++                records=[
++                    MetricResult(
++                        tag="request_latency",
++                        header="Request Latency",
++                        unit="ms",
++                        avg=12.0,
++                        count=1,
++                    )
++                ],
++                start_ns=1,
++                end_ns=2,
++                successful_request_count=1,
++                telemetry_results=TelemetryExportData(
++                    summary=TelemetrySummary(
++                        endpoints_configured=["dcgm"],
++                        endpoints_successful=["dcgm"],
++                        start_time=datetime.fromtimestamp(1 / 1_000_000_000),
++                        end_time=datetime.fromtimestamp(2 / 1_000_000_000),
++                    ),
++                    endpoints={},
++                ),
++                server_metrics_results=ServerMetricsResults(
++                    benchmark_id="bench",
++                    endpoint_summaries={},
++                    start_ns=1,
++                    end_ns=2,
++                    endpoints_configured=["server"],
++                    endpoints_successful=["server"],
++                ),
++            )
++        ]
++        manager = ExporterManager(
++            results=ProfileResults(
++                records=[],
++                start_ns=1,
++                end_ns=2,
++                completed=0,
++                phase_records=phase_records,
++            ),
++            run=make_run_from_cli(mock_cfg),
++            telemetry_results=None,
++        )
++
++        original_write = manager._write_phase_export
++
++        async def flaky_write(*, manifest_entry, manifest_key, **kwargs) -> None:
++            if manifest_key == "metrics_json":
++                raise ValueError("json boom")
++            await original_write(
++                manifest_entry=manifest_entry, manifest_key=manifest_key, **kwargs
++            )
++
++        manager._write_phase_export = flaky_write
++
++        with patch(
++            "aiperf.exporters.exporter_manager.plugins.iter_all", return_value=[]
++        ):
++            failures = await manager.export_data()
++
++        assert len(failures) == 1
++        assert failures[0].exporter == "PhaseMetricArtifacts:storm:metrics_json"
++
++        phase_dir = output_config / "phases" / "storm"
++        assert not (phase_dir / "profile_export_aiperf.json").exists()
++        assert (phase_dir / "profile_export_aiperf.csv").exists()
++        assert (phase_dir / "gpu_telemetry.json").exists()
++        assert (phase_dir / "server_metrics.json").exists()
++
++        manifest = json.loads(
++            (output_config / "phase_manifest.json").read_text(encoding="utf-8")
++        )
++        storm_entry = manifest["phases"][0]
++        assert "metrics_json" not in storm_entry
++        assert storm_entry["metrics_csv"] == "phases/storm/profile_export_aiperf.csv"
++        assert storm_entry["gpu_telemetry_json"] == "phases/storm/gpu_telemetry.json"
++        assert storm_entry["server_metrics_json"] == "phases/storm/server_metrics.json"
++
++    @pytest.mark.asyncio
++    async def test_phase_export_forwards_top_level_incomplete_status(
++        self, output_config, mock_cfg
++    ) -> None:
++        """Per-phase artifacts must agree with the top-level result on
++        whether the run is complete -- otherwise a degraded run (e.g. the
++        stall watchdog giving up) looks clean at the phase level while the
++        top-level artifact correctly reports incomplete.
++        """
++        phase_records = [
++            PhaseProfileResults(
++                phase_index=0,
++                profiling_index=0,
++                phase_name="storm",
++                phase_kind="profiling",
++                records=[
++                    MetricResult(
++                        tag="request_latency",
++                        header="Request Latency",
++                        unit="ms",
++                        avg=12.0,
++                        count=1,
++                    )
++                ],
++                start_ns=1,
++                end_ns=2,
++                successful_request_count=1,
++            )
++        ]
++        manager = ExporterManager(
++            results=ProfileResults(
++                records=[],
++                start_ns=1,
++                end_ns=2,
++                completed=0,
++                phase_records=phase_records,
++                is_complete=False,
++                incomplete_reason="Record aggregation stalled at 1 of 100 records",
++            ),
++            run=make_run_from_cli(mock_cfg),
++            telemetry_results=None,
++        )
++
++        with patch(
++            "aiperf.exporters.exporter_manager.plugins.iter_all", return_value=[]
++        ):
++            failures = await manager.export_data()
++
++        assert failures == []
++        storm_json = json.loads(
++            (
++                output_config / "phases" / "storm" / "profile_export_aiperf.json"
++            ).read_text(encoding="utf-8")
++        )
++        assert storm_json["is_complete"] is False
++        assert (
++            storm_json["incomplete_reason"]
++            == "Record aggregation stalled at 1 of 100 records"
++        )
++
+     @pytest.mark.asyncio
+     async def test_multiple_phase_export_failures_are_reported_per_phase(
+         self, output_config, mock_cfg
+@@ -396,14 +547,19 @@ class TestExporterManager:
+             "beta",
+             "gamma",
+         ]
+-        assert len(failures) == 2
++        # `failing_write` raises for both the JSON and CSV writes of each
++        # affected phase, and each write is isolated from the others, so
++        # each phase contributes two independent failures.
++        assert len(failures) == 4
+         assert [failure.exporter for failure in failures] == [
+-            "PhaseMetricArtifacts:alpha",
+-            "PhaseMetricArtifacts:gamma",
++            "PhaseMetricArtifacts:alpha:metrics_json",
++            "PhaseMetricArtifacts:alpha:metrics_csv",
++            "PhaseMetricArtifacts:gamma:metrics_json",
++            "PhaseMetricArtifacts:gamma:metrics_csv",
+         ]
+         assert all(failure.is_deferred is False for failure in failures)
+-        assert "disk full on alpha" in repr(failures[0].error)
+-        assert "disk full on gamma" in repr(failures[1].error)
++        assert all("disk full on alpha" in repr(f.error) for f in failures[:2])
++        assert all("disk full on gamma" in repr(f.error) for f in failures[2:])
+ 
+     @pytest.mark.asyncio
+     async def test_write_phase_export_handles_disabled_and_failed_exporters(
+diff --git a/tests/unit/exporters/test_search_history_multi_objective.py b/tests/unit/exporters/test_search_history_multi_objective.py
+index 0679ea65..e9329ceb 100644
+--- a/tests/unit/exporters/test_search_history_multi_objective.py
++++ b/tests/unit/exporters/test_search_history_multi_objective.py
+@@ -168,6 +168,77 @@ def test_multi_objective_config_with_length_one_vectors(tmp_path: Path):
+     assert [t["iteration_idx"] for t in payload["best_trials"]] == [1]
+ 
+ 
++def test_single_objective_nan_first_does_not_win_max(tmp_path: Path):
++    """A NaN-scoring iteration must never win max()/min() by list order.
++
++    Reproduces the reported bug directly: with objective values
++    [NaN, 10.0, 50.0] and the NaN trial evaluated first, an unfiltered
++    max() returns the NaN trial as "best" because every comparison against
++    NaN is False. The legitimately-best iteration (idx=2, value=50.0) must
++    win regardless of where the NaN trial sits in history.
++    """
++    cfg = _single_obj_cfg()
++    history = [
++        SearchIteration(
++            iteration_idx=0,
++            variation_values={"concurrency": 5},
++            objective_value=float("nan"),
++            objective_values=[float("nan")],
++            feasible=True,
++        ),
++        SearchIteration(
++            iteration_idx=1,
++            variation_values={"concurrency": 10},
++            objective_value=10.0,
++            objective_values=[10.0],
++            feasible=True,
++        ),
++        SearchIteration(
++            iteration_idx=2,
++            variation_values={"concurrency": 20},
++            objective_value=50.0,
++            objective_values=[50.0],
++            feasible=True,
++        ),
++    ]
++    write_search_history(tmp_path, history, cfg)
++    payload = json.loads((tmp_path / "search_history.json").read_text())
++    assert len(payload["best_trials"]) == 1
++    assert payload["best_trials"][0]["iteration_idx"] == 2
++    assert payload["best_trials"][0]["objective_values"] == [50.0]
++
++
++def test_all_nan_trial_excluded_from_pareto_front(tmp_path: Path):
++    """An all-NaN trial can never be dominated and must not survive on the front.
++
++    Since every comparison against NaN is False, an all-NaN trial would
++    never lose a domination check and would be stuck on the Pareto front
++    forever with pareto_rank=0. It must be filtered out upstream instead.
++    """
++    cfg = _two_obj_cfg()
++    history = [
++        SearchIteration(
++            iteration_idx=0,
++            variation_values={"concurrency": 5},
++            objective_value=float("nan"),
++            objective_values=[float("nan"), float("nan")],
++            feasible=True,
++        ),
++        SearchIteration(
++            iteration_idx=1,
++            variation_values={"concurrency": 50},
++            objective_value=20.0,
++            objective_values=[20.0, 8.0],
++            feasible=True,
++        ),
++    ]
++    write_search_history(tmp_path, history, cfg)
++    payload = json.loads((tmp_path / "search_history.json").read_text())
++    front_idxs = [p["iteration_idx"] for p in payload["best_trials"]]
++    assert 0 not in front_idxs
++    assert front_idxs == [1]
++
++
+ def test_multi_objective_with_absent_vectors(tmp_path: Path):
+     """objective_values is Optional; the scalar mirror must carry index 0."""
+     cfg = _two_obj_cfg()
+diff --git a/tests/unit/gpu_telemetry/test_telemetry_manager.py b/tests/unit/gpu_telemetry/test_telemetry_manager.py
+index ae8b429b..269e3bf1 100644
+--- a/tests/unit/gpu_telemetry/test_telemetry_manager.py
++++ b/tests/unit/gpu_telemetry/test_telemetry_manager.py
+@@ -342,6 +342,34 @@ class TestCallbackFunctions:
+             True,
+         ]
+ 
++    @pytest.mark.asyncio
++    async def test_completion_marker_push_failure_leaves_admission_open(
++        self, sample_telemetry_records
++    ) -> None:
++        """A failed completion-marker push must not latch admission closed.
++
++        Otherwise later records/errors would be silently dropped by the
++        ``_telemetry_records_closed`` guard even though the completion
++        marker itself was never delivered.
++        """
++        manager = self._create_test_manager()
++        manager.warning = MagicMock()
++        mock_push_client = AsyncMock()
++        mock_push_client.push.side_effect = Exception("Push failed")
++        manager.records_push_client = mock_push_client
++
++        await manager._send_collection_complete_marker()
++
++        assert manager._telemetry_records_closed is False
++        assert manager._completion_marker_sent is False
++        manager.warning.assert_called_once()
++
++        # A subsequent record must still be accepted, not silently dropped.
++        mock_push_client.push.side_effect = None
++        mock_push_client.push.reset_mock()
++        await manager._on_telemetry_records(sample_telemetry_records, "collector")
++        mock_push_client.push.assert_called_once()
++
+     @pytest.mark.asyncio
+     async def test_on_telemetry_error_exception_handling(self):
+         """Test _on_telemetry_error handles exceptions during message sending."""
+diff --git a/tests/unit/records/test_artifact_finalization_degradation.py b/tests/unit/records/test_artifact_finalization_degradation.py
+index cb962e4f..96316a3b 100644
+--- a/tests/unit/records/test_artifact_finalization_degradation.py
++++ b/tests/unit/records/test_artifact_finalization_degradation.py
+@@ -8,24 +8,28 @@ the rest of the run. Propagating that out of ``_finalize_local_artifacts`` cost
+ the run ``profile_export.jsonl`` *and* the CSV/JSON/console exports and exited
+ 1, where main lost the one line and kept every artifact.
+ 
+-Under Kubernetes the operator treats a written results marker as
+-authoritative, so a partial artifact set there must still fail closed.
++``_finalize_local_artifacts`` makes no Kubernetes-vs-local distinction: it
++always degrades gracefully (log at ERROR, keep finalizing the rest) and only
++ever propagates ``CancelledError``, regardless of deployment mode. There is no
++``_is_group_managed_mode`` (or equivalent) on ``RecordProcessor`` -- an earlier
++version of this file fabricated that attribute via ``MagicMock(spec=...)``,
++which permits setting attributes absent from the spec, so the "local" and
++"kubernetes" parametrized runs were byte-identical and tested nothing about
++Kubernetes behavior.
+ """
+ 
+ import asyncio
+ from unittest.mock import AsyncMock, MagicMock
+ 
+ import pytest
+-from pytest import param
+ 
+ from aiperf.records.record_processor_service import RecordProcessor
+ 
+ 
+-def _make_processor(*, kubernetes: bool, children: list) -> MagicMock:
++def _make_processor(*, children: list) -> MagicMock:
+     """A RecordProcessor stub carrying only what _finalize_local_artifacts reads."""
+     processor = MagicMock(spec=RecordProcessor)
+     processor._children = children
+-    processor._is_group_managed_mode = MagicMock(return_value=kubernetes)
+     processor.error = MagicMock()
+     return processor
+ 
+@@ -44,7 +48,7 @@ async def test_finalize_local_artifacts_local_failure_logs_and_continues() -> No
+     """The healthy writers still finalize; the failure is loud but not fatal."""
+     bad = _child("raw_record_writer", RuntimeError("orjson: unserializable value"))
+     good = _child("accuracy_writer", None)
+-    processor = _make_processor(kubernetes=False, children=[bad, good])
++    processor = _make_processor(children=[bad, good])
+ 
+     await RecordProcessor._finalize_local_artifacts(processor)
+ 
+@@ -56,19 +60,10 @@ async def test_finalize_local_artifacts_local_failure_logs_and_continues() -> No
+ 
+ 
+ @pytest.mark.asyncio
+-@pytest.mark.parametrize(
+-    "kubernetes",
+-    [
+-        param(False, id="local"),
+-        param(True, id="kubernetes"),
+-    ],
+-)  # fmt: skip
+-async def test_finalize_local_artifacts_cancellation_always_propagates(
+-    kubernetes: bool,
+-) -> None:
++async def test_finalize_local_artifacts_cancellation_always_propagates() -> None:
+     """Cancellation is shutdown, not a degraded artifact; never swallow it."""
+     child = _child("raw_record_writer", asyncio.CancelledError())
+-    processor = _make_processor(kubernetes=kubernetes, children=[child])
++    processor = _make_processor(children=[child])
+ 
+     with pytest.raises(asyncio.CancelledError):
+         await RecordProcessor._finalize_local_artifacts(processor)
+diff --git a/tests/unit/server_metrics/test_named_phase_results.py b/tests/unit/server_metrics/test_named_phase_results.py
+index a7385b20..4abe60c8 100644
+--- a/tests/unit/server_metrics/test_named_phase_results.py
++++ b/tests/unit/server_metrics/test_named_phase_results.py
+@@ -15,6 +15,7 @@ from aiperf.common.models.server_metrics_models import (
+ from aiperf.config.flags.cli_config import CLIConfig
+ from aiperf.plugin.enums import EndpointType
+ from aiperf.server_metrics.accumulator import ServerMetricsAccumulator
++from aiperf.timing.config import AGENTIC_WARMUP_PHASE_NAME
+ from tests.unit.conftest import make_run_from_cli
+ 
+ 
+@@ -43,6 +44,26 @@ def _record(
+     )
+ 
+ 
++def _warmup_record(timestamp_ns: int, value: float) -> ServerMetricsRecord:
++    """A synthesized AGENTIC_REPLAY warmup scrape: phase_index is always None."""
++    return ServerMetricsRecord(
++        endpoint_url="http://server:8000/metrics",
++        timestamp_ns=timestamp_ns,
++        benchmark_phase=CreditPhase.WARMUP,
++        phase_index=None,
++        profiling_index=None,
++        phase_name=AGENTIC_WARMUP_PHASE_NAME,
++        phase_kind="warmup",
++        metrics={
++            "vllm:num_requests_running": MetricFamily(
++                type=PrometheusMetricType.GAUGE,
++                description="running",
++                samples=[MetricSample(value=value)],
++            )
++        },
++    )
++
++
+ @pytest.mark.asyncio
+ async def test_export_results_contains_exact_named_phase_summaries() -> None:
+     accumulator = ServerMetricsAccumulator(
+@@ -71,3 +92,53 @@ async def test_export_results_contains_exact_named_phase_summaries() -> None:
+     ]
+     assert [result.phase_index for result in results.phase_results] == [0, 1]
+     assert all(result.endpoint_summaries for result in results.phase_results)
++
++
++@pytest.mark.asyncio
++async def test_export_results_keeps_repeated_agentic_warmup_instances_distinct() -> (
++    None
++):
++    """Two synthesized agentic-warmup instances (phase_index=None) must not pool.
++
++    AGENTIC_REPLAY synthesizes a warmup phase with phase_index=None for every
++    instance (it isn't a declared cfg.phases entry -- see
++    _build_agentic_warmup_config). A multi-phase agentic plan can run this
++    synthesized warmup more than once with the identical (None, phase_name)
++    identity; each instance must still produce its own phase_results entry
++    instead of collapsing into one pooled result.
++    """
++    accumulator = ServerMetricsAccumulator(
++        run=make_run_from_cli(
++            CLIConfig(
++                model_names=["model"],
++                endpoint_type=EndpointType.CHAT,
++                urls=["http://server:8000/v1/chat/completions"],
++            )
++        )
++    )
++    for record in (
++        _warmup_record(10, 1.0),
++        _warmup_record(20, 2.0),
++        # An intervening profiling phase marks the boundary between the two
++        # warmup instances (mirrors a real multi-phase agentic run).
++        _record(30, phase_index=0, profiling_index=0, phase_name="main"),
++        _warmup_record(40, 3.0),
++        _warmup_record(50, 4.0),
++    ):
++        await accumulator.process_record(record)
++
++    results = await accumulator.export_results(ExportContext(start_ns=10, end_ns=51))
++
++    assert results is not None
++    warmup_results = [
++        result
++        for result in results.phase_results
++        if result.phase_name == AGENTIC_WARMUP_PHASE_NAME
++    ]
++    assert len(warmup_results) == 2, (
++        "expected two distinct agentic-warmup phase_results entries, "
++        f"got {len(warmup_results)}"
++    )
++    assert all(result.phase_index is None for result in warmup_results)
++    assert [result.start_ns for result in warmup_results] == [10, 40]
++    assert [result.end_ns for result in warmup_results] == [20, 50]
+diff --git a/tests/unit/zmq/test_reconnect_socket_options.py b/tests/unit/zmq/test_reconnect_socket_options.py
+index b25f36b0..189c95f5 100644
+--- a/tests/unit/zmq/test_reconnect_socket_options.py
++++ b/tests/unit/zmq/test_reconnect_socket_options.py
+@@ -18,12 +18,21 @@ from aiperf.zmq.zmq_defaults import ZMQSocketDefaults
+ class _FakeSocket:
+     def __init__(self) -> None:
+         self.opts: dict[int, int] = {}
++        self.call_order: list[str] = []
++        """Ordered log of every call made on this socket, so tests can assert
++        that connect-time-sensitive options land on the correct side of
++        bind()/connect() -- not just that they were set at all."""
+ 
+     def setsockopt(self, key: int, val: int) -> None:
+         self.opts[key] = val
++        self.call_order.append(f"setsockopt:{key}")
++
++    def bind(self, _addr: str) -> None:
++        self.call_order.append("bind")
++
++    def connect(self, _addr: str) -> None:
++        self.call_order.append("connect")
+ 
+-    def bind(self, _addr: str) -> None: ...
+-    def connect(self, _addr: str) -> None: ...
+     def close(self, **_kw: object) -> None: ...
+ 
+ 
+@@ -85,3 +94,66 @@ class TestReconnectOptions:
+         client._apply_socket_options()
+ 
+         assert zmq.ROUTER_HANDOVER not in sock.opts
++
++
++class TestSocketOptionOrdering:
++    """Drive the real ``_initialize_socket`` path (not ``_apply_socket_options``
++    directly) so the pre/post-connect ordering invariant is genuinely exercised.
++
++    RECONNECT_IVL*/ROUTER_HANDOVER must land before bind()/connect() -- libzmq
++    snapshots them at connect time, so a later setsockopt is a no-op. IMMEDIATE
++    is deliberately the opposite: set after, so a send to a not-yet-connected
++    peer queues instead of raising zmq.Again. Calling ``_apply_socket_options``
++    in isolation cannot see either half of this invariant since it never runs
++    bind()/connect() at all.
++    """
++
++    @pytest.mark.asyncio
++    async def test_initialize_socket_connecting_client_sets_reconnect_before_connect_and_immediate_after(
++        self, monkeypatch: pytest.MonkeyPatch
++    ) -> None:
++        from aiperf.zmq.streaming_dealer_client import ZMQStreamingDealerClient
++
++        client = ZMQStreamingDealerClient(
++            address="tcp://127.0.0.1:5555", identity="w-1", bind=False
++        )
++        sock = _FakeSocket()
++        monkeypatch.setattr(client.context, "socket", lambda *_a, **_kw: sock)
++
++        await client._initialize_socket()
++
++        connect_idx = sock.call_order.index("connect")
++        reconnect_ivl_idx = sock.call_order.index(f"setsockopt:{zmq.RECONNECT_IVL}")
++        reconnect_ivl_max_idx = sock.call_order.index(
++            f"setsockopt:{zmq.RECONNECT_IVL_MAX}"
++        )
++        immediate_idx = sock.call_order.index(f"setsockopt:{zmq.IMMEDIATE}")
++
++        assert reconnect_ivl_idx < connect_idx, (
++            "RECONNECT_IVL must be set before connect() or libzmq ignores it"
++        )
++        assert reconnect_ivl_max_idx < connect_idx, (
++            "RECONNECT_IVL_MAX must be set before connect() or libzmq ignores it"
++        )
++        assert immediate_idx > connect_idx, (
++            "IMMEDIATE must be set after connect(), not before"
++        )
++
++    @pytest.mark.asyncio
++    async def test_initialize_socket_binding_router_sets_handover_before_bind(
++        self, monkeypatch: pytest.MonkeyPatch
++    ) -> None:
++        from aiperf.zmq.streaming_router_client import ZMQStreamingRouterClient
++
++        client = ZMQStreamingRouterClient(address="tcp://*:5555", bind=True)
++        sock = _FakeSocket()
++        monkeypatch.setattr(client.context, "socket", lambda *_a, **_kw: sock)
++
++        await client._initialize_socket()
++
++        bind_idx = sock.call_order.index("bind")
++        handover_idx = sock.call_order.index(f"setsockopt:{zmq.ROUTER_HANDOVER}")
++
++        assert handover_idx < bind_idx, (
++            "ROUTER_HANDOVER must be set before bind() or libzmq ignores it"
++        )
+diff --git a/tools/generate_cli_docs.py b/tools/generate_cli_docs.py
+index 2b538a93..9f016645 100755
+--- a/tools/generate_cli_docs.py
++++ b/tools/generate_cli_docs.py
+@@ -274,7 +274,11 @@ def extract_commands(app: Any, *, prefix: str = "") -> list[tuple[str, str]]:
+             continue
+         full_name = f"{prefix}{name}"
+         if hasattr(cmd, "_commands") and getattr(cmd, "default_command", None) is None:
+-            _resolve_lazy_commands(cmd)
++            try:
++                _resolve_lazy_commands(cmd)
++            except Exception as e:
++                print_warning(f"Could not extract '{full_name}': {e}")
++                continue
+             commands.extend(extract_commands(cmd, prefix=f"{full_name} "))
+             continue
+         help_text = cmd.help if hasattr(cmd, "help") else ""

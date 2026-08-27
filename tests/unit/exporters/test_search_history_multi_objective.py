@@ -259,3 +259,43 @@ def test_multi_objective_with_absent_vectors(tmp_path: Path):
     write_search_history(tmp_path, history, cfg)
     payload = json.loads((tmp_path / "search_history.json").read_text())
     assert [t["iteration_idx"] for t in payload["best_trials"]] == [1]
+
+
+def test_non_finite_secondary_objective_cannot_dominate(tmp_path: Path):
+    """A NaN on a *secondary* objective must not win the Pareto front.
+
+    The primary-objective filter upstream of the front only rejects a
+    non-finite index 0, so a trial scoring [100.0, NaN] survived it. Inside
+    _dominates the NaN read back as "unavailable" and the objective was
+    skipped, leaving the trial to win on throughput alone -- it dominated
+    [50.0, 8.0], a trial strictly better on the very objective that got
+    dropped, and then serialized as [100.0, null], indistinguishable from a
+    trial that was never scored on latency at all.
+    """
+    cfg = _two_obj_cfg()
+    history = [
+        SearchIteration(
+            iteration_idx=0,
+            variation_values={"concurrency": 5},
+            objective_values=[50.0, 8.0],
+            objective_value=50.0,
+            feasible=True,
+        ),
+        SearchIteration(
+            iteration_idx=1,
+            variation_values={"concurrency": 50},
+            objective_values=[100.0, float("nan")],
+            objective_value=100.0,
+            feasible=True,
+        ),
+    ]
+    write_search_history(tmp_path, history, cfg)
+    payload = json.loads((tmp_path / "search_history.json").read_text())
+
+    ranked = [t["iteration_idx"] for t in payload["best_trials"]]
+    assert 0 in ranked, (
+        "the fully-scored trial must survive: it was strictly better on latency"
+    )
+    assert ranked == [0, 1], (
+        "an undecidable pair leaves both points in the front; neither dominates"
+    )

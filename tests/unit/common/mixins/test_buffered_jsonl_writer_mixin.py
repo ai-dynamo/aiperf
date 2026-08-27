@@ -11,7 +11,10 @@ from unittest.mock import AsyncMock
 import pytest
 from pydantic import BaseModel
 
-from aiperf.common.mixins.buffered_jsonl_writer_mixin import BufferedJSONLWriterMixin
+from aiperf.common.mixins.buffered_jsonl_writer_mixin import (
+    _MAX_PENDING_FLUSH_TASKS,
+    BufferedJSONLWriterMixin,
+)
 
 
 class SampleRecord(BaseModel):
@@ -162,6 +165,75 @@ class TestBufferedJSONLWriterMixin:
         await writer._close_file()
 
     @pytest.mark.asyncio
+    async def test_buffered_write_bounds_flushes_when_appends_never_yield(
+        self, temp_output_file
+    ):
+        """A burst that never yields must still bound doomed flush attempts.
+
+        Companion to the ``_write_error`` breaker test below, which yields
+        between appends so each flush task runs and records the failure before
+        the next append checks it. That yield is what makes the breaker look
+        sufficient, and it is not: ``buffered_write`` *schedules* the flush
+        rather than awaiting it, so a caller appending in a tight loop never
+        lets a flush run. ``_write_error`` is still None at every batch
+        boundary, the breaker passes, and 300 appends at batch_size 10
+        scheduled 30 flushes against a handle already known-bad by the time
+        any of them ran.
+
+        The in-flight cap closes that window: it does not depend on the
+        failure having surfaced yet.
+        """
+        batch_size = 10
+        num_records = 300
+        writer = BufferedJSONLWriterMixin[SampleRecord](
+            output_file=temp_output_file,
+            batch_size=batch_size,
+        )
+        await writer.initialize()
+        writer._file_handle.write = AsyncMock(side_effect=OSError("disk full"))
+
+        flush_calls = 0
+        real_flush_buffer = writer._flush_buffer
+
+        async def counting_flush_buffer(buffer_to_flush):
+            nonlocal flush_calls
+            flush_calls += 1
+            return await real_flush_buffer(buffer_to_flush)
+
+        writer._flush_buffer = counting_flush_buffer
+
+        all_tasks: list[asyncio.Task] = []
+        real_execute_async = writer.execute_async
+
+        def tracking_execute_async(coro):
+            task = real_execute_async(coro)
+            all_tasks.append(task)
+            return task
+
+        writer.execute_async = tracking_execute_async
+
+        # No yield anywhere in this loop: the whole point is that no flush
+        # gets a chance to run and set ``_write_error``.
+        for i in range(num_records):
+            await writer.buffered_write(SampleRecord(id=i, value=f"record_{i}"))
+
+        assert len(all_tasks) <= _MAX_PENDING_FLUSH_TASKS, (
+            f"burst scheduled {len(all_tasks)} flush tasks against a single "
+            f"broken handle; cap is {_MAX_PENDING_FLUSH_TASKS}"
+        )
+
+        await asyncio.gather(*all_tasks, return_exceptions=True)
+
+        assert flush_calls <= _MAX_PENDING_FLUSH_TASKS
+        assert writer._write_error is not None
+        # Bounded, never lossy: every record either made it into a restored
+        # batch or is still queued behind the cap.
+        assert writer.lines_written == num_records
+        assert len(writer._buffer) == num_records
+
+        writer._file_handle.write = AsyncMock(return_value=None)
+        await writer._close_file()
+
     async def test_buffered_write_stops_retrying_flush_after_write_error(
         self, temp_output_file
     ):

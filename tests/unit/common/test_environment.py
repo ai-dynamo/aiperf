@@ -127,7 +127,7 @@ class TestProfileConfigureTimeout:
 
 class TestWorkerStaleTimeVsHeartbeat:
     """Pins the cross-field validator between WORKER.STALE_TIME and
-    SERVICE.HEARTBEAT_INTERVAL / HEARTBEAT_MISSED_THRESHOLD.
+    SERVICE.HEARTBEAT_INTERVAL.
 
     StickyCreditRouter.evict_stale_workers() computes its eviction cutoff as
     STALE_TIME * 3, fed only by the generic HeartbeatMessage cadence. Without
@@ -135,16 +135,23 @@ class TestWorkerStaleTimeVsHeartbeat:
     default 5s HEARTBEAT_INTERVAL) makes the cutoff shorter than a single
     real heartbeat interval, so every worker looks stale on the very first
     sweep.
+
+    HEARTBEAT_MISSED_THRESHOLD is deliberately NOT part of this invariant: it
+    is the controller watchdog's tolerance for missed beats and never reaches
+    the router, which sees only the emission cadence. Folding it in rejected
+    safe configurations from an import-time singleton, i.e. made the package
+    unimportable -- see the high_watchdog_threshold_valid case.
     """
 
     @pytest.mark.parametrize(
         "stale_time,heartbeat_interval,heartbeat_missed_threshold,should_raise",
         [
             param(10.0, 5.0, 3, False, id="defaults_valid"),
-            param(6.0, 5.0, 3, False, id="cutoff_greater_than_worst_case_valid"),
-            param(5.0, 5.0, 3, True, id="cutoff_equal_to_worst_case_invalid"),
+            param(2.0, 5.0, 3, False, id="cutoff_greater_than_interval_valid"),
+            param(1.0, 3.0, 3, True, id="cutoff_equal_to_interval_invalid"),
             param(0.1, 5.0, 3, True, id="tiny_stale_time_invalid"),
             param(100.0, 1.0, 1, False, id="large_stale_time_small_heartbeat_valid"),
+            param(10.0, 5.0, 20, False, id="high_watchdog_threshold_valid"),
         ],
     )  # fmt: skip
     def test_validate_worker_stale_time_vs_heartbeat(
@@ -155,7 +162,7 @@ class TestWorkerStaleTimeVsHeartbeat:
         should_raise,
         monkeypatch,
     ):
-        """STALE_TIME * 3 must exceed HEARTBEAT_INTERVAL * HEARTBEAT_MISSED_THRESHOLD."""
+        """STALE_TIME * 3 must exceed HEARTBEAT_INTERVAL, and nothing else."""
         monkeypatch.setenv("AIPERF_WORKER_STALE_TIME", str(stale_time))
         monkeypatch.setenv("AIPERF_SERVICE_HEARTBEAT_INTERVAL", str(heartbeat_interval))
         monkeypatch.setenv(
@@ -165,7 +172,7 @@ class TestWorkerStaleTimeVsHeartbeat:
         if should_raise:
             with pytest.raises(
                 ValueError,
-                match=r"AIPERF_WORKER_STALE_TIME.*AIPERF_SERVICE_HEARTBEAT_INTERVAL.*AIPERF_SERVICE_HEARTBEAT_MISSED_THRESHOLD",
+                match=r"AIPERF_WORKER_STALE_TIME.*AIPERF_SERVICE_HEARTBEAT_INTERVAL",
             ):
                 _Environment()
         else:

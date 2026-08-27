@@ -8,6 +8,9 @@ exporter failed publishes a truncated result set as authoritative -- an ENOSPC
 or a partial write becomes a job marked Completed with artifacts missing.
 """
 
+import asyncio
+import gc
+import warnings
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -202,3 +205,69 @@ class TestProcessResultFailureSurface:
         await ctrl._announce_results_exported()
 
         ctrl.publish.assert_awaited_once()
+
+
+class TestPhaseArtifactCoroutinesAreNotAbandoned:
+    """A BaseException escaping _export_one_phase must not orphan its writers."""
+
+    @pytest.mark.asyncio
+    async def test_cancellation_leaves_no_unawaited_artifact_coroutines(self) -> None:
+        """The per-artifact handler catches Exception, so CancelledError unwinds.
+
+        Building all four writer coroutines up front meant the ones the loop
+        had not reached yet were discarded without ever being awaited: silently
+        abandoned work, plus a "coroutine was never awaited" RuntimeWarning
+        pointing at the exporter rather than at the cancellation. Constructing
+        each coroutine only as it is about to be awaited makes that impossible.
+        """
+        mgr = _manager()
+        mgr._run = MagicMock()
+        mgr._results = MagicMock(
+            start_ns=0, end_ns=1, is_complete=True, incomplete_reason=None
+        )
+        started: list[str] = []
+
+        async def _record_and_maybe_cancel(**kwargs) -> None:
+            key = kwargs["manifest_key"]
+            started.append(key)
+            if len(started) == 1:
+                raise asyncio.CancelledError
+
+        async def _observability(**kwargs) -> None:
+            started.append(kwargs["manifest_key"])
+
+        mgr._write_phase_export = _record_and_maybe_cancel
+        mgr._write_phase_observability_export = _observability
+
+        phase_result = MagicMock(
+            phase_name="warmup",
+            records=[],
+            start_ns=0,
+            end_ns=1,
+            was_cancelled=False,
+            successful_request_count=0,
+            error_request_count=0,
+            error_summary=[],
+            branch_stats=None,
+        )
+
+        with (
+            warnings.catch_warnings(record=True) as caught,
+            patch("asyncio.to_thread", new=AsyncMock()),
+            pytest.raises(asyncio.CancelledError),
+        ):
+            warnings.simplefilter("always")
+            await mgr._export_one_phase(
+                phase_result=phase_result,
+                manifest_entry={"total_request_count": 0},
+            )
+            gc.collect()
+
+        gc.collect()
+        unawaited = [w for w in caught if "never awaited" in str(w.message)]
+        assert not unawaited, (
+            f"orphaned coroutines: {[str(w.message) for w in unawaited]}"
+        )
+        assert started == ["metrics_json"], (
+            "writers after the cancellation must never be constructed at all"
+        )

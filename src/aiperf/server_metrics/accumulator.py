@@ -144,9 +144,6 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         # phase_index (currently just AGENTIC_REPLAY's synthesized warmup,
         # see _PhaseCapture and _resolve_sample_phase_index).
         self._last_phase_signature: tuple[CreditPhase, int | None, str] | None = None
-        self._last_unstamped_signature: tuple[CreditPhase, int | None, str] | None = (
-            None
-        )
         self._current_synthetic_phase_index: int | None = None
         self._next_synthetic_phase_index = -2
         # (phase_instance_id, phase_name) -> synthesized negative index.
@@ -245,6 +242,7 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         back to that contiguity heuristic, which is still correct whenever
         scrapes do not overlap.
         """
+        previous_signature = self._last_phase_signature
         if phase_index is not None:
             self._last_phase_signature = (benchmark_phase, phase_index, phase_name)
             return phase_index
@@ -263,12 +261,11 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
             return synthetic
 
         if (
-            signature != self._last_unstamped_signature
+            signature != previous_signature
             or self._current_synthetic_phase_index is None
         ):
             self._current_synthetic_phase_index = self._next_synthetic_phase_index
             self._next_synthetic_phase_index -= 1
-        self._last_unstamped_signature = signature
         return self._current_synthetic_phase_index
 
     async def process_record(self, record: ServerMetricsRecord) -> None:

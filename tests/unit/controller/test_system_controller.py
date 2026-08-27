@@ -796,3 +796,30 @@ class TestShutdownDeliveryGrace:
         monkeypatch.setattr(Environment.API_SERVER, "POST_COMPLETE_GRACE", 7.0)
         sleeps = await self._drive_stop(system_controller, monkeypatch)
         assert sleeps[0] == 7.0
+
+
+class TestFailureShutdownTimeoutStaysFinite:
+    """The controller widens the failure-path bound; it must not remove it."""
+
+    def test_timeout_is_finite_and_wider_than_the_global_default(
+        self, system_controller: SystemController
+    ) -> None:
+        """``None`` here reinstates the hang the bound exists to prevent.
+
+        ``_stop_system_controller`` *is* the exit path: it exports artifacts,
+        broadcasts shutdown, reaps every child, and only then calls
+        ``os._exit()``. Every await before that is unbounded, starting with
+        ``ui.stop()``. With no wait_for around ``stop()``, one wedged await
+        means the controller never reaches ``_set_state(FAILED)`` nor the
+        ``os._exit()`` -- a zombie holding its container open indefinitely.
+
+        The bound must still be generous enough that a large export never
+        trips it, which is the reason the global per-service default is
+        overridden at all.
+        """
+        timeout = system_controller.failure_shutdown_timeout
+
+        assert timeout is not None, "an unbounded failure teardown is a zombie"
+        assert timeout > Environment.SERVICE.FAILURE_SHUTDOWN_TIMEOUT, (
+            "the override exists to widen the global bound, not to match it"
+        )

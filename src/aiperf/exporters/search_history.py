@@ -218,6 +218,26 @@ def _objective_at(iteration: SearchIteration, index: int) -> float | None:
     return value if is_finite_value(value) else None
 
 
+def _objective_is_poisoned(iteration: SearchIteration, index: int) -> bool:
+    """Whether this objective is *present but unusable* (NaN/inf).
+
+    Distinct from simply absent. A short or missing ``objective_values`` vector
+    is a benign, symmetric gap -- every trial in a run is described the same
+    way, so the objective carries no information for anyone and skipping it
+    compares the trials on the objectives that do exist. A non-finite value is
+    the opposite: this one trial reported garbage, and skipping it hands that
+    trial a free pass on an objective the others were actually scored against.
+    """
+    values = iteration.objective_values
+    if values is not None and index < len(values):
+        value = values[index]
+    elif index == 0:
+        value = iteration.objective_value
+    else:
+        return False
+    return value is not None and not is_finite_value(value)
+
+
 def _dominates(
     candidate: SearchIteration,
     other: SearchIteration,
@@ -225,15 +245,18 @@ def _dominates(
 ) -> bool:
     """Return whether ``candidate`` is no worse everywhere and better somewhere.
 
-    An objective that is unavailable on either side (absent from a short
-    vector, or non-finite) makes the comparison undecidable, so no domination
-    is claimed. Skipping such an objective instead let a trial win on the
-    strength of its own broken value: with objectives ``[throughput MAX,
-    latency MIN]``, ``[100.0, NaN]`` compared against ``[50.0, 8.0]`` won on
-    throughput, had its NaN latency skipped, and dominated a trial that was
-    strictly better on the objective it silently dropped -- then serialized as
-    ``[100.0, null]``. Returning False keeps both points in the front, which
-    is the safe outcome for an incomparable pair.
+    An objective that is merely *absent* on a side (short or missing vector)
+    is skipped: that gap is symmetric across the run, so the remaining
+    objectives still decide the comparison.
+
+    An objective that is present but *non-finite* instead makes the pair
+    incomparable, and no domination is claimed in either direction. Skipping
+    those let a trial win on the strength of its own broken value: with
+    objectives ``[throughput MAX, latency MIN]``, ``[100.0, NaN]`` compared
+    against ``[50.0, 8.0]`` won on throughput, had its NaN latency skipped,
+    and dominated a trial strictly better on the objective it silently
+    dropped -- then serialized as ``[100.0, null]``. Returning False keeps
+    both points in the front, the safe outcome for an undecidable pair.
     """
     from aiperf.common.enums import OptimizationDirection
 
@@ -241,8 +264,12 @@ def _dominates(
     for index, objective in enumerate(objectives):
         candidate_value = _objective_at(candidate, index)
         other_value = _objective_at(other, index)
-        if candidate_value is None or other_value is None:
+        if _objective_is_poisoned(candidate, index) or _objective_is_poisoned(
+            other, index
+        ):
             return False
+        if candidate_value is None or other_value is None:
+            continue
         maximize = objective.direction == OptimizationDirection.MAXIMIZE
         if (maximize and candidate_value < other_value) or (
             not maximize and candidate_value > other_value
