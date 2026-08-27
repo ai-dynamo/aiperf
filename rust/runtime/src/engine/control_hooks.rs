@@ -9,7 +9,7 @@ use std::rc::Rc;
 
 use anyhow::{Context, Result, anyhow, ensure};
 use serde::Deserialize;
-use tracing::debug;
+use tracing::warn;
 use url::Url;
 
 use crate::clock::Clock;
@@ -31,13 +31,7 @@ const DEFAULT_CONTROL_HOOK_TIMEOUT_NS: i64 = 30_000_000_000;
 const DEFAULT_RESET_KV_CACHE_MAX_RETRY_NS: i64 = 60_000_000_000;
 const RETRY_BACKOFF_INITIAL_NS: i64 = 1_000_000_000;
 const RETRY_BACKOFF_CAP_NS: i64 = 8_000_000_000;
-const RETRY_BACKOFF_MULTIPLIER: i64 = 2;
-/// HTTP statuses treated as transient for `reset_kv_cache` and retried.
-///
-/// 409 Conflict / 423 Locked / 429 Too Many Requests / 503 Service Unavailable
-/// are the standard "busy with transient state, try again" signals - e.g. a
-/// server reporting a profiler-cleanup race explicitly instead of holding the
-/// socket open. Any other non-2xx status is a real rejection.
+/// Statuses a busy server uses to say "try again" rather than "no".
 const RESET_KV_CACHE_RETRYABLE_STATUS_CODES: [u16; 4] = [409, 423, 429, 503];
 const DEFAULT_RESET_KV_CACHE_PATH: &str = "/reset_prefix_cache";
 const DEFAULT_SERVER_PROFILER_START_PATH: &str = "/start_profile";
@@ -68,7 +62,8 @@ pub struct ControlHookOutcome {
 pub struct PreparedResetKvCacheHook {
     pub timeout_ns: i64,
     pub path: String,
-    /// Total budget for retrying a retryable POST against one endpoint origin.
+    /// Budget for *starting* retry attempts against one endpoint origin; a
+    /// final attempt begun just inside it still runs for up to `timeout_ns`.
     pub max_retry_ns: i64,
     pub handles: Vec<Rc<dyn ControlPlaneHttp>>,
     clock: Rc<dyn Clock>,
@@ -303,70 +298,47 @@ pub fn prepare_endpoint_control_hooks_from_profile_value(
 pub fn run_reset_kv_cache(
     hook: &PreparedResetKvCacheHook,
 ) -> LocalPhaseFuture<Result<ControlHookOutcome>> {
-    let timeout_ns = hook.timeout_ns;
-    let path = hook.path.clone();
+    let plan = ControlHookPlan {
+        kind: "reset_kv_cache",
+        path: hook.path.clone(),
+        timeout_ns: hook.timeout_ns,
+        max_retry_ns: hook.max_retry_ns,
+        retryable_status_codes: &RESET_KV_CACHE_RETRYABLE_STATUS_CODES,
+    };
     let handles = hook.handles.clone();
     let clock = hook.clock.clone();
     let target_urls = hook.target_urls.clone();
-    let max_retry_ns = hook.max_retry_ns;
-    Box::pin(async move {
-        execute_control_hook(
-            "reset_kv_cache",
-            timeout_ns,
-            path,
-            handles,
-            target_urls,
-            clock,
-            max_retry_ns,
-        )
-        .await
-    })
+    Box::pin(async move { execute_control_hook(plan, handles, target_urls, clock).await })
 }
 
 /// Execute one prepared profiler-start hook across every endpoint-local handle.
 pub fn start_server_profiler(
     hook: &PreparedServerProfilerHook,
 ) -> LocalPhaseFuture<Result<ControlHookOutcome>> {
-    let timeout_ns = hook.timeout_ns;
-    let path = hook.start_path.clone();
+    let plan = ControlHookPlan::single_attempt(
+        "server_profiler.start",
+        hook.start_path.clone(),
+        hook.timeout_ns,
+    );
     let handles = hook.handles.clone();
     let clock = hook.clock.clone();
     let target_urls = hook.target_urls.clone();
-    Box::pin(async move {
-        execute_control_hook(
-            "server_profiler.start",
-            timeout_ns,
-            path,
-            handles,
-            target_urls,
-            clock,
-            0,
-        )
-        .await
-    })
+    Box::pin(async move { execute_control_hook(plan, handles, target_urls, clock).await })
 }
 
 /// Execute one prepared profiler-stop hook across every endpoint-local handle.
 pub fn stop_server_profiler(
     hook: &PreparedServerProfilerHook,
 ) -> LocalPhaseFuture<Result<ControlHookOutcome>> {
-    let timeout_ns = hook.timeout_ns;
-    let path = hook.stop_path.clone();
+    let plan = ControlHookPlan::single_attempt(
+        "server_profiler.stop",
+        hook.stop_path.clone(),
+        hook.timeout_ns,
+    );
     let handles = hook.handles.clone();
     let clock = hook.clock.clone();
     let target_urls = hook.target_urls.clone();
-    Box::pin(async move {
-        execute_control_hook(
-            "server_profiler.stop",
-            timeout_ns,
-            path,
-            handles,
-            target_urls,
-            clock,
-            0,
-        )
-        .await
-    })
+    Box::pin(async move { execute_control_hook(plan, handles, target_urls, clock).await })
 }
 
 fn prepare_handles(
@@ -581,8 +553,23 @@ struct ControlHookPlan {
     kind: &'static str,
     path: String,
     timeout_ns: i64,
+    /// Budget for starting retry attempts; zero means one attempt only.
+    max_retry_ns: i64,
     /// Statuses treated as transient; empty means every non-2xx is fatal.
     retryable_status_codes: &'static [u16],
+}
+
+impl ControlHookPlan {
+    /// Build a plan that never retries, for a hook with no transient statuses.
+    fn single_attempt(kind: &'static str, path: String, timeout_ns: i64) -> Self {
+        Self {
+            kind,
+            path,
+            timeout_ns,
+            max_retry_ns: 0,
+            retryable_status_codes: &[],
+        }
+    }
 }
 
 async fn attempt_control_request(
@@ -597,6 +584,7 @@ async fn attempt_control_request(
         path,
         timeout_ns,
         retryable_status_codes,
+        ..
     } = plan;
     let absolute_deadline_ns = clock.now_ns().saturating_add(*timeout_ns);
     let response = handle
@@ -611,8 +599,6 @@ async fn attempt_control_request(
         )
         .await
         .map_err(|error| ControlHookAttemptError {
-            // A transport failure or an expired per-attempt deadline can clear
-            // on its own; an invalid request or oversized reply cannot.
             is_retryable: matches!(
                 error.kind,
                 ControlPlaneHttpErrorKind::Transport | ControlPlaneHttpErrorKind::Timeout
@@ -634,53 +620,36 @@ async fn attempt_control_request(
 }
 
 async fn execute_control_hook(
-    kind: &'static str,
-    timeout_ns: i64,
-    path: String,
+    plan: ControlHookPlan,
     handles: Vec<Rc<dyn ControlPlaneHttp>>,
     target_urls: Vec<String>,
     clock: Rc<dyn Clock>,
-    max_retry_ns: i64,
 ) -> Result<ControlHookOutcome> {
-    let plan = ControlHookPlan {
-        kind,
-        path,
-        timeout_ns,
-        // Only reset_kv_cache opts into transient-busy status retries; a
-        // profiler hook passes a zero budget and keeps every non-2xx fatal.
-        retryable_status_codes: if max_retry_ns > 0 {
-            &RESET_KV_CACHE_RETRYABLE_STATUS_CODES
-        } else {
-            &[]
-        },
-    };
     let request_count = handles.len();
     for (index, (handle, target_url)) in handles.into_iter().zip(target_urls).enumerate() {
-        let retry_deadline_ns = clock.now_ns().saturating_add(max_retry_ns);
+        let retry_deadline_ns = clock.now_ns().saturating_add(plan.max_retry_ns);
         let mut backoff_ns = RETRY_BACKOFF_INITIAL_NS;
         loop {
-            let attempt =
-                attempt_control_request(&plan, handle.as_ref(), index, &target_url, &clock).await;
-            let failure = match attempt {
-                Ok(()) => break,
-                Err(failure) => failure,
+            let Err(failure) =
+                attempt_control_request(&plan, handle.as_ref(), index, &target_url, &clock).await
+            else {
+                break;
             };
             if !failure.is_retryable
                 || clock.now_ns().saturating_add(backoff_ns) >= retry_deadline_ns
             {
                 return Err(failure.error);
             }
-            debug!(
-                kind,
+            // A retry stalls the run for up to the whole budget, so surface it.
+            warn!(
+                kind = plan.kind,
                 target_url,
                 backoff_ns,
                 error = %failure.error,
                 "retrying endpoint-local control hook"
             );
             clock.clone().sleep(backoff_ns).await;
-            backoff_ns = backoff_ns
-                .saturating_mul(RETRY_BACKOFF_MULTIPLIER)
-                .min(RETRY_BACKOFF_CAP_NS);
+            backoff_ns = backoff_ns.saturating_mul(2).min(RETRY_BACKOFF_CAP_NS);
         }
     }
     Ok(ControlHookOutcome { request_count })
@@ -708,12 +677,18 @@ mod tests {
         absolute_deadline_ns: i64,
     }
 
+    /// One scripted control-plane reply; anything unscripted succeeds with 204.
+    #[derive(Clone, Copy, Debug)]
+    enum ScriptedOutcome {
+        Status(u16),
+        TransportFailure,
+    }
+
     #[derive(Clone, Debug, Default)]
     struct RecordingState {
         prepared_urls: Rc<RefCell<Vec<String>>>,
         requests: Rc<RefCell<Vec<RecordedRequest>>>,
-        /// Statuses returned in order; the last one repeats once exhausted.
-        scripted_statuses: Rc<RefCell<VecDeque<u16>>>,
+        scripted_outcomes: Rc<RefCell<VecDeque<ScriptedOutcome>>>,
     }
 
     #[derive(Debug)]
@@ -728,10 +703,10 @@ mod tests {
             }
         }
 
-        /// Build a provider whose handle replays `statuses` in order.
-        fn with_statuses(statuses: &[u16]) -> Self {
+        /// Build a provider whose handle replays `outcomes`, then succeeds.
+        fn with_outcomes(outcomes: &[ScriptedOutcome]) -> Self {
             let provider = Self::new();
-            *provider.state.scripted_statuses.borrow_mut() = statuses.iter().copied().collect();
+            *provider.state.scripted_outcomes.borrow_mut() = outcomes.iter().copied().collect();
             provider
         }
     }
@@ -773,18 +748,23 @@ mod tests {
                 path: request.path,
                 absolute_deadline_ns,
             });
-            let mut scripted = self.state.scripted_statuses.borrow_mut();
-            let status = if scripted.len() > 1 {
-                scripted.pop_front().unwrap_or(204)
-            } else {
-                scripted.front().copied().unwrap_or(204)
-            };
-            Ok(ControlPlaneResponse {
-                status,
-                headers: BTreeMap::new(),
-                encoded_body: Bytes::new(),
-                timings: ControlPlaneTransportTimings::default(),
-            })
+            let scripted = self.state.scripted_outcomes.borrow_mut().pop_front();
+            match scripted {
+                Some(ScriptedOutcome::TransportFailure) => Err(ControlPlaneHttpError {
+                    kind: ControlPlaneHttpErrorKind::Transport,
+                    message: "connection refused".to_owned(),
+                    timings: None,
+                }),
+                other => Ok(ControlPlaneResponse {
+                    status: match other {
+                        Some(ScriptedOutcome::Status(status)) => status,
+                        _ => 204,
+                    },
+                    headers: BTreeMap::new(),
+                    encoded_body: Bytes::new(),
+                    timings: ControlPlaneTransportTimings::default(),
+                }),
+            }
         }
     }
 
@@ -1013,35 +993,55 @@ mod tests {
         );
     }
 
+    /// Run one reset hook to completion against a scripted provider, returning
+    /// the outcome and the number of control requests the hook issued.
+    fn run_scripted_reset(outcomes: &[ScriptedOutcome]) -> (Result<ControlHookOutcome>, usize) {
+        let sim_clock = Rc::new(SimClock::new());
+        let provider = RecordingProvider::with_outcomes(outcomes);
+        let hooks = prepare_endpoint_control_hooks(
+            sim_clock.clone(),
+            &provider,
+            &validated_profile_with_paths("http://127.0.0.1:8000"),
+        )
+        .expect("hooks prepare");
+        let reset = hooks.reset_kv_cache.expect("reset hook");
+
+        let slot = Rc::new(RefCell::new(None));
+        let outcome_slot = slot.clone();
+        sim_clock.drive(Box::pin(async move {
+            *outcome_slot.borrow_mut() = Some(run_reset_kv_cache(&reset).await);
+        }));
+
+        let outcome = slot.borrow_mut().take().expect("reset hook completes");
+        let attempts = provider.state.requests.borrow().len();
+        (outcome, attempts)
+    }
+
     #[test]
-    fn transient_reset_statuses_retry_within_budget_and_other_statuses_fail_fast() {
-        for (statuses, expected_attempts, expects_success) in
-            [(vec![503, 503, 204], 3, true), (vec![400], 1, false)]
-        {
-            let sim_clock = Rc::new(SimClock::new());
-            let clock: Rc<dyn Clock> = sim_clock.clone();
-            let provider = RecordingProvider::with_statuses(&statuses);
-            let hooks = prepare_endpoint_control_hooks(
-                clock,
-                &provider,
-                &validated_profile_with_paths("http://127.0.0.1:8000"),
-            )
-            .expect("hooks prepare");
-            let reset = hooks.reset_kv_cache.expect("reset hook");
+    fn transient_reset_status_retries_until_the_server_accepts() {
+        let (outcome, attempts) =
+            run_scripted_reset(&[ScriptedOutcome::Status(503), ScriptedOutcome::Status(503)]);
 
-            let outcome = Rc::new(RefCell::new(None));
-            let outcome_slot = outcome.clone();
-            sim_clock.drive(Box::pin(async move {
-                *outcome_slot.borrow_mut() = Some(run_reset_kv_cache(&reset).await);
-            }));
+        assert!(outcome.is_ok());
+        assert_eq!(attempts, 3);
+    }
 
-            let outcome = outcome.borrow_mut().take().expect("reset hook completes");
-            assert_eq!(outcome.is_ok(), expects_success, "statuses {statuses:?}");
-            assert_eq!(
-                provider.state.requests.borrow().len(),
-                expected_attempts,
-                "statuses {statuses:?}"
-            );
-        }
+    #[test]
+    fn transport_failure_retries_until_the_server_answers() {
+        let (outcome, attempts) = run_scripted_reset(&[
+            ScriptedOutcome::TransportFailure,
+            ScriptedOutcome::TransportFailure,
+        ]);
+
+        assert!(outcome.is_ok());
+        assert_eq!(attempts, 3);
+    }
+
+    #[test]
+    fn rejected_reset_status_fails_without_retrying() {
+        let (outcome, attempts) = run_scripted_reset(&[ScriptedOutcome::Status(400)]);
+
+        assert!(outcome.is_err());
+        assert_eq!(attempts, 1);
     }
 }
