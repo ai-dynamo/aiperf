@@ -1,0 +1,25 @@
+schema_version = 1
+task = 4
+packages = [
+  { package = "aiperf-core", source_files = [
+    "core/src/artifact.rs",
+    "core/src/capture.rs",
+    "core/src/clock.rs",
+    "core/src/dispatch.rs",
+    "core/src/endpoint.rs",
+    "core/src/histogram.rs",
+    "core/src/lib.rs",
+    "core/src/measure/error.rs",
+    "core/src/measure/eventstream.rs",
+    "core/src/measure/mod.rs",
+    "core/src/measure/record.rs",
+    "core/src/measure/response.rs",
+    "core/src/measure/reuse.rs",
+    "core/src/measure/sse.rs",
+    "core/src/measure/trace.rs",
+    "core/src/report.rs",
+    "core/src/services.rs",
+    "core/tests/histogram_contract.rs",
+    "core/tests/public_contract.rs",
+  ], dependencies = [], features = {} }
+]
