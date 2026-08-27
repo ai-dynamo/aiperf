@@ -5387,9 +5387,20 @@ mod tests {
         })
         .unwrap_or_else(|error| panic!("valid action budget: {error}"));
         // `Quarantine` is illegal for the Action scope, so `action_disposition`
-        // refuses after the decision is recorded.
-        let mut reporter =
-            typed_error_action_reporter(budget.clone(), StreamingIssueDisposition::Quarantine);
+        // refuses after the decision is recorded. `StreamingIssueThresholdRule::new`
+        // rejects the pair, so the rule is built by struct literal.
+        let rule = StreamingIssueThresholdRule {
+            exhausted_disposition: StreamingIssueDisposition::Quarantine,
+            ..copy_rule(&action_rule(
+                "action_default",
+                0,
+                StreamingIssueDisposition::TerminalActionReceipt,
+            ))
+        };
+        let run = StreamRunIdentity::new(LogicalReplayRunId::from_bytes([0x81; 32]));
+        let policy = PreparedStreamingIssuePolicy::new([rule])
+            .unwrap_or_else(|error| panic!("valid action policy: {error}"));
+        let mut reporter = BudgetOwnedStreamingIssueReporter::new(run, policy, budget.clone());
 
         let issue = action_issue(0, 0);
         let evidence = typed_error_action_evidence(&issue);
