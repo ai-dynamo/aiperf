@@ -22,9 +22,9 @@ use crate::exporter_runner::{
 use crate::plugin_stats::{
     AuthoritativeIdentityInput, ControlledAttemptDecision, ControlledAttemptRecord,
     ControlledExporterPairRecord, ControlledMeasurementEvaluator, ExporterMember, FrozenCasePlan,
-    MemberTerminalOutcome, PairAttemptDecision, PairedCase, PairedSample, RawMemberTerminalRecord,
-    RawPairTerminalRecord, SimultaneousGateInput, SimultaneousGateReport, Variant,
-    acquire_authoritative_identity, checked_in_case_plans, checked_in_inventory_digest,
+    InfrastructureEvent, MemberTerminalOutcome, PairAttemptDecision, PairedCase, PairedSample,
+    RawMemberTerminalRecord, RawPairTerminalRecord, SimultaneousGateInput, SimultaneousGateReport,
+    Variant, acquire_authoritative_identity, checked_in_case_plans, checked_in_inventory_digest,
 };
 
 const OUTPUT_SCHEMA_V1: &[u8] = b"plugin_runtime_member_output/v1;closed-jcs-line;scenario,pair_id,variant,experiment_identity_blake3,completed_budget,active_duration_nanoseconds,metrics";
@@ -142,6 +142,8 @@ pub struct ControlledRuntimeReportV1 {
     pub terminal_member_evidence: Vec<TerminalMemberEvidenceV1>,
     /// Complete validated exporter evidence retained by the controller.
     pub exporter_pair_history: Vec<ControlledExporterPairRecord>,
+    /// Complete raw pair and replacement history in controller order.
+    pub raw_pair_history: Vec<crate::plugin_stats::ControlledPairAttemptRecord>,
     /// Canonical evidence binding identity, ledger, report, and raw outputs.
     pub runtime_evidence_bytes: Vec<u8>,
     /// Digest of the canonical runtime evidence bytes.
@@ -166,6 +168,7 @@ struct RuntimeEvidenceV1<'a> {
     executed_member_count: usize,
     terminal_output_blake3: &'a [String],
     terminal_member_evidence: &'a [TerminalMemberEvidenceV1],
+    raw_pair_history: &'a [crate::plugin_stats::ControlledPairAttemptRecord],
     exporter_pair_history: &'a [ControlledExporterPairRecord],
 }
 
@@ -254,6 +257,7 @@ struct BoundedChildResult {
     terminal_status: ChildTerminalStatus,
     stdout: BoundedChildOutput,
     stderr: BoundedChildOutput,
+    infrastructure_event: Option<InfrastructureEvent>,
 }
 
 struct ExporterExecutionContext<'a> {
@@ -779,112 +783,132 @@ fn run_controlled_runtime_internal(
 
         let mut samples = Vec::new();
         for scheduled in &schedule {
-            let mut member_records = Vec::with_capacity(2);
-            let mut pair_samples = Vec::new();
-            let mut completed_exporters = Vec::with_capacity(2);
-            for variant in scheduled.member_order {
-                if is_exporter_case && exporter_factory.is_some() {
-                    executed_member_count += 1;
-                    match execute_exporter_member(
-                        exporter_factory.as_deref_mut().ok_or_else(|| {
-                            ControlledRuntimeError::new(
-                                "exporter factory disappeared during controlled execution",
-                            )
-                        })?,
-                        exporter_context.as_ref().ok_or_else(|| {
-                            ControlledRuntimeError::new(
-                                "exporter context is absent under adapter authority",
-                            )
-                        })?,
-                        ExporterMemberCoordinates {
-                            case,
-                            pair_id: &scheduled.pair_id,
-                            variant,
-                        },
-                    ) {
-                        Ok(completed) => completed_exporters.push((variant, completed)),
-                        Err(error) => {
-                            evaluator
-                                .finish_authoritative_product_failure(format!(
-                                    "controlled exporter member failed: {error}"
-                                ))
-                                .map_err(|error| ControlledRuntimeError::new(error.to_string()))?;
-                            return runtime_report(
-                                &evaluator,
-                                &mut attempt_ledger,
-                                &report_context,
-                                executed_member_count,
-                                terminal_output_blake3,
-                                terminal_member_evidence,
-                            );
+            loop {
+                let mut member_records = Vec::with_capacity(2);
+                let mut pair_samples = Vec::new();
+                let mut completed_exporters = Vec::with_capacity(2);
+                for variant in scheduled.member_order {
+                    if is_exporter_case && exporter_factory.is_some() {
+                        executed_member_count += 1;
+                        match execute_exporter_member(
+                            exporter_factory.as_deref_mut().ok_or_else(|| {
+                                ControlledRuntimeError::new(
+                                    "exporter factory disappeared during controlled execution",
+                                )
+                            })?,
+                            exporter_context.as_ref().ok_or_else(|| {
+                                ControlledRuntimeError::new(
+                                    "exporter context is absent under adapter authority",
+                                )
+                            })?,
+                            ExporterMemberCoordinates {
+                                case,
+                                pair_id: &scheduled.pair_id,
+                                variant,
+                            },
+                        ) {
+                            Ok(completed) => completed_exporters.push((variant, completed)),
+                            Err(error) => {
+                                evaluator
+                                    .finish_authoritative_product_failure(format!(
+                                        "controlled exporter member failed: {error}"
+                                    ))
+                                    .map_err(|error| {
+                                        ControlledRuntimeError::new(error.to_string())
+                                    })?;
+                                return runtime_report(
+                                    &evaluator,
+                                    &mut attempt_ledger,
+                                    &report_context,
+                                    executed_member_count,
+                                    terminal_output_blake3,
+                                    terminal_member_evidence,
+                                );
+                            }
                         }
+                    } else {
+                        let MemberExecution {
+                            outcome,
+                            samples,
+                            terminal_evidence,
+                        } = execute_member(
+                            case,
+                            &scheduled.pair_id,
+                            variant,
+                            artifact_for(variant, &artifact_paths),
+                            build_report,
+                            &experiment_identity_blake3,
+                            &inherited_environment,
+                        )?;
+                        executed_member_count += 1;
+                        terminal_output_blake3.push(terminal_evidence.stdout.blake3.clone());
+                        terminal_member_evidence.push(terminal_evidence);
+                        member_records.push(RawMemberTerminalRecord { variant, outcome });
+                        pair_samples.extend(samples);
                     }
+                }
+                let raw_pair = RawPairTerminalRecord {
+                    scenario: case.scenario.clone(),
+                    pair_id: scheduled.pair_id.clone(),
+                    member_order: scheduled.member_order,
+                    members: member_records,
+                    asserted_reason: None,
+                    asserted_disposition: None,
+                };
+                let decision = if is_exporter_case
+                    && exporter_factory.is_some()
+                    && completed_exporters.len() == 2
+                {
+                    let static_member = completed_exporters
+                        .iter()
+                        .find(|(variant, _)| *variant == Variant::Static)
+                        .map(|(_, completed)| completed)
+                        .ok_or_else(|| {
+                            ControlledRuntimeError::new(
+                                "static completed exporter member is absent",
+                            )
+                        })?;
+                    let dynamic_member = completed_exporters
+                        .iter()
+                        .find(|(variant, _)| *variant == Variant::Dynamic)
+                        .map(|(_, completed)| completed)
+                        .ok_or_else(|| {
+                            ControlledRuntimeError::new(
+                                "dynamic completed exporter member is absent",
+                            )
+                        })?;
+                    evaluator
+                        .record_completed_exporter_pair(&policy, static_member, dynamic_member)
+                        .map_err(|error| ControlledRuntimeError::new(error.to_string()))?
                 } else {
-                    let MemberExecution {
-                        outcome,
-                        samples,
-                        terminal_evidence,
-                    } = execute_member(
-                        case,
-                        &scheduled.pair_id,
-                        variant,
-                        artifact_for(variant, &artifact_paths),
-                        build_report,
-                        &experiment_identity_blake3,
-                        &inherited_environment,
-                    )?;
-                    executed_member_count += 1;
-                    terminal_output_blake3.push(terminal_evidence.stdout.blake3.clone());
-                    terminal_member_evidence.push(terminal_evidence);
-                    member_records.push(RawMemberTerminalRecord { variant, outcome });
-                    pair_samples.extend(samples);
+                    evaluator
+                        .record_pair(raw_pair)
+                        .map_err(|error| ControlledRuntimeError::new(error.to_string()))?
+                };
+                match decision {
+                    PairAttemptDecision::RetainPair => {
+                        samples.extend(pair_samples);
+                        break;
+                    }
+                    PairAttemptDecision::ReplaceWholePair { member_order, .. }
+                        if member_order == scheduled.member_order => {}
+                    PairAttemptDecision::ReplaceWholePair { .. } => {
+                        return Err(ControlledRuntimeError::new(
+                            "controller replacement changed the seeded member order",
+                        ));
+                    }
+                    PairAttemptDecision::AttemptInvalid | PairAttemptDecision::ExperimentFailed => {
+                        return runtime_report(
+                            &evaluator,
+                            &mut attempt_ledger,
+                            &report_context,
+                            executed_member_count,
+                            terminal_output_blake3,
+                            terminal_member_evidence,
+                        );
+                    }
                 }
             }
-            let raw_pair = RawPairTerminalRecord {
-                scenario: case.scenario.clone(),
-                pair_id: scheduled.pair_id.clone(),
-                member_order: scheduled.member_order,
-                members: member_records,
-                asserted_reason: None,
-                asserted_disposition: None,
-            };
-            let decision = if is_exporter_case
-                && exporter_factory.is_some()
-                && completed_exporters.len() == 2
-            {
-                let static_member = completed_exporters
-                    .iter()
-                    .find(|(variant, _)| *variant == Variant::Static)
-                    .map(|(_, completed)| completed)
-                    .ok_or_else(|| {
-                        ControlledRuntimeError::new("static completed exporter member is absent")
-                    })?;
-                let dynamic_member = completed_exporters
-                    .iter()
-                    .find(|(variant, _)| *variant == Variant::Dynamic)
-                    .map(|(_, completed)| completed)
-                    .ok_or_else(|| {
-                        ControlledRuntimeError::new("dynamic completed exporter member is absent")
-                    })?;
-                evaluator
-                    .record_completed_exporter_pair(&policy, static_member, dynamic_member)
-                    .map_err(|error| ControlledRuntimeError::new(error.to_string()))?
-            } else {
-                evaluator
-                    .record_pair(raw_pair)
-                    .map_err(|error| ControlledRuntimeError::new(error.to_string()))?
-            };
-            if decision != PairAttemptDecision::RetainPair {
-                return runtime_report(
-                    &evaluator,
-                    &mut attempt_ledger,
-                    &report_context,
-                    executed_member_count,
-                    terminal_output_blake3,
-                    terminal_member_evidence,
-                );
-            }
-            samples.extend(pair_samples);
         }
         measured_cases.push(PairedCase {
             scenario: case.scenario.clone(),
@@ -957,10 +981,20 @@ fn execute_exporter_member(
         .map_err(|error| error.to_string())
 }
 
+#[cfg(test)]
 fn execute_bounded_child(
     command: &mut Command,
     deadline: Duration,
     output_limit: usize,
+) -> Result<BoundedChildResult, ControlledRuntimeError> {
+    execute_monitored_child(command, deadline, output_limit, None)
+}
+
+fn execute_monitored_child(
+    command: &mut Command,
+    deadline: Duration,
+    output_limit: usize,
+    expected_affinity: Option<&BTreeSet<usize>>,
 ) -> Result<BoundedChildResult, ControlledRuntimeError> {
     if deadline.is_zero() || output_limit == 0 {
         return Err(ControlledRuntimeError::new(
@@ -999,11 +1033,23 @@ fn execute_bounded_child(
     let stdout_reader = drain_bounded_output(stdout, output_limit);
     let stderr_reader = drain_bounded_output(stderr, output_limit);
     let started = Instant::now();
+    let mut has_seen_expected_affinity = false;
+    let mut infrastructure_event = None;
     let terminal_status = loop {
         if let Some(status) = child.try_wait().map_err(|error| {
             ControlledRuntimeError::new(format!("cannot poll runtime member: {error}"))
         })? {
             break child_terminal_status(status);
+        }
+        if infrastructure_event.is_none()
+            && let Some(expected) = expected_affinity
+            && let Some(observed) = process_affinity(pid)?
+        {
+            if observed == *expected {
+                has_seen_expected_affinity = true;
+            } else if has_seen_expected_affinity {
+                infrastructure_event = Some(InfrastructureEvent::AffinityLoss);
+            }
         }
         if started.elapsed() >= deadline {
             kill_process_group(pid)?;
@@ -1024,7 +1070,86 @@ fn execute_bounded_child(
         terminal_status,
         stdout,
         stderr,
+        infrastructure_event,
     })
+}
+
+#[cfg(target_os = "linux")]
+fn process_affinity(pid: libc::pid_t) -> Result<Option<BTreeSet<usize>>, ControlledRuntimeError> {
+    // Linux initializes every byte read by sched_getaffinity before the set is inspected.
+    let mut affinity: libc::cpu_set_t = unsafe { std::mem::zeroed() };
+    // SAFETY: `affinity` is a live cpu_set_t and its exact allocation size is supplied.
+    if unsafe {
+        libc::sched_getaffinity(pid, std::mem::size_of::<libc::cpu_set_t>(), &mut affinity)
+    } != 0
+    {
+        let error = std::io::Error::last_os_error();
+        if error.raw_os_error() == Some(libc::ESRCH) {
+            return Ok(None);
+        }
+        return Err(ControlledRuntimeError::new(format!(
+            "cannot inspect runtime member CPU affinity: {error}"
+        )));
+    }
+    let mut cpus = BTreeSet::new();
+    for cpu in 0..libc::CPU_SETSIZE as usize {
+        // SAFETY: `cpu` is strictly below CPU_SETSIZE and `affinity` is initialized above.
+        if unsafe { libc::CPU_ISSET(cpu, &affinity) } {
+            cpus.insert(cpu);
+        }
+    }
+    Ok(Some(cpus))
+}
+
+#[cfg(not(target_os = "linux"))]
+fn process_affinity(_pid: libc::pid_t) -> Result<Option<BTreeSet<usize>>, ControlledRuntimeError> {
+    Err(ControlledRuntimeError::new(
+        "controller CPU-affinity monitoring requires Linux",
+    ))
+}
+
+fn parse_cpu_list(value: &str) -> Result<BTreeSet<usize>, ControlledRuntimeError> {
+    let mut cpus = BTreeSet::new();
+    for component in value.split(',') {
+        if component.is_empty() {
+            return Err(ControlledRuntimeError::new(
+                "checked-in CPU-affinity list contains an empty component",
+            ));
+        }
+        let (first, last) = match component.split_once('-') {
+            Some((first, last)) if !first.is_empty() && !last.is_empty() => (
+                first.parse::<usize>().map_err(|_| {
+                    ControlledRuntimeError::new("checked-in CPU-affinity start is not an integer")
+                })?,
+                last.parse::<usize>().map_err(|_| {
+                    ControlledRuntimeError::new("checked-in CPU-affinity end is not an integer")
+                })?,
+            ),
+            Some(_) => {
+                return Err(ControlledRuntimeError::new(
+                    "checked-in CPU-affinity range is malformed",
+                ));
+            }
+            None => {
+                let cpu = component.parse::<usize>().map_err(|_| {
+                    ControlledRuntimeError::new("checked-in CPU-affinity CPU is not an integer")
+                })?;
+                (cpu, cpu)
+            }
+        };
+        if first > last || last >= libc::CPU_SETSIZE as usize {
+            return Err(ControlledRuntimeError::new(
+                "checked-in CPU-affinity range is outside cpu_set_t",
+            ));
+        }
+        cpus.extend(first..=last);
+    }
+    if cpus.is_empty() {
+        return Err(ControlledRuntimeError::new(
+            "checked-in CPU-affinity list is empty",
+        ));
+    }
+    Ok(cpus)
 }
 
 fn drain_bounded_output<R>(
@@ -1162,7 +1287,14 @@ fn execute_member(
     let deadline = Duration::from_secs(case.minimum_duration_seconds)
         .checked_mul(DEADLINE_MULTIPLIER)
         .ok_or_else(|| ControlledRuntimeError::new("runtime member deadline overflow"))?;
-    let result = execute_bounded_child(&mut command, deadline, MAX_MEMBER_OUTPUT_BYTES)?;
+    let expected_affinity = parse_cpu_list(&case.command[2])?;
+    let result = execute_monitored_child(
+        &mut command,
+        deadline,
+        MAX_MEMBER_OUTPUT_BYTES,
+        Some(&expected_affinity),
+    )?;
+    let infrastructure_event = result.infrastructure_event;
     let terminal_evidence = TerminalMemberEvidenceV1 {
         scenario: case.scenario.clone(),
         pair_id: pair_id.to_owned(),
@@ -1224,7 +1356,10 @@ fn execute_member(
         })
         .collect();
     Ok(MemberExecution {
-        outcome: MemberTerminalOutcome::Completed,
+        outcome: infrastructure_event.map_or(
+            MemberTerminalOutcome::Completed,
+            MemberTerminalOutcome::Infrastructure,
+        ),
         samples,
         terminal_evidence,
     })
@@ -1302,9 +1437,9 @@ fn runtime_report(
     attempt_ledger.append_attempt(terminal_attempt, attempt_evidence_bytes)?;
     let statistical_report = evaluator.last_statistical_report().cloned();
     let attempt_history = evaluator.history().to_vec();
+    let raw_pair_history = evaluator.raw_pair_history().to_vec();
     let exporter_pair_history = evaluator.exporter_pair_history().to_vec();
-    let retained_pair_count = evaluator
-        .raw_pair_history()
+    let retained_pair_count = raw_pair_history
         .iter()
         .filter(|record| record.decision == PairAttemptDecision::RetainPair)
         .count();
@@ -1325,6 +1460,7 @@ fn runtime_report(
         executed_member_count,
         terminal_output_blake3: &terminal_output_blake3,
         terminal_member_evidence: &terminal_member_evidence,
+        raw_pair_history: &raw_pair_history,
         exporter_pair_history: &exporter_pair_history,
     })
     .map_err(|error| {
@@ -1349,6 +1485,7 @@ fn runtime_report(
         terminal_output_blake3,
         terminal_member_evidence,
         exporter_pair_history,
+        raw_pair_history,
         runtime_evidence_bytes,
         runtime_evidence_blake3,
     })

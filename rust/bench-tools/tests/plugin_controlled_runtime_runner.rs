@@ -64,7 +64,7 @@ fn runtime_artifact_with_one_affinity_loss(label: &str, marker: &Path) -> Vec<u8
         .replacen(
             "set -eu\n",
             &format!(
-                "set -eu\nif [ \"$AIPERF_PARITY_PAIR_ID\" = pair-00 ] && [ ! -e '{}' ]; then touch '{}'; /usr/bin/taskset -pc 8 $$ >/dev/null; sleep 0.1; fi\n",
+                "set -eu\nif [ \"$AIPERF_PARITY_SCENARIO\" = http_non_streaming_c1 ] && [ \"$AIPERF_PARITY_PAIR_ID\" = pair-00 ] && [ ! -e '{}' ]; then touch '{}'; sleep 0.05; /usr/bin/taskset -pc 8 $$ >/dev/null; sleep 0.1; fi\n",
                 marker.display(),
                 marker.display()
             ),
