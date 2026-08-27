@@ -2427,6 +2427,22 @@ impl StreamingCheckpointCoordinator {
 #[path = "support/streaming_checkpoint_coordinator.rs"]
 mod coordinator_support;
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct LiveBudgetCharge {
+    items: u64,
+    bytes: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct PartitionInputAuthoritySnapshot {
+    descriptor_identity: ResultSegmentDescriptor,
+    payload_bytes: Bytes,
+    recomputed_payload_digest: ContentDigest,
+    payload_length: u64,
+    singular_descriptor_live_charge: LiveBudgetCharge,
+    payload_live_charge: LiveBudgetCharge,
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn post_commit_failure_does_not_roll_back_authoritative_head() {
     let mut fixture = coordinator_support::coordinator_fixture();
@@ -2534,6 +2550,66 @@ async fn exact_barrier_retry_notifies_then_returns_same_generation_without_recom
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn pending_notification_error_preserves_complete_new_partition_authority() {
+    let mut fixture = coordinator_support::coordinator_fixture();
+    fixture.participant("session").fail_first_commit_notification();
+    let mut first_partitions = Vec::new();
+    assert!(matches!(
+        fixture
+            .coordinator
+            .commit_barrier(
+                coordinator_support::barrier_at(3),
+                &mut first_partitions,
+            )
+            .await,
+        Err(CheckpointError::PostCommitNotification { .. })
+    ));
+    fixture.participant("session").fail_next_commit_notification();
+    let (input_budgets, partition) = fixture.uncommitted_partition_with_budgets(7).await;
+    let mut next_partitions = vec![partition];
+    let input_before = support::partition_input_authority_snapshot(
+        &next_partitions,
+        &input_budgets,
+    );
+    let pending_before = fixture.coordinator.pending_published_barrier().cloned();
+    let head_before = fixture.backend.latest_generation(&fixture.run).unwrap();
+    let counters_before = fixture.backend.stage_commit_counters();
+    let inventory_before = fixture.backend.immutable_object_inventory(&fixture.run);
+
+    assert!(matches!(
+        fixture
+            .coordinator
+            .commit_barrier(
+                coordinator_support::barrier_at(7),
+                &mut next_partitions,
+            )
+            .await,
+        Err(CheckpointError::PostCommitNotification { .. })
+    ));
+
+    support::assert_partition_input_authority_exact(
+        &next_partitions,
+        &input_budgets,
+        &input_before,
+    );
+    assert_eq!(fixture.coordinator.pending_published_barrier(), pending_before.as_ref());
+    assert_eq!(fixture.backend.latest_generation(&fixture.run).unwrap(), head_before);
+    assert_eq!(fixture.backend.stage_commit_counters(), counters_before);
+    assert_eq!(fixture.backend.immutable_object_inventory(&fixture.run), inventory_before);
+
+    fixture
+        .coordinator
+        .commit_barrier(
+            coordinator_support::barrier_at(7),
+            &mut next_partitions,
+        )
+        .await
+        .unwrap();
+    assert!(next_partitions.is_empty());
+    support::assert_partition_input_budgets_released(&input_budgets);
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn cancelling_pending_notification_retry_preserves_pending_and_new_inputs() {
     let mut fixture = coordinator_support::coordinator_fixture();
     let first_barrier = coordinator_support::barrier_at(3);
@@ -2547,9 +2623,16 @@ async fn cancelling_pending_notification_retry_preserves_pending_and_new_inputs(
         Err(CheckpointError::PostCommitNotification { .. })
     ));
     fixture.participant("session").block_next_commit_notification();
-    let mut next_partitions = vec![fixture.uncommitted_partition(7).await];
-    let descriptors_before = support::partition_descriptors(&next_partitions);
+    let (input_budgets, partition) = fixture.uncommitted_partition_with_budgets(7).await;
+    let mut next_partitions = vec![partition];
+    let input_before = support::partition_input_authority_snapshot(
+        &next_partitions,
+        &input_budgets,
+    );
+    let pending_before = fixture.coordinator.pending_published_barrier().cloned();
     let head_before = fixture.backend.latest_generation(&fixture.run).unwrap();
+    let counters_before = fixture.backend.stage_commit_counters();
+    let inventory_before = fixture.backend.immutable_object_inventory(&fixture.run);
     let mut pending = Box::pin(fixture.coordinator.commit_barrier(
         coordinator_support::barrier_at(7),
         &mut next_partitions,
@@ -2557,12 +2640,15 @@ async fn cancelling_pending_notification_retry_preserves_pending_and_new_inputs(
     assert!(matches!(poll!(pending.as_mut()), Poll::Pending));
     drop(pending);
 
-    assert_eq!(support::partition_descriptors(&next_partitions), descriptors_before);
-    assert_eq!(fixture.backend.latest_generation(&fixture.run).unwrap(), head_before);
-    assert_eq!(
-        fixture.coordinator.pending_notification_generation(),
-        Some(&head_before),
+    support::assert_partition_input_authority_exact(
+        &next_partitions,
+        &input_budgets,
+        &input_before,
     );
+    assert_eq!(fixture.coordinator.pending_published_barrier(), pending_before.as_ref());
+    assert_eq!(fixture.backend.latest_generation(&fixture.run).unwrap(), head_before);
+    assert_eq!(fixture.backend.stage_commit_counters(), counters_before);
+    assert_eq!(fixture.backend.immutable_object_inventory(&fixture.run), inventory_before);
     fixture.participant("session").unblock_commit_notification();
     fixture
         .coordinator
@@ -2572,6 +2658,8 @@ async fn cancelling_pending_notification_retry_preserves_pending_and_new_inputs(
         )
         .await
         .unwrap();
+    assert!(next_partitions.is_empty());
+    support::assert_partition_input_budgets_released(&input_budgets);
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -2590,6 +2678,23 @@ async fn greater_epoch_receipt_from_another_run_never_reaches_participant() {
     assert_eq!(fixture.participant("session").commit_notifications(), 0);
 }
 ```
+
+The test-support-only `PartitionInputAuthoritySnapshot` captures the vector
+length and each partition's complete `ResultSegmentDescriptor` identity, exact
+payload bytes, recomputed payload digest, declared payload length, singular
+descriptor-budget live items/bytes, and payload-budget live items/bytes.
+`partition_input_authority_snapshot` requires exactly one nonempty input for
+these adversarial tests. `assert_partition_input_authority_exact` re-borrows the
+move-only partition and independently compares every field and both live budget
+snapshots; descriptor equality alone is insufficient. `InputPartitionBudgets`
+retains separate observation handles for the singular descriptor and payload
+budgets, and `assert_partition_input_budgets_released` requires both live charges
+to reach zero after the same vector is eventually staged successfully.
+`pending_published_barrier` is a test-only borrow of the complete private
+`PublishedBarrier`, including the exact `CheckpointBarrier` run/cut identity and
+committed generation/receipt authority. Error and cancellation assertions clone
+it only into test observation state and compare the full value, not merely its
+generation number.
 
 - [ ] **Step 2: Verify RED**
 
@@ -2680,7 +2785,8 @@ or consume inputs belonging to a later attempt.
 
 Run Step 2. Expected: exact set, no-notify-before-CAS, frozen order,
 same-coordinator consecutive barriers, post-notification-failure progress, retry,
-exact-repeat no-recommit, cancellation/input preservation, and overlay
+exact-repeat no-recommit, notification-error and cancellation preservation of
+complete move-only input authority/live charges, same-vector retry, and overlay
 reclamation tests pass.
 
 - [ ] **Step 5: Commit**

@@ -208,8 +208,12 @@ backend budget snapshots, and authoritative generation unchanged.
   second barrier against the advanced expected generation.
 - An exact pending-barrier repeat retries notification and returns the identical
   committed generation with unchanged stage/commit counters and inventory;
-  cancellation of pending retry preserves the pending receipt and a borrowed
-  vector of newly supplied partitions byte-for-byte.
+  both an explicit notification error and cancellation of pending retry preserve
+  the complete pending `PublishedBarrier`/receipt, authoritative head, typed
+  inventory, stage/commit counters, and a nonempty borrowed input vector. Input
+  preservation compares descriptor identity, payload bytes/digest/length, and
+  the exact live singular-descriptor and payload-budget charges. Retrying with
+  that same vector succeeds and releases both input charges.
 
 The privacy regressions live as `compile_fail` rustdoc directly on the public
 DTOs in `results.rs`; an integration-test comment is not executable coverage.
