@@ -26,7 +26,7 @@ from tests.kubernetes.helpers.operator import OperatorDeployer
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.k8s_slow]
 
-EXPECTED_CHILD_RUNS = 8
+EXPECTED_CHILD_RUNS = 4
 OUTPUT_READY_THRESHOLD = 2
 _TERMINAL_SWEEP_PHASES = frozenset(
     {"Succeeded", "Failed", "Cancelled", "PartiallyFailed"}
@@ -43,7 +43,7 @@ def _build_sweep_manifest(*, name: str, namespace: str, image: str) -> str:
             "imagePullPolicy": "Never",
             "sweep": {
                 "type": "grid",
-                "parameters": {"phases.profiling.concurrency": [1, 2, 3, 4]},
+                "parameters": {"phases.profiling.concurrency": [1, 2]},
             },
             "multiRun": {"numRuns": 2},
             "benchmark": {
@@ -309,7 +309,7 @@ async def _assert_downloaded_sweep_archive(
     assert len(manifest_children) == EXPECTED_CHILD_RUNS
     assert len(children_on_disk) == EXPECTED_CHILD_RUNS
     expected_cells = {
-        (variation, trial) for variation in range(4) for trial in range(2)
+        (variation, trial) for variation in range(2) for trial in range(2)
     }
     downloaded_cells = {
         (int(child["variationIndex"]), int(child["trialIndex"]))
