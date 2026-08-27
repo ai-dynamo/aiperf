@@ -27,12 +27,12 @@ use crate::dataset::{
     SamplerRegistry, SegmentStore, SequentialSampler, TextTokenizer, TiktokenTokenizer,
 };
 use crate::dispatch::collector::ReplayTerminalStatus;
+#[cfg(test)]
+use crate::endpoints::EndpointId;
 use crate::endpoints::{
     CreditPhase, Endpoint, EndpointKey, Media as EndpointMedia, PreparedEndpoint,
     PreparedEndpointTable, ShapeLowerer, Turn as EndpointTurn, TurnMessageLowerer,
 };
-#[cfg(test)]
-use crate::endpoints::EndpointId;
 use crate::rng::RngRoot;
 use crate::timing::{RunState, StopConfig};
 use anyhow::{Result, anyhow, bail};
@@ -47,8 +47,8 @@ mod materializer;
 mod model;
 
 pub use materializer::CreditMaterializer;
-pub use model::*;
 use model::RuntimeSessionBackend;
+pub use model::*;
 
 /// Policy for deriving the input length attached to one materialized request.
 ///

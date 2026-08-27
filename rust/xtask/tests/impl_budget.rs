@@ -7,8 +7,7 @@
 use std::sync::OnceLock;
 
 use aiperf_xtask::abi_impl_budget::{
-    MAX_ABI_FILES, MAX_ABI_TYPES, MAX_GLOBAL_IMPL_LINES, Measurement, ensure_within_budget,
-    measure,
+    MAX_ABI_FILES, MAX_ABI_TYPES, MAX_GLOBAL_IMPL_LINES, Measurement, ensure_within_budget, measure,
 };
 
 fn measurement() -> Measurement {
