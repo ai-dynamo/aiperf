@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Contract for the measured native-plugin package and feature topology.
+//! Contract for the reviewed native-plugin package and feature projection.
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -10,6 +10,43 @@ use std::{
 };
 
 use serde::Deserialize;
+
+const IMPLEMENTATION_TASK_PACKAGES: &[(u64, &[&str])] = &[
+    (4, &["aiperf-core"]),
+    (5, &["aiperf-plugin-api"]),
+    (
+        6,
+        &[
+            "aiperf-endpoint-sdk",
+            "aiperf-export-sdk",
+            "aiperf-plugin-test-support",
+            "aiperf-transport-sdk",
+        ],
+    ),
+    (7, &["aiperf-allocator-provider", "aiperf-allocator-shim"]),
+    (9, &["aiperf-plugin-sdk", "aiperf-plugin-sdk-macros"]),
+    (16, &["aiperf-plugin-host"]),
+    (24, &["aiperf-plugin-export-basic"]),
+    (25, &["aiperf-plugin-export-parquet"]),
+    (26, &["aiperf-plugin-export-mlflow"]),
+    (27, &["aiperf-plugin-export-wandb"]),
+    (28, &["aiperf-plugin-export-otel"]),
+    (30, &["aiperf-plugin-endpoints"]),
+    (31, &["aiperf-plugin-transport-http"]),
+    (32, &["aiperf-plugin-transport-grpc"]),
+    (
+        33,
+        &[
+            "aiperf-plugin-transport-dry-run",
+            "aiperf-plugin-transport-websocket",
+        ],
+    ),
+    (34, &["aiperf-plugin-transport-dynosim"]),
+    (35, &["aiperf-plugin-packaging-tests"]),
+    (36, &["aiperf-plugin-conformance"]),
+    (37, &["aiperf-plugin-static-comparator"]),
+    (38, &["aiperf-plugin-perf"]),
+];
 
 #[derive(Clone, Debug, Deserialize)]
 struct BaselineTopology {
@@ -79,12 +116,12 @@ struct PackageOwnership {
     package: String,
     owner: String,
     review_state: String,
-    coupling_evidence: String,
+    projection_basis: String,
     source_package: Option<String>,
     dependencies: Vec<OwnedDependency>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(deny_unknown_fields)]
 struct OwnedDependency {
     package: String,
@@ -120,6 +157,8 @@ struct MetadataPackage {
     id: String,
     name: String,
     dependencies: Vec<MetadataDependency>,
+    features: BTreeMap<String, Vec<String>>,
+    manifest_path: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -129,11 +168,212 @@ struct MetadataDependency {
     path: Option<String>,
 }
 
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ImplementationWitness {
+    schema_version: u64,
+    task: u64,
+    packages: Vec<ImplementedPackageWitness>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ImplementedPackageWitness {
+    package: String,
+    source_files: Vec<String>,
+    dependencies: Vec<OwnedDependency>,
+    features: BTreeMap<String, Vec<String>>,
+}
+
 fn workspace_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .expect("bench-tools is directly below the workspace root")
         .to_path_buf()
+}
+
+fn fixture_from_checked_files() -> (OwnershipMatrix, BaselineTopology) {
+    let root = workspace_root();
+    let matrix_path = root.join("plugin-api/feature-ownership.toml");
+    let matrix: OwnershipMatrix = toml::from_str(
+        &std::fs::read_to_string(&matrix_path)
+            .unwrap_or_else(|error| panic!("cannot read {}: {error}", matrix_path.display())),
+    )
+    .expect("ownership matrix has the strict version-2 shape");
+    let topology_path = root.join("../").join(&matrix.baseline_topology.path);
+    let baseline: BaselineTopology = serde_json::from_slice(
+        &std::fs::read(&topology_path)
+            .unwrap_or_else(|error| panic!("cannot read {}: {error}", topology_path.display())),
+    )
+    .expect("Task-1 topology must contain the exact Cargo projection");
+    (matrix, baseline)
+}
+
+fn checked_matrix_and_metadata(root: &std::path::Path) -> (OwnershipMatrix, Metadata) {
+    let (matrix, baseline) = fixture_from_checked_files();
+    validate_projection(&matrix, &baseline).expect("ownership projection must be exact");
+    let output = Command::new("cargo")
+        .args(["metadata", "--locked", "--format-version", "1", "--no-deps"])
+        .current_dir(root)
+        .output()
+        .expect("cargo metadata executes");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let metadata = serde_json::from_slice(&output.stdout).expect("metadata JSON");
+    (matrix, metadata)
+}
+
+fn collect_rust_sources(
+    workspace: &std::path::Path,
+    directory: &std::path::Path,
+    files: &mut Vec<String>,
+) -> Result<(), String> {
+    for entry in std::fs::read_dir(directory)
+        .map_err(|error| format!("cannot read {}: {error}", directory.display()))?
+    {
+        let entry = entry.map_err(|error| format!("cannot read directory entry: {error}"))?;
+        let file_type = entry
+            .file_type()
+            .map_err(|error| format!("cannot inspect {}: {error}", entry.path().display()))?;
+        if file_type.is_dir() {
+            collect_rust_sources(workspace, &entry.path(), files)?;
+        } else if file_type.is_file() && entry.path().extension().is_some_and(|ext| ext == "rs") {
+            let relative = entry
+                .path()
+                .strip_prefix(workspace)
+                .map_err(|_| format!("source outside workspace: {}", entry.path().display()))?
+                .to_str()
+                .ok_or_else(|| format!("non-UTF-8 source path: {}", entry.path().display()))?
+                .replace(std::path::MAIN_SEPARATOR, "/");
+            files.push(relative);
+        }
+    }
+    Ok(())
+}
+
+fn validate_implementation_witness(
+    workspace: &std::path::Path,
+    matrix: &OwnershipMatrix,
+    metadata: &Metadata,
+    task: u64,
+    witness: &ImplementationWitness,
+) -> Result<(), String> {
+    if witness.schema_version != 1 || witness.task != task {
+        return Err(format!(
+            "implemented topology witness identity mismatch for Task {task}"
+        ));
+    }
+    let required = IMPLEMENTATION_TASK_PACKAGES
+        .iter()
+        .find_map(|(owner, packages)| (*owner == task).then_some(*packages))
+        .unwrap_or_default();
+    let witnessed = witness
+        .packages
+        .iter()
+        .map(|package| package.package.as_str())
+        .collect::<BTreeSet<_>>();
+    if witnessed.len() != witness.packages.len()
+        || witnessed != required.iter().copied().collect::<BTreeSet<_>>()
+    {
+        return Err(format!("inexact implemented package set for Task {task}"));
+    }
+    let matrix_packages = matrix
+        .package_ownership
+        .iter()
+        .map(|row| row.package.as_str())
+        .collect::<BTreeSet<_>>();
+    let packages = metadata
+        .packages
+        .iter()
+        .map(|package| (package.name.as_str(), package))
+        .collect::<BTreeMap<_, _>>();
+    for package in &witness.packages {
+        if !matrix_packages.contains(package.package.as_str()) {
+            return Err(format!("unknown projected package {}", package.package));
+        }
+        let actual = packages
+            .get(package.package.as_str())
+            .ok_or_else(|| format!("Cargo metadata lacks {}", package.package))?;
+        let package_root = std::path::Path::new(&actual.manifest_path)
+            .parent()
+            .ok_or_else(|| format!("manifest has no parent for {}", package.package))?;
+        let mut source_files = Vec::new();
+        collect_rust_sources(workspace, package_root, &mut source_files)?;
+        source_files.sort();
+        let mut declared_sources = package.source_files.clone();
+        declared_sources.sort();
+        declared_sources.dedup();
+        if package.source_files.is_empty()
+            || declared_sources.len() != package.source_files.len()
+            || declared_sources != source_files
+        {
+            return Err(format!(
+                "source-file census mismatch for {}",
+                package.package
+            ));
+        }
+        let actual_dependencies = actual
+            .dependencies
+            .iter()
+            .filter(|dependency| dependency.path.is_some())
+            .map(|dependency| {
+                (
+                    dependency.name.as_str(),
+                    dependency.kind.as_deref().unwrap_or("normal"),
+                )
+            })
+            .collect::<BTreeSet<_>>();
+        let declared_dependencies = package
+            .dependencies
+            .iter()
+            .map(|dependency| (dependency.package.as_str(), dependency.kind.as_str()))
+            .collect::<BTreeSet<_>>();
+        if declared_dependencies.len() != package.dependencies.len()
+            || declared_dependencies != actual_dependencies
+        {
+            return Err(format!(
+                "dependency census mismatch for {}",
+                package.package
+            ));
+        }
+        if package.features != actual.features {
+            return Err(format!("feature census mismatch for {}", package.package));
+        }
+    }
+    Ok(())
+}
+
+fn validate_configured_implementation_task(
+    workspace: &std::path::Path,
+    task: u64,
+) -> Result<(), String> {
+    let (matrix, metadata) = checked_matrix_and_metadata(workspace);
+    let tasks = if task == 40 {
+        IMPLEMENTATION_TASK_PACKAGES
+            .iter()
+            .map(|(task, _)| *task)
+            .collect::<Vec<_>>()
+    } else if IMPLEMENTATION_TASK_PACKAGES
+        .iter()
+        .any(|(owner, _)| *owner == task)
+    {
+        vec![task]
+    } else {
+        Vec::new()
+    };
+    for task in tasks {
+        let path = workspace.join(format!("plugin-api/implemented-topology/task-{task}.toml"));
+        let witness: ImplementationWitness = toml::from_str(
+            &std::fs::read_to_string(&path)
+                .map_err(|error| format!("cannot read {}: {error}", path.display()))?,
+        )
+        .map_err(|error| format!("invalid {}: {error}", path.display()))?;
+        validate_implementation_witness(workspace, &matrix, &metadata, task, &witness)?;
+    }
+    Ok(())
 }
 
 fn insert_unique<T: Ord>(set: &mut BTreeSet<T>, value: T, description: &str) -> Result<(), String> {
@@ -189,17 +429,17 @@ fn validate_projection(
 
     let mut package_rows = BTreeMap::new();
     for row in &matrix.package_ownership {
-        if row.owner.is_empty() || row.coupling_evidence.trim().is_empty() {
+        if row.owner.is_empty() || row.projection_basis.trim().is_empty() {
             return Err(format!(
-                "empty owner or coupling evidence for {}",
+                "empty owner or projection basis for {}",
                 row.package
             ));
         }
         match row.review_state.as_str() {
-            "measured" => {
+            "reviewed_projection" => {
                 let source = row.source_package.as_deref().ok_or_else(|| {
                     format!(
-                        "measured package {} lacks a Task-1 source witness",
+                        "projected package {} lacks a Task-1 package witness",
                         row.package
                     )
                 })?;
@@ -330,14 +570,14 @@ fn fixture() -> (OwnershipMatrix, BaselineTopology) {
     .map(|(package, owner)| PackageOwnership {
         package: package.to_owned(),
         owner: owner.to_owned(),
-        review_state: "measured".to_owned(),
+        review_state: "reviewed_projection".to_owned(),
         source_package: Some("aiperf-runtime".to_owned()),
         dependencies: vec![OwnedDependency {
             package: "aiperf-plugin-api".to_owned(),
             kind: "normal".to_owned(),
             justification: "fixture witness".to_owned(),
         }],
-        coupling_evidence: "Task-1 fixture source coupling".to_owned(),
+        projection_basis: "Task-1 fixture package projection".to_owned(),
     })
     .collect();
     let matrix = OwnershipMatrix {
@@ -420,7 +660,7 @@ fn projection_rejects_duplicate_package_dependency_feature_and_split_rows() {
 }
 
 #[test]
-fn projection_requires_concrete_task1_cargo_witnesses_and_exact_grpc_splits() {
+fn projection_requires_task1_package_witnesses_and_exact_grpc_splits() {
     let (matrix, baseline) = fixture();
 
     let mut unwitnessed = matrix.clone();
@@ -428,7 +668,7 @@ fn projection_requires_concrete_task1_cargo_witnesses_and_exact_grpc_splits() {
     assert!(
         validate_projection(&unwitnessed, &baseline)
             .unwrap_err()
-            .contains("lacks a Task-1 source witness")
+            .contains("lacks a Task-1 package witness")
     );
 
     let mut drifted = matrix.clone();
@@ -459,11 +699,11 @@ fn projection_requires_concrete_task1_cargo_witnesses_and_exact_grpc_splits() {
     );
 
     let (mut unevidenced, baseline) = fixture();
-    unevidenced.package_ownership[0].coupling_evidence.clear();
+    unevidenced.package_ownership[0].projection_basis.clear();
     assert!(
         validate_projection(&unevidenced, &baseline)
             .unwrap_err()
-            .contains("empty owner or coupling evidence")
+            .contains("empty owner or projection basis")
     );
 
     let (mut unjustified, baseline) = fixture();
@@ -502,7 +742,7 @@ fn toml_is_a_test_only_dependency() {
 }
 
 #[test]
-fn every_plugin_dependency_and_baseline_feature_has_one_reviewed_owner() {
+fn every_plugin_dependency_and_baseline_feature_has_one_reviewed_projection() {
     let root = workspace_root();
     let matrix_path = root.join("plugin-api/feature-ownership.toml");
     let matrix: OwnershipMatrix = toml::from_str(
@@ -626,7 +866,78 @@ fn every_plugin_dependency_and_baseline_feature_has_one_reviewed_owner() {
                 .map(|dependency| (dependency.package.as_str(), dependency.kind.as_str()))
                 .collect::<BTreeSet<_>>(),
             unique,
-            "unmeasured dependency edge for {package_name}"
+            "unprojected dependency edge for {package_name}"
         );
     }
+}
+
+#[test]
+fn implementation_task_map_assigns_every_projected_package_once() {
+    let (matrix, _) = fixture_from_checked_files();
+    let mut assigned = BTreeSet::new();
+    for (_, packages) in IMPLEMENTATION_TASK_PACKAGES {
+        for package in *packages {
+            assert!(assigned.insert(*package), "duplicate implementation owner");
+        }
+    }
+    assert_eq!(
+        assigned,
+        matrix
+            .package_ownership
+            .iter()
+            .map(|row| row.package.as_str())
+            .collect()
+    );
+}
+
+#[test]
+fn implemented_witness_matches_real_package_sources_dependencies_and_features() {
+    let root = workspace_root();
+    let (matrix, metadata) = checked_matrix_and_metadata(&root);
+    let witness = ImplementationWitness {
+        schema_version: 1,
+        task: 4,
+        packages: vec![ImplementedPackageWitness {
+            package: "aiperf-core".to_owned(),
+            source_files: vec!["core/src/lib.rs".to_owned()],
+            dependencies: vec![],
+            features: BTreeMap::new(),
+        }],
+    };
+    validate_implementation_witness(&root, &matrix, &metadata, 4, &witness)
+        .expect("exact core witness");
+
+    let mut missing_source = witness.clone();
+    missing_source.packages[0].source_files.clear();
+    assert!(
+        validate_implementation_witness(&root, &matrix, &metadata, 4, &missing_source)
+            .unwrap_err()
+            .contains("source-file census")
+    );
+
+    let mut wrong_dependency = witness;
+    wrong_dependency.packages[0]
+        .dependencies
+        .push(OwnedDependency {
+            package: "aiperf-plugin-api".to_owned(),
+            kind: "normal".to_owned(),
+            justification: "not present in Cargo metadata".to_owned(),
+        });
+    assert!(
+        validate_implementation_witness(&root, &matrix, &metadata, 4, &wrong_dependency)
+            .unwrap_err()
+            .contains("dependency census")
+    );
+}
+
+#[test]
+fn configured_task_requires_its_implemented_topology_witness() {
+    let Some(task) = std::env::var("AIPERF_PLUGIN_TOPOLOGY_TASK")
+        .ok()
+        .and_then(|task| task.parse::<u64>().ok())
+    else {
+        return;
+    };
+    validate_configured_implementation_task(&workspace_root(), task)
+        .expect("configured implementation topology witness");
 }

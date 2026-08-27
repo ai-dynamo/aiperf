@@ -8,7 +8,7 @@ xtask = "run --package aiperf-xtask --"
 # Dynamo's runtime-protocol feature exposes Tokio runtime metrics whose public
 # API is intentionally gated by Tokio's `tokio_unstable` cfg. Keep the native
 # AIPerf consumer on the same compile contract as Dynamo's canonical workspace.
-rustflags = ["--cfg", "tokio_unstable", "-C", "link-arg=-fuse-ld=lld"]
+rustflags = ["--cfg", "tokio_unstable"]
 
 [target.x86_64-unknown-linux-gnu]
 linker = "clang"

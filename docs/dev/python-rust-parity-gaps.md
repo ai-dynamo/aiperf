@@ -14,7 +14,7 @@ Where the implementations deliberately use different designs, the required
 parity boundary is the public configuration, request, result, artifact, and
 failure contract.
 
-The inventory is current as of 2026-08-26. It is based on executable code and
+The inventory is current as of 2026-08-27. It is based on executable code and
 tests. Design records, plans, tutorials, and architecture prose may explain
 intent, but they are not evidence for a behavior claim in this document.
 
@@ -83,10 +83,12 @@ an error:
 2. Client-visible token counts can mean tokenizer tokens in Python and response
    events in Rust.
 3. Request latency ends at a different response per engine, so the headline
-   latency and every token-derived timing can be inflated on native runs.
+   latency and every token-derived timing carry a trailing-frame offset on
+   native runs. The divergence concentrates in the tail rather than the mean.
 4. A user-centric phase floors its authored `users` and `concurrency` per worker
-   thread in every dispatch mode, and unset `runtime.workers` auto-selects the
-   machine's parallelism, so a cap below the core count runs at the core count.
+   thread under `sharded` and the default `global`, and unset `runtime.workers`
+   auto-selects the machine's parallelism, so a cap below the core count runs at
+   the core count.
 5. The Python programmatic API still executes the service-mesh engine while the
    shipped CLI executes the native one.
 6. Per-request records retain familiar field names while changing field
@@ -112,6 +114,9 @@ an error:
     latency suite passes while comparing the native run against itself, because
     its Python leg executes nothing and both legs write to one artifact
     directory.
+14. The tests guarding aggregate admission and rate pacing either skip their
+    decisive assertion or assert the current behavior as required, so the
+    admission gaps cannot be closed without failing the suite that names them.
 
 The Python `kubernetes` and `operator` packages are absent from the tree, so the
 remaining Kubernetes items are native-only defects rather than parity gaps.
@@ -119,6 +124,14 @@ remaining Kubernetes items are native-only defects rather than parity gaps.
 The first migration milestone should therefore be a deterministic cross-engine
 acceptance gate. Without it, closing individual gaps cannot establish that a
 Python execution path is safe to retire.
+
+That gate cannot treat Python as authoritative for every compared field.
+Convergence is toward the behavior the code shows to be correct, which is Python
+for most items and Rust for some: P0.5 is a confirmed case where the Python
+result parser is the defective side, so a gate that pinned the Python number as
+expected would move the native engine onto a wrong one. Each numbered section's
+`**Direction:**` field records which side that is, and a gate needs a recorded
+expected-value owner per metric rather than one per engine.
 
 ---
 
@@ -134,12 +147,25 @@ subprocess supervision, grading capture, accumulation, and CSV support, but the
 normal CLI projection does not select the `static_accuracy` workload and the
 stock HTTP workload registration does not expose the complete path.
 
+Two independent breaks sit behind that one sentence, and closing either alone
+changes nothing. The projection cannot name the workload: `WorkloadKind` is
+closed over `Scheduled` and `Graph`
+(`rust/runtime/src/config/model/workload_kind.rs:48-64`), so
+`into_authored`'s `workload_kind.workload_id()`
+(`rust/runtime/src/engine/protocol_v2.rs:373`) emits `scheduled` for an accuracy
+run and `static_accuracy` never reaches the wire. And the registration that
+would answer to that id has no production caller:
+`register_http_static_accuracy_workload`
+(`rust/runtime/src/engine/online_execution.rs:277-288`) is referenced only by
+its own factory wrapper and one unit test (`:2389`).
+
 **Impact**
 
 - `--accuracy-benchmark` and its companion flags resolve into `cfg.accuracy`
   without executing the intended native accuracy workload.
 - The native YAML authoring path exposes no `accuracy` key at all, so an
-  accuracy run is not expressible as a config file.
+  accuracy run is not expressible as a config file: `into_inputs` hardcodes
+  `accuracy: None` (`rust/cli/src/yaml.rs:2662`).
 - Python and native runs have different grading timing and association rules.
 - Native report capabilities cannot compensate for an unreachable entry path.
 
@@ -160,17 +186,26 @@ stock HTTP workload registration does not expose the complete path.
 Lower `cfg.accuracy` into a registered native accuracy workload, expose the
 required evaluator configuration, and add a stock `aiperf profile` E2E that
 asserts graded per-record output, aggregate accuracy, evaluator provenance, and
-CSV output.
+CSV output. The projection must emit a distinct static-accuracy workload id and
+the stock registration must claim it, so neither half can be closed in
+isolation. P2.21 carries the three further points at which the same path fails
+closed once its entry is reachable.
 
 ## P0.2 Endpoint transport policy can be silently lost
 
 **Direction:** Bidirectional
 
-The Python endpoint model declares HTTP/2, TLS verification, UDS, connection
-limits, keepalive, templates, and response selectors. The Python aiohttp path
-does not consume several of these fields. Rust's lower transport layers support
-many of them, but the native YAML and CLI projection omits or hardcodes part of
-the same surface.
+The Python endpoint model declares templates and response selectors and nothing
+else on this surface (`src/aiperf/config/endpoint.py:94, 267`). HTTP/2 has no
+declaration anywhere in the Python tree; connection limits, keepalive, and TLS
+verification are process-global environment values consumed by the transport
+defaults (`AIPERF_HTTP_CONNECTION_LIMIT`, `AIPERF_HTTP_KEEPALIVE_TIMEOUT`, and
+`AIPERF_HTTP_SSL_VERIFY` at `src/aiperf/common/environment.py:751, 757, 815`,
+read at `src/aiperf/transports/http_defaults.py:136, 147`); and UDS targeting is
+absent from Python entirely. Those four are therefore a Rust-only superset with
+no per-endpoint Python counterpart rather than a shared field set one side
+ignores. Rust's lower transport layers support all of them, but the native YAML
+and CLI projection omits or hardcodes part of the same surface.
 
 The protocol substitution is silent. The ordinary non-mTLS TLS client advertises
 ALPN `h2` before `http/1.1`
@@ -183,10 +218,18 @@ even express the choice.
 
 - A valid-looking profile can execute with the wrong protocol, pool size,
   keepalive, or endpoint formatter.
-- `http2`, `connection_limit`, `keepalive_timeout`, `template`, and
-  `response_field` reach execution only over the internal protocol-v2 wire;
-  neither CLI nor YAML authoring can set them, and resolution pins them to
-  constants.
+- `http2`, `connection_limit`, and `keepalive_timeout` reach execution only over
+  the internal protocol-v2 wire; neither CLI nor YAML authoring can set them,
+  and resolution pins them to constants.
+- `template` and `response_field` have no key of their own either.
+  `EndpointSection` sets `deny_unknown_fields` (`rust/cli/src/yaml.rs:1085`), so
+  `endpoint.template` is rejected as an unknown key rather than discarded. Both
+  reach execution only through the open `endpoint.extra` bag, which the flexible
+  endpoints read as `payload_template` and `response_field`
+  (`rust/runtime/src/endpoints/tier2/flexible.rs:534-545, 628-646`), so the
+  authored spelling and the reachable spelling are different names.
+- `ssl_verify` and `uds_path` are authorable in YAML and on the flag-only path
+  but are dropped when the two are combined (P1.56).
 - Load shape and measured latency change materially: connection reuse, pool
   limits, and DNS resolver behavior differ, and Python is HTTP/1.1 with global
   environment defaults while Rust multiplexes over h2c or negotiated HTTP/2
@@ -229,6 +272,12 @@ parsed response event. For non-streaming text, a complete response can count as
 one Rust output token. For streaming text, the count can depend on server chunk
 boundaries.
 
+Measured on a 64-request client-token run against a deterministic mock at a
+pinned ISL of 64 and OSL of 8, `output_sequence_length` is avg 8.0 natively
+against 8.671875 in Python, p50 8 against 9, and max 8 against 13. The same run
+under `--use-server-token-count` agrees exactly, which localizes the divergence
+to the client-side count rather than to the responses.
+
 **Impact**
 
 - OSL, token throughput, ITL denominators, goodput, and SLA decisions are not
@@ -245,6 +294,15 @@ boundaries.
 - Rust observer: `rust/runtime/src/metrics.rs`
 - Rust reduction: `rust/runtime/src/transport/reduce.rs`
 - Rust TGI endpoint: `rust/runtime/src/endpoints/tier2.rs`
+- Rust dispatch outcome carrying the reduced counts:
+  `rust/runtime/src/transport/core/dispatch.rs`
+- Rust transport sinks that construct it:
+  `rust/runtime/src/transport/http/sink.rs`,
+  `rust/runtime/src/transport/grpc/sink.rs`
+- Rust worker measurement that observes it:
+  `rust/runtime/src/transport/measure.rs`
+- Rust tokenizer seam a worker-local count needs:
+  `rust/runtime/src/dataset/tokenizer.rs`
 - Rust E2E: `rust/e2e-tests/tests/test_huggingface_generate_endpoint.rs`
 
 **Convergence target**
@@ -252,6 +310,15 @@ boundaries.
 Define visible OSL as tokenizer output over reconstructed response text in both
 engines. Retain response-event count separately for token-arrival timing and
 diagnostics.
+
+The native half of that definition is not a single-file change, and none of the
+reduction or endpoint files above can reach a tokenizer as they stand. The count
+is produced in `transport::reduce`, carried on `DispatchResult`
+(`rust/runtime/src/transport/core/dispatch.rs:305`) which both the HTTP and gRPC
+sinks build, and turned into metrics in `transport::measure`, so a text-derived
+count has to be threaded across all four with a worker-local `TextTokenizer`
+handle. `TurnDispatchOutcome` (`rust/runtime/src/scheduled.rs:124`) is a
+different, higher type and is not on that path.
 
 ## P0.4 Usage normalization changes provider totals
 
@@ -263,6 +330,14 @@ The streaming and derived-total rules still diverge: Python selects the last
 non-empty streaming usage object wholesale, Rust merges fields across usage
 events with per-field carry-forward, and Rust derives a total from prompt plus
 completion when the provider omits one while Python preserves absence.
+
+The native merge is `absorb_usage`'s per-field `.or(observed.…)` chain
+(`rust/runtime/src/transport/reduce.rs:237-260`), which keeps an earlier field
+whenever a later usage object omits or nulls it. `UsageView`
+(`rust/runtime/src/endpoints/usage.rs:12-22`) is a `Copy` borrow over one usage
+object and holds no cross-event state, so it re-totalizes the disjoint cache
+fields but merges nothing. The derived total is
+`rust/runtime/src/metrics.rs:605-613`.
 
 **Impact**
 
@@ -288,7 +363,11 @@ completion when the provider omits one while Python preserves absence.
 
 Represent verbatim provider fields separately from derived normalized totals.
 Specify identical synonym precedence, null handling, streaming merge, and
-derived-total rules.
+derived-total rules. The omitted-total case needs no new fixture: the mock
+server's `anthropic_usage` emits `input_tokens` and `output_tokens` and never
+`total_tokens` (`rust/mock-server/src/handlers.rs:1827-1838`), so
+`--endpoint-type messages` already exercises the derived-total divergence on the
+stock path.
 
 ## P0.5 Mixed prose and tool calls undercount Python output
 
@@ -296,7 +375,21 @@ derived-total rules.
 
 Both chat parsers retain prose and tool-call text from mixed chunks.
 `ToolCallResponseData.get_text()` combines them, but Python's result parser
-tokenizes only `tool_call_text`. Rust reduction includes both.
+takes the `ToolCallResponseData` branch and appends only `tool_call_text`,
+dropping the sibling `content`
+(`src/aiperf/records/inference_result_parser.py:595-596`). Rust reduction
+includes both, so the defective side is Python and the correction is a Python
+change.
+
+This is the one P0 whose convergence direction runs against the acceptance
+gate's oracle policy, and it is the case that bounds that policy. The defect is
+entirely in `inference_result_parser.py`, so the oracle itself is wrong on this
+metric. Native reduction already retains both texts, which means a gate that
+treats the current Python tree as authoritative (P0.7, P0.14) would not expose
+the undercount but converge the native engine onto it. A cross-engine assertion
+on output token counts for tool-call turns must therefore not take the Python
+value as expected while the undercount stands, and whoever builds the gate has to
+resolve authority per metric from the code rather than assume Python is right.
 
 **Impact**
 
@@ -333,11 +426,13 @@ Poisson tests fail their record-count assertions instead of comparing anything.
 
 Two suites do run both engines and compare per-record facts, and each is scoped
 to one feature: the raw-export and per-chunk-usage suites compare deterministic
-`profile_export_raw.jsonl` projections. They also disagree on what "Python"
-means — the raw-export suite exercises the current tree, while the
-per-chunk-usage suite compares against a detached worktree pinned to a
-hard-coded commit. No gate runs an arbitrary resolved request through both
-current engines.
+`profile_export_raw.jsonl` projections. Coverage inside the raw-export suite is
+narrower than the file boundary suggests — three of its nine cases override the
+Python module, four are inert, and two never launch Python at all (P0.14). They
+also disagree on what "Python" means — the raw-export suite exercises the
+current tree, while the per-chunk-usage suite compares against a detached
+worktree pinned to a hard-coded commit. No gate runs an arbitrary resolved
+request through both current engines.
 
 **Impact**
 
@@ -372,6 +467,12 @@ Run one deterministic resolved request through both engines and compare:
 - conversation, turn, and branch identity;
 - complete summary distributions and artifacts.
 
+Record the expected-value owner per compared field before the gate can fail a
+run on a mismatch. Python is the owner for most fields and Rust for some: on
+output token counts for tool-call turns the Python parser is the defective side
+(P0.5), so a blanket Python-authoritative comparison would encode that defect as
+the contract.
+
 ## P0.8 Authored per-model and per-transport fields are accepted and discarded
 
 **Direction:** Python to Rust
@@ -379,16 +480,27 @@ Run one deterministic resolved request through both engines and compare:
 (was P1.1 and P1.3)
 
 Python Pydantic models declare `extra="forbid"` per model and reject unknown
-fields. The Rust YAML root and every section struct set `deny_unknown_fields`,
+fields. The Rust YAML root and most section structs set `deny_unknown_fields`,
 so a Python-only key such as `benchmark.accuracy`, `endpointProfiles`,
-`failurePolicy`, `logging`, `metrics`, or `endpoint.template` is a hard parse
-error rather than a silent truncation. Three spots stay permissive and carry the
-loss: the inline `Full` structs in the `ModelsSection` and `ModelItem` visitors,
-and `TransportSection`'s flattened `options`, whose unknown keys are discarded
-for `transport.type: http` and `grpc`. `ModelItem`'s `visit_map` decodes
-`full.name` only, so every other key in a model mapping is read and dropped. Two
-request fields are lost a second way: the resolver hardcodes
-`endpoint_profiles` and `failure_policy` empty
+`failurePolicy`, `logging`, or `metrics` is a hard parse error rather than a
+silent truncation. `endpoint.template` is rejected the same way, by
+`EndpointSection`'s `deny_unknown_fields` (`rust/cli/src/yaml.rs:1085`), which
+makes it unauthorable rather than discarded and puts it in P0.2's surface rather
+than this one.
+
+The two sections that carry per-model and per-transport keys are exactly the two
+that stay permissive. `ModelsSection` (`rust/cli/src/yaml.rs:963`) and
+`TransportSection` (`:1052-1060`) set no `deny_unknown_fields` at all, and three
+spots inside them carry the loss: the inline `Full` structs in the
+`ModelsSection` and `ModelItem` visitors, and `TransportSection`'s flattened
+`options`, whose unknown keys are discarded for `transport.type: http` and
+`grpc`. `ModelItem`'s `visit_map` decodes `full.name` only (`:1045`), so every
+other key in a model mapping is read and dropped. The typed models the resolver
+re-decodes into are permissive too — `Endpoint`
+(`rust/runtime/src/config/model/endpoint.rs:124-125`), `ModelItem`, and `Models`
+(`rust/runtime/src/config/model/models.rs:21-22, 31-32`) — so the loss is not
+confined to the YAML frontend. Two request fields are lost a second way: the
+resolver hardcodes `endpoint_profiles` and `failure_policy` empty
 (`rust/runtime/src/config/resolve.rs:1682-1683`) even though protocol v2 carries
 them.
 
@@ -476,12 +588,23 @@ and explicitly deprecate the service-mesh execution API.
 (was part of P1.14)
 
 The `PhaseSpec::UserCentric` arm applies `owned_cap` —
-`owned_positions(..).max(1)` — to `users` and to `concurrency` in every dispatch
-mode, not only `sharded`
+`owned_positions(..).max(1)` — to `users` and to `concurrency` regardless of
+dispatch mode, not only `sharded`
 (`rust/runtime/src/engine/sharded_scheduled.rs:217-233`), while unset
 `runtime.workers` auto-selects machine parallelism. So an authored `users: 8` on
 a 144-core host admits one user per thread and runs roughly 144 concurrent
 users. Python's global scheduler holds the authored cap exactly.
+
+Two modes are exempt and two are not. `global-hop` and `global-push` reach the
+slicing seam with `workers == 1`
+(`rust/runtime/src/engine/global_hop.rs:113-124`), which makes the split a no-op
+and leaves the authored cap whole, so the reachable modes are `sharded` and the
+default `global`. `global`'s shared gate does not rescue it: the user-centric
+phase builds its own `UserCentricWorkload` and session `SlotPool` from the
+already-sliced `users` value
+(`rust/runtime/src/engine/execute/dataset_build.rs:262-273`) instead of admitting
+from the cell-shared pool, which is why this arm is unconditional where the
+request-rate arms are gated on `Sharded`.
 
 **Impact**
 
@@ -501,9 +624,22 @@ users. Python's global scheduler holds the authored cap exactly.
 
 **Convergence target**
 
-Floor per-thread caps at zero rather than one, and prove exact global `users`,
-`concurrency`, and prefill totals at every worker count and in every dispatch
-mode.
+Give each thread its exact share of the authored cap and admit only the threads
+whose share is non-zero. A literal floor of zero deadlocks instead: a zero-user
+thread is rejected outright by `UserCentricConfig::validate`
+(`rust/runtime/src/user_centric.rs:41-42`), and one that still holds a non-zero
+request share leaves a hole in the dense record permutation that the merge
+rejects as `OrdinalOutOfRange` (`rust/runtime/src/cellular/shard.rs:165`), so the
+clamp has to be a participating-thread clamp that moves the request share with
+the user share.
+
+Prove exact global `users` and `concurrency` at every worker count under
+`sharded` and `global`. Prove exact prefill totals on the request-rate phase
+shapes only: a user-centric phase cannot carry a prefill cap at all, because
+dataset build rejects `prefill_concurrency` there
+(`rust/runtime/src/engine/execute/dataset_build.rs:232-235`). Two committed
+assertions require the present over-subscription and fail when the clamp lands
+(P0.17).
 
 ## P0.11 Request latency ends at a different response per engine
 
@@ -519,10 +655,17 @@ declared, so the same named metric means two things.
 **Impact**
 
 - Trailing usage and `[DONE]` frames are standard on the default streaming chat
-  path, so native request latency and every token-derived timing can be
-  inflated on every run.
+  path, so native request latency and every token-derived timing carry the gap
+  between the last content frame and the transport terminal.
+- The size of that gap is the server's, not the client's, and it concentrates in
+  the tail. Against `aiperf-mock-server`, `chat_stream` yields the usage chunk
+  and `sse_done()` with no intervening await, so the offset is small: measured at
+  four workers, TTFT p90 diverges 11.25% and `request_latency` p90 7.02% while
+  both averages stay inside 3%. A real server that computes usage after the last
+  content token widens it without bound.
 - A native-versus-Python latency comparison is invalid without either engine
-  reporting a problem.
+  reporting a problem, and an average-only comparison is the projection least
+  likely to detect it.
 - Downstream SLA and goodput decisions inherit the inflation, because request
   latency is the headline metric they read.
 
@@ -537,6 +680,15 @@ declared, so the same named metric means two things.
 
 Record the last meaningful response separately from transport terminal time, and
 document one boundary for request latency that both engines apply.
+
+The first half already holds for token-bearing responses: each record carries
+`token_arrival_ns` beside `request_end_ns`
+(`rust/runtime/src/engine/records.rs:523, 1043`), so the last content arrival is
+recoverable without changing the terminal timestamp. It is not a universal proxy
+for "content response". A record whose response produced no token observation
+carries an empty vector, and under P0.3's semantics its entries are parsed
+response events rather than tokens, so a declared boundary needs a marker that
+exists for every response shape — streaming and not, token-bearing and not.
 
 ## P0.12 A zero-success native run reports success and exits zero
 
@@ -558,6 +710,15 @@ all-failed guard at `:1136`, which does not exempt cancellations because
 error (`src/aiperf/records/records_tracker.py:348-353`) and a policy cancellation
 carries one (`src/aiperf/transports/aiohttp_client.py:290-295`).
 
+The two outcomes are not one shape with two causes. The all-cancelled run
+reports counters and has them subtracted away; the duration-truncated phase
+retains no record at all, because the phase runner cancels every in-flight
+request rather than recording it and warns that the resulting metrics will be
+empty (`rust/runtime/src/timing/phase/runner.rs:714-726`). Neither counter
+reaches the report, so it passes through the absent-counter arm rather than the
+cancellation subtraction. Classified against Python's guards it is
+`NoRequests`, not `AllRequestsFailed`, and the two need separate arms.
+
 The guard's doc comment claims it "mirrors the python engine's
 `system_controller` guard" and names `--dry-run` as the case the zero-request
 pass-through protects. Neither holds: Python's zero-record guard has no native
@@ -566,8 +727,14 @@ zero through the success arm and never reaches the exemption. Rust already
 contains a Python-faithful classifier — `classify_summary` in
 `rust/cli/src/sweep/confidence.rs:139-155` reproduces
 `local_executor._build_result_from_metrics` including its `No requests completed`
-and `All N requests failed` strings — but the single-run coordinator does not use
-it, so the same run passes as a single run and fails as a sweep or search cell.
+and `All N requests failed` strings — but only one of the four native exit paths
+reaches it. A single-trial sweep decides from `CellOutcome::success` alone
+(`rust/cli/src/sweep/aggregate.rs:85-90`), and every search loop sets
+`any_failure` from `!terminal.success`
+(`rust/cli/src/profile.rs:704-705, 897-898, 1052-1053, 1229-1230`). So a
+zero-success run exits zero as a single run, as a single-trial sweep, and as a
+search probe, and exits nonzero only as a repeated trial, where `classify`
+consults the classifier (`rust/cli/src/sweep/aggregate.rs:92`).
 
 **Impact**
 
@@ -581,11 +748,20 @@ it, so the same run passes as a single run and fails as a sweep or search cell.
 - The cancellation subtraction cannot distinguish an authored `cancellation:`
   workload from a deadline cancellation, a router-side cancel, or a server that
   closed every connection, so it suppresses genuine transport failures too.
-- Single-run and sweep-cell classification disagree on the same artifacts, so a
-  cancellation or zero-request workload is unreportable in a sweep while passing
-  as a single run.
-- The guard has no test anywhere in the Rust tree: its only references are its
-  definition and its one call site.
+- Single-run, single-trial-sweep, and search-probe classification agree with each
+  other and disagree with the repeated-trial path on the same artifacts, so a
+  cancellation or zero-request workload is unreportable in a repeated trial while
+  passing everywhere else.
+- The guard's positive arm is tested and its zero-success arms are not.
+  `rust/e2e-tests/tests/test_all_requests_failed.rs` asserts nonzero exit for a
+  run whose every request fails at connect and for one whose every request draws
+  an injected server error, and zero exit for a partially failed run. No test
+  covers the duration-truncated phase or the all-cancelled run, which are the two
+  outcomes that pass. The one cancellation product test asserts per-record error
+  shape, `was_cancelled`, and the error summary but never the exit code
+  (`rust/e2e-tests/tests/test_request_cancellation.rs:15-56`), and it cancels a
+  30 percent share rather than everything, so neither its assertions nor its
+  workload reaches this boundary.
 
 **Executable evidence**
 
@@ -598,6 +774,10 @@ it, so the same run passes as a single run and fails as a sweep or search cell.
 - Rust cancellation classification: `rust/runtime/src/engine/records.rs`
 - Rust faithful classifier: `rust/cli/src/sweep/confidence.rs`,
   `rust/cli/src/sweep/aggregate.rs`
+- Rust guard exit-code tests: `rust/e2e-tests/tests/test_all_requests_failed.rs`
+- Rust search-loop exit paths: `rust/cli/src/profile.rs`
+- Rust phase truncation and cancellation warning:
+  `rust/runtime/src/timing/phase/runner.rs`
 - Rust cancellation product test:
   `rust/e2e-tests/tests/test_request_cancellation.rs`
 - Rust dry-run product test: `rust/dry-run-tests/tests/dry_run.rs`
@@ -666,12 +846,24 @@ CV = 1.
 
 **Convergence target**
 
-Make the shared gate claim jittered fire times from one cell-wide renewal
-sequence rather than a grid plus per-thread offsets, so `global` matches a single
-issuer in distribution as well as in mean. Until then, warn when a
-non-`constant` arrival pattern is authored under `global` and state the exact
-guarantee in the flag help. Pin the observed inter-arrival distribution against a
-Python reference in a product test, not only the mean rate.
+Fire jittered arrivals from one cell-wide renewal sequence rather than a grid
+plus per-thread offsets, so `global` matches a single issuer in distribution as
+well as in mean.
+
+The sequence cannot live in the gate. `GlobalRateGate::new` receives the rate
+and nothing else (`rust/runtime/src/engine/execute/sharding.rs:62-63`), while the
+arrival pattern and the phase's `arrival_seed` reach the workload's interval
+generator directly from dataset build
+(`rust/runtime/src/engine/execute/dataset_build.rs:177-179, 196-200`) and never
+pass the gate. The equivalent observable property is a worker-local
+reconstruction of that one seeded sequence indexed by the dense slot the gate
+already hands out, which leaves the gate's claim protocol and its counter
+untouched.
+
+Until then, warn when a non-`constant` arrival pattern is authored under `global`
+and state the exact guarantee in the flag help. Pin the observed inter-arrival
+distribution against a Python reference in a product test, not only the mean
+rate; P0.17 records how wide the surviving mean-rate band is.
 
 ## P0.14 Cross-engine parity suites compare the native run against itself
 
@@ -683,8 +875,27 @@ Python reference in a product test, not only the mean rate.
 nothing, and exits 0 — including for unknown flags and for `--help`. The e2e
 harness defaults its Python lane to exactly that module
 (`python_module.unwrap_or("aiperf.cli")`,
-`rust/e2e-tests/tests/common/mod.rs:456`), so only the two suites that override
-`AIPERF_E2E_PYTHON_MODULE` to `aiperf` execute Python at all.
+`rust/e2e-tests/tests/common/mod.rs:456`), so only a case that overrides
+`AIPERF_E2E_PYTHON_MODULE` to `aiperf` executes Python at all.
+
+The override is per case, not per file, and `test_port_raw_parity.rs` sets it in
+three of its nine cases: `port55_default_session_affinity_header_raw_parity`
+(`:250`), `port26_session_affinity_headers_raw_parity` (`:428`), and
+`port26_session_affinity_headers_absent_by_default_raw_parity` (`:501`). Four
+cases run the inert module and compare the native run against itself the same way
+the latency suite does: `port18_leading_system_turn_hoist_raw_parity`,
+`port31_assistant_tool_calls_isl_parity`,
+`port25_outputs_json_metric_allowlist_parity`, and
+`port13_console_export_width_env_parity`. The two behaviors travel together: each
+overriding case also gives its two legs separate artifact directories through
+`run_in_artifact_dir`/`run_env_in_artifact_dir`, while each inert case calls
+`run_env` against the single shared directory, so its Python-labelled projection
+reads back the file the native leg just wrote. The remaining two —
+`port55_transport_raw_record_removes_authored_affinity_without_correlation`
+(`:314`) and `port55_transport_raw_record_derives_authoritative_affinity`
+(`:358`) — drive `HttpTransport::send_request` directly and launch no CLI at all,
+so they are native unit-level assertions rather than inert parity suites and
+carry no Python obligation.
 
 `test_rust_python_latency_parity.rs` does not merely lose its oracle: it passes
 while comparing the native run against itself. `harness.run` and
@@ -716,11 +927,18 @@ exactly zero, all three parity assertions pass, and the suite carries no
   no artifact directory, no records, and no captured requests is
   indistinguishable from a completed run at the `success()` check, and a shared
   artifact directory converts that silence into the other engine's numbers.
-- Cross-engine coverage is therefore two suites, and they do not agree on what
-  they compare against: `test_port_raw_parity.rs` overrides the module to
-  `aiperf` and exercises the current tree, while `test_per_chunk_usage_parity.rs`
-  builds a detached worktree at the hard-coded `PYTHON_ORACLE_COMMIT` and
-  compares against that frozen commit instead (P0.7).
+- Live cross-engine coverage is therefore three raw-export cases plus the
+  per-chunk-usage suite, and the two files do not agree on what they compare
+  against: `test_port_raw_parity.rs` overrides the module to `aiperf` and
+  exercises the current tree, while `test_per_chunk_usage_parity.rs` builds a
+  detached worktree at the hard-coded `PYTHON_ORACLE_COMMIT` and compares against
+  that frozen commit instead (P0.7).
+- The four inert raw-export cases are the ones whose subjects have live
+  divergences — leading-system hoisting, assistant tool-call ISL (P0.16),
+  `outputs.json` row shape (P0.15, P2.20), and console width — so each would fail
+  today against a Python leg that executes.
+  `port25_outputs_json_metric_allowlist_parity` embeds `session_num` in the
+  strings it compares, so it is the case P0.15 would fail on first.
 
 **Executable evidence**
 
@@ -744,6 +962,215 @@ artifacts can never answer for the other. Make the harness fail closed when a
 Python leg produces no records, no artifact directory, and no captured requests,
 then re-establish all three suites' assertions against a Python run that
 actually executes.
+
+## P0.15 Native `session_num` is constant across distinct sessions
+
+**Direction:** Python to Rust
+
+Native session numbering is keyed on the turn's correlation ID and assigned by
+first-seen order: a turn whose `x_correlation_id` is already in the map reuses its
+number, and only an unseen ID takes the next one
+(`rust/runtime/src/scheduled.rs:1229-1238`). Whenever that field is constant
+across a phase — which it is for every workload that does not derive a distinct
+correlation ID per session — every record receives session number zero. Measured
+over four single-turn sessions, native `outputs.json` rows report `session_num`
+`[0, 0, 0, 0]` where Python reports `[0, 1, 2, 3]`.
+
+The map holding those assignments is a field of one `ScheduledRuntime`
+(`session_numbers`, `rust/runtime/src/scheduled.rs:500`), and each worker
+sub-cell builds its own on its own OS thread
+(`rust/runtime/src/engine/sharded_scheduled.rs:324-326`,
+`rust/runtime/src/phase_runtime.rs:1029`), as does each cell process. The
+sequence is therefore dense from zero per runtime rather than per run, so at
+`workers > 1` or `--cells N` several runtimes contribute the same session number
+to one merged artifact set. The two failures compose: the numbers do not
+distinguish sessions within a runtime and do not distinguish runtimes within a
+run.
+
+P1.31 records that `session_num` changed meaning from a credit index to a
+conversation index. This is the separate defect that the field does not identify a
+session under either meaning.
+
+**Impact**
+
+- `outputs.json` rows are keyed by `session_num` plus `turn_index`
+  (`rust/runtime/src/engine/records.rs:350-360`,
+  `src/aiperf/exporters/outputs_json_exporter.py:65-77`), so a constant session
+  number collapses the key and a consumer grouping by it sees one session with
+  every turn in it.
+- `write_outputs_json` sorts rows by that same pair and the projection's doc
+  comment states the key makes a set comparison of two documents exact
+  (`rust/runtime/src/engine/records.rs:927, 959`). A repeated number makes the key
+  non-unique, so the published order of the affected rows is decided by merge
+  order rather than by the key the artifact contract names.
+- The field is a published column in the `profile_export.jsonl` metadata, in the
+  records CSV (`rust/runtime/src/engine/records.rs:620`), and in the per-record
+  Parquet schema as a non-nullable `Int64`
+  (`rust/runtime/src/export/per_record_parquet.rs:160`), so the collision reaches
+  every per-record artifact rather than one exporter.
+- Five cellular suites omit `session_num` from their record and `outputs.json`
+  projections and state that a counter each cell starts at zero is an accepted
+  cellular characteristic
+  (`rust/e2e-tests/tests/test_cellular_http_shipping.rs:108-114, 129-131`,
+  `rust/e2e-tests/tests/test_cellular_velo_shipping.rs:405-413`). The counter is
+  per runtime rather than per cell, so a single-cell run at `workers > 1` collides
+  the same way, and the exclusion is what keeps it unobserved.
+- Any per-session aggregation a downstream tool computes from per-record output —
+  turns per session, session duration, per-session token totals — is computed
+  over the whole run natively and per session in Python, with no error.
+- `conversation_id` remains distinct on the same rows, so the artifact is
+  internally inconsistent rather than uniformly degraded, and a reader cannot tell
+  from the file which field to trust.
+
+**Executable evidence**
+
+- Python numbering: `src/aiperf/common/models/record_models.py`
+- Python outputs projection: `src/aiperf/exporters/outputs_json_exporter.py`
+- Rust numbering: `rust/runtime/src/scheduled.rs`
+- Rust per-runtime ownership: `rust/runtime/src/phase_runtime.rs`,
+  `rust/runtime/src/engine/sharded_scheduled.rs`
+- Rust outputs projection: `rust/runtime/src/engine/records.rs`
+- Rust Parquet schema: `rust/runtime/src/export/per_record_parquet.rs`
+- Rust parity case that cannot observe it:
+  `rust/e2e-tests/tests/test_port_raw_parity.rs`
+- Rust cellular projections that exclude it:
+  `rust/e2e-tests/tests/test_cellular_http_shipping.rs`,
+  `rust/e2e-tests/tests/test_cellular_velo_shipping.rs`,
+  `rust/e2e-tests/tests/test_graph_cellular.rs`
+
+**Convergence target**
+
+Number sessions from the identity that distinguishes them — the conversation or
+session identity the dataset already carries — rather than from a header value
+that a workload may hold constant, and assign from a run-wide space so the
+sequence stays unique when several runtimes merge into one artifact set. Assert
+the full `session_num` sequence across several sessions from both engines in a
+product test, and include the field in the cellular and multi-worker projections
+instead of excluding it, so a collision fails a test rather than being described
+in a comment.
+
+## P0.16 Assistant tool-call turns tokenize to different input lengths
+
+**Direction:** Bidirectional
+
+A `messages`-mode trace row whose assistant turn replays one `tool_calls` entry
+produces a byte-identical request on both engines — 558 bytes, equal after
+key-sorted rendering, the same four message roles, and exactly one `tool_calls`
+entry — and then reports `input_sequence_length` 36 natively against 37 in Python.
+An identical body that tokenizes to two different lengths localizes the divergence
+to chat-shape text extraction on the client, not to the wire, the dataset, or the
+tokenizer.
+
+P0.3 and P0.5 own the output side of tool-call accounting. This is the input side,
+and neither of them names it.
+
+**Impact**
+
+- ISL is the denominator of prefix-cache-hit reasoning and the x-axis of most
+  reported sweeps, so an agentic workload's whole curve shifts by one token per
+  tool-call turn and accumulates with turn depth.
+- The divergence survives byte-exact request comparison, so a gate that compares
+  materialized payloads passes while the reported input length differs. It is
+  detectable only by comparing the derived count.
+- Tool-heavy replay is the workload class where tool-call turns dominate the
+  history, so the relative error grows exactly where the measurement matters.
+
+**Executable evidence**
+
+- Python extraction: `src/aiperf/records/inference_result_parser.py`
+- Python tool-call reassembly: `src/aiperf/common/models/record_models.py`
+- Rust chat-shape extraction: `rust/runtime/src/endpoints/chat_chunk.rs`,
+  `rust/runtime/src/endpoints/models.rs`
+- Rust input token counting seam: `rust/runtime/src/multiturn.rs`
+- Rust parity case: `rust/e2e-tests/tests/test_port_raw_parity.rs`
+
+**Convergence target**
+
+Specify which chat-message parts contribute to composed input tokens — content,
+tool-call name, tool-call arguments, tool results, and their separators — and
+count them identically in both engines. Assert per-record ISL equality on a
+tool-call trace row alongside the byte-exact payload assertion, so the two
+comparisons cannot pass independently.
+
+## P0.17 Admission and pacing invariants are pinned or unproven by their own tests
+
+**Direction:** Shared defect
+
+The tests that guard aggregate admission and rate pacing do not fail on the
+behavior P0.10, P0.13, P1.14, and P2.18 describe. Two require it, one skips the
+assertion that would catch it, and one accepts a band wide enough to contain it.
+
+`workers_characterization.rs` pins the per-thread floor twice.
+`global_dispatch_enforces_true_aggregate_concurrency_cap_sharded_does_not`
+asserts `sharded_peak == 4` against an authored cap of 3 and names the
+over-subscription a documented, accepted trade (`:637-642`).
+`sharded_and_global_diverge_under_uneven_completion_times`, which drives both
+modes against a variable-latency mock, asserts `sharded_peak > 3` and then
+`sharded_peak != global_peak` (`:1991-2010`). The second is the stronger
+lock-in, because a strict inequality against the authored cap fails on any
+correct value: the participating-thread clamp that P0.10 and
+P1.14 both name as their convergence target fails both tests, and each failure
+message states that the fix is the accepted behavior. Every `Global` assertion in
+the pair (`global_peak <= 3` and `global_peak == 3`) is sound and is what the
+`Sharded` half should assert too.
+
+`global_dispatch_real_clock.rs` is the only end-to-end proof that `global`
+dispatch holds a true aggregate cap across worker threads, and it discards that
+proof on two paths. A `cfg!(target_os = "macos")` return (`:56-58`) and a
+`timing_fast_forwarded` return (`:112-114`) both sit above the
+`peak <= CONCURRENCY` assertion (`:150-156`), whose own failure text names the
+per-thread over-subscription it exists to catch. That assertion reads
+`peak_wall_clock_concurrency` (`:170`), a sweep-line over each record's
+`request_start_ns`/`request_end_ns` interval, so it depends on the relative
+ordering of record boundaries and not on absolute timer fidelity — the condition
+that invalidates the timing assertions above it leaves this one valid. The
+compressed-timer detector is otherwise sound and prints a diagnostic
+(`rust/e2e-tests/tests/common/raw_jsonl.rs:252`); the macOS return prints
+nothing.
+
+`request_rate_real.rs` is the timing evidence P0.13 and P2.18 both cite, and its
+only rate assertion accepts 2 000 to 8 000 req/s against a 5 000 req/s target
+(`:23-26, 123-126`). The exact-count half is real — `num_requests`,
+`completed_requests`, and the turn count are each compared for equality against
+the authored count (`:109-117`) — but a 40 percent deficit and a 60 percent
+overshoot both pass under a `constant` arrival pattern, which is the pattern
+P2.18 measures at CV 5.6 with 160 ms gaps against a 5 ms authored interval. The
+module doc calls the file a characterization, which is accurate; two gaps
+nonetheless cite it as their timing gate.
+
+**Impact**
+
+- Closing P0.10 or P1.14 fails the suite that guards them, so the convergence
+  target cannot land without rewriting assertions whose messages state that the
+  present behavior is intended.
+- Nothing fails when `global`'s shared gate stops holding the authored cap in a
+  compressed-timer environment or on macOS, where the return is unconditional.
+- The two gaps that own arrival-process fidelity rest on a mean-rate band that
+  admits the distortion they describe, so neither has a failing reference number
+  and both remain characterized rather than gated.
+- A reader checking whether the admission gaps are covered finds green tests named
+  for exactly those invariants.
+
+**Executable evidence**
+
+- Rust cap characterization:
+  `rust/runtime/src/engine/workers_characterization.rs`
+- Rust end-to-end cap proof:
+  `rust/e2e-tests/tests/global_dispatch_real_clock.rs`
+- Rust compressed-timer detector: `rust/e2e-tests/tests/common/raw_jsonl.rs`
+- Rust rate characterization: `rust/runtime/tests/request_rate_real.rs`
+- Rust cap product tests: `rust/cli/tests/thread_per_core_product.rs`
+
+**Convergence target**
+
+Assert what each dispatch mode must guarantee rather than what it currently
+produces: hold every `peak <= cap` assertion and apply the same bound to
+`sharded`, so the tests move with the fix instead of against it. Order
+`global_dispatch_real_clock.rs` so the cap assertion runs above both early
+returns, since it reads only wall-clock record boundaries, and emit a diagnostic
+on the macOS path. Narrow the achieved-rate band to what a correct issuer
+delivers and add the inter-arrival distribution assertion P0.13 requires, so the
+rate path fails on a distorted process and not only on a collapsed rate.
 
 ---
 
@@ -824,10 +1251,12 @@ Examples:
   at all, and four separate Rust truthy parsers disagree on their accepted
   spellings: `0/false/off/no`, `1`/`true`, `1/true/t/yes/y/on`, and
   `1/true/yes/on`.
-- The runtime engine selector is largely a harness choice, not an in-process
-  runtime switch: no code under `src/aiperf/` reads
-  `Environment.RUNTIME.ENGINE`, and `AIPERF_RUNTIME_ENGINE` is set only by the
-  Rust e2e harness.
+- `AIPERF_RUNTIME_ENGINE` is a test-harness convention, not an engine selector.
+  Nothing under `src/aiperf/` reads it and `Environment` declares no
+  corresponding field, so it selects nothing in either process. The Rust e2e
+  harness is its only reader, and what actually selects the Python leg is the
+  executable the harness launches: `AIPERF_E2E_PYTHON_MODULE`, or the default
+  `python -m aiperf.cli`, at `rust/e2e-tests/tests/common/mod.rs:443-458`.
 
 **Evidence:** `src/aiperf/common/environment.py`,
 `rust/cli/src/logging.rs`, `rust/runtime/src/realtime.rs`,
@@ -954,7 +1383,9 @@ and `Gamma` slicing that does so is gated on `DispatchMode::Sharded`, so it is
 reachable only under `--dispatch sharded` or `--cells N`, where `Sharded` is the
 deliberate default; the default `global` mode admits concurrency and prefill
 from one shared per-cell gate built on the unsliced authored cap. P0.10 owns the
-`user_centric` leg, which is floored per thread in every mode.
+`user_centric` leg, which is floored per thread under `sharded` and under the
+default `global` because that phase admits from its own session pool rather than
+the shared gate; P1.57 owns the per-user cadence the same slicing derives.
 
 **Evidence:** `src/aiperf/timing/concurrency.py`,
 `rust/runtime/src/engine/sharded_scheduled.rs`,
@@ -962,7 +1393,9 @@ from one shared per-cell gate built on the unsliced authored cap. P0.10 owns the
 `rust/cli/tests/thread_per_core_product.rs`.
 
 **Target:** allow zero-cap shards and prove exact global concurrency,
-prefill, and request totals for every worker count.
+prefill, and request totals for every worker count. P0.17 owns the two committed
+assertions that require the present floor and the end-to-end `global` cap proof
+that is skipped.
 
 ## P1.15 URL selection restarts per Rust worker
 
@@ -1415,6 +1848,18 @@ core, but draw order, rounding, prefix generation, audio bounds, video
 defaults, and ranking length generation differ, and no committed golden pins a
 synthetic conversation or media payload across both engines.
 
+The divergence is observable in the reported token counts on the default named
+corpus, and it lands on the server-side count rather than the client-side one.
+Measured over the same authored configuration, mean `usage_prompt_tokens` is
+64.546875 natively against 65.0625 in Python, because the two engines compose
+different prompt text at the same authored length, while client-composed
+`input_sequence_length` agrees exactly. That asymmetry bounds what any
+cross-engine token assertion can prove: under `--use-server-token-count` the
+prompt-token counts cannot be compared for equality on a synthetic dataset, only
+against a declared tolerance. It also bounds the reach. The client count is
+authoritative by default and agrees, so no reported number is wrong on the stock
+path and the divergence surfaces only under that non-default flag.
+
 One corpus is exempt by construction. The `random` corpus bypasses the swappable
 RNG on both sides for a fixed vLLM/SGLang reference stream — Python's
 `RangeRatioDistribution` draws from `numpy.random.default_rng` (PCG64) and its
@@ -1549,7 +1994,12 @@ who disables it in Python to measure unpinned routing measures pinned routing
 natively — different KV-cache hit rate, different TTFT, different throughput,
 with no error and no warning. The dead switch also means the three sibling
 opt-in toggles in the same module are gated correctly through the facade while
-this one is not, so the module reads as if all four are live.
+this one is not, so the module reads as if all four are live. Two unit tests named
+for the disabled state pass the flag straight to the pure header function and
+assert that it derives nothing
+(`rust/runtime/src/transport/http/transport/headers.rs:343-361`), which the
+function honors; their scope stops short of the facade that re-inserts the
+header, so the module presents green coverage for a switch with no wire effect.
 
 **Evidence:** `src/aiperf/common/environment.py`,
 `src/aiperf/transports/base_transports.py`,
@@ -1597,6 +2047,133 @@ the native binary accepts.
 **Target:** fold `runtime` into P1.2's one typed capability model. Every key
 either reaches both frontends or is rejected with an explicit migration error
 naming the owning engine.
+
+## P1.55 Native omits `inputs.json` for datasets Python projects
+
+**Direction:** Python to Rust
+
+Both engines skip the `inputs.json` projection for datasets whose per-turn
+payloads are verbatim or synthesized at dispatch, and they draw the line in
+different places. Native skips whenever any conversation has more than one turn
+and its context mode splices live replies into later turns, or when any phase
+dispatches only part of the dataset
+(`dataset_supports_up_front_inputs` and `phase_filters_dataset`,
+`rust/runtime/src/engine/execute/plan.rs:661-671`,
+`rust/runtime/src/engine/execute/compose_sidecars.rs:257-267`). Python skips by
+detected dataset type — the trace, verbatim, and WEKA families — and writes the
+artifact for everything else
+(`src/aiperf/dataset/dataset_manager.py:265-282`). A multi-turn custom dataset
+loaded with `--input-file` is a `custom` type on Python's rule and a
+reply-splicing shape on the native rule, so Python writes `inputs.json` and
+native does not.
+
+**Risk:** an artifact set that Python populated is short one file, so a consumer
+or acceptance gate that requires the standard artifact list fails on the native
+run for a reason unrelated to what it measures, and an operator inspecting a
+multi-turn replay has no record of the resolved inputs. The native skip is
+warned rather than silent, which bounds the surprise but not the absence.
+
+**Evidence:** `src/aiperf/dataset/dataset_manager.py`,
+`rust/runtime/src/engine/execute/plan.rs`,
+`rust/runtime/src/engine/execute/compose_sidecars.rs`,
+`rust/e2e-tests/tests/test_port_raw_parity.rs`.
+
+**Target:** state one rule for which dataset shapes carry an `inputs.json`, apply
+it in both engines, and make the artifact's absence an authored outcome rather
+than a property of the loader that happened to detect the file.
+
+## P1.56 Endpoint TLS and socket flags are dropped beside a config file
+
+**Direction:** Native-only defect
+
+`--ssl-verify` and `--uds-path` are native flags
+(`rust/cli/src/flags.rs:776-784`) and reach the request on the flag-only path
+(`rust/cli/src/load.rs:408-409`) and from YAML
+(`endpoint.ssl_verify`/`endpoint.uds_path`, `rust/cli/src/yaml.rs:1109-1111`,
+projected at `:2487-2488`). Neither is in the overlay `apply_cli_overrides`
+applies when both are present (`rust/cli/src/yaml.rs:221-468`), so a
+`--config` run keeps the config-authored value — or the default `ssl_verify:
+true` — and the flag has no effect. Neither field has a per-endpoint Python
+counterpart, so the parity dimension belongs to P0.2 and what remains here is a
+native precedence defect.
+
+**Risk:** `--ssl-verify false --config run.yaml` against a self-signed endpoint
+fails at handshake, which is loud but attributed to the server rather than to a
+dropped flag. `--uds-path` is the silent half: the run keeps the config's TCP URL
+and benchmarks whatever answers there, so it measures a different transport than
+the one selected with no error. The precedence hole is per field rather than
+per surface, so the flag-only and YAML-only paths both look correct in isolation.
+
+**Evidence:** `rust/cli/src/flags.rs`, `rust/cli/src/load.rs`,
+`rust/cli/src/yaml.rs`.
+
+**Target:** drive the flag overlay from one generated field mapping rather than a
+hand-maintained list, so a flag that exists on the flag-only path cannot be
+absent from the config-plus-flags path, and assert every endpoint flag's effect
+on a `--config` run.
+
+## P1.57 Per-user cadence follows the sliced user count
+
+**Direction:** Python to Rust
+
+User-centric pacing is defined by `turn_gap = num_users / request_rate`
+(`rust/runtime/src/timing/user_centric.rs:99-101`, re-derived the same way by the
+adaptive actuator at `rust/runtime/src/user_centric.rs:317-325`). That relation is
+correct for one global pool and does not survive slicing: a thread receives
+`owned_positions(users).max(1)` users and `rate / workers`
+(`rust/runtime/src/engine/sharded_scheduled.rs:229-230`), so its gap is
+`workers * owned_users / rate` rather than `users / rate`. With `users: 10` on 4
+threads the shares are 3, 3, 2, 2 — an exact total — while the per-user
+inter-turn gap is `12 / rate` on two threads and `8 / rate` on the other two
+against an authored `10 / rate`. Python's single pool paces every user at the
+authored gap.
+
+**Risk:** think time is the parameter a user-centric run is authored to control,
+so two cohorts of users issue at two cadences and the mixture's queueing behavior
+is neither engine's authored workload. The totals are exact, so a gate that
+checks aggregate caps and mean rate reports agreement while the per-user process
+differs, and the split changes with the worker count.
+
+**Evidence:** `src/aiperf/timing/strategies/user_centric_rate.py`,
+`rust/runtime/src/timing/user_centric.rs`,
+`rust/runtime/src/user_centric.rs`,
+`rust/runtime/src/engine/sharded_scheduled.rs`.
+
+**Target:** derive per-user cadence from the authored `users` and `rate` rather
+than from a thread's share of them, and assert the observed per-user inter-turn
+gap at a worker count that does not divide the user count.
+
+## P1.58 Sweep planning goldens are native-authored and named as Python oracles
+
+**Direction:** Shared defect
+
+`rust/cli/tests/sweep_parity.rs` gates native sweep and search-recipe planning
+with five tests whose names end in `match_oracle` (`:69, 150, 217, 276, 327`)
+against thirteen committed files under `tools/parity/sweep_golden/`. Those files
+are written by the same tests: `AIPERF_UPDATE_SWEEP_GOLDEN` set to anything other
+than empty or `0` regenerates each one from the current branch's computed cells
+instead of asserting against it (`:23, 26-27`). No in-tree generator produces
+them. `tools/parity/` holds exactly four Python dumps — `dump_bayes.py`,
+`dump_isotonic.py`, `dump_monotonic.py`, and `dump_tokenizer_parity.py` — and
+`dump_monotonic.py:5-8` refers to a `dump_sweep` as the static counterpart it
+cannot use, and no such file exists. The remaining golden in that directory,
+`sweep_agg.json`, backs `single_trial_sweep_aggregate_matches_python` and has no
+generator either. So the planner is compared against bytes the planner wrote,
+under a name and a directory that read as Python-authoritative.
+
+This is P1.46's shape applied to sweep and search planning, which P1.46 does not
+cover, and the naming makes it harder to see: the monotonic, isotonic, and Bayes
+suites in the same crate are genuine cross-engine gates driven by real Python
+dumps, so `match_oracle` means two different things among neighboring files.
+
+**Evidence:** `rust/cli/tests/sweep_parity.rs`,
+`rust/cli/tests/sweep_aggregate_parity.rs`, `tools/parity/sweep_golden/`,
+`tools/parity/dump_monotonic.py`, `rust/cli/src/sweep/`.
+
+**Target:** produce the planning and aggregation goldens from the Python sweep
+path and pin them as the cross-engine oracle, or rename both suites and their
+golden directory to state that they are native regression gates. Reserve
+`match_oracle` for a comparison whose expected values another engine generated.
 
 ---
 
@@ -1870,8 +2447,13 @@ match.
 
 `--dispatch sharded` slices the authored rate across `W` threads
 (`scaled_rate` in `rust/runtime/src/engine/sharded_scheduled.rs:137-238`), each
-pacing its own independent sub-grid. The union has the right mean but not the
-right spacing. Measured at 200 req/s, `--request-rate-mode constant`, 8 workers,
+pacing its own independent sub-grid. Nothing offsets those grids from one
+another: with no shared gate, every thread anchors its first target at the same
+`runtime.start_ns()` plus its own first interval
+(`rust/runtime/src/request_rate.rs:593-595`), and thereafter advances by the same
+sliced interval, so under `constant` arrival all `W` threads fire together and
+then idle for `W` times the authored gap. The union has the right mean but not
+the right spacing. Measured at 200 req/s, `--request-rate-mode constant`, 8 workers,
 400 requests: effective rate 207.8/s, inter-arrival CV 5.6, maximum gap 160 ms
 against a 5 ms authored interval; `global` gives CV 0.21 and `global-hop` 0.033
 on the same config. Python's single issuer paces one grid, so `constant` is
@@ -1883,13 +2465,114 @@ and from the other native modes. Reachable only outside the default dispatch
 mode, so it is narrower than P0.13.
 
 **Evidence:** `src/aiperf/timing/strategies/request_rate.py`,
+`rust/runtime/src/request_rate.rs`,
 `rust/runtime/src/engine/sharded_scheduled.rs`,
 `rust/runtime/src/engine/execute/sharding.rs`,
 `rust/runtime/tests/request_rate_real.rs`.
 
 **Target:** pace sharded threads against one cell-wide interleaved grid (offset
-thread `k` by `k * interval / W`) and gate the mode on a measured inter-arrival
-CV bound.
+thread `k` by `k * interval / W` at the anchor rather than re-anchoring per tick)
+and gate the mode on a measured inter-arrival CV bound.
+
+## P2.19 Integral metric values carry different JSON number types
+
+**Direction:** Bidirectional
+
+Native metric values are `f64` end to end — `OutputRow::metrics` is a
+`BTreeMap<&str, f64>` (`rust/runtime/src/engine/records.rs:357`) and the summary
+writer inserts `Option<f64>` (`rust/runtime/src/export/genai_perf.rs:324`) — so
+an integral value serializes as `16.0`. Python preserves the integer type it
+computed, because `MetricResult` types each numeric field separately as `int`,
+`float`, or `int | float` (`src/aiperf/common/models/record_models.py:65-75`)
+and the exporters serialize the
+value verbatim (`src/aiperf/exporters/outputs_json_exporter.py:72, 85`), so the
+same value serializes as `16`. The numeric values are equal; only the JSON number
+form differs.
+
+**Risk:** a strict JSON comparison treats `16.0` and `16` as unequal, so a
+cross-engine gate built on structural equality reports a divergence with no
+numeric content and buries the real ones. A consumer that parses into a typed
+integer field rejects the native document outright.
+
+**Evidence:** `src/aiperf/common/models/record_models.py`,
+`src/aiperf/exporters/outputs_json_exporter.py`,
+`rust/runtime/src/engine/records.rs`,
+`rust/runtime/src/export/genai_perf.rs`.
+
+**Target:** neither engine changes its serialization. The number form is not part
+of the artifact contract, and pinning it would mean either giving up Python's
+integral types or emitting a type that depends on a value. A cross-engine
+comparison canonicalizes numbers to one representation before comparing, and this
+section is the record of that decision so a reader does not read the difference as
+an open defect. Every other numeric divergence between the engines is one, and
+P1.33 owns the missing and non-finite policy that is.
+
+## P2.20 Native `outputs.json` rows carry a reasoning field Python omits
+
+**Direction:** Rust to Python
+
+Native output rows carry the eight fields Python's rows carry plus
+`reasoning_text` (`rust/runtime/src/engine/records.rs:350-360` against
+`src/aiperf/exporters/outputs_json_exporter.py:65-74`), populated from the
+captured reasoning split when a response separates reasoning from content. The
+divergence is declared rather than silent: the native document announces
+`schema_version` `1.1` (`rust/runtime/src/engine/records.rs:882`) where Python
+announces `1.0` (`src/aiperf/exporters/outputs_json_exporter.py:80`), so a
+consumer can distinguish the two shapes from the file.
+
+**Risk:** a consumer validating rows against the `1.0` shape with a closed field
+set rejects native output, and a comparison asserting equal row key sets across
+engines fails on a field that is additive and correct. The version bump makes both
+outcomes avoidable, but only for a consumer that reads it.
+
+**Evidence:** `src/aiperf/exporters/outputs_json_exporter.py`,
+`rust/runtime/src/engine/records.rs`,
+`rust/e2e-tests/tests/test_port_raw_parity.rs`.
+
+**Target:** keep the field and the version that declares it, project the same
+reasoning text from Python at `1.1`, and compare row key sets per declared
+schema version rather than across versions.
+
+## P2.21 Native accuracy fails closed at three further points
+
+**Direction:** Python to Rust
+
+P0.1 owns the unreachable entry path. Three independent refusals sit behind it,
+each of which stops an accuracy run that has already been selected:
+
+- the evaluator adapter rejects `accuracy.verbose: true` outright as
+  presentation policy it does not accept
+  (`rust/runtime/src/engine/online_execution.rs:1205-1206`), so a config Python
+  accepts fails at decode;
+- `AccuracyCsvExportConfig::enabled` gates the accuracy CSV exporter
+  (`rust/runtime/src/export/accuracy_csv.rs:29, 40-41`) and no authored path sets
+  it — its only `true` is in the exporter's own tests — so the CSV is never
+  written even when grading succeeds;
+- the grading contract admits exactly one request per benchmark problem. Native
+  submits captures positionally in batches of 128
+  (`rust/runtime/src/accuracy.rs:663-684`) with uniqueness enforced upstream by
+  the duplicate-correlation check (`:473-477`) and the
+  correlation-equals-problem-id invariant (`:159-164`), and the Python worker
+  rejects a repeated `problem_id` inside a batch
+  (`src/aiperf/rust_shims/accuracy_worker.py:308-309`). Multi-sample grading over
+  one problem is therefore unrepresentable in either engine.
+
+**Risk:** each refusal is loud, so none of them can corrupt a result, but together
+they mean that closing P0.1's entry path yields a run that still cannot express a
+Python-accepted config, still writes no CSV, and still cannot grade more than one
+response per problem. Planning that treats P0.1 as the whole of the accuracy work
+underestimates it.
+
+**Evidence:** `src/aiperf/rust_shims/accuracy_worker.py`,
+`rust/runtime/src/engine/online_execution.rs`,
+`rust/runtime/src/export/accuracy_csv.rs`,
+`rust/runtime/src/accuracy.rs`,
+`rust/runtime/src/config/resolve.rs`.
+
+**Target:** accept `verbose` as presentation policy or reject it at validation
+with a migration message, set the CSV toggle from the authored artifact policy,
+and decide whether multi-sample grading is in the product — if it is, key grades
+by request rather than by problem in both engines.
 
 ---
 
@@ -1929,13 +2612,16 @@ thread with a per-shard floor of one; `global`, `global-hop`, and `global-push`
 hold the authored cap in one shared or single-coordinator gate, so exact global
 request/session budgets and concurrency and prefill caps hold for those phase
 shapes outside `sharded`. They do not hold for `user_centric`, whose `users` and
-`concurrency` are floored per thread in every mode, and `sharded` is the default
-whenever `runtime.cells > 1`. The remaining shared invariants are:
+`concurrency` are floored per thread under `sharded` and under `global` because
+that phase admits from its own session pool instead of the shared gate; only the
+single-coordinator modes leave its cap whole. `sharded` is the default whenever
+`runtime.cells > 1`. The remaining shared invariants are:
 
 - deterministic endpoint assignment under a fixed seed (P1.15);
 - equivalent records and aggregate metrics (P0.7);
-- identical aggregate caps under `sharded` (P1.14) and, in every mode, for
-  `user_centric` phases (P0.10);
+- identical aggregate caps under `sharded` (P1.14) and, under `sharded` and
+  `global`, for `user_centric` phases (P0.10), whose per-user cadence is a
+  separate obligation (P1.57);
 - the authored arrival process, not only its mean rate, under a jittered
   `--request-rate-mode` (P0.13).
 
@@ -2022,7 +2708,11 @@ Migration decisions must use executable current-tree behavior.
 
 `rust/cli/tests/parity.rs` validates native resolution against committed
 requests. It does not run Python configuration resolution over the same
-fixtures, and it excludes some exporter-critical dynamic fields.
+fixtures, and it excludes some exporter-critical dynamic fields. Its export
+comparison also returns early when a golden's whole `export` section is null
+(`:156-159`), so every console, MLflow, W&B, and OTLP assertion for that fixture
+disappears without a diagnostic, unlike the narrower per-exporter guards inside
+it.
 
 ## RNG parity can skip silently
 
@@ -2043,12 +2733,23 @@ reasoning, batching, or client-token semantics.
 
 Fold, flatgraph, and worker accumulation tests compare two native paths against
 each other and name no Python reference at all, so they provide useful native
-invariants rather than Python-to-Rust parity. Sweep aggregation asserts byte
-equality against a committed golden with no provenance metadata and no
-generator, so its Python attribution is unchecked. Five test files reference
-`AIPERF_RUNTIME_ENGINE` and only two drive both engines; the other three drive a
-Python module that executes nothing, and one of them passes by comparing the
-native run against itself (P0.14).
+invariants rather than Python-to-Rust parity. The strength of that native
+invariant varies: the exact-fold A/B suite asserts each arm's retention marker so
+a dead toggle fails it, while the flatgraph suite asserts only that its two arms
+agree and reads no marker, so both arms taking the general executor — through an
+unhonored `AIPERF_DISABLE_FLATGRAPH`, a fixture that stops being flat-eligible, or
+a narrowed eligibility rule — passes with no signal. Sweep planning and
+aggregation assert byte equality against committed goldens with no provenance
+metadata and no generator, tracked with evidence and a target as P1.58. Five test
+files reference
+`AIPERF_RUNTIME_ENGINE`, which selects nothing (P1.6); what decides whether a
+Python leg executes is the per-case module override, and it is set in three cases
+of one file. The rest drive a Python module that executes nothing, and several
+pass by comparing the native run against itself (P0.14).
+
+## Admission and pacing tests assert the current behavior
+
+Tracked with evidence and a target as P0.17.
 
 ## Tokenizer alias tests provide no live signal
 
@@ -2105,7 +2806,8 @@ Recommended order:
 4. Enforce strict authoring validation that stops discarding accepted per-model
    and per-transport keys.
 5. Prove exact global `users`, `concurrency`, prefill, and request totals at
-   every worker count.
+   every worker count, rewriting the assertions that require the present
+   per-thread floor in the same change (P0.17).
 6. Adopt one run-outcome classifier that exits nonzero for zero-success and
    zero-request runs on the single-run, repeated-trial, sweep-cell, and
    search-probe paths.
