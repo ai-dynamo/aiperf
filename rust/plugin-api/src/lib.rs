@@ -17,6 +17,18 @@
 //! - [`error`] — the typed errors that cross the boundary instead of unwinding.
 //! - [`ownership`] — the generation-1 ownership table the documentation guard
 //!   checks `docs/specs/plugin-api-ownership.md` against.
+//! - [`validation`] — categories, digests, host resources, and the typed
+//!   refusals that precede a factory call.
+//! - [`category`] — [`EndpointFactory`], [`TransportFactory`], and
+//!   [`ExporterFactory`], the three positions a plugin can occupy.
+//! - [`factory`] — [`FactoryValidationReceiptV1`], the inspectable half of a
+//!   validation whose other half is opaque.
+//! - [`prepared`] — the opaque validated handles and the native [`Endpoint`]
+//!   compatibility trait.
+//! - [`transport`] — the exactly-one execution shape, readiness/WebSocket
+//!   capabilities, and the request execution boundary.
+//! - [`capture`] — what an exporter requires from a finished run, and the
+//!   post-report [`PreparedExporterV1`] boundary.
 //!
 //! # Boundary rules
 //!
@@ -32,20 +44,45 @@
 
 #![deny(missing_docs)]
 
+pub mod capture;
+pub mod category;
 pub mod descriptor;
 pub mod error;
 pub mod extension;
+pub mod factory;
 pub mod id;
 pub mod ownership;
+pub mod prepared;
+pub mod transport;
+pub mod validation;
 
+pub use capture::{
+    CAPTURE_REQUIREMENTS_V1, CaptureRequirementV1, ExportInputV1, ExporterCaptureRequirementsV1,
+    ExporterError, FoldedProjectionV1, PreparedExporterV1,
+};
+pub use category::{
+    AuthoredConfigV1, CategoryError, CategoryOutcome, EMPTY_AUTHORED_CONFIG, EndpointFactory,
+    ExporterFactory, TransportFactory,
+};
 pub use descriptor::{PluginCategoryDescriptor, PluginPackageDescriptor, PluginSourceApiVersion};
 pub use error::{ExtensionError, RegistryIdError, SourceApiVersionError};
 pub use extension::{
     AIPerfExtension, PLUGIN_ENTRY_SYMBOL_V1, PluginDeclarationV1, PluginEntryV1, PluginRegistrar,
 };
+pub use factory::FactoryValidationReceiptV1;
 pub use id::{REGISTRY_ID_MAX_LEN, REGISTRY_ID_NORMALIZATION_VERSION, RegistryId};
 pub use ownership::{
     CallPhase, GENERATION_1_SURFACE, OwnershipRow, SHARED_ALLOCATOR_PRECONDITION, StorageOwner,
+};
+pub use prepared::{Endpoint, PreparedEndpoint, PreparedExporter, PreparedTransport};
+pub use transport::{
+    BoundaryRequest, BoundaryTerminal, GrpcBindingV1, GrpcEndpointBindingFactory,
+    ReadinessCapabilityV1, RequestExecutionBuildContextV1, RequestExecutor,
+    RequestTransportExecution, TransportExecutionShapeV1, WebSocketCapabilityV1,
+};
+pub use validation::{
+    ContentDigest, HOST_RESOURCES_V1, HostResourceSetV1, HostResourceV1, PLUGIN_CATEGORIES,
+    PluginCategory, ValidatedCategoryDescriptorV1, ValidationError,
 };
 
 /// The source API version this crate implements, as a canonical string.
