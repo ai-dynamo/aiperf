@@ -1697,11 +1697,11 @@ fn execute_monitored_child(
     owned.stdout_reader = Some(drain_bounded_output(stdout, output_limit));
     owned.stderr_reader = Some(drain_bounded_output(stderr, output_limit));
     let started = Instant::now();
-    let mut affinity_monitor = pinned_affinity
-        .zip(inherited_at_spawn.as_ref())
-        .map(|_| AffinityMonitorState::NeverArmed {
+    let mut affinity_monitor = pinned_affinity.zip(inherited_at_spawn.as_ref()).map(|_| {
+        AffinityMonitorState::NeverArmed {
             has_observation: false,
-        });
+        }
+    });
     let mut infrastructure_event = None;
     let terminal_status = loop {
         injected_child_fault("poll")?;
