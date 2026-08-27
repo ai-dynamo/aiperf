@@ -21,7 +21,6 @@ use std::rc::Rc;
 
 use aiperf_runtime::streaming::{
     budget::StreamingResourceBudget,
-    checkpoint::StreamingCheckpointParticipant,
     failure::{StreamFormatError, StreamingIssueReporter},
     format::{
         DecodeBatchBudget, DecodeStep, DecoderCheckpoint, DecoderResumeState, FormatEvent,

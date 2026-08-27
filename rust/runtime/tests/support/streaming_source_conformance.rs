@@ -24,12 +24,9 @@ use aiperf_runtime::streaming::{
     checkpoint::{
         AcquisitionHorizon, AdmissionHorizon, CheckpointBarrier, CheckpointCut, CheckpointEpoch,
         CheckpointParticipantPlan, CommittedParticipantReceipt, DecodeHorizon, DiscoveryHorizon,
-        EventTimeWatermark, OrderedActionHorizon, StreamRunIdentity, StreamingCheckpointParticipant,
-        TerminalActionHorizon,
+        EventTimeWatermark, OrderedActionHorizon, StreamRunIdentity, TerminalActionHorizon,
     },
-    checkpoint_backend::{
-        CheckpointCommitMetadata, CheckpointGenerationExpectations, StreamingCheckpointBackend,
-    },
+    checkpoint_backend::{CheckpointCommitMetadata, CheckpointGenerationExpectations},
     checkpoints::memory::{MemoryCheckpointBackend, MemoryCheckpointLimits},
     failure::{
         StableStreamingFailure, StreamingFailureStage, StreamingIssueReporter,
