@@ -65,6 +65,9 @@ hf-hub = { version = "0.4.3", default-features = false, features = ["rustls-tls"
 percent-encoding = "2"
 petgraph = "0.6"
 arrow = { version = "58.3", default-features = false, features = ["ipc"] }
+aws-config = { version = "=1.8.14", default-features = false, features = ["behavior-version-latest", "rt-tokio", "rustls"] }
+aws-sdk-s3 = { version = "=1.123.0", default-features = false, features = ["behavior-version-latest", "default-https-client", "http-1x", "rt-tokio", "rustls"] }
+chacha20poly1305 = { version = "=0.11.0", default-features = false, features = ["alloc", "getrandom", "zeroize"] }
 parquet = { version = "58.3", default-features = false, features = ["arrow", "json", "snap", "zstd"] }
 rand = "0.9"
 ed25519-dalek = "2.2"
@@ -89,6 +92,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 uuid = { version = "1", features = ["v4"] }
 url = "2"
+zeroize = { version = "=1.9.0", features = ["derive"] }
 
 # Plain `cargo build --release`/`--release -p <crate>` uses cargo's stock
 # release defaults (opt-level=3, lto=false, codegen-units=16) — fast to build,

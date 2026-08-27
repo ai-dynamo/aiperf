@@ -37,6 +37,9 @@ pub mod scheduler;
 pub mod user_centric;
 pub mod workload;
 
+#[cfg(feature = "streaming")]
+pub mod streaming;
+
 #[cfg(feature = "engine")]
 pub mod engine;
 
