@@ -731,17 +731,17 @@ impl CreditReportTx {
     }
 }
 
-struct CreditTaskGuard {
-    lease: Arc<CreditLease>,
+struct CreditTaskGuard<'a> {
+    lease: &'a CreditLease,
 }
 
-impl CreditTaskGuard {
-    fn new(lease: Arc<CreditLease>) -> Self {
+impl<'a> CreditTaskGuard<'a> {
+    fn new(lease: &'a CreditLease) -> Self {
         Self { lease }
     }
 }
 
-impl Drop for CreditTaskGuard {
+impl Drop for CreditTaskGuard<'_> {
     fn drop(&mut self) {
         self.lease.mark_abandoned();
     }
@@ -830,6 +830,10 @@ enum WorkerMessage {
     PauseWorker {
         entered: std::sync::mpsc::SyncSender<()>,
         release: oneshot::Receiver<()>,
+    },
+    #[cfg(test)]
+    CreditTaskStats {
+        reply: oneshot::Sender<(usize, usize)>,
     },
     #[cfg(test)]
     PanicWorker,
@@ -1990,8 +1994,8 @@ async fn run_worker<S: WorkerSink + 'static>(
     credit_reports: CreditReportTx,
 ) -> bool {
     let mut jobs = JoinSet::new();
-    let credit_tasks: Rc<RefCell<HashMap<Uuid, Arc<CreditLease>>>> =
-        Rc::new(RefCell::new(HashMap::new()));
+    let credit_tasks: RefCell<HashMap<tokio::task::Id, (Uuid, Arc<CreditLease>)>> =
+        RefCell::new(HashMap::new());
     let mut accepting = true;
     // Built lazily by `Configure`; shared (`Rc`) into every measured task so all
     // of this worker's requests accumulate into one observer that is drained
@@ -2025,7 +2029,7 @@ async fn run_worker<S: WorkerSink + 'static>(
                         let record_label = record_label.clone();
                         jobs.spawn_local(async move {
                             execute_worker_command(sink, observer, *command, record_label).await;
-                            None
+                            false
                         });
                     }
                     Some(WorkerMessage::Credit(command)) => {
@@ -2041,7 +2045,7 @@ async fn run_worker<S: WorkerSink + 'static>(
                         let command = match materialize_credit(materializer.as_deref(), *command) {
                             Ok(command) => command,
                             Err(report) => {
-                                let _guard = CreditTaskGuard::new(report.lease.clone());
+                                let _guard = CreditTaskGuard::new(&report.lease);
                                 report
                                     .events
                                     .publish_terminal(&report.lease, report.failure)
@@ -2049,21 +2053,20 @@ async fn run_worker<S: WorkerSink + 'static>(
                                 continue;
                             }
                         };
-                        credit_tasks
-                            .borrow_mut()
-                            .insert(uuid, command.lease.clone());
+                        let lease = command.lease.clone();
                         let record_label = record_label.clone();
-                        jobs.spawn_local(async move {
+                        let task = jobs.spawn_local(async move {
                             execute_worker_credit(sink, observer, command, record_label).await;
-                            Some(uuid)
+                            true
                         });
+                        credit_tasks.borrow_mut().insert(task.id(), (uuid, lease));
                     }
                     Some(WorkerMessage::Prewarm { turn, done }) => {
                         let sink = sink.clone();
                         jobs.spawn_local(async move {
                             let _ = sink.prewarm(*turn).await;
                             let _ = done.send(());
-                            None
+                            false
                         });
                     }
                     Some(WorkerMessage::Drain { end_ns, reply }) => {
@@ -2078,21 +2081,34 @@ async fn run_worker<S: WorkerSink + 'static>(
                         let _ = release.await;
                     }
                     #[cfg(test)]
+                    Some(WorkerMessage::CreditTaskStats { reply }) => {
+                        let tasks = credit_tasks.borrow();
+                        let abandoned = tasks
+                            .values()
+                            .filter(|(_, lease)| lease.current_state() == CreditState::Abandoned)
+                            .count();
+                        let _ = reply.send((tasks.len(), abandoned));
+                    }
+                    #[cfg(test)]
                     Some(WorkerMessage::PanicWorker) => {
                         panic!("injected execution worker panic");
                     }
                     None => accepting = false,
                 }
             }
-            completed = jobs.join_next(), if !jobs.is_empty() => {
+            completed = jobs.join_next_with_id(), if !jobs.is_empty() => {
                 match completed {
-                    Some(Ok(Some(uuid))) => {
-                        credit_tasks.borrow_mut().remove(&uuid);
+                    Some(Ok((task, true))) => {
+                        credit_tasks.borrow_mut().remove(&task);
                     }
-                    Some(Ok(None)) | None => {}
+                    Some(Ok((_, false))) | None => {}
                     Some(Err(error)) => {
+                        let task = error.id();
                         tracing::error!(error = %error, "execution task panicked");
-                        publish_abandoned_credits(&credit_reports, &credit_tasks).await;
+                        let credit = credit_tasks.borrow_mut().remove(&task);
+                        if let Some((uuid, lease)) = credit {
+                            publish_abandoned_credit(&credit_reports, uuid, &lease).await;
+                        }
                     }
                 }
             }
@@ -2136,40 +2152,22 @@ async fn run_worker<S: WorkerSink + 'static>(
     had_drain && shutdown_succeeded
 }
 
-async fn publish_abandoned_credits(
-    events: &CreditReportTx,
-    credit_tasks: &RefCell<HashMap<Uuid, Arc<CreditLease>>>,
-) {
-    loop {
-        let candidate = {
-            let tasks = credit_tasks.borrow();
-            tasks.iter().find_map(|(uuid, lease)| {
-                (lease.current_state() == CreditState::Abandoned
-                    && !lease.has_pending_rescued_ttft())
-                .then(|| (*uuid, lease.clone()))
-            })
-        };
-        let Some((uuid, lease)) = candidate else {
-            return;
-        };
-        let published = events
-            .publish_terminal(
-                &lease,
-                WorkerCreditReport {
-                    uuid,
-                    worker: events.worker,
-                    kind: CreditReportKind::CreditReturn(Box::new(Err(anyhow!(
-                        "execution task panicked while driving a routed credit"
-                    )))),
-                },
-            )
-            .await;
-        if published || lease.current_state() != CreditState::Abandoned {
-            credit_tasks.borrow_mut().remove(&uuid);
-        } else {
-            return;
-        }
+async fn publish_abandoned_credit(events: &CreditReportTx, uuid: Uuid, lease: &CreditLease) {
+    if lease.current_state() != CreditState::Abandoned || lease.has_pending_rescued_ttft() {
+        return;
     }
+    events
+        .publish_terminal(
+            lease,
+            WorkerCreditReport {
+                uuid,
+                worker: events.worker,
+                kind: CreditReportKind::CreditReturn(Box::new(Err(anyhow!(
+                    "execution task panicked while driving a routed credit"
+                )))),
+            },
+        )
+        .await;
 }
 
 /// Relays a worker's streamed parsed responses back to the coordinator dispatch
@@ -2398,7 +2396,7 @@ async fn execute_worker_credit<S: WorkerSink + 'static>(
         cancellation,
     } = command;
     let uuid = turn.request.uuid;
-    let _task_guard = CreditTaskGuard::new(lease.clone());
+    let _task_guard = CreditTaskGuard::new(&lease);
     let Some(observer) = worker_observer else {
         events
             .publish_terminal(
@@ -2980,6 +2978,7 @@ mod tests {
         PanicTask,
         Block,
         FirstTokenThenBlock,
+        FirstTokenThenPanic,
     }
 
     #[derive(Default)]
@@ -3085,6 +3084,11 @@ mod tests {
                     self.state.signal_started(uuid);
                     std::future::pending().await
                 }
+                CreditFaultAction::FirstTokenThenPanic => {
+                    on_first_token(17);
+                    self.state.signal_started(uuid);
+                    panic!("injected routed-credit task panic after first token");
+                }
                 CreditFaultAction::Complete => {
                     self.state.signal_started(uuid);
                     observer.on_arrival(uuid, 0.0, 1, 1);
@@ -3134,6 +3138,36 @@ mod tests {
             .configure_measurement(MetricsConfig::default(), origin)
             .unwrap();
         executor
+    }
+
+    async fn worker_credit_task_stats(
+        executor: &ThreadPerCoreExecutor<CreditFaultSinkBuilder>,
+        worker: usize,
+    ) -> (usize, usize) {
+        let sender = executor.senders.borrow().as_ref().unwrap()[worker].clone();
+        let (reply, wait) = oneshot::channel();
+        sender
+            .send(WorkerMessage::CreditTaskStats { reply })
+            .await
+            .unwrap();
+        wait.await.unwrap()
+    }
+
+    async fn wait_for_credit_task_completion(
+        executor: &ThreadPerCoreExecutor<CreditFaultSinkBuilder>,
+        worker: usize,
+    ) {
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            loop {
+                let (total, abandoned) = worker_credit_task_stats(executor, worker).await;
+                if total == 0 || abandoned != 0 {
+                    return;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
     }
 
     #[async_trait(?Send)]
@@ -3635,6 +3669,62 @@ mod tests {
         .unwrap();
         assert!(matches!(cancelled.kind, CreditReportKind::Cancelled));
         assert_eq!(executor.inflight[0].inflight.get(), 0);
+        executor.drain_records(1).unwrap();
+        executor.shutdown().await.unwrap();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn rescued_first_token_panic_releases_worker_task_bookkeeping() {
+        let state = Arc::new(CreditFaultState::default());
+        let executor = fault_executor(state.clone(), HopRouting::Sticky);
+        let session = "rescued-panic-worker";
+        let worker = (fnv1a64(session.as_bytes()) % 2) as usize;
+        let fill_main_return_lane = || loop {
+            let envelope = CreditReportEnvelope {
+                report: WorkerCreditReport {
+                    uuid: Uuid::new_v4(),
+                    worker: 1,
+                    kind: CreditReportKind::FirstToken(1),
+                },
+                rescue_ack: None,
+            };
+            match executor.credit_returns.sender.try_send(envelope) {
+                Ok(()) => {}
+                Err(mpsc::error::TrySendError::Full(_)) => break,
+                Err(mpsc::error::TrySendError::Closed(_)) => {
+                    panic!("credit return lane closed during test")
+                }
+            }
+        };
+
+        for _ in 0..8 {
+            fill_main_return_lane();
+            let mut turn = streaming_turn();
+            let uuid = Uuid::new_v4();
+            turn.request.uuid = uuid;
+            turn.runtime_session_id = session.to_string();
+            let started = state.insert(uuid, CreditFaultAction::FirstTokenThenPanic);
+            executor.send_credit(turn, measured_context()).unwrap();
+            started.recv().unwrap();
+            wait_for_credit_task_completion(&executor, worker).await;
+
+            let first_token = executor.next_credit_report().await.unwrap();
+            assert_eq!(first_token.uuid, uuid);
+            assert!(matches!(first_token.kind, CreditReportKind::FirstToken(17)));
+            let terminal = loop {
+                let report = executor.next_credit_report().await.unwrap();
+                if report.uuid == uuid {
+                    break report;
+                }
+            };
+            assert!(matches!(
+                terminal.kind,
+                CreditReportKind::CreditReturn(outcome) if outcome.is_err()
+            ));
+        }
+
+        assert_eq!(worker_credit_task_stats(&executor, worker).await, (0, 0));
+        assert_eq!(executor.inflight[worker].inflight.get(), 0);
         executor.drain_records(1).unwrap();
         executor.shutdown().await.unwrap();
     }
