@@ -321,6 +321,8 @@ The following invariants apply together:
 
 ## Architecture
 
+![Native streaming datasets and shadow replay architecture](streaming-dataset-shadow-replay-architecture.png)
+
 ```text
 Frozen AIPerfRegistry
   |-- StreamingDatasetSourceFactory["hf_hub", "s3", "local", ...]
@@ -1256,6 +1258,109 @@ capture loading. The streaming format does not compile a complete
 finite `dynamo_trace` behavior is unchanged. NVCF production use requires its
 published objects to conform to this exact schema; any different NVCF schema is
 a new versioned format contract, not implementation-time inference.
+
+#### Shared hash-to-content reconstruction
+
+Dynamo `input_sequence_hashes` are opaque cache-block identities; they do not
+encode reversible production prompt text. AIPerf reconstructs executable
+content by deterministically mapping each hash and block size into token blocks
+drawn from the selected prompt corpus, then decoding those tokens through the
+selected run tokenizer. Config v2 defaults recorded-graph reconstruction to the
+`coding` corpus when no corpus is authored. This produces representative,
+prefix-consistent content without claiming to recover the original request
+text.
+
+The batch `dynamo_trace` compiler and `streaming_dynamo_trace` **MUST** share
+one pure recorded-content synthesis algorithm and compatible recorded-message
+reconstruction. The streaming implementation must not introduce a second
+hash-to-text mapping. It also must not reuse the existing
+`CorpusContentSynthesizer` block map unchanged: that map grows with every
+distinct `(scope, hash, block_size)` and is therefore unsuitable as perpetual
+stream state.
+
+Before source acquisition, the run resolves the authored portion of a
+`ContentSynthesisProfileV1` containing:
+
+- a profile schema version;
+- a tokenizer semantic digest that binds the tokenizer artifact, revision,
+  vocabulary, decode behavior, and chat template where applicable; a diagnostic
+  tokenizer name alone is insufficient;
+- the prompt-corpus identifier and corpus implementation version;
+- the resolved content root seed;
+- the exact block-sampling algorithm, including whether compatibility
+  `python_mt19937_v1` or `blake3_fast_v1` behavior is selected;
+- Dynamo's global empty hash scope, equivalent to the current `None` scope; and
+- the current Dynamo prompt/response tail-rule and seed-derivation version.
+
+The trace block size is record-derived rather than available before source
+acquisition. The first valid executable `request_end` replay payload binds it as
+the run authority and seals the complete profile before any executable action
+is reconstructed. Every later replay payload must match; a mismatch terminates
+the stream with a stable format error rather than changing synthesis semantics
+mid-run. Resume restores the committed authority and validates new records
+against it. Existing finite `dynamo_trace` continues to resolve and validate
+one block size across its complete capture.
+
+An environment compatibility switch such as `AIPERF_WEKA_FAST_CONTENT` may be
+consulted only while resolving this profile. Its result becomes the explicit
+algorithm value; ambient environment may not alter synthesis after the profile
+is frozen. The authored-profile digest is part of the frozen run and cellular
+plan. Checkpoints store the synthesis authority explicitly as either unbound or
+bound to a block size. Once bound, the complete profile digest participates in
+the session-program semantic digest and is sent to a cell before that cell may
+reconstruct content. Resume and cellular execution fail closed when the bound
+profile differs. Record identity remains governed by the decoder's format
+semantic digest; record-derived synthesis authority does not retroactively
+change IDs for fragments decoded before the first executable request.
+
+`streaming_dynamo_trace` initially emits session fragments that retain the
+validated hash sequence and token-length metadata. The immutable synthesis
+profile and pure synthesis implementation are shared, but the component that
+reconstructs content owns its memoization cache locally. There is no
+run-global synchronized cache across workers or cells. Hashes expand when the
+fragment becomes an executable request, before ordinary endpoint
+materialization. This keeps format decoding incremental while reusing the same
+prefix geometry, user/assistant message partitioning, token blocks, and decoded
+content as finite Dynamo replay.
+
+Generation 1 requires every executable `request_end` record to contain a valid
+`request.replay` payload. Other typed Dynamo events remain governed by their
+ordinary format rules. A replay source hash list may be empty only when
+`input_length == 0`. For `0 < input_length < trace_block_size`, the source must
+supply one partial-block hash; alignment validation then removes it from the
+normalized reusable full-block sequence. An executable `request_end` lacking
+replay metadata fails with a stable format error. Streaming does not reproduce
+the finite compiler's virtual fallback-hash allocator, whose results depend on
+a globally sorted complete trace and per-session history. Existing finite
+`dynamo_trace` fallback behavior remains unchanged.
+
+Replay alignment validation and partial-block handling preserve current finite
+compiler behavior. When the final supplied hash represents only a partial
+block, it is removed from the reusable full-block sequence. If no complete
+block remains, the existing tiny-prompt path synthesizes the entire nonzero
+prompt from a deterministic tail seed. If complete blocks remain, only those
+blocks are materialized; the residual count remains input metadata and is not
+appended to the endpoint prompt. Synthesized responses continue to use their
+existing deterministic response-tail seed. Reconstruction waits until the
+coordinator has proven the session root under the ordering and parent-closure
+rules; that root identity is checkpointed because it scopes both tail seeds.
+
+Memoized blocks are an optimization, not durable stream state. Each
+reconstruction owner may use an optional worker- or cell-local byte-bounded,
+evictable cache over the pure synthesis function. Eviction cannot change
+output, and cache contents are not checkpointed. Resume may rebuild any block
+and **MUST** produce identical tokens and text under the same profile.
+
+Generation-1 parity is deliberately narrow: for supported records with valid
+`request.replay` metadata and the same `ContentSynthesisProfileV1`, batch and
+streaming paths produce identical materialized token IDs, message roles, text,
+and prefix relationships. Conformance tests cover the three consequential
+behaviors: repeated hashes and shared prefixes; zero-length, tiny, full-block,
+and full-plus-partial input boundaries under the finite behavior above; and
+checkpoint resume plus cellular refusal on profile mismatch. Parity does not
+include legacy virtual fallback hashes or require the streaming path to
+construct a complete `GraphInputBundle`.
+
 Request-level shadow replay emits session-addressed turn fragments as soon as
 they decode. The coordinator retains request history and causal state across
 objects and emits executable actions when ordering allows. Missing parents
