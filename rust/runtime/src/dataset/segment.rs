@@ -259,6 +259,15 @@ pub trait SegmentStore: Send + Sync {
 /// never see the arena, its payload kinds, or its interner. Wrapping a store
 /// rather than implementing the trait on `dyn SegmentStore` keeps the adapter
 /// runtime-owned and leaves the boundary trait free of runtime types.
+///
+/// The accepted payload set is exactly the runtime's own answer to the same
+/// question, `segment_field_wire` in
+/// [`body_plan::plan`](crate::body_plan): `Message` and `Raw` carry a complete
+/// pre-serialized JSON value and nothing else does. In particular `Text` is
+/// refused here even though it holds `Bytes`: those are the caller's plain text
+/// as interned by [`SegmentPool::intern_text`], not JSON wire, and splicing
+/// them into a body through a view documented as "exact pre-serialized wire
+/// bytes" would emit malformed JSON.
 pub struct SegmentStoreReader<'store, S: SegmentStore + ?Sized>(&'store S);
 
 impl<'store, S: SegmentStore + ?Sized> SegmentStoreReader<'store, S> {
@@ -270,12 +279,14 @@ impl<'store, S: SegmentStore + ?Sized> SegmentStoreReader<'store, S> {
 
 impl<S: SegmentStore + ?Sized> aiperf_core::endpoint::SegmentReader for SegmentStoreReader<'_, S> {
     fn wire(&self, handle: Handle) -> Option<Bytes> {
+        // Exhaustive on purpose: a seventh `Payload` variant must be an
+        // explicit decision here, not silently unaddressable.
         match self.0.segment(handle)?.payload {
             Payload::Message { ref wire, .. } | Payload::Raw { ref wire } => Some(wire.clone()),
-            Payload::Text { ref bytes, .. } => Some(bytes.clone()),
-            // A payload with no pre-serialized wire (token ids, media) is not
-            // addressable through the narrow formatter view.
-            _ => None,
+            Payload::Text { .. }
+            | Payload::TokenIds { .. }
+            | Payload::Media { .. }
+            | Payload::TraceHashIds { .. } => None,
         }
     }
 }
@@ -688,6 +699,54 @@ mod tests {
         assert_eq!(different_prefix.index(), 2);
         assert_ne!(pool.id(child).unwrap(), pool.id(different_prefix).unwrap());
         assert_eq!(pool.len(), 3);
+    }
+
+    /// The boundary reader must accept exactly what `segment_field_wire`
+    /// accepts. Production edit that makes this fail: re-admit
+    /// `Payload::Text { ref bytes, .. } => Some(bytes.clone())` in
+    /// `SegmentStoreReader::wire`, which makes the `text` assertion below
+    /// return the interned plain text instead of `None`.
+    #[test]
+    fn the_boundary_reader_admits_exactly_the_spliceable_payloads() {
+        use aiperf_core::endpoint::SegmentReader as _;
+
+        let mut pool = SegmentPool::new();
+        let message = pool
+            .intern_message(None, "user", msg("hello"), vec![1_u32].into_boxed_slice())
+            .unwrap();
+        let raw = pool
+            .intern_raw(None, Bytes::from_static(b"{\"model\":\"m\"}"))
+            .unwrap();
+        let text = pool
+            .intern_text(
+                None,
+                "user",
+                Bytes::from_static(b"plain text"),
+                vec![2_u32].into_boxed_slice(),
+            )
+            .unwrap();
+        let token_ids = pool.intern_token_ids(None, [3_u32]).unwrap();
+        let media = pool
+            .intern_media(None, MediaKind::Image, Bytes::from_static(b"\x89PNG"))
+            .unwrap();
+        let trace_hash_ids = pool
+            .intern_trace_hash_ids(vec![4_i64].into_boxed_slice(), 1)
+            .unwrap();
+
+        let store = pool.freeze();
+        let reader = SegmentStoreReader::new(&store);
+
+        assert_eq!(reader.wire(message), Some(msg("hello")));
+        assert_eq!(
+            reader.wire(raw),
+            Some(Bytes::from_static(b"{\"model\":\"m\"}"))
+        );
+        // Plain text is not JSON wire; `segment_field_wire` rejects it too.
+        assert_eq!(reader.wire(text), None);
+        assert_eq!(reader.wire(token_ids), None);
+        assert_eq!(reader.wire(media), None);
+        assert_eq!(reader.wire(trace_hash_ids), None);
+        assert_eq!(reader.wire(Handle::new(99)), None);
     }
 
     #[test]
