@@ -7,5 +7,9 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[dependencies]
+aiperf-core.workspace = true
+aiperf-plugin-api.workspace = true
+
 [dev-dependencies]
-aiperf-plugin-test-support = { path = "../plugin-test-support" }
+aiperf-plugin-test-support.workspace = true
