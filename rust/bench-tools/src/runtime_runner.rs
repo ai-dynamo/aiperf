@@ -998,9 +998,9 @@ const CONTROLLER_STATE_DIRECTORY: &str = ".aiperf-parity-state";
 
 /// Resolve the one ledger location owned by a sealed experiment identity.
 ///
-/// The caller names only a state root. Two different requested filenames under
-/// the same root therefore resolve to the same ledger, so one sealed identity
-/// can never restart at attempt 1 through a new output path.
+/// The caller names only a state root. Every requested output path under the
+/// same root therefore resolves to the same ledger, so one sealed identity can
+/// never restart at attempt 1 through a new output path.
 pub fn controlled_attempt_ledger_path(
     state_root: &Path,
     experiment_identity_blake3: &str,
@@ -1013,12 +1013,20 @@ pub fn controlled_attempt_ledger_path(
         .join(format!("{identity}.jsonl"))
 }
 
-/// Reduce a caller-requested path to the controller state root that owns it.
+/// Reduce a caller-requested output path to the state root that owns it.
+///
+/// The final component is always ignored, whatever its shape: requested paths
+/// `state/attempts`, `state/attempts.jsonl`, and `state/run.d` all name the one
+/// root `state`. Inferring the shape from `Path::extension` instead would give
+/// a single sealed identity two roots — `state` and `state/attempts` — which is
+/// precisely the restart the identity-owned ledger exists to prevent.
 fn controller_state_root(requested: &Path) -> &Path {
-    if requested.extension().is_some() {
-        requested.parent().unwrap_or(requested)
-    } else {
-        requested
+    match requested.parent() {
+        // A bare filename names the current directory as its root.
+        Some(parent) if parent.as_os_str().is_empty() => Path::new("."),
+        Some(parent) => parent,
+        // A filesystem root has no further component to drop.
+        None => requested,
     }
 }
 
