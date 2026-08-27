@@ -16,16 +16,17 @@ aiperf-plugin-api.workspace = true
 aiperf-plugin-host.workspace = true
 aiperf-plugin-sdk.workspace = true
 aiperf-transport-sdk.workspace = true
+# Task-7: libmimalloc-sys must be a normal dep (not dev-dep) so that Cargo
+# propagates cargo:rustc-link-lib=static=mimalloc from its build script into
+# the test binary link command.  As a [dev-dependency], Cargo propagates the
+# -L search path but silently drops the -l flag, leaving the shim's mi_*
+# extern "C" references unsatisfied.  libmimalloc-sys has `links = "mimalloc"`
+# so Cargo deduplicates the build script; no duplicate -lmimalloc results.
+libmimalloc-sys.workspace = true
 
 [dev-dependencies]
-# Task-7 allocator conformance tests need the provider (rlib) to satisfy
-# the shim's extern "C" mi_* references at test-binary link time, and the
-# shim itself to verify the GlobalAlloc implementation compiles correctly.
-# libmimalloc-sys is listed explicitly because the provider rlib is not
-# linked into the test binary (no Rust items from it are used in the tests);
-# without it the shim's mi_* extern references are undefined at link time.
+# Task-7 allocator conformance tests need the provider (rlib) and shim.
 aiperf-allocator-provider = { path = "../allocator-provider" }
 aiperf-allocator-shim = { path = "../allocator-shim" }
-libmimalloc-sys.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
