@@ -38,6 +38,15 @@ macro_rules! define_builtin_metric_tags {
     };
 }
 
+// POSITIONAL CONTRACT: the declaration order below is a wire/storage contract, not
+// a cosmetic list. `MetricTagId::index()` is an entry's zero-based position here, and
+// `catalog::metric_definition`/`spec_for` index the `CATALOG` static in catalog.rs with
+// it; `ColumnStore`/`SketchColumns` additionally embed that ordinal in MessagePack
+// payloads crossing the cell/controller boundary. Adding or reordering entries here
+// without a matching reorder in `CATALOG` silently re-points every shifted tag at a
+// neighbouring metric's unit, value type, and flags, corrupting per-tag accumulation
+// with no error. Append new built-ins at the end only. Tripwire: the
+// `catalog_is_discriminant_ordered` test in catalog.rs.
 define_builtin_metric_tags! {
     RequestCount => "request_count",
     ErrorRequestCount => "error_request_count",
