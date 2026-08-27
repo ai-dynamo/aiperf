@@ -12,6 +12,7 @@ use std::{
     cmp::Ordering,
     collections::{BTreeMap, BTreeSet, VecDeque},
     fmt,
+    io::{self, Write},
     mem::size_of,
     num::NonZeroU64,
     rc::Rc,
@@ -4028,6 +4029,62 @@ fn increment_summary_counter<K: Ord + Copy>(
 
 // The classification is exposed as the bare code so scope-specific budget
 // errors can wrap it directly instead of narrowing a wider error back down.
+/// Counting adapter that measures encoded length without retaining the encoding.
+///
+/// `serde_json::to_writer` streams; wrapping a sink in this adapter yields the
+/// exact encoded length with no output-proportional allocation, which is what
+/// makes a pre-serialization aggregate acquisition exact rather than guessed.
+struct CountingWriter<W: Write> {
+    inner: W,
+    count: usize,
+}
+
+impl<W: Write> CountingWriter<W> {
+    fn new(inner: W) -> Self {
+        Self { inner, count: 0 }
+    }
+}
+
+impl<W: Write> Write for CountingWriter<W> {
+    fn write(&mut self, data: &[u8]) -> io::Result<usize> {
+        self.inner.write_all(data)?;
+        self.count = self
+            .count
+            .checked_add(data.len())
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "encoded length overflow"))?;
+        Ok(data.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.inner.flush()
+    }
+}
+
+/// Measure the exact JSON encoding length of `value` without allocating it.
+fn measured_json_len<T>(value: &T) -> Result<usize, serde_json::Error>
+where
+    T: Serialize + ?Sized,
+{
+    let mut writer = CountingWriter::new(io::sink());
+    serde_json::to_writer(&mut writer, value)?;
+    Ok(writer.count)
+}
+
+/// Measure the exact JSON encoding length and digest without allocating it.
+///
+/// `blake3::Hasher` implements [`Write`], so the encoder streams directly into
+/// the hasher. This is the allocation-free replacement for buffering an
+/// encoding solely to read its length and content digest.
+fn measured_json_digest<T>(value: &T) -> Result<(usize, ContentDigest), serde_json::Error>
+where
+    T: Serialize + ?Sized,
+{
+    let mut writer = CountingWriter::new(blake3::Hasher::new());
+    serde_json::to_writer(&mut writer, value)?;
+    let digest = ContentDigest::from_bytes(*writer.inner.finalize().as_bytes());
+    Ok((writer.count, digest))
+}
+
 const fn budget_failure_code(error: BudgetError) -> StateBudgetFailureCode {
     match error {
         BudgetError::CapacityUnavailable | BudgetError::RequestExceedsCapacity => {
@@ -4039,6 +4096,7 @@ const fn budget_failure_code(error: BudgetError) -> StateBudgetFailureCode {
         | BudgetError::CannotGrowLease
         | BudgetError::InvalidFragmentItemCharge { .. }
         | BudgetError::ActionPayloadUndercharged { .. }
+        | BudgetError::PartialLeasedBuffer { .. }
         | BudgetError::AccountingOverflow => StateBudgetFailureCode::ItemCapacity,
     }
 }
@@ -6010,5 +6068,27 @@ mod tests {
                 StreamingReliabilityError::ExportReceiptBudget(expected)
             );
         }
+    }
+
+    #[test]
+    fn measured_json_len_matches_serialized_length() {
+        let value = serde_json::json!({
+            "component": "aiperf.streaming.reliability",
+            "counts": [1, 2, 3],
+            "nested": {"unicode": "\u{00e9}\u{4e2d}"},
+        });
+        let encoded = serde_json::to_vec(&value)
+            .unwrap_or_else(|error| panic!("encodable value: {error}"));
+        let measured =
+            measured_json_len(&value).unwrap_or_else(|error| panic!("measurable: {error}"));
+        assert_eq!(measured, encoded.len());
+
+        let (digest_len, digest) =
+            measured_json_digest(&value).unwrap_or_else(|error| panic!("measurable: {error}"));
+        assert_eq!(digest_len, encoded.len());
+        assert_eq!(
+            digest,
+            ContentDigest::from_bytes(*blake3::hash(&encoded).as_bytes())
+        );
     }
 }

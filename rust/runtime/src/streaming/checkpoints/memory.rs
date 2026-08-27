@@ -140,6 +140,7 @@ fn map_budget_error(
         | BudgetError::CannotGrowLease
         | BudgetError::InvalidFragmentItemCharge { .. }
         | BudgetError::ActionPayloadUndercharged { .. }
+        | BudgetError::PartialLeasedBuffer { .. }
         | BudgetError::RequestExceedsCapacity => {
             CheckpointBackendBudgetFailureCode::Unrepresentable
         }
@@ -1574,5 +1575,29 @@ mod tests {
         assert_eq!(backend.live_budget_usage(), usage_before);
         assert!(before_attempt.transactions.used_items > usage_before.transactions.used_items);
         assert!(usage_before.storage.used_items > 0);
+    }
+
+    #[test]
+    fn partial_leased_buffer_maps_to_state_budget() {
+        let error = map_budget_error(
+            CheckpointBackendBudgetKind::Storage,
+            BudgetLimits {
+                max_items: 4,
+                max_bytes: 64,
+            },
+            1,
+            8,
+            BudgetError::PartialLeasedBuffer {
+                charged_bytes: 8,
+                written_bytes: 3,
+            },
+        );
+        assert!(matches!(
+            error,
+            CheckpointError::BackendBudget {
+                budget: CheckpointBackendBudgetKind::Storage,
+                code: CheckpointBackendBudgetFailureCode::Unrepresentable,
+            }
+        ));
     }
 }

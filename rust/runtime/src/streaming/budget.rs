@@ -5,6 +5,7 @@
 
 use std::{
     fmt,
+    io::{self, Write},
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -73,6 +74,13 @@ pub enum BudgetError {
         required_bytes: usize,
         /// Bytes covered by distinct retained-content leases.
         retained_bytes: usize,
+    },
+    /// A leased write buffer was consumed without filling its exact charge.
+    PartialLeasedBuffer {
+        /// Byte capacity charged for the buffer.
+        charged_bytes: usize,
+        /// Bytes actually written into the buffer.
+        written_bytes: usize,
     },
     /// Internal accounting could not represent a state transition.
     AccountingOverflow,
@@ -440,6 +448,107 @@ impl Drop for BudgetLease {
     }
 }
 
+/// Move-only write buffer whose allocated capacity is exactly its budget charge.
+///
+/// The buffer is allocated once, after admission, at the exact size its lease
+/// paid for. [`Write`] refuses a byte past that capacity, so no producer can
+/// outrun its admission and no reallocation can silently double the realized
+/// footprint. The buffer and its lease are inseparable: the only way to obtain
+/// the bytes is [`LeasedByteBuffer::into_full`], which returns the lease too.
+///
+/// ```compile_fail
+/// # use aiperf_runtime::streaming::budget::LeasedByteBuffer;
+/// # fn cannot_separate(value: LeasedByteBuffer) {
+/// let _buffer = value.buffer;
+/// let _lease = value.lease;
+/// # }
+/// ```
+#[derive(Debug)]
+pub struct LeasedByteBuffer {
+    buffer: Vec<u8>,
+    lease: BudgetLease,
+}
+
+impl LeasedByteBuffer {
+    /// Allocate exactly the byte capacity the lease already paid for.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BudgetError::InvalidFragmentItemCharge`] unless the lease
+    /// charges exactly one item, and [`BudgetError::AccountingOverflow`] when
+    /// the exact reservation cannot be allocated. Both paths consume and drop
+    /// the lease, so no charge outlives the refusal.
+    pub fn with_exact_capacity(lease: BudgetLease) -> Result<Self, BudgetError> {
+        if lease.charged_items() != 1 {
+            return Err(BudgetError::InvalidFragmentItemCharge {
+                charged_items: lease.charged_items(),
+            });
+        }
+        let mut buffer = Vec::new();
+        buffer
+            .try_reserve_exact(lease.charged_bytes())
+            .map_err(|_| BudgetError::AccountingOverflow)?;
+        Ok(Self { buffer, lease })
+    }
+
+    /// Return the byte capacity charged for this buffer.
+    #[must_use]
+    pub fn charged_bytes(&self) -> usize {
+        self.lease.charged_bytes()
+    }
+
+    /// Return the bytes written so far.
+    #[must_use]
+    pub fn written_bytes(&self) -> usize {
+        self.buffer.len()
+    }
+
+    /// Return the bytes still acceptable before the charge is exhausted.
+    #[must_use]
+    pub fn remaining_capacity(&self) -> usize {
+        self.lease.charged_bytes() - self.buffer.len()
+    }
+
+    /// Consume an exactly filled buffer, returning compact bytes and the lease.
+    ///
+    /// Requiring the buffer to be exactly full is what makes the charge exact:
+    /// `into_boxed_slice` on a `Vec` whose length equals its capacity never
+    /// reallocates, so the returned allocation matches the charge.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BudgetError::PartialLeasedBuffer`] when fewer bytes were
+    /// written than charged; the charge is released as the refusal returns.
+    pub fn into_full(self) -> Result<(Box<[u8]>, BudgetLease), BudgetError> {
+        if self.buffer.len() != self.lease.charged_bytes() {
+            return Err(BudgetError::PartialLeasedBuffer {
+                charged_bytes: self.lease.charged_bytes(),
+                written_bytes: self.buffer.len(),
+            });
+        }
+        Ok((self.buffer.into_boxed_slice(), self.lease))
+    }
+}
+
+impl Write for LeasedByteBuffer {
+    fn write(&mut self, data: &[u8]) -> io::Result<usize> {
+        if data.len() > self.remaining_capacity() {
+            // Refusing here is the admission bound: a writer that would exceed
+            // its charge fails instead of reallocating past it.
+            return Err(io::Error::new(
+                io::ErrorKind::WriteZero,
+                "leased byte buffer capacity exhausted",
+            ));
+        }
+        self.buffer.extend_from_slice(data);
+        Ok(data.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
 fn checked_permit_count(count: usize) -> Result<u32, BudgetError> {
     if count > Semaphore::MAX_PERMITS {
         return Err(BudgetError::PermitCountTooLarge);
@@ -496,5 +605,85 @@ mod tests {
             checked_sum([usize::MAX, 1]),
             Err(BudgetError::AccountingOverflow)
         );
+    }
+
+    #[test]
+    fn leased_buffer_capacity_equals_charge() {
+        let budget = StreamingResourceBudget::new(BudgetLimits {
+            max_items: 4,
+            max_bytes: 64,
+        })
+        .unwrap_or_else(|error| panic!("valid budget: {error}"));
+        let lease = budget
+            .try_acquire(1, 8)
+            .unwrap_or_else(|error| panic!("available lease: {error}"));
+        let mut buffer = LeasedByteBuffer::with_exact_capacity(lease)
+            .unwrap_or_else(|error| panic!("exact buffer: {error}"));
+
+        assert_eq!(buffer.charged_bytes(), 8);
+        assert_eq!(buffer.remaining_capacity(), 8);
+        buffer
+            .write_all(b"abcdefgh")
+            .unwrap_or_else(|error| panic!("exact fill: {error}"));
+        assert_eq!(buffer.written_bytes(), 8);
+
+        let (bytes, lease) = buffer
+            .into_full()
+            .unwrap_or_else(|error| panic!("exactly filled: {error}"));
+        assert_eq!(bytes.as_ref(), b"abcdefgh");
+        assert_eq!(bytes.len(), lease.charged_bytes());
+        assert_eq!(budget.snapshot().used_bytes, 8);
+        drop(lease);
+        assert_eq!(budget.snapshot().used_bytes, 0);
+    }
+
+    #[test]
+    fn leased_buffer_write_past_charge_fails() {
+        let budget = StreamingResourceBudget::new(BudgetLimits {
+            max_items: 4,
+            max_bytes: 64,
+        })
+        .unwrap_or_else(|error| panic!("valid budget: {error}"));
+        let mut buffer = LeasedByteBuffer::with_exact_capacity(
+            budget
+                .try_acquire(1, 8)
+                .unwrap_or_else(|error| panic!("available lease: {error}")),
+        )
+        .unwrap_or_else(|error| panic!("exact buffer: {error}"));
+
+        buffer
+            .write_all(b"abcd")
+            .unwrap_or_else(|error| panic!("partial write fits: {error}"));
+        assert!(buffer.write_all(b"toolong").is_err());
+        assert_eq!(buffer.written_bytes(), 4);
+        assert_eq!(budget.snapshot().used_bytes, 8);
+    }
+
+    #[test]
+    fn into_full_rejects_partial_buffer() {
+        let budget = StreamingResourceBudget::new(BudgetLimits {
+            max_items: 4,
+            max_bytes: 64,
+        })
+        .unwrap_or_else(|error| panic!("valid budget: {error}"));
+        let mut buffer = LeasedByteBuffer::with_exact_capacity(
+            budget
+                .try_acquire(1, 8)
+                .unwrap_or_else(|error| panic!("available lease: {error}")),
+        )
+        .unwrap_or_else(|error| panic!("exact buffer: {error}"));
+        buffer
+            .write_all(b"abc")
+            .unwrap_or_else(|error| panic!("partial write: {error}"));
+
+        assert_eq!(
+            buffer.into_full().err(),
+            Some(BudgetError::PartialLeasedBuffer {
+                charged_bytes: 8,
+                written_bytes: 3,
+            })
+        );
+        assert_eq!(budget.snapshot().used_items, 0);
+        assert_eq!(budget.snapshot().used_bytes, 0);
     }
 }

@@ -278,6 +278,30 @@ impl BudgetedCheckpointBytes {
         Ok(Self { bytes, lease })
     }
 
+    /// Bind an already-compact, already-charged buffer with no additional copy.
+    ///
+    /// Unlike [`BudgetedCheckpointBytes::new`], this does not re-copy. The
+    /// caller must have produced the buffer at exactly its charged size — the
+    /// `LeasedByteBuffer` seam in `budget.rs` is the only supported producer —
+    /// so binding is a move rather than a transient second allocation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CheckpointError::ObjectVerification`] unless the lease charges
+    /// exactly one item and exactly the buffer's length.
+    pub(crate) fn from_compact(
+        bytes: Box<[u8]>,
+        lease: BudgetLease,
+    ) -> Result<Self, CheckpointError> {
+        if lease.charged_items() != 1 || lease.charged_bytes() != bytes.len() {
+            return Err(CheckpointError::ObjectVerification);
+        }
+        Ok(Self {
+            bytes: Bytes::from(bytes),
+            lease,
+        })
+    }
+
     /// Borrow the exact immutable participant payload.
     #[must_use]
     pub fn as_bytes(&self) -> &[u8] {
@@ -1865,5 +1889,34 @@ mod tests {
 
         fn requires_committed(_: CommittedCheckpointGeneration) {}
         requires_committed(prevalidated.into_committed_after_publication_fence());
+    }
+
+    #[test]
+    fn from_compact_charges_exact_encoded_length() {
+        use crate::streaming::budget::{BudgetLimits, StreamingResourceBudget};
+
+        let budget = StreamingResourceBudget::new(BudgetLimits {
+            max_items: 4,
+            max_bytes: 64,
+        })
+        .unwrap_or_else(|error| panic!("valid budget: {error}"));
+        let lease = budget
+            .try_acquire(1, 5)
+            .unwrap_or_else(|error| panic!("available lease: {error}"));
+        let payload = BudgetedCheckpointBytes::from_compact(Box::from(&b"abcde"[..]), lease)
+            .unwrap_or_else(|error| panic!("exact compact payload: {error}"));
+
+        assert_eq!(payload.as_bytes(), b"abcde");
+        assert_eq!(payload.retained_allocation_bytes(), payload.charged_bytes());
+
+        let mismatched = budget
+            .try_acquire(1, 4)
+            .unwrap_or_else(|error| panic!("available lease: {error}"));
+        assert!(matches!(
+            BudgetedCheckpointBytes::from_compact(Box::from(&b"abcde"[..]), mismatched),
+            Err(CheckpointError::ObjectVerification)
+        ));
+        drop(payload);
+        assert_eq!(budget.snapshot().used_bytes, 0);
     }
 }
