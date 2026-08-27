@@ -162,6 +162,62 @@ impl ExporterObservablePolicyV1 {
     pub fn canonical_blake3(&self) -> Result<String, ExporterPolicyError> {
         Ok(format!("blake3:{}", blake3::hash(&self.canonical_bytes()?)))
     }
+
+    /// Select the exact policy-required backing payloads from host capture.
+    pub(crate) fn select_host_backing_payloads(
+        &self,
+        scenario_id: &str,
+        artifact_contents: &BTreeMap<String, Vec<u8>>,
+        captured_stream: Option<&[u8]>,
+        transcript_bodies: &[Vec<u8>],
+    ) -> Result<Vec<SelectedBackingPayloadV1>, ExporterPolicyError> {
+        let scenario = self
+            .scenarios
+            .iter()
+            .find(|scenario| scenario.scenario_id == scenario_id)
+            .ok_or_else(|| ExporterPolicyError::new("capture scenario is absent from policy"))?;
+        let selectors = scenario
+            .provenance_slots
+            .iter()
+            .map(|slot| backing_key_for_selector(&slot.output_selector))
+            .collect::<BTreeSet<_>>();
+        selectors
+            .into_iter()
+            .map(|selector| match selector {
+                BackingPayloadKey::ArtifactContent(path) => artifact_contents
+                    .get(&path)
+                    .cloned()
+                    .map(|bytes| SelectedBackingPayloadV1::ArtifactContent { path, bytes })
+                    .ok_or_else(|| {
+                        ExporterPolicyError::new(
+                            "host capture is missing policy-selected artifact content",
+                        )
+                    }),
+                BackingPayloadKey::CapturedStream => captured_stream
+                    .map(|bytes| SelectedBackingPayloadV1::CapturedStream {
+                        bytes: bytes.to_vec(),
+                    })
+                    .ok_or_else(|| {
+                        ExporterPolicyError::new(
+                            "host capture is missing the policy-selected captured stream",
+                        )
+                    }),
+                BackingPayloadKey::TranscriptBody(sequence) => transcript_bodies
+                    .get(usize::try_from(sequence).map_err(|_| {
+                        ExporterPolicyError::new(
+                            "policy-selected transcript sequence does not fit usize",
+                        )
+                    })?)
+                    .cloned()
+                    .map(|bytes| SelectedBackingPayloadV1::TranscriptBody { sequence, bytes })
+                    .ok_or_else(|| {
+                        ExporterPolicyError::new(
+                            "host capture is missing a policy-selected transcript body",
+                        )
+                    }),
+            })
+            .collect()
+    }
 }
 
 /// Parse, structurally validate, and authenticate one exact canonical policy.
