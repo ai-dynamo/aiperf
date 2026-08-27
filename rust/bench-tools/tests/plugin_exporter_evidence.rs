@@ -96,23 +96,28 @@ fn member_record_bytes(
     evidence: &ExporterMemberEvidence,
     duration_adjustment: u64,
 ) -> Vec<u8> {
-    let summary = validate_exporter_member_evidence(
-        &ExporterSampleContract::normative(),
-        &binding(member),
-        evidence,
-    )
-    .expect("member evidence validates");
+    member_record_bytes_for_binding(&binding(member), evidence, duration_adjustment)
+}
+
+fn member_record_bytes_for_binding(
+    binding: &ExporterMemberBinding,
+    evidence: &ExporterMemberEvidence,
+    duration_adjustment: u64,
+) -> Vec<u8> {
+    let summary =
+        validate_exporter_member_evidence(&ExporterSampleContract::normative(), binding, evidence)
+            .expect("member evidence validates");
     let retained = &summary.repetitions[evidence.retained.repetition_ordinal];
     let record = serde_json::json!({
         "active_duration_ns": summary.active_duration_nanoseconds + duration_adjustment,
-        "attempt_ordinal": 0,
-        "build_artifact_blake3": DIGEST,
-        "build_receipt_blake3": DIGEST,
+        "attempt_ordinal": binding.attempt_ordinal,
+        "build_artifact_blake3": binding.build_artifact_blake3,
+        "build_receipt_blake3": binding.build_receipt_blake3,
         "comparison_observable_blake3": RAW_OBSERVABLE_DIGEST,
-        "experiment_identity_blake3": DIGEST,
-        "member": member,
-        "observable_policy_blake3": binding(member).observable_policy_blake3,
-        "pair_id": "pair-00",
+        "experiment_identity_blake3": binding.experiment_identity_blake3,
+        "member": binding.member,
+        "observable_policy_blake3": binding.observable_policy_blake3,
+        "pair_id": binding.pair_id,
         "processed_records": 1_600_000,
         "repetition_receipts_blake3": summary.repetition_receipts_blake3,
         "retained_artifact_records": 100_000,
@@ -120,7 +125,7 @@ fn member_record_bytes(
         "retained_provenance_receipt_blake3": retained.provenance_receipt_blake3,
         "retained_raw_observable_blake3": retained.raw_observable_blake3,
         "retained_repetition_ordinal": 0,
-        "scenario_id": "exporter_100k",
+        "scenario_id": binding.scenario_id,
         "schema_version": 1
     });
     let mut bytes = serde_json::to_vec(&record).expect("literal record serializes");
@@ -153,6 +158,20 @@ fn assert_receipts_rejected(label: &str, repetition_receipt_bytes: Vec<u8>) {
         .is_err(),
         "forged receipt vector was accepted: {label}"
     );
+}
+
+fn rewrite_json_field(bytes: &[u8], field: &str, value: serde_json::Value) -> Vec<u8> {
+    let mut document: serde_json::Value = serde_json::from_slice(bytes).expect("JSON parses");
+    if let Some(array) = document.as_array_mut() {
+        for entry in array {
+            entry[field] = value.clone();
+        }
+    } else {
+        document[field] = value;
+    }
+    let mut rewritten = serde_json::to_vec(&document).expect("rewritten JSON serializes");
+    rewritten.push(b'\n');
+    rewritten
 }
 
 #[test]
@@ -452,6 +471,10 @@ fn controlled_evaluator_retains_validated_exporter_member_records() {
         retained[0].dynamic_record.repetition_receipts_blake3,
         retained[0].dynamic_member.repetition_receipts_blake3
     );
+    assert_eq!(retained[0].static_evidence, static_evidence);
+    assert_eq!(retained[0].dynamic_evidence, dynamic_evidence);
+    assert!(retained[0].static_backing_payloads.is_empty());
+    assert!(retained[0].dynamic_backing_payloads.is_empty());
 }
 
 #[test]
@@ -484,5 +507,91 @@ fn controlled_evaluator_refuses_evidence_not_derived_from_its_bound_policy() {
     assert_eq!(
         evaluator.history()[0].decision,
         ControlledAttemptDecision::ValidFailure
+    );
+}
+
+#[test]
+fn controlled_evaluator_turns_unknown_pairs_into_terminal_product_failures() {
+    let mut static_binding = binding(ExporterMember::Static);
+    static_binding.pair_id = "forged-pair".to_owned();
+    let mut dynamic_binding = binding(ExporterMember::Dynamic);
+    dynamic_binding.pair_id = "forged-pair".to_owned();
+    let mut static_evidence = member_evidence(ExporterMember::Static);
+    static_evidence.repetition_receipt_bytes = rewrite_json_field(
+        &static_evidence.repetition_receipt_bytes,
+        "pair_id",
+        serde_json::json!("forged-pair"),
+    );
+    let mut dynamic_evidence = member_evidence(ExporterMember::Dynamic);
+    dynamic_evidence.repetition_receipt_bytes = rewrite_json_field(
+        &dynamic_evidence.repetition_receipt_bytes,
+        "pair_id",
+        serde_json::json!("forged-pair"),
+    );
+    let static_record = member_record_bytes_for_binding(&static_binding, &static_evidence, 0);
+    let dynamic_record = member_record_bytes_for_binding(&dynamic_binding, &dynamic_evidence, 0);
+    let mut evaluator = ControlledMeasurementEvaluator::new().expect("authority validates");
+    evaluator.begin_attempt().expect("first attempt starts");
+
+    assert_eq!(
+        evaluator
+            .record_exporter_pair_evidence(
+                &empty_paired_policy(),
+                &static_binding,
+                &static_evidence,
+                &[],
+                &static_record,
+                &dynamic_binding,
+                &dynamic_evidence,
+                &[],
+                &dynamic_record,
+            )
+            .expect("unknown pair is classified rather than escaping authority"),
+        PairAttemptDecision::ExperimentFailed
+    );
+    assert_eq!(
+        evaluator.history()[0].decision,
+        ControlledAttemptDecision::ValidFailure
+    );
+}
+
+#[test]
+fn controlled_evaluator_rejects_policy_and_receipt_observable_class_mismatch() {
+    let mut static_binding = binding(ExporterMember::Static);
+    static_binding.observable_kind = ExporterObservableKind::CapturedStream;
+    let mut dynamic_binding = binding(ExporterMember::Dynamic);
+    dynamic_binding.observable_kind = ExporterObservableKind::CapturedStream;
+    let mut static_evidence = member_evidence(ExporterMember::Static);
+    static_evidence.repetition_receipt_bytes = rewrite_json_field(
+        &static_evidence.repetition_receipt_bytes,
+        "observable_kind",
+        serde_json::json!("captured_stream"),
+    );
+    let mut dynamic_evidence = member_evidence(ExporterMember::Dynamic);
+    dynamic_evidence.repetition_receipt_bytes = rewrite_json_field(
+        &dynamic_evidence.repetition_receipt_bytes,
+        "observable_kind",
+        serde_json::json!("captured_stream"),
+    );
+    let static_record = member_record_bytes_for_binding(&static_binding, &static_evidence, 0);
+    let dynamic_record = member_record_bytes_for_binding(&dynamic_binding, &dynamic_evidence, 0);
+    let mut evaluator = ControlledMeasurementEvaluator::new().expect("authority validates");
+    evaluator.begin_attempt().expect("first attempt starts");
+
+    assert_eq!(
+        evaluator
+            .record_exporter_pair_evidence(
+                &empty_paired_policy(),
+                &static_binding,
+                &static_evidence,
+                &[],
+                &static_record,
+                &dynamic_binding,
+                &dynamic_evidence,
+                &[],
+                &dynamic_record,
+            )
+            .expect("class mismatch is a terminal product decision"),
+        PairAttemptDecision::ExperimentFailed
     );
 }

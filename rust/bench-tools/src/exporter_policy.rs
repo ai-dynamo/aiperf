@@ -128,6 +128,27 @@ impl ExporterObservablePolicyV1 {
         }
     }
 
+    /// Observable class authorized for one policy scenario.
+    pub fn observable_kind(
+        &self,
+        scenario_id: &str,
+    ) -> Option<crate::plugin_stats::ExporterObservableKind> {
+        self.scenarios
+            .iter()
+            .find(|scenario| scenario.scenario_id == scenario_id)
+            .map(|scenario| match scenario.observable_kind {
+                ExporterObservableKind::ArtifactTree => {
+                    crate::plugin_stats::ExporterObservableKind::ArtifactTree
+                }
+                ExporterObservableKind::CapturedStream => {
+                    crate::plugin_stats::ExporterObservableKind::CapturedStream
+                }
+                ExporterObservableKind::ReceiverTranscript => {
+                    crate::plugin_stats::ExporterObservableKind::ReceiverTranscript
+                }
+            })
+    }
+
     /// Serialize the validated policy as RFC 8785 JCS with one trailing newline.
     pub fn canonical_bytes(&self) -> Result<Vec<u8>, ExporterPolicyError> {
         let mut bytes = serde_json_canonicalizer::to_vec(self).map_err(|error| {
@@ -166,7 +187,8 @@ pub fn parse_exporter_observable_policy(
 }
 
 /// Exact backing bytes for one selector named by a policy slot.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum SelectedBackingPayloadV1 {
     /// Exact bytes of one retained regular file at `path`.
     ArtifactContent {

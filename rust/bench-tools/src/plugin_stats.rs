@@ -625,10 +625,18 @@ pub struct ControlledExporterPairRecord {
     pub static_record: ExporterMemberRecord,
     /// Validated static member evidence summary.
     pub static_member: ExporterMemberSummary,
+    /// Complete retained static evidence used to replay policy application.
+    pub static_evidence: ExporterMemberEvidence,
+    /// Exact static backing payloads selected by the observable policy.
+    pub static_backing_payloads: Vec<SelectedBackingPayloadV1>,
     /// Validated dynamic member record.
     pub dynamic_record: ExporterMemberRecord,
     /// Validated dynamic member evidence summary.
     pub dynamic_member: ExporterMemberSummary,
+    /// Complete retained dynamic evidence used to replay policy application.
+    pub dynamic_evidence: ExporterMemberEvidence,
+    /// Exact dynamic backing payloads selected by the observable policy.
+    pub dynamic_backing_payloads: Vec<SelectedBackingPayloadV1>,
 }
 
 #[derive(Debug)]
@@ -932,9 +940,27 @@ impl ControlledMeasurementEvaluator {
                 dynamic_evidence,
                 dynamic_record_bytes,
             )?;
-            Ok((pair, static_record, dynamic_record))
+            if !self
+                .inventory
+                .cases
+                .iter()
+                .any(|case| case.scenario == static_binding.scenario_id)
+            {
+                return Err(PluginStatsError::new(
+                    "exporter evidence names an unknown inventory scenario",
+                ));
+            }
+            let member_order = self
+                .pair_schedule
+                .iter()
+                .find(|scheduled| scheduled.pair_id == static_binding.pair_id)
+                .map(|scheduled| scheduled.member_order)
+                .ok_or_else(|| {
+                    PluginStatsError::new("exporter pair is absent from the schedule")
+                })?;
+            Ok((pair, static_record, dynamic_record, member_order))
         })();
-        let (pair, static_record, dynamic_record) = match evidence_result {
+        let (pair, static_record, dynamic_record, member_order) = match evidence_result {
             Ok(validated) => validated,
             Err(error) => {
                 self.finish_active(
@@ -945,12 +971,6 @@ impl ControlledMeasurementEvaluator {
             }
         };
 
-        let member_order = self
-            .pair_schedule
-            .iter()
-            .find(|pair| pair.pair_id == static_binding.pair_id)
-            .map(|pair| pair.member_order)
-            .ok_or_else(|| PluginStatsError::new("exporter pair is absent from the schedule"))?;
         let members = member_order
             .into_iter()
             .map(|variant| RawMemberTerminalRecord {
@@ -974,8 +994,12 @@ impl ControlledMeasurementEvaluator {
                     pair_id: static_binding.pair_id.clone(),
                     static_record,
                     static_member: pair.static_member,
+                    static_evidence: static_evidence.clone(),
+                    static_backing_payloads: static_backing_payloads.to_vec(),
                     dynamic_record,
                     dynamic_member: pair.dynamic_member,
+                    dynamic_evidence: dynamic_evidence.clone(),
+                    dynamic_backing_payloads: dynamic_backing_payloads.to_vec(),
                 });
         }
         Ok(decision)
@@ -1110,6 +1134,11 @@ fn validate_exporter_policy_application(
     if policy.evidence_mode() != binding.mode {
         return Err(PluginStatsError::new(
             "exporter observable policy mode does not match the member binding",
+        ));
+    }
+    if policy.observable_kind(&binding.scenario_id) != Some(binding.observable_kind) {
+        return Err(PluginStatsError::new(
+            "exporter observable policy class does not match the member binding",
         ));
     }
     let policy_blake3 = policy
@@ -1461,7 +1490,7 @@ pub struct ExporterRepetitionReceipt {
 }
 
 /// Complete retained bytes for one repetition selected as evidence.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct RetainedExporterEvidence {
     /// Receipt ordinal whose evidence is retained.
     pub repetition_ordinal: usize,
@@ -1474,7 +1503,7 @@ pub struct RetainedExporterEvidence {
 }
 
 /// Canonical receipt vector and the retained bytes that authenticate one row.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct ExporterMemberEvidence {
     /// Canonical compact receipt array with one trailing newline.
     pub repetition_receipt_bytes: Vec<u8>,
