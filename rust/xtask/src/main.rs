@@ -9,7 +9,9 @@ use aiperf_xtask::abi_churn::measure;
 use aiperf_xtask::abi_closure::{
     Baseline, Seeds, compute, compute_in, ensure_no_growth, workspace_root,
 };
-use aiperf_xtask::abi_impl_budget::{MAX_IMPL_RATIO, measure as measure_impl_budget};
+use aiperf_xtask::abi_impl_budget::{
+    ensure_within_budget, measure as measure_impl_budget,
+};
 use anyhow::{Context, Result, bail};
 
 fn main() -> Result<()> {
@@ -74,14 +76,7 @@ fn main() -> Result<()> {
             }
             let measurement = measure_impl_budget()?;
             println!("{}", serde_json::to_string(&measurement)?);
-            if measurement.ratio >= MAX_IMPL_RATIO {
-                bail!(
-                    "ABI-contributing files are {:.0}% implementation ({} impl lines); maximum is {:.0}%",
-                    measurement.ratio * 100.0,
-                    measurement.impl_lines,
-                    MAX_IMPL_RATIO * 100.0
-                );
-            }
+            ensure_within_budget(&measurement)?;
         }
         other => bail!("unknown xtask subcommand {other:?}"),
     }
