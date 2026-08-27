@@ -181,8 +181,18 @@ struct ImplementationWitness {
 struct ImplementedPackageWitness {
     package: String,
     source_files: Vec<String>,
-    dependencies: Vec<OwnedDependency>,
+    dependencies: Vec<WitnessDependency>,
     features: BTreeMap<String, Vec<String>>,
+}
+
+/// A witness dependency edge. Unlike the projection's `OwnedDependency`, a
+/// witness records only what it validates against live Cargo metadata: the
+/// projection owns the justification prose, the witness owns the exact edge.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(deny_unknown_fields)]
+struct WitnessDependency {
+    package: String,
+    kind: String,
 }
 
 fn workspace_root() -> PathBuf {
