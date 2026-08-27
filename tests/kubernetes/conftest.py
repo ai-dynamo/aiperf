@@ -1875,9 +1875,12 @@ def _create_helm_values(k8s_settings: K8sTestSettings) -> HelmValues:
     return HelmValues(
         image_repository=image_repository,
         image_tag=image_tag,
-        image_pull_policy="Never",
+        image_pull_policy=k8s_settings.image_pull_policy,
         default_image=k8s_settings.aiperf_image,
-        default_image_pull_policy="Never",
+        default_image_pull_policy=k8s_settings.image_pull_policy,
+        image_pull_secrets=(
+            [k8s_settings.image_pull_secret] if k8s_settings.image_pull_secret else []
+        ),
         storage_enabled=False,
     )
 
