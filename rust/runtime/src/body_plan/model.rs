@@ -17,23 +17,9 @@ pub type FieldName = Cow<'static, str>;
 
 /// An endpoint-generated literal paired with its serialized wire bytes.
 ///
-/// The wire is produced once when the value is *bound to a field*, not once per
-/// dispatch: the materializer splices it verbatim, exactly as it splices segment
-/// and message wires. That keeps literal serialization off the dispatch path for
-/// a cached plan entirely, and makes it exactly one pass for a plan rebuilt per
-/// dispatch (`precomputable_body() == false` endpoints, graph nodes, warmup) —
-/// the same count as re-serializing at materialization, but the bytes are then
-/// also free to measure, which is what lets [`FieldProgram`] reserve exactly.
-///
-/// This matters most where a literal is large. `from_object` converts a
-/// top-level array to spliceable [`Wires`](FieldValue::Wires) only when every
-/// element is an *object*, so the prompt-sized `input` string arrays that the
-/// embeddings endpoints bind stay literals — and those plans also carry `model`,
-/// so [`prebuilt_if_static`](BodyPlan::prebuilt_if_static) cannot collapse them
-/// and the program stays alive for the whole run.
-///
-/// The wire is absent only when the value would not serialize, in which case
-/// materialization re-attempts it and surfaces the error.
+/// Binding serializes once so cached plans can splice the wire without
+/// per-dispatch serialization. The wire is absent only when serialization
+/// failed; materialization retries and returns that error.
 #[derive(Debug, Clone)]
 pub struct LiteralValue {
     value: Value,
@@ -42,13 +28,8 @@ pub struct LiteralValue {
 
 /// The value bound to one [`BodyPlan`] field.
 ///
-/// Content values are *segment references*, never inline bytes: the endpoint
-/// declares which stored segment fills a slot and the materializer splices its
-/// pre-serialized wire bytes. Everything endpoint-generated that has no content
-/// segment is a [`Literal`] — usually a scalar or a small struct (`model`,
-/// `max_tokens`, `stream`, `sampling_params`, …), but also prompt-sized values
-/// that are not object arrays, such as an embeddings `input` string array or
-/// `vllm_generate`'s token-ID array.
+/// Content remains a segment reference or pre-serialized wire. Values generated
+/// by an endpoint without a content segment use [`Literal`].
 ///
 /// [`Literal`]: FieldValue::Literal
 #[derive(Debug, Clone, PartialEq)]
@@ -80,20 +61,9 @@ pub enum FieldValue {
 /// An ordered named-field program plus the exact serialized length of the body
 /// it materializes to.
 ///
-/// `exact_len` becomes the [`SizeHint`] that lets [`JsonEmitter`] reserve the
-/// finished body in one allocation instead of growing a guessed buffer per
-/// dispatch. It counts the enclosing braces, every `"name":` frame, every
-/// separating comma, and each value's serialized bytes — but **not** the
-/// per-dispatch override tail, which is not part of the program.
-///
-/// It is `None` whenever a [`Segment`](FieldValue::Segment) or
-/// [`Segments`](FieldValue::Segments) value makes the length depend on a segment
-/// store the program does not hold, whenever a literal fails to serialize, and
-/// whenever a [`Reserved`](FieldValue::Reserved) slot is still unfilled — such a
-/// program has no serialized length at all, since materializing it is an error.
-/// A `None` hint costs only the old capacity heuristic; a *wrong* hint would be
-/// a silent regression, so every mutator either maintains it exactly or clears
-/// it, and a debug assertion checks it against the finished buffer.
+/// `exact_len` lets the emitter reserve the finished body once. It is absent
+/// while a segment-store lookup or unfilled reserved slot makes the length
+/// unknown; per-dispatch overrides are not part of the cached value.
 #[derive(Debug, Clone)]
 pub struct FieldProgram {
     fields: SmallVec<[(FieldName, FieldValue); 8]>,
