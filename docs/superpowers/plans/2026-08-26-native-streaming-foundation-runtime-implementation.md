@@ -55,7 +55,7 @@ rust/runtime/src/config/model/dataset_stream.rs strict public Config-v2 types
 rust/runtime/src/engine/execute/capture_service.rs reusable finite/streaming construction
 ```
 
-The cross-plan foundation order is `0 → 1A → 1B → checkpoint 5A → 1C → checkpoint 5B → 1D → 1E`. Task 5A lands the participant vocabulary used by the blocking owner; Task 5B then lands backend vocabulary consumed by the remaining contracts. After Task 1E merges, Tasks 2 and 4A may run in parallel. Task 3 depends on Task 2. Task 4B depends on Task 4A. Task 7A depends on Tasks 1D and 5A.
+The cross-plan foundation order is `0 → 1A → 1B → checkpoint 5A → 1C → checkpoint 5A-R → checkpoint 5B → 1D → 1E`. Task 5A lands the participant vocabulary used by the blocking owner; Task 5A-R then binds the landed checkpoint and blocking-participant APIs to one logical run; Task 5B lands the run-scoped backend vocabulary consumed by the remaining contracts. After Task 1E merges, Tasks 2 and 4A may run in parallel. Task 3 depends on Task 2. Task 4B depends on Task 4A. Task 7A depends on Tasks 1D and 5A-R.
 
 ### Task 0: Freeze Native Streaming Features and Dependencies
 
@@ -668,7 +668,7 @@ git commit -m "feat(runtime): add bounded streaming blocking owner"
 - Test: `rust/runtime/tests/streaming_contracts.rs`
 
 **Interfaces:**
-- Consumes: Tasks 1A–1C plus checkpoint Tasks 5A-5B, which already own the participant/backend traits and backend-facing result vocabulary.
+- Consumes: Tasks 1A–1C plus checkpoint Tasks 5A, 5A-R, and 5B, which already own the run-bound participant/backend traits and backend-facing result vocabulary. Task 1D must not start from landed 5A/1C alone.
 - Produces: source, format, session-program, action-sink, and checkpoint-backend factory contracts plus runtime source/decoder/session/action contracts. Exact new method signatures follow.
 
 ```rust
@@ -864,7 +864,11 @@ pub trait StreamingCheckpointBackendFactory: std::fmt::Debug + Send + Sync {
 
 ```
 
-Task 1D consumes, and must not redefine, the exact `StreamingCheckpointParticipant`, `StreamingCheckpointBackend`, `LeasedGenerationReader`, `StreamingGenerationTransaction`, and backend-facing result DTOs landed by checkpoint Tasks 5A-5B. The checkpoint factory above is the only new checkpoint-facing interface in this task.
+Task 1D consumes, and must not redefine, the exact run-bound
+`StreamingCheckpointParticipant`, `StreamingCheckpointBackend`,
+`LeasedGenerationReader`, `StreamingGenerationTransaction`, and backend-facing
+result DTOs landed by checkpoint Tasks 5A, 5A-R, and 5B. The checkpoint factory
+above is the only new checkpoint-facing interface in this task.
 
 - [ ] **Step 1: Add compile-time RED contract checks**
 
@@ -1473,7 +1477,7 @@ git commit -m "refactor(engine): expose reusable phase capture service"
 
 ### Task 7A: UTC/Monotonic Authority, Event Ordering, and Near-Horizon Scheduling
 
-**Dependencies:** Tasks 1A–1D and master Task 5A must be merged. This task implements `StreamingCheckpointParticipant` for event-time state; it must not invent a temporary checkpoint shape.
+**Dependencies:** Tasks 1A–1D and checkpoint Task 5A-R must be merged. This task implements `StreamingCheckpointParticipant` for event-time state; it must not invent a temporary or run-free checkpoint shape.
 
 **Files:**
 - Modify: `rust/runtime/src/clock/runtime_clock.rs:11-45`
@@ -1604,7 +1608,7 @@ fn capture_utc_anchor(
 
 - [ ] **Step 4: Implement event ordering and late policy**
 
-Use a budgeted min-order heap keyed by `(EventTimeUtc, StableOrderKey)`. Hard frontiers never regress. Bounded disorder computes `max_seen - max_out_of_order` with checked arithmetic. Implement distinct typed outcomes for `Fail`, `IssueImmediately`, `Drop`, and bounded catch-up. Persist policy kind, max seen, watermark, sequence frontier, and heap membership through the Task 5A participant contract.
+Use a budgeted min-order heap keyed by `(EventTimeUtc, StableOrderKey)`. Hard frontiers never regress. Bounded disorder computes `max_seen - max_out_of_order` with checked arithmetic. Implement distinct typed outcomes for `Fail`, `IssueImmediately`, `Drop`, and bounded catch-up. Persist policy kind, max seen, watermark, sequence frontier, and heap membership through the run-bound Task 5A-R participant contract.
 
 - [ ] **Step 5: Implement bounded near-horizon admission**
 
@@ -1636,5 +1640,5 @@ Then run `cargo fmt --check` and `cargo clippy -p aiperf-runtime --all-targets -
 
 - Spec invariants covered here: stable topology-independent identity; typed source/format/session/action/checkpoint seams; bounded memory and blocking ownership; feature-accurate absence; strict resource ownership; cross-format capability agreement; bounded terminal processing; reusable phase/capture construction; one immutable UTC anchor; deterministic event-time ordering; no task per far-future action.
 - Deferred intentionally to later subsystem plans: checkpoint storage implementation, result segments/compaction, session state machines, pipeline execution, concrete local/HF/Baseten/Dynamo/S3 adapters, executable shadow workload, graph action sink, sensitive state, and cellular execution.
-- Type consistency: checkpoint Tasks 5A-5B own participant/backend I/O vocabulary; Task 1D owns the five factory and source/format/session/action contracts; Task 2 registers those exact traits; Task 3 references their descriptor lookups; Task 4A consumes Task 1B permits; Task 7A consumes Task 1A IDs, Task 1B budget, and Task 5A checkpoint cuts.
+- Type consistency: checkpoint Tasks 5A, 5A-R, and 5B own run-bound participant/backend I/O vocabulary; Task 1D owns the five factory and source/format/session/action contracts; Task 2 registers those exact traits; Task 3 references their descriptor lookups; Task 4A consumes Task 1B permits; Task 7A consumes Task 1A IDs, Task 1B budget, and Task 5A-R run-bound checkpoint cuts.
 - Placeholder scan: production registration is deliberately absent until executable implementations exist; no task asks for a rejecting placeholder, temporary workload, source-format switch, or `NativeDatasetPlan` variant.

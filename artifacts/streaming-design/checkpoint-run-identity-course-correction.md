@@ -2,8 +2,9 @@
 
 Date: 2026-08-26
 
-This record corrects the Task 5A/5B contract before the atomic checkpoint
-backend is implemented. The prior backend interface could open a head by run
+This record adds a mandatory Task 5A-R between landed Tasks 5A/1C and Task 5B,
+before the atomic checkpoint backend is implemented. The prior backend
+interface could open a head by run
 but could not name a run when beginning a generation. That made empty
 generations unaddressable and allowed otherwise identical generation content
 to collide across logical runs.
@@ -24,10 +25,14 @@ local incarnation cannot participate in the durable run namespace.
 
 ## Generation binding ruling
 
-Task 5A owns `StreamRunIdentity` and adds it to canonical
+Task 5A-R owns `StreamRunIdentity` and adds it to canonical
 `CheckpointGenerationCandidate` construction, serialization,
 self-verification, expectation verification, and domain-separated hashing. The
-run is hashed as its own length-framed canonical field. Consequently, two
+hash domain is exactly
+`aiperf.streaming.committed-checkpoint-generation.v3`. The raw
+`LogicalReplayRunId::as_bytes()` is hashed immediately after that domain as its
+own length-framed field, before the existing canonical fields. The wrapper's
+Serde representation is never hashed. Consequently, two
 empty generations with identical epochs, predecessors, cuts, participant
 descriptors, plan digests, result roots, and terminal state still have distinct
 generation identities when their logical runs differ.
@@ -37,12 +42,25 @@ borrow-only accessor. Publication authority remains unchanged: a candidate is
 not authoritative until a backend CAS or leased-current-root read produces the
 private proof required for promotion.
 
+`CheckpointGenerationCandidate::verify_against` takes `expected_run` and checks
+it before self-hash, participant-plan, or semantic-plan verification. Promotion
+takes the same explicit expected run, calls that verification first, and only
+then consumes the exact-generation proof. All five existing external
+verification calls and the internal promotion call move to this signature.
+
 The same private run value propagates into each
 `CommittedParticipantReceipt`. A receipt remains bound to the exact committed
 generation, participant descriptor digest, and represented cut, now also under
 the exact logical run. The coordinator and participant both compare run before
 epoch/digest idempotency logic. A receipt from another run is rejected even if
 it has a greater epoch and byte-identical participant state.
+
+`ParticipantStateDescriptor` remains run-free. Its strict public DTO and digest
+stay unchanged, so identical participant bytes across runs retain an identical
+descriptor digest. Run lives privately in prepared/committed state wrappers,
+the candidate/committed generation, and the receipt. Consuming prepared state
+returns `(run, descriptor, budgeted bytes)` together so Task 5B cannot stage a
+payload while discarding its run authority.
 
 ## Backend ruling
 
@@ -73,17 +91,23 @@ root. Objects reachable only from another generation or run are refused.
 
 Task V1 owns the Config-v2/protocol product projection for the explicit
 fresh-or-resume choice and the resume locator carrying the exact
-`StreamRunIdentity`. Fresh execution allocates the logical identity and commits
+`StreamRunIdentity`. Its strict `StreamingRunStartConfigV2` projects to typed
+Protocol-v2 `StreamingRunStartV2`; resume uses the exact
+`StreamResumeLocatorV2` logical ID and cannot redirect the separately configured
+checkpoint backend. Fresh execution allocates the logical identity and commits
 the bootstrap generation—with the exact participant inventory and one
 zero-partition result epoch—before source polling or endpoint issue. Resume
 must receive that identity in the explicit locator/product projection, or a
 future catalog must resolve it from that locator. Missing identity is a refusal;
 resume never silently allocates a new logical run.
 
-Task 5E consumes the already resolved identity and enforces the initial
-commit-before-issue ordering. Task 5C subsequently allocates a fresh
-`RunIncarnationId` while acquiring durable writer authority; it does not choose
-or replace the logical run.
+Task 5E consumes the already resolved identity by constructor injection and
+uses it for canonical bootstrap/barrier commits. It performs no allocation,
+locator parsing, catalog lookup, or fallback. Product Task V1 owns both
+fresh/resume resolution and the lifecycle gate that commits the initial
+generation before source polling or endpoint issue. Task 5C subsequently
+allocates a fresh `RunIncarnationId` while acquiring durable writer authority;
+it does not choose or replace the logical run.
 
 ## Durable writer authority boundary
 
@@ -98,6 +122,10 @@ or result identity.
 
 - Candidate digests differ across two logical runs with otherwise identical
   content, including an empty result epoch.
+- A fixed fully specified fixture pins the v3 run-bound digest to
+  `519bf192518f43e9d4accd6bd8ed38e885a1dce06d8d35579bf5f99b794d10f1`.
+- Candidate deserialization rejects a tampered serialized run, and a
+  publication proof for one run cannot promote a candidate from another run.
 - `RunIncarnationId` cannot type-check as input to `StreamRunIdentity::new`.
 - `begin_generation` rejects explicit-run versus expectation-run mismatch
   before staging or budget transfer.
@@ -114,20 +142,33 @@ or result identity.
   its exact generation even if those objects exist in the backend.
 - A greater-epoch committed receipt from another run is rejected before any
   participant callback, including when the descriptor digest is identical.
+- A foreign barrier is rejected by the blocking owner before it fences
+  admission or mutates prepared/checkpoint state.
 - A fresh invocation commits its bootstrap generation before issue, and a
   resume request without a resolvable explicit logical-run identity refuses.
 
 ## Ownership disposition
 
-- Task 5A continues to own `rust/runtime/src/streaming/checkpoint.rs`, now
-  explicitly including stable run identity and canonical candidate run binding.
+- Task 5A-R owns the run-binding retrofit in
+  `rust/runtime/src/streaming/checkpoint.rs` and
+  `rust/runtime/src/streaming/blocking.rs`, plus checkpoint support,
+  participant, and blocking regressions. It depends on landed 5A+1C and must
+  precede 5B and 1D.
+- Crate-private publication-proof/promotion and authoritative receipt fixtures
+  stay in `#[cfg(test)]` modules in `checkpoint.rs` and `blocking.rs`; public
+  integration support covers only public digest, deserialization, and barrier
+  behavior. GREEN includes the complete streaming-feature library suite.
 - Task 5B owns only its planned backend, memory backend, result DTO, module, and
-  backend test/support files. It consumes the Task 5A run-bound candidate API.
+  backend test/support files. It consumes the Task 5A-R run-bound candidate API.
 - Task 5E owns coordinator-side cross-run receipt refusal and
-  bootstrap-before-issue enforcement after receiving a resolved logical run.
+  canonical bootstrap/barrier commits after receiving an injected resolved
+  logical run; it does not resolve that run.
 - Product Task V1 owns explicit fresh/resume run discovery and resume-locator
-  projection; a future catalog may implement locator resolution without
-  changing the identity contract.
+  projection plus bootstrap-before-source/issue product ordering; a future
+  catalog may implement locator resolution without changing the identity
+  contract.
 - Task 5C remains the sole owner of durable writer incarnation and lease
   allocation.
-- Task 1C blocking-owner files and behavior are unaffected.
+- The frozen Task 1C implementation remains approved on its landed 5A contract,
+  but 5A-R must update its blocking owner to reject foreign barriers before
+  fencing and greater-epoch foreign receipts before any mutation.
