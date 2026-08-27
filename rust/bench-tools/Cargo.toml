@@ -31,7 +31,14 @@ path = "src/bin/sagemaker_logproxy.rs"
 tokio = { workspace = true, features = ["full"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
+serde_json_canonicalizer = "=0.3.2"
+serde_yaml = "0.9"
+tempfile = "3"
+flate2 = "1"
+tar = "0.4"
+libc.workspace = true
 bytes = { workspace = true }
+blake3.workspace = true
 http-body-util = "0.1"
 hyper = { version = "1", features = ["server", "http1", "http2"] }
 # `client-legacy` adds the pooled HTTP client used to forward requests upstream.

@@ -410,6 +410,80 @@ mod tests {
     }
 
     #[test]
+    fn response_reduction_allocation_baseline() {
+        const ITERATIONS: u64 = 10_000;
+        const CHUNKS_PER_RESPONSE: u64 = 32;
+
+        let parsed = ParsedResponse {
+            perf_ns: 10,
+            data: Some(ResponseData::Text {
+                text: "deterministic response token".to_owned(),
+            }),
+            usage: None,
+            sources: None,
+        };
+        let observer = NoopObserver;
+        let to_ms = |ns| ns as f64;
+        let on_first_token = |_| {};
+
+        let allocation_probe = crate::allocation_probe::AllocationProbe::start();
+        for _ in 0..ITERATIONS {
+            let first_token_released = Cell::new(false);
+            let emitter = TokenEmitter {
+                uuid: Uuid::nil(),
+                produces_tokens: true,
+                start_ns: 0,
+                obs: &observer,
+                to_ms: &to_ms,
+                first_token_released: &first_token_released,
+                on_first_token: &on_first_token,
+            };
+            let mut response_text = String::new();
+            let mut model_response = ModelResponseMetadata::default();
+            let mut endpoint_metrics = ObservedEndpointMetrics::default();
+            let mut observed_usage = ObservedUsage::default();
+            for _ in 0..CHUNKS_PER_RESPONSE {
+                std::hint::black_box(reduce_parsed_response(
+                    &parsed,
+                    &emitter,
+                    EndpointReduceAccumulators {
+                        response_text: &mut response_text,
+                        model_response: &mut model_response,
+                        endpoint_metrics: &mut endpoint_metrics,
+                        observed_usage: &mut observed_usage,
+                        capture_first_content_chunk_usage: false,
+                    },
+                ));
+            }
+            std::hint::black_box((
+                response_text,
+                model_response,
+                endpoint_metrics,
+                observed_usage,
+            ));
+        }
+        let sample = allocation_probe.finish();
+
+        println!(
+            "AIPERF_ALLOCATION_SAMPLE {}",
+            serde_json::json!({
+                "path": "response_reduction",
+                "iterations": ITERATIONS,
+                "chunks_per_response": CHUNKS_PER_RESPONSE,
+                "allocation_count": sample.allocation_count,
+                "allocated_bytes": sample.allocated_bytes,
+                "allocation_count_per_request": sample.allocation_count as f64 / ITERATIONS as f64,
+                "allocated_bytes_per_request": sample.allocated_bytes as f64 / ITERATIONS as f64,
+            })
+        );
+        assert!(
+            sample.allocation_count >= ITERATIONS,
+            "fresh production-default response accumulators must expose per-request allocation"
+        );
+        assert!(sample.allocated_bytes > 0);
+    }
+
+    #[test]
     fn usage_absorption_retains_extended_endpoint_facts() {
         let parsed = ParsedResponse {
             perf_ns: 1,

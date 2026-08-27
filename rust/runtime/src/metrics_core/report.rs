@@ -1481,7 +1481,8 @@ mod tests {
             }),
         });
 
-        let report = NativeReport::new(&summary, None);
+        let mut report = NativeReport::new(&summary, None);
+        report.aiperf_version = "0.0.0".to_owned();
         let serialized = serde_json::to_string_pretty(&report).unwrap();
         assert_eq!(
             serialized,

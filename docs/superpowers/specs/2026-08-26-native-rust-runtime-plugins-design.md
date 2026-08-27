@@ -617,6 +617,19 @@ do not depend on the complete orchestration runtime. This avoids dependency
 cycles, duplicate process-global ownership, and needless host-universe
 expansion.
 
+The foundation workspace commit records the eventual frozen-universe and
+frozen-registry ownership as `[[symbol_ownership]]` machine-checked policy rows
+only. It
+does not predeclare placeholder Rust types: the transactional freeze task owns
+their first definitions, layouts, and semantics. The symbolic policy names
+that producer task and remains machine-checked until source/rustdoc checks
+replace its symbol `planned` state. CLI composition has an independent planned
+state that changes only when the CLI composition task proves the actual
+host/runtime dependency and effect ordering. Likewise, only distributable
+plugin packages carry a `plugins.yaml.in` template; API, SDK, host,
+conformance, test, performance, comparator, allocator, and standalone
+third-party-workspace crates are not plugin artifacts and do not carry one.
+
 `aiperf-plugin-api` MUST NOT depend on a transport framework, exporter backend,
 CLI parser, Tokio runtime, or the orchestration crate. CI enforces a checked
 dependency allowlist; comparative language such as "smallest crate" is not a
@@ -1830,8 +1843,11 @@ The initial acceptance protocol is normative:
 - execute exactly 30 retained paired samples after warmup for each representative HTTP
   non-streaming, HTTP streaming, gRPC, multi-worker, and exporter workload that
   applies to the migrated component;
-- give each case a frozen successful-request budget sized before comparison so
-  the static baseline's median sample lasts at least 30 seconds. A dynamic-only
+- give each request-budget case a frozen successful-request budget sized before
+  comparison so the current static baseline's median sample lasts at least 30
+  seconds. Exporter cases instead use the separately calibrated and frozen
+  repetition budget defined below; paired exporter members need only have
+  positive duration and complete that budget. A dynamic-only
   product error, crash, timeout, incomplete request budget, or malformed output
   fails the component gate immediately and is never retried away. A product
   error in both members is also a gate failure. Only a blinded harness-owned
@@ -1864,13 +1880,27 @@ The initial acceptance protocol is normative:
   endpoint of its 95% interval to be at least `0.99` for exporter nanoseconds
   per record. The exporter case has one exact deterministic corpus/pass of
   100,000 records. One retained sample is exactly 16 sequential repetitions of
-  that same pass: each repetition must emit exactly 100,000 records and have
-  the identical output digest. The runner retains one 100,000-record artifact
-  plus per-repetition receipts, sets `processed_records = 1,600,000`, measures
-  active exporter duration as the sum of those repetitions only, and divides it
-  by `processed_records`. Startup, inter-repetition, and other wall-clock gaps
-  are excluded; sleep or padding is forbidden; valid summed active duration is
-  at least 30 seconds;
+  that same pass. Each repetition starts from the same input corpus bytes and
+  processes exactly 100,000 input records. Exporter output cardinality is not
+  assumed to equal input cardinality: an exporter may produce zero, one, or
+  multiple files, stream writes, requests, runs, or backend objects. Instead,
+  each scenario freezes exactly one observable class: `artifact_tree` for file
+  exporters, `captured_stream` for `console_txt`, or `receiver_transcript` for
+  uploaders. The class-specific canonical observable and its raw evidence are
+  defined below. Equality of the canonical comparison observable is required
+  across all 16 repetitions and between the static and dynamic members of a
+  pair. The runner retains one complete 100,000-input-record repetition's raw
+  observable evidence plus the complete ordered repetition-receipt vector, sets
+  `processed_records = 1,600,000`, measures active exporter duration as the sum
+  of the 16 repetitions only, and divides it by `processed_records`. Startup,
+  inter-repetition, validation, hashing, retention, and other wall-clock gaps
+  are excluded; sleep or padding is forbidden. The value 16 is calibrated and
+  frozen only after the original static-baseline retained-sample median is at
+  least 30 seconds. After that calibration, each static and dynamic member must
+  complete all 16 repetitions and every repetition duration must be a positive
+  integer number of nanoseconds, but no individual member or repetition has a
+  30-second minimum; a faster dynamic member is never invalidated for finishing
+  below the calibration duration;
 - require no increase in allocation count or allocated bytes per successful
   request in deterministic endpoint, transport-dispatch, response-reduction,
   and exporter-capture microbenchmarks. For every retained pair and each
@@ -1930,9 +1960,255 @@ contains at least HTTP non-streaming at concurrency 1 and 64, HTTP streaming at
 concurrency 1 and 64 with 32 deterministic response chunks, gRPC unary and
 streaming at concurrency 1 and 64, a four-worker run, OTLP-disabled and OTLP-
 enabled capture runs, and an exporter pass whose exact deterministic corpus is
-100,000 records. Exporter inventory entries additionally freeze
+100,000 input records. Exporter inventory entries additionally freeze
 `corpus_records: 100000`, `sample_repetitions: 16`,
 `processed_records: 1600000`, and `retained_artifact_records: 100000`.
+`retained_artifact_records` means the number of input records whose complete
+observable effects are represented by the one retained repetition; it does not
+assert an exporter-output row or object count.
+
+The three observable classes are exhaustive and have these exact raw-evidence
+forms:
+
+- `artifact_tree`: a canonical compact JSON array sorted by UTF-8 logical path.
+  Every entry has exactly `path`, `kind`, `length`, and `blake3`; `path` is a
+  slash-separated path relative to the exporter-owned output root, `kind` is
+  `regular_file` or `empty_directory`, regular-file `length` is its unsigned
+  byte length and `blake3` hashes its exact bytes, and empty-directory `length`
+  is zero with the BLAKE3 of empty bytes. Non-empty directories are represented
+  by their children; symlinks, hard links, devices, sockets, path aliases,
+  absolute paths, dot components, and duplicate normalized paths are forbidden.
+- `captured_stream`: the exact captured stdout byte string after the harness
+  has redirected the exporter to its own descriptor. It begins at exporter
+  invocation and ends only after exporter flush/close. The descriptor receives
+  no harness/test output. Its raw observable digest is the BLAKE3 of those exact
+  bytes; an empty stream is valid only when the frozen scenario says so.
+- `receiver_transcript`: a canonical compact JSON array in receiver-acceptance
+  order. Every entry has exactly `sequence`, `operation`, `target`, `metadata`,
+  and `body`; `sequence` is the unique dense unsigned sequence from zero,
+  operation and target are the exporter protocol's canonical method and
+  logical destination, metadata is a key-sorted array of exact UTF-8 key/value
+  pairs after only the exact protocol-specific hop-field list frozen in
+  `ExporterObservablePolicyV1` has been removed, and `body` is either
+  `{"encoding":"bytes","length":N,"blake3":D}`. The receiver hashes the
+  exact accepted body bytes before any decoding; those bytes remain available
+  until that repetition has been validated and are retained for the selected
+  evidence repetition. A separately derived strict decoded view may be used to
+  locate a provenance value but never replaces the raw body evidence. The in-
+  repo receiver records before acknowledging an operation. Every decoder-
+  accepted retry attempt is therefore a separate transcript entry and cannot
+  be coalesced. Connection/TLS failures, truncated requests, and other attempts
+  that never cross the decoder-accepted boundary are outside this observable
+  class.
+
+The raw byte domain is class-specific. `artifact_tree` and
+`receiver_transcript` hash their exact canonical compact JSON manifest bytes,
+including one trailing newline; the empty value for either is exactly the three
+bytes `[]\n`. `captured_stream` hashes only the exact captured bytes, with no
+JSON wrapper or added newline; its empty value is the zero-length byte string.
+An individual receiver body hashes only its exact accepted bytes. Generation 1
+starts receiver observability after the in-repo receiver's HTTP/RPC decoder has
+produced the operation, target, metadata, and complete body: packet boundaries,
+TLS records, HTTP chunk boundaries, and other pre-decoder transport framing are
+explicitly outside the exporter-observable domain. Retry attempts, accepted
+metadata, and exact accepted body bytes are inside it. The resulting class-
+specific digest is `raw_observable_blake3`.
+
+For comparison, one checked-in strict `ExporterObservablePolicyV1` JSON file is
+itself canonical compact JSON with one trailing newline and the following closed
+shape (the structural example is expanded in schema order; the encoded file
+uses the canonical key order defined next):
+
+```json
+{"schema_version":1,"mode":"paired","receiver_transport_fields_removed":[{"protocol":"otel_http_v1","keys":["date"]}],"scenarios":[{"scenario_id":"otel","observable_kind":"receiver_transcript","allows_empty":false,"provenance_slots":[{"slot_id":"plugin_lock","output_selector":{"kind":"transcript_body","sequence":0},"locator":{"kind":"json_pointer","pointer":"/plugin_lock_digest"},"static_expected":{"encoding":"canonical_json","value":"static-lock"},"dynamic_expected":{"encoding":"canonical_json","value":"dynamic-lock"},"replacement":{"encoding":"canonical_json","value":"@plugin-lock@"}}]}]}
+```
+
+In this section, canonical JSON means the exact UTF-8 bytes produced by RFC
+8785 JSON Canonicalization Scheme (JCS), with duplicate keys rejected before
+canonicalization. A trailing newline is appended only where this section says
+so and is not part of JCS itself. All additional array-order rules below apply
+before JCS serialization.
+
+Every object rejects unknown or missing fields. Every array rejects duplicate
+elements under its identity key and must already be in the order specified
+below; the decoder never sorts malformed input into validity. `schema_version`
+is the unsigned integer `1`. `mode` is exactly `paired` or
+`static_calibration`. Identifiers (`protocol`, `scenario_id`, and `slot_id`)
+match `[a-z0-9][a-z0-9_.-]{0,127}`. UTF-8 strings contain no NUL. Digests use
+lower-case `blake3:` plus 64 hexadecimal digits.
+
+`receiver_transport_fields_removed` is an array sorted by `protocol`; each
+element has exactly `protocol` and `keys`, and `keys` is a strictly increasing
+array of lower-case protocol-canonical metadata keys. Only those keys are
+removed before a receiver transcript is formed. An omitted protocol removes no
+metadata. A listed protocol unused by every scenario is rejected.
+
+`scenarios` is sorted by `scenario_id`; each element has exactly
+`scenario_id`, `observable_kind`, `allows_empty`, and `provenance_slots`.
+`observable_kind` is `artifact_tree`, `captured_stream`, or
+`receiver_transcript`; `allows_empty` is a JSON boolean; and
+`provenance_slots` is sorted by unique `slot_id`. A scenario missing from this
+array or present more than once fails before an exporter starts.
+
+Every provenance slot has exactly `slot_id`, `output_selector`, `locator`,
+`static_expected`, `replacement`, and, only when `mode` is `paired`,
+`dynamic_expected`. A `static_calibration` slot containing `dynamic_expected`
+and a `paired` slot omitting it are rejected. `output_selector` is one of these
+closed tagged objects:
+
+- `{"kind":"artifact_content","path":P}` selects the exact bytes of the
+  unique regular-file entry at normalized logical path `P`;
+- `{"kind":"captured_stream"}` selects the complete captured byte string;
+- `{"kind":"transcript_body","sequence":N}` selects the exact retained body
+  bytes whose length/digest occur in the unique transcript entry numbered `N`.
+
+Paths obey the artifact-tree path rules above. A selector must match exactly
+one value; an out-of-range sequence, absent path/body, kind/class mismatch,
+or multiply matched value fails. `locator` is one of three closed tagged
+objects:
+
+- `{"kind":"byte_range","offset":O,"length":L}` selects `L > 0` bytes at
+  zero-based byte offset `O`, with checked `O + L` not beyond the selected raw
+  value;
+- `{"kind":"json_pointer","pointer":P}` uses RFC 6901 against a strict UTF-8
+  JSON parse of the selected raw value. The parser rejects duplicate object
+  keys, non-finite numbers, trailing bytes, and invalid UTF-8 and must map the
+  selected value back to exactly one contiguous raw-token byte span. The root
+  pointer is the empty string; every other pointer begins `/` and uses only RFC
+  6901 `~0` and `~1` escapes; malformed escapes and missing or multiply mapped
+  values fail; and
+- `{"kind":"whole_output"}` selects the complete raw value and is legal only
+  when its expected value is independently computable from authenticated pre-
+  run inputs.
+
+Slots selecting one raw value must have disjoint raw byte spans; ancestor/
+descendant JSON pointers overlap and are forbidden, `whole_output` is exclusive,
+and any duplicate selector/locator pair is forbidden. The expected/replacement
+value has exactly `encoding` and `value`. `encoding: canonical_json` requires a
+strict finite canonical JSON value and is legal only for `json_pointer`;
+`encoding: hex_bytes` requires an even-length lower-case hexadecimal string and
+is legal for `byte_range` or `whole_output`. Each expected value is fixed before
+execution from the authenticated member build/lock receipt. Replacement uses
+the same encoding for every member.
+
+Canonicalization validates the selected raw bytes/decoded value against that
+member's expected value, then transforms each selected output payload using the
+exact `ComparisonPayloadV1` binary grammar. Its byte stream is:
+
+1. the exact ASCII bytes `AIPERF_EXPORTER_COMPARISON_V1` followed by one NUL;
+2. zero or more frames in increasing raw-offset order; and
+3. one terminal byte `0xff` and no trailing bytes.
+
+An unselected raw segment is frame tag `0x00`, followed by its length as one
+unsigned 64-bit big-endian integer, followed by those exact raw bytes. Adjacent
+unselected segments are coalesced into one frame; zero-length raw frames are
+forbidden. A selected slot is frame tag `0x01`, followed in order by the UTF-8
+`slot_id` byte length as unsigned 64-bit big-endian, the exact `slot_id` bytes,
+the replacement byte length in the same integer encoding, and the replacement
+bytes. A `canonical_json` replacement is its RFC 8785 bytes with no newline; a
+`hex_bytes` replacement is the bytes decoded from its hex value. Length
+overflow, a frame exceeding its enclosing payload, an unknown tag, a missing
+terminal byte, or bytes after the terminal fails. The transformed payload
+length and BLAKE3 cover this complete stream including magic and terminator.
+
+For `artifact_tree`, rebuild the same JCS manifest, replacing only each selected
+regular file's `length` and `blake3` with its transformed payload length and
+digest; all paths, entry kinds, unselected file length/digests, and empty
+directories remain exact. For `captured_stream`, the comparison bytes are the
+single transformed stream payload itself. For `receiver_transcript`, rebuild
+the same JCS transcript, replacing only each selected body's `length` and
+`blake3` with its transformed payload length and digest; operation, target,
+metadata, sequence, unselected bodies, and entry count remain exact. Manifest/
+transcript comparison bytes include their one trailing newline. Their BLAKE3,
+or the transformed-stream BLAKE3 for `captured_stream`, is
+`comparison_observable_blake3`. Thus JSON whitespace, lexical number spelling,
+binary encoding, field/record order, schema, file set, request count, metadata,
+and every other unselected byte remain observable. A missing, unused,
+overlapping, ambiguous, out-of-range, type/encoding-incompatible, or unexpected
+slot is a product failure. An empty slot list additionally requires exact
+`raw_observable_blake3` equality. When a scenario's `provenance_slots` is empty,
+no `ComparisonPayloadV1` is constructed for any payload and
+`comparison_observable_blake3` is exactly `raw_observable_blake3` for all three
+observable classes, including `[]\n` tree/transcript and zero-byte stream
+evidence. When the list is nonempty, every distinct selected payload is
+transformed exactly once and the class-specific observable is rebuilt as
+specified above; unselected payloads retain their raw length and digest.
+Comparison digests must be equal across all repetitions and both pair members.
+
+A separate `ProvenanceReceiptV1` is one RFC 8785 JCS array in policy-slot order
+with one trailing newline. Every element has exactly `schema_version`,
+`policy_mode`, `experiment_identity_blake3`, `attempt_ordinal`, `scenario_id`,
+`pair_id`, `member`, `repetition_ordinal`, `slot_id`, `output_selector`,
+`locator`, `observed_raw_hex`, `observed_value`, `expected`, and `replacement`.
+`schema_version` is `1`; `policy_mode` equals the policy's `mode`; identity,
+attempt, scenario, pair, member, and repetition equal the enclosing member
+receipt; selector, locator, expected, and replacement are copied exactly from
+the applicable policy slot. `expected` is copied from `static_expected` for a
+paired static member, from `dynamic_expected` for a paired dynamic member, and
+from `static_expected` for a `static_calibration` member. Any other mode/member
+combination fails. `observed_raw_hex` is the lower-case even-
+length hex encoding of the exact selected raw-token/span bytes.
+`observed_value` has exactly `encoding` and `value`: it is
+`canonical_json` with the strictly decoded RFC 8785 value for `json_pointer`,
+or `hex_bytes` with the same bytes as `observed_raw_hex` for `byte_range` and
+`whole_output`. `observed_value` must equal `expected`. Unknown/missing fields,
+wrong order, duplicate/missing/extra slots, wrong enclosing binding, encoding
+mismatch, or disagreement between raw bytes and decoded value fails. The BLAKE3
+of the exact array bytes is `provenance_receipt_blake3`. Fixed vectors contain
+the complete literal comparison stream/JCS receipt bytes and expected BLAKE3
+for every observable class and selector/locator combination, including both
+observed-value encodings and all three expected-field mappings. They also pin
+raw bytes, comparison bytes, and both digests for empty-slot empty and nonempty
+tree, transcript, and stream observables.
+With no provenance slots, the exact provenance receipt is `[]\n`.
+
+This makes required `distribution_id`,
+`plugin_lock_digest`, and catalog-provenance differences explicit and validated
+rather than ignored. The policy digest and every expected member value are part
+of the immutable pre-run experiment identity. Task 1 uses
+`mode: static_calibration`; paired Task-3/Task-38 execution uses `mode: paired`.
+Supplying the wrong slot shape for the mode fails before an exporter starts.
+
+One member owns one retained ordered repetition file. It is canonical compact
+JSON: one array in ascending repetition order with no insignificant whitespace
+and one trailing newline. Every element has exactly `schema_version`,
+`experiment_identity_blake3`, `attempt_ordinal`, `scenario_id`, `pair_id`,
+`member`, `repetition_ordinal`, `corpus_blake3`, `processed_records`,
+`observable_kind`, `raw_observable_blake3`,
+`comparison_observable_blake3`, `provenance_receipt_blake3`,
+`active_duration_ns`, `build_artifact_blake3`, and `build_receipt_blake3`.
+`schema_version` is `1`; `member` is exactly `static` or `dynamic`;
+`observable_kind` equals the scenario's frozen class; `processed_records` is
+exactly 100,000; and `repetition_ordinal` is the unique sequence `0..15` within
+that one member vector. Every integer is an unsigned JSON integer and
+`active_duration_ns` is strictly positive. The two build digests identify the
+binary executing that member. The exact receipt-vector digest and summed active
+duration are bound into the member/sample/attempt record; the append-only
+attempt record binds both member records and the final evidence-tree/report
+digest.
+
+The immutable experiment identity exists before any attempt and never contains
+an observed repetition, duration, output, receipt-vector digest, or final
+evidence digest. It binds the receipt and policy schema versions, the four
+frozen workload constants, corpus digest, observable-policy digest and expected
+provenance values, harness/compiler/source/build inputs, and complete planned
+warmup/pair schedule. Post-run receipt variation therefore cannot create a new
+experiment identity or reset its attempt/replacement counters. Task 1's
+unpaired original-static calibration uses `pair_id` exactly
+`task1-static-calibration`, `member` exactly `static`, and `attempt_ordinal: 0`
+under its separate pre-run calibration identity; it produces one member vector
+and no fictitious dynamic member. Task 3 and Task 38 use one separate 16-element
+vector per static or dynamic member of each planned pair.
+
+Missing, extra, duplicated, reordered, cross-identity, cross-attempt, cross-
+scenario, cross-pair, cross-member, wrong-count, wrong-corpus, wrong-class,
+unequal-comparison-output, malformed raw evidence, invalid provenance,
+zero-duration, duration-sum mismatch, receipt-vector substitution, or build
+substitution is a product failure, never an infrastructure invalidation. The
+retained repetition's raw evidence, comparison observable, and provenance
+receipt must reproduce the corresponding receipt digests exactly. The sum of
+`active_duration_ns` must equal the member's measured active duration without
+rounding.
 Each entry freezes request budget, minimum valid duration, core assignment,
 mock-server placement, response shape, warmup count, estimator, bootstrap seed,
 primary metric and ratio direction, measured metrics, and the infrastructure-

@@ -1,0 +1,4560 @@
+{
+  "schema_version": 1,
+  "generation": "review1i",
+  "host_commit": "caa3ff6fcf20ffe36a7704abe16274bedadbb9fb",
+  "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14) (Arch Linux rust 1:1.97.1-1);LLVM 22.1.8",
+  "target": "x86_64-unknown-linux-gnu",
+  "cargo_profile": "release",
+  "measurement": {
+    "commands": [
+      "cargo metadata --locked --format-version 1",
+      "cargo tree --locked --workspace --edges normal,build --prefix depth",
+      "cargo tree --locked -p aiperf-cli --edges normal,build --prefix depth"
+    ],
+    "cargo_lock_blake3": "blake3:64a9e677f3338954f25297f1546446f4c5c2ea4fa57b78e45f60e3569c7e3a0c",
+    "cargo_metadata_blake3": "blake3:7d25f707fe473572b04e6ef366dc838eb4a010939b7c61f19809878616fc1ca9",
+    "cargo_tree_blake3": "blake3:af0418df68ec3dae01e711ade423324ac9e6eee9140c87b12afd1d8e35c37794",
+    "cargo_cli_tree_blake3": "blake3:523024637b9e16e442db7e3626ad572150da34450bdca825a391155a3a15e6e0",
+    "raw_metadata": "identity/cargo-metadata.json",
+    "raw_tree": "identity/cargo-tree-workspace.txt",
+    "raw_cli_tree": "identity/cargo-tree-cli.txt"
+  },
+  "workspace_packages": [
+    {
+      "name": "aiperf-bench-tools",
+      "version": "0.12.0",
+      "direct_dependency_count": 16,
+      "dependency_kind_counts": {
+        "normal": 16
+      },
+      "direct_dependencies": [
+        {
+          "name": "blake3",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "bytes",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "crc32fast",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "flate2",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "http-body-util",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "hyper",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "hyper-util",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "libc",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "serde",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "serde_json",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "serde_json_canonicalizer",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "serde_yaml",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "tar",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "tempfile",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "tokio",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "tokio-stream",
+          "kind": "normal",
+          "is_workspace": false
+        }
+      ],
+      "direct_workspace_dependencies": [],
+      "features": []
+    },
+    {
+      "name": "aiperf-cli",
+      "version": "0.12.0",
+      "direct_dependency_count": 45,
+      "dependency_kind_counts": {
+        "build": 1,
+        "dev": 8,
+        "normal": 36
+      },
+      "direct_dependencies": [
+        {
+          "name": "aiperf-runtime",
+          "kind": "normal",
+          "is_workspace": true
+        },
+        {
+          "name": "anyhow",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "async-trait",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "axum",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "base64",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "base64",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "bytes",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "cc",
+          "kind": "build",
+          "is_workspace": false
+        },
+        {
+          "name": "chrono",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "clap",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "futures",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "http",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "http-body-util",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "hyper",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "hyper",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "hyper-util",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "include_dir",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "jsonschema",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "libc",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "libmimalloc-sys",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "mimalloc",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "minijinja",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "nix",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "prost",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "pyo3",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "regex",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "rustls",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "rustls-pemfile",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "serde",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "serde_json",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "serde_yaml",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "sha2",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "tempfile",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "tempfile",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "tokio",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "tokio-rustls",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "tokio-stream",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "tokio-util",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "toml",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "tonic",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "tracing",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "tracing-subscriber",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "url",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "uuid",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "webpki-roots",
+          "kind": "normal",
+          "is_workspace": false
+        }
+      ],
+      "direct_workspace_dependencies": [
+        "aiperf-runtime"
+      ],
+      "features": [
+        "cellular",
+        "default",
+        "dynamo-aic-forward-pass",
+        "dynamo-full",
+        "dynamo-kvbm-offload",
+        "dynamo-parity",
+        "dynamo-profile",
+        "dynamo-router-runtime",
+        "dynamo-zmq-events",
+        "dynosim",
+        "full",
+        "grpc",
+        "parquet",
+        "pyo3-embed",
+        "search-pyo3",
+        "websocket"
+      ]
+    },
+    {
+      "name": "aiperf-dry-run-tests",
+      "version": "0.12.0",
+      "direct_dependency_count": 3,
+      "dependency_kind_counts": {
+        "dev": 3
+      },
+      "direct_dependencies": [
+        {
+          "name": "flate2",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "serde_json",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "tempfile",
+          "kind": "dev",
+          "is_workspace": false
+        }
+      ],
+      "direct_workspace_dependencies": [],
+      "features": []
+    },
+    {
+      "name": "aiperf-e2e-tests",
+      "version": "0.12.0",
+      "direct_dependency_count": 22,
+      "dependency_kind_counts": {
+        "dev": 22
+      },
+      "direct_dependencies": [
+        {
+          "name": "aiperf-cli",
+          "kind": "dev",
+          "is_workspace": true
+        },
+        {
+          "name": "aiperf-mock-server",
+          "kind": "dev",
+          "is_workspace": true
+        },
+        {
+          "name": "aiperf-runtime",
+          "kind": "dev",
+          "is_workspace": true
+        },
+        {
+          "name": "arrow",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "axum",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "base64",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "blake3",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "ed25519-dalek",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "glob",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "libc",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "nix",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "opentelemetry-proto",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "parquet",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "prost",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "regex",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "reqwest",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "serde",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "serde_json",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "serde_yaml",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "sha2",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "tempfile",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "tokio",
+          "kind": "dev",
+          "is_workspace": false
+        }
+      ],
+      "direct_workspace_dependencies": [
+        "aiperf-cli",
+        "aiperf-mock-server",
+        "aiperf-runtime"
+      ],
+      "features": []
+    },
+    {
+      "name": "aiperf-mock-server",
+      "version": "0.12.0",
+      "direct_dependency_count": 43,
+      "dependency_kind_counts": {
+        "dev": 4,
+        "normal": 39
+      },
+      "direct_dependencies": [
+        {
+          "name": "aiperf-runtime",
+          "kind": "normal",
+          "is_workspace": true
+        },
+        {
+          "name": "anyhow",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "async-stream",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "axum",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "base64",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "blake2",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "blake3",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "bytes",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "chrono",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "clap",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "dashmap",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "futures",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "futures",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "http",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "http-body-util",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "httparse",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "hyper",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "hyper-util",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "libc",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "mimalloc",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "monoio",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "num_cpus",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "once_cell",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "parking_lot",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "prometheus",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "prost",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "rcgen",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "reqwest",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "rustls",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "rustls-pemfile",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "serde",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "serde_json",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "socket2",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "tokio",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "tokio",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "tokio-rustls",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "tokio-tungstenite",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "tokio-tungstenite",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "tonic",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "tower",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "tracing",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "tracing-subscriber",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "uuid",
+          "kind": "normal",
+          "is_workspace": false
+        }
+      ],
+      "direct_workspace_dependencies": [
+        "aiperf-runtime"
+      ],
+      "features": [
+        "uring"
+      ]
+    },
+    {
+      "name": "aiperf-runtime",
+      "version": "0.12.0",
+      "direct_dependency_count": 83,
+      "dependency_kind_counts": {
+        "dev": 9,
+        "normal": 74
+      },
+      "direct_dependencies": [
+        {
+          "name": "aiconfigurator-core",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "anyhow",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "arrow",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "async-trait",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "axum",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "base64",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "bitflags",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "blake3",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "bytes",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "chrono",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "criterion",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "csv",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "dynamo-kv-router",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "dynamo-mocker",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "dynamo-renderer",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "dynamo-tokenizers",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "ed25519-dalek",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "flate2",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "futures",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "half",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "hf-hub",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "http",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "http-body",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "http-body-util",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "hyper",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "hyper",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "hyper-util",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "image",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "insta",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "itoa",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "jmespath",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "libc",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "libloading",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "mimalloc",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "minijinja",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "num-bigint",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "nvml-wrapper",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "nvml-wrapper-sys",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "opentelemetry-proto",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "parking_lot",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "parquet",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "percent-encoding",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "petgraph",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "prost",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "pyo3",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "rand",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "rand_distr",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "rand_pcg",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "rayon",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "rcgen",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "regex",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "rmp-serde",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "rustc-hash",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "rustc-hash",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "rustls",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "serde",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "serde_json",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "serde_json",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "serde_yaml",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "sha2",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "sha2",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "smallvec",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "socket2",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "tar",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "tempfile",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "tiktoken-rs",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "tokenizers",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "tokio",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "tokio-rustls",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "tokio-stream",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "tokio-stream",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "tokio-tungstenite",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "tokio-util",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "toml",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "tonic",
+          "kind": "dev",
+          "is_workspace": false
+        },
+        {
+          "name": "tonic",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "tower-http",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "tracing",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "url",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "uuid",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "velo",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "webpki-roots",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "zstd",
+          "kind": "normal",
+          "is_workspace": false
+        }
+      ],
+      "direct_workspace_dependencies": [],
+      "features": [
+        "cellular",
+        "default",
+        "dynamo-aic-forward-pass",
+        "dynamo-full",
+        "dynamo-kvbm-offload",
+        "dynamo-parity",
+        "dynamo-profile",
+        "dynamo-router-runtime",
+        "dynamo-zmq-events",
+        "dynosim",
+        "engine",
+        "grpc",
+        "parquet",
+        "websocket"
+      ]
+    }
+  ],
+  "cargo_projection": [
+    {
+      "name": "aiperf-bench-tools",
+      "version": "0.12.0",
+      "edition": "2024",
+      "dependencies": [
+        {
+          "package": "blake3",
+          "local_name": "blake3",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^1",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "bytes",
+          "local_name": "bytes",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^1",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "crc32fast",
+          "local_name": "crc32fast",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^1",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "flate2",
+          "local_name": "flate2",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^1",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "http-body-util",
+          "local_name": "http-body-util",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.1",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "hyper",
+          "local_name": "hyper",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^1",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [
+            "http1",
+            "http2",
+            "server"
+          ],
+          "is_workspace": false
+        },
+        {
+          "package": "hyper-util",
+          "local_name": "hyper-util",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.1",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [
+            "client-legacy",
+            "http1",
+            "http2",
+            "server",
+            "tokio"
+          ],
+          "is_workspace": false
+        },
+        {
+          "package": "libc",
+          "local_name": "libc",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.2",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "serde",
+          "local_name": "serde",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^1",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [
+            "derive"
+          ],
+          "is_workspace": false
+        },
+        {
+          "package": "serde_json",
+          "local_name": "serde_json",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^1",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "serde_json_canonicalizer",
+          "local_name": "serde_json_canonicalizer",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "=0.3.2",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "serde_yaml",
+          "local_name": "serde_yaml",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.9",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "tar",
+          "local_name": "tar",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.4",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "tempfile",
+          "local_name": "tempfile",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^3",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "tokio",
+          "local_name": "tokio",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^1",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [
+            "full",
+            "full"
+          ],
+          "is_workspace": false
+        },
+        {
+          "package": "tokio-stream",
+          "local_name": "tokio-stream",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.1",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        }
+      ],
+      "features": {}
+    },
+    {
+      "name": "aiperf-cli",
+      "version": "0.12.0",
+      "edition": "2024",
+      "dependencies": [
+        {
+          "package": "aiperf-runtime",
+          "local_name": "aiperf-runtime",
+          "kind": "normal",
+          "source": null,
+          "requirement": "*",
+          "registry": null,
+          "path": "runtime",
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": false,
+          "features": [
+            "engine"
+          ],
+          "is_workspace": true
+        },
+        {
+          "package": "anyhow",
+          "local_name": "anyhow",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^1",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "async-trait",
+          "local_name": "async-trait",
+          "kind": "dev",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.1",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "axum",
+          "local_name": "axum",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.8",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "base64",
+          "local_name": "base64",
+          "kind": "dev",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.22",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "base64",
+          "local_name": "base64",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.22",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "bytes",
+          "local_name": "bytes",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^1",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "cc",
+          "local_name": "cc",
+          "kind": "build",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^1",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "chrono",
+          "local_name": "chrono",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.4",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "clap",
+          "local_name": "clap",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^4",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [
+            "derive",
+            "string"
+          ],
+          "is_workspace": false
+        },
+        {
+          "package": "futures",
+          "local_name": "futures",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.3",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "http",
+          "local_name": "http",
+          "kind": "dev",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^1",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "http-body-util",
+          "local_name": "http-body-util",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.1",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "hyper",
+          "local_name": "hyper",
+          "kind": "dev",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^1.10",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [
+            "http1",
+            "http2",
+            "server"
+          ],
+          "is_workspace": false
+        },
+        {
+          "package": "hyper",
+          "local_name": "hyper",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^1.10",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [
+            "client",
+            "http1",
+            "server"
+          ],
+          "is_workspace": false
+        },
+        {
+          "package": "hyper-util",
+          "local_name": "hyper-util",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.1",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [
+            "client-legacy",
+            "http1",
+            "tokio"
+          ],
+          "is_workspace": false
+        },
+        {
+          "package": "include_dir",
+          "local_name": "include_dir",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.7",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "jsonschema",
+          "local_name": "jsonschema",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.30",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "libc",
+          "local_name": "libc",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.2",
+          "registry": null,
+          "path": null,
+          "target": "cfg(unix)",
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "libmimalloc-sys",
+          "local_name": "libmimalloc-sys",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "=0.1.49",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [
+            "extended"
+          ],
+          "is_workspace": false
+        },
+        {
+          "package": "mimalloc",
+          "local_name": "mimalloc",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.1",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "minijinja",
+          "local_name": "minijinja",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^2.21",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [
+            "json"
+          ],
+          "is_workspace": false
+        },
+        {
+          "package": "nix",
+          "local_name": "nix",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.29",
+          "registry": null,
+          "path": null,
+          "target": "cfg(unix)",
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [
+            "signal"
+          ],
+          "is_workspace": false
+        },
+        {
+          "package": "prost",
+          "local_name": "prost",
+          "kind": "dev",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.14.4",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "pyo3",
+          "local_name": "pyo3",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.23",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": true,
+          "uses_default_features": true,
+          "features": [
+            "auto-initialize"
+          ],
+          "is_workspace": false
+        },
+        {
+          "package": "regex",
+          "local_name": "regex",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^1",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "rustls",
+          "local_name": "rustls",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.23",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "rustls-pemfile",
+          "local_name": "rustls-pemfile",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^2",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "serde",
+          "local_name": "serde",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^1",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [
+            "derive"
+          ],
+          "is_workspace": false
+        },
+        {
+          "package": "serde_json",
+          "local_name": "serde_json",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^1",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [
+            "raw_value"
+          ],
+          "is_workspace": false
+        },
+        {
+          "package": "serde_yaml",
+          "local_name": "serde_yaml",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.9",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "sha2",
+          "local_name": "sha2",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.10",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "tempfile",
+          "local_name": "tempfile",
+          "kind": "dev",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^3",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "tempfile",
+          "local_name": "tempfile",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^3",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "tokio",
+          "local_name": "tokio",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^1",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [
+            "full",
+            "io-util",
+            "macros",
+            "net",
+            "rt",
+            "rt-multi-thread",
+            "time"
+          ],
+          "is_workspace": false
+        },
+        {
+          "package": "tokio-rustls",
+          "local_name": "tokio-rustls",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.26",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "tokio-stream",
+          "local_name": "tokio-stream",
+          "kind": "dev",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.1",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [
+            "net"
+          ],
+          "is_workspace": false
+        },
+        {
+          "package": "tokio-util",
+          "local_name": "tokio-util",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.7",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [
+            "io",
+            "rt"
+          ],
+          "is_workspace": false
+        },
+        {
+          "package": "toml",
+          "local_name": "toml",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.8",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "tonic",
+          "local_name": "tonic",
+          "kind": "dev",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.14.6",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": false,
+          "features": [
+            "channel",
+            "codegen",
+            "router",
+            "server",
+            "tls-ring",
+            "tls-webpki-roots"
+          ],
+          "is_workspace": false
+        },
+        {
+          "package": "tracing",
+          "local_name": "tracing",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.1",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "tracing-subscriber",
+          "local_name": "tracing-subscriber",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.3",
+          "registry": null,
+          "path": null,
+          "target": "cfg(unix)",
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [
+            "env-filter",
+            "env-filter",
+            "fmt",
+            "fmt"
+          ],
+          "is_workspace": false
+        },
+        {
+          "package": "url",
+          "local_name": "url",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^2",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "uuid",
+          "local_name": "uuid",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^1",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [
+            "v4"
+          ],
+          "is_workspace": false
+        },
+        {
+          "package": "webpki-roots",
+          "local_name": "webpki-roots",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.26",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        }
+      ],
+      "features": {
+        "cellular": [
+          "aiperf-runtime/cellular"
+        ],
+        "default": [
+          "cellular",
+          "grpc",
+          "parquet",
+          "websocket"
+        ],
+        "dynamo-aic-forward-pass": [
+          "aiperf-runtime/dynamo-aic-forward-pass",
+          "dynosim"
+        ],
+        "dynamo-full": [
+          "dynamo-aic-forward-pass",
+          "dynamo-kvbm-offload",
+          "dynamo-profile",
+          "dynamo-router-runtime",
+          "dynamo-zmq-events"
+        ],
+        "dynamo-kvbm-offload": [
+          "aiperf-runtime/dynamo-kvbm-offload",
+          "dynosim"
+        ],
+        "dynamo-parity": [
+          "aiperf-runtime/dynamo-parity",
+          "dynamo-full"
+        ],
+        "dynamo-profile": [
+          "aiperf-runtime/dynamo-profile",
+          "dynosim"
+        ],
+        "dynamo-router-runtime": [
+          "aiperf-runtime/dynamo-router-runtime",
+          "dynosim"
+        ],
+        "dynamo-zmq-events": [
+          "aiperf-runtime/dynamo-zmq-events",
+          "dynosim"
+        ],
+        "dynosim": [
+          "aiperf-runtime/dynosim"
+        ],
+        "full": [
+          "cellular",
+          "dynosim",
+          "grpc",
+          "parquet",
+          "websocket"
+        ],
+        "grpc": [
+          "aiperf-runtime/grpc"
+        ],
+        "parquet": [
+          "aiperf-runtime/parquet"
+        ],
+        "pyo3-embed": [
+          "dep:pyo3"
+        ],
+        "search-pyo3": [
+          "pyo3-embed"
+        ],
+        "websocket": [
+          "aiperf-runtime/websocket"
+        ]
+      }
+    },
+    {
+      "name": "aiperf-dry-run-tests",
+      "version": "0.12.0",
+      "edition": "2024",
+      "dependencies": [
+        {
+          "package": "flate2",
+          "local_name": "flate2",
+          "kind": "dev",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^1",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "serde_json",
+          "local_name": "serde_json",
+          "kind": "dev",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^1",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "tempfile",
+          "local_name": "tempfile",
+          "kind": "dev",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^3",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        }
+      ],
+      "features": {}
+    },
+    {
+      "name": "aiperf-e2e-tests",
+      "version": "0.12.0",
+      "edition": "2024",
+      "dependencies": [
+        {
+          "package": "aiperf-cli",
+          "local_name": "aiperf-cli",
+          "kind": "dev",
+          "source": null,
+          "requirement": "*",
+          "registry": null,
+          "path": "cli",
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": true
+        },
+        {
+          "package": "aiperf-mock-server",
+          "local_name": "aiperf-mock-server",
+          "kind": "dev",
+          "source": null,
+          "requirement": "*",
+          "registry": null,
+          "path": "mock-server",
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": true
+        },
+        {
+          "package": "aiperf-runtime",
+          "local_name": "aiperf-runtime",
+          "kind": "dev",
+          "source": null,
+          "requirement": "*",
+          "registry": null,
+          "path": "runtime",
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": true
+        },
+        {
+          "package": "arrow",
+          "local_name": "arrow",
+          "kind": "dev",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^58.3",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": false,
+          "features": [
+            "ipc"
+          ],
+          "is_workspace": false
+        },
+        {
+          "package": "axum",
+          "local_name": "axum",
+          "kind": "dev",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.8",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "base64",
+          "local_name": "base64",
+          "kind": "dev",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.22",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "blake3",
+          "local_name": "blake3",
+          "kind": "dev",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^1",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "ed25519-dalek",
+          "local_name": "ed25519-dalek",
+          "kind": "dev",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^2.2",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "glob",
+          "local_name": "glob",
+          "kind": "dev",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.3",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "libc",
+          "local_name": "libc",
+          "kind": "dev",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.2",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "nix",
+          "local_name": "nix",
+          "kind": "dev",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.29",
+          "registry": null,
+          "path": null,
+          "target": "cfg(unix)",
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [
+            "process",
+            "signal"
+          ],
+          "is_workspace": false
+        },
+        {
+          "package": "opentelemetry-proto",
+          "local_name": "opentelemetry-proto",
+          "kind": "dev",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.31",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": false,
+          "features": [
+            "gen-tonic-messages",
+            "metrics"
+          ],
+          "is_workspace": false
+        },
+        {
+          "package": "parquet",
+          "local_name": "parquet",
+          "kind": "dev",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^58.3",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": false,
+          "features": [
+            "arrow",
+            "json",
+            "snap",
+            "zstd"
+          ],
+          "is_workspace": false
+        },
+        {
+          "package": "prost",
+          "local_name": "prost",
+          "kind": "dev",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.14.4",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "regex",
+          "local_name": "regex",
+          "kind": "dev",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^1",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "reqwest",
+          "local_name": "reqwest",
+          "kind": "dev",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.12",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": false,
+          "features": [
+            "json"
+          ],
+          "is_workspace": false
+        },
+        {
+          "package": "serde",
+          "local_name": "serde",
+          "kind": "dev",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^1",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [
+            "derive"
+          ],
+          "is_workspace": false
+        },
+        {
+          "package": "serde_json",
+          "local_name": "serde_json",
+          "kind": "dev",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^1",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "serde_yaml",
+          "local_name": "serde_yaml",
+          "kind": "dev",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.9",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "sha2",
+          "local_name": "sha2",
+          "kind": "dev",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.10",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "tempfile",
+          "local_name": "tempfile",
+          "kind": "dev",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^3",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "tokio",
+          "local_name": "tokio",
+          "kind": "dev",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^1",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [
+            "full"
+          ],
+          "is_workspace": false
+        }
+      ],
+      "features": {}
+    },
+    {
+      "name": "aiperf-mock-server",
+      "version": "0.12.0",
+      "edition": "2024",
+      "dependencies": [
+        {
+          "package": "aiperf-runtime",
+          "local_name": "aiperf-runtime",
+          "kind": "normal",
+          "source": null,
+          "requirement": "*",
+          "registry": null,
+          "path": "runtime",
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [
+            "grpc"
+          ],
+          "is_workspace": true
+        },
+        {
+          "package": "anyhow",
+          "local_name": "anyhow",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^1",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "async-stream",
+          "local_name": "async-stream",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.3",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "axum",
+          "local_name": "axum",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.8",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [
+            "macros",
+            "multipart",
+            "ws"
+          ],
+          "is_workspace": false
+        },
+        {
+          "package": "base64",
+          "local_name": "base64",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.22",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "blake2",
+          "local_name": "blake2",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.10",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "blake3",
+          "local_name": "blake3",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^1",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "bytes",
+          "local_name": "bytes",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^1",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "chrono",
+          "local_name": "chrono",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.4",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": false,
+          "features": [
+            "clock"
+          ],
+          "is_workspace": false
+        },
+        {
+          "package": "clap",
+          "local_name": "clap",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^4",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [
+            "derive",
+            "env"
+          ],
+          "is_workspace": false
+        },
+        {
+          "package": "dashmap",
+          "local_name": "dashmap",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^6",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "futures",
+          "local_name": "futures",
+          "kind": "dev",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.3",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "futures",
+          "local_name": "futures",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.3",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "http",
+          "local_name": "http",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^1",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "http-body-util",
+          "local_name": "http-body-util",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.1",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "httparse",
+          "local_name": "httparse",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^1",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "hyper",
+          "local_name": "hyper",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^1",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [
+            "http1",
+            "http2",
+            "server"
+          ],
+          "is_workspace": false
+        },
+        {
+          "package": "hyper-util",
+          "local_name": "hyper-util",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.1",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [
+            "client-legacy",
+            "http1",
+            "http2",
+            "server",
+            "tokio"
+          ],
+          "is_workspace": false
+        },
+        {
+          "package": "libc",
+          "local_name": "libc",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.2",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "mimalloc",
+          "local_name": "mimalloc",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.1",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "monoio",
+          "local_name": "monoio",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.2",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": true,
+          "uses_default_features": true,
+          "features": [
+            "iouring"
+          ],
+          "is_workspace": false
+        },
+        {
+          "package": "num_cpus",
+          "local_name": "num_cpus",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^1",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "once_cell",
+          "local_name": "once_cell",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^1",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "parking_lot",
+          "local_name": "parking_lot",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.12",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "prometheus",
+          "local_name": "prometheus",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.14",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": false,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "prost",
+          "local_name": "prost",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.14.4",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "rcgen",
+          "local_name": "rcgen",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.13",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "reqwest",
+          "local_name": "reqwest",
+          "kind": "dev",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.12",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [
+            "json",
+            "stream"
+          ],
+          "is_workspace": false
+        },
+        {
+          "package": "rustls",
+          "local_name": "rustls",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.23",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "rustls-pemfile",
+          "local_name": "rustls-pemfile",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^2",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "serde",
+          "local_name": "serde",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^1",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [
+            "derive"
+          ],
+          "is_workspace": false
+        },
+        {
+          "package": "serde_json",
+          "local_name": "serde_json",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^1",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "socket2",
+          "local_name": "socket2",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.5",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [
+            "all"
+          ],
+          "is_workspace": false
+        },
+        {
+          "package": "tokio",
+          "local_name": "tokio",
+          "kind": "dev",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^1",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [
+            "full",
+            "full",
+            "test-util"
+          ],
+          "is_workspace": false
+        },
+        {
+          "package": "tokio",
+          "local_name": "tokio",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^1",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [
+            "full"
+          ],
+          "is_workspace": false
+        },
+        {
+          "package": "tokio-rustls",
+          "local_name": "tokio-rustls",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.26",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "tokio-tungstenite",
+          "local_name": "tokio-tungstenite",
+          "kind": "dev",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.26",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": false,
+          "features": [
+            "connect",
+            "rustls-tls-webpki-roots"
+          ],
+          "is_workspace": false
+        },
+        {
+          "package": "tokio-tungstenite",
+          "local_name": "tokio-tungstenite",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.26",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": false,
+          "features": [
+            "handshake"
+          ],
+          "is_workspace": false
+        },
+        {
+          "package": "tonic",
+          "local_name": "tonic",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.14.6",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": false,
+          "features": [
+            "channel",
+            "server",
+            "tls-ring",
+            "tls-webpki-roots"
+          ],
+          "is_workspace": false
+        },
+        {
+          "package": "tower",
+          "local_name": "tower",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.5",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [
+            "util"
+          ],
+          "is_workspace": false
+        },
+        {
+          "package": "tracing",
+          "local_name": "tracing",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.1",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "tracing-subscriber",
+          "local_name": "tracing-subscriber",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.3",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [
+            "env-filter"
+          ],
+          "is_workspace": false
+        },
+        {
+          "package": "uuid",
+          "local_name": "uuid",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^1",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [
+            "fast-rng",
+            "v4"
+          ],
+          "is_workspace": false
+        }
+      ],
+      "features": {
+        "uring": [
+          "dep:monoio"
+        ]
+      }
+    },
+    {
+      "name": "aiperf-runtime",
+      "version": "0.12.0",
+      "edition": "2024",
+      "dependencies": [
+        {
+          "package": "aiconfigurator-core",
+          "local_name": "aiconfigurator-core",
+          "kind": "normal",
+          "source": "git+https://github.com/ai-dynamo/aiconfigurator.git?rev=ffbab15797d3a3f14c382e937c0ab0c1c5cbc530",
+          "requirement": "*",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": true,
+          "uses_default_features": true,
+          "features": [
+            "embed-python"
+          ],
+          "is_workspace": false
+        },
+        {
+          "package": "anyhow",
+          "local_name": "anyhow",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^1",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "arrow",
+          "local_name": "arrow",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^58.3",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": true,
+          "uses_default_features": false,
+          "features": [
+            "ipc"
+          ],
+          "is_workspace": false
+        },
+        {
+          "package": "async-trait",
+          "local_name": "async-trait",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.1",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "axum",
+          "local_name": "axum",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.8",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "base64",
+          "local_name": "base64",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.22",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "bitflags",
+          "local_name": "bitflags",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^2",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "blake3",
+          "local_name": "blake3",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^1",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "bytes",
+          "local_name": "bytes",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^1",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "chrono",
+          "local_name": "chrono",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.4",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "criterion",
+          "local_name": "criterion",
+          "kind": "dev",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.5",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [
+            "html_reports"
+          ],
+          "is_workspace": false
+        },
+        {
+          "package": "csv",
+          "local_name": "csv",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^1",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "dynamo-kv-router",
+          "local_name": "dynamo-kv-router",
+          "kind": "normal",
+          "source": "git+https://github.com/ai-dynamo/dynamo.git?rev=14e2cf76b04736e9b99412dfbe76cf1af45ae67a",
+          "requirement": "*",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": true,
+          "uses_default_features": false,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "dynamo-mocker",
+          "local_name": "dynamo-mocker",
+          "kind": "normal",
+          "source": "git+https://github.com/ai-dynamo/dynamo.git?rev=14e2cf76b04736e9b99412dfbe76cf1af45ae67a",
+          "requirement": "*",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": true,
+          "uses_default_features": false,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "dynamo-renderer",
+          "local_name": "dynamo-renderer",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^1.3.12",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "dynamo-tokenizers",
+          "local_name": "dynamo-tokenizers",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^1.5.3",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "ed25519-dalek",
+          "local_name": "ed25519-dalek",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^2.2",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "flate2",
+          "local_name": "flate2",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^1",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "futures",
+          "local_name": "futures",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.3",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "half",
+          "local_name": "half",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^2",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "hf-hub",
+          "local_name": "hf-hub",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.4.3",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": false,
+          "features": [
+            "rustls-tls",
+            "ureq"
+          ],
+          "is_workspace": false
+        },
+        {
+          "package": "http",
+          "local_name": "http",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^1",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "http-body",
+          "local_name": "http-body",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^1",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "http-body-util",
+          "local_name": "http-body-util",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.1",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "hyper",
+          "local_name": "hyper",
+          "kind": "dev",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^1.10",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [
+            "http1",
+            "http2",
+            "server"
+          ],
+          "is_workspace": false
+        },
+        {
+          "package": "hyper",
+          "local_name": "hyper",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^1.10",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [
+            "client",
+            "http1",
+            "http2"
+          ],
+          "is_workspace": false
+        },
+        {
+          "package": "hyper-util",
+          "local_name": "hyper-util",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.1",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [
+            "tokio"
+          ],
+          "is_workspace": false
+        },
+        {
+          "package": "image",
+          "local_name": "image",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.25",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": false,
+          "features": [
+            "jpeg",
+            "png"
+          ],
+          "is_workspace": false
+        },
+        {
+          "package": "insta",
+          "local_name": "insta",
+          "kind": "dev",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^1",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [
+            "json"
+          ],
+          "is_workspace": false
+        },
+        {
+          "package": "itoa",
+          "local_name": "itoa",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^1",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "jmespath",
+          "local_name": "jmespath",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.4",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "libc",
+          "local_name": "libc",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.2",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "libloading",
+          "local_name": "libloading",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.8",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "mimalloc",
+          "local_name": "mimalloc",
+          "kind": "dev",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.1",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "minijinja",
+          "local_name": "minijinja",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^2.21",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [
+            "json"
+          ],
+          "is_workspace": false
+        },
+        {
+          "package": "num-bigint",
+          "local_name": "num-bigint",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.4.8",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "nvml-wrapper",
+          "local_name": "nvml-wrapper",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.12.1",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": false,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "nvml-wrapper-sys",
+          "local_name": "nvml-wrapper-sys",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.9.1",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "opentelemetry-proto",
+          "local_name": "opentelemetry-proto",
+          "kind": "dev",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.31",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": false,
+          "features": [
+            "gen-tonic-messages",
+            "metrics"
+          ],
+          "is_workspace": false
+        },
+        {
+          "package": "parking_lot",
+          "local_name": "parking_lot",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.12",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "parquet",
+          "local_name": "parquet",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^58.3",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": true,
+          "uses_default_features": false,
+          "features": [
+            "arrow",
+            "json",
+            "snap",
+            "zstd"
+          ],
+          "is_workspace": false
+        },
+        {
+          "package": "percent-encoding",
+          "local_name": "percent-encoding",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^2",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "petgraph",
+          "local_name": "petgraph",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.6",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "prost",
+          "local_name": "prost",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.14.4",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "pyo3",
+          "local_name": "pyo3",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.23.4",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": true,
+          "uses_default_features": true,
+          "features": [
+            "auto-initialize"
+          ],
+          "is_workspace": false
+        },
+        {
+          "package": "rand",
+          "local_name": "rand",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.9",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "rand_distr",
+          "local_name": "rand_distr",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.5",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "rand_pcg",
+          "local_name": "rand_pcg",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.9",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "rayon",
+          "local_name": "rayon",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^1",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "rcgen",
+          "local_name": "rcgen",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.13",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": false,
+          "features": [
+            "aws_lc_rs",
+            "crypto"
+          ],
+          "is_workspace": false
+        },
+        {
+          "package": "regex",
+          "local_name": "regex",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^1",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "rmp-serde",
+          "local_name": "rmp-serde",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^1",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "rustc-hash",
+          "local_name": "rustc-hash",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^2",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "rustc-hash",
+          "local_name": "tiktoken-rustc-hash",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^1.1",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "rustls",
+          "local_name": "rustls",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.23",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "serde",
+          "local_name": "serde",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^1",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [
+            "derive"
+          ],
+          "is_workspace": false
+        },
+        {
+          "package": "serde_json",
+          "local_name": "serde_json",
+          "kind": "dev",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^1",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "serde_json",
+          "local_name": "serde_json",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^1",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [
+            "preserve_order",
+            "raw_value"
+          ],
+          "is_workspace": false
+        },
+        {
+          "package": "serde_yaml",
+          "local_name": "serde_yaml",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.9",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "sha2",
+          "local_name": "sha2",
+          "kind": "dev",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.10",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "sha2",
+          "local_name": "sha2",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.10",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "smallvec",
+          "local_name": "smallvec",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^1",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [
+            "serde"
+          ],
+          "is_workspace": false
+        },
+        {
+          "package": "socket2",
+          "local_name": "socket2",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.5",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "tar",
+          "local_name": "tar",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.4",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "tempfile",
+          "local_name": "tempfile",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^3",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "tiktoken-rs",
+          "local_name": "tiktoken-rs",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.9",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "tokenizers",
+          "local_name": "tokenizers",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.21",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": false,
+          "features": [
+            "esaxx_fast",
+            "onig"
+          ],
+          "is_workspace": false
+        },
+        {
+          "package": "tokio",
+          "local_name": "tokio",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^1",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [
+            "full"
+          ],
+          "is_workspace": false
+        },
+        {
+          "package": "tokio-rustls",
+          "local_name": "tokio-rustls",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.26",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "tokio-stream",
+          "local_name": "tokio-stream",
+          "kind": "dev",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.1",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [
+            "net"
+          ],
+          "is_workspace": false
+        },
+        {
+          "package": "tokio-stream",
+          "local_name": "tokio-stream",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.1",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "tokio-tungstenite",
+          "local_name": "tokio-tungstenite",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.26",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": true,
+          "uses_default_features": false,
+          "features": [
+            "connect",
+            "rustls-tls-webpki-roots"
+          ],
+          "is_workspace": false
+        },
+        {
+          "package": "tokio-util",
+          "local_name": "tokio-util",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.7",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [
+            "rt"
+          ],
+          "is_workspace": false
+        },
+        {
+          "package": "toml",
+          "local_name": "toml",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.8",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "tonic",
+          "local_name": "tonic",
+          "kind": "dev",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.14.6",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": false,
+          "features": [
+            "channel",
+            "codegen",
+            "router",
+            "server",
+            "tls-ring",
+            "tls-webpki-roots"
+          ],
+          "is_workspace": false
+        },
+        {
+          "package": "tonic",
+          "local_name": "tonic",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.14.6",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": true,
+          "uses_default_features": false,
+          "features": [
+            "channel",
+            "tls-ring",
+            "tls-webpki-roots"
+          ],
+          "is_workspace": false
+        },
+        {
+          "package": "tower-http",
+          "local_name": "tower-http",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.6",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [
+            "fs"
+          ],
+          "is_workspace": false
+        },
+        {
+          "package": "tracing",
+          "local_name": "tracing",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.1",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "url",
+          "local_name": "url",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^2",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "uuid",
+          "local_name": "uuid",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^1",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [
+            "v4"
+          ],
+          "is_workspace": false
+        },
+        {
+          "package": "velo",
+          "local_name": "velo",
+          "kind": "normal",
+          "source": "git+https://github.com/ajcasagrande/velo.git?branch=feat/connect-by-endpoint",
+          "requirement": "*",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": true,
+          "uses_default_features": false,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "webpki-roots",
+          "local_name": "webpki-roots",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.26",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        },
+        {
+          "package": "zstd",
+          "local_name": "zstd",
+          "kind": "normal",
+          "source": "registry+https://github.com/rust-lang/crates.io-index",
+          "requirement": "^0.13",
+          "registry": null,
+          "path": null,
+          "target": null,
+          "is_optional": true,
+          "uses_default_features": true,
+          "features": [],
+          "is_workspace": false
+        }
+      ],
+      "features": {
+        "cellular": [
+          "dep:velo",
+          "dep:zstd"
+        ],
+        "default": [
+          "cellular",
+          "grpc",
+          "parquet"
+        ],
+        "dynamo-aic-forward-pass": [
+          "dep:aiconfigurator-core",
+          "dep:dynamo-kv-router",
+          "dep:pyo3",
+          "dynosim"
+        ],
+        "dynamo-full": [
+          "dynamo-aic-forward-pass",
+          "dynamo-kvbm-offload",
+          "dynamo-profile",
+          "dynamo-router-runtime",
+          "dynamo-zmq-events"
+        ],
+        "dynamo-kvbm-offload": [
+          "dynamo-mocker/kvbm-offload",
+          "dynosim"
+        ],
+        "dynamo-parity": [
+          "dynamo-full"
+        ],
+        "dynamo-profile": [
+          "dynamo-mocker/profile",
+          "dynosim"
+        ],
+        "dynamo-router-runtime": [
+          "dynosim"
+        ],
+        "dynamo-zmq-events": [
+          "dynosim"
+        ],
+        "dynosim": [
+          "dep:dynamo-mocker"
+        ],
+        "engine": [],
+        "grpc": [
+          "dep:tonic"
+        ],
+        "parquet": [
+          "dep:arrow",
+          "dep:parquet"
+        ],
+        "websocket": [
+          "dep:tokio-tungstenite"
+        ]
+      }
+    }
+  ]
+}

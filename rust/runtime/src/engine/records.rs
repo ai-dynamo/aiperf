@@ -1239,6 +1239,43 @@ mod tests {
     use crate::dispatch::sink::ObservedSpecDecodeAcceptance;
     use crate::metrics_core::{Phase, TokenCounts};
 
+    struct ArtifactTreeEntry<'a> {
+        path: &'a str,
+        kind: &'a str,
+        length: u64,
+        blake3: &'a str,
+    }
+
+    fn artifact_tree_observable_bytes(entry: ArtifactTreeEntry<'_>) -> Vec<u8> {
+        // These fixed ASCII schema keys have the same ordering under UTF-8,
+        // UTF-16, and Rust's `Ord`, so the map supplies JCS key order without
+        // coupling the observable to Rust struct declaration order.
+        let fields = BTreeMap::from([
+            ("blake3", json!(entry.blake3)),
+            ("kind", json!(entry.kind)),
+            ("length", json!(entry.length)),
+            ("path", json!(entry.path)),
+        ]);
+        let mut bytes = serde_json::to_vec(&[fields])
+            .expect("serialize canonical exporter artifact-tree observable");
+        bytes.push(b'\n');
+        bytes
+    }
+
+    fn measure_exporter_interval<T>(
+        exporter: impl FnOnce(),
+        post_export: impl FnOnce() -> T,
+    ) -> (u64, crate::allocation_probe::AllocationSample, T) {
+        let allocation_probe = crate::allocation_probe::AllocationProbe::start();
+        let start = std::time::Instant::now();
+        exporter();
+        let elapsed = u64::try_from(start.elapsed().as_nanos())
+            .expect("exporter repetition duration fits u64");
+        let sample = allocation_probe.finish();
+        let post_export = post_export();
+        (elapsed, sample, post_export)
+    }
+
     /// The fallback constant is the zero-partition label, not an independent
     /// string that happens to match today.
     #[test]
@@ -1301,6 +1338,297 @@ mod tests {
         assert_eq!(row["metrics"]["inter_token_latency"]["value"], 2.5);
         assert!(row.get("trace_data").is_none());
         assert!(row["error"].is_null());
+    }
+
+    #[test]
+    fn artifact_tree_observable_is_exact_jcs_with_trailing_newline() {
+        const CONTENT_BLAKE3: &str =
+            "blake3:6437b3ac38465133ffb63b75273a8db548c558465d79db03fd359c6cd5bd9d85";
+        const EXPECTED: &[u8] = b"[{\"blake3\":\"blake3:6437b3ac38465133ffb63b75273a8db548c558465d79db03fd359c6cd5bd9d85\",\"kind\":\"regular_file\",\"length\":3,\"path\":\"a.jsonl\"}]\n";
+        const EXPECTED_BLAKE3: &str =
+            "bc5f0183cc1eb643a0e12a0d0a7cd841c4a5cf786f1df525937ca97ae8506afa";
+
+        let bytes = artifact_tree_observable_bytes(ArtifactTreeEntry {
+            path: "a.jsonl",
+            kind: "regular_file",
+            length: 3,
+            blake3: CONTENT_BLAKE3,
+        });
+
+        assert_eq!(bytes, EXPECTED);
+        assert_eq!(blake3::hash(&bytes).to_hex().as_str(), EXPECTED_BLAKE3);
+    }
+
+    #[test]
+    fn exporter_allocation_interval_excludes_large_post_export_allocation() {
+        let exporter_work = || {
+            let allocation = vec![7_u8; 4 * 1024];
+            std::hint::black_box(allocation);
+        };
+        let (_, baseline, ()) = measure_exporter_interval(exporter_work, || ());
+        let (_, with_post_export, post_export) =
+            measure_exporter_interval(exporter_work, || vec![11_u8; 8 * 1024 * 1024]);
+        std::hint::black_box(post_export);
+
+        assert_eq!(with_post_export, baseline);
+    }
+
+    #[test]
+    fn exporter_capture_allocation_and_duration_baseline() {
+        const CORPUS_RECORDS: u64 = 100_000;
+        const SAMPLE_REPETITIONS: u64 = 16;
+        const PROCESSED_RECORDS: u64 = CORPUS_RECORDS * SAMPLE_REPETITIONS;
+        const MINIMUM_INTERVAL_SECONDS: u64 = 30;
+        const CORPUS_DEFINITION: &[u8] =
+            include_bytes!("../../../benchmarks/exporter-static-calibration-corpus.json");
+        const OBSERVABLE_POLICY: &[u8] =
+            include_bytes!("../../../benchmarks/exporter-observable-policy.json");
+
+        fn digest_environment(name: &str, local_seed: &[u8]) -> String {
+            let value = std::env::var(name)
+                .unwrap_or_else(|_| format!("blake3:{}", blake3::hash(local_seed)));
+            let digest = value.strip_prefix("blake3:").unwrap_or_default();
+            assert!(
+                digest.len() == 64 && digest.bytes().all(|byte| byte.is_ascii_hexdigit()),
+                "{name} must contain a BLAKE3 digest"
+            );
+            value
+        }
+
+        let corpus_definition: Value =
+            serde_json::from_slice(CORPUS_DEFINITION).expect("parse exporter corpus definition");
+        assert_eq!(corpus_definition["schema_version"], 1);
+        assert_eq!(corpus_definition["corpus_records"], CORPUS_RECORDS);
+        let policy: Value =
+            serde_json::from_slice(OBSERVABLE_POLICY).expect("parse observable policy");
+        assert_eq!(policy["schema_version"], 1);
+        assert_eq!(policy["mode"], "static_calibration");
+        let scenarios = policy["scenarios"]
+            .as_array()
+            .expect("observable policy scenarios must be an array");
+        assert_eq!(scenarios.len(), 1);
+        let scenario = &scenarios[0];
+        assert_eq!(scenario["scenario_id"], "exporter_100k");
+        assert_eq!(scenario["observable_kind"], "artifact_tree");
+        assert_eq!(scenario["provenance_slots"], json!([]));
+        let corpus_blake3 = format!("blake3:{}", blake3::hash(CORPUS_DEFINITION));
+        let experiment_identity_blake3 = digest_environment(
+            "AIPERF_EXPORTER_EXPERIMENT_IDENTITY_BLAKE3",
+            b"local exporter calibration identity",
+        );
+        let build_artifact_blake3 = digest_environment(
+            "AIPERF_EXPORTER_BUILD_ARTIFACT_BLAKE3",
+            b"local exporter engine artifact",
+        );
+        let build_receipt_blake3 = digest_environment(
+            "AIPERF_EXPORTER_BUILD_RECEIPT_BLAKE3",
+            b"local exporter engine build receipt",
+        );
+
+        let directory = tempfile::tempdir().expect("temporary export directory");
+        let probe_root = std::env::var_os("AIPERF_EXPORTER_PROBE_ROOT")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| directory.path().to_path_buf());
+        std::fs::create_dir_all(&probe_root).expect("create exporter probe root");
+        let path = probe_root.join("exporter-corpus.jsonl");
+        let observable_root = probe_root.join("observable");
+        std::fs::create_dir_all(&observable_root).expect("create exporter observable root");
+        let record = &corpus_definition["record"];
+        let integer = |field: &str| {
+            record[field]
+                .as_u64()
+                .unwrap_or_else(|| panic!("corpus record `{field}` must be an unsigned integer"))
+        };
+        let timestamp = |field: &str| {
+            i64::try_from(integer(field))
+                .unwrap_or_else(|_| panic!("corpus timestamp `{field}` must fit i64"))
+        };
+        let mut ingest = RecordIngest::minimal(
+            timestamp("request_start_ns"),
+            timestamp("request_end_ns"),
+            Phase::Profiling,
+        );
+        ingest.first_token_ns = Some(timestamp("first_token_ns"));
+        ingest.token_arrival_ns = record["token_arrival_ns"]
+            .as_array()
+            .expect("corpus token arrivals must be an array")
+            .iter()
+            .map(|value| {
+                let timestamp = value
+                    .as_u64()
+                    .expect("corpus token arrival must be unsigned");
+                i64::try_from(timestamp).expect("corpus token arrival must fit i64")
+            })
+            .collect();
+        ingest.tokens = TokenCounts {
+            input: Some(integer("input_tokens")),
+            output: Some(integer("output_tokens")),
+            requested_output: Some(integer("requested_output_tokens")),
+            ..TokenCounts::default()
+        };
+        let captured = CapturedRecord {
+            uuid: Uuid::parse_str(
+                record["uuid"]
+                    .as_str()
+                    .expect("corpus record UUID must be text"),
+            )
+            .expect("corpus record UUID must be valid"),
+            x_correlation_id: record["x_correlation_id"]
+                .as_str()
+                .expect("corpus correlation id must be text")
+                .to_owned(),
+            output: CapturedModelOutput::from_parts(
+                record["response_text"]
+                    .as_str()
+                    .expect("corpus response text must be text"),
+                None,
+                None,
+            ),
+            raw: None,
+            ingest,
+        };
+        let metrics = MetricsConfig::default();
+
+        write_record_jsonl_row(&mut std::io::sink(), &captured, &metrics, false)
+            .expect("warm exporter serializer");
+        let mut active_nanoseconds = 0_u128;
+        let mut allocation_count = 0_u64;
+        let mut allocated_bytes = 0_u64;
+        let mut comparison_observable_blake3 = None;
+        let provenance_bytes = b"[]\n";
+        let provenance_receipt_blake3 = format!("blake3:{}", blake3::hash(provenance_bytes));
+        let mut repetitions = Vec::new();
+        for repetition_ordinal in 0..SAMPLE_REPETITIONS {
+            let mut writer = create_export_writer(&path, "probe directory", "probe output")
+                .expect("create exporter sample writer");
+            let (elapsed, repetition_sample, ()) = measure_exporter_interval(
+                || {
+                    for _ in 0..CORPUS_RECORDS {
+                        write_record_jsonl_row(&mut writer, &captured, &metrics, false)
+                            .expect("export deterministic record");
+                    }
+                    writer.flush().expect("flush exporter sample");
+                },
+                || (),
+            );
+            active_nanoseconds = active_nanoseconds
+                .checked_add(u128::from(elapsed))
+                .expect("exporter active duration fits u128");
+            allocation_count = allocation_count
+                .checked_add(repetition_sample.allocation_count)
+                .expect("exporter allocation count fits u64");
+            allocated_bytes = allocated_bytes
+                .checked_add(repetition_sample.allocated_bytes)
+                .expect("exporter allocated bytes fit u64");
+            let bytes = std::fs::read(&path).expect("read retained exporter corpus");
+            let output_blake3 = format!("blake3:{}", blake3::hash(&bytes));
+            let raw_observable_bytes = artifact_tree_observable_bytes(ArtifactTreeEntry {
+                path: "exporter-corpus.jsonl",
+                kind: "regular_file",
+                length: bytes.len() as u64,
+                blake3: &output_blake3,
+            });
+            let raw_observable_blake3 = format!("blake3:{}", blake3::hash(&raw_observable_bytes));
+            if let Some(expected) = comparison_observable_blake3.as_ref() {
+                assert_eq!(
+                    &raw_observable_blake3, expected,
+                    "exporter comparison observable changed by repetition"
+                );
+            } else {
+                comparison_observable_blake3 = Some(raw_observable_blake3.clone());
+            }
+            if repetition_ordinal + 1 == SAMPLE_REPETITIONS {
+                std::fs::write(
+                    observable_root.join("retained-raw-observable.json"),
+                    &raw_observable_bytes,
+                )
+                .expect("retain raw exporter observable");
+                std::fs::write(
+                    observable_root.join("retained-comparison-observable.json"),
+                    &raw_observable_bytes,
+                )
+                .expect("retain comparison exporter observable");
+                std::fs::write(
+                    observable_root.join("retained-provenance-receipt.json"),
+                    provenance_bytes,
+                )
+                .expect("retain exporter provenance receipt");
+            }
+            repetitions.push(serde_json::json!({
+                "schema_version": 1,
+                "experiment_identity_blake3": experiment_identity_blake3,
+                "attempt_ordinal": 0,
+                "scenario_id": "exporter_100k",
+                "pair_id": "task1-static-calibration",
+                "member": "static",
+                "repetition_ordinal": repetition_ordinal,
+                "corpus_blake3": corpus_blake3,
+                "processed_records": CORPUS_RECORDS,
+                "observable_kind": "artifact_tree",
+                "raw_observable_blake3": raw_observable_blake3,
+                "comparison_observable_blake3": comparison_observable_blake3.as_ref().expect("comparison digest exists"),
+                "provenance_receipt_blake3": provenance_receipt_blake3,
+                "active_duration_ns": elapsed,
+                "build_artifact_blake3": build_artifact_blake3,
+                "build_receipt_blake3": build_receipt_blake3,
+            }));
+        }
+        let mut repetition_receipt_bytes =
+            serde_json::to_vec(&repetitions).expect("serialize exporter repetition receipts");
+        repetition_receipt_bytes.push(b'\n');
+        std::fs::write(
+            observable_root.join("member-repetition-receipts.json"),
+            &repetition_receipt_bytes,
+        )
+        .expect("retain exporter repetition receipt vector");
+        let sample = crate::allocation_probe::AllocationSample {
+            allocation_count,
+            allocated_bytes,
+        };
+        assert!(
+            active_nanoseconds
+                >= std::time::Duration::from_secs(MINIMUM_INTERVAL_SECONDS).as_nanos(),
+            "the frozen 16-repetition static baseline sample must last at least {MINIMUM_INTERVAL_SECONDS} seconds"
+        );
+
+        println!(
+            "AIPERF_ALLOCATION_SAMPLE {}",
+            serde_json::json!({
+                "path": "exporter_capture",
+                "iterations": PROCESSED_RECORDS,
+                "corpus_records": CORPUS_RECORDS,
+                "sample_repetitions": SAMPLE_REPETITIONS,
+                "processed_records": PROCESSED_RECORDS,
+                "retained_artifact_records": CORPUS_RECORDS,
+                "allocation_count": sample.allocation_count,
+                "allocated_bytes": sample.allocated_bytes,
+                "allocation_count_per_request": sample.allocation_count as f64 / PROCESSED_RECORDS as f64,
+                "allocated_bytes_per_request": sample.allocated_bytes as f64 / PROCESSED_RECORDS as f64,
+                "exporter_interval_nanoseconds": active_nanoseconds,
+                "exporter_nanoseconds_per_record": active_nanoseconds as f64 / PROCESSED_RECORDS as f64,
+                "corpus_blake3": corpus_blake3,
+                "observable_kind": "artifact_tree",
+                "observable_policy_blake3": format!("blake3:{}", blake3::hash(OBSERVABLE_POLICY)),
+                "experiment_identity_blake3": experiment_identity_blake3,
+                "attempt_ordinal": 0,
+                "pair_id": "task1-static-calibration",
+                "member": "static",
+                "repetition_receipts_blake3": format!("blake3:{}", blake3::hash(&repetition_receipt_bytes)),
+                "retained_raw_observable_path": "observable/retained-raw-observable.json",
+                "retained_comparison_observable_path": "observable/retained-comparison-observable.json",
+                "retained_provenance_receipt_path": "observable/retained-provenance-receipt.json",
+                "repetition_receipts_path": "observable/member-repetition-receipts.json",
+                "repetition_receipts": repetitions,
+                "ttft_p50": 5.0,
+                "ttft_p90": 5.0,
+                "ttft_p99": 5.0,
+                "itl_p50": 2.5,
+                "itl_p90": 2.5,
+                "itl_p99": 2.5,
+            })
+        );
+        assert!(sample.allocation_count >= PROCESSED_RECORDS);
+        assert!(sample.allocated_bytes >= CORPUS_RECORDS);
     }
 
     #[test]
