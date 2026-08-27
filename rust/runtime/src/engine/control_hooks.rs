@@ -13,11 +13,14 @@ use tracing::warn;
 use url::Url;
 
 use crate::clock::Clock;
-use crate::endpoints::{EndpointId, RawEndpointConfig, ResetKvCacheConfig, ServerProfilerConfig};
+use crate::endpoints::{
+    EndpointId, RawEndpointConfig, ResetKvCacheConfig, ServerProfilerConfig,
+    auth_headers_for_endpoint,
+};
 use crate::engine::control_plane_http::{
     ControlPlaneCredentialReference, ControlPlaneHttp, ControlPlaneHttpErrorKind,
     ControlPlaneHttpProvider, ControlPlaneMethod, ControlPlaneRequest, ControlPlaneTlsReference,
-    LocalCancellationSignal, ValidatedControlPlaneProfile,
+    LocalCancellationSignal, ResolvedRequestHeaders, ValidatedControlPlaneProfile,
 };
 use crate::engine::registry::ValidatedEndpointProfileV2;
 use crate::graph::replay::ReplayRunIdentity;
@@ -224,11 +227,21 @@ impl Debug for PreparedEndpointControlHooks {
     }
 }
 
+/// Narrow re-decode of the authored `endpoint` section this hook path needs.
+///
+/// `api_key` and `headers` are the same authored values the decoded payload
+/// already carries for the inference transport; the hook path must read them to
+/// authenticate its control POSTs the way inference does. The type deliberately
+/// derives no `Debug`, so a decoded credential has no debug surface.
 #[derive(Clone, Deserialize)]
 struct ControlHookProfileValue {
     #[serde(rename = "type")]
     endpoint_id: String,
     urls: Vec<String>,
+    #[serde(default)]
+    api_key: Option<String>,
+    #[serde(default)]
+    headers: std::collections::BTreeMap<String, String>,
     timeout_seconds: f64,
     ssl_verify: bool,
     #[serde(default)]
@@ -257,8 +270,12 @@ pub fn prepare_endpoint_control_hooks(
             server_profiler: None,
         });
     }
-    let (handles, target_urls) =
-        prepare_handles(control_plane, &profile.config.urls, &profile.client)?;
+    let (handles, target_urls) = prepare_handles(
+        control_plane,
+        &profile.config.urls,
+        &profile.client,
+        &control_hook_request_headers(profile)?,
+    )?;
     let reset_kv_cache = profile
         .config
         .reset_kv_cache
@@ -341,17 +358,38 @@ pub fn stop_server_profiler(
     Box::pin(async move { execute_control_hook(plan, handles, target_urls, clock).await })
 }
 
+/// Resolve the authored auth and custom headers every control POST must carry.
+///
+/// A control hook targets the same origin as inference, so an authenticated
+/// endpoint rejects it without the endpoint's own credentials: bearer auth, or
+/// Anthropic Messages `x-api-key` plus `anthropic-version`, plus any authored
+/// `endpoint.headers` a gateway requires.
+fn control_hook_request_headers(
+    profile: &ValidatedEndpointProfileV2,
+) -> Result<ResolvedRequestHeaders> {
+    ResolvedRequestHeaders::new(auth_headers_for_endpoint(
+        profile.endpoint_id.as_str(),
+        &profile.config,
+    ))
+    .map_err(|error| anyhow!("preparing endpoint-local control-hook request headers: {error}"))
+}
+
 fn prepare_handles(
     control_plane: &dyn ControlPlaneHttpProvider,
     endpoint_urls: &[String],
     endpoint_client: &ClientConfig,
+    request_headers: &ResolvedRequestHeaders,
 ) -> Result<PreparedControlPlaneHandles> {
     let mut handles = Vec::with_capacity(endpoint_urls.len());
     let mut target_urls = Vec::with_capacity(endpoint_urls.len());
     for endpoint_url in endpoint_urls {
         let target_url = control_plane_base_url(endpoint_url)?;
         let handle = control_plane
-            .prepare(control_plane_profile(&target_url, endpoint_client)?)
+            .prepare(control_plane_profile(
+                &target_url,
+                endpoint_client,
+                request_headers,
+            )?)
             .with_context(|| {
                 format!("preparing endpoint-local control-plane handle for {target_url:?}")
             })?;
@@ -377,9 +415,13 @@ fn control_plane_base_url(endpoint_url: &str) -> Result<String> {
 fn control_plane_profile(
     base_url: &str,
     endpoint_client: &ClientConfig,
+    request_headers: &ResolvedRequestHeaders,
 ) -> Result<ValidatedControlPlaneProfile> {
     let mut client = endpoint_client.clone();
     client.max_connections_per_origin = 1;
+    // The credential reference stays `None`: an endpoint hook authenticates with
+    // the run's authored endpoint headers, not with a deployment-owned secret
+    // provider resolved by ID from the environment.
     ValidatedControlPlaneProfile::new(
         Url::parse(base_url).with_context(|| format!("parsing control-plane URL {base_url:?}"))?,
         client,
@@ -389,6 +431,7 @@ fn control_plane_profile(
         vec!["identity".to_owned()],
         CONTROL_RESPONSE_MAX_BYTES,
     )
+    .map(|profile| profile.with_request_headers(request_headers.clone()))
     .map_err(|error| anyhow!("preparing endpoint-local control-plane profile: {error}"))
 }
 
@@ -413,6 +456,8 @@ fn validated_profile_from_value(
             timeout_seconds: value.timeout_seconds,
             reset_kv_cache: value.reset_kv_cache,
             server_profiler: value.server_profiler,
+            api_key: value.api_key,
+            headers: value.headers,
             ..RawEndpointConfig::default()
         },
         connection_reuse: ConnectionReuseStrategy::Pooled,
@@ -687,6 +732,8 @@ mod tests {
     #[derive(Clone, Debug, Default)]
     struct RecordingState {
         prepared_urls: Rc<RefCell<Vec<String>>>,
+        /// Headers each prepared handle would place on every control request.
+        prepared_headers: Rc<RefCell<Vec<BTreeMap<String, String>>>>,
         requests: Rc<RefCell<Vec<RecordedRequest>>>,
         scripted_outcomes: Rc<RefCell<VecDeque<ScriptedOutcome>>>,
     }
@@ -723,6 +770,10 @@ mod tests {
                 .prepared_urls
                 .borrow_mut()
                 .push(profile.display_url().to_owned());
+            self.state
+                .prepared_headers
+                .borrow_mut()
+                .push(profile.request_headers().expose_for_transport().clone());
             Ok(Rc::new(RecordingHandle {
                 state: self.state.clone(),
             }))
@@ -971,6 +1022,120 @@ mod tests {
         assert_eq!(
             provider.state.prepared_urls.borrow().as_slice(),
             &["http://127.0.0.1:8000/"]
+        );
+    }
+
+    /// Prepare hooks for one endpoint dialect, key, and authored header set, and
+    /// return the headers every control POST would carry.
+    fn prepared_control_headers(
+        endpoint_id: &str,
+        api_key: Option<&str>,
+        headers: &[(&str, &str)],
+    ) -> BTreeMap<String, String> {
+        let clock: Rc<dyn Clock> = Rc::new(SimClock::new());
+        let provider = RecordingProvider::new();
+        let mut profile = validated_profile_with_paths("http://127.0.0.1:8000");
+        profile.endpoint_id = EndpointId::new(endpoint_id).expect("endpoint id");
+        profile.config.api_key = api_key.map(str::to_owned);
+        profile.config.headers = headers
+            .iter()
+            .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
+            .collect();
+        prepare_endpoint_control_hooks(clock, &provider, &profile).expect("hooks prepare");
+        let prepared = provider.state.prepared_headers.borrow();
+        assert_eq!(prepared.len(), 1, "one endpoint URL prepares one handle");
+        prepared[0].clone()
+    }
+
+    #[test]
+    fn control_posts_carry_bearer_auth_from_the_endpoint_api_key() {
+        let headers = prepared_control_headers("chat", Some("sk-control-hook"), &[]);
+
+        assert_eq!(
+            headers.get("Authorization").map(String::as_str),
+            Some("Bearer sk-control-hook")
+        );
+    }
+
+    #[test]
+    fn messages_control_posts_authenticate_with_x_api_key_and_a_version() {
+        let headers = prepared_control_headers("messages", Some("sk-anthropic"), &[]);
+
+        assert_eq!(
+            headers.get("x-api-key").map(String::as_str),
+            Some("sk-anthropic")
+        );
+        assert_eq!(
+            headers.get("anthropic-version").map(String::as_str),
+            Some("2023-06-01")
+        );
+        assert!(
+            !headers.contains_key("Authorization"),
+            "Anthropic Messages must not receive bearer auth: {headers:?}"
+        );
+    }
+
+    #[test]
+    fn authored_headers_pass_through_and_the_api_key_overrides_a_preconfigured_key() {
+        let headers = prepared_control_headers(
+            "messages",
+            Some("sk-authored"),
+            &[
+                ("x-api-key", "sk-stale-preconfigured"),
+                ("x-gateway-route", "control-plane"),
+            ],
+        );
+
+        assert_eq!(
+            headers.get("x-api-key").map(String::as_str),
+            Some("sk-authored"),
+            "--api-key must win over a preconfigured x-api-key header"
+        );
+        assert_eq!(
+            headers.get("x-gateway-route").map(String::as_str),
+            Some("control-plane")
+        );
+    }
+
+    #[test]
+    fn control_posts_without_a_credential_send_no_authorization_header() {
+        let headers = prepared_control_headers("chat", None, &[]);
+
+        assert!(
+            headers.is_empty(),
+            "a credential-free endpoint must add no control-plane headers: {headers:?}"
+        );
+    }
+
+    #[test]
+    fn profile_value_path_carries_the_authored_key_and_headers() {
+        let clock: Rc<dyn Clock> = Rc::new(SimClock::new());
+        let provider = RecordingProvider::new();
+        prepare_endpoint_control_hooks_from_profile_value(
+            clock,
+            &provider,
+            &serde_json::json!({
+                "type": "chat",
+                "urls": ["http://127.0.0.1:8000/v1/chat/completions"],
+                "timeout_seconds": 30.0,
+                "ssl_verify": true,
+                "connection_limit": 4,
+                "keepalive_timeout": 15.0,
+                "api_key": "sk-from-json",
+                "headers": {"x-gateway-route": "control-plane"},
+                "reset_kv_cache": {},
+            }),
+        )
+        .expect("hooks prepare from value");
+
+        let prepared = provider.state.prepared_headers.borrow();
+        assert_eq!(
+            prepared[0].get("Authorization").map(String::as_str),
+            Some("Bearer sk-from-json")
+        );
+        assert_eq!(
+            prepared[0].get("x-gateway-route").map(String::as_str),
+            Some("control-plane")
         );
     }
 

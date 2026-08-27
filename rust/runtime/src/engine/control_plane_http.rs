@@ -162,6 +162,65 @@ impl Debug for ResolvedSecret {
     }
 }
 
+/// Request headers resolved during preparation, whose values may be credentials.
+///
+/// Authored endpoint headers reach a control-plane handle through this carrier
+/// rather than through [`ControlPlaneCredentialReference`]: they are not all
+/// bearer tokens (Anthropic Messages authenticates with `x-api-key`) and a
+/// gateway header can be as sensitive as one, so the debug surface prints names
+/// alone, exactly as [`ResolvedSecret`] redacts its bytes.
+#[derive(Clone, Default, Eq, PartialEq)]
+pub struct ResolvedRequestHeaders(BTreeMap<String, String>);
+
+impl ResolvedRequestHeaders {
+    /// Validate one authored header set for direct placement on the wire.
+    ///
+    /// Rejecting a malformed name or a value carrying CR, LF, or NUL here fails
+    /// preparation with a value-free diagnostic instead of failing every control
+    /// request later inside the transport.
+    pub fn new(headers: BTreeMap<String, String>) -> Result<Self, ControlPlanePrepareError> {
+        for (name, value) in &headers {
+            if !is_http_token(name) {
+                return Err(ControlPlanePrepareError::InvalidProfile(format!(
+                    "control-plane request header name {name:?} is invalid"
+                )));
+            }
+            if value.chars().any(char::is_control) {
+                return Err(ControlPlanePrepareError::InvalidProfile(format!(
+                    "control-plane request header {name:?} has an unsafe value"
+                )));
+            }
+        }
+        Ok(Self(headers))
+    }
+
+    /// Whether any header will be sent.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// Borrow the exact header set for placement on the wire.
+    ///
+    /// Named to keep credential exposure explicit at the call site: only the
+    /// transport that sends the request, and tests asserting what it sent, may
+    /// read these values.
+    #[must_use]
+    pub fn expose_for_transport(&self) -> &BTreeMap<String, String> {
+        &self.0
+    }
+}
+
+impl Debug for ResolvedRequestHeaders {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ResolvedRequestHeaders")
+            .field("names", &self.0.keys().collect::<Vec<_>>())
+            .field("values", &"[REDACTED]")
+            .finish()
+    }
+}
+
 /// Deployment-owned credential resolution seam.
 pub trait SecretProviderResolver: Debug + Send + Sync {
     /// Resolve one bearer token without logging or serializing its bytes.
@@ -415,6 +474,7 @@ pub struct ValidatedControlPlaneProfile {
     client: ClientConfig,
     credential: ControlPlaneCredentialReference,
     tls: ControlPlaneTlsReference,
+    request_headers: ResolvedRequestHeaders,
     accepted_media_types: Vec<String>,
     accepted_content_encodings: Vec<String>,
     max_encoded_bytes: usize,
@@ -531,10 +591,31 @@ impl ValidatedControlPlaneProfile {
             client,
             credential,
             tls,
+            request_headers: ResolvedRequestHeaders::default(),
             accepted_media_types,
             accepted_content_encodings,
             max_encoded_bytes,
         })
+    }
+
+    /// Send `headers` on every request this profile issues.
+    ///
+    /// Unlike [`ControlPlaneCredentialReference`], these are the run's own
+    /// authored endpoint headers rather than deployment-provider material, so
+    /// they are deliberately not confined to `https`: they are the same
+    /// credentials the run's inference traffic already sends in the clear to
+    /// this exact origin, and refusing them on a plaintext endpoint would only
+    /// disable the control hooks that endpoint requires.
+    #[must_use]
+    pub fn with_request_headers(mut self, headers: ResolvedRequestHeaders) -> Self {
+        self.request_headers = headers;
+        self
+    }
+
+    /// Borrow the headers a prepared handle must send with every request.
+    #[must_use]
+    pub fn request_headers(&self) -> &ResolvedRequestHeaders {
+        &self.request_headers
     }
 
     /// Credential-free normalized endpoint identity.
@@ -834,6 +915,7 @@ impl ControlPlaneHttpProvider for NativeControlPlaneHttpProvider {
             accept: profile.accepted_media_types.join(", "),
             accept_encoding: profile.accepted_content_encodings.join(", "),
             max_encoded_bytes: profile.max_encoded_bytes,
+            request_headers: profile.request_headers,
         }))
     }
 }
@@ -847,6 +929,7 @@ struct NativeControlPlaneHttp {
     accept: String,
     accept_encoding: String,
     max_encoded_bytes: usize,
+    request_headers: ResolvedRequestHeaders,
 }
 
 impl Debug for NativeControlPlaneHttp {
@@ -856,6 +939,7 @@ impl Debug for NativeControlPlaneHttp {
             .field("url", &self.display_url)
             .field("has_authorization", &self.authorization.is_some())
             .field("max_encoded_bytes", &self.max_encoded_bytes)
+            .field("request_headers", &self.request_headers)
             .finish_non_exhaustive()
     }
 }
@@ -875,6 +959,11 @@ impl ControlPlaneHttp for NativeControlPlaneHttp {
             .header("Accept-Encoding", self.accept_encoding.clone())
             .request_id(request.request_id)
             .reuse(ConnectionReuseStrategy::Pooled);
+        for (name, value) in self.request_headers.expose_for_transport() {
+            config = config.header(name.as_str(), value.as_str());
+        }
+        // A provider-resolved credential is deployment-owned, so it stays
+        // authoritative over an authored header of the same name.
         if let Some(secret) = &self.authorization {
             config = config.header("Authorization", format!("Bearer {}", secret.expose()));
         }
@@ -981,6 +1070,31 @@ fn capped_connect_timeout(source: Option<i64>, backend: Option<i64>) -> Option<i
         (None, Some(backend)) => Some(backend),
         (None, None) => None,
     }
+}
+
+/// Whether `value` is a non-empty RFC 7230 header-field name.
+fn is_http_token(value: &str) -> bool {
+    !value.is_empty()
+        && value.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric()
+                || matches!(
+                    byte,
+                    b'!' | b'#'
+                        | b'$'
+                        | b'%'
+                        | b'&'
+                        | b'\''
+                        | b'*'
+                        | b'+'
+                        | b'-'
+                        | b'.'
+                        | b'^'
+                        | b'_'
+                        | b'`'
+                        | b'|'
+                        | b'~'
+                )
+        })
 }
 
 fn validate_provider_id(provider_id: &str) -> Result<(), ()> {
@@ -1345,7 +1459,36 @@ mod tests {
         .unwrap();
         let debug = format!("{trust:?} {mtls:?}");
         assert!(!debug.contains("fixture-super-secret"));
-        let _ = profile("http://127.0.0.1:1/metrics");
+
+        let headers = ResolvedRequestHeaders::new(BTreeMap::from([(
+            "x-api-key".to_owned(),
+            "fixture-super-secret-key".to_owned(),
+        )]))
+        .unwrap();
+        let handle_profile =
+            profile("http://127.0.0.1:1/metrics").with_request_headers(headers.clone());
+        let surfaces = format!("{headers:?} {handle_profile:?}");
+        assert!(!surfaces.contains("fixture-super-secret"), "{surfaces}");
+        assert!(surfaces.contains("x-api-key"));
+    }
+
+    #[test]
+    fn request_headers_reject_unsafe_names_and_values() {
+        assert!(
+            ResolvedRequestHeaders::new(BTreeMap::from([(
+                "x api key".to_owned(),
+                "value".to_owned()
+            )]))
+            .is_err()
+        );
+        assert!(
+            ResolvedRequestHeaders::new(BTreeMap::from([(
+                "authorization".to_owned(),
+                "Bearer a\r\nX-Injected: 1".to_owned(),
+            )]))
+            .is_err()
+        );
+        assert!(ResolvedRequestHeaders::new(BTreeMap::new()).unwrap().is_empty());
     }
 
     #[test]

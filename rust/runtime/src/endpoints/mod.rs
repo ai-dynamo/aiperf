@@ -41,7 +41,7 @@ pub(crate) use implementation::capture_endpoint_policy;
 pub use implementation::{
     ChatEmbeddingsEndpoint, ChatEndpoint, CompletionsEndpoint, EmbeddingsEndpoint, Endpoint,
     RealtimeEndpoint, ResponsesEndpoint, ShapeLowerer, TurnMessageLowerer,
-    WARMUP_SYSTEM_MESSAGE_PREFIX,
+    WARMUP_SYSTEM_MESSAGE_PREFIX, auth_headers_for_endpoint,
 };
 pub use kserve::{
     KServeChatFactory, KServeCompletionsFactory, KServeEmbeddingsFactory, KServeV1PredictFactory,

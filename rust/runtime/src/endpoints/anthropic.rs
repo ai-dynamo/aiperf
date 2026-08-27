@@ -45,6 +45,26 @@ const THINKING_DELTA: &str = "thinking_delta";
 const INPUT_JSON_DELTA: &str = "input_json_delta";
 const SIGNATURE_DELTA: &str = "signature_delta";
 
+/// Apply the Anthropic Messages credential rule to one header set.
+///
+/// `x-api-key` is hard-assigned so an authored `api_key` overrides a
+/// preconfigured header, while `anthropic-version` is only defaulted. Shared
+/// with out-of-band requests through
+/// [`auth_headers_for_endpoint`](crate::endpoints::auth_headers_for_endpoint) so
+/// a control-plane POST authenticates exactly as inference does; bearer auth or
+/// a missing version returns a 4xx from this dialect.
+pub(crate) fn apply_messages_auth_headers(
+    headers: &mut BTreeMap<String, String>,
+    api_key: Option<&str>,
+) {
+    if let Some(api_key) = api_key.filter(|key| !key.is_empty()) {
+        headers.insert("x-api-key".into(), api_key.to_owned());
+    }
+    headers
+        .entry("anthropic-version".into())
+        .or_insert_with(|| ANTHROPIC_VERSION.into());
+}
+
 /// Anthropic Messages API dialect (`/v1/messages`).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct MessagesEndpoint;
@@ -77,12 +97,7 @@ impl Endpoint for MessagesEndpoint {
         let mut headers =
             BTreeMap::from([("content-type".to_string(), "application/json".to_string())]);
         headers.extend(config.headers.clone());
-        if let Some(api_key) = config.api_key.as_ref().filter(|key| !key.is_empty()) {
-            headers.insert("x-api-key".into(), api_key.clone());
-        }
-        headers
-            .entry("anthropic-version".into())
-            .or_insert_with(|| ANTHROPIC_VERSION.into());
+        apply_messages_auth_headers(&mut headers, config.api_key.as_deref());
         headers
     }
 

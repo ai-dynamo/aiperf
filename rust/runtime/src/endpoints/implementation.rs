@@ -20,7 +20,8 @@ use crate::dataset::materialize::Overrides;
 use crate::dataset::segment::SegmentStore;
 use crate::endpoints::config::{EndpointConfig, RawEndpointConfig};
 use crate::endpoints::extraction::{PartTypes, extract_inputs};
-use crate::endpoints::metadata::{EndpointDescriptor, Modality};
+use crate::endpoints::anthropic::apply_messages_auth_headers;
+use crate::endpoints::metadata::{EndpointDescriptor, EndpointType, Modality};
 use crate::endpoints::models::{
     AudioResponseData, CreditPhase, EndpointError, EndpointResult, ExtractedPayload, Media,
     ParsedResponse, RequestInfo, RequestRecord, ResponseData, ServerResponse, Turn,
@@ -63,7 +64,7 @@ pub trait Endpoint: std::fmt::Debug + Send + Sync {
     fn format_headers(&self, config: &EndpointConfig) -> BTreeMap<String, String> {
         let mut headers = config.headers.clone();
         if let Some(api_key) = &config.api_key {
-            headers.insert("Authorization".into(), format!("Bearer {api_key}"));
+            apply_bearer_auth_header(&mut headers, api_key);
         }
         headers
     }
@@ -2087,13 +2088,48 @@ pub(crate) fn joined_text(turn: &Turn) -> String {
     turn_texts(turn).join(" ")
 }
 
+/// Apply the OpenAI-compatible bearer credential rule to one header set.
+///
+/// Single source for the header spelling shared by [`Endpoint::format_headers`],
+/// [`bearer_headers`], and out-of-band requests built by
+/// [`auth_headers_for_endpoint`].
+pub(crate) fn apply_bearer_auth_header(headers: &mut BTreeMap<String, String>, api_key: &str) {
+    headers.insert("Authorization".to_string(), format!("Bearer {api_key}"));
+}
+
 /// Clone an endpoint's configured headers, adding a bearer `Authorization`
 /// header when an API key is present. Shared by every dialect that prepares
 /// from a [`RawEndpointConfig`] (KServe, Riva, vLLM-generate, DynoSim).
 pub(crate) fn bearer_headers(config: &RawEndpointConfig) -> BTreeMap<String, String> {
     let mut headers = config.headers.clone();
     if let Some(api_key) = &config.api_key {
-        headers.insert("Authorization".to_string(), format!("Bearer {api_key}"));
+        apply_bearer_auth_header(&mut headers, api_key);
+    }
+    headers
+}
+
+/// Build the headers an out-of-band request to an endpoint's origin must carry.
+///
+/// Endpoint-local control-plane hooks POST to the same origin as inference, so
+/// an authenticated endpoint rejects them unless they authenticate the same way:
+/// the authored custom headers — which can carry proprietary auth, gateway
+/// routing, or tracing metadata — plus the dialect's credential rule. Content
+/// negotiation is deliberately absent; a bodyless control POST needs none, and
+/// the shared HTTP transport supplies its own.
+pub fn auth_headers_for_endpoint(
+    endpoint_id: &str,
+    config: &RawEndpointConfig,
+) -> BTreeMap<String, String> {
+    let mut headers = config.headers.clone();
+    // An empty authored key is no key, matching the Messages dialect's filter.
+    let api_key = config.api_key.as_deref().filter(|key| !key.is_empty());
+    if matches!(
+        EndpointType::from_canonical_id(endpoint_id),
+        Some(EndpointType::Messages)
+    ) {
+        apply_messages_auth_headers(&mut headers, api_key);
+    } else if let Some(api_key) = api_key {
+        apply_bearer_auth_header(&mut headers, api_key);
     }
     headers
 }
