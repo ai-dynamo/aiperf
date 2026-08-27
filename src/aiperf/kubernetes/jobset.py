@@ -14,7 +14,13 @@ from pydantic import Field
 from aiperf.common.environment import Environment
 from aiperf.common.models import AIPerfBaseModel
 from aiperf.config.deployment import PodTemplateConfig, SchedulingConfig
-from aiperf.kubernetes.constants import AIPerfLabels, Containers, KueueLabels
+from aiperf.kubernetes.constants import (
+    MIN_CONTAINER_CPU_MCPU,
+    MIN_CONTAINER_MEMORY_MIB,
+    AIPerfLabels,
+    Containers,
+    KueueLabels,
+)
 from aiperf.kubernetes.cr_refs import JOBSET_API_VERSION
 from aiperf.kubernetes.enums import ImagePullPolicy, RestartPolicy
 from aiperf.kubernetes.environment import K8sEnvironment
@@ -88,6 +94,16 @@ def split_weighted_total(total: int, weights: list[int]) -> list[int]:
     return shares
 
 
+def _apply_minimum_share(shares: list[int], minimum: int) -> list[int]:
+    """Clamp every share to at least ``minimum``.
+
+    Safety net for `split_weighted_total`: a lightly weighted bucket can floor
+    to 0 even when the aggregate budget technically covers `minimum * len(shares)`,
+    since the largest-remainder allocation rounds per-bucket, not per-floor.
+    """
+    return [max(share, minimum) for share in shares]
+
+
 def format_mcpu(mcpu: int) -> str:
     """Format millicores as a Kubernetes quantity."""
     if mcpu % 1000 == 0:
@@ -113,14 +129,30 @@ def _compute_cpu_shares(
     """
     cpu_weights = [100] + ([131] * worker_count) + ([389] * record_processor_count)
     if record_processor_cpu_request is None or record_processor_count == 0:
-        return split_weighted_total(total_mcpu, cpu_weights)
+        return _apply_minimum_share(
+            split_weighted_total(total_mcpu, cpu_weights), MIN_CONTAINER_CPU_MCPU
+        )
 
     record_processor_mcpu = int(round(parse_cpu(record_processor_cpu_request) * 1000))
     fixed_total = record_processor_mcpu * record_processor_count
-    remaining_mcpu = max(0, total_mcpu - fixed_total)
     non_record_weights = [100] + ([131] * worker_count)
+    remaining_mcpu = total_mcpu - fixed_total
+    min_remaining_mcpu = MIN_CONTAINER_CPU_MCPU * len(non_record_weights)
+    if remaining_mcpu < min_remaining_mcpu:
+        raise ValueError(
+            f"WORKER_POD CPU budget ({total_mcpu}m) cannot cover the pinned "
+            f"record-processor CPU request ({record_processor_mcpu}m x "
+            f"{record_processor_count} record processor(s) = {fixed_total}m) plus "
+            f"the {MIN_CONTAINER_CPU_MCPU}m minimum for each of the remaining "
+            f"{len(non_record_weights)} container(s) (worker-pod-manager + "
+            f"{worker_count} worker(s)). Increase AIPERF_K8S_WORKER_POD_CPU or "
+            f"lower AIPERF_K8S_RECORD_PROCESSOR_CPU_REQUEST."
+        )
     return (
-        split_weighted_total(remaining_mcpu, non_record_weights)
+        _apply_minimum_share(
+            split_weighted_total(remaining_mcpu, non_record_weights),
+            MIN_CONTAINER_CPU_MCPU,
+        )
         + [record_processor_mcpu] * record_processor_count
     )
 
@@ -146,6 +178,27 @@ def split_worker_pod_resources(
     total_mcpu = int(round(parse_cpu(worker_pod_resources["requests"]["cpu"]) * 1000))
     total_mib = parse_memory_mib(worker_pod_resources["requests"]["memory"])
 
+    min_total_mcpu = MIN_CONTAINER_CPU_MCPU * total_containers
+    if total_mcpu < min_total_mcpu:
+        raise ValueError(
+            f"WORKER_POD CPU budget ({total_mcpu}m) cannot cover the "
+            f"{MIN_CONTAINER_CPU_MCPU}m minimum per container across "
+            f"{total_containers} container(s) (1 worker-pod-manager + "
+            f"{worker_count} worker(s) + {record_processor_count} record "
+            f"processor(s)). Increase AIPERF_K8S_WORKER_POD_CPU or reduce "
+            f"--workers-per-pod / --record-processors-per-pod."
+        )
+    min_total_mib = MIN_CONTAINER_MEMORY_MIB * total_containers
+    if total_mib < min_total_mib:
+        raise ValueError(
+            f"WORKER_POD memory budget ({total_mib}Mi) cannot cover the "
+            f"{MIN_CONTAINER_MEMORY_MIB}Mi minimum per container across "
+            f"{total_containers} container(s) (1 worker-pod-manager + "
+            f"{worker_count} worker(s) + {record_processor_count} record "
+            f"processor(s)). Increase AIPERF_K8S_WORKER_POD_MEMORY or reduce "
+            f"--workers-per-pod / --record-processors-per-pod."
+        )
+
     # These weights reflect the measured relative cost noted in the K8s
     # environment comments: workers are lighter than record processors,
     # while the worker-pod-manager remains a small but non-zero share.
@@ -157,7 +210,9 @@ def split_worker_pod_resources(
         record_processor_count,
         record_processor_cpu_request,
     )
-    memory_shares = split_weighted_total(total_mib, memory_weights)
+    memory_shares = _apply_minimum_share(
+        split_weighted_total(total_mib, memory_weights), MIN_CONTAINER_MEMORY_MIB
+    )
 
     resources: list[dict[str, dict[str, str]]] = []
     for mcpu, mib in zip(cpu_shares, memory_shares, strict=True):

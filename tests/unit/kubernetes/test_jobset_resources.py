@@ -138,18 +138,16 @@ class TestComputeCpuShares:
         # Manager + workers split the remainder 4000 - 1000 = 3000
         assert shares[0] + shares[1] + shares[2] == 3000
 
-    def test_fixed_rp_request_larger_than_budget_clamps_remainder_to_zero(self) -> None:
-        """If RP requests exceed total, manager/worker shares go to zero without negatives."""
-        shares = _compute_cpu_shares(
-            total_mcpu=500,
-            worker_count=1,
-            record_processor_count=2,
-            record_processor_cpu_request="1000m",
-        )
-        assert shares[-1] == 1000
-        assert shares[-2] == 1000
-        assert shares[0] == 0  # manager
-        assert shares[1] == 0  # worker
+    def test_fixed_rp_request_larger_than_budget_raises(self) -> None:
+        """If pinned RP requests leave no room for the manager/worker minimums, raise
+        instead of silently emitting a 0m CPU request that Kubernetes would reject."""
+        with pytest.raises(ValueError, match="WORKER_POD CPU budget"):
+            _compute_cpu_shares(
+                total_mcpu=500,
+                worker_count=1,
+                record_processor_count=2,
+                record_processor_cpu_request="1000m",
+            )
 
 
 class TestSplitWorkerPodResources:
@@ -221,6 +219,71 @@ class TestSplitWorkerPodResources:
             burstable=False,
         )
         assert len(result) == 1 + 3 + 2
+
+    def test_cpu_budget_below_minimum_raises(self) -> None:
+        """A CPU budget too thin to give every container at least 1m must raise
+        at config-resolution time instead of emitting a 0m request."""
+        budget = {"requests": {"cpu": "5m", "memory": "16Gi"}}
+        with pytest.raises(ValueError, match="WORKER_POD CPU budget"):
+            split_worker_pod_resources(
+                budget,
+                worker_count=3,
+                record_processor_count=2,
+                record_processor_cpu_request=None,
+                burstable=False,
+            )
+
+    def test_memory_budget_below_minimum_raises(self) -> None:
+        """A memory budget too thin to give every container at least 1Mi must
+        raise instead of emitting a 0Mi request/limit that Kubernetes rejects."""
+        budget = {"requests": {"cpu": "8000m", "memory": "5Mi"}}
+        with pytest.raises(ValueError, match="WORKER_POD memory budget"):
+            split_worker_pod_resources(
+                budget,
+                worker_count=3,
+                record_processor_count=2,
+                record_processor_cpu_request=None,
+                burstable=False,
+            )
+
+    def test_fixed_rp_request_exceeding_budget_raises(self) -> None:
+        """A pinned per-record-processor CPU request that consumes (or exceeds) the
+        whole WORKER_POD budget must raise instead of splitting zero across the
+        manager and worker containers."""
+        budget = {"requests": {"cpu": "500m", "memory": "16Gi"}}
+        with pytest.raises(ValueError, match="WORKER_POD CPU budget"):
+            split_worker_pod_resources(
+                budget,
+                worker_count=1,
+                record_processor_count=2,
+                record_processor_cpu_request="1000m",
+                burstable=False,
+            )
+
+    def test_all_shares_are_nonzero_at_the_floor_boundary(self) -> None:
+        """Sweep small container counts with the CPU/memory budget pinned exactly at
+        the container-count floor boundary. Weighted, largest-remainder splitting
+        would round several containers down to 0 without the minimum-share clamp.
+        """
+        for worker_count, record_processor_count in [(0, 5), (3, 0), (2, 7), (10, 10)]:
+            total_containers = 1 + worker_count + record_processor_count
+            budget = {
+                "requests": {
+                    "cpu": f"{total_containers}m",
+                    "memory": f"{total_containers}Mi",
+                }
+            }
+            result = split_worker_pod_resources(
+                budget,
+                worker_count=worker_count,
+                record_processor_count=record_processor_count,
+                record_processor_cpu_request=None,
+                burstable=False,
+            )
+            for entry in result:
+                assert entry is not None
+                assert parse_cpu(entry["requests"]["cpu"]) * 1000 >= 1
+                assert parse_memory_mib(entry["requests"]["memory"]) >= 1
 
 
 class TestAllocateWorkerHealthPorts:

@@ -81,32 +81,33 @@ class TestKubeListCommand:
             small_benchmark_config, wait_for_completion=False, timeout=60
         )
 
-        # Wait for pods to be created
-        await asyncio.sleep(10)
+        try:
+            # Wait for pods to be created
+            await asyncio.sleep(10)
 
-        # Run list command
-        list_result = await run_aiperf_command(
-            project_root,
-            "kube",
-            "list",
-            "--namespace",
-            result.namespace,
-            timeout=30,
-            kube_context=kubectl.context,
-        )
+            # Run list command
+            list_result = await run_aiperf_command(
+                project_root,
+                "kube",
+                "list",
+                "--namespace",
+                result.namespace,
+                timeout=30,
+                kube_context=kubectl.context,
+            )
 
-        print(f"\n{'=' * 60}")
-        print("KUBE LIST OUTPUT")
-        print(f"{'=' * 60}")
-        print(list_result.stdout)
-        if list_result.stderr:
-            print(f"STDERR: {list_result.stderr}")
-        print(f"{'=' * 60}\n")
+            print(f"\n{'=' * 60}")
+            print("KUBE LIST OUTPUT")
+            print(f"{'=' * 60}")
+            print(list_result.stdout)
+            if list_result.stderr:
+                print(f"STDERR: {list_result.stderr}")
+            print(f"{'=' * 60}\n")
 
-        # List command should succeed
-        assert list_result.returncode == 0, f"List failed: {list_result.stderr}"
-
-        await benchmark_deployer.cleanup(result)
+            # List command should succeed
+            assert list_result.returncode == 0, f"List failed: {list_result.stderr}"
+        finally:
+            await benchmark_deployer.cleanup(result)
 
     @pytest.mark.asyncio
     async def test_list_command_all_namespaces(
@@ -121,22 +122,23 @@ class TestKubeListCommand:
             small_benchmark_config, wait_for_completion=False, timeout=60
         )
 
-        # Wait for pods to be created
-        await asyncio.sleep(10)
+        try:
+            # Wait for pods to be created
+            await asyncio.sleep(10)
 
-        # Run list with --all-namespaces
-        list_result = await run_aiperf_command(
-            project_root,
-            "kube",
-            "list",
-            "--all-namespaces",
-            timeout=30,
-            kube_context=kubectl.context,
-        )
+            # Run list with --all-namespaces
+            list_result = await run_aiperf_command(
+                project_root,
+                "kube",
+                "list",
+                "--all-namespaces",
+                timeout=30,
+                kube_context=kubectl.context,
+            )
 
-        assert list_result.returncode == 0, f"List failed: {list_result.stderr}"
-
-        await benchmark_deployer.cleanup(result)
+            assert list_result.returncode == 0, f"List failed: {list_result.stderr}"
+        finally:
+            await benchmark_deployer.cleanup(result)
 
 
 class TestKubeLogsCommand:
@@ -148,39 +150,42 @@ class TestKubeLogsCommand:
         benchmark_deployer: BenchmarkDeployer,
         project_root: Path,
         small_benchmark_config: BenchmarkConfig,
+        kubectl: KubectlClient,
     ) -> None:
         """Verify logs command retrieves pod logs."""
         result = await benchmark_deployer.deploy(
             small_benchmark_config, wait_for_completion=False, timeout=60
         )
 
-        # Wait for pods to start generating logs
-        await asyncio.sleep(15)
+        try:
+            # Wait for pods to start generating logs
+            await asyncio.sleep(15)
 
-        # Run logs command with explicit namespace
-        logs_result = await run_aiperf_command(
-            project_root,
-            "kube",
-            "logs",
-            "--job-id",
-            result.job_id,
-            "--namespace",
-            result.namespace,
-            "--tail",
-            "50",
-            timeout=30,
-        )
+            # Run logs command with explicit namespace
+            logs_result = await run_aiperf_command(
+                project_root,
+                "kube",
+                "logs",
+                "--job-id",
+                result.job_id,
+                "--namespace",
+                result.namespace,
+                "--tail",
+                "50",
+                timeout=120,
+                kube_context=kubectl.context,
+            )
 
-        print(f"\n{'=' * 60}")
-        print("KUBE LOGS OUTPUT (first 500 chars)")
-        print(f"{'=' * 60}")
-        print(logs_result.stdout[:500] if logs_result.stdout else "(empty)")
-        print(f"{'=' * 60}\n")
+            print(f"\n{'=' * 60}")
+            print("KUBE LOGS OUTPUT (first 500 chars)")
+            print(f"{'=' * 60}")
+            print(logs_result.stdout[:500] if logs_result.stdout else "(empty)")
+            print(f"{'=' * 60}\n")
 
-        # Logs command should succeed (exit code 0)
-        assert logs_result.returncode == 0, f"Logs failed: {logs_result.stderr}"
-
-        await benchmark_deployer.cleanup(result)
+            # Logs command should succeed (exit code 0)
+            assert logs_result.returncode == 0, f"Logs failed: {logs_result.stderr}"
+        finally:
+            await benchmark_deployer.cleanup(result)
 
 
 class TestKubeResultsCommand:

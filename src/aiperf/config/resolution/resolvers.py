@@ -18,7 +18,6 @@ from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.results_markers import EPOCH_RE
 from aiperf.config.artifacts import OutputDefaults
 from aiperf.config.dataset.resolver import DatasetResolver
-from aiperf.kubernetes.environment import K8sEnvironment
 
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
@@ -296,43 +295,18 @@ class GpuMetricsResolver:
 class CommConfigResolver:
     """Resolve the ZMQ communication config from runtime.communication.
 
-    Maps user-facing communication config (IPC/TCP/DUAL) to the internal
-    ZMQ config classes that services actually consume. This is the single
-    place where communication topology decisions are made.
+    Delegates entirely to ``build_comm_config``: that builder is the single
+    source of truth for the user-facing-model to ZMQ-config mapping, and a
+    second hand-written mapping here silently diverged from it -- the resolved
+    config dropped ``control_tcp_port``, ``credit_return_push_pull_tcp_port``
+    and every proxy port, so a run that resolved its comm config disagreed with
+    one that built it, on the very ports remote worker pods connect to.
     """
 
     def resolve(self, run: BenchmarkRun) -> None:
-        from aiperf.common.enums import CommunicationType
-        from aiperf.config.comm import ZMQDualBindConfig, ZMQIPCConfig, ZMQTCPConfig
+        from aiperf.config.comm import build_comm_config
 
-        comm = run.cfg.runtime.communication
-        if comm is None:
-            run.resolved.comm_config = ZMQIPCConfig()
-            return
-
-        if comm.type == CommunicationType.IPC:
-            run.resolved.comm_config = ZMQIPCConfig(
-                path=getattr(comm, "path", None),
-            )
-        elif comm.type == CommunicationType.TCP:
-            run.resolved.comm_config = ZMQTCPConfig(
-                host=comm.host,
-                records_push_pull_port=comm.records_port,
-                credit_router_port=comm.credit_router_port,
-            )
-        elif comm.type == CommunicationType.DUAL:
-            controller_host = comm.controller_host
-            if controller_host is None:
-                controller_host = K8sEnvironment.ZMQ.CONTROLLER_HOST
-            run.resolved.comm_config = ZMQDualBindConfig(
-                ipc_path=comm.ipc_path,
-                tcp_host=comm.tcp_host,
-                controller_host=controller_host,
-                records_push_pull_tcp_port=comm.records_port,
-                credit_router_tcp_port=comm.credit_router_port,
-            )
-        else:
-            run.resolved.comm_config = ZMQIPCConfig()
+        run.resolved.comm_config = build_comm_config(run.cfg)
 
         _logger.debug(
             f"Resolved comm config: {type(run.resolved.comm_config).__name__}"
