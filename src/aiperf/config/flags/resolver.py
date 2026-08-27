@@ -1588,8 +1588,18 @@ def _apply_fixed_schedule_offset_overrides(
         for cli_field, phase_field in fixed_offset_fields.items():
             if cli_field in fields_set:
                 target[phase_field] = getattr(cli, cli_field)
-        if "fixed_schedule_start_offset" in fields_set:
-            target.setdefault("auto_offset", False)
+        # This runs before _coalesce_phase_aliases, so a YAML-authored
+        # ``autoOffset`` is still under its camelCase spelling here. Checking
+        # only the snake_case key would miss it, write the default under
+        # ``auto_offset``, and let the coalesce step overwrite the user's
+        # camelCase value with this False default (same hazard as
+        # _apply_default_grace_period_override above).
+        if (
+            "fixed_schedule_start_offset" in fields_set
+            and "auto_offset" not in target
+            and to_camel("auto_offset") not in target
+        ):
+            target["auto_offset"] = False
 
 
 def _arrival_phase_type(cli: CLIConfig) -> PhaseType:

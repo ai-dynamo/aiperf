@@ -20,6 +20,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 from pytest import param
 
 from aiperf.config.flags import CLIConfig
@@ -93,6 +94,20 @@ _NETWORK_LATENCY_MEAN_YAML = (
 )
 
 
+def _fixed_schedule_auto_offset_yaml(auto_offset_key: str) -> str:
+    return (
+        _PREAMBLE
+        + f"""\
+  phases:
+    - name: measured
+      kind: profiling
+      type: fixed_schedule
+      requests: 10
+      {auto_offset_key}: true
+"""
+    )
+
+
 def _ramp_yaml(ramp_key: str) -> str:
     return (
         _PREAMBLE
@@ -147,6 +162,31 @@ def test_fixed_schedule_offset_over_templated_phase_type_does_not_raise(
 
 
 @pytest.mark.parametrize(
+    "auto_offset_key",
+    [
+        param("autoOffset", id="camel-case"),
+        param("auto_offset", id="snake-case"),
+    ],
+)  # fmt: skip
+def test_fixed_schedule_start_offset_flag_rejects_yaml_auto_offset_either_spelling(
+    tmp_path: Path, auto_offset_key: str
+) -> None:
+    """``--fixed-schedule-start-offset`` must not silently override a
+    YAML-authored ``auto_offset: true`` regardless of its key spelling.
+
+    The default-``auto_offset=False`` overlay only applies when the phase has
+    no explicit ``auto_offset`` at all; when the YAML already set it (under
+    either spelling), the conflict must surface as the same
+    ``ValidationError`` in both cases instead of the camelCase spelling
+    silently getting overwritten to ``False``.
+    """
+    config_file = _write(tmp_path, _fixed_schedule_auto_offset_yaml(auto_offset_key))
+
+    with pytest.raises(ValidationError, match="auto_offset cannot be True"):
+        resolve_config(CLIConfig(fixed_schedule_start_offset=100), config_file)
+
+
+@pytest.mark.parametrize(
     "ramp_key",
     [
         param("concurrencyRamp", id="camel-case"),
@@ -164,6 +204,32 @@ def test_ramp_duration_flag_preserves_sibling_strategy(
     ramp = config.benchmark.phases[0].concurrency_ramp
     assert ramp.duration == 20.0
     assert ramp.strategy == RampType.EXPONENTIAL
+
+
+def test_server_metrics_cli_override_over_yaml_camel_case_url_shorthand(
+    tmp_path: Path,
+) -> None:
+    """A CLI ``--server-metrics`` override on top of a YAML ``serverMetrics:
+    {url: ...}`` shorthand must not crash with a duplicate ``url``/``urls``
+    ``extra_forbidden`` error.
+    """
+    config_file = _write(
+        tmp_path,
+        _PREAMBLE
+        + """\
+  phases:
+    - name: measured
+      kind: profiling
+      type: concurrency
+      concurrency: 8
+      requests: 10
+  serverMetrics: {url: "http://localhost:9090/metrics"}
+""",
+    )
+
+    config = resolve_config(CLIConfig(server_metrics=["localhost:9400"]), config_file)
+
+    assert config.benchmark.server_metrics.urls == ["http://localhost:9400/metrics"]
 
 
 def test_network_latency_automatic_clears_yaml_mean_ms(tmp_path: Path) -> None:
