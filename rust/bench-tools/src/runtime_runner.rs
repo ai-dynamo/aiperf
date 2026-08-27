@@ -2023,6 +2023,82 @@ mod tests {
         );
     }
 
+    fn pid_from_marker(marker: &Path) -> libc::pid_t {
+        for _ in 0..400 {
+            if let Ok(text) = fs::read_to_string(marker)
+                && let Ok(pid) = text.trim().parse::<libc::pid_t>()
+            {
+                return pid;
+            }
+            sleep(Duration::from_millis(5));
+        }
+        panic!("child never published its pid");
+    }
+
+    fn assert_reaped(pid: libc::pid_t) {
+        for _ in 0..400 {
+            if unsafe { libc::kill(pid, 0) } == -1
+                && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+            {
+                return;
+            }
+            sleep(Duration::from_millis(5));
+        }
+        panic!("process {pid} outlived its controller");
+    }
+
+    #[test]
+    fn injected_stage_failures_still_kill_and_reap_the_owned_group() {
+        for stage in ["poll", "affinity", "cleanup", "output"] {
+            let directory = tempfile::tempdir().expect("fault fixture directory");
+            let marker = directory.path().join("pid");
+            let mut command = Command::new("/bin/sh");
+            command.args([
+                "-c",
+                &format!(
+                    "echo $$ > '{}'; trap '' TERM; sleep 30",
+                    marker.display()
+                ),
+            ]);
+            set_injected_child_fault(Some(stage));
+            let error = execute_monitored_child(
+                &mut command,
+                Duration::from_secs(5),
+                4096,
+                Some(&BTreeSet::from([0_usize])),
+            )
+            .expect_err("an injected controller failure is surfaced");
+            set_injected_child_fault(None);
+            assert!(
+                error.to_string().contains(stage),
+                "stage {stage} produced {error}"
+            );
+            assert_reaped(pid_from_marker(&marker));
+        }
+    }
+
+    #[test]
+    fn a_descendant_holding_the_output_pipe_cannot_outlive_the_controller() {
+        let directory = tempfile::tempdir().expect("descendant fixture directory");
+        let marker = directory.path().join("descendant-pid");
+        let mut command = Command::new("/bin/sh");
+        command.args([
+            "-c",
+            &format!(
+                "sh -c 'echo $$ > \"{0}\"; sleep 30' & exit 0",
+                marker.display()
+            ),
+        ]);
+        let started = Instant::now();
+
+        let result = execute_bounded_child(&mut command, Duration::from_secs(10), 4096)
+            .expect("the controller reaches a terminal result");
+
+        assert_eq!(result.terminal_status, ChildTerminalStatus::Exited(0));
+        assert!(started.elapsed() < Duration::from_secs(5));
+        assert_reaped(pid_from_marker(&marker));
+    }
+
     #[test]
     fn child_output_spools_are_bounded_and_retain_both_digests() {
         let mut command = Command::new("/bin/sh");
