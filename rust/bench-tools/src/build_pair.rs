@@ -68,6 +68,14 @@ impl BuildLtoV1 {
     }
 }
 
+/// Normative use of controller-observed paired build durations.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BuildDurationUseV1 {
+    /// Retain durations as post-build evidence without comparing or gating on them.
+    DescriptiveNonGating,
+}
+
 /// One member of an authoritative paired build.
 #[derive(Clone, Debug)]
 pub struct BuildPairMemberV1 {
@@ -145,12 +153,16 @@ pub struct BuildPairMemberReportV1 {
     pub artifact_relative_path: String,
     /// Digest of the produced artifact bytes.
     pub artifact_blake3: String,
-    /// Monotonic active build duration.
+    /// Monotonic active build duration retained as descriptive post-build evidence.
     pub active_duration_ns: u128,
-    /// Canonical JCS build receipt bytes.
+    /// Canonical JCS immutable build-authority receipt bytes.
     pub build_receipt_bytes: Vec<u8>,
-    /// Digest of the canonical build receipt bytes.
+    /// Digest of the immutable build-authority receipt bytes.
     pub build_receipt_blake3: String,
+    /// Canonical JCS post-build observation receipt bytes.
+    pub build_observation_receipt_bytes: Vec<u8>,
+    /// Digest of the post-build observation receipt bytes.
+    pub build_observation_receipt_blake3: String,
 }
 
 /// Authoritative evidence emitted for the complete paired build transaction.
@@ -188,6 +200,10 @@ pub struct BuildPairReportV1 {
     pub features: Vec<String>,
     /// Shared LTO setting.
     pub lto: BuildLtoV1,
+    /// Frozen execution order of the paired builds.
+    pub build_order: [Variant; 2],
+    /// Normative non-gating use of observed build durations.
+    pub build_duration_use: BuildDurationUseV1,
     /// Incremental compilation value enforced for both members.
     pub cargo_incremental: String,
     /// Digest of the complete inherited environment frozen for both children.
@@ -196,7 +212,7 @@ pub struct BuildPairReportV1 {
     pub inherited_build_environment: BTreeMap<String, Option<String>>,
     /// Static then dynamic member evidence.
     pub members: [BuildPairMemberReportV1; 2],
-    /// Canonical pair record binding both member receipts and shared authority.
+    /// Canonical pair record binding both immutable member receipts and shared authority.
     pub pair_record_bytes: Vec<u8>,
     /// Digest of the canonical pair record bytes.
     pub pair_record_blake3: String,
@@ -230,6 +246,17 @@ struct CanonicalBuildReceiptV1<'a> {
     target_root: &'a str,
     artifact_relative_path: &'a str,
     artifact_blake3: &'a str,
+}
+
+#[derive(Serialize)]
+struct CanonicalBuildObservationReceiptV1<'a> {
+    schema_version: &'static str,
+    scenario: &'a str,
+    pair_id: &'a str,
+    variant: Variant,
+    experiment_identity_blake3: &'a str,
+    build_authority_receipt_blake3: &'a str,
+    duration_use: BuildDurationUseV1,
     active_duration_ns: u128,
 }
 
@@ -250,6 +277,8 @@ struct CanonicalPairRecordV1<'a> {
     features: &'a [String],
     lto: BuildLtoV1,
     cargo_incremental: &'static str,
+    build_order: [Variant; 2],
+    build_duration_use: BuildDurationUseV1,
     member_source_identity_blake3: [&'a str; 2],
     member_cargo_lock_blake3: [&'a str; 2],
     member_target_roots: [&'a str; 2],
@@ -302,7 +331,7 @@ pub fn run_paired_build_v1(plan: &BuildPairPlanV1) -> Result<BuildPairReportV1, 
     validate_member_identity(&plan.dynamic_member)?;
 
     let pair_record_bytes = canonical_bytes(&CanonicalPairRecordV1 {
-        schema_version: "plugin_build_pair_record/v1",
+        schema_version: "plugin_build_pair_authority/v1",
         scenario: &plan.scenario,
         pair_id: &plan.pair_id,
         source_commit: &plan.source_commit,
@@ -317,6 +346,8 @@ pub fn run_paired_build_v1(plan: &BuildPairPlanV1) -> Result<BuildPairReportV1, 
         features: &plan.features,
         lto: plan.lto,
         cargo_incremental: "1",
+        build_order: [Variant::Static, Variant::Dynamic],
+        build_duration_use: BuildDurationUseV1::DescriptiveNonGating,
         member_source_identity_blake3: [
             &plan.static_member.source_identity_blake3,
             &plan.dynamic_member.source_identity_blake3,
@@ -350,6 +381,8 @@ pub fn run_paired_build_v1(plan: &BuildPairPlanV1) -> Result<BuildPairReportV1, 
         profile: plan.profile.clone(),
         features: plan.features.clone(),
         lto: plan.lto,
+        build_order: [Variant::Static, Variant::Dynamic],
+        build_duration_use: BuildDurationUseV1::DescriptiveNonGating,
         cargo_incremental: "1".to_owned(),
         inherited_environment_blake3,
         inherited_build_environment,
@@ -357,6 +390,24 @@ pub fn run_paired_build_v1(plan: &BuildPairPlanV1) -> Result<BuildPairReportV1, 
         pair_record_bytes,
         pair_record_blake3,
     })
+}
+
+/// Recompute the immutable paired-build authority identity.
+///
+/// Post-build observations, including active durations and their receipt digests,
+/// are deliberately outside this preimage.
+pub fn build_pair_authority_blake3_v1(
+    report: &BuildPairReportV1,
+) -> Result<String, BuildPairError> {
+    let expected_pair_record = canonical_pair_record_bytes(report)?;
+    if expected_pair_record != report.pair_record_bytes
+        || digest(&report.pair_record_bytes) != report.pair_record_blake3
+    {
+        return Err(BuildPairError::new(
+            "reported paired build authority mismatch",
+        ));
+    }
+    Ok(digest(&expected_pair_record))
 }
 
 pub(crate) fn validate_authoritative_build_report_v1(
@@ -367,6 +418,8 @@ pub(crate) fn validate_authoritative_build_report_v1(
         || report.cargo_incremental != "1"
         || report.members[0].variant != Variant::Static
         || report.members[1].variant != Variant::Dynamic
+        || report.build_order != [Variant::Static, Variant::Dynamic]
+        || report.build_duration_use != BuildDurationUseV1::DescriptiveNonGating
     {
         return Err(BuildPairError::new(
             "paired build report has a non-authoritative shape",
@@ -391,7 +444,7 @@ pub(crate) fn validate_authoritative_build_report_v1(
             ));
         }
         let expected_receipt = canonical_bytes(&CanonicalBuildReceiptV1 {
-            schema_version: "plugin_build_receipt/v1",
+            schema_version: "plugin_build_authority_receipt/v1",
             scenario: &report.scenario,
             pair_id: &report.pair_id,
             variant: member.variant,
@@ -414,7 +467,6 @@ pub(crate) fn validate_authoritative_build_report_v1(
             target_root: &member.target_root,
             artifact_relative_path: &member.artifact_relative_path,
             artifact_blake3: &member.artifact_blake3,
-            active_duration_ns: member.active_duration_ns,
         })?;
         if expected_receipt != member.build_receipt_bytes
             || digest(&member.build_receipt_bytes) != member.build_receipt_blake3
@@ -423,10 +475,36 @@ pub(crate) fn validate_authoritative_build_report_v1(
                 "reported member build receipt mismatch",
             ));
         }
+        let expected_observation = canonical_bytes(&CanonicalBuildObservationReceiptV1 {
+            schema_version: "plugin_build_observation_receipt/v1",
+            scenario: &report.scenario,
+            pair_id: &report.pair_id,
+            variant: member.variant,
+            experiment_identity_blake3: &report.experiment_identity_blake3,
+            build_authority_receipt_blake3: &member.build_receipt_blake3,
+            duration_use: report.build_duration_use,
+            active_duration_ns: member.active_duration_ns,
+        })?;
+        if member.active_duration_ns == 0
+            || expected_observation != member.build_observation_receipt_bytes
+            || digest(&member.build_observation_receipt_bytes)
+                != member.build_observation_receipt_blake3
+        {
+            return Err(BuildPairError::new(
+                "reported member build observation receipt mismatch",
+            ));
+        }
         artifact_paths.push(artifact_path);
     }
-    let expected_pair_record = canonical_bytes(&CanonicalPairRecordV1 {
-        schema_version: "plugin_build_pair_record/v1",
+    build_pair_authority_blake3_v1(report)?;
+    artifact_paths.try_into().map_err(|_| {
+        BuildPairError::new("paired build report does not contain exactly two artifacts")
+    })
+}
+
+fn canonical_pair_record_bytes(report: &BuildPairReportV1) -> Result<Vec<u8>, BuildPairError> {
+    canonical_bytes(&CanonicalPairRecordV1 {
+        schema_version: "plugin_build_pair_authority/v1",
         scenario: &report.scenario,
         pair_id: &report.pair_id,
         source_commit: &report.source_commit,
@@ -441,6 +519,8 @@ pub(crate) fn validate_authoritative_build_report_v1(
         features: &report.features,
         lto: report.lto,
         cargo_incremental: "1",
+        build_order: report.build_order,
+        build_duration_use: report.build_duration_use,
         member_source_identity_blake3: [
             &report.members[0].source_identity_blake3,
             &report.members[1].source_identity_blake3,
@@ -457,14 +537,6 @@ pub(crate) fn validate_authoritative_build_report_v1(
             &report.members[0].build_receipt_blake3,
             &report.members[1].build_receipt_blake3,
         ],
-    })?;
-    if expected_pair_record != report.pair_record_bytes
-        || digest(&report.pair_record_bytes) != report.pair_record_blake3
-    {
-        return Err(BuildPairError::new("reported paired build record mismatch"));
-    }
-    artifact_paths.try_into().map_err(|_| {
-        BuildPairError::new("paired build report does not contain exactly two artifacts")
     })
 }
 
@@ -495,9 +567,7 @@ fn validate_plan(plan: &BuildPairPlanV1) -> Result<(), BuildPairError> {
     validate_rustc_executable(plan)?;
     validate_member(&plan.static_member, Variant::Static)?;
     validate_member(&plan.dynamic_member, Variant::Dynamic)?;
-    if plan.static_member.source_identity_blake3
-        != plan.dynamic_member.source_identity_blake3
-    {
+    if plan.static_member.source_identity_blake3 != plan.dynamic_member.source_identity_blake3 {
         return Err(BuildPairError::new(
             "paired build members must share one complete source identity",
         ));
@@ -760,7 +830,7 @@ fn run_member(
         )));
     }
     let build_receipt_bytes = canonical_bytes(&CanonicalBuildReceiptV1 {
-        schema_version: "plugin_build_receipt/v1",
+        schema_version: "plugin_build_authority_receipt/v1",
         scenario: &plan.scenario,
         pair_id: &plan.pair_id,
         variant: member.variant,
@@ -783,9 +853,19 @@ fn run_member(
         target_root: &target_root,
         artifact_relative_path: &artifact_relative_path,
         artifact_blake3: &artifact_blake3,
-        active_duration_ns: elapsed,
     })?;
     let build_receipt_blake3 = digest(&build_receipt_bytes);
+    let build_observation_receipt_bytes = canonical_bytes(&CanonicalBuildObservationReceiptV1 {
+        schema_version: "plugin_build_observation_receipt/v1",
+        scenario: &plan.scenario,
+        pair_id: &plan.pair_id,
+        variant: member.variant,
+        experiment_identity_blake3: &plan.experiment_identity_blake3,
+        build_authority_receipt_blake3: &build_receipt_blake3,
+        duration_use: BuildDurationUseV1::DescriptiveNonGating,
+        active_duration_ns: elapsed,
+    })?;
+    let build_observation_receipt_blake3 = digest(&build_observation_receipt_bytes);
 
     Ok(BuildPairMemberReportV1 {
         variant: member.variant,
@@ -797,6 +877,8 @@ fn run_member(
         active_duration_ns: elapsed,
         build_receipt_bytes,
         build_receipt_blake3,
+        build_observation_receipt_bytes,
+        build_observation_receipt_blake3,
     })
 }
 

@@ -248,7 +248,10 @@ fn one_controller_executes_both_members_with_one_frozen_command_and_environment(
             .expect("receipt canonicalizes");
         assert_eq!(member.build_receipt_bytes, canonical);
 
-        assert_eq!(report.build_duration_use, BuildDurationUseV1::DescriptiveNonGating);
+        assert_eq!(
+            report.build_duration_use,
+            BuildDurationUseV1::DescriptiveNonGating
+        );
         assert_eq!(
             digest(&member.build_observation_receipt_bytes),
             member.build_observation_receipt_blake3
@@ -280,10 +283,7 @@ fn one_controller_executes_both_members_with_one_frozen_command_and_environment(
         pair_record["build_order"],
         serde_json::json!(["static", "dynamic"])
     );
-    assert_eq!(
-        pair_record["build_duration_use"],
-        "descriptive_non_gating"
-    );
+    assert_eq!(pair_record["build_duration_use"], "descriptive_non_gating");
     assert!(
         pair_record
             .get("member_build_observation_receipt_blake3")
@@ -311,8 +311,7 @@ fn duration_only_observations_leave_build_authority_identity_unchanged() {
         receipt["active_duration_ns"] = serde_json::json!(duration);
         member.build_observation_receipt_bytes =
             serde_json_canonicalizer::to_vec(&receipt).expect("observation canonicalizes");
-        member.build_observation_receipt_blake3 =
-            digest(&member.build_observation_receipt_bytes);
+        member.build_observation_receipt_blake3 = digest(&member.build_observation_receipt_bytes);
     }
 
     assert_ne!(
