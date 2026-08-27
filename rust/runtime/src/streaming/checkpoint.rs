@@ -1020,6 +1020,7 @@ pub struct CheckpointBarrier {
 pub struct CommittedParticipantReceipt {
     run: StreamRunIdentity,
     generation: CheckpointGeneration,
+    result_index_root: ContentDigest,
     participant_id: CheckpointParticipantId,
     descriptor_digest: ContentDigest,
     represented_cut: CheckpointCut,
@@ -1037,6 +1038,7 @@ impl CommittedParticipantReceipt {
         Ok(Self {
             run: *generation.run(),
             generation: generation.generation(),
+            result_index_root: *generation.result_index_root(),
             participant_id: descriptor.participant_id.clone(),
             descriptor_digest: descriptor.digest()?,
             represented_cut: descriptor.represented_cut.clone(),
@@ -1053,6 +1055,12 @@ impl CommittedParticipantReceipt {
     #[must_use]
     pub const fn generation(&self) -> &CheckpointGeneration {
         &self.generation
+    }
+
+    /// Borrow the exact reachable result-index root committed with the participant.
+    #[must_use]
+    pub const fn result_index_root(&self) -> &ContentDigest {
+        &self.result_index_root
     }
 
     /// Borrow the stable participant receiving this notification.

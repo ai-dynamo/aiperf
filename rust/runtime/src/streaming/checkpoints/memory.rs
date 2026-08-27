@@ -26,6 +26,7 @@ use crate::streaming::{
         StreamingGenerationTransaction, build_prevalidated_candidate, validate_commit_metadata,
     },
     identity::ContentDigest,
+    reliability::PreparedIssueReceiptResultPartition,
     results::{
         BudgetedResultDescriptors, PreparedResultEpoch, ResultIndexCursor, ResultIndexPage,
         ResultIndexReadBudget, ResultPartition, ResultSegmentDescriptor, ResultSegmentReader,
@@ -570,8 +571,10 @@ impl MemoryGenerationTransaction {
     pub async fn stage_results(
         &mut self,
         partitions: &mut Vec<ResultPartition>,
+        issue_receipts: &mut Option<PreparedIssueReceiptResultPartition>,
     ) -> Result<PreparedResultEpoch, CheckpointError> {
-        self.prepare_result_partitions(partitions).await
+        self.prepare_result_partitions(partitions, issue_receipts)
+            .await
     }
 
     /// Commit this transaction atomically.
@@ -618,17 +621,23 @@ impl MemoryGenerationTransaction {
     async fn prepare_result_partitions(
         &mut self,
         partitions: &mut Vec<ResultPartition>,
+        issue_receipts: &mut Option<PreparedIssueReceiptResultPartition>,
     ) -> Result<PreparedResultEpoch, CheckpointError> {
         if self.staged_results.is_some() {
             return Err(CheckpointError::ObjectVerification);
         }
+        let issue_partition = issue_receipts
+            .as_ref()
+            .map(PreparedIssueReceiptResultPartition::partition);
         if partitions
             .iter()
+            .chain(issue_partition)
             .any(|partition| partition.descriptor().run != self.run)
         {
             return Err(CheckpointError::ObjectVerification);
         }
-        let plan = CheckedResultStagePlan::from_partitions(partitions)?;
+        let plan =
+            CheckedResultStagePlan::from_partitions(partitions.iter().chain(issue_partition))?;
         let prepared_lease = self
             .backend
             .budgets
@@ -641,18 +650,29 @@ impl MemoryGenerationTransaction {
             .result_summaries
             .acquire(plan.descriptor_items, plan.descriptor_bytes)
             .await?;
-        self.install_result_partitions(partitions, plan, prepared_lease, summary_lease)
+        self.install_result_partitions(
+            partitions,
+            issue_receipts,
+            plan,
+            prepared_lease,
+            summary_lease,
+        )
     }
 
     fn install_result_partitions(
         &mut self,
         partitions: &mut Vec<ResultPartition>,
+        issue_receipts: &mut Option<PreparedIssueReceiptResultPartition>,
         plan: CheckedResultStagePlan,
         prepared_lease: BudgetLease,
         summary_lease: BudgetLease,
     ) -> Result<PreparedResultEpoch, CheckpointError> {
+        let issue_partition = issue_receipts
+            .as_ref()
+            .map(PreparedIssueReceiptResultPartition::partition);
         let prepared_descriptors = partitions
             .iter()
+            .chain(issue_partition)
             .map(|partition| partition.descriptor().clone())
             .collect::<Vec<_>>()
             .into_boxed_slice();
@@ -661,15 +681,31 @@ impl MemoryGenerationTransaction {
             BudgetedResultDescriptors::new(prepared_descriptors, prepared_lease)?;
         let summary_descriptors =
             BudgetedResultDescriptors::new(summary_descriptors, summary_lease)?;
+        // Taking the handoff is infallible, and the only remaining fallible
+        // construction binds a root that equals `plan.index_root` by
+        // construction, so the epoch below cannot refuse and strand it.
+        let (issue_payload_partition, binding) = match issue_receipts.take() {
+            Some(handoff) => {
+                let (partition, binding) = handoff.into_staged_parts(plan.index_root);
+                (Some(partition), Some(binding))
+            }
+            None => (None, None),
+        };
         let prepared_summary = PreparedResultEpoch::new(
             plan.index_root,
             summary_descriptors,
             plan.item_count,
             plan.byte_length,
+            binding,
         )?;
 
+        // Publication fence: every fallible construction above has succeeded,
+        // so the drain below cannot fail and cannot leave a partial epoch.
         let mut payloads = Vec::with_capacity(plan.descriptor_items);
-        for partition in std::mem::take(partitions) {
+        for partition in std::mem::take(partitions)
+            .into_iter()
+            .chain(issue_payload_partition)
+        {
             let (budgeted_descriptor, payload) = partition.into_parts();
             let (input_descriptor, input_lease) = budgeted_descriptor.into_backend_parts();
             payloads.push(payload);
@@ -855,8 +891,10 @@ impl StreamingGenerationTransaction for MemoryGenerationTransaction {
     async fn stage_results(
         &mut self,
         partitions: &mut Vec<ResultPartition>,
+        issue_receipts: &mut Option<PreparedIssueReceiptResultPartition>,
     ) -> Result<PreparedResultEpoch, CheckpointError> {
-        self.prepare_result_partitions(partitions).await
+        self.prepare_result_partitions(partitions, issue_receipts)
+            .await
     }
     async fn commit(
         self: Box<Self>,
@@ -875,15 +913,18 @@ struct CheckedResultStagePlan {
 }
 
 impl CheckedResultStagePlan {
-    fn from_partitions(partitions: &[ResultPartition]) -> Result<Self, CheckpointError> {
-        let descriptor_bytes = partitions.iter().try_fold(0usize, |total, partition| {
+    fn from_partitions<'a, I>(partitions: I) -> Result<Self, CheckpointError>
+    where
+        I: Iterator<Item = &'a ResultPartition> + Clone,
+    {
+        let descriptor_bytes = partitions.clone().try_fold(0usize, |total, partition| {
             total
                 .checked_add(descriptor_retained_bytes(partition.descriptor())?)
                 .ok_or(CheckpointError::ObjectVerification)
         })?;
         let (item_count, byte_length) =
             partitions
-                .iter()
+                .clone()
                 .try_fold((0u64, 0u64), |(items, bytes), partition| {
                     let descriptor = partition.descriptor();
                     Ok((
@@ -896,9 +937,9 @@ impl CheckedResultStagePlan {
                     ))
                 })?;
         let (index_root, _) =
-            canonical_result_index_object(partitions.iter().map(ResultPartition::descriptor))?;
+            canonical_result_index_object(partitions.clone().map(ResultPartition::descriptor))?;
         Ok(Self {
-            descriptor_items: partitions.len(),
+            descriptor_items: partitions.count(),
             descriptor_bytes,
             index_root,
             item_count,
@@ -1325,7 +1366,10 @@ mod tests {
             .stage_participant(participant(run, 1).await)
             .await
             .unwrap();
-        transaction.stage_results(&mut Vec::new()).await.unwrap();
+        transaction
+            .stage_results(&mut Vec::new(), &mut None)
+            .await
+            .unwrap();
         transaction.commit(metadata(None, 1)).await.unwrap()
     }
 
@@ -1358,7 +1402,10 @@ mod tests {
             .stage_participant(participant(run, 2).await)
             .await
             .unwrap();
-        transaction.stage_results(&mut Vec::new()).await.unwrap();
+        transaction
+            .stage_results(&mut Vec::new(), &mut None)
+            .await
+            .unwrap();
         let second = transaction
             .commit(metadata(Some(first.generation()), 2))
             .await
@@ -1421,7 +1468,10 @@ mod tests {
             .stage_participant(participant(run, 2).await)
             .await
             .unwrap();
-        transaction.stage_results(&mut Vec::new()).await.unwrap();
+        transaction
+            .stage_results(&mut Vec::new(), &mut None)
+            .await
+            .unwrap();
         let second = transaction
             .commit(metadata(Some(first.generation()), 2))
             .await
@@ -1470,7 +1520,10 @@ mod tests {
             .stage_participant(participant(run, 2).await)
             .await
             .unwrap();
-        transaction.stage_results(&mut Vec::new()).await.unwrap();
+        transaction
+            .stage_results(&mut Vec::new(), &mut None)
+            .await
+            .unwrap();
 
         assert_eq!(
             transaction
@@ -1550,7 +1603,10 @@ mod tests {
             .stage_participant(participant(run, u64::MAX).await)
             .await
             .unwrap();
-        transaction.stage_results(&mut Vec::new()).await.unwrap();
+        transaction
+            .stage_results(&mut Vec::new(), &mut None)
+            .await
+            .unwrap();
         let before_attempt = backend.live_budget_usage();
         backend.reset_test_state_accesses();
         let error = transaction

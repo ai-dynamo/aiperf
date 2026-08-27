@@ -110,7 +110,8 @@ async fn cancelled_summary_wait_leaves_stage_inputs_and_transaction_retryable() 
     let input_before = input_budget.snapshot();
     let held_summary = backend.hold_all_result_summary_capacity().await.unwrap();
 
-    let mut pending = Box::pin(transaction.stage_results(&mut partitions));
+    let mut issue_receipts = None;
+    let mut pending = Box::pin(transaction.stage_results(&mut partitions, &mut issue_receipts));
     assert!(matches!(
         futures::poll!(&mut pending),
         std::task::Poll::Pending
@@ -125,7 +126,7 @@ async fn cancelled_summary_wait_leaves_stage_inputs_and_transaction_retryable() 
     assert_eq!(backend.budget_snapshots().prepared_indexes, prepared_before);
 
     drop(held_summary);
-    let prepared = transaction.stage_results(&mut partitions).await.unwrap();
+    let prepared = transaction.stage_results(&mut partitions, &mut None).await.unwrap();
     assert!(partitions.is_empty());
     assert_eq!(input_budget.snapshot().used_items, 0);
     assert_eq!(
@@ -152,7 +153,7 @@ async fn fully_staged_after(
         .stage_participant(support::prepared_participant(run, epoch).await)
         .await
         .unwrap();
-    transaction.stage_results(&mut Vec::new()).await.unwrap();
+    transaction.stage_results(&mut Vec::new(), &mut None).await.unwrap();
     transaction
 }
 
@@ -284,7 +285,7 @@ async fn explicit_expectation_and_result_runs_must_match_transaction_run() {
         .unwrap();
     let mut foreign = vec![support::result_partition(other, 1).await];
     assert!(matches!(
-        transaction.stage_results(&mut foreign).await,
+        transaction.stage_results(&mut foreign, &mut None).await,
         Err(CheckpointError::ObjectVerification)
     ));
     assert_eq!(foreign.len(), 1);
@@ -307,7 +308,7 @@ async fn commit_requires_exact_participants_and_one_canonical_result_epoch() {
         .await
         .unwrap();
     let empty = omitted_participant
-        .stage_results(&mut Vec::new())
+        .stage_results(&mut Vec::new(), &mut None)
         .await
         .unwrap();
     assert_eq!(empty.item_count(), 0);
@@ -319,8 +320,8 @@ async fn commit_requires_exact_participants_and_one_canonical_result_epoch() {
 
     let mut exact = support::transaction_with_all_participants(&backend, run).await;
     let mut no_partitions = Vec::new();
-    exact.stage_results(&mut no_partitions).await.unwrap();
-    assert!(exact.stage_results(&mut no_partitions).await.is_err());
+    exact.stage_results(&mut no_partitions, &mut None).await.unwrap();
+    assert!(exact.stage_results(&mut no_partitions, &mut None).await.is_err());
     exact.commit(support::metadata_at(1)).await.unwrap();
 }
 
@@ -330,7 +331,7 @@ async fn result_epoch_must_match_commit_epoch() {
     let run = support::run_id(1);
     let mut transaction = support::transaction_with_all_participants(&backend, run).await;
     transaction
-        .stage_results(&mut vec![support::result_partition(run, 2).await])
+        .stage_results(&mut vec![support::result_partition(run, 2).await], &mut None)
         .await
         .unwrap();
     assert!(matches!(
@@ -446,7 +447,7 @@ async fn maximum_frozen_epoch_refuses_overflow_before_state_access() {
         .stage_participant(support::prepared_participant(run, 1).await)
         .await
         .unwrap();
-    transaction.stage_results(&mut Vec::new()).await.unwrap();
+    transaction.stage_results(&mut Vec::new(), &mut None).await.unwrap();
     backend.reset_test_state_accesses();
     let mut metadata = support::metadata_at(1);
     metadata.previous = Some(maximum.clone());
@@ -466,7 +467,7 @@ async fn storage_capacity_refusal_is_typed_and_publishes_nothing() {
     let run = support::run_id(1);
     let mut transaction = support::transaction_with_all_participants(&backend, run).await;
     transaction
-        .stage_results(&mut vec![support::result_partition(run, 1).await])
+        .stage_results(&mut vec![support::result_partition(run, 1).await], &mut None)
         .await
         .unwrap();
 
@@ -501,7 +502,7 @@ async fn sufficient_page_limit_does_not_hide_backend_read_capacity_refusal() {
                 .await
                 .1,
         ];
-        transaction.stage_results(&mut partitions).await.unwrap();
+        transaction.stage_results(&mut partitions, &mut None).await.unwrap();
         transaction.commit(support::metadata_at(1)).await.unwrap()
     }
 
@@ -747,11 +748,14 @@ async fn projection_allocation_participates_in_result_index_read_charge() {
         let run = support::run_id(1);
         let mut transaction = support::transaction_with_all_participants(&backend, run).await;
         transaction
-            .stage_results(&mut vec![
-                support::result_partition_with_projection_for(run, 1, projection)
-                    .await
-                    .1,
-            ])
+            .stage_results(
+                &mut vec![
+                    support::result_partition_with_projection_for(run, 1, projection)
+                        .await
+                        .1,
+                ],
+                &mut None,
+            )
             .await
             .unwrap();
         transaction.commit(support::metadata_at(1)).await.unwrap();
@@ -812,7 +816,7 @@ async fn identical_participant_and_result_payloads_retain_distinct_typed_objects
     )
     .await;
     let mut partitions = vec![partition];
-    let prepared = transaction.stage_results(&mut partitions).await.unwrap();
+    let prepared = transaction.stage_results(&mut partitions, &mut None).await.unwrap();
     let result_descriptor = prepared.descriptors()[0].clone();
     let committed = transaction.commit(support::metadata_at(1)).await.unwrap();
 
@@ -897,7 +901,7 @@ async fn repeated_result_payload_is_stored_and_charged_once_per_typed_key() {
         support::result_partition_with_projection_and_bytes_for(run, 1, "second", payload.clone())
             .await;
     let mut partitions = vec![first, second];
-    let prepared = transaction.stage_results(&mut partitions).await.unwrap();
+    let prepared = transaction.stage_results(&mut partitions, &mut None).await.unwrap();
     let descriptors = prepared.descriptors().to_vec();
     let committed = transaction.commit(support::metadata_at(1)).await.unwrap();
 
@@ -924,7 +928,7 @@ async fn result_index_pages_advance_strictly_without_repeating_descriptors() {
                 .1,
         );
     }
-    transaction.stage_results(&mut partitions).await.unwrap();
+    transaction.stage_results(&mut partitions, &mut None).await.unwrap();
     transaction.commit(support::metadata_at(1)).await.unwrap();
     let reader = backend
         .open_latest(&run, &support::expectations(run))

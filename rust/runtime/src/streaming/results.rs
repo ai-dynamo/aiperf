@@ -14,6 +14,7 @@ use super::{
     budget::BudgetLease,
     checkpoint::{BudgetedCheckpointBytes, CheckpointEpoch, CheckpointError, StreamRunIdentity},
     identity::{ContentDigest, GlobalSequence},
+    reliability::{PreparedIssueReceiptEpochBinding, PreparedIssueReceiptResultPartition},
 };
 
 /// Stable cell coordinate attached to one result segment.
@@ -293,6 +294,7 @@ pub struct PreparedResultEpoch {
     descriptors: BudgetedResultDescriptors,
     item_count: u64,
     byte_length: u64,
+    issue_receipts: Option<PreparedIssueReceiptEpochBinding>,
 }
 
 impl PreparedResultEpoch {
@@ -301,9 +303,16 @@ impl PreparedResultEpoch {
         descriptors: BudgetedResultDescriptors,
         item_count: u64,
         byte_length: u64,
+        issue_receipts: Option<PreparedIssueReceiptEpochBinding>,
     ) -> Result<Self, CheckpointError> {
         let (computed_items, computed_bytes) = result_totals(descriptors.descriptors())?;
         if computed_items != item_count || computed_bytes != byte_length {
+            return Err(CheckpointError::ObjectVerification);
+        }
+        if issue_receipts
+            .as_ref()
+            .is_some_and(|binding| binding.result_index_root() != &index_root)
+        {
             return Err(CheckpointError::ObjectVerification);
         }
         Ok(Self {
@@ -311,6 +320,7 @@ impl PreparedResultEpoch {
             descriptors,
             item_count,
             byte_length,
+            issue_receipts,
         })
     }
 
@@ -338,15 +348,87 @@ impl PreparedResultEpoch {
         self.byte_length
     }
 
-    /// Move the summary while preserving its descriptor allocation authority.
+    /// Borrow the staged detailed-receipt binding, when this epoch stages one.
     #[must_use]
-    pub fn into_parts(self) -> (ContentDigest, BudgetedResultDescriptors, u64, u64) {
+    pub const fn issue_receipt_binding(&self) -> Option<&PreparedIssueReceiptEpochBinding> {
+        self.issue_receipts.as_ref()
+    }
+
+    /// Move the summary while preserving its descriptor allocation authority.
+    ///
+    /// The staged detailed-receipt binding travels with the parts, so its view
+    /// lease is released exactly once by whichever owner drops it.
+    #[must_use]
+    pub fn into_parts(
+        self,
+    ) -> (
+        ContentDigest,
+        BudgetedResultDescriptors,
+        u64,
+        u64,
+        Option<PreparedIssueReceiptEpochBinding>,
+    ) {
         (
             self.index_root,
             self.descriptors,
             self.item_count,
             self.byte_length,
+            self.issue_receipts,
         )
+    }
+}
+
+/// Coordinator-owned staging input: ordinary partitions plus the optional
+/// detailed-receipt partition.
+///
+/// ```compile_fail
+/// # use aiperf_runtime::streaming::results::PreparedCheckpointResultInput;
+/// # fn cannot_take_issue_receipts(value: PreparedCheckpointResultInput) {
+/// let _receipts = value.issue_receipts;
+/// # }
+/// ```
+#[derive(Debug, Default)]
+pub struct PreparedCheckpointResultInput {
+    partitions: Vec<ResultPartition>,
+    issue_receipts: Option<PreparedIssueReceiptResultPartition>,
+}
+
+impl PreparedCheckpointResultInput {
+    /// Construct one staging input from owned partitions.
+    #[must_use]
+    pub fn new(
+        partitions: Vec<ResultPartition>,
+        issue_receipts: Option<PreparedIssueReceiptResultPartition>,
+    ) -> Self {
+        Self {
+            partitions,
+            issue_receipts,
+        }
+    }
+
+    /// Construct the canonical empty staging input.
+    #[must_use]
+    pub fn empty() -> Self {
+        Self {
+            partitions: Vec::new(),
+            issue_receipts: None,
+        }
+    }
+
+    /// Borrow the ordinary result partitions.
+    #[must_use]
+    pub fn partitions(&self) -> &[ResultPartition] {
+        &self.partitions
+    }
+
+    /// Borrow both staging inputs mutably for exactly one staging call.
+    pub(crate) fn stage_inputs(
+        &mut self,
+    ) -> (
+        &mut Vec<ResultPartition>,
+        &mut Option<PreparedIssueReceiptResultPartition>,
+    ) {
+        (&mut self.partitions, &mut self.issue_receipts)
     }
 }
 

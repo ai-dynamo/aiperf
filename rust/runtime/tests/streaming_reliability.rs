@@ -1,14 +1,19 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+#[allow(dead_code)]
+#[path = "support/streaming_checkpoint.rs"]
+mod support;
+
 use std::num::NonZeroU64;
 
 use aiperf_runtime::streaming::{
     budget::{BudgetLimits, StreamingResourceBudget},
     checkpoint::{
         AcquisitionHorizon, AdmissionHorizon, CheckpointBarrier, CheckpointCut, CheckpointEpoch,
-        CheckpointGeneration, DecodeHorizon, DiscoveryHorizon, EventTimeWatermark,
-        OrderedActionHorizon, StreamRunIdentity, TerminalActionHorizon,
+        CheckpointGeneration, CheckpointParticipantId, DecodeHorizon, DiscoveryHorizon,
+        EventTimeWatermark, OrderedActionHorizon, StreamRunIdentity,
+        StreamingCheckpointParticipant, TerminalActionHorizon,
     },
     failure::{
         AcquisitionFailureCode, ActionExecutionError, ActionFailureCode, CheckpointAttemptError,
@@ -684,4 +689,132 @@ fn only_terminal_action_disposition_carries_failure_identity(
         | ActionFailureDisposition::Backpressure(_) => None,
         ActionFailureDisposition::TerminalActionReceipt(identity) => Some(identity),
     }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn ledger_participant_state_is_budget_owned() {
+    let reporter_budget = budget(64, submission_queue_charge_bytes() + 64 * 1024);
+    let mut reporter =
+        BudgetOwnedStreamingIssueReporter::new(run(0x11), record_policy(), reporter_budget)
+            .unwrap_or_else(|error| panic!("budget-owned reporter: {error}"));
+    reporter
+        .initialize(None)
+        .await
+        .unwrap_or_else(|error| panic!("fresh initialize: {error}"));
+    reporter
+        .report(IssueSequenceUpdate::Issue(record_issue(
+            DecodeFailureCode::Syntax,
+        )))
+        .await
+        .unwrap_or_else(|error| panic!("retain issue: {error}"));
+    reporter
+        .report(IssueSequenceUpdate::NoMoreBefore {
+            input_domain: domain(0x21, 0x20),
+            through: SourcePosition::new(7),
+        })
+        .await
+        .unwrap_or_else(|error| panic!("advance frontier: {error}"));
+
+    let at = barrier(run(0x11), 4);
+    // Capture the pre-restart frontier root so the restored ledger is compared
+    // against it rather than against itself.
+    let pre_frontier_root = {
+        let view = reporter
+            .receipt_partition_view(&at)
+            .await
+            .unwrap_or_else(|error| panic!("prepare pre-restart partition: {error}"));
+        *view.handled_cut().input_frontier_root()
+    };
+    let prepared = reporter
+        .checkpoint_view(&at)
+        .await
+        .unwrap_or_else(|error| panic!("wire ledger state: {error}"));
+    assert_eq!(prepared.descriptor().schema_id, "aiperf.streaming.issue-ledger");
+    assert_eq!(prepared.descriptor().schema_version, 1);
+    assert_eq!(prepared.descriptor().represented_cut, at.cut);
+    assert_eq!(prepared.descriptor().item_count, 2);
+
+    let committed = support::committed_current_v4_participant_state(
+        run(0x11),
+        CheckpointParticipantId::new("streaming_issue_ledger"),
+        "aiperf.streaming.issue-ledger",
+        1,
+        at.cut.clone(),
+        2,
+        bytes::Bytes::copy_from_slice(prepared.payload_bytes()),
+    )
+    .await;
+
+    let mut resumed = BudgetOwnedStreamingIssueReporter::new(
+        run(0x11),
+        record_policy(),
+        budget(64, submission_queue_charge_bytes() + 64 * 1024),
+    )
+    .unwrap_or_else(|error| panic!("resumed reporter: {error}"));
+    resumed
+        .initialize(Some(committed))
+        .await
+        .unwrap_or_else(|error| panic!("restore ledger state: {error}"));
+    assert_eq!(resumed.retained_receipt_count(), 0);
+    assert_eq!(
+        resumed
+            .summary()
+            .unwrap_or_else(|error| panic!("restored summary: {error}"))
+            .total,
+        1
+    );
+    // The restored ledger keeps the committed receipt root, so its next cut is
+    // not the empty cut even though no detailed receipt is retained.
+    let resumed_view = resumed
+        .receipt_partition_view(&barrier(run(0x11), 5))
+        .await
+        .unwrap_or_else(|error| panic!("prepare resumed partition: {error}"));
+    assert_ne!(
+        resumed_view.handled_cut().receipt_root(),
+        HandledIssueCut::empty().receipt_root()
+    );
+    assert_eq!(
+        resumed_view.handled_cut().input_frontier_root(),
+        &pre_frontier_root
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn participant_state_prepare_releases_on_error() {
+    let mut reporter = BudgetOwnedStreamingIssueReporter::new(
+        run(0x11),
+        record_policy(),
+        budget(64, submission_queue_charge_bytes() + 64 * 1024),
+    )
+    .unwrap_or_else(|error| panic!("budget-owned reporter: {error}"));
+
+    // A foreign-run state cannot restore, and the refusal must leave the
+    // one-shot guard untouched so a fresh start is still reachable.
+    let foreign = support::committed_current_v4_participant_state(
+        run(0x12),
+        CheckpointParticipantId::new("streaming_issue_ledger"),
+        "aiperf.streaming.issue-ledger",
+        1,
+        barrier(run(0x12), 1).cut,
+        0,
+        bytes::Bytes::from_static(b"{}"),
+    )
+    .await;
+    assert!(reporter.initialize(Some(foreign)).await.is_err());
+    reporter
+        .initialize(None)
+        .await
+        .unwrap_or_else(|error| panic!("retry after refused restore: {error}"));
+    assert!(reporter.initialize(None).await.is_err());
+
+    // A foreign-run barrier refuses the participant view and installs no
+    // retirement authority, so a later commit notification retires nothing.
+    assert!(reporter.checkpoint_view(&barrier(run(0x12), 4)).await.is_err());
+    reporter
+        .report(IssueSequenceUpdate::Issue(record_issue(
+            DecodeFailureCode::Syntax,
+        )))
+        .await
+        .unwrap_or_else(|error| panic!("retain issue: {error}"));
+    assert_eq!(reporter.retained_receipt_count(), 1);
 }

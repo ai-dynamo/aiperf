@@ -48,7 +48,7 @@ use super::{
         ContentDigest, GlobalSequence, ImmutableObjectIdentity, StableActionId, StableRecordId,
         StableSessionKey,
     },
-    results::{BudgetedResultDescriptor, ResultPartition},
+    results::{BudgetedResultDescriptor, PreparedResultEpoch, ResultPartition},
     session::SessionQuarantineTombstoneView,
     unit::{SourcePosition, StateBudgetFailureCode},
 };
@@ -1200,6 +1200,68 @@ impl From<PersistedStreamingIssueReceiptWire> for PersistedStreamingIssueReceipt
 
 const ISSUE_RECEIPT_WIRE_VERSION: u32 = 2;
 
+/// Participant-state schema identity for the host issue ledger.
+const ISSUE_LEDGER_STATE_SCHEMA_ID: &str = "aiperf.streaming.issue-ledger";
+
+/// Participant-state schema version for the host issue ledger.
+const ISSUE_LEDGER_STATE_WIRE_VERSION: u32 = 1;
+
+#[derive(Serialize)]
+#[serde(deny_unknown_fields)]
+struct IssueLedgerFrontierWire<'a> {
+    domain: &'a StreamingInputDomainIdentity,
+    through: SourcePosition,
+}
+
+#[derive(Serialize)]
+#[serde(deny_unknown_fields)]
+struct IssueLedgerCounterWire<'a> {
+    key: &'a StreamingIssueCounterKey,
+    count: u64,
+}
+
+#[derive(Serialize)]
+#[serde(deny_unknown_fields)]
+struct IssueLedgerStateWire<'a> {
+    wire_version: u32,
+    run: StreamRunIdentity,
+    policy_digest: ContentDigest,
+    barrier_epoch: CheckpointEpoch,
+    handled_cut: &'a HandledIssueCut,
+    action_frontier: Option<GlobalSequence>,
+    input_frontiers: Vec<IssueLedgerFrontierWire<'a>>,
+    counters: Vec<IssueLedgerCounterWire<'a>>,
+    summary: &'a StreamingIssueSummary,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RestoredIssueLedgerFrontier {
+    domain: StreamingInputDomainIdentity,
+    through: SourcePosition,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RestoredIssueLedgerCounter {
+    key: StreamingIssueCounterKey,
+    count: u64,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RestoredIssueLedgerState {
+    wire_version: u32,
+    run: StreamRunIdentity,
+    policy_digest: ContentDigest,
+    barrier_epoch: CheckpointEpoch,
+    handled_cut: HandledIssueCut,
+    action_frontier: Option<GlobalSequence>,
+    input_frontiers: Vec<RestoredIssueLedgerFrontier>,
+    counters: Vec<RestoredIssueLedgerCounter>,
+    summary: StreamingIssueSummary,
+}
+
 /// The fixed-size facts a retained receipt answers without decoding.
 ///
 /// Every field is `Copy` and inline, so the compact receipt owns exactly one
@@ -1447,6 +1509,26 @@ impl<'de> Deserialize<'de> for HandledIssueCut {
             wire.quarantine_tombstone_root,
         ))
     }
+}
+
+/// Fold one canonical input-frontier root over a plain domain-to-position map.
+///
+/// Restore validates the decoded frontier set against the committed cut before
+/// any budgeted entry exists, so the fold cannot read the retained map.
+fn input_frontier_root_of(
+    frontiers: &BTreeMap<StreamingInputDomainIdentity, SourcePosition>,
+) -> ContentDigest {
+    let mut hasher = blake3::Hasher::new();
+    update_hash_field(
+        &mut hasher,
+        b"aiperf.streaming.issue-input-frontier-root.v1",
+    );
+    for (domain, through) in frontiers {
+        update_hash_field(&mut hasher, domain.stream_identity.as_bytes());
+        update_hash_field(&mut hasher, domain.source_identity.as_bytes());
+        update_hash_field(&mut hasher, &through.get().to_le_bytes());
+    }
+    ContentDigest::from_bytes(*hasher.finalize().as_bytes())
 }
 
 fn empty_root(domain: &'static [u8]) -> ContentDigest {
@@ -2076,6 +2158,25 @@ struct RetainedReceipt {
     outcome: StreamingIssueOutcome,
     /// Exact charge for this receipt's ordered-map entry; released on removal.
     entry_lease: BudgetLease,
+    /// Monotonic insertion ordinal. A committed generation retires exactly the
+    /// receipts whose ordinal is below the barrier's frozen next-ordinal, which
+    /// avoids retaining an unbudgeted per-generation identity list.
+    ordinal: u64,
+}
+
+/// Retained between `checkpoint_view` and `checkpoint_committed`.
+///
+/// Holding this is what makes retirement conditional: dropping it (a cancelled
+/// or superseded barrier) leaves every detailed receipt and retry identity in
+/// place.
+struct PendingParticipantCommit {
+    epoch: CheckpointEpoch,
+    represented_cut: CheckpointCut,
+    descriptor_digest: ContentDigest,
+    receipt_root: ContentDigest,
+    handled_cut: HandledIssueCut,
+    retire_through_ordinal: u64,
+    result_index_root: Option<ContentDigest>,
 }
 
 /// One input frontier and the exact lease covering its ordered-map entry.
@@ -2272,6 +2373,13 @@ pub struct BudgetOwnedStreamingIssueReporter {
     action_gap_closure: Option<RetainedActionGapClosure>,
     next_reporter_token: u64,
     receipts: BTreeMap<ContentDigest, RetainedReceipt>,
+    next_receipt_ordinal: u64,
+    /// Root of every receipt already published to a committed result epoch and
+    /// therefore no longer retained in memory. `None` until the first retirement
+    /// or restore, which keeps a fresh ledger's cut byte-identical to
+    /// [`HandledIssueCut::empty`].
+    retired_receipt_root: Option<ContentDigest>,
+    pending_commit: Option<PendingParticipantCommit>,
     accepted_quarantine: Option<PreparedSessionQuarantineInstall>,
     counters: BTreeMap<StreamingIssueCounterKey, RetainedCounter>,
     summary: StreamingIssueSummary,
@@ -2322,6 +2430,9 @@ impl BudgetOwnedStreamingIssueReporter {
             action_gap_closure: None,
             next_reporter_token: 0,
             receipts: BTreeMap::new(),
+            next_receipt_ordinal: 0,
+            retired_receipt_root: None,
+            pending_commit: None,
             accepted_quarantine: None,
             counters: BTreeMap::new(),
             summary: StreamingIssueSummary::empty(),
@@ -3063,6 +3174,13 @@ impl BudgetOwnedStreamingIssueReporter {
             Ok(rule) => rule,
             Err(error) => return Err((error, pending)),
         };
+        // Checked before the reservation is consumed: after
+        // `budget_owned_receipt_from_reservation` the pending issue can no
+        // longer be reconstructed, so a late failure would have no move-only
+        // retry value to return.
+        let Some(next_ordinal) = self.next_receipt_ordinal.checked_add(1) else {
+            return Err((StreamingReliabilityError::CounterOverflow, pending));
+        };
         let key = counter_key_for_issue(&pending.issue, rule.rule_id.clone());
         let prior_matching_count = self.counters.get(&key).map_or(0, |counter| counter.count);
         // Acquire the counter entry before minting the receipt, so a refusal
@@ -3158,19 +3276,44 @@ impl BudgetOwnedStreamingIssueReporter {
                 receipt: owned,
                 outcome,
                 entry_lease: receipt_entry_lease,
+                ordinal: self.next_receipt_ordinal,
             },
         );
+        self.next_receipt_ordinal = next_ordinal;
         Ok(outcome)
     }
 
     fn receipt_root(&self) -> ContentDigest {
         let mut hasher = blake3::Hasher::new();
         update_hash_field(&mut hasher, b"aiperf.streaming.issue-receipt-root.v1");
+        // Chaining only after a retirement or restore keeps a fresh ledger's
+        // root byte-identical to `HandledIssueCut::empty()`.
+        if let Some(retired) = &self.retired_receipt_root {
+            update_hash_field(&mut hasher, retired.as_bytes());
+        }
         for (issue_id, retained) in &self.receipts {
             update_hash_field(&mut hasher, issue_id.as_bytes());
             update_hash_field(&mut hasher, retained.receipt.encoded_bytes());
         }
         ContentDigest::from_bytes(*hasher.finalize().as_bytes())
+    }
+
+    /// Compute the exact cut this ledger currently represents.
+    ///
+    /// One owner for all three roots, so the quarantine-tombstone term is
+    /// derived in exactly one place and a refused acknowledgement refuses the
+    /// whole cut rather than silently downgrading one root.
+    fn handled_cut(
+        &self,
+        barrier: &CheckpointBarrier,
+    ) -> Result<HandledIssueCut, StreamingReliabilityError> {
+        let receipt_root = self.receipt_root();
+        let quarantine_tombstone_root = self.quarantine_tombstone_root(&receipt_root, barrier)?;
+        Ok(HandledIssueCut::checked(
+            receipt_root,
+            self.input_frontier_root(),
+            quarantine_tombstone_root,
+        ))
     }
 
     fn input_frontier_root(&self) -> ContentDigest {
@@ -3196,11 +3339,7 @@ impl BudgetOwnedStreamingIssueReporter {
             return Err(StreamingReliabilityError::ForeignRun);
         }
         let receipt_root = self.receipt_root();
-        let handled_cut = HandledIssueCut::checked(
-            receipt_root,
-            self.input_frontier_root(),
-            self.quarantine_tombstone_root(&receipt_root, barrier)?,
-        );
+        let handled_cut = self.handled_cut(barrier)?;
         let receipt_count = u64::try_from(self.receipts.len())
             .map_err(|_| StreamingReliabilityError::CounterOverflow)?;
         let wire = IssueReceiptPartitionWire {
@@ -3248,6 +3387,226 @@ impl BudgetOwnedStreamingIssueReporter {
             payload,
             view_lease,
         })
+    }
+
+    /// Wire the exact ledger state one barrier represents and retain the
+    /// pre-CAS retirement authority for it.
+    async fn prepare_ledger_participant_state(
+        &mut self,
+        barrier: &CheckpointBarrier,
+    ) -> Result<PreparedParticipantState, CheckpointError> {
+        let participant = self.participant_id();
+        self.drain_submission_queue()
+            .map_err(|error| checkpoint_error_from_reliability(participant.clone(), error))?;
+        if barrier.run != self.run {
+            return Err(CheckpointError::ObjectVerification);
+        }
+        let handled_cut = self
+            .handled_cut(barrier)
+            .map_err(|error| checkpoint_error_from_reliability(participant.clone(), error))?;
+        let receipt_root = *handled_cut.receipt_root();
+        let wire = IssueLedgerStateWire {
+            wire_version: ISSUE_LEDGER_STATE_WIRE_VERSION,
+            run: self.run,
+            policy_digest: self.policy.digest,
+            barrier_epoch: barrier.epoch,
+            handled_cut: &handled_cut,
+            action_frontier: self.action_frontier,
+            input_frontiers: self
+                .input_frontiers
+                .iter()
+                .map(|(domain, frontier)| IssueLedgerFrontierWire {
+                    domain,
+                    through: frontier.through,
+                })
+                .collect(),
+            counters: self
+                .counters
+                .iter()
+                .map(|(key, counter)| IssueLedgerCounterWire {
+                    key,
+                    count: counter.count,
+                })
+                .collect(),
+            summary: &self.summary,
+        };
+        // Measure before admission, then write into a buffer whose capacity is
+        // its charge, so the encoding never exists outside the budget.
+        let encoded_len =
+            measured_json_len(&wire).map_err(|_| CheckpointError::ObjectVerification)?;
+        let item_count = self
+            .input_frontiers
+            .len()
+            .checked_add(self.counters.len())
+            .and_then(|total| u64::try_from(total).ok())
+            .ok_or(CheckpointError::ObjectVerification)?;
+        let lease = self
+            .budget
+            .acquire(1, encoded_len)
+            .await
+            .map_err(|error| CheckpointError::StateBudget {
+                participant: participant.clone(),
+                code: budget_failure_code(error),
+            })?;
+        let mut buffer =
+            LeasedByteBuffer::with_exact_capacity(lease).map_err(|error| {
+                CheckpointError::StateBudget {
+                    participant: participant.clone(),
+                    code: budget_failure_code(error),
+                }
+            })?;
+        serde_json::to_writer(&mut buffer, &wire)
+            .map_err(|_| CheckpointError::ObjectVerification)?;
+        let (bytes, lease) = buffer.into_full().map_err(|error| {
+            CheckpointError::StateBudget {
+                participant: participant.clone(),
+                code: budget_failure_code(error),
+            }
+        })?;
+        let payload = BudgetedCheckpointBytes::from_compact(bytes, lease)?;
+        let prepared = PreparedParticipantState::new(
+            self.run,
+            participant,
+            ISSUE_LEDGER_STATE_SCHEMA_ID,
+            ISSUE_LEDGER_STATE_WIRE_VERSION,
+            barrier.cut.clone(),
+            item_count,
+            payload,
+        )?;
+        // Retained last: every fallible step above has already succeeded, so a
+        // refused or cancelled view never installs a retirement authority.
+        self.pending_commit = Some(PendingParticipantCommit {
+            epoch: barrier.epoch,
+            represented_cut: barrier.cut.clone(),
+            descriptor_digest: prepared.descriptor().digest()?,
+            receipt_root,
+            handled_cut,
+            retire_through_ordinal: self.next_receipt_ordinal,
+            result_index_root: None,
+        });
+        Ok(prepared)
+    }
+
+    /// Restore exactly one committed ledger state, mutating nothing until every
+    /// borrowed check has passed.
+    fn restore_ledger_state(
+        &mut self,
+        state: &CommittedParticipantState,
+    ) -> Result<(), CheckpointError> {
+        let participant = self.participant_id();
+        if state.run() != &self.run {
+            return Err(CheckpointError::ObjectVerification);
+        }
+        let descriptor = state.descriptor();
+        if descriptor.participant_id != participant
+            || descriptor.schema_id != ISSUE_LEDGER_STATE_SCHEMA_ID
+            || descriptor.schema_version != ISSUE_LEDGER_STATE_WIRE_VERSION
+        {
+            return Err(CheckpointError::ObjectVerification);
+        }
+        if !self.receipts.is_empty()
+            || !self.counters.is_empty()
+            || !self.input_frontiers.is_empty()
+            || self.retired_receipt_root.is_some()
+        {
+            return Err(CheckpointError::ObjectVerification);
+        }
+        let restored: RestoredIssueLedgerState = serde_json::from_slice(state.payload_bytes())
+            .map_err(|_| CheckpointError::ObjectVerification)?;
+        if restored.wire_version != ISSUE_LEDGER_STATE_WIRE_VERSION
+            || restored.run != self.run
+            || restored.policy_digest != self.policy.digest
+        {
+            return Err(CheckpointError::ObjectVerification);
+        }
+        let mut input_frontiers = BTreeMap::new();
+        for frontier in restored.input_frontiers {
+            if input_frontiers
+                .insert(frontier.domain, frontier.through)
+                .is_some()
+            {
+                return Err(CheckpointError::ObjectVerification);
+            }
+        }
+        let mut counters = BTreeMap::new();
+        for counter in restored.counters {
+            if counters.insert(counter.key, counter.count).is_some() {
+                return Err(CheckpointError::ObjectVerification);
+            }
+        }
+        if input_frontier_root_of(&input_frontiers) != *restored.handled_cut.input_frontier_root() {
+            return Err(CheckpointError::ObjectVerification);
+        }
+        let item_count = input_frontiers
+            .len()
+            .checked_add(counters.len())
+            .and_then(|total| u64::try_from(total).ok())
+            .ok_or(CheckpointError::ObjectVerification)?;
+        if item_count != descriptor.item_count {
+            return Err(CheckpointError::ObjectVerification);
+        }
+        // Every restored ordered-map entry carries its exact lease, acquired
+        // before any of them is installed, so a refusal here leaves the ledger
+        // empty rather than partially charged.
+        let mut retained_frontiers = BTreeMap::new();
+        for (domain, through) in input_frontiers {
+            let bytes = input_frontier_entry_bytes()
+                .map_err(|_| CheckpointError::ObjectVerification)?;
+            let entry_lease = self.budget.try_acquire(1, bytes).map_err(|error| {
+                CheckpointError::StateBudget {
+                    participant: participant.clone(),
+                    code: budget_failure_code(error),
+                }
+            })?;
+            retained_frontiers.insert(
+                domain,
+                RetainedInputFrontier {
+                    through,
+                    entry_lease,
+                },
+            );
+        }
+        let mut retained_counters = BTreeMap::new();
+        for (key, count) in counters {
+            let bytes =
+                counter_entry_bytes(&key).map_err(|_| CheckpointError::ObjectVerification)?;
+            let entry_lease = self.budget.try_acquire(1, bytes).map_err(|error| {
+                CheckpointError::StateBudget {
+                    participant: participant.clone(),
+                    code: budget_failure_code(error),
+                }
+            })?;
+            retained_counters.insert(key, RetainedCounter { count, entry_lease });
+        }
+        // First mutation. Everything above is a pure check on borrowed input or
+        // a fully released local.
+        self.input_frontiers = retained_frontiers;
+        self.counters = retained_counters;
+        self.summary = restored.summary;
+        self.action_frontier = restored.action_frontier;
+        self.retired_receipt_root = Some(*restored.handled_cut.receipt_root());
+        Ok(())
+    }
+
+    /// Retain the pre-CAS binding between the staged epoch and this ledger.
+    fn bind_result_epoch(
+        &mut self,
+        prepared: &PreparedResultEpoch,
+    ) -> Result<(), StreamingReliabilityError> {
+        let Some(pending) = self.pending_commit.as_mut() else {
+            return Err(StreamingReliabilityError::ReliabilityStateUnavailable);
+        };
+        let Some(binding) = prepared.issue_receipt_binding() else {
+            return Err(StreamingReliabilityError::CorruptCheckpointState);
+        };
+        if binding.receipt_root() != &pending.receipt_root
+            || binding.handled_cut() != &pending.handled_cut
+            || binding.result_index_root() != prepared.index_root()
+        {
+            return Err(StreamingReliabilityError::CorruptCheckpointState);
+        }
+        pending.result_index_root = Some(*prepared.index_root());
+        Ok(())
     }
 
     async fn prepare_quarantine_install(
@@ -3823,6 +4182,71 @@ impl PreparedIssueReceiptResultPartition {
     #[allow(dead_code)]
     pub(crate) fn into_parts(self) -> (ResultPartition, HandledIssueCut, BudgetLease) {
         (self.partition, self.handled_cut, self.view_lease)
+    }
+
+    /// Consume the handoff into the payload the backend stages plus the binding
+    /// the prepared epoch carries back to the reporter.
+    ///
+    /// The view lease travels with the binding, so a dropped prepared epoch
+    /// releases it exactly once.
+    pub(crate) fn into_staged_parts(
+        self,
+        result_index_root: ContentDigest,
+    ) -> (ResultPartition, PreparedIssueReceiptEpochBinding) {
+        (
+            self.partition,
+            PreparedIssueReceiptEpochBinding {
+                receipt_root: self.receipt_root,
+                handled_cut: self.handled_cut,
+                result_index_root,
+                view_lease: self.view_lease,
+            },
+        )
+    }
+}
+
+/// Pre-CAS binding of one staged receipt partition to its result-index root.
+///
+/// The binding retains the view lease, so the exact charge survives exactly as
+/// long as the prepared epoch that carries it.
+///
+/// ```compile_fail
+/// # use aiperf_runtime::streaming::reliability::PreparedIssueReceiptEpochBinding;
+/// # fn cannot_separate(value: PreparedIssueReceiptEpochBinding) {
+/// let _lease = value.view_lease;
+/// # }
+/// ```
+#[derive(Debug)]
+pub struct PreparedIssueReceiptEpochBinding {
+    receipt_root: ContentDigest,
+    handled_cut: HandledIssueCut,
+    result_index_root: ContentDigest,
+    view_lease: BudgetLease,
+}
+
+impl PreparedIssueReceiptEpochBinding {
+    /// Borrow the exact detailed-receipt membership root.
+    #[must_use]
+    pub const fn receipt_root(&self) -> &ContentDigest {
+        &self.receipt_root
+    }
+
+    /// Borrow the exact handled-issue cut staged into this epoch.
+    #[must_use]
+    pub const fn handled_cut(&self) -> &HandledIssueCut {
+        &self.handled_cut
+    }
+
+    /// Borrow the exact canonical result-index root of the staged epoch.
+    #[must_use]
+    pub const fn result_index_root(&self) -> &ContentDigest {
+        &self.result_index_root
+    }
+
+    /// Return the exact retained view-metadata charge.
+    #[must_use]
+    pub fn view_charge_bytes(&self) -> usize {
+        self.view_lease.charged_bytes()
     }
 }
 
@@ -5036,6 +5460,22 @@ fn quarantine_install_budget_error(error: BudgetError) -> StreamingReliabilityEr
     StreamingReliabilityError::QuarantineInstallBudget(budget_failure_code(error))
 }
 
+/// Participant callbacks return [`CheckpointError`]; reliability failures keep
+/// their exact budget classification instead of collapsing into storage.
+fn checkpoint_error_from_reliability(
+    participant: CheckpointParticipantId,
+    error: StreamingReliabilityError,
+) -> CheckpointError {
+    match error {
+        StreamingReliabilityError::StateBudget(code)
+        | StreamingReliabilityError::ExportReceiptBudget(code)
+        | StreamingReliabilityError::QuarantineInstallBudget(code) => {
+            CheckpointError::StateBudget { participant, code }
+        }
+        _ => CheckpointError::ObjectVerification,
+    }
+}
+
 /// Sole mutable host reliability owner and checkpoint participant.
 ///
 /// The synchronous action methods establish the required no-borrow-across-await
@@ -5135,6 +5575,15 @@ pub trait StreamingIssueReporter: StreamingCheckpointParticipant {
         Err(StreamingReliabilityError::ReliabilityStateUnavailable)
     }
 
+    /// Retain the pre-CAS binding between one staged result epoch and the
+    /// detailed receipts that epoch publishes.
+    fn bind_prepared_result_epoch(
+        &mut self,
+        _prepared: &PreparedResultEpoch,
+    ) -> Result<(), StreamingReliabilityError> {
+        Err(StreamingReliabilityError::ReliabilityStateUnavailable)
+    }
+
     /// Borrow deterministic matching counters.
     fn counters(&self) -> StreamingIssueCounterView<'_> {
         StreamingIssueCounterView { counters: None }
@@ -5154,11 +5603,9 @@ impl StreamingCheckpointParticipant for BudgetOwnedStreamingIssueReporter {
 
     async fn checkpoint_view(
         &mut self,
-        _barrier: &CheckpointBarrier,
+        barrier: &CheckpointBarrier,
     ) -> Result<PreparedParticipantState, CheckpointError> {
-        Err(CheckpointError::ParticipantUnavailable {
-            participant: self.participant_id(),
-        })
+        self.prepare_ledger_participant_state(barrier).await
     }
 
     async fn initialize(
@@ -5168,10 +5615,12 @@ impl StreamingCheckpointParticipant for BudgetOwnedStreamingIssueReporter {
         if self.is_initialized {
             return Err(CheckpointError::AlreadyInitialized);
         }
-        self.is_initialized = true;
-        if state.is_some() {
-            return Err(CheckpointError::ObjectVerification);
+        if let Some(state) = state {
+            self.restore_ledger_state(&state)?;
         }
+        // Only a successful fresh start or restore consumes the one-shot guard,
+        // so a refused restore stays retryable.
+        self.is_initialized = true;
         Ok(())
     }
 
@@ -5179,11 +5628,32 @@ impl StreamingCheckpointParticipant for BudgetOwnedStreamingIssueReporter {
         &mut self,
         receipt: &CommittedParticipantReceipt,
     ) -> Result<(), CheckpointError> {
-        if receipt.run() != &self.run || receipt.participant_id() != &self.participant_id() {
-            return Err(CheckpointError::PostCommitNotification {
-                participant: self.participant_id(),
-            });
+        let participant = self.participant_id();
+        if receipt.run() != &self.run || receipt.participant_id() != &participant {
+            return Err(CheckpointError::PostCommitNotification { participant });
         }
+        let Some(pending) = self.pending_commit.as_ref() else {
+            // Idempotent re-delivery after retirement, or a barrier this owner
+            // never prepared. Neither retires anything.
+            return Ok(());
+        };
+        let Some(result_index_root) = pending.result_index_root else {
+            return Err(CheckpointError::PostCommitNotification { participant });
+        };
+        if receipt.generation().epoch() != pending.epoch
+            || receipt.descriptor_digest() != &pending.descriptor_digest
+            || receipt.represented_cut() != &pending.represented_cut
+            || receipt.result_index_root() != &result_index_root
+        {
+            return Err(CheckpointError::PostCommitNotification { participant });
+        }
+        let retire_through_ordinal = pending.retire_through_ordinal;
+        let receipt_root = pending.receipt_root;
+        // First mutation, after every comparison has passed.
+        self.pending_commit = None;
+        self.receipts
+            .retain(|_, retained| retained.ordinal >= retire_through_ordinal);
+        self.retired_receipt_root = Some(receipt_root);
         Ok(())
     }
 }
@@ -5301,6 +5771,13 @@ impl StreamingIssueReporter for BudgetOwnedStreamingIssueReporter {
         barrier: &CheckpointBarrier,
     ) -> Result<PreparedIssueReceiptPartitionView, StreamingReliabilityError> {
         self.prepare_receipt_partition_view(barrier).await
+    }
+
+    fn bind_prepared_result_epoch(
+        &mut self,
+        prepared: &PreparedResultEpoch,
+    ) -> Result<(), StreamingReliabilityError> {
+        self.bind_result_epoch(prepared)
     }
 
     fn counters(&self) -> StreamingIssueCounterView<'_> {
