@@ -1668,6 +1668,13 @@ fn execute_monitored_child(
             });
         }
     }
+    // Sampled before `fork` because that is the exact mask the child inherits
+    // and holds until the spawned `taskset` pins itself. An observation equal to
+    // it is the pre-exec window, not evidence that the pin took effect.
+    let inherited_at_spawn = match pinned_affinity {
+        Some(_) => process_affinity(0)?,
+        None => None,
+    };
     let child = command.spawn().map_err(|error| {
         ControlledRuntimeError::new(format!("cannot spawn controlled runtime member: {error}"))
     })?;
@@ -1690,9 +1697,11 @@ fn execute_monitored_child(
     owned.stdout_reader = Some(drain_bounded_output(stdout, output_limit));
     owned.stderr_reader = Some(drain_bounded_output(stderr, output_limit));
     let started = Instant::now();
-    let mut affinity_monitor = pinned_affinity.map(|_| AffinityMonitorState::NeverArmed {
-        has_observation: false,
-    });
+    let mut affinity_monitor = pinned_affinity
+        .zip(inherited_at_spawn.as_ref())
+        .map(|_| AffinityMonitorState::NeverArmed {
+            has_observation: false,
+        });
     let mut infrastructure_event = None;
     let terminal_status = loop {
         injected_child_fault("poll")?;
@@ -1702,12 +1711,13 @@ fn execute_monitored_child(
             break child_terminal_status(status);
         }
         if let Some(pinned) = pinned_affinity
+            && let Some(inherited) = inherited_at_spawn.as_ref()
             && let Some(state) = affinity_monitor.as_mut()
             && !matches!(state, AffinityMonitorState::ArmedThenLost { .. })
         {
             injected_child_fault("affinity")?;
             if let Some(observed) = process_affinity(pid)? {
-                *state = advance_affinity_monitor(state, &observed, pinned);
+                *state = advance_affinity_monitor(state, &observed, pinned, inherited);
                 if matches!(state, AffinityMonitorState::ArmedThenLost { .. }) {
                     infrastructure_event = Some(InfrastructureEvent::AffinityLoss);
                 }
@@ -1735,8 +1745,8 @@ fn execute_monitored_child(
             pid,
             pinned = %format_cpu_set(pinned),
             has_observation,
-            "runtime member was never observed holding its checked-in CPU pin exactly; \
-             affinity monitoring did not arm for it"
+            "runtime member never held a mask that proves its checked-in CPU pin \
+             took effect; affinity monitoring did not arm for it"
         );
     }
     let (stdout, stderr) = owned.release()?;
@@ -2003,25 +2013,34 @@ fn parse_cpu_list(value: &str) -> Result<BTreeSet<usize>, ControlledRuntimeError
 
 /// State of one member's CPU-affinity monitor, and its terminal result at exit.
 ///
-/// The monitor arms on an *exact* match with the checked-in pin and on nothing
-/// else. The spawned process is `taskset` itself, so between `fork` and its own
-/// `sched_setaffinity` it still carries the controller's inherited mask; any
-/// membership test — including "inside the pin" — accepts that inherited mask
-/// whenever the controller happens to be pinned within the scenario pin, arms on
-/// it, and then reports the subsequent widening to the real pin as affinity
-/// loss. Requiring equality with the pin cannot admit the pre-exec window unless
-/// the controller's mask is already exactly the pin, in which case arming on it
-/// is indistinguishable from arming after `exec`.
+/// The spawned process *is* `taskset`, so between `fork` and its own
+/// `sched_setaffinity` it holds the controller's mask verbatim. No membership
+/// test can exclude that window: "inside the pin" accepts the inherited mask
+/// whenever the controller is itself pinned within the scenario pin, arms on it,
+/// and reports the widening to the real pin as fabricated affinity loss. Exact
+/// equality with the authored pin cannot be required either, because
+/// `sched_setaffinity` clamps the request to the target's allowed set, so a pin
+/// authored as `4-71` lands as `4-31` on a 32-CPU host and would never arm.
+///
+/// The monitor therefore arms on an observation that is inside the pin *and* is
+/// not the controller's own mask sampled at spawn. The second condition excludes
+/// the pre-exec window by identity rather than by arithmetic: the inherited mask
+/// is that exact set. When the controller's mask happens to equal the mask
+/// `taskset` installs, the monitor never arms and says so; it never fabricates a
+/// loss.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum AffinityMonitorState {
-    /// The pin has not been observed yet, so no deviation can be attributed.
+    /// No observation has established that the pin took effect.
     NeverArmed {
         /// Whether any mask at all was sampled before the child terminated.
         has_observation: bool,
     },
     /// The pin was observed and every observation since has matched it.
-    ArmedAndStable,
-    /// The pin was observed and a later observation deviated from it.
+    ArmedAndStable {
+        /// The mask the monitor armed on, and the one deviation is judged from.
+        baseline: BTreeSet<usize>,
+    },
+    /// The armed mask was observed and a later observation deviated from it.
     ArmedThenLost {
         /// The deviating mask, retained for the affinity-loss diagnostic.
         observed: BTreeSet<usize>,
@@ -2030,26 +2049,32 @@ enum AffinityMonitorState {
 
 /// Advances the affinity monitor by one observation.
 ///
-/// Deliberately I/O-free: the `sched_getaffinity` call stays at the call site so
-/// the whole arming decision is testable as a pure transition table.
+/// Deliberately I/O-free: `sched_getaffinity` stays at the call site so the whole
+/// arming decision is testable as a pure transition table. `inherited_at_spawn`
+/// is the controller's own mask sampled immediately before `fork`; it is used
+/// only to refuse an observation, never to predict one, so a wrong value can
+/// only leave a member unmonitored and can never manufacture a loss.
 fn advance_affinity_monitor(
     state: &AffinityMonitorState,
     observed: &BTreeSet<usize>,
     pinned: &BTreeSet<usize>,
+    inherited_at_spawn: &BTreeSet<usize>,
 ) -> AffinityMonitorState {
     match state {
         AffinityMonitorState::NeverArmed { .. } => {
-            if observed == pinned {
-                AffinityMonitorState::ArmedAndStable
+            if observed != inherited_at_spawn && observed.is_subset(pinned) {
+                AffinityMonitorState::ArmedAndStable {
+                    baseline: observed.clone(),
+                }
             } else {
                 AffinityMonitorState::NeverArmed {
                     has_observation: true,
                 }
             }
         }
-        AffinityMonitorState::ArmedAndStable => {
-            if observed == pinned {
-                AffinityMonitorState::ArmedAndStable
+        AffinityMonitorState::ArmedAndStable { baseline } => {
+            if observed == baseline {
+                state.clone()
             } else {
                 AffinityMonitorState::ArmedThenLost {
                     observed: observed.clone(),
@@ -2298,7 +2323,10 @@ fn execute_member(
         stderr: result.stderr,
         is_affinity_monitored: matches!(
             result.affinity_monitor,
-            Some(AffinityMonitorState::ArmedAndStable | AffinityMonitorState::ArmedThenLost { .. })
+            Some(
+                AffinityMonitorState::ArmedAndStable { .. }
+                    | AffinityMonitorState::ArmedThenLost { .. }
+            )
         ),
     };
     if terminal_evidence.terminal_status == ChildTerminalStatus::TimedOut {
@@ -2695,61 +2723,77 @@ mod tests {
     }
 
     #[test]
-    fn affinity_monitor_arms_only_on_an_exact_pin_match() {
+    fn affinity_monitor_refuses_to_arm_on_the_inherited_pre_exec_mask() {
         let pinned: BTreeSet<usize> = (4..=7).collect();
+        // The controller is externally pinned *inside* the scenario pin, which
+        // is what turned round-6's membership test into a fabricated loss.
+        let inherited: BTreeSet<usize> = BTreeSet::from([4, 5]);
         let unarmed = AffinityMonitorState::NeverArmed {
             has_observation: false,
         };
 
-        // The pre-exec window: the spawned `taskset` still carries the
-        // controller's inherited mask. A subset of the pin is exactly what an
-        // externally pinned controller contributes there, so it must not arm.
+        // The pre-exec window: identical to the inherited mask, so not evidence
+        // that `taskset` ran, however far inside the pin it lies.
         assert_eq!(
-            advance_affinity_monitor(&unarmed, &BTreeSet::from([4, 5]), &pinned),
+            advance_affinity_monitor(&unarmed, &inherited, &pinned, &inherited),
             AffinityMonitorState::NeverArmed {
                 has_observation: true
             }
         );
-        // Only the pin itself arms the monitor.
+        // A mask reaching outside the pin is not a credible baseline either.
         assert_eq!(
-            advance_affinity_monitor(&unarmed, &pinned, &pinned),
-            AffinityMonitorState::ArmedAndStable
+            advance_affinity_monitor(&unarmed, &BTreeSet::from([3, 5, 9]), &pinned, &inherited),
+            AffinityMonitorState::NeverArmed {
+                has_observation: true
+            }
         );
-        // Once armed, the pin repeating is the steady state.
+        // Inside the pin and not the inherited mask: `taskset` took effect.
         assert_eq!(
-            advance_affinity_monitor(&AffinityMonitorState::ArmedAndStable, &pinned, &pinned),
-            AffinityMonitorState::ArmedAndStable
+            advance_affinity_monitor(&unarmed, &pinned, &pinned, &inherited),
+            AffinityMonitorState::ArmedAndStable {
+                baseline: pinned.clone()
+            }
+        );
+        // Once armed, the baseline repeating is the steady state.
+        let armed = AffinityMonitorState::ArmedAndStable {
+            baseline: pinned.clone(),
+        };
+        assert_eq!(
+            advance_affinity_monitor(&armed, &pinned, &pinned, &inherited),
+            armed
         );
         // Once armed, any deviation is real affinity loss, named by its mask.
         assert_eq!(
-            advance_affinity_monitor(
-                &AffinityMonitorState::ArmedAndStable,
-                &BTreeSet::from([3, 5, 9]),
-                &pinned
-            ),
+            advance_affinity_monitor(&armed, &BTreeSet::from([4]), &pinned, &inherited),
             AffinityMonitorState::ArmedThenLost {
-                observed: BTreeSet::from([3, 5, 9])
+                observed: BTreeSet::from([4])
             }
         );
     }
 
     #[test]
     fn a_controller_mask_inside_the_pin_does_not_fabricate_affinity_loss() {
-        // The round-6 C1 sequence on a `taskset -c 4-71` pin with the controller
-        // externally pinned to 4-19: two pre-exec polls carrying the inherited
-        // mask, then the real pin twice. Arming on the inherited mask would read
-        // the third observation as affinity loss.
+        // The round-6 C1 sequence: scenario pin `4-71`, controller externally
+        // pinned to 4-19, the host clamping the installed pin to 4-31. Two
+        // pre-exec polls carry the inherited mask, then `taskset` installs the
+        // clamped pin. Arming on the inherited mask reads that as a loss.
         let pinned: BTreeSet<usize> = (4..=71).collect();
         let inherited: BTreeSet<usize> = (4..=19).collect();
+        let installed: BTreeSet<usize> = (4..=31).collect();
         let mut state = AffinityMonitorState::NeverArmed {
             has_observation: false,
         };
 
-        for observed in [&inherited, &inherited, &pinned, &pinned] {
-            state = advance_affinity_monitor(&state, observed, &pinned);
+        for observed in [&inherited, &inherited, &installed, &installed] {
+            state = advance_affinity_monitor(&state, observed, &pinned, &inherited);
         }
 
-        assert_eq!(state, AffinityMonitorState::ArmedAndStable);
+        assert_eq!(
+            state,
+            AffinityMonitorState::ArmedAndStable {
+                baseline: installed
+            }
+        );
     }
 
     #[test]
