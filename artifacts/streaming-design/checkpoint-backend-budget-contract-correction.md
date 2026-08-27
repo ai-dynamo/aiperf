@@ -1,0 +1,236 @@
+# Checkpoint Backend Budget Contract Correction
+
+Date: 2026-08-26
+
+This record corrects Task 5B before the atomic checkpoint backend is
+implemented. The landed checkpoint error vocabulary distinguishes participant
+state capacity from storage failure, but Task 5B introduces backend-owned
+transaction, index, storage, summary, and read budgets. Those failures cannot be
+reported truthfully as participant `StateBudget`, immutable-object
+`ObjectVerification`, or external `Storage` failure.
+
+## Stable backend-budget ruling
+
+Task 5B owns three additions to `CheckpointError` plus the private prevalidated
+candidate and infallible committed transition, and therefore adds
+`rust/runtime/src/streaming/checkpoint.rs` to its file set. It does not change
+Task 5A-R's run identity, canonical hash, publication proof, receipt, barrier, or
+participant ordering.
+
+`CheckpointBackendBudgetKind` identifies the exact backend-owned category:
+`Transaction`, `PreparedIndex`, `Storage`, `ResultSummary`, or `Read`.
+`CheckpointBackendBudgetFailureCode` is the stable reason:
+`ItemCapacity`, `ByteCapacity`, `Closed`, or `Unrepresentable`.
+`CheckpointError::BackendBudget { budget, code }` carries both values.
+`CheckpointError::ResultIndexReadBudgetTooSmall` expresses a caller page limit,
+and `CheckpointError::GenerationEpochOverflow` expresses the absence of a
+representable exact successor to the frozen generation.
+
+`RequestExceedsCapacity` maps to item capacity when the requested item count
+exceeds its configured limit, otherwise byte capacity. If both exceed, item
+capacity wins deterministically. A closed budget maps to `Closed`;
+unrepresentable permit counts or accounting map to `Unrepresentable`.
+Temporary contention is not an error and waits cancellation-safely.
+
+`MemoryCheckpointBackend` has one constructor only:
+`new(limits: MemoryCheckpointLimits) -> Result<Self, CheckpointError>`. It
+validates the five transaction, prepared-index, storage, result-summary, and
+read item/byte limits in that order before retaining backend state. Zero item or
+byte capacity maps to the matching kind plus `ItemCapacity` or `ByteCapacity`;
+each nonzero limit is then passed through the existing
+`StreamingResourceBudget::new` validator. Its `u32::MAX` `acquire_many`
+conversion boundary is authoritative: exact-boundary limits are accepted and
+the first larger representable `usize` maps to `Unrepresentable`. RED covers
+both dimensions and both failure classes for all five kinds.
+
+## Move-only DTO ruling
+
+Every lease-bearing result wrapper has private fields.
+`BudgetedResultDescriptor`, `ResultPartition`, `PreparedResultEpoch`,
+`BudgetedResultDescriptors`, `ResultSegmentReader`, and `ResultIndexPage` expose
+checked construction and borrow-only accessors. Where an enclosing wrapper has
+a consuming `into_parts`, it returns the allocation and its authority together.
+No public field or accessor returns a `BudgetLease` independently.
+`BudgetedResultDescriptors` itself exposes no consuming separation method; the
+enclosing wrappers move it intact.
+
+`ResultProjectionId` stores compact `Box<str>`. A budgeted descriptor slice
+charges its boxed inline allocation plus every nested projection byte, using
+checked arithmetic. The descriptor slice and exact lease remain inseparable
+until the wrapper is consumed. Custom deserialization routes through the
+checked constructor, so an empty projection cannot bypass the public invariant.
+
+Every input `ResultPartition` owns one private singular
+`BudgetedResultDescriptor`; its exact one-item charge includes the inline
+descriptor and compact projection allocation. Public partition consumption
+returns that wrapper intact with the separately budgeted payload. Only a
+crate-private backend transfer may extract the descriptor and input lease.
+`stage_results` validates and totals inputs by borrow, acquires the complete
+backend prepared-index and returned-summary reservations first, then moves
+charged descriptor copies into backend-owned exact-capacity storage and the
+separately leased returned summary while the input vector remains intact. Only
+after every checked construction succeeds does one infallible synchronous phase
+drain the inputs, move their payloads, and drop their original descriptor
+authorities. Cancelling either wait or failing checked construction leaves the
+transaction and inputs unchanged and retryable. No fallible operation or await
+is permitted after the vector or transaction begins to mutate, nor after commit
+publication begins.
+
+Task 6B owns the distinct producer-side singular-descriptor budget and maps its
+refusal to `ResultPlaneError::PartitionDescriptorCapacityExceeded`; it neither
+borrows Task 5B's private budgets nor mislabels the charge as provisional
+capacity.
+
+`ResultSegmentReader` retains only its separately budgeted payload. It borrows
+the caller's descriptor while verifying length and digest but does not clone or
+return that descriptor. Result-index pages do own descriptor clones, and their
+read charge therefore includes every compact projection allocation; RED varies
+only projection length and observes the exact charge delta.
+
+One aggregate immutable-storage acquisition cannot be divided among objects by
+the existing move-only `BudgetLease`. The memory backend therefore stores one
+private `Rc<StorageCommitBundle>` owning that aggregate lease, and every object
+newly introduced by the commit retains a clone of that bundle handle. The full
+charge remains until the last object from the bundle is reclaimed; it may
+over-retain but cannot undercharge. Sequential per-object acquisition while
+earlier leases are held is forbidden.
+
+## Infallible publication ruling
+
+Commit metadata is not independent authority. Before storage acquisition or
+state access, its complete predecessor generation (epoch and digest) must equal
+the transaction's frozen expected generation. An initial commit has exact epoch
+1; every later commit has the checked next epoch. A maximum predecessor epoch
+returns the typed `GenerationEpochOverflow` refusal. Candidate construction
+derives its predecessor digest and epoch only from this validated lineage token,
+so the candidate, CAS expectation, and published generation cannot diverge.
+Task 5B implements lineage validation and candidate construction as one
+crate-private backend-neutral seam. Candidate construction passes the explicit
+`StreamRunIdentity` first. Memory, Task 5C local, any layered Task 5C1, and Task
+5F2 object-store publication all call this same seam before commit-time storage
+acquisition, filesystem/provider I/O, pointer lookup, or authoritative state
+access. Transaction/staging leases may already be held. The
+shared conformance harness proves malformed lineage leaves both backend effects
+and authority unchanged.
+
+Task 5B consumes a candidate through complete run/plan/shape/self-hash
+prevalidation before touching authoritative state. The resulting private
+`PrevalidatedCheckpointGenerationCandidate` has one infallible conversion to a
+committed generation. Its private wrapper, candidate prevalidation method, and
+infallible conversion are implemented in `checkpoint.rs`, the module that owns
+and may construct the private `CommittedCheckpointGeneration` tuple field;
+backend modules only invoke those crate-private methods. Under exclusive
+`MemoryState` access, the backend compares
+the expected head before mutation, performs that conversion, inserts prebuilt
+objects, and replaces the head without any later await or fallible call. The old
+post-CAS fallible promotion path is forbidden for backend commit. A test-only
+fault immediately after prevalidation is evaluated before the state borrow and
+must be tested over a nonempty previously committed generation with live storage
+and reader leases. It preserves the exact prior head, typed object inventory,
+and current used charges for every budget (high-water telemetry may record the
+refused attempt); no post-publication fault seam exists.
+
+The Task 5E coordinator clones its non-`Copy` expected generation when opening a
+transaction. Immediately after successful CAS, and before any fallible
+participant notification, it advances that expected generation and retains the
+committed receipt as pending notification authority. A subsequent barrier on
+the same coordinator first retries the pending notification. If the incoming
+barrier exactly repeats the pending run/cut/barrier, notification success returns
+the already-published generation without restaging or recommitting; a different
+barrier proceeds against the advanced head. The coordinator borrows caller
+partitions, and pending retry precedes any access to them, so notification error
+or cancellation retains both pending authority and new uncommitted inputs.
+Notification failure never rewinds CAS authority or leaves the coordinator
+expecting the predecessor.
+
+## Non-looping result-index ruling
+
+`ResultIndexReadBudget.max_bytes` bounds the actual retained allocation of a
+returned descriptor page. When the next reachable valid descriptor cannot fit
+by itself, `scan_result_index` returns
+`CheckpointError::ResultIndexReadBudgetTooSmall { required_bytes, max_bytes }`.
+It never returns an empty page with the same continuation cursor.
+
+The reader validates generation root, block reachability, and cursor offset
+before any budget operation. It then computes the compact allocation needed for
+the next descriptor. Caller-page refusal precedes backend read-budget
+acquisition. If the caller limit is sufficient but the configured backend read
+budget cannot represent or admit that single page, the method returns
+`BackendBudget { budget: Read, ... }`. Every refusal leaves the cursor, reader,
+backend budget snapshots, and authoritative generation unchanged.
+
+## Required RED evidence
+
+- A commit whose one aggregate immutable storage reservation exceeds only the
+  storage byte limit returns `BackendBudget { Storage, ByteCapacity }`, publishes
+  no head or object, leaves the exact typed immutable-object inventory unchanged,
+  preserves its exact object count, and releases every transaction/prepared
+  charge.
+- Zero or unrepresentable capacity in each `MemoryCheckpointLimits` field is
+  rejected by the sole fallible constructor with the exact budget kind/code;
+  exact `u32::MAX` capacities remain accepted and `u32::MAX + 1` is refused.
+- Moving or borrowing a lease independently from any lease-bearing result
+  wrapper does not type-check; compact nested projection bytes participate in
+  exact descriptor-summary charging.
+- Varying only an input partition's projection length changes its singular
+  descriptor charge by the exact byte delta; public consuming access cannot
+  separate the descriptor allocation from that charge, and staging acquires the
+  aggregate prepared-index and returned-summary authorities before releasing it.
+- Cancelling while returned-summary capacity is blocked releases the already
+  acquired prepared-index lease, leaves the transaction and caller vector
+  unchanged, and permits the same vector to succeed on retry.
+- Empty `ResultProjectionId` text is rejected both by direct construction and
+  deserialization, and projection length contributes exactly to index-page read
+  charging.
+- A valid next descriptor one byte larger than the caller page limit returns
+  `ResultIndexReadBudgetTooSmall` with exact required and maximum values, does
+  not acquire backend read capacity, and succeeds when retried with the exact
+  required value.
+- With that caller limit made sufficient but backend read bytes configured one
+  byte smaller, the same read returns
+  `BackendBudget { Read, ByteCapacity }` without advancing the cursor.
+- Foreign-root, unreachable-block, and out-of-range cursors are rejected as
+  object verification before either page-limit or backend-budget errors.
+- Result and participant-state objects proven present under a superseded
+  generation and another logical run remain unreadable from the current
+  generation, with no read-budget mutation; mere content-addressed presence is
+  not authority.
+- Wrong predecessor identity, predecessor digest, or nonconsecutive epoch is
+  refused before state access without changing head, typed inventory, or live
+  budget use; a maximum predecessor epoch returns
+  `GenerationEpochOverflow` with the same guarantees.
+- The shared conformance harness runs those lineage cases against memory, local,
+  any layered local backend, and object storage after staging counters are
+  reset, proving no commit-time storage acquisition, filesystem/provider I/O,
+  pointer lookup, or state access occurs.
+- A fault after candidate prevalidation over a nonempty prior generation returns
+  before the publication fence and preserves its exact head, typed object
+  inventory, and nonzero live storage/read charges. The private prevalidated
+  promotion unit test has an infallible committed return type, proving no caller
+  can observe `Err` after authoritative state changes.
+- One coordinator commits two consecutive barriers, and a notification failure
+  after the first CAS still leaves it able to retry that receipt and commit the
+  second barrier against the advanced expected generation.
+- An exact pending-barrier repeat retries notification and returns the identical
+  committed generation with unchanged stage/commit counters and inventory;
+  both an explicit notification error and cancellation of pending retry preserve
+  the complete pending `PublishedBarrier`/receipt, authoritative head, typed
+  inventory, stage/commit counters, and a nonempty borrowed input vector. Input
+  preservation compares descriptor identity, payload bytes/digest/length, and
+  the exact live singular-descriptor and payload-budget charges. Retrying with
+  that same vector succeeds and releases both input charges.
+
+The privacy regressions live as `compile_fail` rustdoc directly on the public
+DTOs in `results.rs`; an integration-test comment is not executable coverage.
+Task 5B GREEN therefore includes `cargo test -p aiperf-runtime --features
+streaming --doc`.
+
+## Ownership disposition
+
+- Task 5B owns these enums, `CheckpointError` variants, `Display` branches,
+  the `checkpoint.rs`-private prevalidated wrapper/candidate method/infallible
+  committed transition, backend mappings, and integration regressions.
+- Task 5A-R remains exclusively responsible for logical-run authority. Its five
+  implementation files and approved behavior are unchanged by this correction.
+- Task 5C and later backends consume the same stable vocabulary; they do not
+  collapse capacity refusal into storage failure.

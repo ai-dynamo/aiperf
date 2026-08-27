@@ -1831,11 +1831,16 @@ it never substitutes current bytes or fabricates decoder/session state.
 ```rust
 #[async_trait(?Send)]
 pub trait StreamingCheckpointBackend {
-    async fn open_latest(&self, run: &StreamRunIdentity)
-        -> Result<Option<Box<dyn LeasedGenerationReader>>, CheckpointError>;
+    async fn open_latest(
+        &self,
+        run: &StreamRunIdentity,
+        expected: &CheckpointGenerationExpectations,
+    ) -> Result<Option<Box<dyn LeasedGenerationReader>>, CheckpointError>;
     async fn begin_generation(
         &self,
+        run: StreamRunIdentity,
         expected: Option<CheckpointGeneration>,
+        expectations: CheckpointGenerationExpectations,
     ) -> Result<Box<dyn StreamingGenerationTransaction>, CheckpointError>;
 }
 
@@ -1865,7 +1870,7 @@ pub trait StreamingGenerationTransaction {
     ) -> Result<(), CheckpointError>;
     async fn stage_results(
         &mut self,
-        partitions: Vec<ResultPartition>,
+        partitions: &mut Vec<ResultPartition>,
     ) -> Result<PreparedResultEpoch, CheckpointError>;
     async fn commit(
         self: Box<Self>,
@@ -1878,6 +1883,14 @@ One transaction stages typed participant state and result segments, then
 constructs and publishes the generation from host-validated commit metadata;
 the caller cannot supply a mismatched result root, and types do not expose an
 independent result commit.
+The explicit run must equal `CheckpointGenerationExpectations.run` at open and
+begin boundaries. Every publishing backend calls Task 5B's shared crate-private
+lineage/candidate seam before filesystem/provider I/O or authoritative state:
+metadata predecessor equals the transaction's complete frozen expected
+generation, epoch is exactly 1 or the checked successor, and canonical
+candidate construction receives the explicit run as its first argument. Local,
+layered local, and object-store implementations do not reproduce or weaken that
+validation.
 The committed generation is the single authority for resume state and result
 inventory. A stale or divergent writer fails; it does not merge horizons by
 max. The selected backend must prove conditional pointer update and durable
