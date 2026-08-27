@@ -442,14 +442,17 @@ async fn committed_result_segment_is_reachable_through_the_ordinary_result_index
         )
         .await
         .expect("scan the reachable index");
-    let descriptors = page.descriptors().descriptors().to_vec();
+    let descriptors = page.descriptors().to_vec();
     assert_eq!(descriptors.len(), 1);
 
     let segment = reader
         .read_segment(&descriptors[0])
         .await
         .expect("read the reachable payload");
-    assert_eq!(segment.bytes().len() as u64, descriptors[0].byte_length);
+    assert_eq!(
+        segment.payload_bytes().len() as u64,
+        descriptors[0].byte_length
+    );
 }
 
 #[test]
@@ -457,31 +460,31 @@ fn invalid_limits_perform_no_filesystem_effect() {
     let directory = tempfile::tempdir().expect("temporary store root");
     let root = directory.path().join("store");
     let run = support::run_id(9);
-    let zero = BudgetLimits {
+    const ZERO: BudgetLimits = BudgetLimits {
         max_items: 0,
         max_bytes: 0,
     };
 
     for (mutate, kind) in [
         (
-            (|limits: &mut LocalCheckpointLimits| limits.transactions = zero)
+            (|limits: &mut LocalCheckpointLimits| limits.transactions = ZERO)
                 as fn(&mut LocalCheckpointLimits),
             CheckpointBackendBudgetKind::Transaction,
         ),
         (
-            |limits: &mut LocalCheckpointLimits| limits.prepared_indexes = zero,
+            |limits: &mut LocalCheckpointLimits| limits.prepared_indexes = ZERO,
             CheckpointBackendBudgetKind::PreparedIndex,
         ),
         (
-            |limits: &mut LocalCheckpointLimits| limits.storage = zero,
+            |limits: &mut LocalCheckpointLimits| limits.storage = ZERO,
             CheckpointBackendBudgetKind::Storage,
         ),
         (
-            |limits: &mut LocalCheckpointLimits| limits.result_summaries = zero,
+            |limits: &mut LocalCheckpointLimits| limits.result_summaries = ZERO,
             CheckpointBackendBudgetKind::ResultSummary,
         ),
         (
-            |limits: &mut LocalCheckpointLimits| limits.reads = zero,
+            |limits: &mut LocalCheckpointLimits| limits.reads = ZERO,
             CheckpointBackendBudgetKind::Read,
         ),
     ] {

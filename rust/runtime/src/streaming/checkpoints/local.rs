@@ -925,6 +925,15 @@ pub struct LocalCheckpointBackend {
     inner: Rc<LocalBackendInner>,
 }
 
+impl std::fmt::Debug for LocalCheckpointBackend {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("LocalCheckpointBackend")
+            .field("root", &self.inner.root)
+            .finish_non_exhaustive()
+    }
+}
+
 impl LocalCheckpointBackend {
     /// Open or create a local store rooted at `root`.
     ///
@@ -1764,6 +1773,16 @@ pub struct LocalGenerationTransaction {
     tmp_guard: TransactionTmpGuard,
     participants: Vec<StagedParticipant>,
     staged_results: Option<StagedResultEpoch>,
+}
+
+impl std::fmt::Debug for LocalGenerationTransaction {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("LocalGenerationTransaction")
+            .field("run", &self.run)
+            .field("scratch", &self.tmp_guard.path())
+            .finish_non_exhaustive()
+    }
 }
 
 impl LocalGenerationTransaction {
