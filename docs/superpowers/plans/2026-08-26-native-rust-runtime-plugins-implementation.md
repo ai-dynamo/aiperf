@@ -411,6 +411,20 @@ set, invalidation classifier, harness/mock digest, firmware, memory topology,
 and canonical inventory digest. TTFT and ITL p50/p90/p99 are mandatory measured
 secondary metrics and are rejected as `primary_metric`. It rejects an omitted
 identity field.
+For every exporter scenario it additionally requires exactly these fields and
+values: `corpus_records: 100000`, `sample_repetitions: 16`,
+`processed_records: 1600000`, and `retained_artifact_records: 100000`.
+It requires 16 sequential per-repetition receipts, each proving exactly 100,000
+processed input records, the scenario's frozen observable class, valid raw and
+comparison observable digests, and the same comparison digest across all
+repetitions. It requires one retained repetition's complete observable evidence,
+active exporter duration equal to the receipt-duration sum, and no
+sleep/padding. The original static-baseline median must be at least 30 seconds
+when 16 is calibrated and frozen; later static and
+dynamic members need only complete all 16 repetitions with positive durations,
+and a faster dynamic member is not invalidated for taking less than 30 seconds.
+Exporter nanoseconds-per-record must divide by `processed_records`, not the retained
+artifact count or wall-clock duration.
 `plugin_task_gate_inventory.rs` parses the script, Task Gate Matrix, and
 Implementation-unit Gate Matrix; it requires exactly one case for every integer
 1 through 40 plus every named implementation unit, and rejects a case missing a
@@ -438,7 +452,16 @@ cache/profile/features. Record canonical commands and BLAKE3 artifact digests.
 Run the spec’s paired runtime scenarios against the in-repo mock server and
 store raw samples under `artifacts/native-plugin-baseline/raw/`. Author
 `rust/benchmarks/plugin-parity.yaml` using schema version `1` and relative
-raw-sample paths.
+raw-sample paths. For the exporter sample, retain one deterministic 100,000-
+input-record observable and 16 sequential receipts for identical 100,000-record
+passes;
+record `processed_records: 1600000` and only the summed active pass duration.
+Write the canonical compact JSON member receipt array using the exact schema and
+rejection rules in the spec. Bind its exact-byte BLAKE3 into the Task-1 sample/
+attempt and final evidence tree, never the pre-run calibration identity. Use
+the reserved `task1-static-calibration` pair ID and produce no dynamic member.
+The calibration identity instead freezes schema/policy versions, workload,
+corpus, harness, source/build inputs, and expected provenance before execution.
 Implement `run-plugin-task-gates.sh` as an exhaustive integer `case` over the
 Task Gate Matrix below. It rejects missing/unknown task IDs, runs with
 `set -eu`, preserves all compiler/cache variables, and propagates the first
@@ -524,7 +547,11 @@ it locally, and mark Task 1 `PASS` in the tracker.
   `aiperf-allocator-provider`, and
   `aiperf-allocator-shim`.
 - Create: provisional `Cargo.toml`, `src/lib.rs`, and `plugins.yaml.in` in each
-  package shell above so later `Modify` paths exist from their claimed base.
+  of the 11 `rust/plugins/*` distributable plugin shells above so later
+  `Modify` paths exist from their claimed base. The 15 foundational, host,
+  conformance, test, performance, comparator, and allocator crate shells do
+  not receive `plugins.yaml.in`; neither does the standalone
+  `rust/tests/plugin-third-party` workspace.
 - Create: `rust/plugin-api/api-allowlist.toml`
 - Create: `rust/plugin-api/feature-ownership.toml`
 - Create: `rust/plugin-conformance/candidate-source-inventory.toml`
@@ -546,9 +573,11 @@ it locally, and mark Task 1 `PASS` in the tracker.
   has the sole allocator-topology amendment to CLI dependencies and the lock;
   Task 37 is the sole later distribution-membership/lock amendment. Other later
   tasks may alter only their precreated package manifests.
-- Task 2 consumes Task 1’s measured `package-topology.json` only to prove every
-  required shell exists without prematurely assigning implementation
-  dependencies. Task 3 owns the measured, reviewed topology matrix and one
+- Task 2 consumes Task 1’s measured `package-topology.json` as the immutable
+  pre-foundation topology and proves with Cargo metadata that its exact shell
+  addition set is the only delta; it does not regenerate or claim those new
+  shells existed in the Task-1 artifact, and it does not prematurely assign
+  implementation dependencies. Task 3 owns the measured, reviewed topology matrix and one
   explicitly scoped workspace/member-manifest and lock amendment. Task 7 then
   owns only the CLI allocator dependency/lock delta; Task 37 alone may later
   amend final distribution membership/lock.
@@ -561,6 +590,44 @@ it locally, and mark Task 1 `PASS` in the tracker.
   `serde_json`, `thiserror`, and standard library entries explicitly present in
   `api-allowlist.toml`; it may not depend on Tokio, Hyper, Tonic, Clap, exporter
   backends, or `aiperf-runtime`.
+- Task 2 creates `rust/plugin-api/feature-ownership.toml` with exactly this
+  schema and these two seed rows (TOML array ordering and every value are
+  normative):
+
+```toml
+schema_version = 1
+
+[[symbol_ownership]]
+symbol = "FrozenAIPerfRegistry"
+owner_crate = "aiperf-plugin-api"
+source_path = "plugin-api/src/frozen.rs"
+producer_task = 15
+construction_crate = "aiperf-plugin-host"
+consumer_crates = ["aiperf-runtime"]
+composition_crate = "aiperf-cli"
+state = "planned"
+composition_state = "planned"
+
+[[symbol_ownership]]
+symbol = "FrozenPluginUniverse"
+owner_crate = "aiperf-plugin-api"
+source_path = "plugin-api/src/frozen.rs"
+producer_task = 15
+construction_crate = "aiperf-plugin-host"
+consumer_crates = ["aiperf-runtime"]
+composition_crate = "aiperf-cli"
+state = "planned"
+composition_state = "planned"
+```
+
+  Task 3 appends its measured dependency/feature rows without changing these
+  two records. Task 15, and no earlier task, creates the types and changes both
+  rows to `state = "present"` while leaving `composition_state = "planned"`;
+  its tests then replace symbol-existence checks with source/rustdoc and
+  host/runtime Cargo-metadata assertions while retaining every owner,
+  construction, consumer, and composition value above. Task 17 first composes
+  CLI plus runtime/host and changes only `composition_state` to `"present"`
+  after its effect-order and Cargo-metadata tests observe that dependency.
 
 - [ ] **Step 1: Write the failing dependency-policy test**
 
@@ -580,7 +647,12 @@ The test separately inspects normal/build versus test dependencies, rejects both
 `aiperf-plugin-host -> aiperf-runtime` and `aiperf-runtime ->
 aiperf-plugin-host`, permits host only on API/core/SDK, and requires runtime to
 consume the plugin-API-owned `FrozenPluginUniverse`/`FrozenAIPerfRegistry` view
-(API depends on core). CLI is the sole
+(API depends on core). At Task 2 this is an ownership assertion over exact
+symbolic rows in `feature-ownership.toml`; Task 2 MUST NOT declare placeholder
+Rust types or any public API beyond `PLUGIN_SOURCE_API_VERSION`. Task 15 creates
+the actual API-owned view types and replaces the symbolic-only assertion with
+source/rustdoc/Cargo-metadata assertions against those definitions. Until Task
+15, the test does not falsely require nonexistent Rust uses. CLI is the sole
 composition layer that depends on both host and runtime.
 The test also requires `aiperf-plugin-test-support` as a non-published,
 distribution-excluded workspace member whose normal dependencies are limited to
@@ -593,17 +665,54 @@ not amend workspace membership or shared manifests.
 The test also parses `candidate-source-inventory.toml`, requires every exact
 source, test, golden, and proto path in the plan’s Candidate Source Inventory
 appendix, rejects duplicate/unknown owners, and requires a candidate destination
-plus `implementation_leaf` or explicitly reviewed `facade` classification for
-every present entry. Exact post-Task-6 split paths may be absent only as
+plus `implementation_leaf`, `asset`, or explicitly reviewed `facade`
+classification for every present entry. Every present row has its source
+BLAKE3; `implementation_leaf` and `asset` rows later require byte-identical
+candidate bytes, while `facade` rows do not. Exact post-Task-6 split paths may be absent only as
 `planned` rows with `producer_task = 6`; every other missing source fails.
+The appendix plus its normative expansion rule is the complete seed: expand
+each brace member literally; expand each “every file under” clause with
+`git ls-tree -r` against the exact integrated Task-1 commit recorded in the
+tracker, selecting only `100644`/`100755` blobs below that exact prefix in
+lexical byte order, and refuse if the Task-2 worktree path does not match the
+selected blob bytes before hashing; include explicit facade rows for
+`runtime/src/endpoints/mod.rs` and `runtime/src/transport/grpc/mod.rs`; and add
+nothing else. The generated TOML contains literal rows only, never braces,
+wildcards, or recursive clauses, and MUST contain exactly 126 rows. Each row is
+`[[source]]` with `source_path`, `candidate_path`, `owner_task`,
+`classification`, and `state`; a `present` row additionally has a lowercase
+64-hex `blake3`, while a `planned` row instead has `producer_task = 6` and no
+digest. Task 2 uses `planned` only for the four expansion paths absent from the
+Task-1 topology and named as post-Task-6 sources by the appendix:
+`runtime/src/transport/grpc/kserve_binding.rs`,
+`runtime/src/transport/ws/sink.rs`, `runtime/src/transport/dry_run.rs`, and
+`runtime/src/dynosim/direct.rs`. The exact classification/state totals are 111
+present plus 4 planned `implementation_leaf` rows, 9 present `asset` rows, and
+2 present `facade` rows: 122 present and 4 planned, 126 total. The asset rows
+are the eight console goldens plus
+`runtime/tests/proto/grpc_predict_v2.proto`; the facade rows are exactly
+`runtime/src/endpoints/mod.rs` →
+`plugins/endpoints/src/endpoints/mod.rs` and
+`runtime/src/transport/grpc/mod.rs` →
+`plugins/transport-grpc/src/transport/grpc/mod.rs`. Any
+other count, absent path, implicit facade, or field shape fails.
 Task 6 must replace every planned row with a present BLAKE3-bound
 `implementation_leaf` before downstream candidate staging.
 
-- [ ] **Step 2: Verify RED**
+- [ ] **Step 2: Verify harness RED, then behavioral RED**
 
 Run: `cargo test --manifest-path plugin-api/Cargo.toml`
 
-Expected: FAIL because the crate manifest does not exist.
+Expected harness RED: FAIL because the crate manifest does not exist. Then add
+only the minimal `plugin-api` manifest, its parent-workspace member entry, and
+the documented constant-bearing `src/lib.rs` needed to compile the already
+written policy test; do not add another shell, template, ownership file, or
+inventory row. Rerun the same command. Expected behavioral RED: three separate
+tests named `workspace_and_template_policy`, `symbolic_ownership_policy`, and
+`candidate_inventory_policy` execute and fail respectively for absent shells
+and exact template placement, absent exact symbolic rows, and absent exact
+126-row inventory. Retain both command outputs. A compile failure or a single
+early-return test is not acceptable behavioral RED.
 
 - [ ] **Step 3: Add minimal documented crate shells**
 
@@ -713,6 +822,49 @@ maximum-degradation bootstrap distribution, and invalidation attempts. Tests
 pin AB/BA pairing, same-member-order replacement of only invalid pairs, retained
 members/reason, refusal to replace valid failures, and the five-replacement/
 three-attempt limits.
+Exporter sample construction is fixed: one deterministic 100,000-record corpus
+and exact pass, 16 sequential repetitions per retained member, exactly 100,000
+processed input records per repetition, identical class-specific comparison-
+observable BLAKE3, one retained repetition's complete raw/comparison/provenance
+evidence, and `processed_records = 1600000`. Its duration is the
+sum of active repetition durations; startup, inter-repetition, validation,
+hashing, and retention gaps are excluded and no sleep or padding is permitted.
+The original static-baseline median must reach 30 seconds before 16 is frozen;
+later members have no per-member 30-second minimum and require only positive
+per-repetition durations and completion of the fixed workload.
+`exporter_nanoseconds_per_record` divides by `processed_records`. Fixed-vector
+tests reject changes to `corpus_records`, `sample_repetitions`,
+`processed_records`, or `retained_artifact_records` as performance-contract
+changes; no test or runner may derive any of those values from a duration,
+retained artifact, or wall-clock observation.
+Implement and fixed-vector-test all three spec-defined observable classes:
+canonical artifact-tree manifests for file exporters, exact captured bytes for
+`console_txt`, and canonical receiver transcripts plus retained bodies for
+uploaders. Implement strict `ExporterObservablePolicyV1` provenance slots and
+require every unlisted observable fact to remain equal. The member receipt-array
+fixed vector has exactly the spec's 16 fields per element, ordinals `0..15`
+unique within that member, immutable experiment/attempt/scenario/pair/member
+binding, exact corpus/raw/comparison/provenance/build digests, and positive
+duration. Bind the vector digest into the member/sample/attempt and final
+evidence tree, never the pre-run experiment identity. Negative tests reject
+every missing/extra field, duplicate or reordered ordinal, wrong identity/
+attempt/scenario/pair/member/class, count or corpus mismatch, malformed raw
+evidence, unlisted or invalid provenance variation, comparison mismatch within
+or across the pair, retained-evidence mismatch, build substitution, zero
+duration, duration-sum mismatch, and receipt/evidence digest mismatch as a
+product failure rather than an invalidation. A fixed lifecycle vector proves
+that changing post-run duration or receipt bytes does not change experiment
+identity or grant a new attempt/replacement allowance.
+The observable fixed vectors pin `[]\n` for an empty tree/transcript, zero bytes
+for an empty captured stream, exact-body retention for noncanonical-but-
+decodable JSON, and failure on a one-byte unlisted body mutation. Policy fixed
+vectors pin canonical bytes/digests for both modes and reject unknown/missing
+fields, unsorted/duplicate identities, ambiguous or overlapping selectors,
+malformed RFC 6901 escapes, duplicate JSON keys, out-of-range spans/sequences,
+unused hop-field rules, class mismatches, and mode-incompatible expected-member
+fields. They also pin literal `ComparisonPayloadV1` frame bytes and
+`ProvenanceReceiptV1` JCS bytes plus their BLAKE3 digests for every class,
+selector, locator, and observed-value encoding.
 
 The shell runner sets `CARGO_INCREMENTAL=1`, accepts an explicit target path,
 and records rather than mutates existing wrapper/cache variables.
@@ -1644,6 +1796,7 @@ platform flag, and error path; commit as
 - Modify: `rust/runtime/src/extensions/transactional.rs`
 - Modify: `rust/runtime/src/extensions/registry_id.rs`
 - Modify: `rust/plugin-api/src/extension.rs`
+- Modify: `rust/plugin-api/feature-ownership.toml`
 - Create: `rust/plugin-api/src/frozen.rs`
 - Modify: `rust/plugin-api/src/lib.rs`
 - Create: `rust/plugin-host/src/register.rs`
@@ -1660,7 +1813,15 @@ platform flag, and error path; commit as
   interface. `aiperf-plugin-host` depends only on API/core/SDK, retains concrete
   process-global handles, and returns the plugin-API-owned
   `FrozenPluginUniverse`; runtime depends downward on API/core and consumes that
-  view while CLI composes host plus runtime.
+  view. Task 17 later makes CLI the sole composition layer over host plus
+  runtime; Task 15 leaves that composition declarative and unclaimed.
+- Atomically transitions both Task-2 `[[symbol_ownership]]` rows from
+  `state = "planned"` to `state = "present"` without changing any other row
+  value. The registration test resolves each row's `source_path`, verifies the
+  exported rustdoc owner and actual host/runtime dependency direction, leaves
+  `composition_state = "planned"`, and
+  fails if either type exists while its row remains planned or is marked
+  present before it exists.
 - Freeze carries the still-unsealed `ActivatingLibrarySet`; it cannot claim a
   reusable `LoadedLibrarySet` until Task 16 derives the canonical lock over the
   actual frozen registrations.
@@ -1677,6 +1838,8 @@ Mutate every repeated descriptor field (package name/version/source API version,
 host universe ID, artifact build ID) and prove comparison necessarily follows
 native entry invocation, retains every returned handle, poisons the process on
 mismatch, and precedes transaction commit, freeze, lock sealing, and effects.
+The same test parses `feature-ownership.toml` and initially fails because both
+frozen symbols remain `planned` and their source/rustdoc definitions are absent.
 
 - [ ] **Step 2: Verify RED**
 
@@ -1695,10 +1858,12 @@ Task 16 is the only success-sealing transition.
 
 - [ ] **Step 4: Verify GREEN**
 
-Run the same tests plus `cargo test -p aiperf-runtime --features engine`.
+Run the same tests plus `cargo test -p aiperf-runtime --features engine` and
+`cargo test -p aiperf-plugin-api --test dependency_policy`.
 Expected: rollback and compile-fail behavior pass; every existing static test
 uses an explicitly inventory-declared temporary static path rather than a hidden
-production built-in path.
+production built-in path. Both symbol-ownership rows are `present` and match
+their source/rustdoc/Cargo-metadata evidence exactly.
 
 - [ ] **Step 5: Graham review, bundle, and integrate**
 
@@ -1785,6 +1950,7 @@ bundle/import.
 **Files:**
 - Modify: `rust/cli/Cargo.toml`
 - Modify: `rust/runtime/Cargo.toml`
+- Modify: `rust/plugin-api/feature-ownership.toml`
 - Modify: `rust/runtime/src/engine/application.rs`
 - Modify: `rust/runtime/src/engine/coordinator.rs`
 - Modify: `rust/runtime/src/engine/execution_factories.rs`
@@ -1823,6 +1989,10 @@ bundle/import.
   `manifest_only`, or `full_composition`; a new or renamed command without a
   census row fails the test. Unrelated commands are `no_discovery` unless they
   explicitly request the capability catalog.
+- Changes both frozen-symbol rows from `composition_state = "planned"` to
+  `composition_state = "present"` only after Cargo metadata and the effect
+  ledger prove `aiperf-cli` is the sole composition crate depending on both
+  host and runtime. No earlier task may claim that observed CLI edge.
 
 - [ ] **Step 1: Write failing subprocess effect-order and command tests**
 
@@ -1845,6 +2015,9 @@ remain no-discovery unless it requests the capability catalog. Test
 conflicts, and missing/extra/tampered objects. Before adopting panic semantics,
 the approval artifact/test must identify the public CLI/protocol contract and
 approve abort or select an outer supervisor.
+Parse both frozen-symbol ownership rows and fail while their
+`composition_state` remains planned or when it is present without the measured
+CLI host/runtime edges.
 
 - [ ] **Step 2: Verify RED**
 
@@ -1869,7 +2042,8 @@ Run all five focused test targets, existing CLI help/completion/config/profile/
 eval tests, and `cargo test -p aiperf-runtime --features engine` on paper-rig.
 Expected: ledgers prove exact ordering/lock consumption and no unapproved static
 removal; the approval artifact’s exact decision is asserted; only Task 39 makes
-a dynamic package authoritative.
+a dynamic package authoritative. Both frozen-symbol rows have
+`composition_state = "present"` backed by the observed CLI composition edges.
 
 - [ ] **Step 5: Graham review, bundle, and integrate**
 
@@ -2953,8 +3127,12 @@ On the otherwise-idle paper-rig, run the Task-3 paired runner against the exact
 Task-7 authoritative host/provider plus conformance plugins for the four mandatory early cases
 `allocator_owned_values`, `endpoint_factory_dispatch`,
 `transport_factory_dispatch`, and `exporter_capture_projection`, with five
-warmups, exactly 30 retained AB/BA pairs, static median at least 30 seconds,
-simultaneous one-sided 95% lower bounds `>= 0.99`, primary CV `<= 2%`, and zero
+warmups and exactly 30 retained AB/BA pairs. Request-budget cases require a
+current static median of at least 30 seconds. The exporter case instead verifies
+the bound Task-1 calibration median and frozen repetition budget and accepts
+positive-duration paired static or dynamic members below 30 seconds. All cases
+still require simultaneous one-sided 95% lower bounds `>= 0.99`, primary CV
+`<= 2%`, and zero
 allocation-count/byte increase. The allocator case crosses and drops every
 ownership-table family both directions and includes startup, steady-state,
 ordinary/aligned reallocation, and process teardown. Retain raw samples,
@@ -3146,8 +3324,12 @@ the prepared static removals. No pre-removal approximation can satisfy this gate
 - [ ] **Step 1: Write failing statistical/state/structural tests**
 
 Golden-test experiment identity mutation for every required fact, balanced AB/
-BA schedule, five warmups, exactly 30 retained pairs, static median >=30s,
-product-error immediate failure, fixed blinded invalidation/max-five/max-three
+BA schedule, five warmups, and exactly 30 retained pairs. Request-budget cases
+require a current static median >=30s; exporter cases verify the immutable
+Task-1 calibration and accept complete positive-duration paired static or
+dynamic members below 30 seconds. Include a negative regression vector that
+proves such a faster exporter member is accepted. Also pin product-error
+immediate failure, fixed blinded invalidation/max-five/max-three
 attempt rules, Hyndman-Fan type 7, deterministic >=100,000-resample paired
 maximum-degradation bootstrap, simultaneous one-sided 95% bounds, primary-
 metric CV <=2%, allocation no-increase, and forbidden hot-path edge detection.
@@ -3188,7 +3370,20 @@ candidate component:
   Task-33/34 deterministic single-worker and multi-worker applicable cases;
 - `genai_perf_v1`, `server_metrics`, `timeslice`, `accuracy_csv`,
   `server_metrics_parquet`, `console_txt`, `otel`, `mlflow`, and `wandb` each
-  run a 100,000-record exporter case; OTel additionally runs exact/folded/sketch,
+  run an exporter case with `corpus_records: 100000`,
+  `sample_repetitions: 16`, `processed_records: 1600000`, and
+  `retained_artifact_records: 100000`; every retained member performs 16
+  sequential exact passes, processes exactly 100,000 input records per pass,
+  produces the same class-specific comparison-observable digest per pass and
+  across the static/dynamic pair, retains one pass's complete raw observable/
+  comparison/provenance evidence plus each member's 16 receipts, sums active
+  pass duration only, and divides exporter nanoseconds by `processed_records`;
+  file exporters use canonical artifact-tree manifests, `console_txt` uses
+  exact captured bytes, and `otel`/`mlflow`/`wandb` use canonical receiver
+  transcripts with retained bodies, all under the spec's strict frozen
+  provenance-slot policy; the static-baseline calibration that froze 16 has a
+  retained-sample median of at least 30 seconds, while later members have no
+  individual 30-second minimum; OTel additionally runs exact/folded/sketch,
   single-worker/four-worker, same-host/cross-host cellular, and telemetry off/on;
 - allocator startup/steady-state/teardown and endpoint dispatch, transport
   dispatch, response reduction, capture fold, and exporter write microbenchmarks
