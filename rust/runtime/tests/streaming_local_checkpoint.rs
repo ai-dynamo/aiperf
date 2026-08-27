@@ -314,14 +314,21 @@ async fn checkpoint_tree_is_private_and_transaction_scratch_is_reclaimed() {
     assert_eq!(current_mode, 0o600, "every regular file must be private");
 
     // A cancelled transaction removes its own scratch subtree.
+    let head = head_of(&store, run).await.expect("retained head");
+    let opened = store
+        .backend
+        .open_latest_local(&run, &support::expectations(run))
+        .await
+        .expect("open head")
+        .expect("head exists");
+    let predecessor =
+        support::current_v4_predecessor(&opened, &head).expect("verified predecessor");
+    drop(opened);
     let transaction = store
         .backend
-        .begin_generation_local(run, None, support::expectations(run))
-        .await;
-    let transaction = match transaction {
-        Ok(transaction) => transaction,
-        Err(error) => panic!("begin must succeed against the retained head: {error:?}"),
-    };
+        .begin_generation_local(run, Some(predecessor), support::expectations(run))
+        .await
+        .expect("begin against the retained head");
     let scratch = transaction.tmp_path().to_path_buf();
     assert!(scratch.is_dir());
     transaction.cancel().await;

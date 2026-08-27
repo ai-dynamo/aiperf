@@ -1090,21 +1090,22 @@ impl LocalCheckpointBackend {
             .ok_or(CheckpointError::ObjectVerification)
     }
 
+    /// Read one content-addressed object by its committed identity.
+    ///
+    /// Object identities are domain-separated digests minted by the type that
+    /// owns them, so the bytes are verified by the typed constructor that
+    /// consumes them — `canonical_result_index_root` for the index, the segment
+    /// and participant constructors for payloads — not by re-hashing here.
     async fn read_object(
         &self,
         paths: &RunPaths,
         digest: &ContentDigest,
         max_bytes: u64,
     ) -> Result<Bytes, CheckpointError> {
-        let bytes = self
-            .fs()
+        self.fs()
             .read_optional(&paths.object_path(digest), max_bytes)
             .await?
-            .ok_or(CheckpointError::ObjectVerification)?;
-        if ContentDigest::from_bytes(*blake3::hash(&bytes).as_bytes()) != *digest {
-            return Err(CheckpointError::ObjectVerification);
-        }
-        Ok(bytes)
+            .ok_or(CheckpointError::ObjectVerification)
     }
 
     fn check_fault(&self, fault: LocalCommitFault) -> Result<(), CheckpointError> {
