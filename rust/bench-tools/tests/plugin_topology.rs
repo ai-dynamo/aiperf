@@ -923,6 +923,55 @@ fn every_plugin_dependency_and_baseline_feature_has_one_reviewed_projection() {
     }
 }
 
+/// Parses the plan's witness table. The table is what a future task author
+/// reads before writing a witness, so it is bound to the constant the gate
+/// enforces rather than left to drift as prose.
+fn planned_witness_tasks(plan: &str) -> Vec<(u64, Vec<String>)> {
+    plan.split_once("| Witness task | Exact packages |")
+        .expect("plan must document the witness table")
+        .1
+        .lines()
+        .skip(1)
+        .map(str::trim)
+        .take_while(|line| line.starts_with('|'))
+        .filter_map(|line| {
+            let cells = line.split('|').map(str::trim).collect::<Vec<_>>();
+            let task = cells.get(1)?.parse::<u64>().ok()?;
+            let packages = cells
+                .get(2)?
+                .split(',')
+                .map(|package| package.trim().trim_matches('`').to_owned())
+                .collect();
+            Some((task, packages))
+        })
+        .collect()
+}
+
+#[test]
+fn planned_witness_table_matches_the_implementation_task_map() {
+    let plan_path = workspace_root()
+        .join("../docs/superpowers/plans/2026-08-26-native-rust-runtime-plugins-implementation.md");
+    let plan = std::fs::read_to_string(&plan_path)
+        .unwrap_or_else(|error| panic!("cannot read {}: {error}", plan_path.display()));
+    let enforced = IMPLEMENTATION_TASK_PACKAGES
+        .iter()
+        .map(|(task, packages)| {
+            (
+                *task,
+                packages
+                    .iter()
+                    .map(|package| (*package).to_owned())
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        planned_witness_tasks(&plan),
+        enforced,
+        "the plan's witness table and IMPLEMENTATION_TASK_PACKAGES must agree exactly"
+    );
+}
+
 #[test]
 fn implementation_task_map_assigns_every_projected_package_once() {
     let (matrix, _) = fixture_from_checked_files();
