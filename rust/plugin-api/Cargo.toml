@@ -8,7 +8,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-aiperf-core = { path = "../core" }
+aiperf-core.workspace = true
 
 [dev-dependencies]
 serde = { workspace = true }

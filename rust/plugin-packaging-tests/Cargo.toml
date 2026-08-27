@@ -7,3 +7,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish = false
+
+[dependencies]
+aiperf-plugin-host.workspace = true
+aiperf-plugin-sdk.workspace = true

@@ -50,8 +50,32 @@ version = "0.12.0"
 edition = "2024"
 license = "Apache-2.0"
 
+[workspace.metadata.plugin-parity]
+schema-version = 1
+retained-pairs = 30
+bootstrap-resamples = 100000
+confidence = 0.95
+max-relative-regression = 0.01
+max-coefficient-of-variation = 0.02
+max-replacement-pairs = 5
+max-experiment-attempts = 3
+exporter-corpus-records = 100000
+exporter-sample-repetitions = 16
+exporter-processed-records = 1600000
+exporter-retained-artifact-records = 100000
+
 [workspace.dependencies]
 # internal crates
+aiperf-bench-tools = { path = "bench-tools" }
+aiperf-core = { path = "core" }
+aiperf-endpoint-sdk = { path = "endpoint-sdk" }
+aiperf-export-sdk = { path = "export-sdk" }
+aiperf-plugin-api = { path = "plugin-api" }
+aiperf-plugin-host = { path = "plugin-host" }
+aiperf-plugin-sdk = { path = "plugin-sdk" }
+aiperf-plugin-sdk-macros = { path = "plugin-sdk-macros" }
+aiperf-plugin-test-support = { path = "plugin-test-support" }
+aiperf-transport-sdk = { path = "transport-sdk" }
 aiperf-runtime = { path = "runtime" }
 
 # external (shared versions)

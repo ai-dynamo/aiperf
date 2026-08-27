@@ -9,5 +9,5 @@ license.workspace = true
 publish = false
 
 [dependencies]
-aiperf-core = { path = "../core" }
+aiperf-core.workspace = true
 tempfile = { workspace = true }

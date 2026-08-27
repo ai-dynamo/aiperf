@@ -6,3 +6,9 @@ name = "aiperf-plugin-transport-http"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+
+[dependencies]
+aiperf-core.workspace = true
+aiperf-endpoint-sdk.workspace = true
+aiperf-plugin-api.workspace = true
+aiperf-transport-sdk.workspace = true

@@ -6,3 +6,7 @@ name = "aiperf-endpoint-sdk"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+
+[dependencies]
+aiperf-core.workspace = true
+aiperf-plugin-api.workspace = true

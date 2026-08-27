@@ -6,3 +6,8 @@ name = "aiperf-plugin-export-otel"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+
+[dependencies]
+aiperf-core.workspace = true
+aiperf-export-sdk.workspace = true
+aiperf-plugin-api.workspace = true
