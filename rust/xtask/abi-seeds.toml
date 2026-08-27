@@ -1,0 +1,18 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Every type structurally reachable from these field or signature positions is
+# in the host ABI universe.
+seeds = [
+  "ExecutionBackendConfig", "PreparedTurn", "TurnToSend", "MeasuredContext",
+  "DispatchResult", "InferenceDimensions", "PreparedEndpointTable",
+  "WorkerMaterializer", "RequestObserver", "TurnResponseObserver",
+  "RequestExecutor", "Clock", "WorkerSink", "ExecutionSinkBuilder",
+  "Exporter", "EndpointFactory", "AIPerfExtension", "Request",
+]
+
+# Traversal stops at edges the normative design forbids at the boundary.
+blocked = [
+  "RunContext", "AIPerfRegistry", "ExecutionFactories",
+  "TransportFactory", "WorkloadFactory",
+]
