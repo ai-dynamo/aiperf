@@ -1268,3 +1268,115 @@ fn configured_topology_task_rejects_a_present_but_invalid_value() {
         );
     }
 }
+
+/// Builds a witness for one package entirely from the live workspace: the
+/// source census from the package's own tree, the dependency census from its
+/// path dependencies, and the feature table verbatim from Cargo metadata.
+///
+/// Deriving the expectation is what keeps this usable past Task 4. A witness
+/// with a hand-written source list would have to be re-authored every time a
+/// task adds a file to the package it owns.
+fn witness_from_live_metadata(
+    workspace: &std::path::Path,
+    metadata: &Metadata,
+    task: u64,
+    package: &str,
+) -> ImplementationWitness {
+    let actual = metadata
+        .packages
+        .iter()
+        .find(|candidate| candidate.name == package)
+        .unwrap_or_else(|| panic!("Cargo metadata must describe {package}"));
+    let package_root = std::path::Path::new(&actual.manifest_path)
+        .parent()
+        .unwrap_or_else(|| panic!("manifest for {package} must have a parent"));
+    let mut source_files = Vec::new();
+    collect_rust_sources(workspace, package_root, &mut source_files)
+        .unwrap_or_else(|error| panic!("cannot census {package}: {error}"));
+    let dependencies = actual
+        .dependencies
+        .iter()
+        .filter(|dependency| dependency.path.is_some())
+        .map(|dependency| WitnessDependency {
+            package: dependency.name.clone(),
+            kind: dependency.kind.clone().unwrap_or_else(|| "normal".to_owned()),
+            justification: None,
+        })
+        .collect();
+    ImplementationWitness {
+        schema_version: 1,
+        task,
+        packages: vec![ImplementedPackageWitness {
+            package: package.to_owned(),
+            source_files,
+            dependencies,
+            features: actual.features.clone(),
+        }],
+    }
+}
+
+/// Runs the witness validator against the real workspace on every `cargo test`,
+/// with no environment selector in front of it.
+///
+/// The task-selected gate reaches `checked_matrix_and_metadata` only when
+/// `AIPERF_PLUGIN_TOPOLOGY_TASK` names an owning task, so without this test a
+/// bare `cargo test` never executes `cargo metadata --locked`, never walks a
+/// real package tree, and never proves the projection is exact against checked
+/// files. The negative arms below are what make the positive arm meaningful:
+/// they prove the census actually compared something.
+#[test]
+fn implemented_witness_validates_against_the_live_workspace() {
+    let workspace = workspace_root();
+    let (matrix, metadata) = checked_matrix_and_metadata(&workspace);
+    let (task, packages) = IMPLEMENTATION_TASK_PACKAGES
+        .first()
+        .expect("the implementation task map is never empty");
+    let package = packages
+        .first()
+        .expect("every implementation task owns at least one package");
+    let witness = witness_from_live_metadata(&workspace, &metadata, *task, package);
+    assert!(
+        !witness.packages[0].source_files.is_empty(),
+        "{package} must own at least one Rust source file"
+    );
+    validate_implementation_witness(&workspace, &matrix, &metadata, *task, &witness)
+        .expect("a witness derived from the live workspace must validate");
+
+    let mut empty_sources = witness.clone();
+    empty_sources.packages[0].source_files.clear();
+    assert!(
+        validate_implementation_witness(&workspace, &matrix, &metadata, *task, &empty_sources)
+            .expect_err("an empty source census must be refused")
+            .contains("empty source-file census"),
+    );
+
+    let mut surplus_source = witness.clone();
+    surplus_source.packages[0]
+        .source_files
+        .push("core/src/this-file-does-not-exist.rs".to_owned());
+    assert!(
+        validate_implementation_witness(&workspace, &matrix, &metadata, *task, &surplus_source)
+            .expect_err("a surplus source row must be refused")
+            .contains("source-file census mismatch"),
+    );
+
+    let mut surplus_dependency = witness;
+    surplus_dependency.packages[0]
+        .dependencies
+        .push(WitnessDependency {
+            package: "aiperf-plugin-api".to_owned(),
+            kind: "normal".to_owned(),
+            justification: None,
+        });
+    assert!(
+        validate_implementation_witness(
+            &workspace,
+            &matrix,
+            &metadata,
+            *task,
+            &surplus_dependency
+        )
+        .expect_err("a dependency absent from Cargo metadata must be refused")
+        .contains("dependency census"),
+    );
+}
