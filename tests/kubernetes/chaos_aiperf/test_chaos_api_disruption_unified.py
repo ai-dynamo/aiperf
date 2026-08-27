@@ -69,6 +69,7 @@ async def _force_delete(kubectl: KubectlClient, namespace: str, name: str) -> No
     )
 
 
+@pytest.mark.k8s_needs_toxiproxy
 async def test_c15_pause_apiserver_30s_recovers_unified(
     operator_ready_apiserver_toxiproxy_routed: OperatorDeployer,
     chaos_injector: ChaosInjector,
@@ -131,6 +132,7 @@ async def test_c15_pause_apiserver_30s_recovers_unified(
         await toxiproxy_injector.reset()
 
 
+@pytest.mark.k8s_needs_toxiproxy
 @pytest.mark.timeout(600)
 async def test_c16_block_operator_controller_http_falls_back_unified(
     operator_ready_toxiproxy_routed: OperatorDeployer,

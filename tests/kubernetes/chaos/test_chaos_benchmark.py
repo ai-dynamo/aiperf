@@ -257,6 +257,7 @@ async def test_b2_mock_server_restart_mid_run(
         await _force_delete_cr(kubectl, operator_job_namespace, name)
 
 
+@pytest.mark.k8s_needs_toxiproxy
 async def test_b3_mock_server_latency_injection(
     operator_ready: OperatorDeployer,
     toxiproxy_injector: ToxiproxyInjector,

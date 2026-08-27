@@ -263,6 +263,8 @@ markers = [
     "trtllm: marks tests requiring a TRT-LLM server (deselected by default)",
     "sglang: marks tests requiring an SGLang server (deselected by default)",
     "k8s_audit: marks Kubernetes operator-vs-bare-pod correctness audit tests",
+    "k8s_disruptive: marks tests that make cluster-wide mutations (e.g. CRD deletion); skipped by default, opt-in with --k8s-allow-disruptive",
+    "k8s_needs_toxiproxy: marks tests that require toxiproxy infrastructure; skipped when toxiproxy is not deployed",
 ]
 # Better console output
 console_output_style = "progress"

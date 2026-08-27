@@ -147,6 +147,11 @@ class K8sTestSettings:
     Auto-enabled when kube_context is set and CPU nodes have insufficient capacity.
     """
 
+    allow_disruptive: bool = False
+    """When True, allow tests marked k8s_disruptive (e.g. CRD deletion) to run.
+    By default these are skipped to protect shared cluster state.
+    """
+
     @property
     def cluster_runtime(self) -> ClusterRuntime:
         """Get the cluster runtime enum value."""
@@ -185,6 +190,7 @@ _OPTIONS: list[tuple[str, str, str | None, str, str]] = [
     ("--k8s-image-pull-policy", "K8S_TEST_IMAGE_PULL_POLICY", "Never", "str", "Image pull policy for benchmark pods (Never, IfNotPresent, Always)"),
     ("--k8s-job-node-selector", "K8S_TEST_JOB_NODE_SELECTOR", None, "str", "Comma-separated key=value node selector for benchmark pods (e.g. kubernetes.io/arch=amd64)"),
     ("--k8s-tolerate-gpu-nodes", "K8S_TEST_TOLERATE_GPU_NODES", None, "bool", "Add tolerations for GPU node taints (nvidia.com/gpu, kubernetes.io/arch=arm64) so pods can run on GPU nodes"),
+    ("--k8s-allow-disruptive", "K8S_TEST_ALLOW_DISRUPTIVE", None, "bool", "Allow tests marked k8s_disruptive that make cluster-wide mutations (e.g. CRD deletion); skipped by default"),
 ]  # fmt: skip
 
 
@@ -293,6 +299,7 @@ def _resolve_settings(config: pytest.Config) -> K8sTestSettings:
         "stream_logs",
         "skip_operator_deploy",
         "tolerate_gpu_nodes",
+        "allow_disruptive",
     ):
         if resolved.get(key) is None:
             resolved[key] = False
@@ -678,6 +685,17 @@ def pytest_collection_modifyitems(
     config: pytest.Config, items: list[pytest.Item]
 ) -> None:
     """Add k8s marker to all tests in this directory."""
+    settings = config.stash.get(_SETTINGS_KEY, None)
+    allow_disruptive = settings.allow_disruptive if settings else False
+
+    skip_disruptive = pytest.mark.skip(
+        reason="k8s_disruptive: makes cluster-wide mutations (CRD deletion, etc). "
+        "Pass --k8s-allow-disruptive or set K8S_TEST_ALLOW_DISRUPTIVE=1 to enable."
+    )
+    skip_needs_toxiproxy = pytest.mark.skip(
+        reason="k8s_needs_toxiproxy: requires toxiproxy infrastructure not available on this cluster."
+    )
+
     for item in items:
         path = str(item.fspath)
         if "kubernetes" in path:
@@ -686,6 +704,12 @@ def pytest_collection_modifyitems(
             item.add_marker(pytest.mark.xdist_group("kubernetes-chaos"))
             if "@kubernetes-chaos" not in item.nodeid:
                 item._nodeid = f"{item.nodeid}@kubernetes-chaos"
+
+        own_markers = {m.name for m in item.iter_markers()}
+        if "k8s_disruptive" in own_markers and not allow_disruptive:
+            item.add_marker(skip_disruptive)
+        if "k8s_needs_toxiproxy" in own_markers:
+            item.add_marker(skip_needs_toxiproxy)
 
 
 @pytest.fixture(scope="package")

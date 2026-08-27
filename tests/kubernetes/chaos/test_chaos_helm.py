@@ -467,6 +467,7 @@ async def test_h3_invalid_values_fail_fast_and_recover(
             await _force_cleanup_release(bad_deployer, kubectl)
 
 
+@pytest.mark.k8s_disruptive
 @pytest.mark.timeout(_PER_TEST_TIMEOUT)
 async def test_h4_missing_jobset_crd_surfaces_error(
     kubectl: KubectlClient,
