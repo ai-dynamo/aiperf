@@ -8,6 +8,7 @@
 pub mod core;
 #[cfg(feature = "grpc")]
 pub mod grpc;
+#[cfg(feature = "engine")]
 pub mod dry_run;
 pub mod http;
 pub(crate) mod measure;
