@@ -103,6 +103,14 @@ the transaction's frozen expected generation. An initial commit has exact epoch
 returns the typed `GenerationEpochOverflow` refusal. Candidate construction
 derives its predecessor digest and epoch only from this validated lineage token,
 so the candidate, CAS expectation, and published generation cannot diverge.
+Task 5B implements lineage validation and candidate construction as one
+crate-private backend-neutral seam. Candidate construction passes the explicit
+`StreamRunIdentity` first. Memory, Task 5C local, any layered Task 5C1, and Task
+5F2 object-store publication all call this same seam before commit-time storage
+acquisition, filesystem/provider I/O, pointer lookup, or authoritative state
+access. Transaction/staging leases may already be held. The
+shared conformance harness proves malformed lineage leaves both backend effects
+and authority unchanged.
 
 Task 5B consumes a candidate through complete run/plan/shape/self-hash
 prevalidation before touching authoritative state. The resulting private
@@ -121,9 +129,14 @@ The Task 5E coordinator clones its non-`Copy` expected generation when opening a
 transaction. Immediately after successful CAS, and before any fallible
 participant notification, it advances that expected generation and retains the
 committed receipt as pending notification authority. A subsequent barrier on
-the same coordinator first retries the pending notification and then commits
-against the advanced head. Notification failure never rewinds CAS authority or
-leaves the coordinator expecting the predecessor.
+the same coordinator first retries the pending notification. If the incoming
+barrier exactly repeats the pending run/cut/barrier, notification success returns
+the already-published generation without restaging or recommitting; a different
+barrier proceeds against the advanced head. The coordinator borrows caller
+partitions, and pending retry precedes any access to them, so notification error
+or cancellation retains both pending authority and new uncommitted inputs.
+Notification failure never rewinds CAS authority or leaves the coordinator
+expecting the predecessor.
 
 ## Non-looping result-index ruling
 
@@ -181,6 +194,10 @@ backend budget snapshots, and authoritative generation unchanged.
   refused before state access without changing head, typed inventory, or live
   budget use; a maximum predecessor epoch returns
   `GenerationEpochOverflow` with the same guarantees.
+- The shared conformance harness runs those lineage cases against memory, local,
+  any layered local backend, and object storage after staging counters are
+  reset, proving no commit-time storage acquisition, filesystem/provider I/O,
+  pointer lookup, or state access occurs.
 - A fault after candidate prevalidation over a nonempty prior generation returns
   before the publication fence and preserves its exact head, typed object
   inventory, and nonzero live storage/read charges. The private prevalidated
@@ -189,6 +206,10 @@ backend budget snapshots, and authoritative generation unchanged.
 - One coordinator commits two consecutive barriers, and a notification failure
   after the first CAS still leaves it able to retry that receipt and commit the
   second barrier against the advanced expected generation.
+- An exact pending-barrier repeat retries notification and returns the identical
+  committed generation with unchanged stage/commit counters and inventory;
+  cancellation of pending retry preserves the pending receipt and a borrowed
+  vector of newly supplied partitions byte-for-byte.
 
 The privacy regressions live as `compile_fail` rustdoc directly on the public
 DTOs in `results.rs`; an integration-test comment is not executable coverage.
