@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import Annotated, Any
 
 from aiofiles import os as aio_os
@@ -22,13 +23,23 @@ from aiperf.common.compression import (
 )
 from aiperf.common.enums import MessageType
 from aiperf.common.hooks import on_message
-from aiperf.common.messages import ProcessAllResultsMessage
+from aiperf.common.messages import BenchmarkCompleteMessage, ProcessAllResultsMessage
 from aiperf.common.mixins.message_bus_mixin import MessageBusClientMixin
 from aiperf.common.models.record_models import ProcessRecordsResult
 
 ResultsDep = Annotated["ResultsRouter", component_dependency("results")]
 
 results_router = APIRouter(tags=["Results"])
+
+# Grace period after BENCHMARK_COMPLETE for the unified ProcessAllResultsMessage
+# to arrive before we stop waiting on it. RecordsManager publishes its per-stream
+# results first (the actual shutdown trigger the controller reacts to) and only
+# afterwards, as a separate step, publishes ProcessAllResultsMessage. If
+# RecordsManager dies/is reaped between those two steps, that message never
+# arrives even though SystemController still announces BENCHMARK_COMPLETE
+# unconditionally during teardown. Without this bound, /api/results would
+# report RUNNING forever.
+_FINAL_RESULTS_GRACE_SEC: float = 10.0
 
 
 _CONTENT_TYPES: dict[str, str] = {
@@ -47,6 +58,8 @@ class ResultsRouter(MessageBusClientMixin, BaseRouter):
         super().__init__(**kwargs)
         self._final_results: ProcessRecordsResult | None = None
         self._benchmark_complete: bool = False
+        self._benchmark_complete_was_cancelled: bool = False
+        self._benchmark_complete_at: float | None = None
 
     def get_router(self) -> APIRouter:
         return results_router
@@ -56,26 +69,48 @@ class ResultsRouter(MessageBusClientMixin, BaseRouter):
         self._final_results = message.results
 
     @on_message(MessageType.BENCHMARK_COMPLETE)
-    async def _on_benchmark_complete(self, message: Any) -> None:
+    async def _on_benchmark_complete(self, message: BenchmarkCompleteMessage) -> None:
         # Results files have been exported to disk by the time this message
         # arrives (the controller exports BEFORE publishing this message).
         # Only now do we report "complete" to external consumers so they
         # can safely fetch all result files.
         self._benchmark_complete = True
+        self._benchmark_complete_was_cancelled = message.was_cancelled
+        self._benchmark_complete_at = time.monotonic()
 
 
 @results_router.get("/api/results", response_model=BenchmarkResultsResponse)
 async def get_results(component: ResultsDep) -> BenchmarkResultsResponse:
     """Get final benchmark results."""
-    if not component._benchmark_complete or component._final_results is None:
+    if component._final_results is not None:
+        status = (
+            BenchmarkStatus.CANCELLED
+            if component._final_results.results.was_cancelled
+            else BenchmarkStatus.COMPLETE
+        )
+        return BenchmarkResultsResponse(status=status, results=component._final_results)
+
+    if not component._benchmark_complete:
         return BenchmarkResultsResponse(status=BenchmarkStatus.RUNNING)
 
+    elapsed = time.monotonic() - (component._benchmark_complete_at or 0.0)
+    if elapsed < _FINAL_RESULTS_GRACE_SEC:
+        # BENCHMARK_COMPLETE and PROCESS_ALL_RESULTS are published by
+        # different services with no ordering guarantee between them; give
+        # the unified results message a bounded window to still show up.
+        return BenchmarkResultsResponse(status=BenchmarkStatus.RUNNING)
+
+    # The benchmark was announced complete, but RecordsManager never
+    # published the unified results (most likely it died/was reaped between
+    # its per-stream publish and ProcessAllResultsMessage). A cancelled run
+    # is still reported as cancelled; anything else is INCOMPLETE rather than
+    # COMPLETE, so callers are never told a resultless run finished cleanly.
     status = (
         BenchmarkStatus.CANCELLED
-        if component._final_results.results.was_cancelled
-        else BenchmarkStatus.COMPLETE
+        if component._benchmark_complete_was_cancelled
+        else BenchmarkStatus.INCOMPLETE
     )
-    return BenchmarkResultsResponse(status=status, results=component._final_results)
+    return BenchmarkResultsResponse(status=status, results=None)
 
 
 @results_router.get("/api/results/list", response_model=ResultsListResponse)

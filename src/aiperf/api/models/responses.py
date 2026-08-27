@@ -22,7 +22,17 @@ class ProgressResponse(AIPerfBaseModel):
     """Benchmark progress response."""
 
     phases: dict[str, CombinedPhaseStats] = Field(
-        default_factory=dict, description="Per-phase progress stats"
+        default_factory=dict,
+        description=(
+            "Per-phase progress stats, keyed by the phase's concrete name "
+            "(`CombinedPhaseStats.phase_name`, e.g. a DAG/multi-instance "
+            "phase's user-assigned identity) falling back to the plain "
+            "`CreditPhase` value (e.g. 'profiling') when the phase has no "
+            "explicit name. Breaking change: prior releases keyed this dict "
+            "by the closed `CreditPhase` enum; consumers indexing by a fixed "
+            "enum value should instead iterate the dict or match on each "
+            "stats entry's `phase` field."
+        ),
     )
     results_exported: bool = Field(
         default=False,
@@ -57,13 +67,15 @@ class BenchmarkStatus(CaseInsensitiveStrEnum):
     RUNNING = "running"
     COMPLETE = "complete"
     CANCELLED = "cancelled"
+    INCOMPLETE = "incomplete"
 
 
 class BenchmarkResultsResponse(AIPerfBaseModel):
     """Final benchmark results response."""
 
     status: BenchmarkStatus = Field(
-        description="Benchmark status: running, complete, or cancelled"
+        description="Benchmark status: running, complete, cancelled, or incomplete "
+        "(the run terminated without ever publishing final results)"
     )
     results: ProcessRecordsResult | None = Field(
         default=None, description="Final benchmark results if complete"

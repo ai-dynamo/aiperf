@@ -59,7 +59,14 @@ class ProgressRouter(RealtimeMetricsMixin, ProgressTrackerMixin, BaseRouter):
     async def _on_system_state_changed(
         self, message: SystemStateChangedMessage
     ) -> None:
-        """Record the controller's most-recent outer-lifecycle SystemState."""
+        """Record the controller's most-recent outer-lifecycle SystemState.
+
+        Guards against late/duplicate delivery (e.g. from ZMQ retry/reconnect)
+        walking the reported state backwards, mirroring the monotonicity
+        check ``SystemController._set_system_state`` applies before publishing.
+        """
+        if message.state.rank < self._system_state.rank:
+            return
         self._system_state = message.state
 
 

@@ -86,6 +86,47 @@ class TestProgressRouterSystemState:
         data = progress_client.get("/api/progress").json()
         assert data["system_state"] == SystemState.INITIALIZING.value
 
+    @pytest.mark.asyncio
+    async def test_out_of_order_system_state_does_not_regress(
+        self, progress_router: ProgressRouter
+    ) -> None:
+        """A late/duplicate SYSTEM_STATE_CHANGED with a lower rank must not
+        walk the reported state backwards."""
+        await progress_router._on_system_state_changed(
+            SystemStateChangedMessage(
+                service_id="system_controller",
+                state=SystemState.PROFILING,
+            )
+        )
+        # Late-arriving message for an earlier state (e.g. reordered/duplicated
+        # over ZMQ) must be ignored.
+        await progress_router._on_system_state_changed(
+            SystemStateChangedMessage(
+                service_id="system_controller",
+                state=SystemState.CONFIGURING,
+            )
+        )
+        assert progress_router._system_state == SystemState.PROFILING
+
+    @pytest.mark.asyncio
+    async def test_duplicate_system_state_is_idempotent(
+        self, progress_router: ProgressRouter
+    ) -> None:
+        """A duplicate delivery of the current state is a no-op, not a regression."""
+        await progress_router._on_system_state_changed(
+            SystemStateChangedMessage(
+                service_id="system_controller",
+                state=SystemState.PROFILING,
+            )
+        )
+        await progress_router._on_system_state_changed(
+            SystemStateChangedMessage(
+                service_id="system_controller",
+                state=SystemState.PROFILING,
+            )
+        )
+        assert progress_router._system_state == SystemState.PROFILING
+
     def test_progress_response_reflects_latest_system_state(
         self, progress_client: TestClient, progress_router: ProgressRouter
     ) -> None:
