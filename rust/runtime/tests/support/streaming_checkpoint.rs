@@ -688,22 +688,19 @@ pub async fn issue_receipt_partition(
         max_bytes: submission_queue_charge_bytes() + 64 * 1024,
     })
     .expect("valid reporter budget");
-    let policy = PreparedStreamingIssuePolicy::new([
-        StreamingIssueThresholdRule::new(
-            StreamingIssueComponentId::new("record_default").expect("valid rule ID"),
-            StreamingIssueScopeKind::Record,
-            StreamingIssueClass::Permanent,
-            None,
-            0,
-            StreamingIssueDisposition::Quarantine,
-            None,
-        )
-        .expect("valid record rule"),
-    ])
+    let policy = PreparedStreamingIssuePolicy::new([StreamingIssueThresholdRule::new(
+        StreamingIssueComponentId::new("record_default").expect("valid rule ID"),
+        StreamingIssueScopeKind::Record,
+        StreamingIssueClass::Permanent,
+        None,
+        0,
+        StreamingIssueDisposition::Quarantine,
+        None,
+    )
+    .expect("valid record rule")])
     .expect("valid record policy");
-    let mut reporter =
-        BudgetOwnedStreamingIssueReporter::new(run, policy, reporter_budget.clone())
-            .expect("budget-owned reporter");
+    let mut reporter = BudgetOwnedStreamingIssueReporter::new(run, policy, reporter_budget.clone())
+        .expect("budget-owned reporter");
 
     let input_domain = StreamingInputDomainIdentity::new(
         ContentDigest::from_bytes([0x21; 32]),

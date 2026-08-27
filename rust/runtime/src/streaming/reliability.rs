@@ -8652,9 +8652,8 @@ mod tests {
             StreamingIssueDisposition::Backpressure,
         )])
         .unwrap_or_else(|error| panic!("valid action policy: {error}"));
-        let reporter =
-            BudgetOwnedStreamingIssueReporter::new(run, policy, action_budget.clone())
-                .unwrap_or_else(|error| panic!("budget-owned reporter: {error}"));
+        let reporter = BudgetOwnedStreamingIssueReporter::new(run, policy, action_budget.clone())
+            .unwrap_or_else(|error| panic!("budget-owned reporter: {error}"));
         (run, action_budget, reporter)
     }
 
@@ -8686,7 +8685,10 @@ mod tests {
         let (run, _budget, mut reporter) = gap_closure_reporter();
         retain_succeeded_terminal(&mut reporter, run, 2, [0xb2; 32]);
         let mut terminals = BTreeMap::new();
-        terminals.insert(GlobalSequence::new(2), ContentDigest::from_bytes([0xb2; 32]));
+        terminals.insert(
+            GlobalSequence::new(2),
+            ContentDigest::from_bytes([0xb2; 32]),
+        );
         let inventory = FrozenActionInventory::for_test(
             run,
             GlobalSequence::new(2),
@@ -8972,7 +8974,10 @@ mod tests {
         // Construction charges the fixed-capacity ring buffer exactly once.
         let constructed = budget.snapshot();
         assert_eq!(constructed.used_items - empty.used_items, 1);
-        assert_eq!(constructed.used_bytes - empty.used_bytes, QUEUE_CHARGE_BYTES);
+        assert_eq!(
+            constructed.used_bytes - empty.used_bytes,
+            QUEUE_CHARGE_BYTES
+        );
 
         let handle = reporter.handle();
         for index in 0..MAX_QUEUED_SUBMISSIONS {
@@ -8989,7 +8994,10 @@ mod tests {
                 .unwrap_or_else(|error| panic!("overflow submission: {error}")),
             StreamingIssueReportStatus::Backpressured
         );
-        assert_eq!(reporter.submission.queue.borrow().len(), MAX_QUEUED_SUBMISSIONS);
+        assert_eq!(
+            reporter.submission.queue.borrow().len(),
+            MAX_QUEUED_SUBMISSIONS
+        );
     }
 
     #[test]
@@ -9036,9 +9044,8 @@ mod tests {
             let descriptor_lease = budget
                 .try_acquire(0, 0)
                 .unwrap_or_else(|error| panic!("empty descriptor lease: {error}"));
-            let descriptors =
-                BudgetedResultDescriptors::new(Box::new([]), descriptor_lease)
-                    .unwrap_or_else(|error| panic!("empty descriptors: {error}"));
+            let descriptors = BudgetedResultDescriptors::new(Box::new([]), descriptor_lease)
+                .unwrap_or_else(|error| panic!("empty descriptors: {error}"));
             // Constructed directly so the binding can name a root that staging
             // would never produce; `into_staged_parts` always passes the root
             // the plan just computed.
