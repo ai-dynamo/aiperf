@@ -7,7 +7,7 @@ import asyncio
 import time
 from collections import defaultdict
 from contextvars import ContextVar
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from aiperf.common.accumulator_protocols import ExportContext
@@ -358,16 +358,18 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
         """Capture a one-shot server-metrics scrape for a phase boundary."""
         if self._server_metrics_disabled or not self._collectors:
             return
-        boundary_phase = _ServerMetricsPhaseIdentity(
-            phase=(
-                CreditPhase.WARMUP
-                if message.phase_kind == "warmup"
-                else CreditPhase.PROFILING
-            ),
-            phase_index=message.phase_index,
-            profiling_index=message.profiling_index,
-            phase_name=message.phase_name,
-            phase_kind=message.phase_kind,
+        boundary_phase = self._stamped_like_active(
+            _ServerMetricsPhaseIdentity(
+                phase=(
+                    CreditPhase.WARMUP
+                    if message.phase_kind == "warmup"
+                    else CreditPhase.PROFILING
+                ),
+                phase_index=message.phase_index,
+                profiling_index=message.profiling_index,
+                phase_name=message.phase_name,
+                phase_kind=message.phase_kind,
+            )
         )
         errors: list[str] = []
         for endpoint_url, collector in list(self._collectors.items()):
@@ -430,6 +432,28 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
                 f"Server Metrics: Started {started_count} collector(s) successfully"
             )
 
+    def _stamped_like_active(
+        self, identity: _ServerMetricsPhaseIdentity
+    ) -> _ServerMetricsPhaseIdentity:
+        """Carry the active phase's occurrence id onto an identity for that phase.
+
+        Only ``_on_credit_phase_start`` mints occurrence ids, but it is not the
+        only place a scrape identity is built: the end-of-warmup capture and
+        the phase-boundary baseline each rebuild one from their own message.
+        Left unstamped those scrapes fall back to the accumulator's arrival-
+        contiguity heuristic, which is exactly what the stamping was introduced
+        to retire -- and the end-of-warmup scrape is the one most likely to
+        land after an intervening phase's records, splitting a single warmup
+        occurrence in two.
+
+        ``__eq__`` deliberately ignores ``instance_id``, so this equality means
+        "same phase", which is the precondition for sharing its occurrence id.
+        """
+        active = self._active_phase
+        if active is not None and active.instance_id is not None and identity == active:
+            return replace(identity, instance_id=active.instance_id)
+        return identity
+
     @on_message(MessageType.CREDIT_PHASE_START)
     async def _on_credit_phase_start(self, message: CreditPhaseStartMessage) -> None:
         """Track which benchmark phase subsequent server-metric scrapes belong to."""
@@ -476,12 +500,14 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
         scrape as profiling.
         """
         stats = message.stats
-        identity = _ServerMetricsPhaseIdentity(
-            phase=stats.phase,
-            phase_index=stats.phase_index,
-            profiling_index=stats.profiling_index,
-            phase_name=stats.phase_name or str(stats.phase),
-            phase_kind=stats.phase_kind,
+        identity = self._stamped_like_active(
+            _ServerMetricsPhaseIdentity(
+                phase=stats.phase,
+                phase_index=stats.phase_index,
+                profiling_index=stats.profiling_index,
+                phase_name=stats.phase_name or str(stats.phase),
+                phase_kind=stats.phase_kind,
+            )
         )
         is_warmup = stats.phase_kind == "warmup" or stats.phase == CreditPhase.WARMUP
         is_profiling = (

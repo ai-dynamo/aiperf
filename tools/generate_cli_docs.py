@@ -277,8 +277,17 @@ def extract_commands(app: Any, *, prefix: str = "") -> list[tuple[str, str]]:
             try:
                 _resolve_lazy_commands(cmd)
             except Exception as e:
-                print_warning(f"Could not extract '{full_name}': {e}")
-                continue
+                # Swallowing this drops the command AND every descendant from
+                # the generated page while the generator still exits 0, so an
+                # import/registration bug lands as a quietly incomplete
+                # docs/cli-options.md that the pre-commit hook happily accepts.
+                # An unresolvable command group is a build failure, not a
+                # documentation style choice.
+                raise RuntimeError(
+                    f"Could not resolve subcommands of '{full_name}': {e}. "
+                    "Refusing to emit docs that silently omit it and its "
+                    "descendants."
+                ) from e
             commands.extend(extract_commands(cmd, prefix=f"{full_name} "))
             continue
         help_text = cmd.help if hasattr(cmd, "help") else ""

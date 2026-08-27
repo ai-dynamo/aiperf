@@ -157,24 +157,30 @@ def _compute_best_trials(
     # An iteration that reports only the scalar mirror is still scored: most
     # planners populate objective_value and a length-1 vector, but the vector
     # is Optional and filtering on it alone dropped those iterations entirely
-    # (best_trials came back null for a fully scored search). A NaN/inf
-    # primary objective is filtered out here, upstream of both the
-    # single-objective max()/min() below and the Pareto front in
-    # _pareto_front/_dominates: every comparison against NaN is False, so an
-    # unfiltered NaN trial could silently win max()/min() outright, or - for
-    # the Pareto path - never be dominated and get stuck in the front forever.
+    # (best_trials came back null for a fully scored search).
+    #
+    # A trial carrying a non-finite value in ANY configured objective is
+    # dropped here, not just the primary. Filtering only the primary left a
+    # trial like [100.0, NaN] in the pool, where _dominates refuses to decide
+    # in either direction -- which does stop it dominating, but also makes it
+    # undominatable, so it was *guaranteed* a slot in the reported front and
+    # was serialized as [100.0, null]. Being incomparable is the safe answer
+    # for a pairwise question and the wrong answer for front membership; the
+    # pool is where that has to be settled. An absent or short vector is
+    # deliberately NOT filtered -- see _objective_is_poisoned.
+    n_obj = len(cfg.objectives)
     scored = [
         h
         for h in history
         if (h.objective_values or h.objective_value is not None)
         and is_finite_value(_primary(h))
+        and not any(_objective_is_poisoned(h, index) for index in range(n_obj))
     ]
     feasible = [h for h in scored if h.feasible]
     ranking_pool = feasible if feasible else scored
     if not ranking_pool:
         return None
 
-    n_obj = len(cfg.objectives)
     if n_obj == 1:
         direction = cfg.objectives[0].direction
         if direction == OptimizationDirection.MAXIMIZE:
@@ -255,8 +261,14 @@ def _dominates(
     objectives ``[throughput MAX, latency MIN]``, ``[100.0, NaN]`` compared
     against ``[50.0, 8.0]`` won on throughput, had its NaN latency skipped,
     and dominated a trial strictly better on the objective it silently
-    dropped -- then serialized as ``[100.0, null]``. Returning False keeps
-    both points in the front, the safe outcome for an undecidable pair.
+    dropped -- then serialized as ``[100.0, null]``.
+
+    Refusing to decide is correct for this *pairwise* question but does not
+    settle front membership: an incomparable point is also undominatable, so
+    on its own this guard would guarantee the poisoned trial a slot in the
+    front. ``_compute_best_trials`` therefore drops poisoned trials from the
+    ranking pool upstream. This guard remains as the local invariant, so a
+    future caller that assembles its own pool cannot resurrect the bug.
     """
     from aiperf.common.enums import OptimizationDirection
 
