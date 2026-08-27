@@ -1427,17 +1427,23 @@ fn implemented_witness_validates_against_the_live_workspace() {
     );
 
     // The dependency census only bites where a package has path dependencies at
-    // all, so drop them from a task that actually has some.
-    if let Some((task, packages)) = with_dependencies {
-        let mut dropped = witness_from_live_metadata(&workspace, &metadata, task, &packages);
-        for built in &mut dropped.packages {
-            built.dependencies.clear();
-        }
-        assert!(
-            validate_implementation_witness(&workspace, &matrix, &metadata, task, &dropped)
-                .expect_err("a missing dependency row must be refused")
-                .contains("dependency census mismatch"),
-            "Task {task} has path dependencies, so dropping them must be refused"
-        );
+    // all, so drop them from a task that actually has some. This must be a hard
+    // requirement rather than a skip: the positive arms above compare a derived
+    // witness against a derived expectation through the same path-dependency
+    // filter, so a filter that stopped matching would leave every census empty,
+    // every positive arm passing as empty-against-empty, and — under a skip —
+    // this arm silently absent. Requiring it here is what keeps dependency
+    // comparison from switching itself off while the suite stays green.
+    let (task, packages) = with_dependencies
+        .expect("at least one mapped task must have live path dependencies to compare");
+    let mut dropped = witness_from_live_metadata(&workspace, &metadata, task, &packages);
+    for built in &mut dropped.packages {
+        built.dependencies.clear();
     }
+    assert!(
+        validate_implementation_witness(&workspace, &matrix, &metadata, task, &dropped)
+            .expect_err("a missing dependency row must be refused")
+            .contains("dependency census mismatch"),
+        "Task {task} has path dependencies, so dropping them must be refused"
+    );
 }
