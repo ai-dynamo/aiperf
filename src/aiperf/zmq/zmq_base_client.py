@@ -115,6 +115,18 @@ class BaseZMQClient(AIPerfLifecycleMixin):
             else:
                 self.socket.connect(self.address)
 
+            # Unlike RECONNECT_IVL*/ROUTER_HANDOVER above, IMMEDIATE is deliberately set
+            # AFTER bind/connect, where libzmq's connect-time snapshot makes it a no-op
+            # -- matching its behavior on main. Setting it before connect() instead makes
+            # a send to a not-yet-(re)connected peer raise zmq.Again rather than queueing,
+            # which plain PUSH clients (e.g. RecordProcessor -> RecordsManager) retry only
+            # twice at 100ms apart: far short of the RECONNECT_IVL_MAX backoff above, so a
+            # peer restart can exhaust the retry budget and drop (or, worse, hang on) a
+            # record. Only the streaming credit-return PUSH/DEALER clients are built to
+            # rely on IMMEDIATE's zmq.Again signal; activate it there deliberately via
+            # socket_ops if that behavior is ever needed instead of enabling it globally.
+            self.socket.setsockopt(zmq.IMMEDIATE, ZMQSocketDefaults.IMMEDIATE)
+
             self.debug(
                 lambda: f"ZMQ {self.socket_type_name} socket {'BOUND' if self.bind else 'CONNECTED'} to {self.address} ({self.client_id})"
             )
@@ -123,7 +135,11 @@ class BaseZMQClient(AIPerfLifecycleMixin):
             raise InitializationError(f"Failed to initialize ZMQ socket: {e}") from e
 
     def _apply_socket_options(self) -> None:
-        """Apply every socket option this client needs, in one place."""
+        """Apply the connect-time-sensitive socket options, before bind/connect.
+
+        IMMEDIATE is intentionally not among them; see the setsockopt call after
+        bind/connect in :meth:`_initialize_socket` for why.
+        """
         self.socket.setsockopt(zmq.RCVTIMEO, ZMQSocketDefaults.RCVTIMEO)
         self.socket.setsockopt(zmq.SNDTIMEO, ZMQSocketDefaults.SNDTIMEO)
 
@@ -140,7 +156,6 @@ class BaseZMQClient(AIPerfLifecycleMixin):
         self.socket.setsockopt(
             zmq.TCP_KEEPALIVE_CNT, ZMQSocketDefaults.TCP_KEEPALIVE_CNT
         )
-        self.socket.setsockopt(zmq.IMMEDIATE, ZMQSocketDefaults.IMMEDIATE)
         self.socket.setsockopt(zmq.LINGER, ZMQSocketDefaults.LINGER)
 
         # When a DEALER reconnects with the same identity, replace the stale

@@ -81,10 +81,11 @@ class ZMQStreamingPushClient(BaseZMQClient):
 
         The fast path is a sync NOBLOCK send straight to libzmq, skipping
         zmq.asyncio's Future/polling machinery. With ``SNDHWM=0`` the send never
-        blocks on the high-water mark, but ``IMMEDIATE=1`` makes a send to a
-        not-yet-connected peer raise ``zmq.Again`` (e.g. a startup race before the
-        manager's PULL has connected). Retry with backoff so a credit return is
-        never silently dropped, matching :class:`ZMQPushClient`.
+        blocks on the high-water mark, so libzmq queues rather than rejects a
+        send to a not-yet-connected peer (e.g. a startup race before the
+        manager's PULL has connected). The retry-with-backoff below still
+        guards against genuine ``zmq.Again`` (e.g. a torn-down context), so a
+        credit return is never silently dropped, matching :class:`ZMQPushClient`.
         """
         await self._check_initialized()
         if max_retries is None:

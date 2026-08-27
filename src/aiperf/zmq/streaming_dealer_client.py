@@ -121,7 +121,6 @@ class ZMQStreamingDealerClient(BaseZMQClient):
         self._decoder = (
             _decoder if decode_type is None else msgspec.msgpack.Decoder(decode_type)
         )
-        # Futures for in-flight request() calls, keyed by the request's rid/cid.
         self._msg_count: int = 0
         self._yield_interval: int = Environment.ZMQ.STREAMING_DEALER_YIELD_INTERVAL
         self._fd_reader: FdEdgeReader | None = None
@@ -210,10 +209,10 @@ class ZMQStreamingDealerClient(BaseZMQClient):
         # FD-driver owns both directions of the socket; never touch zmq.asyncio
         # send here or it corrupts the shared FD edge-trigger. Before the
         # receiver task has created the driver (early WorkerDispatchable), send
-        # directly. SNDHWM=0 means the NOBLOCK send never blocks on the queue,
-        # but IMMEDIATE=1 makes it raise zmq.Again until the ROUTER connection
-        # has handshaked, so retry the way the PUSH clients do rather than
-        # dropping the first struct on a startup race.
+        # directly. SNDHWM=0 means the NOBLOCK send never blocks on the queue and
+        # libzmq queues rather than rejects a send before the ROUTER connection
+        # has handshaked, but retry the way the PUSH clients do anyway to guard
+        # against a genuine zmq.Again rather than dropping the first struct.
         if self._fd_reader is not None:
             self._fd_reader.send(data)
         else:
