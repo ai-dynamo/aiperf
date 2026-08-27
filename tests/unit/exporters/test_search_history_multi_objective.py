@@ -296,6 +296,56 @@ def test_non_finite_secondary_objective_cannot_dominate(tmp_path: Path):
     assert 0 in ranked, (
         "the fully-scored trial must survive: it was strictly better on latency"
     )
-    assert ranked == [0, 1], (
-        "an undecidable pair leaves both points in the front; neither dominates"
+    assert ranked == [0], (
+        "the poisoned trial must be dropped from the pool, not merely made "
+        "incomparable -- incomparable is also undominatable, which would "
+        "*guarantee* it a slot in the reported front"
     )
+    assert all(
+        t["objective_values"] is None or None not in t["objective_values"]
+        for t in payload["best_trials"]
+    ), "no best trial may serialize a scrubbed non-finite objective as null"
+
+
+def test_poisoned_trial_is_not_reported_as_pareto_best(tmp_path: Path):
+    """Front membership, not just domination, must reject a poisoned trial.
+
+    Distinct from the domination test above: here the poisoned trial is the
+    only one that could plausibly top the front, so a fix that merely stops it
+    *dominating* still leaves it undominated and therefore reported as
+    Pareto-best with pareto_rank=0 -- serialized as [500.0, null], which a
+    consumer cannot distinguish from a trial never scored on latency.
+    """
+    cfg = _two_obj_cfg()
+    history = [
+        SearchIteration(
+            iteration_idx=0,
+            variation_values={"concurrency": 5},
+            objective_values=[10.0, 1.0],
+            objective_value=10.0,
+            feasible=True,
+        ),
+        SearchIteration(
+            iteration_idx=1,
+            variation_values={"concurrency": 50},
+            objective_values=[20.0, 2.0],
+            objective_value=20.0,
+            feasible=True,
+        ),
+        SearchIteration(
+            iteration_idx=2,
+            variation_values={"concurrency": 99},
+            objective_values=[500.0, float("inf")],
+            objective_value=500.0,
+            feasible=True,
+        ),
+    ]
+    write_search_history(tmp_path, history, cfg)
+    payload = json.loads((tmp_path / "search_history.json").read_text())
+
+    ranked = [t["iteration_idx"] for t in payload["best_trials"]]
+    assert 2 not in ranked, (
+        "a trial with a non-finite objective must never be reported as best"
+    )
+    assert ranked, "dropping the poisoned trial must not empty the front"
+    assert set(ranked) <= {0, 1}

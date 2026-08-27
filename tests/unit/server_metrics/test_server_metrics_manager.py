@@ -1808,3 +1808,128 @@ class TestScrapeHangContainment:
             assert collector._session.timeout.sock_read is not None
         finally:
             await collector._session.close()
+
+
+class TestPhaseOccurrenceIdReachesEveryScrape:
+    """Every scrape identity must carry the occurrence id, not just the first.
+
+    Only `_on_credit_phase_start` mints occurrence ids, but the end-of-warmup
+    capture and the phase-boundary baseline each rebuild an identity from their
+    own message. Leaving those unstamped drops them back onto the accumulator's
+    arrival-contiguity fallback -- the heuristic the stamping exists to retire
+    -- and the end-of-warmup scrape is precisely the one that tends to land
+    after an intervening phase's records, splitting one warmup occurrence into
+    two `phase_index=None` results.
+    """
+
+    @pytest.mark.asyncio
+    async def test_end_of_warmup_scrape_carries_the_active_occurrence_id(
+        self,
+        cfg_with_endpoint: CLIConfig,
+    ) -> None:
+        manager = ServerMetricsManager(run=make_run_from_cli(cfg_with_endpoint))
+        manager._collectors = {"http://server:8000/metrics": MagicMock()}
+        captured: list[_ServerMetricsPhaseIdentity] = []
+
+        async def _capture(collector, identity):
+            captured.append(identity)
+
+        manager._collect_and_process_metrics_for_phase = _capture  # type: ignore[assignment]
+
+        await manager._on_credit_phase_start(
+            CreditPhaseStartMessage(
+                service_id="timing-manager",
+                stats=CreditPhaseStats(phase=CreditPhase.WARMUP),
+                config=CreditPhaseConfig(
+                    phase=CreditPhase.WARMUP,
+                    timing_mode=TimingMode.REQUEST_RATE,
+                ),
+            )
+        )
+        minted = manager._active_phase.instance_id
+        assert minted is not None, "phase start must mint an occurrence id"
+
+        await manager._on_credit_phase_complete(
+            CreditPhaseCompleteMessage(
+                service_id="timing-manager",
+                stats=CreditPhaseStats(phase=CreditPhase.WARMUP),
+            )
+        )
+
+        assert captured, "end-of-warmup scrape must have been taken"
+        assert captured[0].instance_id == minted, (
+            "the final warmup scrape belongs to the warmup occurrence that just "
+            "ended; unstamped it falls back to arrival-contiguity and splits the "
+            "occupancy in two"
+        )
+
+    @pytest.mark.asyncio
+    async def test_phase_boundary_baseline_carries_the_active_occurrence_id(
+        self,
+        cfg_with_endpoint: CLIConfig,
+    ) -> None:
+        manager = ServerMetricsManager(run=make_run_from_cli(cfg_with_endpoint))
+        manager._collectors = {"http://server:8000/metrics": MagicMock()}
+        captured: list[_ServerMetricsPhaseIdentity] = []
+
+        async def _capture(collector, identity):
+            captured.append(identity)
+
+        manager._collect_and_process_metrics_for_phase = _capture  # type: ignore[assignment]
+
+        await manager._on_credit_phase_start(
+            CreditPhaseStartMessage(
+                service_id="timing-manager",
+                stats=CreditPhaseStats(
+                    phase=CreditPhase.WARMUP,
+                    phase_name=str(CreditPhase.WARMUP),
+                    phase_kind="warmup",
+                ),
+                config=CreditPhaseConfig(
+                    phase=CreditPhase.WARMUP,
+                    timing_mode=TimingMode.REQUEST_RATE,
+                ),
+            )
+        )
+        minted = manager._active_phase.instance_id
+
+        await manager.collect_baseline(
+            PhaseBaselineRequestMessage(
+                service_id="timing-manager",
+                phase_id="warmup-0",
+                kind=BaselineKind.START,
+                phase_kind="warmup",
+                phase_index=None,
+                profiling_index=None,
+                phase_name=str(CreditPhase.WARMUP),
+            )
+        )
+
+        assert captured, "baseline scrape must have been taken"
+        assert captured[0].instance_id == minted
+
+    @pytest.mark.asyncio
+    async def test_identity_for_a_different_phase_is_not_stamped(
+        self,
+        cfg_with_endpoint: CLIConfig,
+    ) -> None:
+        """The id must travel only to the phase that owns it."""
+        manager = ServerMetricsManager(run=make_run_from_cli(cfg_with_endpoint))
+
+        await manager._on_credit_phase_start(
+            CreditPhaseStartMessage(
+                service_id="timing-manager",
+                stats=CreditPhaseStats(phase=CreditPhase.WARMUP),
+                config=CreditPhaseConfig(
+                    phase=CreditPhase.WARMUP,
+                    timing_mode=TimingMode.REQUEST_RATE,
+                ),
+            )
+        )
+
+        foreign = _ServerMetricsPhaseIdentity(
+            phase=CreditPhase.PROFILING,
+            phase_name="profiling",
+            phase_kind="profiling",
+        )
+        assert manager._stamped_like_active(foreign).instance_id is None
