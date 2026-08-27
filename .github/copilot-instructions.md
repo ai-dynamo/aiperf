@@ -119,6 +119,7 @@ The Kubernetes operator and CLI layer live in `src/aiperf/operator/`, `src/aiper
 - **Operator metrics** — Wrap **only** kopf reconcile handlers with `@track_handler("name")` (between the `@kopf.*` decorator and the function); never instrument helper functions.
 - **`ServiceRunType.KUBERNETES`** is a generated plugin enum member: it is declared in `src/aiperf/plugin/plugins.yaml` and emitted into `src/aiperf/plugin/enums.py` by `make generate-all-plugin-files`. Never hand-edit `src/aiperf/plugin/enums.py`.
 - **Operator-namespace fallback** — code that needs the chart-default operator namespace MUST import `DEFAULT_OPERATOR_NAMESPACE` from `aiperf.kubernetes.constants`, never hardcode `"aiperf-system"`. Callers with cluster API access should still prefer `find_operator_namespace` (cluster-wide pod-label search).
+- **Dual-channel credit readiness** — credit dispatch rides the DEALER (`CommAddress.CREDIT_ROUTER`) but credit *returns* ride a separate PUSH/PULL fan-in (`CommAddress.CREDIT_RETURN`). A worker MUST pass `probe_return_channel` (`aiperf.workers.return_channel_probe`) before announcing `WorkerDispatchable`, otherwise a dead PUSH side is invisible and every credit routed there stalls until the run timeout. Any new startup signal must not assume the DEALER proves both directions. See `docs/dev/kubernetes-flow.md` § "Dual-Channel Credit Readiness Gate".
 
 For complete implementation details see `docs/dev/kubernetes-flow.md`.
 
