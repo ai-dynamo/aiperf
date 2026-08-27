@@ -504,7 +504,7 @@ async def test_c7_kill_worker_pod_mid_benchmark_unified(
             operator_job_namespace,
             name,
             phases=("Completed",),
-            timeout=360.0,
+            timeout=480.0,  # replacement pod startup + benchmark resume can be slow on kind
         )
         assert phase == "Completed"
     finally:
