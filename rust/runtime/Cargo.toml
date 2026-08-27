@@ -266,6 +266,11 @@ name = "streaming_contract_conformance"
 path = "tests/streaming_contract_conformance.rs"
 required-features = ["streaming"]
 
+[[test]]
+name = "streaming_local_source"
+path = "tests/streaming_local_source.rs"
+required-features = ["streaming"]
+
 [[example]]
 name = "velo_cell_spike"
 path = "examples/velo_cell_spike.rs"
