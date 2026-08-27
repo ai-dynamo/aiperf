@@ -5,8 +5,8 @@
 
 use aiperf_bench_tools::plugin_stats::{
     ArtifactBoundExporterMemberV1, ExporterEvidenceMode, ExporterMember, ExporterMemberBinding,
-    ExporterMemberEvidence, ExporterMemberRecord, ExporterObservableKind, ExporterRepetitionReceipt,
-    ExporterSampleContract, RetainedExporterEvidence, Variant,
+    ExporterMemberEvidence, ExporterMemberRecord, ExporterObservableKind,
+    ExporterRepetitionReceipt, ExporterSampleContract, RetainedExporterEvidence, Variant,
 };
 use aiperf_bench_tools::runtime_runner::{
     ExporterChildExpectationV1, ExporterMemberChildOutputV1,
@@ -171,7 +171,11 @@ fn conforming_artifact_bound_exporter_child_is_admitted() {
     assert_eq!(admitted.record.pair_id, PAIR_ID);
     assert_eq!(admitted.record.member, member);
     assert_eq!(
-        admitted.artifact_bound.evidence.retained.raw_observable_bytes,
+        admitted
+            .artifact_bound
+            .evidence
+            .retained
+            .raw_observable_bytes,
         RAW_OBSERVABLE
     );
     assert_eq!(admitted.artifact_bound.binding.member, member);
@@ -191,9 +195,11 @@ fn bare_exporter_metric_child_line_is_refused_by_the_artifact_bound_protocol() {
         "\"pair_id\":\"pair-01\",\"scenario\":\"exporter_100k\",",
         "\"schema_version\":1,\"variant\":\"dynamic\"}\n"
     );
-    let error =
-        validate_exporter_member_child_output_v1(bare.as_bytes(), &expectation(ExporterMember::Dynamic))
-            .expect_err("a bare exporter metric line carries no artifact-bound evidence");
+    let error = validate_exporter_member_child_output_v1(
+        bare.as_bytes(),
+        &expectation(ExporterMember::Dynamic),
+    )
+    .expect_err("a bare exporter metric line carries no artifact-bound evidence");
     assert!(
         error.to_string().contains("artifact-bound"),
         "unexpected error: {error}"
