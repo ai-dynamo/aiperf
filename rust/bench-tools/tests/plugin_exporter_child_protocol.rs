@@ -179,11 +179,15 @@ fn conforming_artifact_bound_exporter_child_is_admitted() {
 
 #[test]
 fn bare_exporter_metric_child_line_is_refused_by_the_artifact_bound_protocol() {
+    // The fixture must itself be canonical JCS (note `1`, not `1.0`), or the
+    // canonical-line check refuses it first and this test proves nothing about
+    // the artifact-bound schema. Non-canonical input is covered separately by
+    // `child_output_that_is_not_one_canonical_line_is_refused`.
     let bare = concat!(
         "{\"active_duration_nanoseconds\":30000000000,\"completed_budget\":1,",
         "\"experiment_identity_blake3\":\"",
         "blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "\",\"metrics\":{\"exporter_nanoseconds_per_record\":1.0},",
+        "\",\"metrics\":{\"exporter_nanoseconds_per_record\":1},",
         "\"pair_id\":\"pair-01\",\"scenario\":\"exporter_100k\",",
         "\"schema_version\":1,\"variant\":\"dynamic\"}\n"
     );
