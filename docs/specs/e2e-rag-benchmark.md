@@ -185,15 +185,27 @@ hop bound, and tasks-per-second measures the timeout path.
 
 ### Measurement
 
-**I12. Request latency excludes client-side work; task latency includes it.**
+**I12. Request latency excludes client-side work; task latency includes it, and
+every stage the reference pipeline names is inside some measured window.**
 Both scopes exist, they measure different things, and the report says which is
-which.
+which. Parse and chunk are ingestion *stages*, not setup: they occur after the
+run origin, on the worker, inside the document task.
 *Enforces:* `on_admit` as the request origin
 (`transport/http/sink/endpoint_dispatch.rs:289`), which already fires after
-materialization; a separate task-level origin and terminal.
-*Status:* request half **HOLDS** for free. Task half is NEW.
-*Without it:* a task-level number that inherited the request exclusion reports a
-duration no operator of the system experiences.
+materialization; a separate task-level origin and terminal; and a worker-side
+materializer for parse and chunk.
+*Status:* request half **HOLDS** for free. Task half is NEW. The parse/chunk
+clause is NEW **and was contradicted by an earlier draft of this record**, which
+scoped both stages to a `DatasetLoader`/`Composer` pair. That pair runs entirely
+in preparation — `LoaderRegistry::build_dataset` awaits `load` and `compose` and
+freezes the `Dataset` (`dataset/loader/mod.rs:543`, `:560`, `:568`, `:578`),
+reached from `prepare_with_context` (`engine/online_execution.rs:362`, `:1276`
+-`:1288`) before the run spec, before any phase plan, and before
+`set_run_origin` (`engine/execute/sharding.rs:476`). Nothing in a loader or
+composer can be timed by this benchmark.
+*Without it:* `rag_documents_per_second` names the reference's four-stage
+pipeline and measures two of them, which is a wrong number wearing the right
+label.
 
 **I13. In-flight tasks and in-flight requests are separate curves, and any window
 derived from concurrency names which one it used.** `--steady-state` reads the
@@ -628,24 +640,55 @@ refusal) without inheriting that module's episode-scoped quota model.
 
 ### Ingestion: parse → chunk → embed → index
 
-The client-side stages are pure functions run on the worker before dispatch,
-following the `CreditMaterializer` precedent:
+The client-side stages are pure functions run on the worker inside the measured
+window, following the deferred-materialization precedent. **This corrects an
+earlier draft of this record**, which scoped parse and chunk to a
+`DatasetLoader`/`Composer` pair while also claiming they were measured. Those two
+statements cannot both hold: the loader/composer pipeline is fully awaited and
+frozen during preparation (`dataset/loader/mod.rs:543`, `:560`, `:568`, `:578`,
+reached from `engine/online_execution.rs:362`, `:1276`-`:1288`), before the run
+origin exists (`engine/execute/sharding.rs:476`). A loader-based ingestion would
+have reported `rag_documents_per_second` for embed and index while calling it the
+four-stage pipeline.
+
+The seam that does run on the worker inside the window is deferred
+materialization — `materialize_credit` executes inline on the worker's message
+loop (`engine/turn_execution.rs:2045`, `:2320`), the same mechanism
+`--dispatch global-push` already uses. So:
+
+- The **loader** fetches and interns raw article bytes. It does not parse. Its
+  only job is to make each document a frozen, content-addressed handle.
+- The **worker** parses, chunks, and issues that document's passage batches.
+
+The unit that makes this work is the document. Chunk count is not known until
+parse completes, so batch membership cannot be computed ahead of dispatch; batches
+are therefore formed **within** a document, and one document is one task whose
+stages are its passage batches. That is data-dependent stage count, which is
+exactly what the staged `GraphTraceProgram` driver (P2) provides — ingestion
+reuses it rather than introducing a second deferral mechanism. `--batch-size`
+retains its meaning as the passages-per-request cap.
+
+The stages:
 
 - **Parse.** Extract the article body from HTML, dropping navigation, reference,
   and metadata subtrees; flatten tables and lists to text row by row rather than
   dropping them. This is the one new third-party dependency in this design, and
   the inventory above confirms nothing suitable is present in either language.
-  Parsing is deterministic and content-addressed, so a parsed-corpus cache makes
-  re-runs skip it.
+  Parsing is deterministic and content-addressed. A parsed-corpus cache is
+  therefore possible and is **refused for a scored ingestion run**: parse is inside
+  the measured window by I12, so a cache hit would silently delete a reference
+  stage from `rag_documents_per_second`. Caching is available only for
+  non-scored exploratory runs, which say so in their report.
 - **Chunk.** Slice to `chunk_chars` (default 768) with `chunk_overlap_chars`
   (default 32) on UTF-8-respecting character boundaries, tagging each passage with
   its source document identity and byte offsets. This extends
   `dataset/corpus.rs`'s existing character-bounded chunker rather than replacing
   it. Defaults match the MLPerf reference; both are authorable and both
   participate in `corpus_digest`.
-- **Embed.** Dispatch passage batches to the `embed` profile through the existing
-  batch path. Batch size is authorable because macro-batching the embedder is one
-  of the optimization levers the benchmark exposes.
+- **Embed.** Dispatch the document's passage batches to the `embed` profile
+  through the existing batch path, one stage per batch. Batch size is authorable
+  because macro-batching the embedder is one of the optimization levers the
+  benchmark exposes; it caps passages per request and does not span documents.
 - **Index.** Append returned vectors to the builder, then seal through a
   registered `Exporter` into the run's `artifact_dir`.
 
@@ -656,9 +699,11 @@ on the record — a new catalog tag plus record-plane plumbing, not a derived
 aggregate over existing columns. The spec's earlier framing of this as "a derived
 aggregate" was wrong.
 
-Parse and chunk time are reported as named client-side stage timings. The half of
-that claim that says they are *not folded into request latency* is already true
-for free (`on_admit` fires after materialization). The half that says they are
+Parse and chunk time are reported as named client-side stage timings, scoped to
+the document task rather than to any one request. The half of that claim that says
+they are *not folded into request latency* is already true for free (`on_admit`
+fires after materialization, and the transport origin is later still —
+`transport/http/client/http_client.rs:434`-`:437`). The half that says they are
 *measured* is new machinery: a timer around the worker-side stages, new catalog
 tags, record-plane fields, and exporter projections. `CreditToStartLatency`
 (`rust/runtime/src/metrics_core/store.rs:1675`) contains materialization time but
@@ -1059,6 +1104,8 @@ protects.
 | `aiperf rag compliance` before per-record role attribution exists | I16 |
 | `aiperf rag compliance` against a sketch-mode run | I17 |
 | Retrieval integrity reported from a run that did not retain the retrieval-evidence artifact | I18 |
+| A scored `rag_ingest` run with the parsed-corpus cache enabled | I12 |
+| An ingestion format whose parse or chunk stage is implemented in a `DatasetLoader` or `Composer` | I12 |
 | A `retrieval` node in a non-RAG workload | node-kind soundness |
 | A multi-endpoint `rag_qna` run over gRPC | transport limit (`grpc_execution.rs:130`) |
 
