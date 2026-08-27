@@ -410,17 +410,17 @@ alignment, and partial-block removal while keeping finite `dynamo_trace`
 byte-compatible. Generation 1 requires valid `request.replay` on every
 executable `request_end`; it never invokes the finite complete-trace virtual
 fallback allocator. Bind the first executable positive block size before
-emitting executable content, checkpoint unbound/bound authority, and reject
+emitting a deferred executable descriptor, checkpoint unbound/bound authority, and reject
 later or restored drift with stable decode codes. Enforce checked bounds on
 block size, hash count, token count, and retained deferred-fragment capacity.
 Map tool/edge/close records to canonical mutations, treat responses as
 reference-only, and never infer root or closure at object EOF.
 
-Run the same cache-free synthesis/profile seam in finite parity fixtures. Cover
+Cover
 repeated/shared hashes; zero, tiny, full, and full-plus-partial inputs; missing
 replay; nonzero input with empty hashes; resume before and after binding; record
-identity stability across unbound-to-bound authority; and a trailing-descendant
-lookahead input facts. A5 never releases an action: P1C waits for a typed
+identity stability across unbound-to-bound authority; and retained trailing-
+descendant lookahead facts. A5 never releases an action: P1C waits for a typed
 whole-producer-tree closure receipt before invoking the shared future-aware
 message-role pass. Indefinite shapes without a configured closure proof are
 refused by P1C using the stable unbounded-causality session failure; A5 only
@@ -428,9 +428,11 @@ retains the typed parent/descendant facts needed to decide later.
 
 - [ ] **Step 4: Verify green**
 
-Run Step 2. Expected: PASS including finite token/message/text/prefix parity,
+Run Step 2. Expected: PASS for strict parsing, deferred descriptor geometry,
 duplicate idempotency/conflict, stable error codes, block boundaries, authority
-resume, and future-descendant lookahead.
+resume, identity stability, and retained parent/descendant closure facts.
+Materialized finite/streaming token/message/text/prefix parity and no-early-
+release evidence belong to P1C after whole-tree closure exists.
 
 - [ ] **Step 5: Commit**
 

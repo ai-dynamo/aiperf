@@ -142,7 +142,11 @@ pub enum ControllerStreamingPurpose {
     ReleaseAction,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ContentSynthesisProfileBoundReceipt {
+    pub version: u16,
+    pub plan_digest: [u8; 32],
     pub authored_profile_digest: [u8; 32],
     pub bound_profile_digest: [u8; 32],
 }

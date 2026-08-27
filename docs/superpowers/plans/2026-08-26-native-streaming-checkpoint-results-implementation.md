@@ -518,6 +518,7 @@ pub struct CheckpointCommitMetadata {
     pub terminal_reason: Option<CheckpointTerminalReason>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CheckpointGenerationExpectations {
     pub participant_plan: CheckpointParticipantPlan,
     pub execution_plan_digest: ContentDigest,

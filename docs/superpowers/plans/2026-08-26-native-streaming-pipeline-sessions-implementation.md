@@ -103,7 +103,12 @@ git commit -m "feat(runtime): preserve conversations across stream chunks"
 - Modify: `rust/runtime/src/streaming/session.rs`
 - Test: `rust/runtime/tests/streaming_session_closure.rs`
 
-**Produces:** `SessionClosurePolicy`, `MissingPredecessorPolicy`, externally sorted finite completeness receipts, and explicit refusal when neither a finite bound nor spill/drop/fail policy exists.
+**Produces:** `SessionClosurePolicy`, `MissingPredecessorPolicy`, externally
+sorted finite completeness receipts, typed `WholeProducerTreeClosureReceipt`,
+and explicit refusal when neither a finite bound nor spill/drop/fail policy
+exists. The tree receipt binds one root plus the exact closed descendant
+inventory and is minted only after the coordinator proves the entire rooted
+producer tree complete.
 
 - [ ] **Step 1: Write the RED policy matrix**
 
@@ -120,6 +125,17 @@ async fn closure_requires_authored_proof_not_partition_eof() {
     for case in cases {
         assert_eq!(run_closure_case(case).await, case.expected);
     }
+}
+
+#[test]
+fn whole_tree_receipt_requires_every_descendant_not_individual_session_close() {
+    let mut tree = producer_tree_with_open_descendant();
+    tree.close_root();
+    assert!(tree.whole_tree_receipt().is_none());
+    tree.observe_partition_eof();
+    assert!(tree.whole_tree_receipt().is_none());
+    tree.close_last_descendant_with_complete_inventory();
+    assert!(tree.whole_tree_receipt().is_some());
 }
 
 #[test]
@@ -157,6 +173,11 @@ Run: `CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-run
 - [ ] **Step 3: Implement explicit closure proofs**
 
 Partition EOF is never closure evidence. Inactivity closes only below the soft event-time watermark; hard session watermarks close exactly once; a finite seal fails incomplete sessions; external sort closes only from a verified complete run; indefinite follow waits for a missing predecessor. Charge active frontier, pending predecessor, and spill descriptors to configured item/byte budgets. `PrivateSessionSpill` owns a no-follow `0700` run directory, creates `0600` files, rejects link/type/mode drift, and removes only its validated run subtree through RAII on success, error, and cancellation. A renewable owner lease uses injected `Clock`; startup performs a bounded cursor scan and reclaims crash-orphaned run directories only after lease expiry.
+
+Individual session closure, root discovery, and partition EOF never mint
+`WholeProducerTreeClosureReceipt`. Only verified finite seal/external-sort or an
+equivalent authored hard completeness proof covering the exact root descendant
+inventory may mint it; the receipt is checkpointed with that inventory.
 
 - [ ] **Step 4: Verify GREEN and commit**
 
