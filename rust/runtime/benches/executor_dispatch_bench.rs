@@ -148,14 +148,14 @@ fn bench_dispatch_boundary(criterion: &mut Criterion) {
         bencher.iter_batched(
             || (prepared_turn(), measured_context()),
             |(turn, context)| {
-                black_box(WorkerSink::dispatch_measured(
+                drop(black_box(WorkerSink::dispatch_measured(
                     black_box(&sink),
                     black_box(&observer),
                     turn,
                     black_box(&context),
                     black_box(&on_first_token),
                     None,
-                ));
+                )));
             },
             BatchSize::SmallInput,
         );
@@ -164,14 +164,14 @@ fn bench_dispatch_boundary(criterion: &mut Criterion) {
         bencher.iter_batched(
             || (prepared_turn(), measured_context()),
             |(turn, context)| {
-                black_box(WorkerSink::dispatch_measured(
+                drop(black_box(WorkerSink::dispatch_measured(
                     erased_worker,
                     black_box(&observer),
                     turn,
                     black_box(&context),
                     black_box(&on_first_token),
                     None,
-                ));
+                )));
             },
             BatchSize::SmallInput,
         );
@@ -183,12 +183,12 @@ fn bench_dispatch_boundary(criterion: &mut Criterion) {
         bencher.iter_batched(
             || (prepared_turn(), measured_context()),
             |(turn, context)| {
-                black_box(RequestExecutor::execute_measured(
+                drop(black_box(RequestExecutor::execute_measured(
                     black_box(&sink),
                     turn,
                     context,
                     black_box(&on_first_token),
-                ));
+                )));
             },
             BatchSize::SmallInput,
         );
@@ -197,12 +197,12 @@ fn bench_dispatch_boundary(criterion: &mut Criterion) {
         bencher.iter_batched(
             || (prepared_turn(), measured_context()),
             |(turn, context)| {
-                black_box(RequestExecutor::execute_measured(
+                drop(black_box(RequestExecutor::execute_measured(
                     erased_executor,
                     turn,
                     context,
                     black_box(&on_first_token),
-                ));
+                )));
             },
             BatchSize::SmallInput,
         );
