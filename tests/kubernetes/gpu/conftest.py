@@ -382,6 +382,18 @@ def _resolve_settings(config: pytest.Config) -> GPUTestSettings:
                 "External GPU runs require --gpu-external-existing-operator so "
                 "the harness cannot install or repair shared controllers."
             )
+        # xdist workers each deploy their own backend server onto the same
+        # finite pool of GPUs, so parallel workers do not merely slow each
+        # other down — they contend for GPU memory and the losers fail engine
+        # init outright. Refuse rather than silently clamping: a clamp would
+        # hide that the requested -n was overridden.
+        numprocesses = config.getoption("numprocesses", default=None)
+        if isinstance(numprocesses, int) and numprocesses > 1:
+            raise pytest.UsageError(
+                f"External GPU runs must be serial, got -n {numprocesses}. "
+                "Parallel xdist workers each deploy a backend server and "
+                "contend for the same GPUs. Re-run with -n 0 (or omit -n)."
+            )
         if settings.image_pull_secret and (
             not settings.image_pull_secret_source_namespace
             or not settings.image_pull_secret_source_namespace.startswith(
