@@ -193,7 +193,7 @@ async def _force_cleanup_release(
     )
 
 
-@pytest.mark.timeout(_PER_TEST_TIMEOUT)
+@pytest.mark.timeout(900)  # 2 install+run cycles; _PER_TEST_TIMEOUT is insufficient
 async def test_h1_install_job_uninstall_reinstall_is_clean_unified(
     faults: InjectorRegistry,  # noqa: ARG001  (registry presence keeps this in the unified suite)
     kubectl: KubectlClient,
