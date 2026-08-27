@@ -56,6 +56,19 @@ ALLOWED_MODIFIED: dict[str, str] = {
     ),
 }
 
+# Directory prefixes from origin/main this branch is permitted to modify. Prefer
+# ALLOWED_MODIFIED; use this only when one mechanical change spans a whole tree.
+ALLOWED_MODIFIED_PREFIXES: dict[str, str] = {
+    "tests/aiperf_mock_server/": (
+        "imports rewritten from the top-level 'aiperf_mock_server' to "
+        "'tests.aiperf_mock_server'. On origin/main this package is pip-installed "
+        "(tests/aiperf_mock_server/pyproject.toml), but its [project.scripts] "
+        "declares an aiperf-mock-server console script that would collide on the "
+        "venv PATH with the native Rust binary of the same name. Importing it as "
+        "a subpackage of tests/ avoids installing it at all."
+    ),
+}
+
 # Branch-only files under src/ that are not in the cordon. Each needs a reason.
 ALLOWED_NEW: dict[str, str] = {
     "src/aiperf/entrypoint.py": (
@@ -108,6 +121,8 @@ def check(base: str, head: str) -> list[str]:
         if _blob_id(base, path) == _blob_id(head, path):
             continue
         if path in ALLOWED_MODIFIED:
+            continue
+        if any(path.startswith(prefix) for prefix in ALLOWED_MODIFIED_PREFIXES):
             continue
         violations.append(
             f"MODIFIED vs {base}: {path}\n"

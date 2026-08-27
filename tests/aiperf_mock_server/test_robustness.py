@@ -9,10 +9,10 @@ import time
 
 import pytest
 from aiperf_mock_server import scheduler as scheduler_module
-from aiperf_mock_server.config import MockServerConfig
-from aiperf_mock_server.metrics import DYNAMO_FRONTEND_DISCONNECTED_CLIENTS
-from aiperf_mock_server.scheduler import BatchScheduler, _DecodeWaiter, _PrefillWaiter
-from aiperf_mock_server.utils import (
+from tests.aiperf_mock_server.config import MockServerConfig
+from tests.aiperf_mock_server.metrics import DYNAMO_FRONTEND_DISCONNECTED_CLIENTS
+from tests.aiperf_mock_server.scheduler import BatchScheduler, _DecodeWaiter, _PrefillWaiter
+from tests.aiperf_mock_server.utils import (
     LatencySimulator,
     _lognormal_jitter,
     _positive_jitter_extra_seconds,
@@ -318,8 +318,8 @@ async def test_scheduler_cancel_called_on_simulator_cancel_when_enabled():
 @pytest.mark.asyncio
 async def test_streaming_chat_disconnect_triggers_cancel():
     """Closing a chat-completion async generator mid-stream invokes sim.cancel()."""
-    from aiperf_mock_server.tokens import TokenizedText
-    from aiperf_mock_server.utils import RequestCtx, stream_chat_completion
+    from tests.aiperf_mock_server.tokens import TokenizedText
+    from tests.aiperf_mock_server.utils import RequestCtx, stream_chat_completion
 
     cfg = MockServerConfig(ttft=1.0, itl=50.0, scheduler_enabled=False)
     tokenized = TokenizedText(
@@ -366,8 +366,8 @@ async def test_streaming_chat_disconnect_triggers_cancel():
 @pytest.mark.asyncio
 async def test_streaming_chat_normal_completion_does_not_record_disconnect():
     """Full stream consumption marks finished and does NOT bump the disconnect counter."""
-    from aiperf_mock_server.tokens import TokenizedText
-    from aiperf_mock_server.utils import RequestCtx, stream_chat_completion
+    from tests.aiperf_mock_server.tokens import TokenizedText
+    from tests.aiperf_mock_server.utils import RequestCtx, stream_chat_completion
 
     cfg = MockServerConfig(ttft=0.0, itl=0.0, scheduler_enabled=False)
     tokenized = TokenizedText(

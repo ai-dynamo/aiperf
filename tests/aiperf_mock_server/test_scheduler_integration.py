@@ -9,8 +9,8 @@ import time
 import httpx
 import pytest
 import uvicorn
-from aiperf_mock_server.app import asgi_app
-from aiperf_mock_server.config import MockServerConfig, set_server_config
+from tests.aiperf_mock_server.app import asgi_app
+from tests.aiperf_mock_server.config import MockServerConfig, set_server_config
 
 
 def _free_port() -> int:

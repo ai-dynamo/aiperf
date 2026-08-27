@@ -12,8 +12,8 @@ accounting, and chunked input_json_delta fragments.
 import orjson
 import pytest
 from aiperf_mock_server import utils as mock_utils
-from aiperf_mock_server.app import asgi_app
-from aiperf_mock_server.config import server_config
+from tests.aiperf_mock_server.app import asgi_app
+from tests.aiperf_mock_server.config import server_config
 from httpx import ASGITransport, AsyncClient
 
 pytestmark = pytest.mark.asyncio

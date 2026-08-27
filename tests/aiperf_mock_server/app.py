@@ -13,14 +13,14 @@ from time import perf_counter
 from typing import Any
 
 import orjson
-from aiperf_mock_server.config import (
+from tests.aiperf_mock_server.config import (
     MockServerConfig,
     public_config_dump,
     server_config,
 )
-from aiperf_mock_server.control_state import control_state
-from aiperf_mock_server.dcgm_faker import DCGMFaker
-from aiperf_mock_server.metrics import (
+from tests.aiperf_mock_server.control_state import control_state
+from tests.aiperf_mock_server.dcgm_faker import DCGMFaker
+from tests.aiperf_mock_server.metrics import (
     AIPERF_MOCK_REGISTRY,
     DYNAMO_DECODE_REGISTRY,
     DYNAMO_FRONTEND_REGISTRY,
@@ -31,7 +31,7 @@ from aiperf_mock_server.metrics import (
     TRTLLM_REGISTRY,
     VLLM_REGISTRY,
 )
-from aiperf_mock_server.metrics_utils import (
+from tests.aiperf_mock_server.metrics_utils import (
     async_track_llm_request,
     async_track_request,
     init_model_config,
@@ -44,7 +44,7 @@ from aiperf_mock_server.metrics_utils import (
     track_llm_request,
     track_request,
 )
-from aiperf_mock_server.models import (
+from tests.aiperf_mock_server.models import (
     AnthropicMessagesRequest,
     ChatCompletionRequest,
     CohereRerankRequest,
@@ -58,12 +58,12 @@ from aiperf_mock_server.models import (
     SolidoRAGRequest,
     TGIGenerateRequest,
 )
-from aiperf_mock_server.node_exporter_faker import (
+from tests.aiperf_mock_server.node_exporter_faker import (
     render_default as render_node_exporter,
 )
-from aiperf_mock_server.request_recorder import RequestRecorder, set_global_recorder
-from aiperf_mock_server.scheduler import init_scheduler, shutdown_scheduler
-from aiperf_mock_server.utils import (
+from tests.aiperf_mock_server.request_recorder import RequestRecorder, set_global_recorder
+from tests.aiperf_mock_server.scheduler import init_scheduler, shutdown_scheduler
+from tests.aiperf_mock_server.utils import (
     RequestCtx,
     anthropic_stop_reason,
     make_ctx,
@@ -116,7 +116,7 @@ async def lifespan(_: FastAPI):
         random.seed(server_config.random_seed)
 
     if not server_config.no_tokenizer:
-        from aiperf_mock_server.tokens import _load_corpus
+        from tests.aiperf_mock_server.tokens import _load_corpus
 
         _load_corpus()
 
