@@ -757,7 +757,7 @@ pub trait StreamingGenerationTransaction {
     ) -> Result<(), CheckpointError>;
     async fn stage_results(
         &mut self,
-        partitions: Vec<ResultPartition>,
+        partitions: &mut Vec<ResultPartition>,
     ) -> Result<PreparedResultEpoch, CheckpointError>;
     async fn commit(
         self: Box<Self>,
@@ -766,7 +766,7 @@ pub trait StreamingGenerationTransaction {
 }
 ```
 
-Task 5B also defines the content-neutral DTOs needed by those object-safe signatures: `ResultPartition`, `PreparedResultEpoch`, `ResultSegmentDescriptor`, `ResultSegmentReader`, `ResultIndexCursor`, `ResultIndexReadBudget`, and `ResultIndexPage`. At this stage a partition is verified bytes plus projection/schema/range/count/digest metadata; Task 6A adds logical membership construction and conflict policy without changing the backend signatures. This ordering avoids a backend/results module cycle.
+Task 5B also defines the content-neutral DTOs needed by those object-safe signatures: `BudgetedResultDescriptor`, `ResultPartition`, `PreparedResultEpoch`, `ResultSegmentDescriptor`, `ResultSegmentReader`, `ResultIndexCursor`, `ResultIndexReadBudget`, and `ResultIndexPage`. At this stage a partition is verified bytes plus projection/schema/range/count/digest metadata; Task 6A adds logical membership construction and conflict policy without changing the backend signatures. This ordering avoids a backend/results module cycle.
 
 ```rust
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
@@ -785,8 +785,38 @@ pub struct ResultProjectionId(Box<str>);
 #[serde(transparent)]
 pub struct ResultSchemaVersion(u32);
 
-pub struct ResultPartition {
+/// Singular result descriptor with inseparable retained-allocation authority.
+///
+/// ```compile_fail
+/// # use aiperf_runtime::streaming::results::BudgetedResultDescriptor;
+/// # fn cannot_separate(value: BudgetedResultDescriptor) {
+/// let _descriptor = value.descriptor;
+/// let _lease = value.lease;
+/// # }
+/// ```
+///
+/// ```compile_fail
+/// # use aiperf_runtime::streaming::results::BudgetedResultDescriptor;
+/// # fn cannot_use_backend_transfer(value: BudgetedResultDescriptor) {
+/// let _ = value.into_backend_parts();
+/// # }
+/// ```
+pub struct BudgetedResultDescriptor {
     descriptor: ResultSegmentDescriptor,
+    lease: BudgetLease,
+}
+
+/// Verified result payload and its inseparable budgeted descriptor.
+///
+/// ```compile_fail
+/// # use aiperf_runtime::streaming::results::ResultPartition;
+/// # fn cannot_separate(value: ResultPartition) {
+/// let _descriptor = value.descriptor;
+/// let _payload = value.payload;
+/// # }
+/// ```
+pub struct ResultPartition {
+    descriptor: BudgetedResultDescriptor,
     payload: BudgetedCheckpointBytes,
 }
 
@@ -797,6 +827,15 @@ pub struct PreparedResultEpoch {
     byte_length: u64,
 }
 
+/// Descriptor collection with inseparable aggregate allocation authority.
+///
+/// ```compile_fail
+/// # use aiperf_runtime::streaming::results::BudgetedResultDescriptors;
+/// # fn cannot_separate(value: BudgetedResultDescriptors) {
+/// let _descriptors = value.descriptors;
+/// let _lease = value.lease;
+/// # }
+/// ```
 pub struct BudgetedResultDescriptors {
     descriptors: Box<[ResultSegmentDescriptor]>,
     lease: BudgetLease,
@@ -837,6 +876,15 @@ pub struct ResultIndexReadBudget {
     pub max_bytes: NonZeroU64,
 }
 
+/// One budgeted page of reachable result descriptors.
+///
+/// ```compile_fail
+/// # use aiperf_runtime::streaming::results::ResultIndexPage;
+/// # fn cannot_separate(value: ResultIndexPage) {
+/// let _descriptors = value.descriptors;
+/// let _next = value.next;
+/// # }
+/// ```
 pub struct ResultIndexPage {
     descriptors: BudgetedResultDescriptors,
     next: Option<ResultIndexCursor>,
@@ -929,12 +977,23 @@ impl<'de> Deserialize<'de> for ResultProjectionId {
 
 impl ResultPartition {
     pub fn new(
-        descriptor: ResultSegmentDescriptor,
+        descriptor: BudgetedResultDescriptor,
         payload: BudgetedCheckpointBytes,
     ) -> Result<Self, CheckpointError>;
     pub fn descriptor(&self) -> &ResultSegmentDescriptor;
+    pub fn descriptor_charged_bytes(&self) -> usize;
     pub fn payload_bytes(&self) -> &[u8];
-    pub fn into_parts(self) -> (ResultSegmentDescriptor, BudgetedCheckpointBytes);
+    pub fn into_parts(self) -> (BudgetedResultDescriptor, BudgetedCheckpointBytes);
+}
+
+impl BudgetedResultDescriptor {
+    pub fn new(
+        descriptor: ResultSegmentDescriptor,
+        lease: BudgetLease,
+    ) -> Result<Self, CheckpointError>;
+    pub fn descriptor(&self) -> &ResultSegmentDescriptor;
+    pub fn charged_bytes(&self) -> usize;
+    pub(crate) fn into_backend_parts(self) -> (ResultSegmentDescriptor, BudgetLease);
 }
 
 impl BudgetedResultDescriptors {
@@ -988,8 +1047,12 @@ impl ResultIndexPage {
 `ResultProjectionId::new` rejects an empty value and compacts the accepted text
 with `String::into_boxed_str`. Its custom `Deserialize` implementation decodes
 through that checked constructor; derive must not bypass the nonempty invariant.
-`ResultPartition::new` and `ResultSegmentReader::new` verify exact payload length
-and raw BLAKE3 digest against the descriptor. The segment reader borrows that
+`BudgetedResultDescriptor::new` requires exactly one charged item and exact
+bytes equal to `size_of::<ResultSegmentDescriptor>()` plus the compact nested
+projection length, using the same checked retained-byte helper as descriptor
+pages. `ResultPartition::new` accepts that wrapper intact and
+`ResultSegmentReader::new` verifies exact payload length and raw BLAKE3 digest
+against the descriptor. The segment reader borrows that
 descriptor only for verification and retains no descriptor clone, so its payload
 lease is sufficient and `into_payload` cannot expose an uncharged allocation.
 `BudgetedResultDescriptors::new` requires lease items
@@ -1000,11 +1063,14 @@ equal to descriptor count and lease bytes equal to the checked sum of
 totals and requires those computed totals to equal its supplied `item_count`
 and `byte_length`. `ResultIndexPage::new` checked-converts the inseparable
 descriptor lease charge rather than retaining a second caller-supplied value.
-No accessor or consuming method exposes `BudgetLease` or an unbudgeted
-descriptor allocation. `BudgetedResultDescriptors` has no `into_parts` method;
-the enclosing wrappers' consuming methods move that wrapper intact. The other
-`into_parts` methods are consuming and keep each payload or descriptor lease
-inside its existing budgeted wrapper.
+No public accessor or consuming method exposes `BudgetLease` or an unbudgeted
+descriptor allocation. `ResultPartition::into_parts` returns the singular
+descriptor wrapper intact beside the separately budgeted payload.
+`BudgetedResultDescriptors` has no `into_parts` method; the enclosing wrappers'
+consuming methods move that wrapper intact. Only the crate-private
+`BudgetedResultDescriptor::into_backend_parts` may dismantle the singular
+wrapper, and `stage_results` may call it only after acquiring the exact aggregate
+prepared-index reservation described below.
 
 `MemoryCheckpointBackend::new` is the only backend constructor. Validate all
 five `MemoryCheckpointLimits` entries in field order before retaining state or
@@ -1104,6 +1170,33 @@ every result descriptor must match both the transaction run and
 commit, while epoch is authoritative only when metadata is supplied. No
 participant state or result epoch may be inferred from absence.
 
+`stage_results` first validates the input partitions by borrow and checked-sums
+their exact singular descriptor charges, result totals, and canonical index
+inputs. It then acquires both the backend prepared-index reservation and the
+separate returned-summary reservation for the complete descriptor count and
+retained-byte sum while the caller's vector and every singular input authority
+remain intact. Only after both acquisitions succeed may one synchronous helper
+clone the borrowed descriptors into exact-capacity prepared and summary
+collections, construct both checked aggregate wrappers, and construct the
+returned `PreparedResultEpoch` while the input vector is still unchanged. The
+final infallible helper `mem::take`s the vector, invokes the crate-private
+`BudgetedResultDescriptor::into_backend_parts`, moves each separately budgeted
+payload into transaction storage, drops each original descriptor plus input
+lease, and installs the already-built prepared collection. There is no fallible
+operation or `.await` after the caller vector or transaction state begins to
+mutate.
+
+Refusal or cancellation during either acquisition leaves the transaction and
+caller vector unchanged and retryable; dropping the pending future releases any
+first aggregate lease already acquired. Any checked construction error releases
+the aggregate leases while leaving all input authorities in the caller vector.
+The
+backend's private prepared-index and returned-summary budgets are never exposed
+for caller partition construction, preventing self-contention with input
+authority. Commit likewise completes every storage acquisition and validation
+before borrowing `MemoryState` mutably; object insertion plus head CAS/publication
+is one non-async critical section with no `.await` after publication begins.
+
 A leased reader exposes only descriptors reachable from its exact committed
 generation. `read_participant` requires the complete supplied descriptor to be
 present in that generation's participant inventory. `read_segment` requires the
@@ -1176,21 +1269,66 @@ fn result_projection_id_deserialization_rejects_empty_text() {
     );
 }
 
-/// ```compile_fail
-/// # use aiperf_runtime::streaming::results::BudgetedResultDescriptors;
-/// # fn cannot_separate(value: BudgetedResultDescriptors) {
-/// let _descriptors = value.descriptors;
-/// let _lease = value.lease;
-/// # }
-/// ```
+#[tokio::test(flavor = "current_thread")]
+async fn result_partition_projection_allocation_remains_exactly_charged() {
+    let (short_budget, short) = support::result_partition_with_projection("p").await;
+    let (long_budget, long) =
+        support::result_partition_with_projection("projection-with-retained-bytes").await;
+    let projection_delta = "projection-with-retained-bytes".len() - "p".len();
 
-/// ```compile_fail
-/// # use aiperf_runtime::streaming::results::{ResultIndexPage, ResultPartition};
-/// # fn cannot_separate(page: ResultIndexPage, partition: ResultPartition) {
-/// let _page_descriptors = page.descriptors;
-/// let _partition_payload = partition.payload;
-/// # }
-/// ```
+    assert_eq!(
+        long.descriptor_charged_bytes() - short.descriptor_charged_bytes(),
+        projection_delta,
+    );
+    assert_eq!(
+        short_budget.snapshot().used_bytes,
+        short.descriptor_charged_bytes(),
+    );
+    assert_eq!(
+        long_budget.snapshot().used_bytes,
+        long.descriptor_charged_bytes(),
+    );
+
+    let (wrapped_descriptor, payload) = long.into_parts();
+    assert_eq!(long_budget.snapshot().used_bytes, wrapped_descriptor.charged_bytes());
+    drop(payload);
+    drop(wrapped_descriptor);
+    assert_eq!(long_budget.snapshot().used_bytes, 0);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn cancelled_summary_wait_leaves_stage_inputs_and_transaction_retryable() {
+    let backend = MemoryCheckpointBackend::new(support::backend_limits()).unwrap();
+    let run = support::run_id(1);
+    let mut transaction = support::transaction_with_all_participants(&backend, run).await;
+    let (input_budget, partition) = support::result_partition_with_projection("projection").await;
+    let mut partitions = vec![partition];
+    let transaction_before = transaction.staged_snapshot();
+    let prepared_before = backend.budget_snapshots().prepared_indexes;
+    let input_before = input_budget.snapshot();
+    let held_summary = backend.hold_all_result_summary_capacity().await;
+
+    let mut pending = Box::pin(transaction.stage_results(&mut partitions));
+    assert!(matches!(futures::poll!(&mut pending), std::task::Poll::Pending));
+    assert!(backend.budget_snapshots().prepared_indexes.used_items > 0);
+    assert_eq!(input_budget.snapshot(), input_before);
+    drop(pending);
+
+    assert_eq!(transaction.staged_snapshot(), transaction_before);
+    assert_eq!(partitions.len(), 1);
+    assert_eq!(input_budget.snapshot(), input_before);
+    assert_eq!(backend.budget_snapshots().prepared_indexes, prepared_before);
+
+    drop(held_summary);
+    let prepared = transaction.stage_results(&mut partitions).await.unwrap();
+    assert!(partitions.is_empty());
+    assert_eq!(input_budget.snapshot().used_items, 0);
+    assert_eq!(transaction.staged_result_root(), Some(prepared.index_root()));
+    assert_eq!(backend.budget_snapshots().result_summaries.used_items, 1);
+    drop(prepared);
+    assert_eq!(backend.budget_snapshots().result_summaries.used_items, 0);
+    assert_eq!(backend.budget_snapshots().prepared_indexes.used_items, 1);
+}
 
 #[tokio::test(flavor = "current_thread")]
 async fn stale_writer_cannot_merge_or_replace_head() {
@@ -1251,10 +1389,12 @@ async fn explicit_expectation_and_result_runs_must_match_transaction_run() {
         .begin_generation(run, None, support::expectations(run))
         .await
         .unwrap();
+    let mut foreign_partitions = vec![support::result_partition(other, 1).await];
     assert!(matches!(
-        transaction.stage_results(vec![support::result_partition(other, 1)]).await,
+        transaction.stage_results(&mut foreign_partitions).await,
         Err(CheckpointError::ObjectVerification)
     ));
+    assert_eq!(foreign_partitions.len(), 1);
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -1269,48 +1409,85 @@ async fn commit_requires_exact_participants_and_one_canonical_result_epoch() {
         .begin_generation(run, None, support::expectations(run))
         .await
         .unwrap();
-    omitted_participant.stage_results(Vec::new()).await.unwrap();
+    let mut no_partitions = Vec::new();
+    omitted_participant.stage_results(&mut no_partitions).await.unwrap();
     assert!(matches!(
         omitted_participant.commit(support::metadata_at(1)).await,
         Err(CheckpointError::ParticipantSetMismatch)
     ));
 
     let mut exact = support::transaction_with_all_participants(&backend, run).await;
-    let empty = exact.stage_results(Vec::new()).await.unwrap();
+    let mut no_partitions = Vec::new();
+    let empty = exact.stage_results(&mut no_partitions).await.unwrap();
     assert_eq!(empty.item_count(), 0);
     assert_eq!(empty.byte_length(), 0);
-    assert!(exact.stage_results(Vec::new()).await.is_err());
+    assert!(exact.stage_results(&mut no_partitions).await.is_err());
     exact.commit(support::metadata_at(1)).await.unwrap();
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn result_epoch_and_reader_reachability_are_generation_scoped() {
+async fn result_epoch_must_match_commit_epoch() {
     let backend = MemoryCheckpointBackend::new(support::backend_limits()).unwrap();
     let run = support::run_id(1);
     let mut transaction = support::transaction_with_all_participants(&backend, run).await;
+    let mut wrong_epoch = vec![support::result_partition(run, 2).await];
     transaction
-        .stage_results(vec![support::result_partition(run, 2)])
+        .stage_results(&mut wrong_epoch)
         .await
         .unwrap();
     assert!(matches!(
         transaction.commit(support::metadata_at(1)).await,
         Err(CheckpointError::ObjectVerification)
     ));
+}
 
-    let first = support::commit_generation_with_segment(&backend, run, None, 1).await.unwrap();
+#[tokio::test(flavor = "current_thread")]
+async fn existing_immutable_objects_do_not_grant_cross_generation_or_run_read_authority() {
+    let backend = MemoryCheckpointBackend::new(support::backend_limits()).unwrap();
+    let run = support::run_id(1);
+    let other = support::run_id(2);
+    let superseded = support::commit_generation_with_segment(&backend, run, None, 1)
+        .await
+        .unwrap();
+    let current = support::commit_generation_with_segment(
+        &backend,
+        run,
+        Some(superseded.generation().clone()),
+        2,
+    )
+    .await
+    .unwrap();
+    let foreign = support::commit_generation_with_segment(&backend, other, None, 1)
+        .await
+        .unwrap();
+    let superseded_descriptor = superseded.only_result_descriptor().clone();
+    let foreign_descriptor = foreign.only_result_descriptor().clone();
+
+    assert!(backend
+        .immutable_object_inventory(&run)
+        .contains(&superseded_descriptor.payload_digest));
+    assert!(backend
+        .immutable_object_inventory(&other)
+        .contains(&foreign_descriptor.payload_digest));
+
     let reader = backend
         .open_latest(&run, &support::expectations(run))
         .await
         .unwrap()
         .unwrap();
-    assert!(reader
-        .read_segment(&support::unreachable_segment(run, 1))
-        .await
-        .is_err());
-    assert!(reader
-        .read_participant(&support::unreachable_participant(&first))
-        .await
-        .is_err());
+    assert_eq!(reader.generation(), current.generation());
+    let reads_before = backend.budget_snapshots().reads;
+
+    assert_eq!(
+        reader.read_segment(&superseded_descriptor).await.unwrap_err(),
+        CheckpointError::ObjectVerification,
+    );
+    assert_eq!(backend.budget_snapshots().reads, reads_before);
+    assert_eq!(
+        reader.read_segment(&foreign_descriptor).await.unwrap_err(),
+        CheckpointError::ObjectVerification,
+    );
+    assert_eq!(backend.budget_snapshots().reads, reads_before);
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -1441,6 +1618,7 @@ async fn sufficient_page_limit_does_not_hide_backend_read_capacity_refusal() {
 
 ```bash
 CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime --features streaming --test streaming_checkpoint_backend
+CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime --features streaming --doc
 ```
 
 - [ ] **Step 3: Implement the minimal reference backend**
@@ -1462,6 +1640,72 @@ struct StorageCommitBundle {
 struct BudgetedStoredObject {
     bytes: Bytes,
     _storage_bundle: Rc<StorageCommitBundle>,
+}
+
+async fn prepare_result_partitions(
+    &mut self,
+    partitions: &mut Vec<ResultPartition>,
+) -> Result<PreparedResultEpoch, CheckpointError> {
+    self.validate_result_partitions(partitions.as_slice())?;
+    let plan = CheckedResultStagePlan::from_partitions(partitions)?;
+    let prepared_lease = self
+        .prepared_index_budget
+        .acquire(plan.descriptor_items, plan.descriptor_bytes)
+        .await
+        .map_err(map_prepared_index_budget_error)?;
+    let summary_lease = self
+        .result_summary_budget
+        .acquire(plan.descriptor_items, plan.descriptor_bytes)
+        .await
+        .map_err(map_result_summary_budget_error)?;
+    self.install_result_partitions(partitions, plan, prepared_lease, summary_lease)
+}
+
+fn install_result_partitions(
+    &mut self,
+    partitions: &mut Vec<ResultPartition>,
+    plan: CheckedResultStagePlan,
+    prepared_lease: BudgetLease,
+    summary_lease: BudgetLease,
+) -> Result<PreparedResultEpoch, CheckpointError> {
+    let prepared_descriptors = partitions
+        .iter()
+        .map(|partition| partition.descriptor().clone())
+        .collect::<Vec<_>>()
+        .into_boxed_slice();
+    let summary_descriptors = prepared_descriptors.to_vec().into_boxed_slice();
+    let prepared_descriptors = BudgetedResultDescriptors::new(
+        prepared_descriptors,
+        prepared_lease,
+    )?;
+    let summary_descriptors = BudgetedResultDescriptors::new(
+        summary_descriptors,
+        summary_lease,
+    )?;
+    let prepared_summary = PreparedResultEpoch::new(
+        plan.index_root,
+        summary_descriptors,
+        plan.item_count,
+        plan.byte_length,
+    )?;
+
+    let mut payloads = Vec::with_capacity(plan.descriptor_items);
+    let inputs = std::mem::take(partitions);
+    for partition in inputs {
+        let (budgeted_descriptor, payload) = partition.into_parts();
+        let (input_descriptor, input_lease) = budgeted_descriptor.into_backend_parts();
+        payloads.push(payload);
+        drop(input_descriptor);
+        drop(input_lease);
+    }
+    self.staged_results = Some(StagedResultEpoch {
+        index_root: plan.index_root,
+        descriptors: prepared_descriptors,
+        payloads,
+        item_count: plan.item_count,
+        byte_length: plan.byte_length,
+    });
+    Ok(prepared_summary)
 }
 
 fn compare_expected(
@@ -1509,7 +1753,8 @@ side-effect-free.
 
 Run Step 2. Expected: atomic participant+result publication, same-run stale-writer
 refusal, cross-run independence, empty-generation run binding, transaction/result
-run mismatch refusal, immutable read verification, and RAII abort pass.
+run mismatch refusal, cancellation-safe retryable result staging, immutable read
+authority verification, DTO privacy doctests, and RAII abort pass.
 
 - [ ] **Step 5: Commit**
 
@@ -1800,7 +2045,7 @@ let mut transaction = self.backend.begin_generation(
 for view in views {
     transaction.stage_participant(view).await?;
 }
-transaction.stage_results(result_partitions).await?;
+transaction.stage_results(&mut result_partitions).await?;
 let committed = transaction.commit(self.metadata(&barrier)?).await?;
 self.notify_committed(&committed).await?;
 Ok(committed)
@@ -2129,6 +2374,7 @@ pub struct StreamingProvenanceProjection {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ResultPlaneError {
     MembershipConflict { membership_root: ContentDigest },
+    PartitionDescriptorCapacityExceeded { items: u64, bytes: u64 },
     ProvisionalCapacityExceeded { items: u64, bytes: u64 },
     InvalidCoverage,
     SegmentVerification,
@@ -2137,6 +2383,18 @@ pub enum ResultPlaneError {
 ```
 
 Implement `Display` and `std::error::Error` directly; errors expose stable lowercase reason codes through a separate `code()` method.
+
+Task 6A's `EpochResultCoordinator` also owns a producer-side
+`StreamingResourceBudget` for singular partition descriptors; it is distinct
+from every private backend budget. Before returning a `ResultPartition`, it
+acquires one item and the exact checked inline-descriptor-plus-projection bytes,
+constructs `BudgetedResultDescriptor`, and installs that wrapper with the
+separately budgeted payload. Producer refusal maps to
+`PartitionDescriptorCapacityExceeded { items, bytes }`; it must not be mislabeled
+as backend, participant-state, storage, or provisional-hole capacity. The
+wrapper remains charged while Task 5E carries partitions into Task 5B staging
+and is released only after Task 5B has acquired both aggregate descriptor
+authorities.
 
 - [ ] **Step 1: Write representative RED tests**
 

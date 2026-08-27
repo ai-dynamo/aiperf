@@ -41,12 +41,12 @@ both dimensions and both failure classes for all five kinds.
 
 ## Move-only DTO ruling
 
-Every lease-bearing result wrapper has private fields. `ResultPartition`,
-`PreparedResultEpoch`, `BudgetedResultDescriptors`, `ResultSegmentReader`, and
-`ResultIndexPage` expose checked construction and borrow-only accessors. Where
-an enclosing wrapper has a consuming `into_parts`, it returns the allocation
-and its authority together. No public field or accessor returns a `BudgetLease`
-independently.
+Every lease-bearing result wrapper has private fields.
+`BudgetedResultDescriptor`, `ResultPartition`, `PreparedResultEpoch`,
+`BudgetedResultDescriptors`, `ResultSegmentReader`, and `ResultIndexPage` expose
+checked construction and borrow-only accessors. Where an enclosing wrapper has
+a consuming `into_parts`, it returns the allocation and its authority together.
+No public field or accessor returns a `BudgetLease` independently.
 `BudgetedResultDescriptors` itself exposes no consuming separation method; the
 enclosing wrappers move it intact.
 
@@ -55,6 +55,27 @@ charges its boxed inline allocation plus every nested projection byte, using
 checked arithmetic. The descriptor slice and exact lease remain inseparable
 until the wrapper is consumed. Custom deserialization routes through the
 checked constructor, so an empty projection cannot bypass the public invariant.
+
+Every input `ResultPartition` owns one private singular
+`BudgetedResultDescriptor`; its exact one-item charge includes the inline
+descriptor and compact projection allocation. Public partition consumption
+returns that wrapper intact with the separately budgeted payload. Only a
+crate-private backend transfer may extract the descriptor and input lease.
+`stage_results` validates and totals inputs by borrow, acquires the complete
+backend prepared-index and returned-summary reservations first, then moves
+charged descriptor copies into backend-owned exact-capacity storage and the
+separately leased returned summary while the input vector remains intact. Only
+after every checked construction succeeds does one infallible synchronous phase
+drain the inputs, move their payloads, and drop their original descriptor
+authorities. Cancelling either wait or failing checked construction leaves the
+transaction and inputs unchanged and retryable. No fallible operation or await
+is permitted after the vector or transaction begins to mutate, nor after commit
+publication begins.
+
+Task 6A owns the distinct producer-side singular-descriptor budget and maps its
+refusal to `ResultPlaneError::PartitionDescriptorCapacityExceeded`; it neither
+borrows Task 5B's private budgets nor mislabels the charge as provisional
+capacity.
 
 `ResultSegmentReader` retains only its separately budgeted payload. It borrows
 the caller's descriptor while verifying length and digest but does not clone or
@@ -99,6 +120,13 @@ backend budget snapshots, and authoritative generation unchanged.
 - Moving or borrowing a lease independently from any lease-bearing result
   wrapper does not type-check; compact nested projection bytes participate in
   exact descriptor-summary charging.
+- Varying only an input partition's projection length changes its singular
+  descriptor charge by the exact byte delta; public consuming access cannot
+  separate the descriptor allocation from that charge, and staging acquires the
+  aggregate prepared-index and returned-summary authorities before releasing it.
+- Cancelling while returned-summary capacity is blocked releases the already
+  acquired prepared-index lease, leaves the transaction and caller vector
+  unchanged, and permits the same vector to succeed on retry.
 - Empty `ResultProjectionId` text is rejected both by direct construction and
   deserialization, and projection length contributes exactly to index-page read
   charging.
@@ -111,6 +139,14 @@ backend budget snapshots, and authoritative generation unchanged.
   `BackendBudget { Read, ByteCapacity }` without advancing the cursor.
 - Foreign-root, unreachable-block, and out-of-range cursors are rejected as
   object verification before either page-limit or backend-budget errors.
+- Result objects proven present under a superseded generation and another
+  logical run remain unreadable from the current generation, with no read-budget
+  mutation; mere content-addressed presence is not authority.
+
+The privacy regressions live as `compile_fail` rustdoc directly on the public
+DTOs in `results.rs`; an integration-test comment is not executable coverage.
+Task 5B GREEN therefore includes `cargo test -p aiperf-runtime --features
+streaming --doc`.
 
 ## Ownership disposition
 
