@@ -149,6 +149,59 @@ fn runtime_artifact_rebooting_while_gated(
         .into_bytes()
 }
 
+/// Path to the conforming artifact-bound exporter child example binary.
+///
+/// `cargo test` builds every example of the crate under test, so the binary
+/// sits beside the integration-test binary's own target directory.
+fn exporter_fixture_child() -> PathBuf {
+    let mut path = std::env::current_exe().expect("integration test binary path is known");
+    path.pop();
+    if path.ends_with("deps") {
+        path.pop();
+    }
+    path.push("examples");
+    path.push("exporter_parity_fixture_child");
+    assert!(
+        path.is_file(),
+        "conforming exporter child example is not built at {}",
+        path.display()
+    );
+    path
+}
+
+fn runtime_artifact_with_exporter_child(label: &str, child: &Path) -> Vec<u8> {
+    let script = String::from_utf8(runtime_artifact(label)).expect("fixture script is UTF-8");
+    script
+        .replacen(
+            "set -eu\n",
+            &format!(
+                "set -eu\nif [ \"$AIPERF_PARITY_SCENARIO\" = exporter_100k ]; then exec '{child}'; fi\n",
+                child = child.display()
+            ),
+            1,
+        )
+        .into_bytes()
+}
+
+fn runtime_artifact_with_exporter_child_losing_affinity_once(
+    label: &str,
+    child: &Path,
+    marker: &Path,
+) -> Vec<u8> {
+    let script = String::from_utf8(runtime_artifact(label)).expect("fixture script is UTF-8");
+    script
+        .replacen(
+            "set -eu\n",
+            &format!(
+                "set -eu\nif [ \"$AIPERF_PARITY_SCENARIO\" = exporter_100k ]; then if [ \"$AIPERF_PARITY_PAIR_ID\" = pair-00 ] && [ ! -e '{marker}' ]; then touch '{marker}'; sleep 0.05; /usr/bin/taskset -pc 8 $$ >/dev/null; sleep 0.1; fi; exec '{child}'; fi\n",
+                marker = marker.display(),
+                child = child.display()
+            ),
+            1,
+        )
+        .into_bytes()
+}
+
 #[derive(Clone, Copy)]
 enum FakeExporterMode {
     AcquisitionFailure,
@@ -1058,4 +1111,176 @@ fn three_invocations_reconstruct_every_prior_member_from_retained_evidence() {
             assert!(member["stderr"]["blake3"].is_string());
         }
     }
+}
+
+/// Exporter nanoseconds per record every conforming member reports.
+///
+/// The frozen exporter budget is 30 seconds over the contract's 1,600,000
+/// processed records, and the child divides that budget evenly across its 16
+/// repetitions, so both members land on exactly this rate.
+const EXPECTED_EXPORTER_NS_PER_RECORD: f64 = 30_000_000_000.0 / 1_600_000.0;
+
+/// Complete-matrix decision when every member completes and both variants
+/// report identical metrics.
+const EXPECTED_CONFORMING_DECISION: ControlledAttemptDecision = ControlledAttemptDecision::ValidPass;
+
+/// Retained pairs of the frozen inventory: twelve scenarios of thirty pairs.
+const EXPECTED_CONFORMING_PAIRS: usize = 360;
+
+/// Members the controller executes for the complete matrix.
+const EXPECTED_CONFORMING_MEMBERS: usize = 840;
+
+/// Retained pairs of the single exporter scenario.
+const EXPECTED_EXPORTER_PAIRS: usize = 30;
+
+fn install_artifacts(fixture: &Fixture) {
+    write_executable(
+        &fixture.static_source.join("artifact-source"),
+        &fixture.static_artifact,
+    );
+    write_executable(
+        &fixture.dynamic_source.join("artifact-source"),
+        &fixture.dynamic_artifact,
+    );
+}
+
+fn assert_authoritative_exporter_pair(
+    record: &aiperf_bench_tools::plugin_stats::ControlledExporterPairRecord,
+) {
+    assert_eq!(record.scenario, "exporter_100k");
+    assert_eq!(record.experiment_attempt, 1);
+    assert!(record.receiver_protocol.is_none());
+    for (summary, member_record, member) in [
+        (
+            &record.static_member,
+            &record.static_record,
+            ExporterMember::Static,
+        ),
+        (
+            &record.dynamic_member,
+            &record.dynamic_record,
+            ExporterMember::Dynamic,
+        ),
+    ] {
+        assert_eq!(member_record.member, member);
+        assert_eq!(member_record.pair_id, record.pair_id);
+        assert_eq!(summary.repetitions.len(), 16);
+        assert_eq!(summary.active_duration_nanoseconds, 30_000_000_000);
+        assert_eq!(summary.processed_records, 1_600_000);
+        assert_eq!(summary.retained_artifact_records, 100_000);
+        assert!(
+            (summary.exporter_nanoseconds_per_record - EXPECTED_EXPORTER_NS_PER_RECORD).abs()
+                < f64::EPSILON,
+            "unexpected exporter rate: {}",
+            summary.exporter_nanoseconds_per_record
+        );
+    }
+    // Parity is defined over the comparison observable, so both members must
+    // have published byte-identical artifact trees.
+    assert_eq!(
+        record.static_member.comparison_observable_blake3,
+        record.dynamic_member.comparison_observable_blake3
+    );
+}
+
+#[test]
+fn conforming_artifact_bound_exporter_children_are_admitted_as_authoritative_samples() {
+    let mut fixture = Fixture::new();
+    let child = exporter_fixture_child();
+    fixture.static_artifact = runtime_artifact_with_exporter_child("static authority fixture", &child);
+    fixture.dynamic_artifact =
+        runtime_artifact_with_exporter_child("dynamic authority fixture", &child);
+    install_artifacts(&fixture);
+    let build_report = fixture.build_report();
+
+    let report = run_controlled_runtime_with_ledger_v1(
+        &build_report,
+        &fixture._directory.path().join("exporter-attempts.jsonl"),
+        None,
+    )
+    .expect("a conforming exporter child completes the controlled matrix");
+
+    assert_eq!(report.attempt_history.len(), 1);
+    assert_eq!(report.decision, EXPECTED_CONFORMING_DECISION);
+    assert_eq!(report.scenario_count, 12);
+    assert_eq!(report.retained_pair_count, EXPECTED_CONFORMING_PAIRS);
+    assert_eq!(report.executed_member_count, EXPECTED_CONFORMING_MEMBERS);
+    assert_eq!(
+        report.exporter_pair_history.len(),
+        EXPECTED_EXPORTER_PAIRS
+    );
+    for record in &report.exporter_pair_history {
+        assert_authoritative_exporter_pair(record);
+    }
+    // Every exporter pair the controller retained is one seeded pair of the
+    // exporter scenario, recorded exactly once.
+    let mut pair_ids = report
+        .exporter_pair_history
+        .iter()
+        .map(|record| record.pair_id.clone())
+        .collect::<Vec<_>>();
+    pair_ids.sort();
+    pair_ids.dedup();
+    assert_eq!(pair_ids.len(), report.exporter_pair_history.len());
+    assert!(report.statistical_report.is_some());
+}
+
+#[test]
+fn an_exporter_pair_that_lost_its_affinity_is_replaced_rather_than_retained() {
+    let mut fixture = Fixture::new();
+    let child = exporter_fixture_child();
+    let marker = fixture._directory.path().join("exporter-affinity-loss-once");
+    fixture.static_artifact = runtime_artifact_with_exporter_child_losing_affinity_once(
+        "static authority fixture",
+        &child,
+        &marker,
+    );
+    fixture.dynamic_artifact = runtime_artifact_with_exporter_child_losing_affinity_once(
+        "dynamic authority fixture",
+        &child,
+        &marker,
+    );
+    install_artifacts(&fixture);
+    let build_report = fixture.build_report();
+
+    let report = run_controlled_runtime_with_ledger_v1(
+        &build_report,
+        &fixture._directory.path().join("exporter-affinity-attempts.jsonl"),
+        None,
+    )
+    .expect("controller completes after one exporter infrastructure replacement");
+
+    let attempts = report
+        .raw_pair_history
+        .iter()
+        .filter(|record| record.raw.scenario == "exporter_100k" && record.raw.pair_id == "pair-00")
+        .collect::<Vec<_>>();
+    // An admitted artifact-bound exporter member does not launder an
+    // infrastructure disturbance into an authoritative parity sample: the
+    // disturbed attempt is a replacement in the same seeded member order.
+    assert_eq!(attempts.len(), 2);
+    assert_eq!(attempts[0].derived_reason, "affinity_loss");
+    assert!(matches!(
+        attempts[0].decision,
+        PairAttemptDecision::ReplaceWholePair {
+            replacement_ordinal: 1,
+            ..
+        }
+    ));
+    assert_eq!(attempts[0].raw.members.len(), 2);
+    assert_eq!(attempts[0].raw.member_order, attempts[1].raw.member_order);
+    assert_eq!(attempts[1].decision, PairAttemptDecision::RetainPair);
+
+    let retained = report
+        .exporter_pair_history
+        .iter()
+        .filter(|record| record.pair_id == "pair-00")
+        .collect::<Vec<_>>();
+    assert_eq!(retained.len(), 1);
+    assert_authoritative_exporter_pair(retained[0]);
+    assert_eq!(report.decision, EXPECTED_CONFORMING_DECISION);
+    assert_eq!(
+        report.exporter_pair_history.len(),
+        EXPECTED_EXPORTER_PAIRS
+    );
 }
