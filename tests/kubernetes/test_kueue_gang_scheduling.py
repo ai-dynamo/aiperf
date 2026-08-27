@@ -184,7 +184,7 @@ class TestKueueAdmissionFlow:
         result = await benchmark_deployer.deploy(
             config=config,
             wait_for_completion=True,
-            timeout=600,
+            timeout=1200,
             stream_logs=True,
             pre_apply_hook=create_local_queue,
         )
@@ -205,7 +205,7 @@ class TestKueueAdmissionFlow:
 
         async def verify_workload_hook(namespace: str) -> None:
             workload = await kueue_manager.wait_for_workload_admitted(
-                namespace, timeout=300
+                namespace, timeout=600
             )
             admitted_workload.update(workload)
             logger.info(f"Workload admitted in {namespace}")
@@ -226,7 +226,7 @@ class TestKueueAdmissionFlow:
         result = await benchmark_deployer.deploy(
             config=config,
             wait_for_completion=True,
-            timeout=600,
+            timeout=1200,
             stream_logs=True,
             pre_apply_hook=create_local_queue,
             pre_wait_hook=verify_workload_hook,

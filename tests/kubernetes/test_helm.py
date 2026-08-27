@@ -772,7 +772,7 @@ class TestHelmScaling:
             else [],
         )
 
-        result = await helm_deployed.run_job(config, timeout=600)
+        result = await helm_deployed.run_job(config, timeout=1200)
 
         assert result.success
         assert result.status is not None

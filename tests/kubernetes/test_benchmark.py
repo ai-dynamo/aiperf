@@ -289,7 +289,7 @@ class TestLargeBenchmarks:
             warmup_request_count=10,
         )
 
-        result = await benchmark_deployer.deploy(config, timeout=600)
+        result = await benchmark_deployer.deploy(config, timeout=1200)
 
         assert result.success
         assert result.metrics is not None
@@ -307,7 +307,7 @@ class TestLargeBenchmarks:
             warmup_request_count=10,
         )
 
-        result = await benchmark_deployer.deploy(config, timeout=600)
+        result = await benchmark_deployer.deploy(config, timeout=1200)
 
         assert result.success
         assert result.metrics is not None

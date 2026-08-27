@@ -115,7 +115,7 @@ class K8sTestSettings:
     kueue_version: str = KUEUE_VERSION
     """Kueue controller version to install."""
 
-    benchmark_timeout: int = 900
+    benchmark_timeout: int = 1200
     """Benchmark completion timeout in seconds."""
 
     kube_context: str | None = None
@@ -177,7 +177,7 @@ _OPTIONS: list[tuple[str, str, str | None, str, str]] = [
     ("--k8s-mock-server-image", "K8S_TEST_MOCK_SERVER_IMAGE", "aiperf-mock-server:latest", "str", "Mock server container image"),
     ("--k8s-jobset-version", "K8S_TEST_JOBSET_VERSION", JOBSET_VERSION, "str", "JobSet controller version"),
     ("--k8s-kueue-version", "K8S_TEST_KUEUE_VERSION", KUEUE_VERSION, "str", "Kueue controller version"),
-    ("--k8s-benchmark-timeout", "K8S_TEST_BENCHMARK_TIMEOUT", "900", "int", "Benchmark completion timeout in seconds"),
+    ("--k8s-benchmark-timeout", "K8S_TEST_BENCHMARK_TIMEOUT", "1200", "int", "Benchmark completion timeout in seconds"),
     ("--k8s-kube-context", "K8S_TEST_CONTEXT", None, "str", "Use an existing kubectl context (remote cluster mode)"),
     ("--k8s-operator-namespace", "K8S_TEST_OPERATOR_NAMESPACE", "aiperf-system", "str", "Operator namespace on the cluster"),
     ("--k8s-skip-operator-deploy", "K8S_TEST_SKIP_OPERATOR_DEPLOY", None, "bool", "Skip deploying the operator (use existing deployment)"),

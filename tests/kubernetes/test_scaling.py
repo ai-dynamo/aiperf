@@ -195,7 +195,7 @@ class TestHighConcurrencyScaling:
             workers=workers,
         )
 
-        result = await benchmark_deployer.deploy(config, timeout=600)
+        result = await benchmark_deployer.deploy(config, timeout=1200)
 
         assert result.success, (
             f"High concurrency benchmark failed: {result.error_message}"

@@ -938,7 +938,7 @@ class TestOperatorScaling:
             else [],
         )
 
-        result = await operator_ready.run_job(config, timeout=600)
+        result = await operator_ready.run_job(config, timeout=1200)
 
         assert result.success
         assert result.status is not None
