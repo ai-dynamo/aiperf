@@ -54,7 +54,7 @@ async def test_c1_delete_aiperfjob_mid_ramp(
             name,
             phases=("Running",),
             current_phase="profiling",
-            timeout=180.0,
+            timeout=300.0,  # stressed kind cluster after prior chaos tests can exceed 180s
         )
 
         await chaos_injector.delete_cr_no_wait(operator_job_namespace, name)
@@ -106,7 +106,7 @@ async def test_c3_rapid_double_delete_is_idempotent(
             name,
             phases=("Running",),
             current_phase="profiling",
-            timeout=180.0,
+            timeout=300.0,  # stressed kind cluster after prior chaos tests can exceed 180s
         )
 
         first_rc, second_rc = await chaos_injector.delete_cr_twice(

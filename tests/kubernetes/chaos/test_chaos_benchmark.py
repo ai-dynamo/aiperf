@@ -147,7 +147,7 @@ async def test_b1_mock_server_500s_mid_run(
             name,
             phases=("Running",),
             current_phase="profiling",
-            timeout=180.0,
+            timeout=300.0,  # stressed kind cluster after prior chaos tests can exceed 180s
         )
 
         await mock_server_injector.patch_env(
@@ -217,7 +217,7 @@ async def test_b2_mock_server_restart_mid_run(
             name,
             phases=("Running",),
             current_phase="profiling",
-            timeout=180.0,
+            timeout=300.0,  # stressed kind cluster after prior chaos tests can exceed 180s
         )
 
         await mock_server_injector.delete_pod(MOCK_SERVER_NAMESPACE)

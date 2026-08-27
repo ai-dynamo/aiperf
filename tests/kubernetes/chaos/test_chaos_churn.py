@@ -86,7 +86,7 @@ async def test_c10_rapid_create_delete_recreate_same_name(
             operator_job_namespace,
             name,
             phases=("Initializing", "Running"),
-            timeout=180.0,
+            timeout=300.0,  # stressed kind cluster after prior chaos tests can exceed 180s
         )
 
         delete_wall_time = time.time()

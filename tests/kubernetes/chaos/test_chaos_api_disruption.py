@@ -119,7 +119,7 @@ async def test_c15_pause_apiserver_30s_recovers(
             name,
             phases=("Running",),
             current_phase="profiling",
-            timeout=180.0,
+            timeout=300.0,  # stressed kind cluster after prior chaos tests can exceed 180s
         )
 
         await toxiproxy_injector.add_toxic(
@@ -214,7 +214,7 @@ async def test_c16_block_operator_controller_http_falls_back(
             name,
             phases=("Running",),
             current_phase="profiling",
-            timeout=180.0,
+            timeout=300.0,  # stressed kind cluster after prior chaos tests can exceed 180s
         )
 
         # Blackhole every subsequent controller HTTP call. The sidecar-result

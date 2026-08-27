@@ -319,8 +319,8 @@ async def _get_worker_pod_uids(
 
 
 @pytest.mark.timeout(
-    720
-)  # 180(Running)+180(live_metrics)+60(terminated)+240(Failed)=660s; 720 gives margin
+    900
+)  # 300(Running)+180(live_metrics)+60(terminated)+240(Failed)=780s; 900 gives margin
 async def test_c6_kill_controller_container_salvages(
     operator_ready_shared_pid: OperatorDeployer,
     chaos_injector: ChaosInjector,
@@ -346,7 +346,7 @@ async def test_c6_kill_controller_container_salvages(
             name,
             phases=("Running",),
             current_phase="profiling",
-            timeout=180.0,
+            timeout=300.0,  # stressed kind cluster after prior chaos tests can exceed 180s
         )
 
         # The salvage path this test exercises copies CR live metrics into
@@ -426,7 +426,9 @@ async def test_c6_kill_controller_container_salvages(
         await _force_delete_cr(kubectl, operator_job_namespace, name)
 
 
-@pytest.mark.timeout(750)
+@pytest.mark.timeout(
+    960
+)  # 300(Running)+60(replacement)+480(Completed)=840s; 960 gives margin
 async def test_c7_kill_worker_pod_mid_benchmark(
     operator_ready_shared_pid: OperatorDeployer,
     chaos_injector: ChaosInjector,
@@ -453,7 +455,7 @@ async def test_c7_kill_worker_pod_mid_benchmark(
             name,
             phases=("Running",),
             current_phase="profiling",
-            timeout=180.0,
+            timeout=300.0,  # stressed kind cluster after prior chaos tests can exceed 180s
         )
 
         workers_before = await _get_worker_pod_uids(
@@ -505,7 +507,7 @@ async def test_c7_kill_worker_pod_mid_benchmark(
         await _force_delete_cr(kubectl, operator_job_namespace, name)
 
 
-@pytest.mark.timeout(450)  # 180(Running)+180(terminal)=360s; 450 gives margin
+@pytest.mark.timeout(600)  # 300(Running)+180(terminal)=480s; 600 gives margin
 async def test_c8_kill_event_bus_sidecar(
     operator_ready_shared_pid: OperatorDeployer,
     chaos_injector: ChaosInjector,
@@ -538,7 +540,7 @@ async def test_c8_kill_event_bus_sidecar(
             name,
             phases=("Running",),
             current_phase="profiling",
-            timeout=180.0,
+            timeout=300.0,  # stressed kind cluster after prior chaos tests can exceed 180s
         )
 
         pod = await chaos_injector.get_controller_pod_name(operator_job_namespace, name)
@@ -571,8 +573,8 @@ async def test_c8_kill_event_bus_sidecar(
 
 
 @pytest.mark.timeout(
-    720
-)  # 180(Running)+180(claim)+45(restart)+240(Completed)=645s; 720 gives margin
+    900
+)  # 300(Running)+180(claim)+45(restart)+240(Completed)=765s; 900 gives margin
 async def test_c9_kill_results_sidecar_mid_fetch(
     operator_ready_shared_pid: OperatorDeployer,
     chaos_injector: ChaosInjector,

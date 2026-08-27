@@ -255,8 +255,8 @@ async def test_h1_install_job_uninstall_reinstall_is_clean(
 
 
 @pytest.mark.timeout(
-    720
-)  # install(3m) + profiling-wait(3m) + upgrade(3m) + observe + completion
+    1020
+)  # install(3m) + profiling-wait(5m) + upgrade(3m) + observe(20s) + completion(4m)
 async def test_h2_upgrade_with_inflight_job_preserves_cr(
     kubectl: KubectlClient,
     helm_client: HelmClient,
@@ -303,7 +303,7 @@ async def test_h2_upgrade_with_inflight_job_preserves_cr(
             cr_name,
             phases=("Running",),
             current_phase="profiling",
-            timeout=180.0,
+            timeout=300.0,  # stressed kind cluster after prior chaos tests can exceed 180s
         )
 
         # Trivial no-op values tweak: bump monitor interval. This forces
