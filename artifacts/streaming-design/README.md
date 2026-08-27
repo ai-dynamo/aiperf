@@ -30,6 +30,10 @@ Documents:
   plan-set commit and its three independent approval gates.
 - `implementation-progress.md` is the durable task/merge/evidence ledger while
   the approved plan is being implemented.
+- `benchmark-security-scope-course-correction.md` narrows generation one to
+  reliability-oriented integrity and real external trust boundaries; it
+  defers encrypted closed-loop session persistence and removes direct crypto
+  ownership from base streaming.
 
 Implementation and review records remain in this directory while the normative
 design is implemented through the linked durable plan.

@@ -34,6 +34,7 @@ SPDX-License-Identifier: Apache-2.0
 | Task 1D — object-safe streaming contracts | Complete | Task head `84ad2da32e` rebased as `90a88e04fe` plus final EOF fix; merge `1264653069`; root batch passed contracts 22/22, streaming units 16/16, doctests 16/16, clippy, and scoped rustfmt; spec and Rust-quality review approved |
 | Task 1D-R budget primitives | Complete | Task head `e2e4d77703`; merge `979f7d4ff0`; root batch passed 74 integration tests, 16 streaming units, 16 doctests, clippy, and scoped rustfmt; spec and Rust-quality review approved |
 | Task 1D-R reliability policy | Complete | Task heads `66d4274946` and `472848142d`; merge `2757ca7e3e`; root batch passed contracts 22/22, policy 9/9, reliability units 8/8, streaming doctests 22/22, clippy, scoped rustfmt, and diff checks; spec and Rust-quality review approved |
+| Benchmark security-scope correction | Complete | Normative overlay `benchmark-security-scope-course-correction.md` approved; generation one retains BLAKE3 identity/integrity and existing provider/cellular boundaries, while encrypted resumable closed-loop state and direct base-streaming crypto dependencies are deferred |
 
 Baseline note: the full feature-off runtime suite reached execution after the
 repair and reported 1907 passing tests plus one pre-existing version-fixture
@@ -83,6 +84,14 @@ v3 domain and binds the raw logical-run bytes; participant descriptors remain
 content-addressed and deliberately run-neutral.
 
 ## Implementation rulings
+
+- Generation one is a reliability-first benchmarking system, not a general
+  encrypted state platform. Recorded-input replay remains restartable; encrypted
+  target-closed-loop persistence, key resolution, XChaCha envelopes, and
+  zeroization are deferred. BLAKE3 remains for deterministic identity,
+  corruption/conflict detection, CAS lineage, and truthful restart. Cost if
+  wrong: target-derived closed-loop state cannot resume across process loss
+  until a separately justified non-default capability is designed.
 
 - Parallel worktrees may edit concurrently, but Cargo invocations against the
   shared `/mnt/4tb/aiperf-streaming-target` are serialized and run only after
