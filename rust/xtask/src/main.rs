@@ -5,7 +5,7 @@
 
 use std::path::PathBuf;
 
-use aiperf_xtask::abi_closure::{Baseline, Seeds, compute, workspace_root};
+use aiperf_xtask::abi_closure::{Baseline, Seeds, compute, compute_in, workspace_root};
 use anyhow::{Context, Result, bail};
 
 fn main() -> Result<()> {
@@ -16,9 +16,12 @@ fn main() -> Result<()> {
 
     match command.as_str() {
         "abi-closure" => {
-            let (seeds_path, is_json) = closure_options(arguments)?;
+            let (seeds_path, workspace, is_json) = closure_options(arguments)?;
             let seeds = Seeds::load(seeds_path)?;
-            let closure = compute(&seeds)?;
+            let closure = match workspace {
+                Some(workspace) => compute_in(&workspace, &seeds)?,
+                None => compute(&seeds)?,
+            };
             let baseline = Baseline::from_closure(&closure);
             if is_json {
                 println!("{}", serde_json::to_string(&baseline)?);
@@ -56,8 +59,11 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn closure_options(arguments: impl Iterator<Item = String>) -> Result<(PathBuf, bool)> {
+fn closure_options(
+    arguments: impl Iterator<Item = String>,
+) -> Result<(PathBuf, Option<PathBuf>, bool)> {
     let mut seeds = PathBuf::from("xtask/abi-seeds.toml");
+    let mut workspace = None;
     let mut is_json = false;
     let mut arguments = arguments.peekable();
     while let Some(argument) = arguments.next() {
@@ -69,9 +75,16 @@ fn closure_options(arguments: impl Iterator<Item = String>) -> Result<(PathBuf, 
                         .context("--seeds requires a path argument")?,
                 );
             }
+            "--workspace" => {
+                workspace = Some(PathBuf::from(
+                    arguments
+                        .next()
+                        .context("--workspace requires a path argument")?,
+                ));
+            }
             "--json" => is_json = true,
             other => bail!("unknown abi-closure option {other:?}"),
         }
     }
-    Ok((seeds, is_json))
+    Ok((seeds, workspace, is_json))
 }

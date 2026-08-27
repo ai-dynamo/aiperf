@@ -107,6 +107,14 @@ pub fn workspace_root() -> PathBuf {
 /// Compute the closure by breadth-first traversal from the configured seeds.
 pub fn compute(seeds: &Seeds) -> Result<Closure> {
     let workspace = workspace_root();
+    compute_in(&workspace, seeds)
+}
+
+/// Compute the closure for an explicitly selected Cargo workspace.
+pub fn compute_in(workspace: &Path, seeds: &Seeds) -> Result<Closure> {
+    if !workspace.join("Cargo.toml").is_file() {
+        bail!("ABI workspace {} has no Cargo.toml", workspace.display());
+    }
     let rustdoc = RustdocIndex::build(&workspace)?;
     let blocked: BTreeSet<&str> = seeds.blocked.iter().map(String::as_str).collect();
     let mut queue = VecDeque::new();
