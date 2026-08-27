@@ -23,8 +23,9 @@ use aiperf_runtime::streaming::{
         ValidatedCheckpointBackendConfig,
     },
     failure::{
-        AcquisitionFailureCode, DecodeFailureCode, OrderingFailureCode, OrdinaryStreamingFailure,
-        OrdinaryStreamingIssue, PlacementFailureCode, StableStreamingFailure, StreamFormatError,
+        AcquisitionFailureCode, ActionExecutionError, DecodeFailureCode, OrderingFailureCode,
+        OrdinaryStreamingFailure, OrdinaryStreamingIssue, PlacementFailureCode,
+        SessionCoordinatorError, SessionFailureCode, StableStreamingFailure, StreamFormatError,
         StreamSourceError, StreamingFailureStage, StreamingInputDomainIdentity,
         StreamingIssueClass, StreamingIssueOrderKey, StreamingIssueReportError,
         StreamingIssueReportStatus, StreamingIssueReporter, StreamingIssueReporterEndpoint,
@@ -197,13 +198,22 @@ fn checked_scope_order(
     scope: StreamingIssueScope,
     order: StreamingIssueOrderKey,
 ) -> Result<OrdinaryStreamingIssue, StreamingIssueValidationError> {
+    let failure = match &scope {
+        StreamingIssueScope::Session { .. } => OrdinaryStreamingFailure::Session(
+            SessionCoordinatorError::session(SessionFailureCode::MissingPredecessor),
+        ),
+        StreamingIssueScope::Action { .. } => OrdinaryStreamingFailure::Action(
+            ActionExecutionError::action(ActionFailureCode::Endpoint),
+        ),
+        _ => OrdinaryStreamingFailure::Format(StreamFormatError::decode(DecodeFailureCode::Syntax)),
+    };
     OrdinaryStreamingIssue::new(
         StreamRunIdentity::new(LogicalReplayRunId::from_bytes([21; 32])),
         scope,
         StreamingIssueClass::Permanent,
         ContentDigest::from_bytes([22; 32]),
         order,
-        OrdinaryStreamingFailure::Format(StreamFormatError::decode(DecodeFailureCode::Syntax)),
+        failure,
     )
 }
 

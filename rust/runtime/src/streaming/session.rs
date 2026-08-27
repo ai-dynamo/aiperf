@@ -11,7 +11,7 @@ use serde_json::value::RawValue;
 
 use super::{
     action::ActionExecutionEvent,
-    checkpoint::StreamingCheckpointParticipant,
+    checkpoint::{StreamRunIdentity, StreamingCheckpointParticipant},
     format::{SessionWatermark, StreamingFormatDescriptor},
     identity::{ContentDigest, SessionCausalFrontier},
     source::SourceSeal,
@@ -19,6 +19,45 @@ use super::{
 };
 
 pub use super::failure::{SessionCoordinatorError, SessionFailureCode};
+
+mod reliability_view_seal {
+    pub trait SessionQuarantineTombstoneView {}
+}
+
+/// Borrowed checked view of the session owner's retained quarantine tombstones.
+///
+/// Implementations are sealed to session-host child modules. An adapter cannot
+/// fabricate a detached tombstone map:
+///
+/// ```compile_fail
+/// # use aiperf_runtime::streaming::{
+/// #     checkpoint::StreamRunIdentity,
+/// #     identity::ContentDigest,
+/// #     session::SessionQuarantineTombstoneView,
+/// # };
+/// struct Forged;
+/// impl SessionQuarantineTombstoneView for Forged {
+///     fn run(&self) -> &StreamRunIdentity { unimplemented!() }
+///     fn tombstone_root(&self) -> ContentDigest { unimplemented!() }
+///     fn revision(&self) -> u64 { 0 }
+///     fn canonical_encoded_entries(&self) -> &[u8] { &[] }
+/// }
+/// ```
+pub trait SessionQuarantineTombstoneView:
+    reliability_view_seal::SessionQuarantineTombstoneView
+{
+    /// Borrow the logical run owning the retained tombstones.
+    fn run(&self) -> &StreamRunIdentity;
+
+    /// Return the content-addressed root of the retained tombstone map.
+    fn tombstone_root(&self) -> ContentDigest;
+
+    /// Return the monotonic checked view revision.
+    fn revision(&self) -> u64;
+
+    /// Borrow the canonical compact tombstone entries.
+    fn canonical_encoded_entries(&self) -> &[u8];
+}
 
 /// Immutable registry metadata for one session-program implementation.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]

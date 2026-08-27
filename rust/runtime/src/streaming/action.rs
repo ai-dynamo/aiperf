@@ -12,7 +12,7 @@ use serde_json::value::RawValue;
 
 use super::{
     budget::BudgetLease,
-    checkpoint::StreamingCheckpointParticipant,
+    checkpoint::{StreamRunIdentity, StreamingCheckpointParticipant},
     identity::{
         ActionAttemptId, ContentDigest, GlobalSequence, SessionOwnershipEpoch, StableActionId,
         StableSessionKey,
@@ -21,6 +21,99 @@ use super::{
 };
 
 pub use super::failure::{ActionExecutionError, ActionFailureCode, PlacementFailureCode};
+
+mod reliability_view_seal {
+    pub trait CheckedActionFailureTerminalEvidenceView {}
+    pub trait CheckedActionTerminalMembershipView {}
+    pub trait FrozenActionInventoryView {}
+}
+
+/// Borrowed checked evidence that one failed action attempt reached terminal.
+///
+/// Implementations are sealed to action-host child modules. An adapter cannot
+/// forge terminal evidence:
+///
+/// ```compile_fail
+/// # use aiperf_runtime::streaming::{
+/// #     action::CheckedActionFailureTerminalEvidenceView,
+/// #     checkpoint::StreamRunIdentity,
+/// #     identity::{ContentDigest, GlobalSequence, StableActionId},
+/// # };
+/// struct Forged;
+/// impl CheckedActionFailureTerminalEvidenceView for Forged {
+///     fn run(&self) -> &StreamRunIdentity { unimplemented!() }
+///     fn action_id(&self) -> StableActionId { unimplemented!() }
+///     fn sequence(&self) -> GlobalSequence { unimplemented!() }
+///     fn terminal_evidence_digest(&self) -> ContentDigest { unimplemented!() }
+/// }
+/// ```
+pub trait CheckedActionFailureTerminalEvidenceView:
+    reliability_view_seal::CheckedActionFailureTerminalEvidenceView
+{
+    /// Borrow the logical run owning the action.
+    fn run(&self) -> &StreamRunIdentity;
+
+    /// Return the stable logical action identity.
+    fn action_id(&self) -> StableActionId;
+
+    /// Return the dense host-assigned action sequence.
+    fn sequence(&self) -> GlobalSequence;
+
+    /// Return the digest of the checked terminal attempt evidence.
+    fn terminal_evidence_digest(&self) -> ContentDigest;
+}
+
+/// Checked terminal membership observed after the action owner has finalized it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ActionTerminalMembershipOutcomeView {
+    /// The action completed successfully.
+    Succeeded,
+    /// The action failed under one reporter-retained issue identity.
+    Failed {
+        /// Deterministic issue identity bound to terminal membership.
+        issue_id: ContentDigest,
+    },
+}
+
+/// Borrowed checked membership for one finalized action.
+///
+/// This trait is sealed to action-host child modules.
+pub trait CheckedActionTerminalMembershipView:
+    reliability_view_seal::CheckedActionTerminalMembershipView
+{
+    /// Borrow the logical run owning the terminal membership.
+    fn run(&self) -> &StreamRunIdentity;
+
+    /// Return the stable logical action identity.
+    fn action_id(&self) -> StableActionId;
+
+    /// Return the dense host-assigned action sequence.
+    fn sequence(&self) -> GlobalSequence;
+
+    /// Return the checked success or reporter-bound failure outcome.
+    fn outcome(&self) -> ActionTerminalMembershipOutcomeView;
+
+    /// Return the digest binding the complete terminal membership.
+    fn membership_digest(&self) -> ContentDigest;
+}
+
+/// Borrowed immutable inventory used to prove dense action gap closure.
+///
+/// This trait is sealed to action-host child modules.
+pub trait FrozenActionInventoryView: reliability_view_seal::FrozenActionInventoryView {
+    /// Borrow the logical run owning the frozen inventory.
+    fn run(&self) -> &StreamRunIdentity;
+
+    /// Return the greatest action sequence covered by the inventory.
+    fn through(&self) -> GlobalSequence;
+
+    /// Return the digest binding the frozen inventory membership.
+    fn membership_root(&self) -> ContentDigest;
+
+    /// Return whether the exact terminal membership is present.
+    fn contains_terminal(&self, sequence: GlobalSequence, membership_digest: ContentDigest)
+    -> bool;
+}
 
 /// Stable action schema selected during compatibility validation.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
