@@ -1358,6 +1358,20 @@ fn implemented_witness_validates_against_the_live_workspace() {
             .iter()
             .all(|package| metadata.packages.iter().any(|c| c.name == *package));
         if !present {
+            // A task may be mapped before its crates exist, which is the only
+            // legitimate reason to skip. A package that the reviewed matrix
+            // still projects but the workspace no longer contains is a shrinking
+            // workspace, not a future task, and must not skip silently.
+            for package in *packages {
+                assert!(
+                    !matrix
+                        .package_ownership
+                        .iter()
+                        .any(|row| row.package == *package),
+                    "Task {task} package {package} is projected by the ownership \
+                     matrix but absent from the live workspace"
+                );
+            }
             continue;
         }
         let witness = witness_from_live_metadata(&workspace, &metadata, *task, packages);
