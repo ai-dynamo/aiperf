@@ -9,12 +9,12 @@
 
 use std::any::Any;
 use std::collections::{BTreeMap, BTreeSet};
-use std::fmt::Debug;
+use std::fmt::{Debug, Display};
 use std::sync::Arc;
 
 use crate::endpoints::{
-    EndpointId, EndpointRegistry, RawEndpointConfig, RequestContentType, ResetKvCacheConfig,
-    ServerProfilerConfig,
+    EndpointDescriptor, EndpointId, EndpointRegistry, RawEndpointConfig, RequestContentType,
+    ResetKvCacheConfig, ServerProfilerConfig,
 };
 use crate::extensions::{
     AIPerfExtension, AIPerfRegistry, DuplicateName, ExtensionError, RegistryId,
@@ -41,6 +41,29 @@ use crate::engine::protocol_v2::{
     RunDiagnosticArtifactV2, RunResourceV2,
 };
 use crate::engine::sidecar_input::PreparedSidecarInputs;
+#[cfg(feature = "streaming")]
+use crate::streaming::{
+    action::{
+        ActionPlacement, ActionResultRetention, StreamingActionSinkDescriptor,
+        StreamingActionSinkFactory,
+    },
+    checkpoint_backend::{
+        CheckpointBackendPlacement, StreamingCheckpointBackendDescriptor,
+        StreamingCheckpointBackendFactory,
+    },
+    format::{
+        FormatProjection, FormatStateRetention, StreamingDatasetFormatFactory,
+        StreamingFormatDescriptor,
+    },
+    session::{
+        SessionClosureCapability, SessionPlacement, SessionStateRetention,
+        StreamingSessionProgramDescriptor, StreamingSessionProgramFactory,
+    },
+    source::{
+        StreamingDatasetSourceFactory, StreamingSourceDescriptor, StreamingSourceMode,
+        StreamingSourceRetention,
+    },
+};
 
 /// Clock family supplied by one prepared transport.
 #[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq, PartialOrd, Ord)]
@@ -696,6 +719,706 @@ impl AIPerfRegistry {
             selection.workload,
             &selection.transport_id,
         )
+    }
+
+    /// Register one streaming dataset source factory, rejecting duplicate IDs.
+    #[cfg(feature = "streaming")]
+    pub fn register_stream_source(
+        &mut self,
+        factory: Arc<dyn StreamingDatasetSourceFactory>,
+    ) -> Result<()> {
+        let id = checked_descriptor_id(factory.descriptor().id, "streaming source")?;
+        self.stream_sources
+            .insert(id.into_string(), factory)
+            .map_err(|DuplicateName(id)| anyhow!("duplicate streaming source ID {id:?}"))
+    }
+
+    /// Register one streaming format factory, rejecting duplicate IDs.
+    #[cfg(feature = "streaming")]
+    pub fn register_stream_format(
+        &mut self,
+        factory: Arc<dyn StreamingDatasetFormatFactory>,
+    ) -> Result<()> {
+        let id = checked_descriptor_id(factory.descriptor().id, "streaming format")?;
+        self.stream_formats
+            .insert(id.into_string(), factory)
+            .map_err(|DuplicateName(id)| anyhow!("duplicate streaming format ID {id:?}"))
+    }
+
+    /// Register one streaming session-program factory, rejecting duplicate IDs.
+    #[cfg(feature = "streaming")]
+    pub fn register_stream_session_program(
+        &mut self,
+        factory: Arc<dyn StreamingSessionProgramFactory>,
+    ) -> Result<()> {
+        let id = checked_descriptor_id(factory.descriptor().id, "streaming session program")?;
+        self.stream_session_programs
+            .insert(id.into_string(), factory)
+            .map_err(|DuplicateName(id)| anyhow!("duplicate streaming session program ID {id:?}"))
+    }
+
+    /// Register one streaming action-sink factory, rejecting duplicate IDs.
+    #[cfg(feature = "streaming")]
+    pub fn register_stream_action_sink(
+        &mut self,
+        factory: Arc<dyn StreamingActionSinkFactory>,
+    ) -> Result<()> {
+        let id = checked_descriptor_id(factory.descriptor().id, "streaming action sink")?;
+        self.stream_action_sinks
+            .insert(id.into_string(), factory)
+            .map_err(|DuplicateName(id)| anyhow!("duplicate streaming action sink ID {id:?}"))
+    }
+
+    /// Register one streaming checkpoint backend factory, rejecting duplicate IDs.
+    #[cfg(feature = "streaming")]
+    pub fn register_stream_checkpoint_backend(
+        &mut self,
+        factory: Arc<dyn StreamingCheckpointBackendFactory>,
+    ) -> Result<()> {
+        let id = checked_descriptor_id(factory.descriptor().id, "streaming checkpoint backend")?;
+        self.stream_checkpoint_backends
+            .insert(id.into_string(), factory)
+            .map_err(|DuplicateName(id)| {
+                anyhow!("duplicate streaming checkpoint backend ID {id:?}")
+            })
+    }
+
+    /// Resolve one registered streaming source factory by ID.
+    ///
+    /// Returns `None` for every identifier that is not compiled into this
+    /// distribution: there is no manifest scan, dynamic load, or fallback.
+    #[cfg(feature = "streaming")]
+    pub fn stream_source_factory(
+        &self,
+        id: &str,
+    ) -> Option<Arc<dyn StreamingDatasetSourceFactory>> {
+        self.stream_sources.get(id).cloned()
+    }
+
+    /// Resolve one registered streaming format factory by ID.
+    #[cfg(feature = "streaming")]
+    pub fn stream_format_factory(
+        &self,
+        id: &str,
+    ) -> Option<Arc<dyn StreamingDatasetFormatFactory>> {
+        self.stream_formats.get(id).cloned()
+    }
+
+    /// Resolve one registered streaming session-program factory by ID.
+    #[cfg(feature = "streaming")]
+    pub fn stream_session_program_factory(
+        &self,
+        id: &str,
+    ) -> Option<Arc<dyn StreamingSessionProgramFactory>> {
+        self.stream_session_programs.get(id).cloned()
+    }
+
+    /// Resolve one registered streaming action-sink factory by ID.
+    #[cfg(feature = "streaming")]
+    pub fn stream_action_sink_factory(
+        &self,
+        id: &str,
+    ) -> Option<Arc<dyn StreamingActionSinkFactory>> {
+        self.stream_action_sinks.get(id).cloned()
+    }
+
+    /// Resolve one registered streaming checkpoint backend factory by ID.
+    #[cfg(feature = "streaming")]
+    pub fn stream_checkpoint_backend_factory(
+        &self,
+        id: &str,
+    ) -> Option<Arc<dyn StreamingCheckpointBackendFactory>> {
+        self.stream_checkpoint_backends.get(id).cloned()
+    }
+
+    /// Return streaming source descriptors in deterministic normalized-ID order.
+    #[cfg(feature = "streaming")]
+    pub fn stream_source_descriptors(&self) -> Vec<&'static StreamingSourceDescriptor> {
+        self.stream_sources
+            .values()
+            .map(|factory| factory.descriptor())
+            .collect()
+    }
+
+    /// Return streaming format descriptors in deterministic normalized-ID order.
+    #[cfg(feature = "streaming")]
+    pub fn stream_format_descriptors(&self) -> Vec<&'static StreamingFormatDescriptor> {
+        self.stream_formats
+            .values()
+            .map(|factory| factory.descriptor())
+            .collect()
+    }
+
+    /// Return streaming session-program descriptors in deterministic order.
+    #[cfg(feature = "streaming")]
+    pub fn stream_session_program_descriptors(
+        &self,
+    ) -> Vec<&'static StreamingSessionProgramDescriptor> {
+        self.stream_session_programs
+            .values()
+            .map(|factory| factory.descriptor())
+            .collect()
+    }
+
+    /// Return streaming action-sink descriptors in deterministic order.
+    #[cfg(feature = "streaming")]
+    pub fn stream_action_sink_descriptors(&self) -> Vec<&'static StreamingActionSinkDescriptor> {
+        self.stream_action_sinks
+            .values()
+            .map(|factory| factory.descriptor())
+            .collect()
+    }
+
+    /// Return streaming checkpoint backend descriptors in deterministic order.
+    #[cfg(feature = "streaming")]
+    pub fn stream_checkpoint_backend_descriptors(
+        &self,
+    ) -> Vec<&'static StreamingCheckpointBackendDescriptor> {
+        self.stream_checkpoint_backends
+            .values()
+            .map(|factory| factory.descriptor())
+            .collect()
+    }
+
+    /// Enumerate every source × format × session × action-sink × transport
+    /// combination this frozen registry declares as supported.
+    ///
+    /// The declared-supported predicate is
+    /// [`StreamingCapabilityAgreement::validate`] itself; there is deliberately
+    /// no second compatibility rulebook to drift from it. Endpoint and
+    /// checkpoint-backend axes are not enumerated here because their selection
+    /// is authored per run rather than implied by the linked inventory.
+    #[cfg(feature = "streaming")]
+    pub fn declared_supported_cross_product(&self) -> Vec<StreamingCapabilitySelection> {
+        let mut selections = Vec::new();
+        for source in self.stream_source_descriptors() {
+            for format in self.stream_format_descriptors() {
+                for session in self.stream_session_program_descriptors() {
+                    for action_sink in self.stream_action_sink_descriptors() {
+                        for transport in self.transport_descriptors() {
+                            let selection = StreamingCapabilitySelection {
+                                source,
+                                format,
+                                session,
+                                action_sink,
+                                transport,
+                                endpoint: None,
+                                checkpoint_backend: None,
+                            };
+                            if StreamingCapabilityAgreement::validate(selection.descriptors())
+                                .is_ok()
+                            {
+                                selections.push(selection);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        selections
+    }
+}
+
+/// One fully selected streaming capability combination, descriptors only.
+///
+/// Every field is a frozen registry descriptor. The selection holds no
+/// configuration, no prepared object, no handle, and no owned bytes, so
+/// constructing or validating one cannot perform work.
+#[cfg(feature = "streaming")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct StreamingCapabilitySelection {
+    /// Selected streaming source implementation.
+    pub source: &'static StreamingSourceDescriptor,
+    /// Selected streaming format implementation.
+    pub format: &'static StreamingFormatDescriptor,
+    /// Selected streaming session program.
+    pub session: &'static StreamingSessionProgramDescriptor,
+    /// Selected streaming action-sink binding.
+    pub action_sink: &'static StreamingActionSinkDescriptor,
+    /// Selected protocol-v2 transport.
+    pub transport: &'static TransportDescriptor,
+    /// Optional selected endpoint dialect.
+    pub endpoint: Option<&'static EndpointDescriptor>,
+    /// Optional selected checkpoint backend.
+    pub checkpoint_backend: Option<&'static StreamingCheckpointBackendDescriptor>,
+}
+
+#[cfg(feature = "streaming")]
+impl StreamingCapabilitySelection {
+    /// Borrow this selection as the descriptor-only agreement input.
+    #[must_use]
+    pub const fn descriptors(&self) -> StreamingSelectedDescriptors {
+        StreamingSelectedDescriptors {
+            source: self.source,
+            format: self.format,
+            session: self.session,
+            action_sink: self.action_sink,
+            transport: self.transport,
+            endpoint: self.endpoint,
+            checkpoint_backend: self.checkpoint_backend,
+        }
+    }
+
+    /// Return the stable IDs of every selected descriptor.
+    #[must_use]
+    pub const fn ids(&self) -> StreamingSelectionIds {
+        self.descriptors().ids()
+    }
+}
+
+/// Descriptor-only input accepted by [`StreamingCapabilityAgreement::validate`].
+#[cfg(feature = "streaming")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct StreamingSelectedDescriptors {
+    /// Selected streaming source implementation.
+    pub source: &'static StreamingSourceDescriptor,
+    /// Selected streaming format implementation.
+    pub format: &'static StreamingFormatDescriptor,
+    /// Selected streaming session program.
+    pub session: &'static StreamingSessionProgramDescriptor,
+    /// Selected streaming action-sink binding.
+    pub action_sink: &'static StreamingActionSinkDescriptor,
+    /// Selected protocol-v2 transport.
+    pub transport: &'static TransportDescriptor,
+    /// Optional selected endpoint dialect.
+    pub endpoint: Option<&'static EndpointDescriptor>,
+    /// Optional selected checkpoint backend.
+    pub checkpoint_backend: Option<&'static StreamingCheckpointBackendDescriptor>,
+}
+
+#[cfg(feature = "streaming")]
+impl StreamingSelectedDescriptors {
+    /// Return the stable IDs of every selected descriptor.
+    #[must_use]
+    pub const fn ids(&self) -> StreamingSelectionIds {
+        StreamingSelectionIds {
+            source: self.source.id,
+            format: self.format.id,
+            session: self.session.id,
+            action_sink: self.action_sink.id,
+            transport: self.transport.id,
+            endpoint: match self.endpoint {
+                Some(endpoint) => Some(endpoint.id),
+                None => None,
+            },
+            checkpoint_backend: match self.checkpoint_backend {
+                Some(backend) => Some(backend.id),
+                None => None,
+            },
+        }
+    }
+}
+
+/// Stable IDs of one selected streaming capability combination.
+#[cfg(feature = "streaming")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+pub struct StreamingSelectionIds {
+    /// Selected source ID.
+    pub source: &'static str,
+    /// Selected format ID.
+    pub format: &'static str,
+    /// Selected session-program ID.
+    pub session: &'static str,
+    /// Selected action-sink ID.
+    pub action_sink: &'static str,
+    /// Selected transport ID.
+    pub transport: &'static str,
+    /// Selected endpoint ID, when one was supplied.
+    pub endpoint: Option<&'static str>,
+    /// Selected checkpoint backend ID, when one was supplied.
+    pub checkpoint_backend: Option<&'static str>,
+}
+
+#[cfg(feature = "streaming")]
+impl Display for StreamingSelectionIds {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "source={:?} format={:?} session_program={:?} action_sink={:?} transport={:?}",
+            self.source, self.format, self.session, self.action_sink, self.transport
+        )?;
+        if let Some(endpoint) = self.endpoint {
+            write!(formatter, " endpoint={endpoint:?}")?;
+        }
+        if let Some(backend) = self.checkpoint_backend {
+            write!(formatter, " checkpoint_backend={backend:?}")?;
+        }
+        Ok(())
+    }
+}
+
+/// Composite retained-state behavior reported by an accepted agreement.
+///
+/// This is a report, not a gate: a selection that reaches this point has
+/// already been admitted. Later resource ownership reads it to size budgets.
+#[cfg(feature = "streaming")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+pub struct StreamingRetentionReport {
+    /// Source-owned retained-state requirement.
+    pub source: StreamingSourceRetention,
+    /// Decoder-owned retained-state requirement.
+    pub format: FormatStateRetention,
+    /// Session-owned retained-state requirement.
+    pub session: SessionStateRetention,
+    /// Action-result retained-state requirement.
+    pub action_sink: ActionResultRetention,
+    /// Whether any selected stage needs validated spill authority.
+    pub needs_spill_authority: bool,
+    /// Whether any selected stage needs a durable resume root.
+    pub needs_durable_resume: bool,
+}
+
+/// Exact capability that first refused a selected streaming combination.
+#[cfg(feature = "streaming")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StreamingIncompatibleCapability {
+    /// The format needs a partition access shape the source cannot provide.
+    SourceAccess,
+    /// The format requires event time the source does not carry.
+    SourceEventTime,
+    /// The format requires stable record identity the source does not carry.
+    SourceStableRecordIds,
+    /// The source declares no resume granularity.
+    SourceResume,
+    /// The format must hold its complete input, which a growing source forbids.
+    FormatResidentInput,
+    /// The format declares no accepted media type or no canonical output schema.
+    FormatProjection,
+    /// The session program does not accept the format's output schema.
+    SessionInputSchema,
+    /// No selected closure proof can be produced by the source and format.
+    SessionClosure,
+    /// The session must hold its complete input, which a growing source forbids.
+    SessionResidentInput,
+    /// The action sink accepts none of the session's emitted action schemas.
+    ActionSchema,
+    /// The action sink must retain complete result history.
+    ActionResidentResults,
+    /// The action sink does not accept the selected transport.
+    ActionTransport,
+    /// The action sink does not accept the selected endpoint family.
+    ActionEndpoint,
+    /// A stage cannot execute on the transport's virtual clock.
+    VirtualClock,
+    /// The selection needs a durable resume root but no backend supplies one.
+    CheckpointDurability,
+    /// The selected backend does not publish one atomic generation.
+    CheckpointAtomicGenerations,
+    /// The backend advertises result segments without leased readers.
+    CheckpointLeasedReaders,
+    /// The selection routes session state across cells the backend cannot reach.
+    CheckpointPlacement,
+}
+
+#[cfg(feature = "streaming")]
+impl StreamingIncompatibleCapability {
+    /// Return the stable lowercase diagnostic code.
+    #[must_use]
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::SourceAccess => "source_access",
+            Self::SourceEventTime => "source_event_time",
+            Self::SourceStableRecordIds => "source_stable_record_ids",
+            Self::SourceResume => "source_resume",
+            Self::FormatResidentInput => "format_resident_input",
+            Self::FormatProjection => "format_projection",
+            Self::SessionInputSchema => "session_input_schema",
+            Self::SessionClosure => "session_closure",
+            Self::SessionResidentInput => "session_resident_input",
+            Self::ActionSchema => "action_schema",
+            Self::ActionResidentResults => "action_resident_results",
+            Self::ActionTransport => "action_transport",
+            Self::ActionEndpoint => "action_endpoint",
+            Self::VirtualClock => "virtual_clock",
+            Self::CheckpointDurability => "checkpoint_durability",
+            Self::CheckpointAtomicGenerations => "checkpoint_atomic_generations",
+            Self::CheckpointLeasedReaders => "checkpoint_leased_readers",
+            Self::CheckpointPlacement => "checkpoint_placement",
+        }
+    }
+}
+
+/// Refusal naming every selected descriptor ID and the first incompatibility.
+#[cfg(feature = "streaming")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct StreamingCapabilityError {
+    /// Complete selected combination.
+    pub selected: StreamingSelectionIds,
+    /// First capability that refused the combination.
+    pub capability: StreamingIncompatibleCapability,
+}
+
+#[cfg(feature = "streaming")]
+impl Display for StreamingCapabilityError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "incompatible streaming capability selection [{}]: first incompatible capability {}",
+            self.selected,
+            self.capability.code()
+        )
+    }
+}
+
+#[cfg(feature = "streaming")]
+impl std::error::Error for StreamingCapabilityError {}
+
+/// Accepted descriptor-only agreement for one streaming capability selection.
+#[cfg(feature = "streaming")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct StreamingCapabilityPlan {
+    selected: StreamingSelectionIds,
+    agreed_action_schema: &'static str,
+    agreed_fragment_schema: &'static str,
+    retention: StreamingRetentionReport,
+    session_placement: SessionPlacement,
+    action_placement: ActionPlacement,
+    format_projection: FormatProjection,
+}
+
+#[cfg(feature = "streaming")]
+impl StreamingCapabilityPlan {
+    /// Return every selected descriptor ID in this accepted plan.
+    #[must_use]
+    pub const fn selected_ids(&self) -> StreamingSelectionIds {
+        self.selected
+    }
+
+    /// Return how many times each selected factory is prepared by this plan.
+    ///
+    /// The agreement admits one descriptor per category, so every selected
+    /// factory is prepared exactly once downstream. A value other than `1`
+    /// would mean a category was selected twice, which the agreement cannot
+    /// represent.
+    #[must_use]
+    pub const fn preparation_count_per_factory(&self) -> usize {
+        1
+    }
+
+    /// Canonical action schema agreed between session program and action sink.
+    #[must_use]
+    pub const fn agreed_action_schema(&self) -> &'static str {
+        self.agreed_action_schema
+    }
+
+    /// Canonical fragment schema agreed between format and session program.
+    #[must_use]
+    pub const fn agreed_fragment_schema(&self) -> &'static str {
+        self.agreed_fragment_schema
+    }
+
+    /// Composite retained-state behavior of the accepted selection.
+    #[must_use]
+    pub const fn retention(&self) -> StreamingRetentionReport {
+        self.retention
+    }
+
+    /// Session ownership placement declared by the accepted session program.
+    #[must_use]
+    pub const fn session_placement(&self) -> SessionPlacement {
+        self.session_placement
+    }
+
+    /// Action binding placement declared by the accepted action sink.
+    #[must_use]
+    pub const fn action_placement(&self) -> ActionPlacement {
+        self.action_placement
+    }
+
+    /// Projection behavior declared by the accepted format.
+    #[must_use]
+    pub const fn format_projection(&self) -> FormatProjection {
+        self.format_projection
+    }
+}
+
+/// Descriptor-only cross-format streaming capability agreement.
+///
+/// The agreement is a pure predicate over frozen registry metadata. It accepts
+/// descriptors only: it never validates authored configuration, never calls a
+/// factory's `validate`/`prepare`, never touches the filesystem, the network,
+/// a clock, or a checkpoint backend, and never allocates a lease. Generation
+/// one deliberately advertises, requires, and refuses **no** encrypted or
+/// sensitive-session-state capability; `protects_sensitive_state` on a backend
+/// descriptor is never read here.
+#[cfg(feature = "streaming")]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct StreamingCapabilityAgreement;
+
+#[cfg(feature = "streaming")]
+impl StreamingCapabilityAgreement {
+    /// Admit one descriptor-only streaming capability combination.
+    ///
+    /// Returns the first incompatible capability together with every selected
+    /// descriptor ID. Checks run in a fixed order — source, format, session,
+    /// action, transport/endpoint, clock, checkpoint — so the reported
+    /// capability is deterministic for a given selection.
+    pub fn validate(
+        selected: StreamingSelectedDescriptors,
+    ) -> std::result::Result<StreamingCapabilityPlan, StreamingCapabilityError> {
+        let ids = selected.ids();
+        let refuse = |capability| StreamingCapabilityError {
+            selected: ids,
+            capability,
+        };
+        let source = selected.source;
+        let format = selected.format;
+        let session = selected.session;
+        let action_sink = selected.action_sink;
+        let transport = selected.transport;
+
+        let source_grows = source.modes.contains(&StreamingSourceMode::Follow);
+
+        // Source × format.
+        if !source.access.contains(&format.required_access) {
+            return Err(refuse(StreamingIncompatibleCapability::SourceAccess));
+        }
+        if format.has_event_time && !source.has_event_time {
+            return Err(refuse(StreamingIncompatibleCapability::SourceEventTime));
+        }
+        if format.has_stable_record_ids && !source.has_stable_record_ids {
+            return Err(refuse(
+                StreamingIncompatibleCapability::SourceStableRecordIds,
+            ));
+        }
+        if source.resume.is_empty() {
+            return Err(refuse(StreamingIncompatibleCapability::SourceResume));
+        }
+        if format.media_types.is_empty() || format.output_schema.is_empty() {
+            return Err(refuse(StreamingIncompatibleCapability::FormatProjection));
+        }
+        if source_grows && format.retention == FormatStateRetention::ResidentInput {
+            return Err(refuse(StreamingIncompatibleCapability::FormatResidentInput));
+        }
+
+        // Format × session program.
+        if !session.fragment_input_schemas.contains(&format.output_schema) {
+            return Err(refuse(StreamingIncompatibleCapability::SessionInputSchema));
+        }
+        if source_grows && session.retention == SessionStateRetention::ResidentInput {
+            return Err(refuse(
+                StreamingIncompatibleCapability::SessionResidentInput,
+            ));
+        }
+        if !session
+            .closure
+            .iter()
+            .any(|closure| closure_is_provable(*closure, source, format))
+        {
+            return Err(refuse(StreamingIncompatibleCapability::SessionClosure));
+        }
+
+        // Session × action sink.
+        let Some(agreed_action_schema) = session
+            .action_schemas
+            .iter()
+            .copied()
+            .find(|schema| action_sink.accepted_schemas.contains(schema))
+        else {
+            return Err(refuse(StreamingIncompatibleCapability::ActionSchema));
+        };
+        if action_sink.retention == ActionResultRetention::ResidentTotal {
+            return Err(refuse(
+                StreamingIncompatibleCapability::ActionResidentResults,
+            ));
+        }
+
+        // Action sink × transport and optional endpoint.
+        if !action_sink.transport_ids.contains(&transport.id) {
+            return Err(refuse(StreamingIncompatibleCapability::ActionTransport));
+        }
+        if let Some(endpoint) = selected.endpoint
+            && !action_sink.endpoint_kinds.contains(&endpoint.service_kind)
+        {
+            return Err(refuse(StreamingIncompatibleCapability::ActionEndpoint));
+        }
+
+        // Clock family.
+        if transport.clock == ClockKind::Sim
+            && !(source.supports_virtual_clock
+                && format.supports_virtual_clock
+                && session.supports_virtual_clock
+                && action_sink.supports_virtual_clock
+                && selected
+                    .checkpoint_backend
+                    .is_none_or(|backend| backend.supports_virtual_clock))
+        {
+            return Err(refuse(StreamingIncompatibleCapability::VirtualClock));
+        }
+
+        // Checkpoint backend. Durability, atomic generations, leased readers,
+        // and placement only. Sensitive-state protection is out of scope for
+        // generation one and is intentionally not consulted.
+        let needs_spill_authority = format.retention == FormatStateRetention::BoundedSpill
+            || session.retention == SessionStateRetention::BoundedSpill;
+        let needs_durable_resume = source.retention
+            == StreamingSourceRetention::ResumeRootReachability
+            || needs_spill_authority;
+        match selected.checkpoint_backend {
+            Some(backend) => {
+                if !backend.has_atomic_generations {
+                    return Err(refuse(
+                        StreamingIncompatibleCapability::CheckpointAtomicGenerations,
+                    ));
+                }
+                if needs_durable_resume && !backend.is_durable {
+                    return Err(refuse(StreamingIncompatibleCapability::CheckpointDurability));
+                }
+                if backend.has_result_segments && !backend.has_leased_readers {
+                    return Err(refuse(
+                        StreamingIncompatibleCapability::CheckpointLeasedReaders,
+                    ));
+                }
+                if (session.placement == SessionPlacement::RoutedByStableSession
+                    || action_sink.placement == ActionPlacement::RoutedAcrossCells)
+                    && backend.placement != CheckpointBackendPlacement::SharedAcrossCells
+                {
+                    return Err(refuse(StreamingIncompatibleCapability::CheckpointPlacement));
+                }
+            }
+            None => {
+                if needs_durable_resume {
+                    return Err(refuse(StreamingIncompatibleCapability::CheckpointDurability));
+                }
+            }
+        }
+
+        Ok(StreamingCapabilityPlan {
+            selected: ids,
+            agreed_action_schema,
+            agreed_fragment_schema: format.output_schema,
+            retention: StreamingRetentionReport {
+                source: source.retention,
+                format: format.retention,
+                session: session.retention,
+                action_sink: action_sink.retention,
+                needs_spill_authority,
+                needs_durable_resume,
+            },
+            session_placement: session.placement,
+            action_placement: action_sink.placement,
+            format_projection: format.projection,
+        })
+    }
+}
+
+/// Whether one declared closure proof can actually be produced by the selected
+/// source and format.
+#[cfg(feature = "streaming")]
+const fn closure_is_provable(
+    closure: SessionClosureCapability,
+    source: &'static StreamingSourceDescriptor,
+    format: &'static StreamingFormatDescriptor,
+) -> bool {
+    let source_seals = !matches!(source.modes, [StreamingSourceMode::Follow]);
+    match closure {
+        // A terminal record in the decoded stream needs nothing from ordering.
+        SessionClosureCapability::ExplicitClose | SessionClosureCapability::LossyInactivity => true,
+        SessionClosureCapability::MonotonicSequence => format.has_stable_record_ids,
+        SessionClosureCapability::HardWatermark => format.has_event_time,
+        SessionClosureCapability::FiniteSeal => source_seals,
+        SessionClosureCapability::CompleteSortedRun => source_seals,
     }
 }
 
