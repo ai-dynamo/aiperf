@@ -58,8 +58,8 @@ use crate::streaming::source::{
     SourceFrontier, SourceSeal, StreamingSourceDescriptor,
 };
 use crate::streaming::unit::{
-    ConversationTurnFragment, EventTimeUtc, SessionFragmentLease, SessionMutationV1, SourcePosition,
-    StreamingSessionFragment, UnitProvenance,
+    ConversationTurnFragment, EventTimeUtc, SessionFragmentLease, SessionMutationV1,
+    SourcePosition, StreamingSessionFragment, UnitProvenance,
 };
 
 /// Canonical schema of one immutable synthesis shard manifest.
@@ -705,7 +705,10 @@ impl SynthesisDecoder {
 
         // A byte-level BPE window can begin or end mid-codepoint; the finite
         // path replaces rather than fails, and so must this one.
-        let text = plan.tokenizer.decode_lossy(&tokens).map_err(|_| profile_error())?;
+        let text = plan
+            .tokenizer
+            .decode_lossy(&tokens)
+            .map_err(|_| profile_error())?;
         let content = text.into_bytes();
 
         let lease = self
@@ -1145,10 +1148,11 @@ mod tests {
         }
     }
 
-    async fn decode_shard(config: &str, max_fragments: usize, records: u64) -> Vec<(
-        crate::streaming::identity::StableRecordId,
-        Vec<u8>,
-    )> {
+    async fn decode_shard(
+        config: &str,
+        max_fragments: usize,
+        records: u64,
+    ) -> Vec<(crate::streaming::identity::StableRecordId, Vec<u8>)> {
         let budgets = budgets();
         let factory = factory_with(Arc::new(ByteTokenizer), budgets.clone());
         let mut format = prepare(&factory, config).expect("prepared format");
@@ -1216,8 +1220,7 @@ mod tests {
         let checkpoint = DecoderCheckpoint {
             partition: ImmutableObjectIdentity::from_bytes([1_u8; 32]),
             format_semantic_digest: SYNTHESIS_FORMAT_DESCRIPTOR.semantic_digest,
-            state: DecoderResumeState::new(Bytes::from(cursor_bytes), lease)
-                .expect("resume state"),
+            state: DecoderResumeState::new(Bytes::from(cursor_bytes), lease).expect("resume state"),
         };
         let mut decoder = resumed
             .begin_partition(acquired, Some(checkpoint))
