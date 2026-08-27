@@ -190,6 +190,7 @@ async def _download_sweep_results(
     name: str,
     namespace: str,
     kube_context: str,
+    operator_namespace: str = "aiperf-system",
 ) -> None:
     result = await run_command(
         [
@@ -201,6 +202,8 @@ async def _download_sweep_results(
             name,
             "--namespace",
             namespace,
+            "--operator-namespace",
+            operator_namespace,
             "--output",
             str(destination),
             "--all",
@@ -331,6 +334,7 @@ async def test_grid_sweep_completes_and_harvests_aggregate(
             name=name,
             namespace=operator_job_namespace,
             kube_context=kubectl.context,
+            operator_namespace=k8s_settings.operator_namespace,
         )
         downloaded_manifest = orjson.loads(
             await asyncio.to_thread((destination / "sweep_manifest.json").read_bytes)
@@ -445,6 +449,7 @@ async def test_adaptive_sweep_runs_shared_planner_and_archives_history(
             name=name,
             namespace=operator_job_namespace,
             kube_context=kubectl.context,
+            operator_namespace=k8s_settings.operator_namespace,
         )
         history_files = list(destination.rglob("search_history.json"))
         assert len(history_files) == 1, sorted(
@@ -512,6 +517,7 @@ async def test_sobol_sweep_archives_sampling_design_with_parent_epoch(
             name=name,
             namespace=operator_job_namespace,
             kube_context=kubectl.context,
+            operator_namespace=k8s_settings.operator_namespace,
         )
         design_files = list(destination.rglob("sampling_design.json"))
         assert len(design_files) == 1, sorted(
@@ -608,6 +614,7 @@ async def test_multi_run_without_parameter_axis_uses_one_cell_sweep(
             name=name,
             namespace=operator_job_namespace,
             kube_context=kubectl.context,
+            operator_namespace=k8s_settings.operator_namespace,
         )
         downloaded_manifest = orjson.loads(
             await asyncio.to_thread((destination / "sweep_manifest.json").read_bytes)
