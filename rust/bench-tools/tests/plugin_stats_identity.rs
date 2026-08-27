@@ -351,6 +351,36 @@ fn production_cli_has_no_inventory_or_expected_digest_input() {
 }
 
 #[test]
+fn production_cli_refuses_consistently_forged_receipt_files_and_rows() {
+    let fixture = authority_fixture();
+    let input_path = fixture.directory.path().join("forged-complete-input.json");
+    std::fs::write(
+        &input_path,
+        serde_json::to_vec(&fixture.input).expect("forged input serializes"),
+    )
+    .expect("forged input is written");
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_plugin_runtime_bench"))
+        .args([
+            "evaluate",
+            fixture
+                .receipt_path
+                .to_str()
+                .expect("temporary path is UTF-8"),
+            input_path.to_str().expect("temporary path is UTF-8"),
+        ])
+        .output()
+        .expect("production acceptance seam executes");
+    assert!(
+        !output.status.success(),
+        "a caller-controlled receipt, files, authority, and matching rows must not self-authorize"
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("same-process controlled measurement capability")
+    );
+}
+
+#[test]
 fn full_authoritative_joint_bootstrap_retains_the_golden_distribution() {
     let fixture = authority_fixture();
     let report = evaluate_simultaneous_gate(
