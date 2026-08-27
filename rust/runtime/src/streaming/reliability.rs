@@ -8832,4 +8832,195 @@ mod tests {
         assert!(restored.action_gap_closure.is_none());
         assert_eq!(restored_budget.snapshot().used_bytes, charged_before);
     }
+
+    /// Submit and classify one record issue, returning its retained identity.
+    fn classify_record_issue(
+        reporter: &mut BudgetOwnedStreamingIssueReporter,
+        input_domain: StreamingInputDomainIdentity,
+    ) -> ContentDigest {
+        let issue_id = record_issue().issue_id();
+        futures::executor::block_on(reporter.report(IssueSequenceUpdate::Issue(record_issue())))
+            .unwrap_or_else(|error| panic!("retain record issue: {error}"));
+        futures::executor::block_on(reporter.report(IssueSequenceUpdate::NoMoreBefore {
+            input_domain,
+            through: SourcePosition::new(7),
+        }))
+        .unwrap_or_else(|error| panic!("classify record issue: {error}"));
+        issue_id
+    }
+
+    #[test]
+    fn retained_receipt_is_compact_and_round_trips_through_materialization() {
+        let (budget, mut reporter, input_domain) =
+            submission_test_reporter(256, QUEUE_CHARGE_BYTES + 256 * 1024);
+        let issue_id = classify_record_issue(&mut reporter, input_domain);
+        let retained = reporter
+            .retained_receipt(&issue_id)
+            .unwrap_or_else(|| panic!("receipt is retained"));
+
+        // The retained charge is exactly the canonical bytes: no parsed heap.
+        assert_eq!(
+            retained.encoded_charge_bytes(),
+            retained.encoded_bytes().len()
+        );
+
+        let parsed = retained
+            .materialize_parsed(&budget)
+            .unwrap_or_else(|error| panic!("retained bytes strictly decode: {error}"));
+        let receipt = parsed.receipt();
+        assert_eq!(receipt.issue_id, issue_id);
+        assert_eq!(receipt.disposition, retained.disposition());
+        assert_eq!(receipt.scope.kind(), retained.scope_kind());
+        assert_eq!(receipt.scope.action_id(), retained.action_id());
+        assert_eq!(receipt.order.global_sequence, retained.global_sequence());
+
+        // Re-encoding the materialized value reproduces the retained bytes.
+        let reencoded =
+            serde_json::to_vec(receipt).unwrap_or_else(|error| panic!("re-encode: {error}"));
+        assert_eq!(reencoded.as_slice(), retained.encoded_bytes());
+
+        // Dropping the materialization releases exactly its charge.
+        let expected = parsed.charged_bytes();
+        let held = budget.snapshot().used_bytes;
+        drop(parsed);
+        assert_eq!(budget.snapshot().used_bytes, held - expected);
+    }
+
+    #[test]
+    fn materialized_receipt_disagreeing_with_its_facts_is_corrupt_state() {
+        let (budget, mut reporter, input_domain) =
+            submission_test_reporter(256, QUEUE_CHARGE_BYTES + 256 * 1024);
+        let issue_id = classify_record_issue(&mut reporter, input_domain);
+        let retained = reporter
+            .retained_receipt(&issue_id)
+            .unwrap_or_else(|| panic!("receipt is retained"));
+        let encoded_bytes = retained.encoded_bytes().to_vec();
+        // The classified disposition is the rule's exhausted disposition, so
+        // `Retry` is guaranteed to disagree with the encoded receipt.
+        assert_ne!(retained.disposition(), StreamingIssueDisposition::Retry);
+        let mut facts = retained.facts;
+        facts.disposition = StreamingIssueDisposition::Retry;
+
+        let lease = budget
+            .try_acquire(1, encoded_bytes.len())
+            .unwrap_or_else(|error| panic!("charge tampered encoding: {error}"));
+        let encoded = BudgetedCheckpointBytes::new(Bytes::from(encoded_bytes), lease)
+            .unwrap_or_else(|error| panic!("bind tampered encoding: {error}"));
+        let tampered = BudgetOwnedStreamingIssueReceipt { facts, encoded };
+
+        // Materialization revalidates the decoded identity against the retained
+        // compact facts, so bytes and facts cannot silently diverge.
+        let charged_before = budget.snapshot().used_bytes;
+        assert!(matches!(
+            tampered.materialize_parsed(&budget),
+            Err(StreamingReliabilityError::CorruptCheckpointState)
+        ));
+        // The refused materialization released its whole transient bound.
+        assert_eq!(budget.snapshot().used_bytes, charged_before);
+    }
+
+    #[test]
+    fn advancing_a_new_input_frontier_charges_its_ordered_map_entry() {
+        let (budget, mut reporter, input_domain) =
+            submission_test_reporter(256, QUEUE_CHARGE_BYTES + 256 * 1024);
+        let expected =
+            input_frontier_entry_bytes().unwrap_or_else(|error| panic!("entry charge: {error}"));
+
+        let before = budget.snapshot();
+        reporter
+            .advance_input_frontier(input_domain.clone(), SourcePosition::new(4))
+            .unwrap_or_else(|error| panic!("frontier advances: {error}"));
+        let after = budget.snapshot();
+        assert_eq!(after.used_items - before.used_items, 1);
+        assert_eq!(after.used_bytes - before.used_bytes, expected);
+
+        // Advancing the same domain reuses the entry and charges nothing more.
+        reporter
+            .advance_input_frontier(input_domain, SourcePosition::new(9))
+            .unwrap_or_else(|error| panic!("frontier advances again: {error}"));
+        assert_eq!(budget.snapshot().used_items, after.used_items);
+        assert_eq!(budget.snapshot().used_bytes, after.used_bytes);
+    }
+
+    #[test]
+    fn frontier_entry_refusal_leaves_frontiers_unchanged() {
+        let entry_bytes =
+            input_frontier_entry_bytes().unwrap_or_else(|error| panic!("entry charge: {error}"));
+        // Exactly one byte short of the frontier entry the advance needs.
+        let (budget, mut reporter, input_domain) =
+            submission_test_reporter(256, QUEUE_CHARGE_BYTES + entry_bytes - 1);
+
+        let before = budget.snapshot();
+        assert!(matches!(
+            reporter.advance_input_frontier(input_domain, SourcePosition::new(4)),
+            Err(StreamingReliabilityError::StateBudget(_))
+        ));
+        assert!(reporter.input_frontiers.is_empty());
+        assert_eq!(budget.snapshot().used_bytes, before.used_bytes);
+        assert_eq!(budget.snapshot().used_items, before.used_items);
+    }
+
+    #[test]
+    fn submission_queue_is_charged_once_and_refuses_past_capacity() {
+        let budget = StreamingResourceBudget::new(super::super::budget::BudgetLimits {
+            max_items: 4096,
+            max_bytes: 8 * 1024 * 1024,
+        })
+        .unwrap_or_else(|error| panic!("valid budget: {error}"));
+        let empty = budget.snapshot();
+        let reporter = BudgetOwnedStreamingIssueReporter::new(
+            StreamRunIdentity::new(LogicalReplayRunId::from_bytes([0x11; 32])),
+            PreparedStreamingIssuePolicy::new([rule("record_default", None, 0)])
+                .unwrap_or_else(|error| panic!("valid policy: {error}")),
+            budget.clone(),
+        )
+        .unwrap_or_else(|error| panic!("budget-owned reporter: {error}"));
+
+        // Construction charges the fixed-capacity ring buffer exactly once.
+        let constructed = budget.snapshot();
+        assert_eq!(constructed.used_items - empty.used_items, 1);
+        assert_eq!(constructed.used_bytes - empty.used_bytes, QUEUE_CHARGE_BYTES);
+
+        let handle = reporter.handle();
+        for index in 0..MAX_QUEUED_SUBMISSIONS {
+            assert_eq!(
+                futures::executor::block_on(handle.report(record_issue()))
+                    .unwrap_or_else(|error| panic!("submission {index}: {error}")),
+                StreamingIssueReportStatus::Accepted
+            );
+        }
+        // A full queue is backpressure, not a budget failure, and the ring
+        // buffer never grew past its single construction-time charge.
+        assert_eq!(
+            futures::executor::block_on(handle.report(record_issue()))
+                .unwrap_or_else(|error| panic!("overflow submission: {error}")),
+            StreamingIssueReportStatus::Backpressured
+        );
+        assert_eq!(reporter.submission.queue.borrow().len(), MAX_QUEUED_SUBMISSIONS);
+    }
+
+    #[test]
+    fn classified_issue_charges_its_counter_entry_and_releases_everything_on_drop() {
+        let (budget, mut reporter, input_domain) =
+            submission_test_reporter(256, QUEUE_CHARGE_BYTES + 256 * 1024);
+        let before = budget.snapshot();
+        classify_record_issue(&mut reporter, input_domain);
+
+        let key = reporter
+            .counters
+            .keys()
+            .next()
+            .unwrap_or_else(|| panic!("one counter key"))
+            .clone();
+        let counter_charge =
+            counter_entry_bytes(&key).unwrap_or_else(|error| panic!("counter charge: {error}"));
+        assert!(budget.snapshot().used_bytes - before.used_bytes >= counter_charge);
+
+        // Every byte the reporter ever retained — queue, frontier entries,
+        // counters, and receipts — is released when it drops, which can only
+        // hold if all of them were charged in the first place.
+        drop(reporter);
+        assert_eq!(budget.snapshot().used_bytes, 0);
+        assert_eq!(budget.snapshot().used_items, 0);
+    }
 }
