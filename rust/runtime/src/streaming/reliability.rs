@@ -8871,7 +8871,7 @@ mod tests {
             byte_length,
         };
         let payload = charged_bytes(budget, &bytes);
-        CommittedParticipantState::new(run, descriptor, payload)
+        CommittedParticipantState::from_verified_parts(run, descriptor, payload)
             .unwrap_or_else(|error| panic!("verified committed ledger state: {error:?}"))
     }
 

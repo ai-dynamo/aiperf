@@ -442,6 +442,26 @@ impl CommittedParticipantState {
         &self.run
     }
 
+    /// Assemble verified restore authority directly from checked parts.
+    ///
+    /// Reachability from a committed generation is what `from_current_v4_reader`
+    /// adds; in-crate tests that exercise a restore path already own the exact
+    /// descriptor and payload, so they bind them here under the same
+    /// length-and-digest verification.
+    #[cfg(test)]
+    pub(crate) fn from_verified_parts(
+        run: StreamRunIdentity,
+        descriptor: ParticipantStateDescriptor,
+        payload: BudgetedCheckpointBytes,
+    ) -> Result<Self, CheckpointError> {
+        Self {
+            run,
+            descriptor,
+            payload,
+        }
+        .verify()
+    }
+
     /// Re-verify a state assembled by a storage implementation before using it.
     pub fn verify(self) -> Result<Self, CheckpointError> {
         validate_payload_charge(&self.payload)?;
@@ -2244,7 +2264,7 @@ mod tests {
         )
         .expect("valid candidate");
 
-        assert_eq!(&candidate.cut().handled_issues, view.handled_cut());
+        assert_eq!(&candidate.cut.handled_issues, view.handled_cut());
     }
 
     #[test]
