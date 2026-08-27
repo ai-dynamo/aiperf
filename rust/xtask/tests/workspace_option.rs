@@ -9,9 +9,12 @@ use std::process::Command;
 fn closure_validates_the_selected_workspace() {
     let missing_workspace = std::env::temp_dir().join("aiperf-abi-workspace-without-manifest");
     std::fs::create_dir_all(&missing_workspace).expect("test workspace");
+    let seeds = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("abi-seeds.toml");
     let output = Command::new(env!("CARGO_BIN_EXE_aiperf-xtask"))
         .args([
             "abi-closure",
+            "--seeds",
+            seeds.to_str().expect("UTF-8 seed path"),
             "--workspace",
             missing_workspace.to_str().expect("UTF-8 temporary path"),
         ])
