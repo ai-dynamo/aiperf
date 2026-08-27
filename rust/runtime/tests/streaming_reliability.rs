@@ -492,7 +492,8 @@ async fn ordered_reporter_is_arrival_invariant_and_replay_counts_once() {
     };
 
     let mut reverse =
-        BudgetOwnedStreamingIssueReporter::new(run(0x11), record_policy(), budget(64, 64 * 1024));
+        BudgetOwnedStreamingIssueReporter::new(run(0x11), record_policy(), budget(64, 64 * 1024))
+            .unwrap_or_else(|error| panic!("budget-owned reporter: {error}"));
     assert_eq!(
         reverse
             .report(IssueSequenceUpdate::Issue(make_issue(9, 9)))
@@ -525,7 +526,8 @@ async fn ordered_reporter_is_arrival_invariant_and_replay_counts_once() {
     assert_eq!(reverse.summary().unwrap().total, 2);
 
     let mut forward =
-        BudgetOwnedStreamingIssueReporter::new(run(0x11), record_policy(), budget(64, 64 * 1024));
+        BudgetOwnedStreamingIssueReporter::new(run(0x11), record_policy(), budget(64, 64 * 1024))
+            .unwrap_or_else(|error| panic!("budget-owned reporter: {error}"));
     for (position, tie) in [(7, 7), (9, 9)] {
         forward
             .report(IssueSequenceUpdate::Issue(make_issue(position, tie)))
@@ -556,7 +558,8 @@ async fn ordered_reporter_is_arrival_invariant_and_replay_counts_once() {
 async fn tiny_reporter_budget_refuses_without_frontier_or_counter_mutation() {
     let shared_budget = budget(1, 8);
     let mut reporter =
-        BudgetOwnedStreamingIssueReporter::new(run(0x11), record_policy(), shared_budget.clone());
+        BudgetOwnedStreamingIssueReporter::new(run(0x11), record_policy(), shared_budget.clone())
+            .unwrap_or_else(|error| panic!("budget-owned reporter: {error}"));
     let error = reporter
         .report(IssueSequenceUpdate::Issue(record_issue(
             DecodeFailureCode::Syntax,
@@ -578,7 +581,8 @@ async fn receipt_partition_handoff_moves_payload_and_view_leases_without_copy() 
     let reporter_budget = budget(64, 64 * 1024);
     let descriptor_budget = budget(4, 4096);
     let mut reporter =
-        BudgetOwnedStreamingIssueReporter::new(run(0x11), record_policy(), reporter_budget.clone());
+        BudgetOwnedStreamingIssueReporter::new(run(0x11), record_policy(), reporter_budget.clone())
+            .unwrap_or_else(|error| panic!("budget-owned reporter: {error}"));
     let input_domain = domain(0x21, 0x20);
     reporter
         .report(IssueSequenceUpdate::Issue(record_issue(

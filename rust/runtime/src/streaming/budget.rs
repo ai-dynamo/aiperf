@@ -384,6 +384,56 @@ impl BudgetLease {
     }
 }
 
+/// Structural bytes one ordered-map entry retains beyond its key and value.
+///
+/// `BTreeMap` exposes no capacity API, so its node storage cannot be measured
+/// the way a `Vec` or `String` capacity can. This is the authored per-entry
+/// structural overhead used for exact charging, derived from the std B-tree
+/// node shape and rounded up so a computed charge can only exceed, never
+/// understate, the true retained node bytes.
+pub const ORDERED_MAP_ENTRY_OVERHEAD_BYTES: usize = 32;
+
+/// Return the exact structural charge for one ordered-map entry of `K` and `V`.
+///
+/// This covers the inline key, the inline value, and the authored per-entry
+/// node overhead. Heap owned *behind* `K` or `V` is not included; add it with
+/// [`checked_sum`].
+///
+/// # Errors
+///
+/// Returns [`BudgetError::AccountingOverflow`] when the sum is not representable.
+pub fn ordered_map_entry_bytes<K, V>() -> Result<usize, BudgetError> {
+    std::mem::size_of::<K>()
+        .checked_add(std::mem::size_of::<V>())
+        .and_then(|bytes| bytes.checked_add(ORDERED_MAP_ENTRY_OVERHEAD_BYTES))
+        .ok_or(BudgetError::AccountingOverflow)
+}
+
+/// Return the exact retained charge for one contiguous ring buffer of `T`.
+///
+/// # Errors
+///
+/// Returns [`BudgetError::AccountingOverflow`] when the product is not
+/// representable.
+pub fn ring_buffer_bytes<T>(capacity: usize) -> Result<usize, BudgetError> {
+    capacity
+        .checked_mul(std::mem::size_of::<T>())
+        .ok_or(BudgetError::AccountingOverflow)
+}
+
+/// Sum exact charges with checked arithmetic.
+///
+/// # Errors
+///
+/// Returns [`BudgetError::AccountingOverflow`] on the first non-representable
+/// partial sum.
+pub fn checked_sum(parts: impl IntoIterator<Item = usize>) -> Result<usize, BudgetError> {
+    parts
+        .into_iter()
+        .try_fold(0_usize, |total, part| total.checked_add(part))
+        .ok_or(BudgetError::AccountingOverflow)
+}
+
 impl Drop for BudgetLease {
     fn drop(&mut self) {
         self.inner.release(self.charged_items, self.charged_bytes);
@@ -415,4 +465,36 @@ fn unpack_counts(counts: u64) -> (usize, usize) {
         (counts >> ITEM_SHIFT) as usize,
         (counts & COUNT_MASK) as usize,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ordered_map_entry_bytes_is_checked() {
+        let bytes = ordered_map_entry_bytes::<u64, u64>()
+            .unwrap_or_else(|error| panic!("representable entry charge: {error}"));
+        assert_eq!(bytes, 16 + ORDERED_MAP_ENTRY_OVERHEAD_BYTES);
+    }
+
+    #[test]
+    fn ring_buffer_bytes_is_checked() {
+        let bytes = ring_buffer_bytes::<u32>(8)
+            .unwrap_or_else(|error| panic!("representable ring charge: {error}"));
+        assert_eq!(bytes, 32);
+        assert_eq!(
+            ring_buffer_bytes::<u64>(usize::MAX),
+            Err(BudgetError::AccountingOverflow)
+        );
+    }
+
+    #[test]
+    fn checked_sum_reports_accounting_overflow() {
+        assert_eq!(checked_sum([1_usize, 2, 3]), Ok(6));
+        assert_eq!(
+            checked_sum([usize::MAX, 1]),
+            Err(BudgetError::AccountingOverflow)
+        );
+    }
 }

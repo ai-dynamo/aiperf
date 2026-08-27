@@ -20,6 +20,7 @@ use std::{
 use async_trait::async_trait;
 use bytes::Bytes;
 use serde::{Deserialize, Deserializer, Serialize};
+use serde_json::value::RawValue;
 
 use super::{
     action::{
@@ -43,6 +44,12 @@ use super::{
     unit::{SourcePosition, StateBudgetFailureCode},
 };
 
+/// Maximum checked length, in bytes, of a stable component identifier.
+///
+/// The checked constructor enforces this bound, so it is a proven maximum for
+/// every derived reservation rather than an authored cushion.
+pub const MAX_COMPONENT_ID_BYTES: usize = 128;
+
 /// Stable identifier for a reliability rule, failure code, or host component.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(try_from = "String")]
@@ -50,17 +57,23 @@ pub struct StreamingIssueComponentId(String);
 
 impl StreamingIssueComponentId {
     /// Construct a checked lowercase ASCII identifier.
+    ///
+    /// The retained allocation is shrunk toward its exact length so that budget
+    /// charges computed from [`Self::retained_bytes`] track the real allocation
+    /// rather than an oversized caller buffer.
     pub fn new(value: impl Into<String>) -> Result<Self, StreamingReliabilityError> {
-        let value = value.into();
+        let mut value = value.into();
         let bytes = value.as_bytes();
         let is_valid_first = bytes.first().is_some_and(u8::is_ascii_lowercase);
         let is_valid_tail = bytes.get(1..).is_some_and(|tail| {
             tail.iter()
                 .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || *byte == b'_')
         });
-        if !(1..=128).contains(&bytes.len()) || !is_valid_first || !is_valid_tail {
+        if !(1..=MAX_COMPONENT_ID_BYTES).contains(&bytes.len()) || !is_valid_first || !is_valid_tail
+        {
             return Err(StreamingReliabilityError::InvalidComponentId);
         }
+        value.shrink_to_fit();
         Ok(Self(value))
     }
 
@@ -68,6 +81,16 @@ impl StreamingIssueComponentId {
     #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+
+    /// Return the retained heap bytes behind this identifier.
+    ///
+    /// The charge is the retained capacity, not the length, so a short
+    /// identifier held in an oversized allocation cannot bypass the
+    /// fixed-memory invariant.
+    #[must_use]
+    pub fn retained_bytes(&self) -> usize {
+        self.0.capacity()
     }
 }
 
@@ -1106,7 +1129,6 @@ pub struct PersistedStreamingIssueReceipt {
     threshold: StreamingIssueThresholdReceipt,
 }
 
-#[allow(dead_code)]
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PersistedStreamingIssueReceiptWire {
@@ -1124,7 +1146,6 @@ struct PersistedStreamingIssueReceiptWire {
     threshold: StreamingIssueThresholdReceiptWire,
 }
 
-#[allow(dead_code)]
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct StreamingIssueThresholdReceiptWire {
@@ -1136,17 +1157,74 @@ struct StreamingIssueThresholdReceiptWire {
     is_exhausted: bool,
 }
 
+impl From<StreamingIssueThresholdReceiptWire> for StreamingIssueThresholdReceipt {
+    fn from(wire: StreamingIssueThresholdReceiptWire) -> Self {
+        Self {
+            policy_digest: wire.policy_digest,
+            rule_id: wire.rule_id,
+            prior_matching_count: wire.prior_matching_count,
+            resulting_matching_count: wire.resulting_matching_count,
+            retry_ordinal: wire.retry_ordinal,
+            is_exhausted: wire.is_exhausted,
+        }
+    }
+}
+
+impl From<PersistedStreamingIssueReceiptWire> for PersistedStreamingIssueReceipt {
+    fn from(wire: PersistedStreamingIssueReceiptWire) -> Self {
+        Self {
+            wire_version: wire.wire_version,
+            issue_id: wire.issue_id,
+            run: wire.run,
+            scope: wire.scope,
+            class: wire.class,
+            stage: wire.stage,
+            code: wire.code,
+            semantic_context_digest: wire.semantic_context_digest,
+            order: wire.order,
+            terminal_invariant: wire.terminal_invariant,
+            disposition: wire.disposition,
+            threshold: wire.threshold.into(),
+        }
+    }
+}
+
 const ISSUE_RECEIPT_WIRE_VERSION: u32 = 2;
 
-/// Move-only detailed receipt with exact encoded and parsed-state charges.
+/// The fixed-size facts a retained receipt answers without decoding.
 ///
-/// The encoded bytes, verified parsed facts, and both leases are private and
-/// cannot be detached from one another.
+/// Every field is `Copy` and inline, so the compact receipt owns exactly one
+/// heap allocation: its canonical strict-v2 encoding.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct CompactIssueReceiptFacts {
+    issue_id: ContentDigest,
+    disposition: StreamingIssueDisposition,
+    scope_kind: StreamingIssueScopeKind,
+    action_id: Option<StableActionId>,
+    global_sequence: Option<GlobalSequence>,
+}
+
+impl CompactIssueReceiptFacts {
+    fn from_receipt(receipt: &PersistedStreamingIssueReceipt) -> Self {
+        Self {
+            issue_id: receipt.issue_id,
+            disposition: receipt.disposition,
+            scope_kind: receipt.scope.kind(),
+            action_id: receipt.scope.action_id(),
+            global_sequence: receipt.order.global_sequence,
+        }
+    }
+}
+
+/// Move-only detailed receipt retaining only its canonical bytes.
+///
+/// The receipt retains the exact strict-v2 encoding and a fixed-size block of
+/// `Copy` facts; the parsed data-transfer object is materialized on demand
+/// under its own lease through [`Self::materialize_parsed`] and is never
+/// retained. The encoded bytes and their exact charge are inseparable.
 pub struct BudgetOwnedStreamingIssueReceipt {
-    receipt: PersistedStreamingIssueReceipt,
+    facts: CompactIssueReceiptFacts,
     encoded: BudgetedCheckpointBytes,
-    parsed_lease: BudgetLease,
-    parsed_charge_bytes: usize,
 }
 
 impl BudgetOwnedStreamingIssueReceipt {
@@ -1157,28 +1235,89 @@ impl BudgetOwnedStreamingIssueReceipt {
     }
 
     /// Return the exact encoded allocation charge.
+    ///
+    /// This is the receipt's complete retained heap charge; no further parsed
+    /// allocation is held.
     #[must_use]
     pub fn encoded_charge_bytes(&self) -> usize {
         self.encoded.charged_bytes()
     }
 
-    /// Return the exact parsed allocation charge.
-    #[must_use]
-    pub fn parsed_charge_bytes(&self) -> usize {
-        debug_assert_eq!(self.parsed_charge_bytes, self.parsed_lease.charged_bytes());
-        self.parsed_lease.charged_bytes()
-    }
-
     /// Return the deterministic issue identity retained by this receipt.
     #[must_use]
     pub const fn issue_id(&self) -> ContentDigest {
-        self.receipt.issue_id
+        self.facts.issue_id
     }
 
     /// Return the checked disposition retained by this receipt.
     #[must_use]
     pub const fn disposition(&self) -> StreamingIssueDisposition {
-        self.receipt.disposition
+        self.facts.disposition
+    }
+
+    /// Return the checked scope kind retained by this receipt.
+    #[must_use]
+    pub const fn scope_kind(&self) -> StreamingIssueScopeKind {
+        self.facts.scope_kind
+    }
+
+    /// Return the retained action identity, when this receipt is action-scoped.
+    #[must_use]
+    pub const fn action_id(&self) -> Option<StableActionId> {
+        self.facts.action_id
+    }
+
+    /// Return the retained dense action sequence, when one was ordered.
+    #[must_use]
+    pub const fn global_sequence(&self) -> Option<GlobalSequence> {
+        self.facts.global_sequence
+    }
+
+    /// Materialize the parsed receipt on demand under its own exact lease.
+    ///
+    /// Capacity is acquired for the proven bound
+    /// `size_of::<PersistedStreamingIssueReceipt>() + encoded.len()` — every
+    /// `String` in the parsed value is a substring of the encoding, so that sum
+    /// cannot be exceeded — and is then shrunk synchronously to the exact
+    /// retained charge. The decoded identity is revalidated against the
+    /// retained compact facts, so a materialized value cannot diverge from the
+    /// bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StreamingReliabilityError::StateBudget`] when capacity is
+    /// unavailable and [`StreamingReliabilityError::CorruptCheckpointState`]
+    /// when the retained bytes do not strictly decode to the retained identity.
+    pub fn materialize_parsed(
+        &self,
+        budget: &StreamingResourceBudget,
+    ) -> Result<BudgetOwnedParsedIssueReceipt, StreamingReliabilityError> {
+        let bound_bytes = super::budget::checked_sum([
+            size_of::<PersistedStreamingIssueReceipt>(),
+            self.encoded.as_bytes().len(),
+        ])
+        .map_err(|_| StreamingReliabilityError::CounterOverflow)?;
+        let mut lease = budget
+            .try_acquire(1, bound_bytes)
+            .map_err(state_budget_error)?;
+        // The Serialize-only receipt has no `Deserialize`; its strict wire DTO
+        // is the only decode path, so unknown fields are still rejected.
+        let receipt: PersistedStreamingIssueReceipt =
+            serde_json::from_slice::<PersistedStreamingIssueReceiptWire>(self.encoded.as_bytes())
+                .map_err(|_| StreamingReliabilityError::CorruptCheckpointState)?
+                .into();
+        if receipt.issue_id != self.facts.issue_id
+            || receipt.disposition != self.facts.disposition
+            || receipt.scope.kind() != self.facts.scope_kind
+        {
+            return Err(StreamingReliabilityError::CorruptCheckpointState);
+        }
+        let exact_bytes = parsed_receipt_bytes(&receipt)
+            .map_err(|_| StreamingReliabilityError::CounterOverflow)?;
+        lease
+            .shrink_to(1, exact_bytes)
+            .map_err(|_| StreamingReliabilityError::CorruptCheckpointState)?;
+        Ok(BudgetOwnedParsedIssueReceipt { receipt, lease })
     }
 }
 
@@ -1186,9 +1325,38 @@ impl fmt::Debug for BudgetOwnedStreamingIssueReceipt {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("BudgetOwnedStreamingIssueReceipt")
-            .field("issue_id", &self.receipt.issue_id)
+            .field("issue_id", &self.facts.issue_id)
             .field("encoded_charge_bytes", &self.encoded.charged_bytes())
-            .field("parsed_charge_bytes", &self.parsed_lease.charged_bytes())
+            .finish_non_exhaustive()
+    }
+}
+
+/// A parsed receipt materialized on demand, inseparable from its exact lease.
+pub struct BudgetOwnedParsedIssueReceipt {
+    receipt: PersistedStreamingIssueReceipt,
+    lease: BudgetLease,
+}
+
+impl BudgetOwnedParsedIssueReceipt {
+    /// Borrow the strictly decoded receipt.
+    #[must_use]
+    pub const fn receipt(&self) -> &PersistedStreamingIssueReceipt {
+        &self.receipt
+    }
+
+    /// Return the exact parsed allocation charge.
+    #[must_use]
+    pub fn charged_bytes(&self) -> usize {
+        self.lease.charged_bytes()
+    }
+}
+
+impl fmt::Debug for BudgetOwnedParsedIssueReceipt {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("BudgetOwnedParsedIssueReceipt")
+            .field("issue_id", &self.receipt.issue_id)
+            .field("charged_bytes", &self.lease.charged_bytes())
             .finish_non_exhaustive()
     }
 }
@@ -1357,23 +1525,49 @@ impl StreamingIssueCounterKey {
 }
 
 /// Borrowed read-only threshold counter view.
-#[derive(Clone, Debug, Eq, PartialEq)]
+///
+/// The view borrows budget-owned counter entries, so its trait implementations
+/// are written by hand over the observable counts rather than derived.
 pub struct StreamingIssueCounterView<'a> {
-    counters: &'a BTreeMap<StreamingIssueCounterKey, u64>,
+    counters: Option<&'a BTreeMap<StreamingIssueCounterKey, RetainedCounter>>,
 }
 
 impl<'a> StreamingIssueCounterView<'a> {
     /// Return the matching count for one exact key.
     #[must_use]
     pub fn get(&self, key: &StreamingIssueCounterKey) -> Option<u64> {
-        self.counters.get(key).copied()
+        self.counters?.get(key).map(|counter| counter.count)
     }
 
     /// Iterate over counters in canonical key order.
-    pub fn iter(&self) -> impl Iterator<Item = (&StreamingIssueCounterKey, &u64)> {
-        self.counters.iter()
+    pub fn iter(&self) -> impl Iterator<Item = (&'a StreamingIssueCounterKey, u64)> {
+        self.counters
+            .into_iter()
+            .flat_map(|counters| counters.iter().map(|(key, counter)| (key, counter.count)))
     }
 }
+
+impl Clone for StreamingIssueCounterView<'_> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl Copy for StreamingIssueCounterView<'_> {}
+
+impl std::fmt::Debug for StreamingIssueCounterView<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_map().entries(self.iter()).finish()
+    }
+}
+
+impl PartialEq for StreamingIssueCounterView<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        self.iter().eq(other.iter())
+    }
+}
+
+impl Eq for StreamingIssueCounterView<'_> {}
 
 /// Fixed-size aggregate issue summary.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -1739,9 +1933,17 @@ impl fmt::Debug for StreamingIssueReporterHandle {
     }
 }
 
-static EMPTY_COUNTERS: BTreeMap<StreamingIssueCounterKey, u64> = BTreeMap::new();
-
-const RECEIPT_ENCODED_RESERVATION_BYTES: usize = 4096;
+/// Bytes the strict-v2 receipt encoding spends on everything except its three
+/// checked component identifiers.
+///
+/// The encoding is a fixed JSON object: constant field names and punctuation,
+/// one `u32` wire version, four `[u8; 32]` digest arrays, the fixed-width order
+/// block, two `u64` counters, one `u32` retry ordinal, and the closed set of
+/// scope, class, stage, disposition, and terminal-invariant tags. Every
+/// contributor is bounded by the type system, so this is a proven maximum
+/// rather than an authored cushion, and `receipt_encoding_bound_is_sufficient`
+/// fails loudly if a new fixed-width field outgrows it.
+const RECEIPT_ENCODING_FIXED_BOUND_BYTES: usize = 1408;
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 struct PendingInputKey {
@@ -1779,21 +1981,59 @@ struct PendingActionFailure {
 
 struct RetainedActionTerminal {
     fact: CheckedActionTerminalFact,
+    entry_lease: BudgetLease,
 }
 
 struct RetainedReceipt {
     receipt: BudgetOwnedStreamingIssueReceipt,
     outcome: StreamingIssueOutcome,
+    /// Exact charge for this receipt's ordered-map entry; released on removal.
+    entry_lease: BudgetLease,
+}
+
+/// One input frontier and the exact lease covering its ordered-map entry.
+struct RetainedInputFrontier {
+    through: SourcePosition,
+    entry_lease: BudgetLease,
+}
+
+/// One threshold counter and the exact lease covering its ordered-map entry.
+struct RetainedCounter {
+    count: u64,
+    entry_lease: BudgetLease,
+}
+
+/// One outer pending-input domain bucket and the exact lease covering its entry.
+struct RetainedDomainPending {
+    pending: BTreeMap<PendingInputKey, PendingIssue>,
+    entry_lease: BudgetLease,
+}
+
+/// One in-flight action attempt token and the lease covering its entry.
+struct CurrentActionAttempt {
+    reporter_token: u64,
+    entry_lease: BudgetLease,
 }
 
 struct QueuedHandleIssue {
     pending: PendingIssue,
 }
 
+/// Maximum queued host submissions awaiting the next owner drain.
+///
+/// The ring buffer is allocated once at this exact capacity and charged once,
+/// so a host that never drains cannot grow reporter residency. A full queue is
+/// reported as backpressure, not as a budget failure.
+const MAX_QUEUED_SUBMISSIONS: usize = 256;
+
 struct ReporterSubmissionEndpoint {
     run: StreamRunIdentity,
     budget: StreamingResourceBudget,
     queue: RefCell<VecDeque<QueuedHandleIssue>>,
+    // Charges the ring buffer allocated once at its constructed capacity; the
+    // queue never reallocates, so this charge stays exact for the endpoint's
+    // whole lifetime.
+    _queue_lease: BudgetLease,
 }
 
 #[async_trait(?Send)]
@@ -1812,9 +2052,13 @@ impl StreamingIssueReporterEndpoint for ReporterSubmissionEndpoint {
             }
             Err(_) => return Err(StreamingIssueReportError::InvalidIssue),
         };
-        self.queue
-            .borrow_mut()
-            .push_back(QueuedHandleIssue { pending });
+        let mut queue = self.queue.borrow_mut();
+        if queue.len() == MAX_QUEUED_SUBMISSIONS {
+            // Dropping `pending` releases its reservation, so a refused
+            // submission costs the budget nothing.
+            return Ok(StreamingIssueReportStatus::Backpressured);
+        }
+        queue.push_back(QueuedHandleIssue { pending });
         Ok(StreamingIssueReportStatus::Accepted)
     }
 }
@@ -1829,33 +2073,49 @@ pub struct BudgetOwnedStreamingIssueReporter {
     policy: PreparedStreamingIssuePolicy,
     budget: StreamingResourceBudget,
     submission: Rc<ReporterSubmissionEndpoint>,
-    input_frontiers: BTreeMap<StreamingInputDomainIdentity, SourcePosition>,
-    pending_inputs: BTreeMap<StreamingInputDomainIdentity, BTreeMap<PendingInputKey, PendingIssue>>,
+    input_frontiers: BTreeMap<StreamingInputDomainIdentity, RetainedInputFrontier>,
+    pending_inputs: BTreeMap<StreamingInputDomainIdentity, RetainedDomainPending>,
     pending_actions: BTreeMap<u64, PendingActionFailure>,
-    current_action_attempts: BTreeMap<GlobalSequence, u64>,
+    current_action_attempts: BTreeMap<GlobalSequence, CurrentActionAttempt>,
     action_terminals: BTreeMap<GlobalSequence, RetainedActionTerminal>,
     action_frontier: Option<GlobalSequence>,
     next_reporter_token: u64,
     receipts: BTreeMap<ContentDigest, RetainedReceipt>,
-    counters: BTreeMap<StreamingIssueCounterKey, u64>,
+    counters: BTreeMap<StreamingIssueCounterKey, RetainedCounter>,
     summary: StreamingIssueSummary,
     is_initialized: bool,
 }
 
 impl BudgetOwnedStreamingIssueReporter {
     /// Construct one empty reporter under a frozen run, policy, and budget.
-    #[must_use]
+    ///
+    /// Construction acquires the exact charge for the fixed-capacity submission
+    /// ring buffer, so a reporter cannot exist whose queue is unbudgeted.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StreamingReliabilityError::StateBudget`] when the budget
+    /// cannot admit the submission queue.
     pub fn new(
         run: StreamRunIdentity,
         policy: PreparedStreamingIssuePolicy,
         budget: StreamingResourceBudget,
-    ) -> Self {
+    ) -> Result<Self, StreamingReliabilityError> {
+        // The deque is allocated first and charged from its own reported
+        // capacity, so an over-allocating `with_capacity` cannot be undercharged.
+        let queue = VecDeque::with_capacity(MAX_QUEUED_SUBMISSIONS);
+        let queue_bytes = super::budget::ring_buffer_bytes::<QueuedHandleIssue>(queue.capacity())
+            .map_err(|_| StreamingReliabilityError::CounterOverflow)?;
+        let queue_lease = budget
+            .try_acquire(1, queue_bytes)
+            .map_err(state_budget_error)?;
         let submission = Rc::new(ReporterSubmissionEndpoint {
             run,
             budget: budget.clone(),
-            queue: RefCell::new(VecDeque::new()),
+            queue: RefCell::new(queue),
+            _queue_lease: queue_lease,
         });
-        Self {
+        Ok(Self {
             run,
             policy,
             budget,
@@ -1871,7 +2131,7 @@ impl BudgetOwnedStreamingIssueReporter {
             counters: BTreeMap::new(),
             summary: StreamingIssueSummary::empty(),
             is_initialized: false,
-        }
+        })
     }
 
     /// Return the number of retained detailed receipts.
@@ -1961,11 +2221,32 @@ impl BudgetOwnedStreamingIssueReporter {
             tiebreaker: pending.issue.order.scope_tiebreaker,
             retry_ordinal: pending.issue.order.retry_ordinal,
         };
-        let domain_pending = self.pending_inputs.entry(input_domain).or_default();
-        if domain_pending.contains_key(&key) {
-            return Err((StreamingReliabilityError::CorruptCheckpointState, pending));
+        if let Some(domain) = self.pending_inputs.get_mut(&input_domain) {
+            if domain.pending.contains_key(&key) {
+                return Err((StreamingReliabilityError::CorruptCheckpointState, pending));
+            }
+            domain.pending.insert(key, pending);
+            return Ok(None);
         }
-        domain_pending.insert(key, pending);
+        // The outer bucket is a new allocation; its inner entry is already
+        // covered by the pending reservation minted in `reserve_pending_issue`.
+        let bytes = match super::budget::ordered_map_entry_bytes::<
+            StreamingInputDomainIdentity,
+            RetainedDomainPending,
+        >() {
+            Ok(bytes) => bytes,
+            Err(_) => return Err((StreamingReliabilityError::CounterOverflow, pending)),
+        };
+        let entry_lease = match self.budget.try_acquire(1, bytes) {
+            Ok(lease) => lease,
+            Err(error) => return Err((state_budget_error(error), pending)),
+        };
+        let mut domain = RetainedDomainPending {
+            pending: BTreeMap::new(),
+            entry_lease,
+        };
+        domain.pending.insert(key, pending);
+        self.pending_inputs.insert(input_domain, domain);
         Ok(None)
     }
 
@@ -2022,7 +2303,11 @@ impl BudgetOwnedStreamingIssueReporter {
         }) {
             return Err(StreamingReliabilityError::CorruptCheckpointState);
         }
-        if let Some(current_token) = self.current_action_attempts.get(&sequence).copied() {
+        if let Some(current_token) = self
+            .current_action_attempts
+            .get(&sequence)
+            .map(|current| current.reporter_token)
+        {
             let current = self
                 .pending_actions
                 .get(&current_token)
@@ -2045,6 +2330,19 @@ impl BudgetOwnedStreamingIssueReporter {
         {
             return Err(StreamingReliabilityError::CorruptCheckpointState);
         }
+        // Charge the current-attempt index entry before any state mutation. A
+        // retry reuses the existing entry and needs no new charge.
+        let attempt_entry_lease = if self.current_action_attempts.contains_key(&sequence) {
+            None
+        } else {
+            let bytes = super::budget::ordered_map_entry_bytes::<GlobalSequence, CurrentActionAttempt>()
+                .map_err(|_| StreamingReliabilityError::CounterOverflow)?;
+            Some(
+                self.budget
+                    .try_acquire(1, bytes)
+                    .map_err(state_budget_error)?,
+            )
+        };
         let pending = reserve_pending_issue(&self.budget, issue)?;
         let reporter_token = self.next_reporter_token;
         self.next_reporter_token = self
@@ -2065,8 +2363,21 @@ impl BudgetOwnedStreamingIssueReporter {
                 decision: None,
             },
         );
-        self.current_action_attempts
-            .insert(sequence, reporter_token);
+        match self.current_action_attempts.get_mut(&sequence) {
+            Some(current) => current.reporter_token = reporter_token,
+            None => {
+                let Some(entry_lease) = attempt_entry_lease else {
+                    return Err(StreamingReliabilityError::CorruptCheckpointState);
+                };
+                self.current_action_attempts.insert(
+                    sequence,
+                    CurrentActionAttempt {
+                        reporter_token,
+                        entry_lease,
+                    },
+                );
+            }
+        }
         Ok(QueuedActionFailure { reporter_token })
     }
 
@@ -2136,8 +2447,8 @@ impl BudgetOwnedStreamingIssueReporter {
                     .get(&issue_id)
                     .ok_or(StreamingReliabilityError::InvalidActionTerminalMembership)?;
                 if retained.outcome.disposition != StreamingIssueDisposition::TerminalActionReceipt
-                    || retained.receipt.receipt.scope.action_id() != Some(membership.action_id())
-                    || retained.receipt.receipt.order.global_sequence != Some(membership.sequence())
+                    || retained.receipt.action_id() != Some(membership.action_id())
+                    || retained.receipt.global_sequence() != Some(membership.sequence())
                 {
                     return Err(StreamingReliabilityError::InvalidActionTerminalMembership);
                 }
@@ -2190,8 +2501,17 @@ impl BudgetOwnedStreamingIssueReporter {
             }
         }
         let sequence = fact.sequence;
+        let entry_bytes = super::budget::ordered_map_entry_bytes::<
+            GlobalSequence,
+            RetainedActionTerminal,
+        >()
+        .map_err(|_| StreamingReliabilityError::CounterOverflow)?;
+        let entry_lease = self
+            .budget
+            .try_acquire(1, entry_bytes)
+            .map_err(state_budget_error)?;
         self.action_terminals
-            .insert(sequence, RetainedActionTerminal { fact });
+            .insert(sequence, RetainedActionTerminal { fact, entry_lease });
         let Some(mut next) = self
             .action_frontier
             .map_or(Some(0), |frontier| frontier.get().checked_add(1))
@@ -2232,10 +2552,10 @@ impl BudgetOwnedStreamingIssueReporter {
                 return Err(StreamingReliabilityError::InvalidActionTerminalMembership);
             }
         }
-        for (sequence, token) in self.current_action_attempts.range(..=through) {
+        for (sequence, attempt) in self.current_action_attempts.range(..=through) {
             let current = self
                 .pending_actions
-                .get(token)
+                .get(&attempt.reporter_token)
                 .ok_or(StreamingReliabilityError::CorruptActionAttemptIndex)?;
             if current.sequence != *sequence || !self.action_terminals.contains_key(sequence) {
                 return Err(StreamingReliabilityError::InvalidActionTerminalMembership);
@@ -2278,18 +2598,33 @@ impl BudgetOwnedStreamingIssueReporter {
         if self
             .input_frontiers
             .get(&input_domain)
-            .is_some_and(|current| through < *current)
+            .is_some_and(|current| through < current.through)
         {
             return Err(StreamingReliabilityError::NonContiguousIssueFrontier);
         }
 
+        // Acquire the frontier entry before any state mutation, so a refusal
+        // leaves both maps and every pending lease untouched. An existing
+        // frontier already owns its entry lease and needs no new charge.
+        let new_entry_lease = if self.input_frontiers.contains_key(&input_domain) {
+            None
+        } else {
+            let bytes = input_frontier_entry_bytes()
+                .map_err(|_| StreamingReliabilityError::CounterOverflow)?;
+            Some(
+                self.budget
+                    .try_acquire(1, bytes)
+                    .map_err(state_budget_error)?,
+            )
+        };
+
         loop {
             // Selection and removal share one borrow, so no second lookup can
             // observe a different map and no absent-key branch exists.
-            let Some(domain_pending) = self.pending_inputs.get_mut(&input_domain) else {
+            let Some(domain) = self.pending_inputs.get_mut(&input_domain) else {
                 break;
             };
-            let Some(first) = domain_pending.first_entry() else {
+            let Some(first) = domain.pending.first_entry() else {
                 break;
             };
             if first.key().position > through {
@@ -2297,19 +2632,37 @@ impl BudgetOwnedStreamingIssueReporter {
             }
             let (next_key, pending) = first.remove_entry();
             if let Err((error, pending)) = self.classify_pending(pending) {
-                self.pending_inputs
-                    .entry(input_domain.clone())
-                    .or_default()
-                    .insert(next_key, pending);
+                // Reinsertion cannot allocate a new outer entry: the bucket was
+                // present when the key was drawn and is only removed below.
+                let Some(domain) = self.pending_inputs.get_mut(&input_domain) else {
+                    return Err(StreamingReliabilityError::CorruptCheckpointState);
+                };
+                domain.pending.insert(next_key, pending);
                 return Err(error);
             }
         }
-        self.input_frontiers.insert(input_domain.clone(), through);
+
+        match self.input_frontiers.get_mut(&input_domain) {
+            Some(current) => current.through = through,
+            None => {
+                let Some(entry_lease) = new_entry_lease else {
+                    return Err(StreamingReliabilityError::CorruptCheckpointState);
+                };
+                self.input_frontiers.insert(
+                    input_domain.clone(),
+                    RetainedInputFrontier {
+                        through,
+                        entry_lease,
+                    },
+                );
+            }
+        }
         if self
             .pending_inputs
             .get(&input_domain)
-            .is_some_and(BTreeMap::is_empty)
+            .is_some_and(|domain| domain.pending.is_empty())
         {
+            // Removing the bucket drops its entry lease, releasing the charge.
             self.pending_inputs.remove(&input_domain);
         }
         Ok(())
@@ -2327,7 +2680,21 @@ impl BudgetOwnedStreamingIssueReporter {
             Err(error) => return Err((error, pending)),
         };
         let key = counter_key_for_issue(&pending.issue, rule.rule_id.clone());
-        let prior_matching_count = self.counters.get(&key).copied().unwrap_or(0);
+        let prior_matching_count = self.counters.get(&key).map_or(0, |counter| counter.count);
+        // Acquire the counter entry before minting the receipt, so a refusal
+        // here cannot leave a receipt retained against an uncharged counter.
+        let counter_lease = if self.counters.contains_key(&key) {
+            None
+        } else {
+            let bytes = match counter_entry_bytes() {
+                Ok(bytes) => bytes,
+                Err(_) => return Err((StreamingReliabilityError::CounterOverflow, pending)),
+            };
+            match self.budget.try_acquire(1, bytes) {
+                Ok(lease) => Some(lease),
+                Err(error) => return Err((state_budget_error(error), pending)),
+            }
+        };
         let resulting_matching_count = match prior_matching_count.checked_add(1) {
             Some(count) => count,
             None => return Err((StreamingReliabilityError::CounterOverflow, pending)),
@@ -2355,7 +2722,7 @@ impl BudgetOwnedStreamingIssueReporter {
         if let Err(error) = update_summary(&mut next_summary, &receipt, needs_admission_fence) {
             return Err((error, pending));
         }
-        let (owned, pending_lease) = match budget_owned_receipt_from_reservation(
+        let (owned, receipt_entry_lease, pending_lease) = match budget_owned_receipt_from_reservation(
             receipt,
             pending.reservation,
             pending.retained_issue_bytes,
@@ -2372,19 +2739,41 @@ impl BudgetOwnedStreamingIssueReporter {
                 ));
             }
         };
-        drop(pending_lease);
         let outcome = StreamingIssueOutcome {
             issue_id,
             disposition,
             needs_admission_fence,
         };
-        self.counters.insert(key, resulting_matching_count);
+        match self.counters.get_mut(&key) {
+            Some(counter) => counter.count = resulting_matching_count,
+            None => {
+                let Some(entry_lease) = counter_lease else {
+                    return Err((
+                        StreamingReliabilityError::CorruptCheckpointState,
+                        PendingIssue {
+                            issue: pending.issue,
+                            reservation: pending_lease,
+                            retained_issue_bytes: pending.retained_issue_bytes,
+                        },
+                    ));
+                };
+                self.counters.insert(
+                    key,
+                    RetainedCounter {
+                        count: resulting_matching_count,
+                        entry_lease,
+                    },
+                );
+            }
+        }
+        drop(pending_lease);
         self.summary = next_summary;
         self.receipts.insert(
             issue_id,
             RetainedReceipt {
                 receipt: owned,
                 outcome,
+                entry_lease: receipt_entry_lease,
             },
         );
         Ok(outcome)
@@ -2406,10 +2795,10 @@ impl BudgetOwnedStreamingIssueReporter {
             &mut hasher,
             b"aiperf.streaming.issue-input-frontier-root.v1",
         );
-        for (domain, through) in &self.input_frontiers {
+        for (domain, frontier) in &self.input_frontiers {
             update_hash_field(&mut hasher, domain.stream_identity.as_bytes());
             update_hash_field(&mut hasher, domain.source_identity.as_bytes());
-            update_hash_field(&mut hasher, &through.get().to_le_bytes());
+            update_hash_field(&mut hasher, &frontier.through.get().to_le_bytes());
         }
         ContentDigest::from_bytes(*hasher.finalize().as_bytes())
     }
@@ -2437,8 +2826,15 @@ impl BudgetOwnedStreamingIssueReporter {
             receipts: self
                 .receipts
                 .values()
-                .map(|value| &value.receipt.receipt)
-                .collect(),
+                .map(|value| {
+                    std::str::from_utf8(value.receipt.encoded_bytes())
+                        .map_err(|_| StreamingReliabilityError::CorruptCheckpointState)
+                        .and_then(|encoded| {
+                            RawValue::from_string(encoded.to_owned())
+                                .map_err(|_| StreamingReliabilityError::CorruptCheckpointState)
+                        })
+                })
+                .collect::<Result<Vec<_>, _>>()?,
         };
         let encoded = serde_json::to_vec(&wire)
             .map_err(|_| StreamingReliabilityError::CorruptCheckpointState)?;
@@ -2487,10 +2883,7 @@ impl BudgetOwnedStreamingIssueReporter {
             .get(&issue_id)
             .ok_or(StreamingReliabilityError::QuarantineReceiptUnavailable)?;
         if retained.outcome.disposition != StreamingIssueDisposition::Quarantine
-            || !matches!(
-                retained.receipt.receipt.scope,
-                StreamingIssueScope::Session { .. }
-            )
+            || retained.receipt.scope_kind() != StreamingIssueScopeKind::Session
         {
             return Err(StreamingReliabilityError::QuarantineReceiptUnavailable);
         }
@@ -2677,7 +3070,9 @@ struct IssueReceiptPartitionWire<'a> {
     barrier_epoch: CheckpointEpoch,
     receipt_root: ContentDigest,
     handled_cut: &'a HandledIssueCut,
-    receipts: Vec<&'a PersistedStreamingIssueReceipt>,
+    /// Each retained receipt is embedded verbatim from its canonical encoding,
+    /// so the partition payload never re-serializes a materialized DTO.
+    receipts: Vec<Box<RawValue>>,
 }
 
 /// Non-destructive move-only detailed-receipt partition prepared at a barrier.
@@ -3304,19 +3699,82 @@ fn issue_id_from_wire(wire: &PersistedStreamingIssueReceiptWire) -> ContentDiges
     ContentDigest::from_bytes(*hasher.finalize().as_bytes())
 }
 
+/// Return a proven upper bound on the strict-v2 encoding of the receipt one
+/// issue produces.
+///
+/// The bound is the fixed structural maximum plus the three checked component
+/// identifiers at their validated maximum length. Both contributors are proven,
+/// so acquiring this bound before serialization and shrinking to the exact
+/// encoded length afterwards keeps the transient encoding inside the budget.
+fn receipt_encoding_bound_bytes() -> Result<usize, BudgetError> {
+    super::budget::checked_sum([
+        RECEIPT_ENCODING_FIXED_BOUND_BYTES,
+        MAX_COMPONENT_ID_BYTES,
+        MAX_COMPONENT_ID_BYTES,
+        MAX_COMPONENT_ID_BYTES,
+    ])
+}
+
+/// Return a proven upper bound on the parsed receipt allocation.
+fn parsed_receipt_bound_bytes() -> Result<usize, BudgetError> {
+    super::budget::checked_sum([
+        size_of::<PersistedStreamingIssueReceipt>(),
+        MAX_COMPONENT_ID_BYTES,
+        MAX_COMPONENT_ID_BYTES,
+        MAX_COMPONENT_ID_BYTES,
+    ])
+}
+
+/// Return the exact structural charge of one pending-input ordered-map entry.
+fn pending_input_entry_bytes() -> Result<usize, BudgetError> {
+    super::budget::ordered_map_entry_bytes::<PendingInputKey, PendingIssue>()
+}
+
+/// Return the exact structural charge of one retained-receipt ordered-map entry.
+fn receipt_entry_bytes() -> Result<usize, BudgetError> {
+    super::budget::ordered_map_entry_bytes::<ContentDigest, RetainedReceipt>()
+}
+
+/// Return the exact structural charge of one input-frontier ordered-map entry.
+fn input_frontier_entry_bytes() -> Result<usize, BudgetError> {
+    super::budget::ordered_map_entry_bytes::<StreamingInputDomainIdentity, RetainedInputFrontier>()
+}
+
+/// Return the exact structural charge of one counter ordered-map entry,
+/// including the checked identifiers owned by its key.
+fn counter_entry_bytes(key: &StreamingIssueCounterKey) -> Result<usize, BudgetError> {
+    super::budget::checked_sum([
+        super::budget::ordered_map_entry_bytes::<StreamingIssueCounterKey, RetainedCounter>()?,
+        key.rule_id.retained_bytes(),
+        match &key.domain {
+            StreamingIssueCounterDomain::Export { exporter_id, .. } => exporter_id.retained_bytes(),
+            StreamingIssueCounterDomain::Run
+            | StreamingIssueCounterDomain::Input(_)
+            | StreamingIssueCounterDomain::Action
+            | StreamingIssueCounterDomain::CheckpointAttempt => 0,
+        },
+    ])
+}
+
 fn reserve_pending_issue(
     budget: &StreamingResourceBudget,
     issue: OrdinaryStreamingIssue,
 ) -> Result<PendingIssue, StreamingReliabilityError> {
-    let retained_issue_bytes = retained_issue_bytes(&issue);
-    let parsed_reservation = retained_issue_bytes
-        .checked_add(size_of::<PersistedStreamingIssueReceipt>())
-        .and_then(|bytes| bytes.checked_add(512))
-        .ok_or(StreamingReliabilityError::CounterOverflow)?;
-    let total_bytes = retained_issue_bytes
-        .checked_add(RECEIPT_ENCODED_RESERVATION_BYTES)
-        .and_then(|bytes| bytes.checked_add(parsed_reservation))
-        .ok_or(StreamingReliabilityError::CounterOverflow)?;
+    let retained_issue_bytes =
+        retained_issue_bytes(&issue).map_err(|_| StreamingReliabilityError::CounterOverflow)?;
+    // Three charged items: the pending issue itself, its ordered-map entry
+    // while it waits behind an input frontier, and the encoded receipt that
+    // classification will retain. Every byte contributor is derived, and
+    // `budget_owned_receipt_from_reservation` shrinks the reservation to its
+    // exact retained size on success.
+    let total_bytes = super::budget::checked_sum([
+        retained_issue_bytes,
+        pending_input_entry_bytes().map_err(|_| StreamingReliabilityError::CounterOverflow)?,
+        receipt_encoding_bound_bytes().map_err(|_| StreamingReliabilityError::CounterOverflow)?,
+        parsed_receipt_bound_bytes().map_err(|_| StreamingReliabilityError::CounterOverflow)?,
+        receipt_entry_bytes().map_err(|_| StreamingReliabilityError::CounterOverflow)?,
+    ])
+    .map_err(|_| StreamingReliabilityError::CounterOverflow)?;
     let reservation = budget
         .try_acquire(3, total_bytes)
         .map_err(state_budget_error)?;
@@ -3359,31 +3817,46 @@ fn action_disposition(
     }
 }
 
-fn retained_issue_bytes(issue: &OrdinaryStreamingIssue) -> usize {
-    size_of::<OrdinaryStreamingIssue>()
-        + issue.code.as_str().len()
-        + issue
+/// Return the exact retained bytes of one ordinary issue.
+///
+/// Component identifiers charge their retained capacity, not their length, so a
+/// short identifier held in an oversized allocation cannot bypass the
+/// fixed-memory invariant.
+fn retained_issue_bytes(issue: &OrdinaryStreamingIssue) -> Result<usize, BudgetError> {
+    super::budget::checked_sum([
+        size_of::<OrdinaryStreamingIssue>(),
+        issue.code.retained_bytes(),
+        issue
             .scope
             .exporter_id()
-            .map_or(0, |value| value.as_str().len())
+            .map_or(0, StreamingIssueComponentId::retained_bytes),
+    ])
 }
 
-fn parsed_receipt_bytes(receipt: &PersistedStreamingIssueReceipt) -> usize {
-    size_of::<PersistedStreamingIssueReceipt>()
-        + receipt.code.as_str().len()
-        + receipt.threshold.rule_id.as_str().len()
-        + receipt
+/// Return the exact retained bytes of one parsed persisted receipt.
+fn parsed_receipt_bytes(receipt: &PersistedStreamingIssueReceipt) -> Result<usize, BudgetError> {
+    super::budget::checked_sum([
+        size_of::<PersistedStreamingIssueReceipt>(),
+        receipt.code.retained_bytes(),
+        receipt.threshold.rule_id.retained_bytes(),
+        receipt
             .scope
             .exporter_id()
-            .map_or(0, |value| value.as_str().len())
+            .map_or(0, StreamingIssueComponentId::retained_bytes),
+    ])
 }
 
-fn parsed_export_receipt_bytes(receipt: &PersistedExportIssueReceipt) -> usize {
-    size_of::<PersistedExportIssueReceipt>()
-        + receipt.sink_id.as_str().len()
-        + parsed_receipt_bytes(&receipt.embedded_receipt)
-        + size_of::<PreparedExportAttemptFailure>()
-        + size_of::<CheckedExportAttemptDecision>()
+/// Return the exact retained bytes of one parsed persisted export receipt.
+fn parsed_export_receipt_bytes(
+    receipt: &PersistedExportIssueReceipt,
+) -> Result<usize, BudgetError> {
+    super::budget::checked_sum([
+        size_of::<PersistedExportIssueReceipt>(),
+        receipt.sink_id.retained_bytes(),
+        parsed_receipt_bytes(&receipt.embedded_receipt)?,
+        size_of::<PreparedExportAttemptFailure>(),
+        size_of::<CheckedExportAttemptDecision>(),
+    ])
 }
 
 fn persisted_receipt_from_issue(
@@ -3412,8 +3885,12 @@ fn budget_owned_receipt_from_reservation(
     receipt: PersistedStreamingIssueReceipt,
     mut reservation: BudgetLease,
     retained_issue_bytes: usize,
-) -> Result<(BudgetOwnedStreamingIssueReceipt, BudgetLease), (StreamingReliabilityError, BudgetLease)>
-{
+) -> Result<
+    (BudgetOwnedStreamingIssueReceipt, BudgetLease, BudgetLease),
+    (StreamingReliabilityError, BudgetLease),
+> {
+    // The reservation already covers the proven encoding bound, so this
+    // allocation is inside the budget before it exists.
     let encoded = match serde_json::to_vec(&receipt) {
         Ok(encoded) => encoded,
         Err(_) => {
@@ -3423,14 +3900,17 @@ fn budget_owned_receipt_from_reservation(
             ));
         }
     };
-    let parsed_charge_bytes = parsed_receipt_bytes(&receipt);
-    let exact_bytes = match retained_issue_bytes
-        .checked_add(encoded.len())
-        .and_then(|bytes| bytes.checked_add(parsed_charge_bytes))
-    {
-        Some(bytes) => bytes,
-        None => return Err((StreamingReliabilityError::CounterOverflow, reservation)),
+    let entry_bytes = match receipt_entry_bytes() {
+        Ok(bytes) => bytes,
+        Err(_) => return Err((StreamingReliabilityError::CounterOverflow, reservation)),
     };
+    let exact_bytes =
+        match super::budget::checked_sum([retained_issue_bytes, encoded.len(), entry_bytes]) {
+            Ok(bytes) => bytes,
+            Err(_) => return Err((StreamingReliabilityError::CounterOverflow, reservation)),
+        };
+    // Shrinking here is the synchronous settlement of the proven bound to the
+    // exact retained charge; it can only ever release capacity.
     if reservation.shrink_to(3, exact_bytes).is_err() {
         return Err((
             StreamingReliabilityError::StateBudget(StateBudgetFailureCode::ByteCapacity),
@@ -3446,7 +3926,7 @@ fn budget_owned_receipt_from_reservation(
             ));
         }
     };
-    let parsed_lease = match reservation.split_off(1, parsed_charge_bytes) {
+    let entry_lease = match reservation.split_off(1, entry_bytes) {
         Ok(lease) => lease,
         Err(_) => {
             return Err((
@@ -3455,6 +3935,7 @@ fn budget_owned_receipt_from_reservation(
             ));
         }
     };
+    let facts = CompactIssueReceiptFacts::from_receipt(&receipt);
     let encoded = match BudgetedCheckpointBytes::new(Bytes::from(encoded), encoded_lease) {
         Ok(encoded) => encoded,
         Err(_) => {
@@ -3464,13 +3945,13 @@ fn budget_owned_receipt_from_reservation(
             ));
         }
     };
+    // `receipt` is dropped here: only the compact facts and canonical bytes are
+    // retained. The returned leases are, in order, the retained receipt, its
+    // ordered-map entry authority, and the pending-issue remainder the caller
+    // releases after classification.
     Ok((
-        BudgetOwnedStreamingIssueReceipt {
-            receipt,
-            encoded,
-            parsed_lease,
-            parsed_charge_bytes,
-        },
+        BudgetOwnedStreamingIssueReceipt { facts, encoded },
+        entry_lease,
         reservation,
     ))
 }
@@ -3652,9 +4133,7 @@ pub trait StreamingIssueReporter: StreamingCheckpointParticipant {
 
     /// Borrow deterministic matching counters.
     fn counters(&self) -> StreamingIssueCounterView<'_> {
-        StreamingIssueCounterView {
-            counters: &EMPTY_COUNTERS,
-        }
+        StreamingIssueCounterView { counters: None }
     }
 
     /// Return the current fixed-size summary.
@@ -3814,7 +4293,7 @@ impl StreamingIssueReporter for BudgetOwnedStreamingIssueReporter {
 
     fn counters(&self) -> StreamingIssueCounterView<'_> {
         StreamingIssueCounterView {
-            counters: &self.counters,
+            counters: Some(&self.counters),
         }
     }
 
@@ -4609,7 +5088,8 @@ mod tests {
             StreamingIssueDisposition::TerminalActionReceipt,
         )])
         .unwrap_or_else(|error| panic!("valid action policy: {error}"));
-        let mut reporter = BudgetOwnedStreamingIssueReporter::new(run, policy, action_budget);
+        let mut reporter = BudgetOwnedStreamingIssueReporter::new(run, policy, action_budget)
+            .unwrap_or_else(|error| panic!("budget-owned reporter: {error}"));
 
         let issue = action_issue(1, 0);
         let evidence = CheckedActionFailureTerminalEvidence::for_test(
@@ -4685,7 +5165,8 @@ mod tests {
             StreamingIssueDisposition::TerminalActionReceipt,
         )])
         .unwrap_or_else(|error| panic!("valid action policy: {error}"));
-        let mut reporter = BudgetOwnedStreamingIssueReporter::new(run, policy, action_budget);
+        let mut reporter = BudgetOwnedStreamingIssueReporter::new(run, policy, action_budget)
+            .unwrap_or_else(|error| panic!("budget-owned reporter: {error}"));
 
         let first_issue = action_issue(0, 0);
         let first_evidence = CheckedActionFailureTerminalEvidence::for_test(
@@ -4774,7 +5255,8 @@ mod tests {
         .unwrap_or_else(|error| panic!("valid action rule: {error}"));
         let policy = PreparedStreamingIssuePolicy::new([rule])
             .unwrap_or_else(|error| panic!("valid action policy: {error}"));
-        let mut reporter = BudgetOwnedStreamingIssueReporter::new(run, policy, action_budget);
+        let mut reporter = BudgetOwnedStreamingIssueReporter::new(run, policy, action_budget)
+            .unwrap_or_else(|error| panic!("budget-owned reporter: {error}"));
 
         let issue = action_issue(2, 0);
         let evidence = CheckedActionFailureTerminalEvidence::for_test(
@@ -4840,7 +5322,8 @@ mod tests {
         )])
         .unwrap_or_else(|error| panic!("valid action policy: {error}"));
         let mut reporter =
-            BudgetOwnedStreamingIssueReporter::new(run, policy, action_budget.clone());
+            BudgetOwnedStreamingIssueReporter::new(run, policy, action_budget.clone())
+            .unwrap_or_else(|error| panic!("budget-owned reporter: {error}"));
         let issue = action_issue(0, 0);
         let evidence = CheckedActionFailureTerminalEvidence::for_test(
             run,
@@ -4896,7 +5379,8 @@ mod tests {
             max_bytes: 8 * 1024,
         })
         .unwrap_or_else(|error| panic!("valid install budget: {error}"));
-        let mut reporter = BudgetOwnedStreamingIssueReporter::new(run, policy, reporter_budget);
+        let mut reporter = BudgetOwnedStreamingIssueReporter::new(run, policy, reporter_budget)
+            .unwrap_or_else(|error| panic!("budget-owned reporter: {error}"));
         let issue = OrdinaryStreamingIssue::session(
             run,
             input_domain.clone(),
@@ -4978,7 +5462,8 @@ mod tests {
             max_bytes: 32 * 1024,
         })
         .unwrap_or_else(|error| panic!("valid export budget: {error}"));
-        let mut reporter = BudgetOwnedStreamingIssueReporter::new(run, policy, reporter_budget);
+        let mut reporter = BudgetOwnedStreamingIssueReporter::new(run, policy, reporter_budget)
+            .unwrap_or_else(|error| panic!("budget-owned reporter: {error}"));
         let issue = OrdinaryStreamingIssue::export(
             run,
             sink_id.clone(),
@@ -5124,7 +5609,8 @@ mod tests {
             max_bytes: 32 * 1024,
         })
         .unwrap_or_else(|error| panic!("valid export budget: {error}"));
-        let mut reporter = BudgetOwnedStreamingIssueReporter::new(run, policy, reporter_budget);
+        let mut reporter = BudgetOwnedStreamingIssueReporter::new(run, policy, reporter_budget)
+            .unwrap_or_else(|error| panic!("budget-owned reporter: {error}"));
 
         let first_issue = OrdinaryStreamingIssue::export(
             run,
@@ -5248,6 +5734,7 @@ mod tests {
         )])
         .unwrap_or_else(|error| panic!("valid action policy: {error}"));
         BudgetOwnedStreamingIssueReporter::new(run, policy, budget)
+            .unwrap_or_else(|error| panic!("budget-owned reporter: {error}"))
     }
 
     fn typed_error_action_evidence(
@@ -5400,7 +5887,8 @@ mod tests {
         let run = StreamRunIdentity::new(LogicalReplayRunId::from_bytes([0x81; 32]));
         let policy = PreparedStreamingIssuePolicy::new([rule])
             .unwrap_or_else(|error| panic!("valid action policy: {error}"));
-        let mut reporter = BudgetOwnedStreamingIssueReporter::new(run, policy, budget.clone());
+        let mut reporter = BudgetOwnedStreamingIssueReporter::new(run, policy, budget.clone())
+            .unwrap_or_else(|error| panic!("budget-owned reporter: {error}"));
 
         let issue = action_issue(0, 0);
         let evidence = typed_error_action_evidence(&issue);
