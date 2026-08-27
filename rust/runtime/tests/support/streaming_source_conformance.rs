@@ -28,9 +28,7 @@ use aiperf_runtime::streaming::{
     },
     checkpoint_backend::{CheckpointCommitMetadata, CheckpointGenerationExpectations},
     checkpoints::memory::{MemoryCheckpointBackend, MemoryCheckpointLimits},
-    failure::{
-        StableStreamingFailure, StreamingFailureStage, StreamingIssueReporter,
-    },
+    failure::{StableStreamingFailure, StreamingFailureStage, StreamingIssueReporter},
     identity::{ContentDigest, GlobalSequence, ImmutableObjectIdentity, SessionCausalFrontier},
     reliability::HandledIssueCut,
     source::{

@@ -26,8 +26,8 @@ use aiperf_runtime::streaming::{
         PreparedParticipantState, StreamRunIdentity, StreamingCheckpointParticipant,
     },
     failure::{
-        AcquisitionFailureCode, DecodeFailureCode, OrderingFailureCode, StableStreamingFailure,
-        SourceFailureCode, StreamFormatError, StreamSourceError, StreamingFailureStage,
+        AcquisitionFailureCode, DecodeFailureCode, OrderingFailureCode, SourceFailureCode,
+        StableStreamingFailure, StreamFormatError, StreamSourceError, StreamingFailureStage,
     },
     format::{
         DecodeBatchBudget, DecodeReceipt, DecodeStep, DecodedFragmentBatch, DecoderCheckpoint,
@@ -228,7 +228,8 @@ static SOURCE_DESCRIPTOR: StreamingSourceDescriptor = StreamingSourceDescriptor 
     supports_virtual_clock: true,
 };
 
-static PARTITION_IDENTITY: ImmutableObjectIdentity = ImmutableObjectIdentity::from_bytes([0x21; 32]);
+static PARTITION_IDENTITY: ImmutableObjectIdentity =
+    ImmutableObjectIdentity::from_bytes([0x21; 32]);
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -356,8 +357,8 @@ impl StreamingCheckpointParticipant for ScriptedSource {
             .acquire(1, bytes.len())
             .await
             .map_err(|_| CheckpointError::ObjectVerification)?;
-        let payload =
-            BudgetedCheckpointBytes::new(bytes, lease).map_err(|_| CheckpointError::ObjectVerification)?;
+        let payload = BudgetedCheckpointBytes::new(bytes, lease)
+            .map_err(|_| CheckpointError::ObjectVerification)?;
         PreparedParticipantState::new(
             barrier.run,
             self.participant_id.clone(),
@@ -615,11 +616,10 @@ impl StreamingPartitionDecoder for ScriptedDecoder {
             // Parks while the previously issued output lease is outstanding; the
             // harness drops the batch and opens the gate to resume.
             while !self.gate.is_open() {
-                let probe = self
-                    .budget
-                    .acquire(1, 0)
-                    .await
-                    .map_err(|_| StreamFormatError::decode(DecodeFailureCode::BudgetInvariant))?;
+                let probe =
+                    self.budget.acquire(1, 0).await.map_err(|_| {
+                        StreamFormatError::decode(DecodeFailureCode::BudgetInvariant)
+                    })?;
                 drop(probe);
             }
             return Ok(DecodeStep::End(DecodeReceipt {
