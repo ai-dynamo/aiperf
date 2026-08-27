@@ -309,7 +309,7 @@ fn raw_member_stdout_cannot_authorize_an_exporter_parity_pass() {
 }
 
 #[test]
-fn controller_owned_exporter_adapter_seals_history_without_invoking_exporter_child() {
+fn unrelated_in_process_exporter_workload_is_rejected_before_measurement() {
     let mut fixture = Fixture::new();
     fixture.static_artifact = runtime_artifact_rejecting_exporter("static authority fixture");
     fixture.dynamic_artifact = runtime_artifact_rejecting_exporter("dynamic authority fixture");
@@ -323,34 +323,16 @@ fn controller_owned_exporter_adapter_seals_history_without_invoking_exporter_chi
     );
     let build_report = fixture.build_report();
     let mut factory = FakeExporterFactory {
-        mode: FakeExporterMode::Complete,
+        mode: FakeExporterMode::ProductFailure,
     };
 
-    let report = run_controlled_runtime_with_exporters_v1(&build_report, &mut factory)
-        .expect("controller-owned exporter execution completes");
+    let error = run_controlled_runtime_with_exporters_v1(&build_report, &mut factory)
+        .expect_err("an unrelated in-process workload cannot acquire artifact authority");
 
-    assert_eq!(report.decision, ControlledAttemptDecision::ValidFailure);
-    assert_eq!(report.exporter_pair_history.len(), 30);
-    assert_eq!(report.executed_member_count, 840);
-    assert_eq!(report.terminal_output_blake3.len(), 770);
-    assert!(report.statistical_report.is_none());
     assert!(
-        report
-            .exporter_pair_history
-            .iter()
-            .all(|pair| pair.static_member.exporter_nanoseconds_per_record != 1.0)
-    );
-    assert!(
-        report
-            .exporter_pair_history
-            .iter()
-            .all(|pair| pair.dynamic_member.exporter_nanoseconds_per_record != 1000.0)
-    );
-    assert!(
-        report.attempt_history[0]
-            .reason
-            .as_deref()
-            .is_some_and(|reason| reason.contains("measurement evidence is incomplete"))
+        error
+            .to_string()
+            .contains("unrelated in-process exporter workload")
     );
 }
 
