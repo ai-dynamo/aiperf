@@ -13,15 +13,16 @@ use criterion::{BatchSize, Criterion, black_box, criterion_group, criterion_main
 use uuid::Uuid;
 
 use aiperf_runtime::dispatch::collector::ReplayTerminalStatus;
-use aiperf_runtime::dispatch::sink::{RequestObserver, TurnResponseObserver};
+use aiperf_runtime::dispatch::sink::RequestObserver;
 use aiperf_runtime::endpoints::{EndpointId, EndpointKey};
 use aiperf_runtime::engine::turn_execution::WorkerSink;
 use aiperf_runtime::metrics::RequestMetricMetadata;
 use aiperf_runtime::metrics_core::InferenceDimensions;
-use aiperf_runtime::multiturn::PreparedEndpointReference;
+use aiperf_runtime::multiturn::{PreparedEndpointReference, TurnDataPolicy};
+use aiperf_runtime::scheduled::TurnResponseObserver;
 use aiperf_runtime::transport::core::{
     DispatchResult, MeasuredContext, MeasuredOutcome, PreparedEndpointBinding, PreparedTurn,
-    Request, RequestExecutor, TurnDataPolicy,
+    Request, RequestExecutor,
 };
 use aiperf_runtime::transport::http::{Clock, RealClock};
 
