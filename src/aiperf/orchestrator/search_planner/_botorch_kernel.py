@@ -20,7 +20,7 @@ SAASBO; out of scope for this migration).
 from __future__ import annotations
 
 import math
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     import torch
@@ -56,9 +56,6 @@ def make_dsp_kernel(d: int, batch_shape: torch.Size | None = None) -> ScaleKerne
         raise ValueError(f"d must be >= 1; got {d}")
     loc = torch.tensor(math.sqrt(2.0) + 0.5 * math.log(d), dtype=torch.float64)
     scale = torch.tensor(math.sqrt(3.0), dtype=torch.float64)
-    batch_kwargs: dict[str, Any] = (
-        {} if batch_shape is None else {"batch_shape": batch_shape}
-    )
     return ScaleKernel(
         MaternKernel(
             nu=2.5,
