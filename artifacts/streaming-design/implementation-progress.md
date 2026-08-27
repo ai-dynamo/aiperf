@@ -7,7 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 
 - Integration branch: `ajc/native-rust-runtime-plugins`
 - Normative specification: base `505efc06b0`, content-reconstruction amendment `3fea6f2fe0`
-- Approved executable plan set: base `e16aa2c71f802a9ad17a241464374e4d7b5ba19b`, content amendment final `3621ec56e5`
+- Approved executable plan set: base `e16aa2c71f802a9ad17a241464374e4d7b5ba19b`, content amendment final `3621ec56e5`, checkpoint run-authority amendment `f4bd60e95b`
 - Implementation start: `cd4a600e6c`
 - Status: foundation contract wave started
 
@@ -25,6 +25,7 @@ SPDX-License-Identifier: Apache-2.0
 | Streaming Dynamo reconstruction amendment | Complete | Design `3fea6f2fe0`; executable plan final `3621ec56e5`; two reviews approved; durable ruling and review record committed |
 | Task 5A — typed checkpoint cuts and authority | Complete | Task head `407116c2a2`; merge `20cf021e93`; checkpoint 13/13, authority 2/2, API doctests 8/8, budget/identity 25/25; two exact-head reviews approved |
 | Task 1C — bounded blocking execution owner | Complete | Task head `f7af2069e8`; merge `b82ff70942`; blocking 11/11, budget 15/15, participants 13/13, authority 2/2, doctests 9/9; two exact-head reviews approved |
+| Checkpoint logical-run authority plan correction | Complete | Plan head `f4bd60e95b`; merge `11f41a3b2a`; two exact-head reviews approved; mandatory Task 5A-R inserted before 5B |
 
 Baseline note: the full feature-off runtime suite reached execution after the
 repair and reported 1907 passing tests plus one pre-existing version-fixture
@@ -80,6 +81,12 @@ silently into the completed 1C contract.
   and uses only bounded local non-durable memoization. The controller performs
   generation-1 reconstruction; cells authenticate the bound profile digest
   before prepare. See `content-reconstruction-course-correction.md`.
+- Checkpoint logical-run authority: durable generations, barriers, prepared and
+  committed participant wrappers, publication proofs, receipts, and result
+  reachability bind one `StreamRunIdentity(LogicalReplayRunId)`. Process
+  incarnation remains separate. Task 5A-R retrofits this authority before 5B;
+  V1 owns explicit fresh/resume resolution and bootstrap-before-issue product
+  ordering. See `checkpoint-run-identity-course-correction.md`.
 
 This file is updated and force-added after every reviewed task merge. Detailed
 ephemeral RED/GREEN output, task briefs, review packages, and rulings live in
