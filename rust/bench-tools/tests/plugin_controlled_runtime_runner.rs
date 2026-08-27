@@ -17,6 +17,7 @@ use aiperf_bench_tools::plugin_stats::{ControlledAttemptDecision, ExporterMember
 use aiperf_bench_tools::runtime_runner::{
     ControlledExporterWorkloadFactory, ExporterWorkloadAcquisitionError, ExporterWorkloadRequest,
     run_controlled_runtime_v1, run_controlled_runtime_with_exporters_v1,
+    run_controlled_runtime_with_ledger_v1,
 };
 
 const COMMIT: &str = "0123456789abcdef0123456789abcdef01234567";
@@ -390,4 +391,37 @@ fn terminal_failure_is_retained_once_with_its_exact_empty_output_digest() {
     assert_eq!(report.executed_member_count, 1);
     assert_eq!(report.terminal_output_blake3, [digest(b"")]);
     assert!(report.statistical_report.is_none());
+}
+
+#[test]
+fn valid_terminal_attempt_refuses_a_second_runner_invocation() {
+    let mut fixture = Fixture::new();
+    let failing_artifact = b"#!/bin/sh\nexit 9\n".to_vec();
+    write_executable(
+        &fixture.static_source.join("artifact-source"),
+        &failing_artifact,
+    );
+    fixture.static_artifact = failing_artifact;
+    let build_report = fixture.build_report();
+    let ledger = fixture._directory.path().join("attempt-ledger.jsonl");
+
+    let first = run_controlled_runtime_with_ledger_v1(&build_report, &ledger)
+        .expect("first invocation records its terminal attempt");
+    assert_eq!(first.decision, ControlledAttemptDecision::ValidFailure);
+
+    let error = run_controlled_runtime_with_ledger_v1(&build_report, &ledger)
+        .expect_err("the first valid attempt is authoritative across invocations");
+    assert!(
+        error
+            .to_string()
+            .contains("first valid experiment attempt is authoritative")
+    );
+    assert_eq!(
+        std::fs::read(&ledger)
+            .expect("attempt ledger is retained")
+            .split(|byte| *byte == b'\n')
+            .filter(|line| !line.is_empty())
+            .count(),
+        1
+    );
 }
