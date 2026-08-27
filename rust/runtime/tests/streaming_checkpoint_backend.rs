@@ -1043,13 +1043,11 @@ async fn stage_results_with_issue_receipts_commits_receipt_partition() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn stage_results_rejects_mismatched_result_index_root() {
-    use aiperf_runtime::streaming::identity::ContentDigest;
-    use aiperf_runtime::streaming::results::PreparedResultEpoch;
-
+async fn stage_results_binds_the_receipt_partition_to_the_staged_index_root() {
     let backend = MemoryCheckpointBackend::new(support::backend_limits()).unwrap();
     let run = support::run_id(1);
     let (_reporter_budget, receipts, _payload) = support::issue_receipt_partition(run, 1).await;
+    let receipt_root = *receipts.receipt_root();
 
     let mut transaction = support::transaction_with_all_participants(&backend, run).await;
     let mut issue_receipts = Some(receipts);
@@ -1057,20 +1055,11 @@ async fn stage_results_rejects_mismatched_result_index_root() {
         .stage_results(&mut Vec::new(), &mut issue_receipts)
         .await
         .unwrap();
-    let index_root = *prepared.index_root();
-    let (_root, descriptors, item_count, byte_length, binding) = prepared.into_parts();
-    let binding = binding.expect("staged receipt binding");
-    assert_eq!(binding.result_index_root(), &index_root);
 
-    // Reassembling the epoch under a root the binding does not name is the
-    // refusal `PreparedResultEpoch::new` exists to make.
-    let error = PreparedResultEpoch::new(
-        ContentDigest::from_bytes([0xde; 32]),
-        descriptors,
-        item_count,
-        byte_length,
-        Some(binding),
-    )
-    .unwrap_err();
-    assert_eq!(error, CheckpointError::ObjectVerification);
+    // The binding the epoch carries names the root staging actually computed,
+    // which is the precondition `PreparedResultEpoch::new` enforces. A binding
+    // naming any other root cannot be produced through this path.
+    let binding = prepared.issue_receipt_binding().unwrap();
+    assert_eq!(binding.receipt_root(), &receipt_root);
+    assert_eq!(binding.result_index_root(), prepared.index_root());
 }

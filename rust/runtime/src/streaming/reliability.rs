@@ -9016,4 +9016,58 @@ mod tests {
         assert_eq!(budget.snapshot().used_bytes, 0);
         assert_eq!(budget.snapshot().used_items, 0);
     }
+
+    #[test]
+    fn prepared_result_epoch_refuses_a_binding_naming_another_index_root() {
+        use super::super::results::BudgetedResultDescriptors;
+
+        fn epoch_for(
+            binding_root: ContentDigest,
+            epoch_root: ContentDigest,
+        ) -> Result<PreparedResultEpoch, CheckpointError> {
+            let budget = StreamingResourceBudget::new(super::super::budget::BudgetLimits {
+                max_items: 4,
+                max_bytes: 64,
+            })
+            .unwrap_or_else(|error| panic!("valid budget: {error}"));
+            let view_lease = budget
+                .try_acquire(1, 0)
+                .unwrap_or_else(|error| panic!("view lease: {error}"));
+            let descriptor_lease = budget
+                .try_acquire(0, 0)
+                .unwrap_or_else(|error| panic!("empty descriptor lease: {error}"));
+            let descriptors =
+                BudgetedResultDescriptors::new(Box::new([]), descriptor_lease)
+                    .unwrap_or_else(|error| panic!("empty descriptors: {error}"));
+            // Constructed directly so the binding can name a root that staging
+            // would never produce; `into_staged_parts` always passes the root
+            // the plan just computed.
+            let binding = PreparedIssueReceiptEpochBinding {
+                receipt_root: ContentDigest::from_bytes([0xa1; 32]),
+                handled_cut: HandledIssueCut::empty(),
+                result_index_root: binding_root,
+                view_lease,
+            };
+            PreparedResultEpoch::new(epoch_root, descriptors, 0, 0, Some(binding))
+        }
+
+        // A binding whose retained root disagrees with the epoch's index root
+        // cannot be assembled: the receipt partition and the result index would
+        // otherwise commit under two different identities.
+        assert_eq!(
+            epoch_for(
+                ContentDigest::from_bytes([0xde; 32]),
+                ContentDigest::from_bytes([0xdf; 32]),
+            )
+            .err(),
+            Some(CheckpointError::ObjectVerification)
+        );
+
+        // The identical construction with agreeing roots is accepted, so the
+        // refusal above is the root check and not incidental setup.
+        let agreed = ContentDigest::from_bytes([0xde; 32]);
+        let prepared = epoch_for(agreed, agreed)
+            .unwrap_or_else(|error| panic!("agreeing roots prepare: {error}"));
+        assert_eq!(prepared.index_root(), &agreed);
+    }
 }
