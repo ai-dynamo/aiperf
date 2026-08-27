@@ -3612,6 +3612,12 @@ fn is_retryable_submission_error(error: &StreamingReliabilityError) -> bool {
         | StreamingReliabilityError::ExportReceiptDigestLengthMismatch
         | StreamingReliabilityError::NonContiguousExportCounter
         | StreamingReliabilityError::DerivedExportReceiptUnreachable
+        | StreamingReliabilityError::NonFinalGenerationAuthority
+        | StreamingReliabilityError::ExportReceiptFailureUnrepresentable
+        | StreamingReliabilityError::ExportReceiptClassCodeMismatch
+        | StreamingReliabilityError::ExportReceiptRuleMismatch
+        | StreamingReliabilityError::ExportReceiptExhaustionMismatch
+        | StreamingReliabilityError::ExportReceiptDispositionMismatch
         | StreamingReliabilityError::CorruptActionAttemptIndex
         | StreamingReliabilityError::MissingPendingActionIssue
         | StreamingReliabilityError::ConflictingIssueSubmission
@@ -6897,7 +6903,7 @@ mod tests {
         let committed = committed_final_generation(run, 4);
         let generation = committed.generation();
         let sink_id = component("native_report");
-        let (bytes, reference, _) =
+        let (bytes, _, _) =
             prepared_export_bytes(run, &generation, &sink_id, StreamingIssueClass::Permanent, 0);
         let policy = export_recomputation_policy();
         let budget = export_restore_budget();
