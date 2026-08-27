@@ -424,6 +424,7 @@ name = "aiperf-runtime"
 version = "0.12.0"
 dependencies = [
  "aiconfigurator-core",
+ "aiperf-core",
  "anyhow",
  "arrow",
  "async-trait",
