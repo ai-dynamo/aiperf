@@ -115,7 +115,9 @@ async fn recording_listener(host: &str) -> (u16, tokio::sync::oneshot::Receiver<
             let read = socket.read(&mut buffer).await.unwrap_or(0);
             let _ = sender.send(String::from_utf8_lossy(&buffer[..read]).into_owned());
             let _ = socket
-                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nContent-Type: text/plain\r\n\r\nok")
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nContent-Type: text/plain\r\n\r\nok",
+                )
                 .await;
             let _ = socket.flush().await;
             tokio::time::sleep(Duration::from_millis(50)).await;
@@ -306,10 +308,9 @@ async fn refresh_backoff_is_exponential_capped_and_clock_driven() {
             settings.refresh_backoff_base_ns = 250_000_000;
             settings.refresh_backoff_cap_ns = 600_000_000;
             let reader = FakeCredentialReader::new(Some(SECRET));
-            let authority =
-                HfCredentialAuthority::prepare(settings, reader, clock, executor())
-                    .await
-                    .expect("prepared authority");
+            let authority = HfCredentialAuthority::prepare(settings, reader, clock, executor())
+                .await
+                .expect("prepared authority");
             let seen = authority.lease().await.expect("lease").generation();
             assert_eq!(sim.now_ns(), 0, "preparation performs no clock wait");
 
@@ -584,11 +585,10 @@ async fn bearer_is_stamped_only_for_the_pinned_endpoint_host() {
             let (other_port, other_request) = recording_listener("127.0.0.2").await;
             let pinned =
                 Url::parse(&format!("http://127.0.0.1:{pinned_port}/api")).expect("pinned url");
-            let other =
-                Url::parse(&format!("http://127.0.0.2:{other_port}/cdn")).expect("cdn url");
+            let other = Url::parse(&format!("http://127.0.0.2:{other_port}/cdn")).expect("cdn url");
 
-            let factory =
-                HfHttpClientFactory::resolve(&HfHttpSettings::new(pinned.clone())).expect("factory");
+            let factory = HfHttpClientFactory::resolve(&HfHttpSettings::new(pinned.clone()))
+                .expect("factory");
             let client = factory.build(real_clock());
             let reader = FakeCredentialReader::new(Some(SECRET));
             let authority = prepared(pinned_settings(), reader)

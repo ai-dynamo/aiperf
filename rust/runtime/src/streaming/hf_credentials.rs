@@ -1150,9 +1150,7 @@ impl HfHttpClient {
                 .insert((*name).to_owned(), (*value).to_owned());
         }
         let mut bearer_stamped = false;
-        if is_pinned_host
-            && let Some(bearer) = lease.bearer()
-        {
+        if is_pinned_host && let Some(bearer) = lease.bearer() {
             request
                 .headers
                 .insert("Authorization".to_owned(), format!("Bearer {bearer}"));
