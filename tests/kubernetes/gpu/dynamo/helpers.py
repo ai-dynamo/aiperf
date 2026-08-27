@@ -382,14 +382,15 @@ class DynamoDeployer:
 
         worker_envs = [_POD_UID_ENV, *self._build_worker_envs(is_prefill=is_prefill)]
         if c.hf_token_secret:
-            worker_envs.append(
-                {
-                    "name": "HUGGING_FACE_HUB_TOKEN",
-                    "valueFrom": {
-                        "secretKeyRef": {"name": c.hf_token_secret, "key": "token"}
-                    },
-                }
-            )
+            for env_name in ("HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"):
+                worker_envs.append(
+                    {
+                        "name": env_name,
+                        "valueFrom": {
+                            "secretKeyRef": {"name": c.hf_token_secret, "key": "token"}
+                        },
+                    }
+                )
         main_container["env"] = worker_envs
 
         main_container.update(self._build_probes())
