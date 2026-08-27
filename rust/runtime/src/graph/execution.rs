@@ -889,7 +889,10 @@ mod tests {
                 async move { handle.wait_idle().await }
             });
             tokio::task::yield_now().await;
-            assert!(idle.is_finished(), "abort must drop the parked tool dispatch");
+            assert!(
+                idle.is_finished(),
+                "abort must drop the parked tool dispatch"
+            );
             idle.await.unwrap();
             release.notify_one();
         }));

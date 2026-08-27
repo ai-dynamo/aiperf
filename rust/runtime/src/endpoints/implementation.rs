@@ -18,9 +18,9 @@ use crate::body_plan::{
 };
 use crate::dataset::materialize::Overrides;
 use crate::dataset::segment::SegmentStore;
+use crate::endpoints::anthropic::apply_messages_auth_headers;
 use crate::endpoints::config::{EndpointConfig, RawEndpointConfig};
 use crate::endpoints::extraction::{PartTypes, extract_inputs};
-use crate::endpoints::anthropic::apply_messages_auth_headers;
 use crate::endpoints::metadata::{EndpointDescriptor, EndpointType, Modality};
 use crate::endpoints::models::{
     AudioResponseData, CreditPhase, EndpointError, EndpointResult, ExtractedPayload, Media,

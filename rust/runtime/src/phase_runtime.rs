@@ -1549,7 +1549,9 @@ mod tests {
             .unwrap();
         let events = Rc::new(RefCell::new(Vec::new()));
         let sidecars: Vec<Rc<dyn ScheduledPhaseSidecar>> = vec![
-            Rc::new(RecordingSidecar::new("first", events.clone()).with_finish_error("cleanup boom")),
+            Rc::new(
+                RecordingSidecar::new("first", events.clone()).with_finish_error("cleanup boom"),
+            ),
             Rc::new(RecordingSidecar::new("second", events.clone()).with_start_error("setup boom")),
         ];
 

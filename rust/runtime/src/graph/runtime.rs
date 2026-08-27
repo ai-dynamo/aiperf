@@ -675,7 +675,10 @@ mod tests {
             });
             handle.wait_idle().await;
         });
-        assert!(!outcome.deadlocked, "a panicking task must release wait_idle");
+        assert!(
+            !outcome.deadlocked,
+            "a panicking task must release wait_idle"
+        );
     }
 
     #[test]

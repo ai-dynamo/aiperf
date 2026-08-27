@@ -14,13 +14,13 @@ pub mod dispatch;
 // crates that already import `crate::transport::core::*`.
 pub use aiperf_core::measure::{error, eventstream, record, response, reuse, sse, trace};
 
-pub use dispatch::{
-    BoundedDecisionAdmission, BoundedDecisionMode, BoundedDecisionReader, CreditReportKind,
-    DecisionAdmissionError, DispatchResult, Dispatcher, MeasuredContext, MeasuredOutcome,
-    PreparedEndpointBinding, PreparedTurn, Request, RequestExecutor, WorkerCreditReport,
-};
 pub use aiperf_core::measure::{
     ConnectionReuseStrategy, ErrorDetails, ErrorKind, EventStreamDecodeError, EventStreamDecoder,
     EventStreamEncodeError, EventStreamMessage, RequestRecord, Response, SseField, SseFieldName,
     SseMessage, TextResponse, TraceData, TraceExport, TraceReference,
+};
+pub use dispatch::{
+    BoundedDecisionAdmission, BoundedDecisionMode, BoundedDecisionReader, CreditReportKind,
+    DecisionAdmissionError, DispatchResult, Dispatcher, MeasuredContext, MeasuredOutcome,
+    PreparedEndpointBinding, PreparedTurn, Request, RequestExecutor, WorkerCreditReport,
 };

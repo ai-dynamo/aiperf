@@ -82,7 +82,10 @@ pub fn check_relative(relative_path: &str) -> Result<PathBuf, ArtifactError> {
     for component in candidate.components() {
         match component {
             Component::Normal(part) => approved.push(part),
-            Component::CurDir | Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+            Component::CurDir
+            | Component::ParentDir
+            | Component::RootDir
+            | Component::Prefix(_) => {
                 return Err(ArtifactError::Rejected(format!(
                     "non-relative component in {relative_path:?}"
                 )));
@@ -134,36 +137,45 @@ impl DirectoryArtifacts {
     fn resolve(&self, relative_path: &str) -> Result<PathBuf, ArtifactError> {
         Ok(self.root.join(check_relative(relative_path)?))
     }
+}
 
-    fn walk(&self, directory: &Path, prefix: &str, into: &mut Vec<ArtifactEntry>) -> Result<(), ArtifactError> {
-        for entry in std::fs::read_dir(directory)? {
-            let entry = entry?;
-            let name = entry.file_name();
-            let name = name.to_string_lossy();
-            let relative_path = if prefix.is_empty() {
-                name.to_string()
-            } else {
-                format!("{prefix}/{name}")
-            };
-            let metadata = entry.metadata()?;
-            if metadata.is_dir() {
-                self.walk(&entry.path(), &relative_path, into)?;
-            } else if metadata.is_file() {
-                into.push(ArtifactEntry {
-                    relative_path,
-                    len: metadata.len(),
-                });
-            }
+/// Collect every regular file under `directory` as a `/`-separated path
+/// relative to the listing root.
+///
+/// Free rather than a method: it recurses on the directory argument alone and
+/// reads nothing from the scope.
+fn walk(
+    directory: &Path,
+    prefix: &str,
+    into: &mut Vec<ArtifactEntry>,
+) -> Result<(), ArtifactError> {
+    for entry in std::fs::read_dir(directory)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        let relative_path = if prefix.is_empty() {
+            name.to_string()
+        } else {
+            format!("{prefix}/{name}")
+        };
+        let metadata = entry.metadata()?;
+        if metadata.is_dir() {
+            walk(&entry.path(), &relative_path, into)?;
+        } else if metadata.is_file() {
+            into.push(ArtifactEntry {
+                relative_path,
+                len: metadata.len(),
+            });
         }
-        Ok(())
     }
+    Ok(())
 }
 
 impl ArtifactAccess for DirectoryArtifacts {
     fn list(&self) -> Result<Vec<ArtifactEntry>, ArtifactError> {
         let mut entries = Vec::new();
         if self.root.is_dir() {
-            self.walk(&self.root.clone(), "", &mut entries)?;
+            walk(&self.root, "", &mut entries)?;
         }
         entries.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
         Ok(entries)
@@ -215,8 +227,12 @@ mod tests {
     fn directory_artifacts_round_trip_within_the_scope() {
         let root = tempfile::tempdir().expect("temporary artifact root");
         let artifacts = DirectoryArtifacts::new(root.path());
-        artifacts.create("nested/report.json", b"{}").expect("create");
-        artifacts.append("nested/report.json", b"\n").expect("append");
+        artifacts
+            .create("nested/report.json", b"{}")
+            .expect("create");
+        artifacts
+            .append("nested/report.json", b"\n")
+            .expect("append");
         assert_eq!(artifacts.read("nested/report.json").expect("read"), b"{}\n");
         let listed = artifacts.list().expect("list");
         assert_eq!(listed.len(), 1);

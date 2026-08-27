@@ -287,11 +287,9 @@ impl<M: WireMessage> TraceExecutor<M> {
             trace_subphase: self.trace_subphase,
             trace_instance: TraceInstanceId::new(ctx.trace_id.to_string()),
         };
-        let dispatch = self.sink.dispatch_tool_node(
-            node_id,
-            node,
-            &dispatch_context,
-        );
+        let dispatch = self
+            .sink
+            .dispatch_tool_node(node_id, node, &dispatch_context);
         tokio::pin!(dispatch);
         let reply = tokio::select! {
             biased;

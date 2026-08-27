@@ -30,11 +30,11 @@ use crate::transport::http::models::RequestConfig;
 use crate::transport::http::transport::body::{
     JsonBodyEncoder, MultipartBodyEncoder, RequestBodyEncoder,
 };
+#[cfg(test)]
+use crate::transport::http::transport::headers::build_headers;
 use crate::transport::http::transport::headers::{
     apply_default_session_affinity_header, session_affinity_header_enabled,
 };
-#[cfg(test)]
-use crate::transport::http::transport::headers::build_headers;
 use crate::transport::http::transport::http_transport::HttpTransport;
 use crate::transport::http::transport::polling::{
     JsonVideoPollingProtocol, PollingOptions, submit_and_poll,

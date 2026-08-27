@@ -1488,7 +1488,11 @@ mod tests {
             )]))
             .is_err()
         );
-        assert!(ResolvedRequestHeaders::new(BTreeMap::new()).unwrap().is_empty());
+        assert!(
+            ResolvedRequestHeaders::new(BTreeMap::new())
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]
