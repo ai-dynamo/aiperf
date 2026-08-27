@@ -2511,14 +2511,15 @@ impl BudgetOwnedStreamingIssueReporter {
             })
     }
 
-    /// Revalidate a restored proof against restored terminals and frontier,
-    /// then install it under a fresh exact lease.
+    /// Revalidate a restored proof against the retained frontier, then install
+    /// it under a fresh exact lease.
     ///
     /// Every refusal path returns before the single assignment, so a failed
     /// restore leaves the retained closure at its prior value and charges
     /// nothing. The checkpoint restore path must call this after installing
-    /// `action_terminals` and `action_frontier` and before marking the
-    /// participant initialized.
+    /// `action_frontier` and before marking the participant initialized. It
+    /// revalidates against retained terminal membership when the ledger has
+    /// any; a restored ledger has none, because terminals are not checkpointed.
     pub(crate) fn install_restored_action_gap_closure(
         &mut self,
         persisted: Option<PersistedActionGapClosure>,
@@ -3534,6 +3535,7 @@ impl BudgetOwnedStreamingIssueReporter {
         if !self.receipts.is_empty()
             || !self.counters.is_empty()
             || !self.input_frontiers.is_empty()
+            || !self.action_terminals.is_empty()
             || self.retired_receipt_root.is_some()
         {
             return Err(CheckpointError::ObjectVerification);
@@ -3611,9 +3613,11 @@ impl BudgetOwnedStreamingIssueReporter {
         self.counters = retained_counters;
         self.summary = restored.summary;
         self.action_frontier = restored.action_frontier;
-        // The frontier is installed first so the proof is revalidated against
-        // the state it justifies. A refusal here leaves the closure uninstalled
-        // and charges nothing.
+        // The frontier is installed first so the proof is checked against the
+        // state it justifies. Terminal membership is not checkpointed, so the
+        // guard above leaves `action_terminals` empty here and the proof is
+        // accepted on its structural relation to the committed frontier. A
+        // refusal leaves the closure uninstalled and charges nothing.
         self.install_restored_action_gap_closure(restored.action_gap_closure)
             .map_err(|error| checkpoint_error_from_reliability(participant.clone(), error))?;
         self.retired_receipt_root = Some(*restored.handled_cut.receipt_root());
@@ -5324,6 +5328,16 @@ fn is_action_frontier_proven(
 
 // Restore-side revalidation. This takes borrowed restored state rather than
 // `&mut self` so the caller validates before installing any reporter field.
+//
+// Terminal membership is deliberately not part of the checkpointed ledger
+// state: a restored ledger holds the committed frontier the terminals produced,
+// not the terminals themselves. So the terminal-derived checks below apply only
+// when the caller does retain terminals to check against. When it retains none,
+// the committed `action_frontier` is the fact this proof accompanies rather than
+// something the proof has to re-establish, and the payload's integrity is
+// already the committed descriptor's responsibility. What stays checkable in
+// both cases is the structural relation between the two wire fields: a proof
+// cannot exist without a frontier, and cannot claim to cover past it.
 fn checked_restored_action_gap_closure(
     run: &StreamRunIdentity,
     budget: &StreamingResourceBudget,
@@ -5331,11 +5345,12 @@ fn checked_restored_action_gap_closure(
     action_frontier: Option<GlobalSequence>,
     persisted: Option<PersistedActionGapClosure>,
 ) -> Result<Option<RetainedActionGapClosure>, StreamingReliabilityError> {
+    let has_retained_terminals = !action_terminals.is_empty();
     let Some(persisted) = persisted else {
         let Some(frontier) = action_frontier else {
             return Ok(None);
         };
-        if is_action_frontier_proven(action_terminals, frontier, None) {
+        if !has_retained_terminals || is_action_frontier_proven(action_terminals, frontier, None) {
             return Ok(None);
         }
         return Err(StreamingReliabilityError::UnprovenActionGapClosure);
@@ -5346,17 +5361,19 @@ fn checked_restored_action_gap_closure(
     if persisted.through > frontier {
         return Err(StreamingReliabilityError::UnprovenActionGapClosure);
     }
-    if !is_action_frontier_proven(action_terminals, frontier, Some(persisted.through)) {
-        return Err(StreamingReliabilityError::UnprovenActionGapClosure);
-    }
-    let recomputed = action_gap_coverage_digest(
-        run,
-        action_terminals,
-        persisted.through,
-        persisted.membership_root,
-    );
-    if recomputed != persisted.coverage_digest {
-        return Err(StreamingReliabilityError::ForgedActionGapClosure);
+    if has_retained_terminals {
+        if !is_action_frontier_proven(action_terminals, frontier, Some(persisted.through)) {
+            return Err(StreamingReliabilityError::UnprovenActionGapClosure);
+        }
+        let recomputed = action_gap_coverage_digest(
+            run,
+            action_terminals,
+            persisted.through,
+            persisted.membership_root,
+        );
+        if recomputed != persisted.coverage_digest {
+            return Err(StreamingReliabilityError::ForgedActionGapClosure);
+        }
     }
     let lease = budget
         .try_acquire(1, ACTION_GAP_CLOSURE_CHARGE_BYTES)
@@ -6128,7 +6145,7 @@ mod tests {
             AcquisitionHorizon, AdmissionHorizon, CheckpointCut, CheckpointGenerationCandidate,
             CheckpointGenerationPublicationProof, CheckpointParticipantPlan,
             CheckpointTerminalReason, DecodeHorizon, DiscoveryHorizon, EventTimeWatermark,
-            OrderedActionHorizon, TerminalActionHorizon,
+            OrderedActionHorizon, ParticipantStateDescriptor, TerminalActionHorizon,
         },
         failure::{
             ActionExecutionError, ActionFailureCode, DecodeFailureCode, ResultExportError,
@@ -8826,6 +8843,120 @@ mod tests {
         );
         assert!(restored.action_gap_closure.is_none());
         assert_eq!(restored_budget.snapshot().used_bytes, charged_before);
+    }
+
+    /// Wrap one encoded ledger-state document as a verified committed state.
+    ///
+    /// The descriptor is derived from the encoding, so the state passes
+    /// `CommittedParticipantState`'s own verification and every refusal a test
+    /// observes comes from the ledger's restore checks rather than from the
+    /// checkpoint object layer.
+    fn committed_ledger_state(
+        run: StreamRunIdentity,
+        budget: &StreamingResourceBudget,
+        item_count: u64,
+        wire: &serde_json::Value,
+    ) -> CommittedParticipantState {
+        let bytes = serde_json::to_vec(wire)
+            .unwrap_or_else(|error| panic!("encode ledger payload: {error}"));
+        let byte_length =
+            u64::try_from(bytes.len()).unwrap_or_else(|_| panic!("payload length fits u64"));
+        let descriptor = ParticipantStateDescriptor {
+            participant_id: CheckpointParticipantId::new("streaming_issue_ledger"),
+            schema_id: ISSUE_LEDGER_STATE_SCHEMA_ID.to_string(),
+            schema_version: ISSUE_LEDGER_STATE_WIRE_VERSION,
+            represented_cut: test_barrier(run, 3).cut,
+            content_digest: ContentDigest::from_bytes(*blake3::hash(&bytes).as_bytes()),
+            item_count,
+            byte_length,
+        };
+        let payload = charged_bytes(budget, &bytes);
+        CommittedParticipantState::new(run, descriptor, payload)
+            .unwrap_or_else(|error| panic!("verified committed ledger state: {error:?}"))
+    }
+
+    #[test]
+    fn restoring_a_committed_action_frontier_needs_no_retained_terminals() {
+        let (run, persisted) = seeded_gap_closure();
+        let (_run, budget, mut restored) = gap_closure_reporter();
+        let wire = ledger_state_wire_json(
+            run,
+            restored.policy.digest,
+            Some(GlobalSequence::new(2)),
+            Some(persisted),
+        );
+        let state = committed_ledger_state(run, &budget, 0, &wire);
+
+        // Terminal membership is not checkpointed, so restore installs the
+        // committed frontier and its proof from the payload alone.
+        restored
+            .restore_ledger_state(&state)
+            .unwrap_or_else(|error| panic!("restore committed ledger state: {error:?}"));
+        assert_eq!(restored.action_frontier, Some(GlobalSequence::new(2)));
+        assert_eq!(restored.persisted_action_gap_closure(), Some(persisted));
+    }
+
+    #[test]
+    fn restoring_a_terminal_advanced_frontier_without_a_proof_is_accepted() {
+        let (_run, budget, mut restored) = gap_closure_reporter();
+        let run = restored.run;
+        // A frontier a contiguous run of terminals advanced carries no closure,
+        // so restore must not demand one for it.
+        let wire = ledger_state_wire_json(
+            run,
+            restored.policy.digest,
+            Some(GlobalSequence::new(0)),
+            None,
+        );
+        let state = committed_ledger_state(run, &budget, 0, &wire);
+
+        restored
+            .restore_ledger_state(&state)
+            .unwrap_or_else(|error| panic!("restore committed ledger state: {error:?}"));
+        assert_eq!(restored.action_frontier, Some(GlobalSequence::new(0)));
+        assert_eq!(restored.persisted_action_gap_closure(), None);
+    }
+
+    #[test]
+    fn a_restored_input_frontier_root_mismatch_is_refused() {
+        let (_run, budget, mut restored) = gap_closure_reporter();
+        let run = restored.run;
+        let domain = StreamingInputDomainIdentity::new(
+            ContentDigest::from_bytes([0x21; 32]),
+            ImmutableObjectIdentity::from_bytes([0x20; 32]),
+        );
+        // The empty cut's input-frontier root cannot describe a payload that
+        // carries one frontier, so the two disagree by construction.
+        let handled_cut = HandledIssueCut::empty();
+        let summary = StreamingIssueSummary::empty();
+        let wire = IssueLedgerStateWire {
+            wire_version: ISSUE_LEDGER_STATE_WIRE_VERSION,
+            run,
+            policy_digest: restored.policy.digest,
+            barrier_epoch: CheckpointEpoch::new(3),
+            handled_cut: &handled_cut,
+            action_frontier: None,
+            action_gap_closure: None,
+            input_frontiers: vec![IssueLedgerFrontierWire {
+                domain: &domain,
+                through: SourcePosition::new(4),
+            }],
+            counters: Vec::new(),
+            summary: &summary,
+        };
+        let encoded =
+            serde_json::to_value(&wire).unwrap_or_else(|error| panic!("encode wire: {error}"));
+        let state = committed_ledger_state(run, &budget, 1, &encoded);
+
+        // `restore_ledger_state` reports through `CheckpointError`, so its
+        // internal-consistency refusals surface as object verification.
+        assert!(matches!(
+            restored.restore_ledger_state(&state),
+            Err(CheckpointError::ObjectVerification)
+        ));
+        // A refused restore installs nothing and charges no entry.
+        assert!(restored.input_frontiers.is_empty());
+        assert!(restored.retired_receipt_root.is_none());
     }
 
     /// Submit and classify one record issue, returning its retained identity.
