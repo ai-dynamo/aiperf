@@ -2657,6 +2657,28 @@ mod tests {
     }
 
     #[test]
+    fn first_observed_affinity_arms_inside_the_pin_and_only_warns_outside_it() {
+        let pinned: BTreeSet<usize> = (4..=7).collect();
+
+        // A strict subset: the kernel clamped the pin down, monitoring is sound.
+        assert_eq!(
+            classify_first_observed_affinity(&BTreeSet::from([4, 5]), &pinned),
+            FirstObservedAffinity::HonoursPin
+        );
+        // Exactly the pin: taskset took effect verbatim.
+        assert_eq!(
+            classify_first_observed_affinity(&pinned, &pinned),
+            FirstObservedAffinity::HonoursPin
+        );
+        // Reaching outside the pin is reported with the escaping CPUs named,
+        // and is still a usable baseline rather than a refusal.
+        assert_eq!(
+            classify_first_observed_affinity(&BTreeSet::from([3, 5, 9]), &pinned),
+            FirstObservedAffinity::EscapesPin(vec![3, 9])
+        );
+    }
+
+    #[test]
     fn ledger_hash_chain_survives_reopen_and_three_invalid_attempts_block() {
         let directory = tempfile::tempdir().expect("ledger directory");
         let path = directory.path().join("attempts.jsonl");
