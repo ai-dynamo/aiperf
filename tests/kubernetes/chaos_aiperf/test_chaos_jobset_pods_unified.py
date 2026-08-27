@@ -362,7 +362,10 @@ async def test_c6_kill_controller_container_salvages_unified(
         )
 
         await _wait_for_live_metrics(
-            kubectl, name=name, namespace=operator_job_namespace, timeout=120.0
+            kubectl,
+            name=name,
+            namespace=operator_job_namespace,
+            timeout=180.0,  # operator redeploy + warmup lag can exceed 120s on kind
         )
 
         pod = await chaos_injector.get_controller_pod_name(operator_job_namespace, name)
