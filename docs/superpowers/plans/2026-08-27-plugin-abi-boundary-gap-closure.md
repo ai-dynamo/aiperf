@@ -7,11 +7,20 @@ SPDX-License-Identifier: Apache-2.0
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Shrink the measured host/plugin ABI closure by the Task 2–6 deltas and instrument the universe-rebuild rate, so the recompile-boundary matrix in the plugin design is true of this codebase instead of aspirational.
+**Goal:** Shrink the measured host/plugin ABI closure by every accepted Task
+2-6 delta, disposition unsafe cuts with benchmark evidence, and instrument the
+universe-rebuild rate so the recompile-boundary matrix in the plugin design is
+grounded in this codebase.
 
-**Architecture:** Six independent refactors of `rust/runtime`, each cutting one measured leak edge that drags host-private implementation into the plugin ABI closure. Every task is behavior-preserving; the observable deliverable is a smaller measured ABI closure and a lower measured universe-bump rate. Task 1 builds the measurement first so every later task proves its own effect.
+**Architecture:** Five independent refactors of `rust/runtime` plus one
+hot-path experiment, each addressing a measured leak edge that drags
+host-private implementation into the plugin ABI closure. Task 5's proposed
+per-request erasure was rejected by its performance gate and leaves that edge
+open for a replacement design. Every accepted task is behavior-preserving;
+Task 1 builds the measurement first so every later task proves its own effect.
 
-**Tech Stack:** Rust 2024 / resolver 3, `cargo`, `rustdoc --output-format json`, `criterion` (`rust/runtime/benches/chat_dispatch_bench.rs`), `git`.
+**Tech Stack:** Rust 2024 / resolver 3, `cargo`, `rustdoc --output-format json`,
+`criterion` (`rust/runtime/benches/executor_dispatch_bench.rs`), `git`.
 
 **Spec:**
 - `docs/superpowers/specs/2026-08-26-native-rust-runtime-plugins-design.md` (normative)
@@ -24,7 +33,7 @@ cover, verified by grep against it:
 
 | Gap | Mentions in the 40-task plan | Status |
 |---|---:|---|
-| `ExecutionSinkBuilder::Sink` associated-type erasure / `ThreadPerCoreExecutor<B>` | 0 | **gap** |
+| `ExecutionSinkBuilder::Sink` associated-type erasure / `ThreadPerCoreExecutor<B>` | 0 | **open — per-request erasure rejected by Task 5** |
 | `WorkerMaterializer` concrete-struct-at-boundary leak | 0 | **gap** |
 | `MetricTag` closed 60-variant enum in the ABI | 0 | **gap** |
 | ABI-closure / universe-bump churn measurement and gate | 0 | **gap** |
@@ -1003,19 +1012,26 @@ EOF
 
 ---
 
-### Task 5: De-generify the thread-per-core executor
+### Task 5: De-generify the thread-per-core executor — REJECTED
 
-**This is the risky one. It touches the request hot path and it is the task most
-likely to be rejected on measurement. Do it last among the refactors and do not
-proceed past Step 5 without the benchmark.**
+> **Final disposition (2026-08-27): REJECTED.** The proposed
+> `Box<dyn WorkerSinkExec>` request boundary measured a statistically decisive
+> loss on paper-rig. The production refactor, RED test, post-change run, and ABI
+> baseline regeneration MUST NOT be performed. The complete finding is tracked
+> in `artifacts/native-plugin-baseline/task-5-erased-executor-rejection.md`.
+
+**This was the risky one. It would have touched the request hot path, so the
+corrected benchmark ran before the RED test or any production edit and rejected
+the proposal.**
 
 **Why:** `ExecutionSinkBuilder` carries an associated type
 (`engine/turn_execution.rs:257`), and the executor is generic over it end to end:
 `dimension_sink: B::Sink` (`:931`), `impl<B: ExecutionSinkBuilder>
 ThreadPerCoreExecutor<B>` (`:1189`, `:1545`, `:1830`, `:1919`). A `cdylib`
-plugin cannot supply an associated type across a library boundary, so `B` must
-be erased. Nothing in the 40-task plan addresses this (0 mentions), and it is
-load-bearing: without it there are no transport plugins at all.
+plugin cannot supply an associated type across a library boundary, so this seam
+must be resolved. It cannot be resolved by erasing `B` at the per-request call
+site. Nothing in the 40-task plan addresses this (0 mentions), and the gap
+remains load-bearing for transport plugins.
 
 **Countervailing constraint:** `design.md` Goals — "Add no abstraction or
 dispatch layer to request- or token-processing paths and introduce no
@@ -1026,22 +1042,20 @@ Partial mitigation already present: `WorkerSink` is `#[async_trait(?Send)]`, so
 `dispatch_measured` already returns a boxed future. The added cost is the vtable
 call, not a new allocation.
 
-**Files:**
-- Modify: `rust/runtime/src/engine/turn_execution.rs:255-267` (`ExecutionSinkBuilder`)
-- Modify: `rust/runtime/src/engine/turn_execution.rs:931` (`dimension_sink`)
-- Modify: `rust/runtime/src/engine/turn_execution.rs:1189,1545,1830,1919`
-- Modify: `rust/runtime/src/engine/ws_execution.rs:291`
-- Modify: `rust/runtime/src/engine/grpc_turn_execution.rs:104`
-- Test: `rust/runtime/benches/chat_dispatch_bench.rs`
+**Actual files:**
+- Add: `rust/runtime/benches/executor_dispatch_bench.rs`
+- Modify: `rust/runtime/Cargo.toml` (Criterion target registration)
+- Modify: this plan and the normative plugin design (rejection record)
+- Do not modify: executor, HTTP, gRPC, or WebSocket production code
 
-**Interfaces:**
+**Rejected interface proposal (historical evidence only):**
 - Consumes: `Box<dyn CreditMaterializer>` from Task 2.
 - Produces: `ExecutionSinkBuilder::build_sink` returns
   `Result<Box<dyn WorkerSinkExec>>` where
   `pub trait WorkerSinkExec: WorkerSink + RequestExecutor {}` with a blanket
   impl. `ThreadPerCoreExecutor` loses its type parameter.
 
-- [ ] **Step 1: Record the pre-change benchmark on paper-rig**
+- [x] **Step 1: Record the pre-change benchmark on paper-rig**
 
 **Not on a workstation.** The tracker's *Authoritative A/B placement* row is
 explicit: "otherwise-idle paper-rig with pinned affinity/topology and recorded
@@ -1049,21 +1063,34 @@ noise controls; local workstation forbidden." A local run cannot distinguish a
 real vtable cost from scheduler noise, and a noisy pass here is worse than no
 measurement — it launders a regression as "within variance."
 
-On paper-rig (`/work-pvc/paper-rig/aiperf-native-plugins-impl`), otherwise
-idle, with pinned affinity:
+The plan originally named `chat_dispatch_bench`, but that target is a libtest
+harness, rejects Criterion's `--save-baseline`, and never traverses the changed
+call surface. The corrected `executor_dispatch_bench` target measures concrete
+and erased `WorkerSink`/`RequestExecutor` calls in one binary. On the existing
+reserved paper-rig pod:
 
 ```bash
-source .venv/bin/activate && cd rust
 CARGO_BUILD_JOBS=144 CARGO_INCREMENTAL=1 \
-  cargo bench -p aiperf-runtime --bench chat_dispatch_bench -- --save-baseline pre-erase
+CARGO_TARGET_DIR=/nvme/cargo-target \
+  cargo bench -p aiperf-runtime --features engine \
+  --bench executor_dispatch_bench -- --save-baseline pre-erase
 ```
 
-Expected: a saved criterion baseline named `pre-erase`. Record the mean, the
-confidence interval, and the recorded noise controls in the tracker. **Do not
-skip this** — after the refactor there is no way to reconstruct it without
-reverting.
+Recorded controls: source base `f84b9dbe9da6ada33b9ee1e997cacf0ec35df465`,
+benchmark commit `7e3cb6e1f91383b276d95a1f5e8b7e6e647706e7`, namespace
+`acasagrande-paper-rig`, pod `paper-rig`, scratch container, cpuset `0-143`,
+`nproc=144`, pre-run load `1.14 2.16 2.49`, and rustc/Cargo 1.98.0.
 
-- [ ] **Step 2: Write the failing test**
+| Call surface | Concrete/static 95% interval | Erased/dyn 95% interval | Point delta |
+|---|---:|---:|---:|
+| `WorkerSink::dispatch_measured` | 89.129-89.577 ns | 113.56-114.17 ns | +27.45% |
+| `RequestExecutor::execute_measured` | 104.08-104.76 ns | 116.92-117.57 ns | +12.27% |
+
+The disjoint intervals violate the zero-loss invariant. The remaining original
+steps are retained below only to identify the rejected proposal; they MUST NOT
+be executed.
+
+- [ ] **Step 2: Write the failing test — NOT RUN; gate rejected**
 
 Add to the `mod tests` block in `rust/runtime/src/engine/turn_execution.rs`:
 
@@ -1087,7 +1114,7 @@ Note `&dyn ExecutionSinkBuilder` in the signature: that is itself the assertion.
 The trait is not object-safe today because of the associated type, so this test
 cannot compile until the erasure lands.
 
-- [ ] **Step 3: Run test to verify it fails**
+- [ ] **Step 3: Run test to verify it fails — NOT RUN; gate rejected**
 
 Run:
 ```bash
@@ -1098,7 +1125,7 @@ cargo test -p aiperf-runtime --features engine a_transport_builds_a_sink_without
 Expected: FAIL — `the trait ExecutionSinkBuilder cannot be made into an object`
 … `because it contains the generic associated type Sink`.
 
-- [ ] **Step 4: Erase the associated type**
+- [ ] **Step 4: Erase the associated type — REJECTED; DO NOT IMPLEMENT**
 
 In `engine/turn_execution.rs`:
 
@@ -1139,52 +1166,34 @@ Keep `#[async_trait(?Send)]` on `WorkerSink`. Do **not** take this opportunity
 to change anything else about the executor — a mixed diff here is unreviewable
 and unbisectable.
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [ ] **Step 5: Run production tests — NOT APPLICABLE; no production change**
 
-Run:
-```bash
-source .venv/bin/activate && cd rust
-cargo test -p aiperf-runtime && cargo test -p aiperf-runtime --features engine
-```
+No production correctness suite is authorized or useful after the pre-change
+gate rejected the design. The benchmark target receives formatting and
+task-local compile checks only.
 
-Expected: PASS across HTTP, gRPC, WebSocket, dry-run, and every dispatch mode
-(`sharded`, `global`, `global-hop`, `global-push`).
+- [ ] **Step 6: Run a post-change benchmark — NOT RUN; pre-change A/B rejected**
 
-- [ ] **Step 6: Run the benchmark gate on paper-rig**
+There is no post-change artifact to compare. A post-change run would require
+implementing a design already rejected by its same-build static-vs-erased A/B.
 
-Same host, same pinning, same noise controls as Step 1:
+**The statistically significant loss rejects this design.** Do not commit the
+hot-path refactor and do not re-run until a pass appears. The replacement
+direction is fixed: move the dynamic boundary above the request/token loop so a
+trait-object dispatch occurs once at frozen worker startup, while the selected
+plugin owns the complete monomorphized worker loop. That redesign requires a
+separate reviewed task; this task does not implement it and does not waive the
+performance goal.
 
-```bash
-source .venv/bin/activate && cd rust
-CARGO_BUILD_JOBS=144 CARGO_INCREMENTAL=1 \
-  cargo bench -p aiperf-runtime --bench chat_dispatch_bench -- --baseline pre-erase
-```
-
-Expected: criterion reports **no statistically significant regression**.
-
-**Any statistically significant loss rejects this design.** Do not commit a
-hot-path regression to satisfy a packaging goal, and do not re-run until a pass
-appears. Record the measured delta and escalate the design question: either the
-transport boundary moves up a level (the executor stays monomorphized and only
-*sink construction* crosses the boundary), or the performance goal in
-`design.md` is amended with the measured number. Both are legitimate; silently
-absorbing the regression is not.
-
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit benchmark and rejection evidence only**
 
 ```bash
-git add rust/runtime/src/engine/turn_execution.rs \
-        rust/runtime/src/engine/ws_execution.rs \
-        rust/runtime/src/engine/grpc_turn_execution.rs
-git commit -F - <<'EOF'
-refactor(engine): erase the transport sink associated type
-
-ExecutionSinkBuilder carried an associated Sink type and ThreadPerCoreExecutor
-was generic over it, so the trait was not object-safe and no cdylib transport
-could implement it. Sinks are now Box<dyn WorkerSinkExec>.
-
-chat_dispatch_bench vs pre-erase baseline: <paste criterion summary>
-EOF
+git add rust/runtime/Cargo.toml \
+        rust/runtime/benches/executor_dispatch_bench.rs \
+        artifacts/native-plugin-baseline/task-5-erased-executor-rejection.md \
+        docs/superpowers/plans/2026-08-27-plugin-abi-boundary-gap-closure.md \
+        docs/superpowers/specs/2026-08-26-native-rust-runtime-plugins-design.md
+git commit -m 'docs(plugins): reject per-request executor erasure'
 ```
 
 ---
@@ -1335,10 +1344,11 @@ EOF
 **Spec coverage.** This plan deliberately covers only the gaps enumerated in the
 "Relationship to the existing plan" table. `ExportConfig` (40-task plan Task 6)
 and `RunContext` (Tasks 4/5) are covered there and intentionally absent here.
-Every other measured leak edge from the 2026-08-27 audit has a task:
+Every other measured leak edge from the 2026-08-27 audit has a task or explicit
+gate disposition:
 `WorkerMaterializer` → Task 2, `NativeReport` → Task 3, `EndpointType` and
-`MetricTag` → Task 4, `ExecutionSinkBuilder` → Task 5, implementation
-co-residency → Task 6, measurement → Task 1.
+`MetricTag` → Task 4, `ExecutionSinkBuilder` → Task 5 (rejected and still
+open), implementation co-residency → Task 6, measurement → Task 1.
 
 **Known gap, deliberately not closed.** Leak 5 from the audit — `config::model`
 types reaching the boundary via `HopRouting <- ExecutionBackendConfig` and
@@ -1350,14 +1360,14 @@ ownership of the config surface across two plans invites exactly the kind of
 conflict the tracker's single-owner rule exists to prevent. Raise it as an
 amendment to Task 18 rather than implementing it here.
 
-**Type consistency.** `CreditMaterializer` (Task 2) is consumed by name in Task
-5's `ExecutionSinkBuilder`. `ReportView` (Task 3) is amended by Task 4's
-`MetricTagId`. `WorkerSinkExec` appears only in Task 5. No task references a
-type no task defines.
+**Type consistency.** `CreditMaterializer` (Task 2) remains consumed by the
+existing generic `ExecutionSinkBuilder`. `ReportView` (Task 3) is amended by
+Task 4's `MetricTagId`. `WorkerSinkExec` appears only as the rejected Task 5
+proposal and is not introduced into production.
 
 **Sequencing.** Task 1 first — measurement before change. Tasks 2, 3, and 4 are
-mutually independent and may run in parallel worktrees. Task 5 last among the
-refactors because it is the one that can be rejected on benchmark evidence.
+mutually independent and may run in parallel worktrees. Task 5 ran last among
+the boundary-cut experiments and was rejected by benchmark evidence.
 Task 6 last overall, because its budget only makes sense once the closure has
 stopped moving.
 
@@ -1365,7 +1375,7 @@ stopped moving.
 
 | Risk | Task | Mitigation |
 |---|---|---|
-| Hot-path regression from sink erasure | 5 | `chat_dispatch_bench` baseline captured *before*; explicit stop-and-escalate |
+| Hot-path regression from sink erasure | 5 | Corrected `executor_dispatch_bench` static-vs-erased A/B rejected the design before production changes |
 | Serialization drift from interning | 4 | Round-trip test over all 19 + 60 built-in names against exact prior strings |
 | rustdoc JSON format instability | 1 | Nightly pinned inline in `abi_closure.rs` (`RUSTDOC_TOOLCHAIN`), never in `rust-toolchain.toml`; the product workspace stays on stable |
 | Measuring a moved tree against a stale absolute | 1 | Two-step validation: calibrate at `110e00321a`, then baseline the integration HEAD; later tasks assert deltas |

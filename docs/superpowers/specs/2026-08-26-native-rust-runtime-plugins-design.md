@@ -145,6 +145,7 @@ decision changes.
 | Override behavior | Per-entry signed priority; unique maximum wins; equal maximum is ambiguous | Discovery and priority |
 | Core reuse | Plugins depend on allowlisted API/core/category SDK crates, never the orchestration runtime | Crate architecture |
 | Performance | No added hot-path operations plus normative statistical equivalence gates | Performance contract |
+| Transport worker boundary | Per-request sink trait-object erasure is rejected; dynamic transport selection occurs once at frozen worker startup and the plugin owns the complete monomorphized worker loop | Transports; performance contract |
 | Multi-process consistency | Parent, re-exec children, controllers, and cells require the exact same plugin-lock digest | Composition and lifecycle |
 | Security | Native plugins are trusted code; digests identify but do not sandbox them | Failure and trust policy |
 | Boundary memory and panic | One verified allocator provider owns all `Global` storage; shipped host/plugins use `panic=abort`; no unwind crosses the boundary | Rust linkage, allocator, and panic rules |
@@ -1540,6 +1541,15 @@ observation, reduction, and measurement. The plugin owns transport-specific
 connection pools, dispatchers, and request executors using the existing
 worker-local `Rc` and `LocalSet` discipline.
 
+The boundary MUST sit above the request/token worker loop. A frozen transport
+selection may make one trait-object call while starting each worker, but the
+selected plugin then owns that worker's complete monomorphized loop. The host
+MUST NOT erase a transport sink behind `Box<dyn WorkerSinkExec>` and invoke it
+once per request. Host scheduling and measurement semantics remain normative;
+the replacement worker-start contract must preserve them without adding a new
+per-request callback, wrapper, allocation, lock, channel hop, or serialization
+step.
+
 The currently closed built-in transport configuration becomes an open
 registry-selected record:
 
@@ -1820,6 +1830,37 @@ Structurally:
 - worker-local state remains local and gains no synchronization requirement;
 - timing and measurement continue through the host-provided `Clock`;
 - plugin libraries use the same optimized build profile as the distribution.
+
+### Rejected per-request transport erasure
+
+The proposed `ExecutionSinkBuilder::build_sink -> Box<dyn WorkerSinkExec>` and
+non-generic `ThreadPerCoreExecutor` boundary is rejected. It would add a trait-
+object dispatch at the worker's request call site, violating the structural
+contract above even though `#[async_trait(?Send)]` already boxes the returned
+future.
+
+The rejection was measured on 2026-08-27 from source base
+`f84b9dbe9da6ada33b9ee1e997cacf0ec35df465` with benchmark commit
+`7e3cb6e1f91383b276d95a1f5e8b7e6e647706e7`. The reserved
+`acasagrande-paper-rig/paper-rig` scratch container exposed CPUs `0-143`
+(`nproc=144`), had pre-run load `1.14 2.16 2.49`, used rustc/Cargo 1.98.0,
+`CARGO_BUILD_JOBS=144`, `CARGO_INCREMENTAL=1`, and the persistent
+`CARGO_TARGET_DIR=/nvme/cargo-target`. The task-local Criterion target measured
+the same async-trait future-construction/drop call surface through concrete and
+erased paths in one binary, with no additional wrapper, allocation, lock, hop,
+or callback:
+
+| Call surface | Concrete/static 95% interval | Erased/dyn 95% interval | Point delta |
+|---|---:|---:|---:|
+| `WorkerSink::dispatch_measured` | 89.129-89.577 ns | 113.56-114.17 ns | +27.45% |
+| `RequestExecutor::execute_measured` control | 104.08-104.76 ns | 116.92-117.57 ns | +12.27% |
+
+Both intervals are disjoint. This is a valid performance-gate failure, not a
+waiver or an invitation to rerun until noise produces a pass. The required
+replacement direction is to move dynamic selection above the request/token
+loop: dispatch once at frozen worker startup, then keep the complete plugin-
+owned worker loop monomorphized. That replacement requires a separate reviewed
+design and is not specified or implemented by the rejected experiment.
 
 Separate shared libraries prevent fat LTO from optimizing across their
 boundaries, so literal machine-code identity is not promised. Instead, a
