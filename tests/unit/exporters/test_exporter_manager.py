@@ -348,9 +348,160 @@ class TestExporterManager:
         ).exists()
 
         assert len(failures) == 1
-        assert failures[0].exporter == "PhaseMetricArtifacts:beta"
+        assert failures[0].exporter == "PhaseMetricArtifacts:beta:metrics_csv"
         assert failures[0].is_deferred is False
         assert "csv boom" in repr(failures[0].error)
+
+    @pytest.mark.asyncio
+    async def test_phase_artifact_writes_are_isolated_within_a_phase(
+        self, output_config, mock_cfg
+    ) -> None:
+        """A failing metrics-JSON write must not abort the other three
+        independent artifacts (CSV, GPU telemetry, server metrics) for the
+        same phase -- each of the four writes is isolated from the others.
+        """
+        phase_records = [
+            PhaseProfileResults(
+                phase_index=0,
+                profiling_index=0,
+                phase_name="storm",
+                phase_kind="profiling",
+                records=[
+                    MetricResult(
+                        tag="request_latency",
+                        header="Request Latency",
+                        unit="ms",
+                        avg=12.0,
+                        count=1,
+                    )
+                ],
+                start_ns=1,
+                end_ns=2,
+                successful_request_count=1,
+                telemetry_results=TelemetryExportData(
+                    summary=TelemetrySummary(
+                        endpoints_configured=["dcgm"],
+                        endpoints_successful=["dcgm"],
+                        start_time=datetime.fromtimestamp(1 / 1_000_000_000),
+                        end_time=datetime.fromtimestamp(2 / 1_000_000_000),
+                    ),
+                    endpoints={},
+                ),
+                server_metrics_results=ServerMetricsResults(
+                    benchmark_id="bench",
+                    endpoint_summaries={},
+                    start_ns=1,
+                    end_ns=2,
+                    endpoints_configured=["server"],
+                    endpoints_successful=["server"],
+                ),
+            )
+        ]
+        manager = ExporterManager(
+            results=ProfileResults(
+                records=[],
+                start_ns=1,
+                end_ns=2,
+                completed=0,
+                phase_records=phase_records,
+            ),
+            run=make_run_from_cli(mock_cfg),
+            telemetry_results=None,
+        )
+
+        original_write = manager._write_phase_export
+
+        async def flaky_write(*, manifest_entry, manifest_key, **kwargs) -> None:
+            if manifest_key == "metrics_json":
+                raise ValueError("json boom")
+            await original_write(
+                manifest_entry=manifest_entry, manifest_key=manifest_key, **kwargs
+            )
+
+        manager._write_phase_export = flaky_write
+
+        with patch(
+            "aiperf.exporters.exporter_manager.plugins.iter_all", return_value=[]
+        ):
+            failures = await manager.export_data()
+
+        assert len(failures) == 1
+        assert failures[0].exporter == "PhaseMetricArtifacts:storm:metrics_json"
+
+        phase_dir = output_config / "phases" / "storm"
+        assert not (phase_dir / "profile_export_aiperf.json").exists()
+        assert (phase_dir / "profile_export_aiperf.csv").exists()
+        assert (phase_dir / "gpu_telemetry.json").exists()
+        assert (phase_dir / "server_metrics.json").exists()
+
+        manifest = json.loads(
+            (output_config / "phase_manifest.json").read_text(encoding="utf-8")
+        )
+        storm_entry = manifest["phases"][0]
+        assert "metrics_json" not in storm_entry
+        assert storm_entry["metrics_csv"] == "phases/storm/profile_export_aiperf.csv"
+        assert storm_entry["gpu_telemetry_json"] == "phases/storm/gpu_telemetry.json"
+        assert storm_entry["server_metrics_json"] == "phases/storm/server_metrics.json"
+
+    @pytest.mark.asyncio
+    async def test_phase_export_forwards_top_level_incomplete_status(
+        self, output_config, mock_cfg
+    ) -> None:
+        """Per-phase artifacts must agree with the top-level result on
+        whether the run is complete -- otherwise a degraded run (e.g. the
+        stall watchdog giving up) looks clean at the phase level while the
+        top-level artifact correctly reports incomplete.
+        """
+        phase_records = [
+            PhaseProfileResults(
+                phase_index=0,
+                profiling_index=0,
+                phase_name="storm",
+                phase_kind="profiling",
+                records=[
+                    MetricResult(
+                        tag="request_latency",
+                        header="Request Latency",
+                        unit="ms",
+                        avg=12.0,
+                        count=1,
+                    )
+                ],
+                start_ns=1,
+                end_ns=2,
+                successful_request_count=1,
+            )
+        ]
+        manager = ExporterManager(
+            results=ProfileResults(
+                records=[],
+                start_ns=1,
+                end_ns=2,
+                completed=0,
+                phase_records=phase_records,
+                is_complete=False,
+                incomplete_reason="Record aggregation stalled at 1 of 100 records",
+            ),
+            run=make_run_from_cli(mock_cfg),
+            telemetry_results=None,
+        )
+
+        with patch(
+            "aiperf.exporters.exporter_manager.plugins.iter_all", return_value=[]
+        ):
+            failures = await manager.export_data()
+
+        assert failures == []
+        storm_json = json.loads(
+            (
+                output_config / "phases" / "storm" / "profile_export_aiperf.json"
+            ).read_text(encoding="utf-8")
+        )
+        assert storm_json["is_complete"] is False
+        assert (
+            storm_json["incomplete_reason"]
+            == "Record aggregation stalled at 1 of 100 records"
+        )
 
     @pytest.mark.asyncio
     async def test_multiple_phase_export_failures_are_reported_per_phase(
@@ -396,14 +547,19 @@ class TestExporterManager:
             "beta",
             "gamma",
         ]
-        assert len(failures) == 2
+        # `failing_write` raises for both the JSON and CSV writes of each
+        # affected phase, and each write is isolated from the others, so
+        # each phase contributes two independent failures.
+        assert len(failures) == 4
         assert [failure.exporter for failure in failures] == [
-            "PhaseMetricArtifacts:alpha",
-            "PhaseMetricArtifacts:gamma",
+            "PhaseMetricArtifacts:alpha:metrics_json",
+            "PhaseMetricArtifacts:alpha:metrics_csv",
+            "PhaseMetricArtifacts:gamma:metrics_json",
+            "PhaseMetricArtifacts:gamma:metrics_csv",
         ]
         assert all(failure.is_deferred is False for failure in failures)
-        assert "disk full on alpha" in repr(failures[0].error)
-        assert "disk full on gamma" in repr(failures[1].error)
+        assert all("disk full on alpha" in repr(f.error) for f in failures[:2])
+        assert all("disk full on gamma" in repr(f.error) for f in failures[2:])
 
     @pytest.mark.asyncio
     async def test_write_phase_export_handles_disabled_and_failed_exporters(

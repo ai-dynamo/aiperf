@@ -227,8 +227,10 @@ class ExporterManager(AIPerfLoggerMixin):
         for phase_result in phase_records:
             entry = self._phase_manifest_entry(phase_result)
             try:
-                await self._export_one_phase(
-                    phase_result=phase_result, manifest_entry=entry
+                failures.extend(
+                    await self._export_one_phase(
+                        phase_result=phase_result, manifest_entry=entry
+                    )
                 )
             except Exception as exc:  # noqa: BLE001 - recorded as a per-phase failure
                 self.error(
@@ -285,8 +287,15 @@ class ExporterManager(AIPerfLoggerMixin):
         *,
         phase_result: PhaseProfileResults,
         manifest_entry: dict[str, Any],
-    ) -> None:
-        """Write every artifact for one phase, recording paths in the entry."""
+    ) -> list[ExporterFailure]:
+        """Write every artifact for one phase, recording paths in the entry.
+
+        Each of the four artifacts (metrics JSON/CSV, GPU telemetry, server
+        metrics) is independent: a failure writing one must not prevent the
+        other three from being written. Failures are collected and returned
+        rather than raised so the caller can still index the phase in the
+        manifest and report every failed artifact by name.
+        """
         phase_dir = self._run.cfg.artifacts.dir / "phases" / phase_result.phase_name
         await asyncio.to_thread(phase_dir.mkdir, parents=True, exist_ok=True)
         phase_profile = ProfileResults(
@@ -295,43 +304,77 @@ class ExporterManager(AIPerfLoggerMixin):
             start_ns=phase_result.start_ns or self._results.start_ns,
             end_ns=phase_result.end_ns or self._results.end_ns,
             was_cancelled=phase_result.was_cancelled,
+            is_complete=self._results.is_complete,
+            incomplete_reason=self._results.incomplete_reason,
             successful_request_count=phase_result.successful_request_count,
             error_request_count=phase_result.error_request_count,
             error_summary=phase_result.error_summary,
             branch_stats=phase_result.branch_stats,
         )
-        await self._write_phase_export(
-            exporter_cls=MetricsJsonExporter,
-            phase_profile=phase_profile,
-            file_path=phase_dir / self._run.cfg.artifacts.profile_export_json_file.name,
-            manifest_entry=manifest_entry,
-            manifest_key="metrics_json",
+        artifact_writers: tuple[tuple[str, Any], ...] = (
+            (
+                "metrics_json",
+                self._write_phase_export(
+                    exporter_cls=MetricsJsonExporter,
+                    phase_profile=phase_profile,
+                    file_path=phase_dir
+                    / self._run.cfg.artifacts.profile_export_json_file.name,
+                    manifest_entry=manifest_entry,
+                    manifest_key="metrics_json",
+                ),
+            ),
+            (
+                "metrics_csv",
+                self._write_phase_export(
+                    exporter_cls=MetricsCsvExporter,
+                    phase_profile=phase_profile,
+                    file_path=phase_dir
+                    / self._run.cfg.artifacts.profile_export_csv_file.name,
+                    manifest_entry=manifest_entry,
+                    manifest_key="metrics_csv",
+                ),
+            ),
+            (
+                "gpu_telemetry_json",
+                self._write_phase_observability_export(
+                    phase_result=phase_result,
+                    phase_dir=phase_dir,
+                    manifest_entry=manifest_entry,
+                    attr="telemetry_results",
+                    warnings_attr="telemetry_warnings",
+                    file_name="gpu_telemetry.json",
+                    manifest_key="gpu_telemetry_json",
+                ),
+            ),
+            (
+                "server_metrics_json",
+                self._write_phase_observability_export(
+                    phase_result=phase_result,
+                    phase_dir=phase_dir,
+                    manifest_entry=manifest_entry,
+                    attr="server_metrics_results",
+                    warnings_attr="server_metrics_warnings",
+                    file_name="server_metrics.json",
+                    manifest_key="server_metrics_json",
+                ),
+            ),
         )
-        await self._write_phase_export(
-            exporter_cls=MetricsCsvExporter,
-            phase_profile=phase_profile,
-            file_path=phase_dir / self._run.cfg.artifacts.profile_export_csv_file.name,
-            manifest_entry=manifest_entry,
-            manifest_key="metrics_csv",
-        )
-        await self._write_phase_observability_export(
-            phase_result=phase_result,
-            phase_dir=phase_dir,
-            manifest_entry=manifest_entry,
-            attr="telemetry_results",
-            warnings_attr="telemetry_warnings",
-            file_name="gpu_telemetry.json",
-            manifest_key="gpu_telemetry_json",
-        )
-        await self._write_phase_observability_export(
-            phase_result=phase_result,
-            phase_dir=phase_dir,
-            manifest_entry=manifest_entry,
-            attr="server_metrics_results",
-            warnings_attr="server_metrics_warnings",
-            file_name="server_metrics.json",
-            manifest_key="server_metrics_json",
-        )
+        failures: list[ExporterFailure] = []
+        for manifest_key, artifact_coro in artifact_writers:
+            try:
+                await artifact_coro
+            except Exception as exc:  # noqa: BLE001 - recorded as a per-artifact failure
+                failures.append(
+                    ExporterFailure(
+                        exporter=(
+                            f"PhaseMetricArtifacts:{phase_result.phase_name}:"
+                            f"{manifest_key}"
+                        ),
+                        error=exc,
+                        is_deferred=False,
+                    )
+                )
+        return failures
 
     async def _write_phase_observability_export(
         self,

@@ -51,7 +51,7 @@ from typing import TYPE_CHECKING, Any
 
 import orjson
 
-from aiperf.common.finite import scrub_non_finite
+from aiperf.common.finite import is_finite_value, scrub_non_finite
 from aiperf.orchestrator.search_planner._sla_helpers import first_failing_filter
 
 if TYPE_CHECKING:
@@ -151,18 +151,28 @@ def _compute_best_trials(
     """
     from aiperf.common.enums import OptimizationDirection
 
+    def _primary(h: SearchIteration) -> float | None:
+        return h.objective_values[0] if h.objective_values else h.objective_value
+
     # An iteration that reports only the scalar mirror is still scored: most
     # planners populate objective_value and a length-1 vector, but the vector
     # is Optional and filtering on it alone dropped those iterations entirely
-    # (best_trials came back null for a fully scored search).
-    scored = [h for h in history if h.objective_values or h.objective_value is not None]
+    # (best_trials came back null for a fully scored search). A NaN/inf
+    # primary objective is filtered out here, upstream of both the
+    # single-objective max()/min() below and the Pareto front in
+    # _pareto_front/_dominates: every comparison against NaN is False, so an
+    # unfiltered NaN trial could silently win max()/min() outright, or - for
+    # the Pareto path - never be dominated and get stuck in the front forever.
+    scored = [
+        h
+        for h in history
+        if (h.objective_values or h.objective_value is not None)
+        and is_finite_value(_primary(h))
+    ]
     feasible = [h for h in scored if h.feasible]
     ranking_pool = feasible if feasible else scored
     if not ranking_pool:
         return None
-
-    def _primary(h: SearchIteration) -> float:
-        return h.objective_values[0] if h.objective_values else h.objective_value
 
     n_obj = len(cfg.objectives)
     if n_obj == 1:
@@ -198,8 +208,6 @@ def _objective_at(iteration: SearchIteration, index: int) -> float | None:
     be dominated depending on argument order. See ``docs/dev/patterns.md``
     "NaN/Inf Discipline Pattern".
     """
-    from aiperf.common.finite import is_finite_value
-
     values = iteration.objective_values
     if values is not None and index < len(values):
         value = values[index]

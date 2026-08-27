@@ -168,6 +168,77 @@ def test_multi_objective_config_with_length_one_vectors(tmp_path: Path):
     assert [t["iteration_idx"] for t in payload["best_trials"]] == [1]
 
 
+def test_single_objective_nan_first_does_not_win_max(tmp_path: Path):
+    """A NaN-scoring iteration must never win max()/min() by list order.
+
+    Reproduces the reported bug directly: with objective values
+    [NaN, 10.0, 50.0] and the NaN trial evaluated first, an unfiltered
+    max() returns the NaN trial as "best" because every comparison against
+    NaN is False. The legitimately-best iteration (idx=2, value=50.0) must
+    win regardless of where the NaN trial sits in history.
+    """
+    cfg = _single_obj_cfg()
+    history = [
+        SearchIteration(
+            iteration_idx=0,
+            variation_values={"concurrency": 5},
+            objective_value=float("nan"),
+            objective_values=[float("nan")],
+            feasible=True,
+        ),
+        SearchIteration(
+            iteration_idx=1,
+            variation_values={"concurrency": 10},
+            objective_value=10.0,
+            objective_values=[10.0],
+            feasible=True,
+        ),
+        SearchIteration(
+            iteration_idx=2,
+            variation_values={"concurrency": 20},
+            objective_value=50.0,
+            objective_values=[50.0],
+            feasible=True,
+        ),
+    ]
+    write_search_history(tmp_path, history, cfg)
+    payload = json.loads((tmp_path / "search_history.json").read_text())
+    assert len(payload["best_trials"]) == 1
+    assert payload["best_trials"][0]["iteration_idx"] == 2
+    assert payload["best_trials"][0]["objective_values"] == [50.0]
+
+
+def test_all_nan_trial_excluded_from_pareto_front(tmp_path: Path):
+    """An all-NaN trial can never be dominated and must not survive on the front.
+
+    Since every comparison against NaN is False, an all-NaN trial would
+    never lose a domination check and would be stuck on the Pareto front
+    forever with pareto_rank=0. It must be filtered out upstream instead.
+    """
+    cfg = _two_obj_cfg()
+    history = [
+        SearchIteration(
+            iteration_idx=0,
+            variation_values={"concurrency": 5},
+            objective_value=float("nan"),
+            objective_values=[float("nan"), float("nan")],
+            feasible=True,
+        ),
+        SearchIteration(
+            iteration_idx=1,
+            variation_values={"concurrency": 50},
+            objective_value=20.0,
+            objective_values=[20.0, 8.0],
+            feasible=True,
+        ),
+    ]
+    write_search_history(tmp_path, history, cfg)
+    payload = json.loads((tmp_path / "search_history.json").read_text())
+    front_idxs = [p["iteration_idx"] for p in payload["best_trials"]]
+    assert 0 not in front_idxs
+    assert front_idxs == [1]
+
+
 def test_multi_objective_with_absent_vectors(tmp_path: Path):
     """objective_values is Optional; the scalar mirror must carry index 0."""
     cfg = _two_obj_cfg()
