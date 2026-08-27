@@ -83,6 +83,14 @@ fn validation_root() -> PathBuf {
         .unwrap_or_else(repository_root)
 }
 
+fn refuse_interrupted_publication(root: &Path) -> Result<(), String> {
+    let journal = root.join(".aiperf-baseline-refresh-transaction.json");
+    if journal.exists() {
+        return Err("baseline reader refuses an interrupted durable publication".to_owned());
+    }
+    Ok(())
+}
+
 fn measurement_source_projection(root: &Path) -> Result<Vec<String>, String> {
     let contents = fs::read_to_string(
         root.join("rust/benchmarks/plugin-baseline-measurement-source-projection.txt"),
@@ -1062,7 +1070,10 @@ fn validate_inventory(contents: &str, root: &Path) -> Result<(), String> {
     }
 
     let artifacts = mapping(field(inventory, "artifacts")?, "artifacts")?;
-    for (_, value) in artifacts {
+    for (name, value) in artifacts {
+        if is_prepublication && name.as_str() == Some("allocation_probe") {
+            continue;
+        }
         let artifact = mapping(value, "artifact")?;
         let path = root.join(text(artifact, "path")?);
         let (bytes, digest) = digest_file(&path)?;
@@ -1145,6 +1156,7 @@ fn validate_inventory(contents: &str, root: &Path) -> Result<(), String> {
 #[test]
 fn baseline_inventory_is_complete_and_self_authenticating() {
     let root = validation_root();
+    refuse_interrupted_publication(&root).unwrap_or_else(|error| panic!("{error}"));
     let contents = fs::read_to_string(root.join("rust/benchmarks/plugin-parity.yaml"))
         .expect("baseline inventory must be readable");
     let document: Value = serde_yaml::from_str(&contents).expect("inventory parses");
@@ -1163,6 +1175,119 @@ fn baseline_inventory_is_complete_and_self_authenticating() {
     } else {
         validate_inventory(&contents, &root).unwrap_or_else(|error| panic!("{error}"));
     }
+}
+
+#[test]
+fn prepublication_gate_runs_from_only_the_tracked_measurement_package() {
+    let source = repository_root();
+    let directory = tempfile::tempdir().expect("clean measurement package root");
+    let clean = directory.path();
+    let mut paths = measurement_source_projection(&source).expect("projection list is valid");
+    paths.extend([
+        "rust/benchmarks/plugin-parity.yaml".to_owned(),
+        "artifacts/native-plugin-baseline/README.md".to_owned(),
+        "artifacts/native-plugin-baseline/package-topology.json".to_owned(),
+    ]);
+    for relative in paths {
+        let destination = clean.join(&relative);
+        fs::create_dir_all(destination.parent().expect("package member parent"))
+            .expect("package member parent is created");
+        fs::copy(source.join(&relative), destination).expect("tracked package member is copied");
+    }
+    assert!(
+        [
+            "allocation-probe.json",
+            "evidence-manifest.json",
+            "bundle-locator.json",
+            "raw",
+        ]
+        .iter()
+        .all(|name| !clean
+            .join("artifacts/native-plugin-baseline")
+            .join(name)
+            .exists()),
+        "clean pre-capture candidate contains stale canonical evidence"
+    );
+
+    let contents = fs::read_to_string(clean.join("rust/benchmarks/plugin-parity.yaml"))
+        .expect("clean package inventory is readable");
+    assert_eq!(
+        validate_inventory(&contents, clean)
+            .expect_err("prepublication inventory must remain deliberately inadmissible"),
+        "canonical raw evidence is not published_and_verified"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn refresh_reader_refuses_an_interrupted_publication_before_inventory_access() {
+    let directory = tempfile::tempdir().expect("interrupted reader fixture root");
+    let repository = directory.path().join("repository");
+    let scripts = repository.join("rust/scripts");
+    let target = directory.path().join("target");
+    let commands = directory.path().join("commands");
+    fs::create_dir_all(&scripts).expect("script fixture root is created");
+    fs::create_dir_all(target.join("native-plugin-baseline")).expect("refresh target is created");
+    fs::create_dir_all(&commands).expect("command fixture root is created");
+    fs::copy(
+        repository_root().join("rust/scripts/refresh-plugin-baseline-inventory.sh"),
+        scripts.join("refresh-plugin-baseline-inventory.sh"),
+    )
+    .expect("refresh script is copied");
+    fs::copy(
+        repository_root().join("rust/scripts/plugin-baseline-owned-command.sh"),
+        scripts.join("plugin-baseline-owned-command.sh"),
+    )
+    .expect("ownership helper is copied");
+    fs::write(
+        repository.join(".aiperf-baseline-refresh-transaction.json"),
+        b"durable interrupted transaction\n",
+    )
+    .expect("interrupted journal is written");
+    assert_eq!(
+        refuse_interrupted_publication(&repository).expect_err("reader must fail closed"),
+        "baseline reader refuses an interrupted durable publication"
+    );
+
+    let execution_marker = directory.path().join("unexpected-command-execution");
+    let fake_git = commands.join("git");
+    fs::write(
+        &fake_git,
+        format!(
+            "#!/bin/sh\nif [ \"${{1:-}}\" = rev-parse ]; then printf '%s\\n' '{}'; exit 0; fi\nprintf executed >'{}'\nexit 90\n",
+            repository.display(),
+            execution_marker.display()
+        ),
+    )
+    .expect("fake git is written");
+    fs::set_permissions(&fake_git, fs::Permissions::from_mode(0o755))
+        .expect("fake git is executable");
+    let path = format!(
+        "{}:{}",
+        commands.display(),
+        std::env::var("PATH").expect("PATH exists")
+    );
+    let output = Command::new("sh")
+        .arg(scripts.join("refresh-plugin-baseline-inventory.sh"))
+        .args(["pre-capture", "review1i"])
+        .current_dir(&repository)
+        .env("PATH", path)
+        .env("CARGO_TARGET_DIR", &target)
+        .env("AIPERF_PLUGIN_REFRESH_ROOT", &target)
+        .env("AIPERF_PLUGIN_REFRESH_REQUIRED_FREE_BYTES", "1")
+        .output()
+        .expect("interrupted publication refresh starts");
+    assert!(!output.status.success(), "interrupted publication was read");
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("interrupted durable baseline publication"),
+        "unexpected interrupted-publication refusal: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !execution_marker.exists(),
+        "refresh executed a command after discovering an interrupted publication"
+    );
 }
 
 #[test]
@@ -1284,8 +1409,8 @@ fn capture_harness_bounds_every_long_lived_command_site() {
         "run_owned 300 evidence-manifest",
         "run_owned 300 evidence-verify",
         "run_owned 1800 evidence-bundle",
-        "run_owned 1800 bundle-extract",
-        "run_owned 600 bundle-verify",
+        "run_owned 1800 bundle-verify",
+        "verify-staged-bundle",
         "run_owned 300 locator",
         "run_owned 300 locator-verify",
         "failure_ledger=$(dirname \"$output_root\")/capture-failures.txt",
@@ -1321,7 +1446,7 @@ fn capture_harness_bounds_every_long_lived_command_site() {
         "require_output nonempty response-reduction-probe",
         "require_output nonempty evidence-manifest",
         "require_output nonempty evidence-bundle",
-        "require_output nonempty bundle-extract",
+        "require_output nonempty bundle-verification",
         "require_output nonempty locator",
     ] {
         assert!(
@@ -2086,10 +2211,14 @@ fn baseline_inventory_rejects_contract_mutations() {
 
 #[test]
 fn baseline_manifest_rejects_missing_length_and_bad_digest() {
-    let path = repository_root().join("artifacts/native-plugin-baseline/evidence-manifest.json");
-    let original: JsonValue =
-        serde_json::from_slice(&fs::read(path).expect("manifest must be readable"))
-            .expect("manifest must be JSON");
+    let original = serde_json::json!({
+        "schema_version": 1,
+        "files": [{
+            "path": "identity/effective-source-tree.tar",
+            "bytes": 17,
+            "blake3": "blake3:1111111111111111111111111111111111111111111111111111111111111111",
+        }],
+    });
     assert!(validate_manifest(&original).is_ok());
 
     let mut missing_length = original.clone();
@@ -2128,6 +2257,78 @@ fn baseline_manifest_rejects_unsafe_or_noncanonical_schema() {
             "malformed manifest unexpectedly passed: {invalid}"
         );
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn pre_capture_refuses_stale_canonical_state_before_candidate_or_code_execution() {
+    let directory = tempfile::tempdir().expect("stale canonical-state fixture root");
+    let repository = directory.path().join("repository");
+    let scripts = repository.join("rust/scripts");
+    let canonical = repository.join("artifacts/native-plugin-baseline");
+    let target = directory.path().join("target");
+    let commands = directory.path().join("commands");
+    fs::create_dir_all(&scripts).expect("script fixture root is created");
+    fs::create_dir_all(canonical.join("raw")).expect("stale raw root is created");
+    fs::create_dir_all(target.join("native-plugin-baseline")).expect("refresh target is created");
+    fs::create_dir_all(&commands).expect("command fixture root is created");
+    fs::copy(
+        repository_root().join("rust/scripts/refresh-plugin-baseline-inventory.sh"),
+        scripts.join("refresh-plugin-baseline-inventory.sh"),
+    )
+    .expect("refresh script is copied");
+    fs::copy(
+        repository_root().join("rust/scripts/plugin-baseline-owned-command.sh"),
+        scripts.join("plugin-baseline-owned-command.sh"),
+    )
+    .expect("ownership helper is copied");
+    fs::write(
+        canonical.join("bundle-locator.json"),
+        b"stale canonical locator\n",
+    )
+    .expect("stale locator is written");
+    let execution_marker = directory.path().join("unexpected-command-execution");
+    let fake_git = commands.join("git");
+    fs::write(
+        &fake_git,
+        format!(
+            "#!/bin/sh\nif [ \"${{1:-}}\" = rev-parse ]; then printf '%s\\n' '{}'; exit 0; fi\nprintf executed >'{}'\nexit 90\n",
+            repository.display(),
+            execution_marker.display()
+        ),
+    )
+    .expect("fake git is written");
+    fs::set_permissions(&fake_git, fs::Permissions::from_mode(0o755))
+        .expect("fake git is executable");
+    let path = format!(
+        "{}:{}",
+        commands.display(),
+        std::env::var("PATH").expect("PATH exists")
+    );
+
+    let output = Command::new("sh")
+        .arg(scripts.join("refresh-plugin-baseline-inventory.sh"))
+        .args(["pre-capture", "review1i"])
+        .current_dir(&repository)
+        .env("PATH", path)
+        .env("CARGO_TARGET_DIR", &target)
+        .env("AIPERF_PLUGIN_REFRESH_ROOT", &target)
+        .env("AIPERF_PLUGIN_REFRESH_REQUIRED_FREE_BYTES", "1")
+        .output()
+        .expect("pre-capture refresh starts");
+    assert!(
+        !output.status.success(),
+        "stale canonical state was accepted"
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("stale canonical baseline state"),
+        "unexpected refusal: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !execution_marker.exists(),
+        "pre-capture executed a command before stale-state refusal"
+    );
 }
 
 #[test]

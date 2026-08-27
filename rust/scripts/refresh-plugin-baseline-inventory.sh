@@ -9,6 +9,29 @@ usage() {
     exit 64
 }
 
+trusted_extract_captured_source() {
+    run_owned 600 refresh-extract-captured-source "$1" \
+        extract-captured-source "$2" "$3"
+}
+
+if [ "${1:-}" = "--captured-source-verification-self-test" ]; then
+    [ "$#" -eq 5 ] || usage
+    selftest_tool=$2
+    selftest_capture_root=$3
+    selftest_destination=$4
+    selftest_post_authentication_marker=$5
+    repository=$(git rev-parse --show-toplevel)
+    ownership_helper=$repository/rust/scripts/plugin-baseline-owned-command.sh
+    . "$ownership_helper"
+    failure_ledger=$(dirname "$selftest_post_authentication_marker")/refresh-failures.txt
+    acquire_baseline_lock
+    trap 'status=$?; trap - EXIT; release_baseline_lock || status=74; exit "$status"' EXIT
+    trusted_extract_captured_source "$selftest_tool" "$selftest_capture_root" \
+        "$selftest_destination"
+    printf '%s\n' authenticated >"$selftest_post_authentication_marker"
+    exit 0
+fi
+
 [ "$#" -ge 2 ] && [ "$#" -le 3 ] || usage
 mode=$1
 generation=$2
@@ -48,6 +71,24 @@ ownership_helper=$repository/rust/scripts/plugin-baseline-owned-command.sh
 failure_ledger=$refresh_parent/task1-$generation-refresh-failures.txt
 acquire_baseline_lock
 trap 'status=$?; trap - EXIT; release_baseline_lock || status=74; exit "$status"' EXIT
+publication_journal=$repository/.aiperf-baseline-refresh-transaction.json
+if [ -e "$publication_journal" ] || [ -L "$publication_journal" ]; then
+    echo "interrupted durable baseline publication requires trusted recovery: $publication_journal" >&2
+    exit 75
+fi
+if [ "$mode" = pre-capture ]; then
+    canonical_root=$repository/artifacts/native-plugin-baseline
+    for stale_path in \
+        "$canonical_root/evidence-manifest.json" \
+        "$canonical_root/bundle-locator.json" \
+        "$canonical_root/raw"
+    do
+        if [ -e "$stale_path" ] || [ -L "$stale_path" ]; then
+            echo "stale canonical baseline state blocks pre-capture: $stale_path" >&2
+            exit 65
+        fi
+    done
+fi
 refresh_root=$(mktemp -d "$refresh_parent/task1-$generation-refresh.XXXXXX")
 refresh_marker=$refresh_root/.aiperf-plugin-refresh-owned
 : >"$refresh_marker"
@@ -142,8 +183,16 @@ else
     }
     source_root=$refresh_root/effective
     mkdir -p "$source_root"
-    run_owned 300 refresh-extract-captured-source tar -xf \
-        "$receipts/effective-source-tree.tar" -C "$source_root"
+    trusted_tool_target=$refresh_root/trusted-tool-target
+    run_owned 1800 refresh-trusted-tool-build sh -c \
+        'cd "$1"; cargo build --locked -p aiperf-bench-tools --bin evidence_digest --target-dir "$2"' \
+        sh "$repository/rust" "$trusted_tool_target"
+    trusted_digest_tool=$trusted_tool_target/debug/evidence_digest
+    [ -x "$trusted_digest_tool" ] || {
+        echo "trusted refresh evidence tool was not built" >&2
+        exit 70
+    }
+    trusted_extract_captured_source "$trusted_digest_tool" "$capture_root" "$source_root"
 fi
 
 candidate_inventory=$source_root/rust/benchmarks/plugin-parity.yaml
@@ -151,7 +200,11 @@ candidate_compact=$source_root/artifacts/native-plugin-baseline
 candidate_topology=$candidate_compact/package-topology.json
 mkdir -p "$(dirname "$candidate_inventory")" "$candidate_compact"
 cp "$inventory" "$candidate_inventory"
-for compact_name in README.md allocation-probe.json evidence-manifest.json bundle-locator.json package-topology.json; do
+compact_names="README.md package-topology.json"
+if [ "$mode" != pre-capture ]; then
+    compact_names="$compact_names allocation-probe.json evidence-manifest.json bundle-locator.json"
+fi
+for compact_name in $compact_names; do
     compact_source=$repository/artifacts/native-plugin-baseline/$compact_name
     if [ -f "$compact_source" ]; then
         cp "$compact_source" "$candidate_compact/$compact_name"
@@ -229,6 +282,8 @@ run_owned 1800 refresh-topology-validator sh -c \
     sh "$repository/rust" "$source_root"
 run_owned 300 refresh-publish "$digest_tool" publish-baseline \
     "$mode" "$source_root" "$repository"
+run_owned 300 refresh-publication-reader "$digest_tool" verify-baseline-publication \
+    "$mode" "$repository"
 cmp "$candidate_inventory" "$inventory"
 cmp "$candidate_topology" "$topology"
 if [ "$mode" != pre-capture ]; then

@@ -107,9 +107,7 @@ fn extract_and_verify_downloaded_archive(
     authenticated_digest: blake3::Hash,
     extraction_parent: &Path,
 ) -> Result<(Manifest, u64, blake3::Hash), Box<dyn std::error::Error>> {
-    const MAX_ARCHIVE_MEMBERS: usize = 10_000;
-    const MAX_ARCHIVE_MEMBER_BYTES: u64 = 8 * 1024 * 1024 * 1024;
-    const MAX_ARCHIVE_EXPANDED_BYTES: u64 = 16 * 1024 * 1024 * 1024;
+    let limits = downloaded_archive_limits()?;
 
     let initial_metadata = bundle.metadata()?;
     if initial_metadata.len() != authenticated_bytes {
@@ -128,7 +126,7 @@ fn extract_and_verify_downloaded_archive(
         let mut archive = tar::Archive::new(decoder);
         for entry in archive.entries()? {
             let entry = entry?;
-            if members.len() >= MAX_ARCHIVE_MEMBERS {
+            if members.len() >= limits.max_members {
                 return Err("downloaded archive exceeds member-count limit".into());
             }
             let entry_type = entry.header().entry_type();
@@ -139,7 +137,7 @@ fn extract_and_verify_downloaded_archive(
             }
             let raw_path = entry.path_bytes();
             let raw_path = std::str::from_utf8(raw_path.as_ref())?;
-            if raw_path.contains(['\n', '\r', '\\']) {
+            if raw_path.contains(['\n', '\r', '\\']) || raw_path.contains("//") {
                 return Err(
                     format!("downloaded archive contains unsafe member `{raw_path:?}`").into(),
                 );
@@ -163,13 +161,13 @@ fn extract_and_verify_downloaded_archive(
                 );
             }
             let member_bytes = entry.header().size()?;
-            if member_bytes > MAX_ARCHIVE_MEMBER_BYTES {
+            if member_bytes > limits.max_member_bytes {
                 return Err("downloaded archive member exceeds expanded-byte limit".into());
             }
             expanded_bytes = expanded_bytes
                 .checked_add(member_bytes)
                 .ok_or("downloaded archive expanded-byte count overflow")?;
-            if expanded_bytes > MAX_ARCHIVE_EXPANDED_BYTES {
+            if expanded_bytes > limits.max_expanded_bytes {
                 return Err("downloaded archive exceeds aggregate expanded-byte limit".into());
             }
             if member == "evidence" {
@@ -235,6 +233,40 @@ fn extract_and_verify_downloaded_archive(
         return Err("downloaded archive changed during descriptor-held verification".into());
     }
     Ok((manifest, authenticated_bytes, authenticated_digest))
+}
+
+fn verify_staged_bundle(
+    bundle_path: &Path,
+    manifest_path: &Path,
+    extraction_parent: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if !extraction_parent.is_absolute()
+        || !fs::symlink_metadata(extraction_parent)?
+            .file_type()
+            .is_dir()
+    {
+        return Err("staged-bundle extraction parent must be an absolute directory".into());
+    }
+    let manifest = snapshot_regular_file(manifest_path)?;
+    let mut bundle = open_regular_nofollow(bundle_path)?;
+    let (authenticated_bytes, authenticated_digest) = digest_open_file(&mut bundle)?;
+    #[cfg(debug_assertions)]
+    replace_authenticated_path_for_test(
+        "AIPERF_TEST_REPLACE_STAGED_BUNDLE_AFTER_AUTHENTICATION",
+        bundle_path,
+    )?;
+    extract_and_verify_downloaded_archive(
+        &mut bundle,
+        &manifest,
+        authenticated_bytes,
+        authenticated_digest,
+        extraction_parent,
+    )?;
+    let reopened = open_regular_nofollow(bundle_path)?;
+    if !same_file_identity(&bundle, &reopened)? {
+        return Err("staged bundle path changed during descriptor-held verification".into());
+    }
+    Ok(())
 }
 
 #[cfg(unix)]
@@ -333,6 +365,243 @@ fn same_file_identity(left: &File, right: &File) -> io::Result<bool> {
         let _ = (left, right);
         Ok(false)
     }
+}
+
+#[cfg(debug_assertions)]
+fn replace_authenticated_path_for_test(environment: &str, path: &Path) -> io::Result<()> {
+    let Some(replacement) = std::env::var_os(environment) else {
+        return Ok(());
+    };
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "test path is not UTF-8"))?;
+    let displaced = path.with_file_name(format!(".{name}.authenticated-test-original"));
+    fs::rename(path, &displaced)?;
+    if let Err(error) = fs::rename(PathBuf::from(replacement), path) {
+        let _ = fs::rename(displaced, path);
+        return Err(error);
+    }
+    Ok(())
+}
+
+#[derive(Clone, Copy)]
+struct ArchiveLimits {
+    max_members: usize,
+    max_member_bytes: u64,
+    max_expanded_bytes: u64,
+}
+
+const CAPTURED_SOURCE_ARCHIVE_LIMITS: ArchiveLimits = ArchiveLimits {
+    max_members: 100_000,
+    max_member_bytes: 8 * 1024 * 1024 * 1024,
+    max_expanded_bytes: 16 * 1024 * 1024 * 1024,
+};
+
+const DOWNLOADED_ARCHIVE_LIMITS: ArchiveLimits = ArchiveLimits {
+    max_members: 10_000,
+    max_member_bytes: 8 * 1024 * 1024 * 1024,
+    max_expanded_bytes: 16 * 1024 * 1024 * 1024,
+};
+
+fn downloaded_archive_limits() -> Result<ArchiveLimits, Box<dyn std::error::Error>> {
+    let mut limits = DOWNLOADED_ARCHIVE_LIMITS;
+    if cfg!(debug_assertions) {
+        if let Some(value) = std::env::var_os("AIPERF_TEST_DOWNLOADED_MAX_MEMBERS") {
+            limits.max_members = value
+                .to_str()
+                .ok_or("test downloaded member limit is not UTF-8")?
+                .parse()?;
+        }
+        if let Some(value) = std::env::var_os("AIPERF_TEST_DOWNLOADED_MAX_MEMBER_BYTES") {
+            limits.max_member_bytes = value
+                .to_str()
+                .ok_or("test downloaded member-byte limit is not UTF-8")?
+                .parse()?;
+        }
+        if let Some(value) = std::env::var_os("AIPERF_TEST_DOWNLOADED_MAX_EXPANDED_BYTES") {
+            limits.max_expanded_bytes = value
+                .to_str()
+                .ok_or("test downloaded aggregate-byte limit is not UTF-8")?
+                .parse()?;
+        }
+    }
+    Ok(limits)
+}
+
+fn captured_source_archive_limits() -> Result<ArchiveLimits, Box<dyn std::error::Error>> {
+    let mut limits = CAPTURED_SOURCE_ARCHIVE_LIMITS;
+    if cfg!(debug_assertions) {
+        if let Some(value) = std::env::var_os("AIPERF_TEST_CAPTURED_SOURCE_MAX_MEMBERS") {
+            limits.max_members = value
+                .to_str()
+                .ok_or("test captured-source member limit is not UTF-8")?
+                .parse()?;
+        }
+        if let Some(value) = std::env::var_os("AIPERF_TEST_CAPTURED_SOURCE_MAX_MEMBER_BYTES") {
+            limits.max_member_bytes = value
+                .to_str()
+                .ok_or("test captured-source member-byte limit is not UTF-8")?
+                .parse()?;
+        }
+        if let Some(value) = std::env::var_os("AIPERF_TEST_CAPTURED_SOURCE_MAX_EXPANDED_BYTES") {
+            limits.max_expanded_bytes = value
+                .to_str()
+                .ok_or("test captured-source aggregate-byte limit is not UTF-8")?
+                .parse()?;
+        }
+    }
+    Ok(limits)
+}
+
+fn normalized_source_archive_member(
+    raw_path: &str,
+    is_directory: bool,
+) -> Result<Option<String>, Box<dyn std::error::Error>> {
+    if raw_path.contains(['\n', '\r', '\\', '\0']) {
+        return Err(
+            format!("captured source archive contains unsafe member `{raw_path:?}`").into(),
+        );
+    }
+    if matches!(raw_path, "." | "./") {
+        if !is_directory {
+            return Err("captured source archive root member must be a directory".into());
+        }
+        return Ok(None);
+    }
+    let member = raw_path
+        .strip_prefix("./")
+        .unwrap_or(raw_path)
+        .strip_suffix('/')
+        .unwrap_or_else(|| raw_path.strip_prefix("./").unwrap_or(raw_path));
+    let path = Path::new(member);
+    if member.is_empty()
+        || member.starts_with('/')
+        || member.ends_with('/')
+        || member.contains("//")
+        || path.is_absolute()
+        || path
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_)))
+    {
+        return Err(format!("captured source archive contains unsafe member `{raw_path}`").into());
+    }
+    Ok(Some(member.to_owned()))
+}
+
+fn extract_authenticated_captured_source(
+    capture_root: &Path,
+    destination: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let manifest_path = capture_root.join("evidence-manifest.json");
+    let manifest_bytes = snapshot_regular_file(&manifest_path)?;
+    let manifest: Manifest = serde_json::from_slice(&manifest_bytes)?;
+    if manifest.schema_version != 1 {
+        return Err("captured evidence manifest schema must be 1".into());
+    }
+    let matching = manifest
+        .files
+        .iter()
+        .filter(|entry| entry.path == "identity/effective-source-tree.tar")
+        .collect::<Vec<_>>();
+    if matching.len() != 1 {
+        return Err(
+            "captured evidence manifest must bind one effective-source-tree archive".into(),
+        );
+    }
+    let expected = matching[0];
+    if !is_lower_blake3(&expected.blake3) {
+        return Err("captured source archive manifest digest is not lower-case BLAKE3".into());
+    }
+    let archive_path = capture_root.join("evidence/identity/effective-source-tree.tar");
+    let mut archive_file = open_regular_nofollow(&archive_path)?;
+    let initial_metadata = archive_file.metadata()?;
+    let (authenticated_bytes, authenticated_digest) = digest_open_file(&mut archive_file)?;
+    if authenticated_bytes != expected.bytes
+        || format!("blake3:{authenticated_digest}") != expected.blake3
+    {
+        return Err("captured source archive does not match its authenticated manifest".into());
+    }
+    #[cfg(debug_assertions)]
+    replace_authenticated_path_for_test(
+        "AIPERF_TEST_REPLACE_CAPTURED_SOURCE_AFTER_AUTHENTICATION",
+        &archive_path,
+    )?;
+
+    let destination_metadata = fs::symlink_metadata(destination)?;
+    if !destination_metadata.file_type().is_dir() || fs::read_dir(destination)?.next().is_some() {
+        return Err("captured source destination must be an empty controlled directory".into());
+    }
+    if let Ok(marker) = std::env::var("AIPERF_CAPTURED_SOURCE_EXTRACTION_MARKER") {
+        fs::write(
+            marker,
+            b"authenticated captured source extraction entered\n",
+        )?;
+    }
+
+    let mut members = BTreeSet::new();
+    let mut expanded_bytes = 0_u64;
+    let limits = captured_source_archive_limits()?;
+    archive_file.seek(SeekFrom::Start(0))?;
+    {
+        let mut archive = tar::Archive::new(&mut archive_file);
+        for entry in archive.entries()? {
+            let entry = entry?;
+            if members.len() >= limits.max_members {
+                return Err("captured source archive exceeds member-count limit".into());
+            }
+            let entry_type = entry.header().entry_type();
+            if !entry_type.is_dir() && !entry_type.is_file() {
+                return Err(
+                    "captured source archive entries must be regular files or directories".into(),
+                );
+            }
+            let raw_path = entry.path_bytes();
+            let raw_path = std::str::from_utf8(raw_path.as_ref())?;
+            if let Some(member) = normalized_source_archive_member(raw_path, entry_type.is_dir())?
+                && !members.insert(member)
+            {
+                return Err("captured source archive contains duplicate normalized member".into());
+            }
+            let member_bytes = entry.header().size()?;
+            if member_bytes > limits.max_member_bytes {
+                return Err("captured source archive member exceeds expanded-byte limit".into());
+            }
+            expanded_bytes = expanded_bytes
+                .checked_add(member_bytes)
+                .ok_or("captured source archive expanded-byte count overflow")?;
+            if expanded_bytes > limits.max_expanded_bytes {
+                return Err("captured source archive exceeds aggregate expanded-byte limit".into());
+            }
+        }
+    }
+    if members.is_empty() {
+        return Err("captured source archive contains no source members".into());
+    }
+
+    archive_file.seek(SeekFrom::Start(0))?;
+    {
+        let mut archive = tar::Archive::new(&mut archive_file);
+        for entry in archive.entries()? {
+            if !entry?.unpack_in(destination)? {
+                return Err("captured source archive member escaped controlled storage".into());
+            }
+        }
+    }
+    let mut extracted_paths = Vec::new();
+    visit(destination, &mut extracted_paths)?;
+    let final_metadata = archive_file.metadata()?;
+    let (final_bytes, final_digest) = digest_open_file(&mut archive_file)?;
+    let reopened = open_regular_nofollow(&archive_path)?;
+    if final_bytes != authenticated_bytes
+        || final_digest != authenticated_digest
+        || final_metadata.len() != initial_metadata.len()
+        || final_metadata.modified().ok() != initial_metadata.modified().ok()
+        || !same_file_identity(&archive_file, &reopened)?
+    {
+        return Err("captured source archive changed during descriptor-held extraction".into());
+    }
+    Ok(())
 }
 
 #[derive(Serialize)]
@@ -1123,6 +1392,174 @@ fn atomic_write(path: &Path, contents: &[u8]) -> Result<(), Box<dyn std::error::
     Ok(())
 }
 
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct PublicationJournal {
+    schema_version: u8,
+    phase: String,
+    nonce: u32,
+    entries: Vec<PublicationJournalEntry>,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct PublicationJournalEntry {
+    destination: PathBuf,
+    temporary: PathBuf,
+    backup: PathBuf,
+    had_original: bool,
+}
+
+fn sync_directory(path: &Path) -> io::Result<()> {
+    File::open(path)?.sync_all()
+}
+
+fn transaction_root(outputs: &[(PathBuf, Vec<u8>)]) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let first = outputs
+        .first()
+        .ok_or("transactional output set must not be empty")?
+        .0
+        .parent()
+        .ok_or("transactional output has no parent")?;
+    if !first.is_absolute() {
+        return Err("transactional outputs must use absolute paths".into());
+    }
+    let mut root = first.to_path_buf();
+    for (path, _) in &outputs[1..] {
+        while !path.starts_with(&root) {
+            if !root.pop() {
+                return Err("transactional outputs do not share a safe root".into());
+            }
+        }
+    }
+    if root == Path::new("/") {
+        return Err("transactional output root must not be the filesystem root".into());
+    }
+    Ok(root)
+}
+
+fn write_publication_journal(
+    journal_path: &Path,
+    journal: &PublicationJournal,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let parent = journal_path
+        .parent()
+        .ok_or("publication journal has no parent")?;
+    let temporary = parent.join(".aiperf-baseline-refresh-transaction.json.tmp");
+    if temporary.exists() {
+        fs::remove_file(&temporary)?;
+    }
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temporary)?;
+    serde_json::to_writer(&mut file, journal)?;
+    file.write_all(b"\n")?;
+    file.sync_all()?;
+    fs::rename(&temporary, journal_path)?;
+    sync_directory(parent)?;
+    Ok(())
+}
+
+fn maybe_kill_publication(boundary: &str) {
+    if std::env::var("AIPERF_REFRESH_KILL_AFTER_BOUNDARY").as_deref() == Ok(boundary) {
+        #[cfg(unix)]
+        {
+            // SAFETY: sending SIGKILL to the current process has no memory-safety preconditions.
+            unsafe { libc::kill(libc::getpid(), libc::SIGKILL) };
+        }
+        #[cfg(not(unix))]
+        std::process::abort();
+    }
+}
+
+fn recover_publication(
+    journal_path: &Path,
+    expected_outputs: &[(PathBuf, Vec<u8>)],
+) -> Result<(), Box<dyn std::error::Error>> {
+    if !journal_path.exists() {
+        return Ok(());
+    }
+    let journal: PublicationJournal =
+        serde_json::from_slice(&snapshot_regular_file(journal_path)?)?;
+    if journal.schema_version != 1
+        || !matches!(journal.phase.as_str(), "staging" | "committing")
+        || journal.entries.len() != expected_outputs.len()
+        || journal
+            .entries
+            .iter()
+            .zip(expected_outputs)
+            .any(|(entry, output)| entry.destination != output.0)
+    {
+        return Err("publication journal does not match the mandatory recovery set".into());
+    }
+    let root = journal_path
+        .parent()
+        .ok_or("publication journal has no parent")?;
+    for (index, entry) in journal.entries.iter().enumerate() {
+        let parent = entry
+            .destination
+            .parent()
+            .ok_or("journal destination has no parent")?;
+        let name = entry
+            .destination
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or("journal destination name is not UTF-8")?;
+        if !entry.destination.starts_with(root)
+            || entry.temporary
+                != parent.join(format!(".{name}.refresh-{}-{index}.tmp", journal.nonce))
+            || entry.backup != parent.join(format!(".{name}.refresh-{}-{index}.bak", journal.nonce))
+        {
+            return Err("publication journal contains an unsafe path".into());
+        }
+    }
+
+    let is_complete_new_generation = journal.phase == "committing"
+        && journal
+            .entries
+            .iter()
+            .all(|entry| !entry.temporary.exists())
+        && journal
+            .entries
+            .iter()
+            .all(|entry| entry.destination.is_file());
+    if is_complete_new_generation {
+        for entry in &journal.entries {
+            if entry.backup.exists() {
+                fs::remove_file(&entry.backup)?;
+            }
+        }
+    } else {
+        for entry in journal.entries.iter().rev() {
+            if entry.backup.exists() {
+                if entry.destination.exists() {
+                    fs::remove_file(&entry.destination)?;
+                }
+                fs::rename(&entry.backup, &entry.destination)?;
+            } else if !entry.had_original && !entry.temporary.exists() && entry.destination.exists()
+            {
+                fs::remove_file(&entry.destination)?;
+            }
+            if entry.temporary.exists() {
+                fs::remove_file(&entry.temporary)?;
+            }
+        }
+    }
+    let mut parents = BTreeSet::new();
+    for entry in &journal.entries {
+        if let Some(parent) = entry.destination.parent() {
+            parents.insert(parent);
+        }
+    }
+    for parent in parents {
+        sync_directory(parent)?;
+    }
+    fs::remove_file(journal_path)?;
+    sync_directory(root)?;
+    Ok(())
+}
+
 fn transactional_write_all(
     outputs: &[(PathBuf, Vec<u8>)],
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -1131,93 +1568,112 @@ fn transactional_write_all(
         if !unique.insert(path) {
             return Err(format!("duplicate transactional output: {}", path.display()).into());
         }
+        fs::create_dir_all(path.parent().ok_or("transactional output has no parent")?)?;
     }
+    let root = transaction_root(outputs)?;
+    let journal_path = root.join(".aiperf-baseline-refresh-transaction.json");
+    recover_publication(&journal_path, outputs)?;
+
     let nonce = std::process::id();
-    let mut staged = Vec::with_capacity(outputs.len());
-    for (index, (path, bytes)) in outputs.iter().enumerate() {
-        let parent = path.parent().ok_or("transactional output has no parent")?;
-        fs::create_dir_all(parent)?;
-        let name = path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .ok_or("transactional output name is not UTF-8")?;
-        let temporary = parent.join(format!(".{name}.refresh-{nonce}-{index}.tmp"));
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temporary)?;
-        file.write_all(bytes)?;
-        file.sync_all()?;
-        staged.push(temporary);
+    let entries = outputs
+        .iter()
+        .enumerate()
+        .map(|(index, (path, _))| {
+            let parent = path.parent().ok_or("transactional output has no parent")?;
+            let name = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .ok_or("transactional output name is not UTF-8")?;
+            Ok(PublicationJournalEntry {
+                destination: path.clone(),
+                temporary: parent.join(format!(".{name}.refresh-{nonce}-{index}.tmp")),
+                backup: parent.join(format!(".{name}.refresh-{nonce}-{index}.bak")),
+                had_original: path.exists(),
+            })
+        })
+        .collect::<Result<Vec<_>, Box<dyn std::error::Error>>>()?;
+    let mut journal = PublicationJournal {
+        schema_version: 1,
+        phase: "staging".to_owned(),
+        nonce,
+        entries,
+    };
+    write_publication_journal(&journal_path, &journal)?;
+    maybe_kill_publication("journal");
+
+    let stage_result = (|| -> Result<(), Box<dyn std::error::Error>> {
+        for (index, ((_, bytes), entry)) in outputs.iter().zip(&journal.entries).enumerate() {
+            if std::env::var("AIPERF_REFRESH_FAIL_STAGING_INDEX").as_deref()
+                == Ok(index.to_string().as_str())
+            {
+                return Err(format!("injected staging failure at output {index}").into());
+            }
+            let mut file = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&entry.temporary)?;
+            file.write_all(bytes)?;
+            file.sync_all()?;
+        }
+        Ok(())
+    })();
+    if let Err(error) = stage_result {
+        recover_publication(&journal_path, outputs)?;
+        return Err(error);
     }
+    journal.phase = "committing".to_owned();
+    write_publication_journal(&journal_path, &journal)?;
+    maybe_kill_publication("commit-ready");
+
     let fail_after = std::env::var("AIPERF_REFRESH_FAIL_AFTER_RENAMES")
         .ok()
         .map(|value| value.parse::<usize>())
         .transpose()?;
-    let mut backups = Vec::with_capacity(outputs.len());
-    let mut committed = 0_usize;
     let transaction = (|| -> Result<(), Box<dyn std::error::Error>> {
-        for (index, ((path, _), temporary)) in outputs.iter().zip(&staged).enumerate() {
-            let backup = path.with_file_name(format!(
-                ".{}.refresh-{nonce}-{index}.bak",
-                path.file_name()
-                    .and_then(|name| name.to_str())
-                    .ok_or("transactional output name is not UTF-8")?
-            ));
-            let had_original = path.exists();
-            if had_original {
-                fs::rename(path, &backup)?;
+        for (index, entry) in journal.entries.iter().enumerate() {
+            let ordinal = index + 1;
+            let parent = entry
+                .destination
+                .parent()
+                .ok_or("transactional destination has no parent")?;
+            if entry.had_original {
+                fs::rename(&entry.destination, &entry.backup)?;
+                sync_directory(parent)?;
             }
-            backups.push((backup, had_original));
-            if let Err(error) = fs::rename(temporary, path) {
-                let (backup, had_original) = backups
-                    .last()
-                    .ok_or("transaction backup accounting is empty")?;
-                if *had_original {
-                    fs::rename(backup, path)?;
-                }
-                return Err(error.into());
-            }
-            committed += 1;
-            if fail_after == Some(committed) {
+            maybe_kill_publication(&format!("backup:{ordinal}"));
+            fs::rename(&entry.temporary, &entry.destination)?;
+            sync_directory(parent)?;
+            maybe_kill_publication(&format!("destination:{ordinal}"));
+            if fail_after == Some(ordinal) {
                 return Err(
-                    format!("injected transactional failure after {committed} renames").into(),
+                    format!("injected transactional failure after {ordinal} renames").into(),
                 );
             }
         }
         Ok(())
     })();
     if let Err(error) = transaction {
-        for index in (0..committed).rev() {
-            let path = &outputs[index].0;
-            if path.exists() {
-                fs::remove_file(path)?;
-            }
-            let (backup, had_original) = &backups[index];
-            if *had_original {
-                fs::rename(backup, path)?;
-            }
-        }
-        for temporary in &staged[committed..] {
-            if temporary.exists() {
-                fs::remove_file(temporary)?;
-            }
-        }
+        recover_publication(&journal_path, outputs)?;
         return Err(error);
     }
-    for (backup, had_original) in backups {
-        if had_original {
-            fs::remove_file(backup)?;
+    for (index, entry) in journal.entries.iter().enumerate() {
+        if entry.backup.exists() {
+            fs::remove_file(&entry.backup)?;
+            sync_directory(
+                entry
+                    .backup
+                    .parent()
+                    .ok_or("transactional backup has no parent")?,
+            )?;
         }
+        maybe_kill_publication(&format!("cleanup:{}", index + 1));
     }
+    fs::remove_file(&journal_path)?;
+    sync_directory(&root)?;
     Ok(())
 }
 
-fn publish_baseline_candidates(
-    mode: InventoryRefreshMode,
-    candidate_root: &Path,
-    repository_root: &Path,
-) -> Result<(), Box<dyn std::error::Error>> {
+fn baseline_relative_paths(mode: InventoryRefreshMode) -> Vec<PathBuf> {
     let mut relative_paths = vec![
         PathBuf::from("rust/benchmarks/plugin-parity.yaml"),
         PathBuf::from("artifacts/native-plugin-baseline/package-topology.json"),
@@ -1229,11 +1685,57 @@ fn publish_baseline_candidates(
             PathBuf::from("artifacts/native-plugin-baseline/bundle-locator.json"),
         ]);
     }
-    let outputs = relative_paths
+    relative_paths
+}
+
+fn verify_baseline_publication(
+    mode: InventoryRefreshMode,
+    repository_root: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let journal = repository_root.join(".aiperf-baseline-refresh-transaction.json");
+    if journal.exists() {
+        return Err("baseline publication has an interrupted durable transaction".into());
+    }
+    for relative in baseline_relative_paths(mode) {
+        let path = repository_root.join(relative);
+        if !fs::symlink_metadata(&path)?.file_type().is_file() {
+            return Err(format!(
+                "baseline publication is not a regular file: {}",
+                path.display()
+            )
+            .into());
+        }
+    }
+    Ok(())
+}
+
+fn recover_baseline_publication(
+    mode: InventoryRefreshMode,
+    repository_root: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let outputs = baseline_relative_paths(mode)
+        .into_iter()
+        .map(|relative| (repository_root.join(relative), Vec::new()))
+        .collect::<Vec<_>>();
+    let root = transaction_root(&outputs)?;
+    recover_publication(
+        &root.join(".aiperf-baseline-refresh-transaction.json"),
+        &outputs,
+    )
+}
+
+fn publish_baseline_candidates(
+    mode: InventoryRefreshMode,
+    candidate_root: &Path,
+    repository_root: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let outputs = baseline_relative_paths(mode)
         .into_iter()
         .map(|relative| {
             let candidate = candidate_root.join(&relative);
-            if !candidate.is_file() {
+            if !fs::symlink_metadata(&candidate)
+                .is_ok_and(|metadata| metadata.file_type().is_file())
+            {
                 return Err(format!(
                     "missing validated baseline candidate: {}",
                     candidate.display()
@@ -2164,6 +2666,60 @@ fn parse_exporter_observable_policy(
     Ok(policy)
 }
 
+#[derive(Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum ArtifactTreeKind {
+    EmptyDirectory,
+    RegularFile,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct ArtifactTreeEntry {
+    blake3: String,
+    kind: ArtifactTreeKind,
+    length: u64,
+    path: String,
+}
+
+fn is_lower_blake3(value: &str) -> bool {
+    value.strip_prefix("blake3:").is_some_and(|hex| {
+        hex.len() == 64
+            && hex
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    })
+}
+
+fn parse_artifact_tree_observable(
+    bytes: &[u8],
+) -> Result<Vec<ArtifactTreeEntry>, Box<dyn std::error::Error>> {
+    let entries: Vec<ArtifactTreeEntry> = serde_json::from_slice(bytes)?;
+    let empty_digest = format!("blake3:{}", blake3::hash(b""));
+    let mut previous_path = None;
+    for entry in &entries {
+        validate_artifact_policy_path(&entry.path)?;
+        if previous_path.is_some_and(|previous| previous >= entry.path.as_str()) {
+            return Err("artifact-tree paths must be sorted and unique".into());
+        }
+        previous_path = Some(entry.path.as_str());
+        if !is_lower_blake3(&entry.blake3) {
+            return Err("artifact-tree digest must be lower-case BLAKE3".into());
+        }
+        if entry.kind == ArtifactTreeKind::EmptyDirectory
+            && (entry.length != 0 || entry.blake3 != empty_digest)
+        {
+            return Err("empty artifact-tree directory has nonempty content identity".into());
+        }
+    }
+    let mut canonical = serde_json::to_vec(&entries)?;
+    canonical.push(b'\n');
+    if canonical != bytes {
+        return Err("artifact-tree observable is not exact RFC 8785 JCS plus newline".into());
+    }
+    Ok(entries)
+}
+
 fn exporter_authored_contract(
     identity_root: &Path,
 ) -> Result<serde_json::Map<String, serde_json::Value>, Box<dyn std::error::Error>> {
@@ -2631,22 +3187,18 @@ fn write_measurement_results(
     {
         return Err("retained exporter observable evidence mismatch".into());
     }
-    let raw_tree: serde_json::Value = serde_json::from_reader(File::open(&retained_raw)?)?;
-    let raw_entries = raw_tree
-        .as_array()
-        .filter(|entries| entries.len() == 1)
-        .ok_or("retained exporter artifact tree must contain one entry")?;
-    exact_object_keys(
-        &raw_entries[0],
-        "retained exporter artifact tree entry",
-        &["path", "kind", "length", "blake3"],
-    )?;
+    let raw_tree_bytes = snapshot_regular_file(&retained_raw)?;
+    let raw_entries = parse_artifact_tree_observable(&raw_tree_bytes)?;
+    if raw_entries.len() != 1 {
+        return Err("retained exporter artifact tree must contain one entry".into());
+    }
+    let raw_entry = &raw_entries[0];
     let retained_output = required_receipt(&exporter, "exporter-corpus.jsonl")?;
     let retained_output_blake3 = digest_string(&retained_output)?;
-    if raw_entries[0]["path"] != "exporter-corpus.jsonl"
-        || raw_entries[0]["kind"] != "regular_file"
-        || raw_entries[0]["length"].as_u64() != Some(fs::metadata(&retained_output)?.len())
-        || raw_entries[0]["blake3"].as_str() != Some(retained_output_blake3.as_str())
+    if raw_entry.path != "exporter-corpus.jsonl"
+        || raw_entry.kind != ArtifactTreeKind::RegularFile
+        || raw_entry.length != fs::metadata(&retained_output)?.len()
+        || raw_entry.blake3 != retained_output_blake3
     {
         return Err("retained exporter artifact tree does not bind retained output".into());
     }
@@ -3532,6 +4084,42 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "usage: evidence_digest [manifest ROOT | verify MANIFEST ROOT | locator REPOSITORY TAG BUNDLE MANIFEST OUTPUT | verify-locator LOCATOR | topology HOST_COMMIT RUSTC TARGET LOCK METADATA WORKSPACE_TREE CLI_TREE | refresh-inventory INVENTORY | FILE ...]".into(),
         );
     };
+    if first == "verify-staged-bundle" {
+        let bundle = arguments
+            .next()
+            .ok_or("verify-staged-bundle requires BUNDLE MANIFEST EXTRACTION_PARENT")?;
+        let manifest = arguments
+            .next()
+            .ok_or("verify-staged-bundle requires BUNDLE MANIFEST EXTRACTION_PARENT")?;
+        let extraction_parent = arguments
+            .next()
+            .ok_or("verify-staged-bundle requires BUNDLE MANIFEST EXTRACTION_PARENT")?;
+        if arguments.next().is_some() {
+            return Err(
+                "verify-staged-bundle accepts exactly BUNDLE MANIFEST EXTRACTION_PARENT".into(),
+            );
+        }
+        return verify_staged_bundle(
+            Path::new(&bundle),
+            Path::new(&manifest),
+            Path::new(&extraction_parent),
+        );
+    }
+    if first == "extract-captured-source" {
+        let capture_root = arguments
+            .next()
+            .ok_or("extract-captured-source requires CAPTURE_ROOT DESTINATION")?;
+        let destination = arguments
+            .next()
+            .ok_or("extract-captured-source requires CAPTURE_ROOT DESTINATION")?;
+        if arguments.next().is_some() {
+            return Err("extract-captured-source accepts exactly CAPTURE_ROOT DESTINATION".into());
+        }
+        return extract_authenticated_captured_source(
+            Path::new(&capture_root),
+            Path::new(&destination),
+        );
+    }
     if first == "manifest" {
         let root = arguments.next().ok_or("manifest requires ROOT")?;
         if arguments.next().is_some() {
@@ -3681,6 +4269,36 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return publish_baseline_candidates(
             InventoryRefreshMode::parse(mode.to_str().ok_or("mode must be UTF-8")?)?,
             Path::new(&candidate_root),
+            Path::new(&repository_root),
+        );
+    }
+    if first == "verify-baseline-publication" {
+        let mode = arguments
+            .next()
+            .ok_or("verify-baseline-publication requires MODE REPOSITORY_ROOT")?;
+        let repository_root = arguments
+            .next()
+            .ok_or("verify-baseline-publication requires MODE REPOSITORY_ROOT")?;
+        if arguments.next().is_some() {
+            return Err("verify-baseline-publication accepts exactly MODE REPOSITORY_ROOT".into());
+        }
+        return verify_baseline_publication(
+            InventoryRefreshMode::parse(mode.to_str().ok_or("mode must be UTF-8")?)?,
+            Path::new(&repository_root),
+        );
+    }
+    if first == "recover-baseline-publication" {
+        let mode = arguments
+            .next()
+            .ok_or("recover-baseline-publication requires MODE REPOSITORY_ROOT")?;
+        let repository_root = arguments
+            .next()
+            .ok_or("recover-baseline-publication requires MODE REPOSITORY_ROOT")?;
+        if arguments.next().is_some() {
+            return Err("recover-baseline-publication accepts exactly MODE REPOSITORY_ROOT".into());
+        }
+        return recover_baseline_publication(
+            InventoryRefreshMode::parse(mode.to_str().ok_or("mode must be UTF-8")?)?,
             Path::new(&repository_root),
         );
     }
@@ -4022,6 +4640,40 @@ mod tests {
         let bytes = b"{\"mode\":\"static_calibration\",\"receiver_transport_fields_removed\":[],\"scenarios\":[{\"allows_empty\":false,\"observable_kind\":\"artifact_tree\",\"provenance_slots\":[{\"locator\":{\"kind\":\"json_pointer\",\"pointer\":\"/digest\"},\"output_selector\":{\"kind\":\"captured_stream\"},\"replacement\":{\"encoding\":\"canonical_json\",\"value\":\"replacement\"},\"slot_id\":\"lock\",\"static_expected\":{\"encoding\":\"canonical_json\",\"value\":\"static\"}}],\"scenario_id\":\"exporter\"}],\"schema_version\":1}\n";
 
         assert!(parse_exporter_observable_policy(bytes).is_err());
+    }
+
+    #[test]
+    fn artifact_tree_requires_the_exact_jcs_vector_and_lower_case_digest() {
+        const CANONICAL: &[u8] = b"[{\"blake3\":\"blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"kind\":\"regular_file\",\"length\":3,\"path\":\"out.txt\"}]\n";
+        parse_artifact_tree_observable(CANONICAL).expect("literal JCS artifact tree validates");
+
+        for mutation in [
+            b"[{\"path\":\"out.txt\",\"kind\":\"regular_file\",\"length\":3,\"blake3\":\"blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}]\n".as_slice(),
+            b"[{\"blake3\":\"blake3:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\",\"kind\":\"regular_file\",\"length\":3,\"path\":\"out.txt\"}]\n".as_slice(),
+            b"[{\"blake3\":\"blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"kind\":\"regular_file\",\"length\":3,\"path\":\"out.txt\",\"path\":\"other.txt\"}]\n".as_slice(),
+            b"[{\"blake3\":\"blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"kind\":\"regular_file\",\"length\":3,\"path\":\"out.txt\",\"unknown\":0}]\n".as_slice(),
+        ] {
+            assert!(parse_artifact_tree_observable(mutation).is_err());
+        }
+    }
+
+    #[test]
+    fn transactional_write_rejects_duplicate_destinations_before_staging() {
+        let directory = tempfile::tempdir().expect("duplicate transaction fixture root");
+        let destination = directory.path().join("output.txt");
+        let error = transactional_write_all(&[
+            (destination.clone(), b"first".to_vec()),
+            (destination.clone(), b"second".to_vec()),
+        ])
+        .expect_err("duplicate destination must fail before staging");
+        assert!(error.to_string().contains("duplicate transactional output"));
+        assert!(!destination.exists());
+        assert_eq!(
+            fs::read_dir(directory.path())
+                .expect("fixture root remains readable")
+                .count(),
+            0
+        );
     }
 
     #[test]

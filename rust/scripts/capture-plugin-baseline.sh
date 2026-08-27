@@ -52,6 +52,17 @@ elif [ "${1:-}" = "--stdin-signal-self-test" ]; then
     selftest_pidfile=$3
     output_root=$(dirname "$capture_lock")
     failure_ledger=$output_root/capture-failures.txt
+elif [ "${1:-}" = "--bundle-verification-self-test" ]; then
+    [ "$#" -eq 7 ] || usage
+    selftest_mode=6
+    capture_lock=$2
+    digest_tool=$3
+    selftest_bundle=$4
+    selftest_manifest=$5
+    selftest_extraction_root=$6
+    selftest_verification_receipt=$7
+    output_root=$(dirname "$capture_lock")
+    failure_ledger=$output_root/capture-failures.txt
 else
     [ "$#" -eq 3 ] || usage
     baseline_source=$1
@@ -137,6 +148,28 @@ require_output() {
     echo "$output_contract_label did not produce required $output_contract_kind output $output_contract_path" >&2
     return 66
 }
+
+verify_completed_bundle() {
+    completed_tool=$1
+    completed_generation=$2
+    completed_bundle=$3
+    completed_manifest=$4
+    completed_extraction_root=$5
+    completed_verification_receipt=$6
+    run_owned 1800 bundle-verify "$completed_tool" verify-staged-bundle \
+        "$completed_bundle" "$completed_manifest" "$completed_extraction_root"
+    run_owned 300 bundle-verification "$completed_tool" bundle-verification \
+        "$completed_generation" "$completed_bundle" "$completed_manifest" \
+        "$completed_verification_receipt"
+    require_output nonempty bundle-verification "$completed_verification_receipt"
+}
+
+if [ "$selftest_mode" -eq 6 ]; then
+    verify_completed_bundle "$digest_tool" review1i "$selftest_bundle" \
+        "$selftest_manifest" "$selftest_extraction_root" \
+        "$selftest_verification_receipt"
+    exit 0
+fi
 
 if [ "$selftest_mode" -eq 1 ]; then
     export AIPERF_CAPTURE_TERM_GRACE_SECONDS=1
@@ -777,19 +810,8 @@ run_owned 1800 evidence-bundle sh -c \
 require_output nonempty evidence-bundle "$bundle"
 verification_root=$target_root/completed-bundle-verification
 mkdir "$verification_root"
-run_owned 1800 bundle-extract sh -c \
-    'gzip -dc "$1" | tar -xf - -C "$2"' sh "$bundle" "$verification_root"
-require_output nonempty bundle-extract "$verification_root/$(basename "$manifest")"
-require_output directory bundle-extract \
-    "$verification_root/$(basename "$output_root")"
-run_owned 600 bundle-verify "$digest_tool" verify \
-    "$verification_root/$(basename "$manifest")" \
-    "$verification_root/$(basename "$output_root")"
-run_owned 300 bundle-verification "$digest_tool" bundle-verification \
-    "$capture_generation" "$bundle" "$manifest" \
-    "$output_root/../bundle-verification.json"
-require_output nonempty bundle-verification \
-    "$output_root/../bundle-verification.json"
+verify_completed_bundle "$digest_tool" "$capture_generation" "$bundle" "$manifest" \
+    "$verification_root" "$output_root/../bundle-verification.json"
 digest "$manifest" >"$manifest.digest"
 digest "$bundle" >"$bundle.digest"
 run_owned 300 locator "$digest_tool" locator \

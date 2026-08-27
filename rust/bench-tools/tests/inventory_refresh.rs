@@ -3,7 +3,10 @@
 
 //! Behavioral contract for deterministic native-plugin inventory refreshes.
 
-use std::{fs, path::Path, process::Command};
+use std::{fs, fs::File, path::Path, process::Command};
+
+use flate2::{Compression, write::GzEncoder};
+use tar::{Builder, Header};
 
 const CAPTURED_BUILD_DIGEST: &str =
     "blake3:1111111111111111111111111111111111111111111111111111111111111111";
@@ -141,6 +144,812 @@ fn digest(path: &Path) -> String {
         "blake3:{}",
         blake3::hash(&fs::read(path).expect("digest input is readable"))
     )
+}
+
+fn append_tar_file<W: std::io::Write>(builder: &mut Builder<W>, path: &str, contents: &[u8]) {
+    let mut header = Header::new_gnu();
+    header.set_mode(0o644);
+    header.set_size(contents.len() as u64);
+    header.set_cksum();
+    builder
+        .append_data(&mut header, path, contents)
+        .expect("tar fixture member is appended");
+}
+
+fn append_tar_file_with_raw_name<W: std::io::Write>(
+    builder: &mut Builder<W>,
+    name: &[u8],
+    contents: &[u8],
+) {
+    assert!(
+        name.len() < 100,
+        "raw tar fixture name fits the legacy field"
+    );
+    let mut header = Header::new_gnu();
+    header.set_mode(0o644);
+    header.set_size(contents.len() as u64);
+    header.as_mut_bytes()[..100].fill(0);
+    header.as_mut_bytes()[..name.len()].copy_from_slice(name);
+    header.set_cksum();
+    builder
+        .append(&header, contents)
+        .expect("raw-name tar fixture member is appended");
+}
+
+fn write_captured_source_manifest(capture: &Path, archive: &Path) {
+    let manifest = serde_json::json!({
+        "schema_version": 1,
+        "files": [{
+            "path": "identity/effective-source-tree.tar",
+            "bytes": fs::metadata(archive).expect("archive metadata").len(),
+            "blake3": digest(archive),
+        }],
+    });
+    fs::write(
+        capture.join("evidence-manifest.json"),
+        serde_json::to_vec(&manifest).expect("manifest serializes"),
+    )
+    .expect("manifest is written");
+}
+
+#[test]
+fn trusted_tool_authenticates_captured_source_before_extraction() {
+    let directory = tempfile::tempdir().expect("captured source fixture root");
+    let capture = directory.path().join("capture");
+    let identity = capture.join("evidence/identity");
+    let destination = directory.path().join("extracted");
+    fs::create_dir_all(&identity).expect("capture identity root is created");
+    fs::create_dir(&destination).expect("controlled extraction root is created");
+    let archive = identity.join("effective-source-tree.tar");
+    let mut builder = Builder::new(File::create(&archive).expect("source archive is created"));
+    append_tar_file(&mut builder, "rust/Cargo.toml", b"[workspace]\n");
+    builder.finish().expect("source archive is finished");
+    let archive_bytes = fs::metadata(&archive).expect("archive metadata").len();
+    let manifest = serde_json::json!({
+        "schema_version": 1,
+        "files": [{
+            "path": "identity/effective-source-tree.tar",
+            "bytes": archive_bytes,
+            "blake3": digest(&archive),
+        }],
+    });
+    fs::write(
+        capture.join("evidence-manifest.json"),
+        serde_json::to_vec(&manifest).expect("manifest serializes"),
+    )
+    .expect("manifest is written");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_evidence_digest"))
+        .arg("extract-captured-source")
+        .arg(&capture)
+        .arg(&destination)
+        .output()
+        .expect("trusted extraction command starts");
+    assert!(
+        output.status.success(),
+        "trusted extraction failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read(destination.join("rust/Cargo.toml")).expect("source member is extracted"),
+        b"[workspace]\n"
+    );
+}
+
+#[test]
+fn refresh_shell_executes_post_authentication_work_only_after_trusted_source_extraction() {
+    let directory = tempfile::tempdir().expect("refresh shell captured-source fixture root");
+    let script = repository_root().join("rust/scripts/refresh-plugin-baseline-inventory.sh");
+
+    let valid_capture = directory.path().join("valid-capture");
+    let valid_identity = valid_capture.join("evidence/identity");
+    let valid_destination = directory.path().join("valid-extracted");
+    fs::create_dir_all(&valid_identity).expect("valid identity root is created");
+    fs::create_dir(&valid_destination).expect("valid destination is created");
+    let valid_archive = valid_identity.join("effective-source-tree.tar");
+    let mut builder =
+        Builder::new(File::create(&valid_archive).expect("valid source archive is created"));
+    append_tar_file(&mut builder, "rust/Cargo.toml", b"[workspace]\n");
+    builder.finish().expect("valid source archive is finished");
+    write_captured_source_manifest(&valid_capture, &valid_archive);
+    let valid_marker = directory.path().join("valid-post-authentication-work");
+    let valid = Command::new("sh")
+        .arg(&script)
+        .arg("--captured-source-verification-self-test")
+        .arg(env!("CARGO_BIN_EXE_evidence_digest"))
+        .arg(&valid_capture)
+        .arg(&valid_destination)
+        .arg(&valid_marker)
+        .env(
+            "AIPERF_PLUGIN_BASELINE_LOCK",
+            directory.path().join("valid-refresh.lock"),
+        )
+        .output()
+        .expect("valid refresh shell verification starts");
+    assert!(
+        valid.status.success(),
+        "valid captured source was refused: {}",
+        String::from_utf8_lossy(&valid.stderr)
+    );
+    assert!(
+        valid_marker.is_file(),
+        "post-authentication work was not reached"
+    );
+
+    let tampered_capture = directory.path().join("tampered-capture");
+    let tampered_identity = tampered_capture.join("evidence/identity");
+    let tampered_destination = directory.path().join("tampered-extracted");
+    fs::create_dir_all(&tampered_identity).expect("tampered identity root is created");
+    fs::create_dir(&tampered_destination).expect("tampered destination is created");
+    let tampered_archive = tampered_identity.join("effective-source-tree.tar");
+    let mut builder =
+        Builder::new(File::create(&tampered_archive).expect("tampered archive is created"));
+    append_tar_file(&mut builder, "rust/Cargo.toml", b"malicious build input\n");
+    builder
+        .finish()
+        .expect("tampered source archive is finished");
+    write_captured_source_manifest(&tampered_capture, &tampered_archive);
+    fs::write(&tampered_archive, b"bytes changed after manifest")
+        .expect("captured source is tampered after manifest");
+    let tampered_marker = directory.path().join("unexpected-post-authentication-work");
+    let rejected = Command::new("sh")
+        .arg(script)
+        .arg("--captured-source-verification-self-test")
+        .arg(env!("CARGO_BIN_EXE_evidence_digest"))
+        .arg(&tampered_capture)
+        .arg(&tampered_destination)
+        .arg(&tampered_marker)
+        .env(
+            "AIPERF_PLUGIN_BASELINE_LOCK",
+            directory.path().join("tampered-refresh.lock"),
+        )
+        .output()
+        .expect("tampered refresh shell verification starts");
+    assert!(
+        !rejected.status.success(),
+        "tampered captured source passed"
+    );
+    assert!(
+        !tampered_marker.exists(),
+        "post-authentication work ran for a tampered captured source"
+    );
+    assert_eq!(
+        fs::read_dir(&tampered_destination)
+            .expect("tampered destination remains readable")
+            .count(),
+        0,
+        "tampered source was extracted before authentication"
+    );
+}
+
+#[test]
+fn captured_source_archive_enforces_member_count_before_writing_destination() {
+    let directory = tempfile::tempdir().expect("captured source limit fixture root");
+    let capture = directory.path().join("capture");
+    let identity = capture.join("evidence/identity");
+    let destination = directory.path().join("extracted");
+    fs::create_dir_all(&identity).expect("capture identity root is created");
+    fs::create_dir(&destination).expect("controlled extraction root is created");
+    let archive = identity.join("effective-source-tree.tar");
+    let mut builder = Builder::new(File::create(&archive).expect("source archive is created"));
+    append_tar_file(&mut builder, "one.txt", b"one");
+    append_tar_file(&mut builder, "two.txt", b"two");
+    builder.finish().expect("source archive is finished");
+    let manifest = serde_json::json!({
+        "schema_version": 1,
+        "files": [{
+            "path": "identity/effective-source-tree.tar",
+            "bytes": fs::metadata(&archive).expect("archive metadata").len(),
+            "blake3": digest(&archive),
+        }],
+    });
+    fs::write(
+        capture.join("evidence-manifest.json"),
+        serde_json::to_vec(&manifest).expect("manifest serializes"),
+    )
+    .expect("manifest is written");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_evidence_digest"))
+        .arg("extract-captured-source")
+        .arg(&capture)
+        .arg(&destination)
+        .env("AIPERF_TEST_CAPTURED_SOURCE_MAX_MEMBERS", "1")
+        .output()
+        .expect("trusted extraction command starts");
+    assert!(
+        !output.status.success(),
+        "member-count overflow was accepted"
+    );
+    assert_eq!(
+        fs::read_dir(&destination)
+            .expect("destination remains readable")
+            .count(),
+        0,
+        "archive validation wrote destination bytes before refusal"
+    );
+}
+
+#[test]
+fn completed_bundle_is_verified_through_the_trusted_archive_entrypoint() {
+    let directory = tempfile::tempdir().expect("completed bundle fixture root");
+    let capture = directory.path().join("capture");
+    let evidence = capture.join("evidence");
+    let extraction_parent = directory.path().join("controlled");
+    fs::create_dir_all(&evidence).expect("evidence root is created");
+    fs::create_dir(&extraction_parent).expect("controlled root is created");
+    fs::write(evidence.join("sample.txt"), b"sealed evidence").expect("evidence is written");
+    let manifest = capture.join("evidence-manifest.json");
+    fs::write(
+        &manifest,
+        serde_json::to_vec(&serde_json::json!({
+            "schema_version": 1,
+            "files": [{
+                "path": "sample.txt",
+                "bytes": 15,
+                "blake3": format!("blake3:{}", blake3::hash(b"sealed evidence")),
+            }],
+        }))
+        .expect("manifest serializes"),
+    )
+    .expect("manifest is written");
+    let bundle = directory.path().join("bundle.tar.gz");
+    create_bundle(&capture, &bundle);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_evidence_digest"))
+        .arg("verify-staged-bundle")
+        .arg(&bundle)
+        .arg(&manifest)
+        .arg(&extraction_parent)
+        .output()
+        .expect("trusted staged-bundle verifier starts");
+    assert!(
+        output.status.success(),
+        "trusted staged-bundle verification failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn staged_bundle_verifier_rejects_unsafe_archive_before_extraction() {
+    for case in [
+        "parent",
+        "absolute",
+        "backslash",
+        "symlink",
+        "hardlink",
+        "duplicate",
+        "duplicate_alias",
+        "missing_evidence",
+        "evidence_wrong_type",
+        "manifest_wrong_type",
+        "unlisted_evidence",
+        "member_count",
+        "member_size",
+        "aggregate_size",
+    ] {
+        let directory = tempfile::tempdir().expect("staged bundle adversary root");
+        let manifest = directory.path().join("evidence-manifest.json");
+        let manifest_bytes = if case == "duplicate_alias" {
+            serde_json::to_vec(&serde_json::json!({
+                "schema_version": 1,
+                "files": [{
+                    "path": "same",
+                    "bytes": 6,
+                    "blake3": format!("blake3:{}", blake3::hash(b"second")),
+                }],
+            }))
+            .expect("alias manifest serializes")
+        } else {
+            serde_json::to_vec(&serde_json::json!({
+                "schema_version": 1,
+                "files": [],
+            }))
+            .expect("manifest serializes")
+        };
+        fs::write(&manifest, &manifest_bytes).expect("external manifest is written");
+        let bundle = directory.path().join("bundle.tar.gz");
+        let encoder = GzEncoder::new(
+            File::create(&bundle).expect("bundle is created"),
+            Compression::default(),
+        );
+        let mut builder = Builder::new(encoder);
+        if case == "evidence_wrong_type" {
+            append_tar_file(&mut builder, "evidence", b"not a directory");
+        } else if case != "missing_evidence" {
+            let mut evidence_header = Header::new_gnu();
+            evidence_header.set_entry_type(tar::EntryType::Directory);
+            evidence_header.set_mode(0o755);
+            evidence_header.set_size(0);
+            evidence_header.set_cksum();
+            builder
+                .append_data(&mut evidence_header, "evidence", std::io::empty())
+                .expect("evidence root is appended");
+        }
+        if case == "manifest_wrong_type" {
+            let mut manifest_header = Header::new_gnu();
+            manifest_header.set_entry_type(tar::EntryType::Directory);
+            manifest_header.set_mode(0o755);
+            manifest_header.set_size(0);
+            manifest_header.set_cksum();
+            builder
+                .append_data(
+                    &mut manifest_header,
+                    "evidence-manifest.json",
+                    std::io::empty(),
+                )
+                .expect("manifest directory is appended");
+        } else {
+            append_tar_file(&mut builder, "evidence-manifest.json", &manifest_bytes);
+        }
+        match case {
+            "parent" => append_tar_file_with_raw_name(&mut builder, b"../outside", b"attack"),
+            "absolute" => append_tar_file_with_raw_name(&mut builder, b"/outside", b"attack"),
+            "backslash" => append_tar_file_with_raw_name(&mut builder, b"evidence\\bad", b"attack"),
+            "symlink" | "hardlink" => {
+                let mut header = Header::new_gnu();
+                header.set_entry_type(if case == "symlink" {
+                    tar::EntryType::Symlink
+                } else {
+                    tar::EntryType::Link
+                });
+                header.set_mode(0o777);
+                header.set_size(0);
+                header
+                    .set_link_name("../outside")
+                    .expect("link target is written");
+                header.set_cksum();
+                builder
+                    .append_data(&mut header, "evidence/link", std::io::empty())
+                    .expect("link fixture is appended");
+            }
+            "duplicate" => {
+                append_tar_file(&mut builder, "evidence/same", b"first");
+                append_tar_file(&mut builder, "evidence/same", b"second");
+            }
+            "duplicate_alias" => {
+                append_tar_file(&mut builder, "evidence/same", b"first");
+                append_tar_file_with_raw_name(&mut builder, b"evidence//same", b"second");
+            }
+            "unlisted_evidence" => {
+                append_tar_file(&mut builder, "evidence/unlisted", b"not in manifest")
+            }
+            "member_count" => append_tar_file(&mut builder, "evidence/extra", b"one"),
+            "member_size" => append_tar_file(
+                &mut builder,
+                "evidence/large",
+                &vec![b'x'; manifest_bytes.len() + 1],
+            ),
+            "aggregate_size" => {
+                append_tar_file(&mut builder, "evidence/one", b"three");
+                append_tar_file(&mut builder, "evidence/two", b"three");
+            }
+            "missing_evidence" | "evidence_wrong_type" | "manifest_wrong_type" => {}
+            _ => unreachable!(),
+        }
+        builder
+            .into_inner()
+            .expect("tar stream is finished")
+            .finish()
+            .expect("gzip stream is finished");
+        let controlled = directory.path().join("controlled");
+        fs::create_dir(&controlled).expect("controlled extraction root is created");
+        let outside = directory.path().join("outside");
+        fs::write(&outside, b"sentinel").expect("outside sentinel is written");
+        let mut command = Command::new(env!("CARGO_BIN_EXE_evidence_digest"));
+        command
+            .arg("verify-staged-bundle")
+            .arg(&bundle)
+            .arg(&manifest)
+            .arg(&controlled);
+        if case == "member_count" {
+            command.env("AIPERF_TEST_DOWNLOADED_MAX_MEMBERS", "2");
+        }
+        if case == "member_size" {
+            command.env(
+                "AIPERF_TEST_DOWNLOADED_MAX_MEMBER_BYTES",
+                manifest_bytes.len().to_string(),
+            );
+        }
+        if case == "aggregate_size" {
+            command.env(
+                "AIPERF_TEST_DOWNLOADED_MAX_EXPANDED_BYTES",
+                (manifest_bytes.len() + 5).to_string(),
+            );
+        }
+        let output = command.output().expect("staged bundle verifier starts");
+        assert!(
+            !output.status.success(),
+            "staged bundle adversary `{case}` was accepted"
+        );
+        assert_eq!(
+            fs::read(&outside).expect("outside sentinel remains"),
+            b"sentinel",
+            "staged bundle adversary `{case}` escaped controlled storage"
+        );
+        assert_eq!(
+            fs::read_dir(&controlled)
+                .expect("controlled root remains readable")
+                .count(),
+            0,
+            "staged bundle adversary `{case}` left extracted bytes"
+        );
+    }
+}
+
+#[test]
+fn staged_bundle_verifier_rejects_uncontrolled_extraction_parents() {
+    let directory = tempfile::tempdir().expect("staged bundle root fixture");
+    let capture = directory.path().join("capture");
+    let evidence = capture.join("evidence");
+    fs::create_dir_all(&evidence).expect("evidence root is created");
+    fs::write(evidence.join("sample.txt"), b"sealed evidence").expect("evidence is written");
+    let manifest = capture.join("evidence-manifest.json");
+    fs::write(
+        &manifest,
+        serde_json::to_vec(&serde_json::json!({
+            "schema_version": 1,
+            "files": [{
+                "path": "sample.txt",
+                "bytes": 15,
+                "blake3": format!("blake3:{}", blake3::hash(b"sealed evidence")),
+            }],
+        }))
+        .expect("manifest serializes"),
+    )
+    .expect("manifest is written");
+    let bundle = directory.path().join("bundle.tar.gz");
+    create_bundle(&capture, &bundle);
+
+    for uncontrolled in [
+        std::path::PathBuf::from("relative-extraction-root"),
+        directory.path().join("missing-extraction-root"),
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_evidence_digest"))
+            .arg("verify-staged-bundle")
+            .arg(&bundle)
+            .arg(&manifest)
+            .arg(&uncontrolled)
+            .output()
+            .expect("staged bundle verifier starts");
+        assert!(
+            !output.status.success(),
+            "uncontrolled extraction parent {} was accepted",
+            uncontrolled.display()
+        );
+    }
+}
+
+#[test]
+fn captured_source_archive_rejects_unsafe_types_paths_and_sizes() {
+    for case in [
+        "parent",
+        "absolute",
+        "backslash",
+        "newline",
+        "non_utf8",
+        "symlink",
+        "hardlink",
+        "duplicate",
+        "member_size",
+        "aggregate_size",
+    ] {
+        let directory = tempfile::tempdir().expect("captured archive adversary root");
+        let capture = directory.path().join("capture");
+        let identity = capture.join("evidence/identity");
+        let destination = directory.path().join("extracted");
+        fs::create_dir_all(&identity).expect("capture identity root is created");
+        fs::create_dir(&destination).expect("controlled extraction root is created");
+        let outside = directory.path().join("outside");
+        fs::write(&outside, b"sentinel").expect("outside sentinel is written");
+        let archive = identity.join("effective-source-tree.tar");
+        let mut builder = Builder::new(File::create(&archive).expect("archive is created"));
+        match case {
+            "parent" => append_tar_file_with_raw_name(&mut builder, b"../outside", b"attack"),
+            "absolute" => append_tar_file_with_raw_name(&mut builder, b"/outside", b"attack"),
+            "backslash" => append_tar_file_with_raw_name(&mut builder, b"bad\\path", b"attack"),
+            "newline" => append_tar_file_with_raw_name(&mut builder, b"bad\npath", b"attack"),
+            "non_utf8" => append_tar_file_with_raw_name(&mut builder, b"bad\xffpath", b"attack"),
+            "symlink" | "hardlink" => {
+                let mut header = Header::new_gnu();
+                header.set_entry_type(if case == "symlink" {
+                    tar::EntryType::Symlink
+                } else {
+                    tar::EntryType::Link
+                });
+                header.set_mode(0o777);
+                header.set_size(0);
+                header
+                    .set_link_name("../outside")
+                    .expect("link target is written");
+                header.set_cksum();
+                builder
+                    .append_data(&mut header, "link", std::io::empty())
+                    .expect("link fixture is appended");
+            }
+            "duplicate" => {
+                append_tar_file(&mut builder, "same", b"first");
+                append_tar_file_with_raw_name(&mut builder, b"./same", b"second");
+            }
+            "member_size" => append_tar_file(&mut builder, "large", b"three"),
+            "aggregate_size" => {
+                append_tar_file(&mut builder, "one", b"three");
+                append_tar_file(&mut builder, "two", b"three");
+            }
+            _ => unreachable!(),
+        }
+        builder.finish().expect("adversarial archive is finished");
+        write_captured_source_manifest(&capture, &archive);
+        let mut command = Command::new(env!("CARGO_BIN_EXE_evidence_digest"));
+        command
+            .arg("extract-captured-source")
+            .arg(&capture)
+            .arg(&destination);
+        if case == "member_size" {
+            command.env("AIPERF_TEST_CAPTURED_SOURCE_MAX_MEMBER_BYTES", "4");
+        }
+        if case == "aggregate_size" {
+            command.env("AIPERF_TEST_CAPTURED_SOURCE_MAX_EXPANDED_BYTES", "9");
+        }
+        let output = command.output().expect("trusted archive verifier starts");
+        assert!(
+            !output.status.success(),
+            "captured source adversary `{case}` was accepted"
+        );
+        assert_eq!(
+            fs::read_dir(&destination)
+                .expect("controlled destination is readable")
+                .count(),
+            0,
+            "captured source adversary `{case}` wrote before refusal"
+        );
+        assert_eq!(
+            fs::read(&outside).expect("outside sentinel remains"),
+            b"sentinel",
+            "captured source adversary `{case}` escaped controlled storage"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn captured_source_authentication_precedes_extraction_and_rejects_symlinks() {
+    use std::os::unix::fs::symlink;
+
+    let directory = tempfile::tempdir().expect("captured source authentication root");
+    let capture = directory.path().join("capture");
+    let identity = capture.join("evidence/identity");
+    let destination = directory.path().join("extracted");
+    fs::create_dir_all(&identity).expect("capture identity root is created");
+    fs::create_dir(&destination).expect("controlled extraction root is created");
+    let archive = identity.join("effective-source-tree.tar");
+    let mut builder = Builder::new(File::create(&archive).expect("archive is created"));
+    append_tar_file(&mut builder, "safe.txt", b"safe");
+    builder.finish().expect("archive is finished");
+    write_captured_source_manifest(&capture, &archive);
+    let manifest_path = capture.join("evidence-manifest.json");
+    let mut manifest: serde_json::Value =
+        serde_json::from_slice(&fs::read(&manifest_path).expect("manifest is readable"))
+            .expect("manifest parses");
+    manifest["files"][0]["blake3"] = serde_json::json!(
+        "blake3:0000000000000000000000000000000000000000000000000000000000000000"
+    );
+    fs::write(
+        &manifest_path,
+        serde_json::to_vec(&manifest).expect("mutated manifest serializes"),
+    )
+    .expect("mutated manifest is written");
+    let marker = directory.path().join("extraction-entered");
+    let mismatched = Command::new(env!("CARGO_BIN_EXE_evidence_digest"))
+        .arg("extract-captured-source")
+        .arg(&capture)
+        .arg(&destination)
+        .env("AIPERF_CAPTURED_SOURCE_EXTRACTION_MARKER", &marker)
+        .status()
+        .expect("mismatched extraction starts");
+    assert!(
+        !mismatched.success(),
+        "unauthenticated archive was accepted"
+    );
+    assert!(!marker.exists(), "extraction began before authentication");
+    assert_eq!(
+        fs::read_dir(&destination)
+            .expect("destination remains readable")
+            .count(),
+        0
+    );
+
+    write_captured_source_manifest(&capture, &archive);
+    let original = identity.join("original-source.tar");
+    fs::rename(&archive, &original).expect("archive is moved behind a symlink");
+    symlink(&original, &archive).expect("archive symlink is created");
+    let symlinked = Command::new(env!("CARGO_BIN_EXE_evidence_digest"))
+        .arg("extract-captured-source")
+        .arg(&capture)
+        .arg(&destination)
+        .status()
+        .expect("symlinked extraction starts");
+    assert!(
+        !symlinked.success(),
+        "symlinked captured archive was accepted"
+    );
+}
+
+#[test]
+fn captured_source_path_replacement_after_authentication_is_refused() {
+    let directory = tempfile::tempdir().expect("captured source replacement fixture root");
+    let capture = directory.path().join("capture");
+    let identity = capture.join("evidence/identity");
+    let destination = directory.path().join("extracted");
+    fs::create_dir_all(&identity).expect("capture identity root is created");
+    fs::create_dir(&destination).expect("controlled extraction root is created");
+    let archive = identity.join("effective-source-tree.tar");
+    let mut builder = Builder::new(File::create(&archive).expect("source archive is created"));
+    append_tar_file(&mut builder, "safe.txt", b"authenticated bytes");
+    builder.finish().expect("source archive is finished");
+    write_captured_source_manifest(&capture, &archive);
+
+    let replacement = directory.path().join("replacement-source.tar");
+    let mut builder = Builder::new(File::create(&replacement).expect("replacement is created"));
+    append_tar_file(&mut builder, "replacement.txt", b"different bytes");
+    builder.finish().expect("replacement archive is finished");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_evidence_digest"))
+        .arg("extract-captured-source")
+        .arg(&capture)
+        .arg(&destination)
+        .env(
+            "AIPERF_TEST_REPLACE_CAPTURED_SOURCE_AFTER_AUTHENTICATION",
+            &replacement,
+        )
+        .output()
+        .expect("replacement-resistant extraction starts");
+    assert!(
+        !output.status.success(),
+        "captured source path replacement was accepted"
+    );
+}
+
+#[test]
+fn staged_bundle_path_replacement_after_authentication_is_refused() {
+    let directory = tempfile::tempdir().expect("staged bundle replacement fixture root");
+    let capture = directory.path().join("capture");
+    let evidence = capture.join("evidence");
+    let extraction_parent = directory.path().join("controlled");
+    fs::create_dir_all(&evidence).expect("evidence root is created");
+    fs::create_dir(&extraction_parent).expect("controlled root is created");
+    fs::write(evidence.join("sample.txt"), b"sealed evidence").expect("evidence is written");
+    let manifest = capture.join("evidence-manifest.json");
+    fs::write(
+        &manifest,
+        serde_json::to_vec(&serde_json::json!({
+            "schema_version": 1,
+            "files": [{
+                "path": "sample.txt",
+                "bytes": 15,
+                "blake3": format!("blake3:{}", blake3::hash(b"sealed evidence")),
+            }],
+        }))
+        .expect("manifest serializes"),
+    )
+    .expect("manifest is written");
+    let bundle = directory.path().join("bundle.tar.gz");
+    create_bundle(&capture, &bundle);
+
+    let replacement_capture = directory.path().join("replacement-capture");
+    fs::create_dir_all(replacement_capture.join("evidence"))
+        .expect("replacement evidence root is created");
+    fs::write(
+        replacement_capture.join("evidence/other.txt"),
+        b"replacement evidence",
+    )
+    .expect("replacement evidence is written");
+    fs::write(
+        replacement_capture.join("evidence-manifest.json"),
+        b"{\"schema_version\":1,\"files\":[]}",
+    )
+    .expect("replacement manifest is written");
+    let replacement = directory.path().join("replacement.tar.gz");
+    create_bundle(&replacement_capture, &replacement);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_evidence_digest"))
+        .arg("verify-staged-bundle")
+        .arg(&bundle)
+        .arg(&manifest)
+        .arg(&extraction_parent)
+        .env(
+            "AIPERF_TEST_REPLACE_STAGED_BUNDLE_AFTER_AUTHENTICATION",
+            &replacement,
+        )
+        .output()
+        .expect("replacement-resistant staged verifier starts");
+    assert!(
+        !output.status.success(),
+        "staged bundle path replacement was accepted"
+    );
+}
+
+#[test]
+fn capture_shell_verifies_the_completed_bundle_before_authoring_its_receipt() {
+    let directory = tempfile::tempdir().expect("capture bundle shell fixture root");
+    let capture = directory.path().join("capture");
+    let evidence = capture.join("evidence");
+    fs::create_dir_all(&evidence).expect("evidence root is created");
+    fs::write(evidence.join("sample.txt"), b"sealed evidence").expect("evidence is written");
+    let manifest = capture.join("evidence-manifest.json");
+    fs::write(
+        &manifest,
+        serde_json::to_vec(&serde_json::json!({
+            "schema_version": 1,
+            "files": [{
+                "path": "sample.txt",
+                "bytes": 15,
+                "blake3": format!("blake3:{}", blake3::hash(b"sealed evidence")),
+            }],
+        }))
+        .expect("manifest serializes"),
+    )
+    .expect("manifest is written");
+    let bundle = directory.path().join("valid-bundle.tar.gz");
+    create_bundle(&capture, &bundle);
+    let valid_extraction = directory.path().join("valid-extraction");
+    fs::create_dir(&valid_extraction).expect("valid controlled root is created");
+    let valid_receipt = directory.path().join("valid-bundle-verification.json");
+    let script = repository_root().join("rust/scripts/capture-plugin-baseline.sh");
+    let valid = Command::new("sh")
+        .arg(&script)
+        .arg("--bundle-verification-self-test")
+        .arg(directory.path().join("valid.lock"))
+        .arg(env!("CARGO_BIN_EXE_evidence_digest"))
+        .arg(&bundle)
+        .arg(&manifest)
+        .arg(&valid_extraction)
+        .arg(&valid_receipt)
+        .output()
+        .expect("valid completed-bundle shell verification starts");
+    assert!(
+        valid.status.success(),
+        "valid completed bundle was refused: {}",
+        String::from_utf8_lossy(&valid.stderr)
+    );
+    assert!(valid_receipt.is_file(), "valid receipt was not authored");
+
+    let malicious_bundle = directory.path().join("malicious-bundle.tar.gz");
+    let encoder = GzEncoder::new(
+        File::create(&malicious_bundle).expect("malicious bundle is created"),
+        Compression::default(),
+    );
+    let mut builder = Builder::new(encoder);
+    append_tar_file_with_raw_name(&mut builder, b"../outside", b"attack");
+    builder
+        .into_inner()
+        .expect("malicious tar stream is finished")
+        .finish()
+        .expect("malicious gzip stream is finished");
+    let malicious_extraction = directory.path().join("malicious-extraction");
+    fs::create_dir(&malicious_extraction).expect("malicious controlled root is created");
+    let malicious_receipt = directory.path().join("malicious-bundle-verification.json");
+    let outside = directory.path().join("outside");
+    fs::write(&outside, b"sentinel").expect("outside sentinel is written");
+    let rejected = Command::new("sh")
+        .arg(script)
+        .arg("--bundle-verification-self-test")
+        .arg(directory.path().join("malicious.lock"))
+        .arg(env!("CARGO_BIN_EXE_evidence_digest"))
+        .arg(&malicious_bundle)
+        .arg(&manifest)
+        .arg(&malicious_extraction)
+        .arg(&malicious_receipt)
+        .output()
+        .expect("malicious completed-bundle shell verification starts");
+    assert!(!rejected.status.success(), "malicious bundle was accepted");
+    assert!(
+        !malicious_receipt.exists(),
+        "verification receipt was authored after archive refusal"
+    );
+    assert_eq!(
+        fs::read(&outside).expect("outside sentinel remains"),
+        b"sentinel"
+    );
 }
 
 fn copy_tree(source: &Path, destination: &Path) {
@@ -1096,6 +1905,71 @@ fn refresh_transaction_rolls_back_every_output_after_commit_failure() {
     ] {
         assert_eq!(fs::read(path).expect("compact output survives"), bytes);
     }
+    assert!(
+        transaction_residue(directory.path()).is_empty(),
+        "returned-error rollback left backup, stage, or journal residue"
+    );
+}
+
+#[test]
+fn refresh_contract_recovers_a_killed_candidate_transaction_before_reuse() {
+    let directory = tempfile::tempdir().expect("killed refresh candidate fixture root");
+    let inventory = directory.path().join("plugin-parity.yaml");
+    let capture = directory.path().join("task1-review1i-final");
+    let compact = directory.path().join("compact");
+    let topology = compact.join("package-topology.json");
+    fs::create_dir_all(&compact).expect("compact root is created");
+    fs::copy(
+        repository_root().join("rust/benchmarks/plugin-parity.yaml"),
+        &inventory,
+    )
+    .expect("inventory fixture is copied");
+    prepare_capture_layout(&capture, "review1i");
+    for (path, bytes) in [
+        (&topology, b"old topology".as_slice()),
+        (&compact.join("allocation-probe.json"), b"old allocation"),
+        (&compact.join("evidence-manifest.json"), b"old manifest"),
+        (&compact.join("bundle-locator.json"), b"old locator"),
+    ] {
+        fs::write(path, bytes).expect("old compact output is written");
+    }
+
+    let killed = run_refresh_with_environment(
+        "post-capture",
+        "review1i",
+        &inventory,
+        &capture,
+        Some(&topology),
+        &[(
+            "AIPERF_REFRESH_KILL_AFTER_BOUNDARY",
+            Path::new("destination:2"),
+        )],
+    );
+    assert!(
+        !killed.status.success(),
+        "candidate kill point did not kill"
+    );
+    assert!(
+        !transaction_residue(directory.path()).is_empty(),
+        "killed candidate transaction did not leave its recovery authority"
+    );
+
+    let recovered = run_refresh(
+        "post-capture",
+        "review1i",
+        &inventory,
+        &capture,
+        Some(&topology),
+    );
+    assert!(
+        recovered.status.success(),
+        "next refresh did not recover before candidate reuse: {}",
+        String::from_utf8_lossy(&recovered.stderr)
+    );
+    assert!(
+        transaction_residue(directory.path()).is_empty(),
+        "recovered candidate transaction left residue"
+    );
 }
 
 #[test]
@@ -1149,6 +2023,276 @@ fn publish_baseline_commits_only_the_complete_validated_candidate_set() {
         assert_eq!(
             fs::read_to_string(repository.join(relative)).expect("candidate is published"),
             format!("candidate-{index}\n")
+        );
+    }
+    assert!(
+        transaction_residue(&repository).is_empty(),
+        "successful publication left backup, stage, or journal residue"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn publish_baseline_rejects_candidate_symlink_before_any_destination_change() {
+    use std::os::unix::fs::symlink;
+
+    let directory = tempfile::tempdir().expect("candidate symlink fixture root");
+    let candidate = directory.path().join("candidate");
+    let repository = directory.path().join("repository");
+    let paths = publication_paths("pre-capture");
+    for (index, relative) in paths.iter().enumerate() {
+        let candidate_path = candidate.join(relative);
+        let repository_path = repository.join(relative);
+        fs::create_dir_all(candidate_path.parent().expect("candidate parent"))
+            .expect("candidate parent is created");
+        fs::create_dir_all(repository_path.parent().expect("repository parent"))
+            .expect("repository parent is created");
+        fs::write(&candidate_path, format!("candidate-{index}\n"))
+            .expect("candidate output is written");
+        fs::write(&repository_path, format!("original-{index}\n"))
+            .expect("original output is written");
+    }
+    let symlink_candidate = candidate.join(paths[0]);
+    let regular_target = candidate.join("regular-target");
+    fs::write(&regular_target, b"candidate-through-symlink\n").expect("symlink target is written");
+    fs::remove_file(&symlink_candidate).expect("regular candidate is removed");
+    symlink(&regular_target, &symlink_candidate).expect("candidate symlink is created");
+
+    let rejected = Command::new(env!("CARGO_BIN_EXE_evidence_digest"))
+        .args(["publish-baseline", "pre-capture"])
+        .arg(&candidate)
+        .arg(&repository)
+        .output()
+        .expect("symlink candidate publication starts");
+    assert!(!rejected.status.success(), "candidate symlink was accepted");
+    for (index, relative) in paths.iter().enumerate() {
+        assert_eq!(
+            fs::read_to_string(repository.join(relative)).expect("original remains readable"),
+            format!("original-{index}\n")
+        );
+    }
+    assert!(
+        transaction_residue(&repository).is_empty(),
+        "candidate rejection left publication residue"
+    );
+}
+
+#[test]
+fn publication_recovers_after_process_death_at_a_destination_rename() {
+    let directory = tempfile::tempdir().expect("publication crash fixture root");
+    let candidate = directory.path().join("candidate");
+    let repository = directory.path().join("repository");
+    let paths = [
+        "rust/benchmarks/plugin-parity.yaml",
+        "artifacts/native-plugin-baseline/package-topology.json",
+    ];
+    for (index, relative) in paths.iter().enumerate() {
+        let candidate_path = candidate.join(relative);
+        let repository_path = repository.join(relative);
+        fs::create_dir_all(candidate_path.parent().expect("candidate parent"))
+            .expect("candidate parent is created");
+        fs::create_dir_all(repository_path.parent().expect("repository parent"))
+            .expect("repository parent is created");
+        fs::write(&candidate_path, format!("new-generation-{index}\n"))
+            .expect("candidate output is written");
+        fs::write(&repository_path, format!("old-generation-{index}\n"))
+            .expect("original output is written");
+    }
+
+    let killed = Command::new(env!("CARGO_BIN_EXE_evidence_digest"))
+        .args(["publish-baseline", "pre-capture"])
+        .arg(&candidate)
+        .arg(&repository)
+        .env("AIPERF_REFRESH_KILL_AFTER_BOUNDARY", "destination:1")
+        .status()
+        .expect("kill-point publisher starts");
+    assert!(!killed.success(), "kill-point publisher did not die");
+    let refused_reader = Command::new(env!("CARGO_BIN_EXE_evidence_digest"))
+        .args(["verify-baseline-publication", "pre-capture"])
+        .arg(&repository)
+        .output()
+        .expect("publication reader starts");
+    assert!(
+        !refused_reader.status.success(),
+        "reader accepted an interrupted publication"
+    );
+
+    let recovered = Command::new(env!("CARGO_BIN_EXE_evidence_digest"))
+        .args(["publish-baseline", "pre-capture"])
+        .arg(&candidate)
+        .arg(&repository)
+        .output()
+        .expect("recovery publisher starts");
+    assert!(
+        recovered.status.success(),
+        "mandatory publication recovery failed: {}",
+        String::from_utf8_lossy(&recovered.stderr)
+    );
+    for (index, relative) in paths.iter().enumerate() {
+        assert_eq!(
+            fs::read_to_string(repository.join(relative)).expect("published output exists"),
+            format!("new-generation-{index}\n")
+        );
+    }
+    let verified_reader = Command::new(env!("CARGO_BIN_EXE_evidence_digest"))
+        .args(["verify-baseline-publication", "pre-capture"])
+        .arg(&repository)
+        .output()
+        .expect("recovered publication reader starts");
+    assert!(
+        verified_reader.status.success(),
+        "reader rejected recovered publication: {}",
+        String::from_utf8_lossy(&verified_reader.stderr)
+    );
+}
+
+fn publication_paths(mode: &str) -> Vec<&'static str> {
+    let mut paths = vec![
+        "rust/benchmarks/plugin-parity.yaml",
+        "artifacts/native-plugin-baseline/package-topology.json",
+    ];
+    if mode != "pre-capture" {
+        paths.extend([
+            "artifacts/native-plugin-baseline/allocation-probe.json",
+            "artifacts/native-plugin-baseline/evidence-manifest.json",
+            "artifacts/native-plugin-baseline/bundle-locator.json",
+        ]);
+    }
+    paths
+}
+
+fn transaction_residue(root: &Path) -> Vec<std::path::PathBuf> {
+    fn visit(root: &Path, residue: &mut Vec<std::path::PathBuf>) {
+        for entry in fs::read_dir(root).expect("transaction directory is readable") {
+            let entry = entry.expect("transaction entry is readable");
+            if entry.file_type().expect("transaction entry type").is_dir() {
+                visit(&entry.path(), residue);
+            } else {
+                let name = entry.file_name();
+                let name = name.to_string_lossy();
+                if name.contains(".refresh-") || name == ".aiperf-baseline-refresh-transaction.json"
+                {
+                    residue.push(entry.path());
+                }
+            }
+        }
+    }
+    let mut residue = Vec::new();
+    visit(root, &mut residue);
+    residue
+}
+
+#[test]
+fn publication_is_crash_durable_at_every_commit_boundary() {
+    for mode in ["pre-capture", "post-capture"] {
+        let output_count = publication_paths(mode).len();
+        let mut boundaries = vec!["journal".to_owned(), "commit-ready".to_owned()];
+        for ordinal in 1..=output_count {
+            boundaries.extend([
+                format!("backup:{ordinal}"),
+                format!("destination:{ordinal}"),
+                format!("cleanup:{ordinal}"),
+            ]);
+        }
+        for boundary in boundaries {
+            let directory = tempfile::tempdir().expect("publication boundary fixture root");
+            let candidate = directory.path().join("candidate");
+            let repository = directory.path().join("repository");
+            let paths = publication_paths(mode);
+            for (index, relative) in paths.iter().enumerate() {
+                let candidate_path = candidate.join(relative);
+                let repository_path = repository.join(relative);
+                fs::create_dir_all(candidate_path.parent().expect("candidate parent"))
+                    .expect("candidate parent is created");
+                fs::create_dir_all(repository_path.parent().expect("repository parent"))
+                    .expect("repository parent is created");
+                fs::write(&candidate_path, format!("new-{index}\n")).expect("candidate is written");
+                fs::write(&repository_path, format!("old-{index}\n")).expect("original is written");
+            }
+            let killed = Command::new(env!("CARGO_BIN_EXE_evidence_digest"))
+                .args(["publish-baseline", mode])
+                .arg(&candidate)
+                .arg(&repository)
+                .env("AIPERF_REFRESH_KILL_AFTER_BOUNDARY", &boundary)
+                .status()
+                .expect("boundary publisher starts");
+            assert!(!killed.success(), "{mode} boundary {boundary} did not kill");
+            let reader = Command::new(env!("CARGO_BIN_EXE_evidence_digest"))
+                .args(["verify-baseline-publication", mode])
+                .arg(&repository)
+                .status()
+                .expect("interrupted reader starts");
+            assert!(
+                !reader.success(),
+                "{mode} boundary {boundary} did not fail closed"
+            );
+            let recovery = Command::new(env!("CARGO_BIN_EXE_evidence_digest"))
+                .args(["recover-baseline-publication", mode])
+                .arg(&repository)
+                .output()
+                .expect("publication recovery starts");
+            assert!(
+                recovery.status.success(),
+                "{mode} boundary {boundary} recovery failed: {}",
+                String::from_utf8_lossy(&recovery.stderr)
+            );
+            let recovered = paths
+                .iter()
+                .map(|relative| {
+                    fs::read_to_string(repository.join(relative)).expect("recovered file exists")
+                })
+                .collect::<Vec<_>>();
+            let is_old = recovered
+                .iter()
+                .enumerate()
+                .all(|(index, bytes)| bytes == &format!("old-{index}\n"));
+            let is_new = recovered
+                .iter()
+                .enumerate()
+                .all(|(index, bytes)| bytes == &format!("new-{index}\n"));
+            assert!(
+                is_old || is_new,
+                "{mode} boundary {boundary} recovered a mixed generation: {recovered:?}"
+            );
+            assert!(
+                transaction_residue(&repository).is_empty(),
+                "{mode} boundary {boundary} left transaction residue"
+            );
+        }
+    }
+}
+
+#[test]
+fn staging_failure_cleans_all_created_temporary_outputs() {
+    let directory = tempfile::tempdir().expect("publication staging fixture root");
+    let candidate = directory.path().join("candidate");
+    let repository = directory.path().join("repository");
+    for (index, relative) in publication_paths("pre-capture").iter().enumerate() {
+        let candidate_path = candidate.join(relative);
+        let repository_path = repository.join(relative);
+        fs::create_dir_all(candidate_path.parent().expect("candidate parent"))
+            .expect("candidate parent is created");
+        fs::create_dir_all(repository_path.parent().expect("repository parent"))
+            .expect("repository parent is created");
+        fs::write(candidate_path, format!("new-{index}\n")).expect("candidate is written");
+        fs::write(repository_path, format!("old-{index}\n")).expect("original is written");
+    }
+    let failed = Command::new(env!("CARGO_BIN_EXE_evidence_digest"))
+        .args(["publish-baseline", "pre-capture"])
+        .arg(&candidate)
+        .arg(&repository)
+        .env("AIPERF_REFRESH_FAIL_STAGING_INDEX", "1")
+        .status()
+        .expect("staging-failure publisher starts");
+    assert!(!failed.success(), "injected staging failure passed");
+    assert!(
+        transaction_residue(&repository).is_empty(),
+        "staging failure left temporary or journal residue"
+    );
+    for (index, relative) in publication_paths("pre-capture").iter().enumerate() {
+        assert_eq!(
+            fs::read_to_string(repository.join(relative)).expect("original survives"),
+            format!("old-{index}\n")
         );
     }
 }
