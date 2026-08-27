@@ -12,7 +12,7 @@ use std::collections::{HashMap, VecDeque};
 use std::future::poll_fn;
 use std::rc::Rc;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::task::{Context as TaskContext, Poll};
 use std::thread::JoinHandle;
 
@@ -511,6 +511,7 @@ struct CreditCommand {
     /// report so the coordinator can release the right worker's depth.
     worker: usize,
     events: CreditReportTx,
+    lease: Arc<CreditLease>,
     /// Placement-wide latch fired by [`RequestExecutor::cancel_credits`]. Shared
     /// rather than per credit: nothing coordinator-side holds a per-request
     /// handle to fire, and grace escalation cancels the whole phase at once.
@@ -518,36 +519,157 @@ struct CreditCommand {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
 enum CreditState {
-    AcceptedQueued,
-    Running,
-    Abandoned,
-    TerminalPublished,
-    RecoveryStaged,
+    AcceptedQueued = 0,
+    Running = 1,
+    Abandoned = 2,
+    TerminalPublished = 3,
+    RecoveryStaged = 4,
 }
 
-#[derive(Clone, Copy, Debug)]
-struct CreditEntry {
-    state: CreditState,
-    has_pending_rescued_ttft: bool,
+const CREDIT_STATE_MASK: u8 = 0x0f;
+const CREDIT_PENDING_RESCUED_TTFT: u8 = 0x80;
+
+// The coordinator owns UUID lookup; this one-word lease is the only state a
+// worker shares back. State and rescued-TTFT ownership must change in one CAS
+// so terminal publication and exit recovery cannot both claim the credit.
+struct CreditLease {
+    state: AtomicU8,
 }
 
-#[derive(Default)]
-struct WorkerCreditRegistry {
-    entries: parking_lot::Mutex<HashMap<Uuid, CreditEntry>>,
-}
-
-impl WorkerCreditRegistry {
-    fn mark_running(&self, uuid: Uuid) -> bool {
-        let mut entries = self.entries.lock();
-        let Some(entry) = entries.get_mut(&uuid) else {
-            return false;
-        };
-        if entry.state != CreditState::AcceptedQueued {
-            return false;
+impl CreditLease {
+    fn accepted() -> Self {
+        Self {
+            state: AtomicU8::new(CreditState::AcceptedQueued as u8),
         }
-        entry.state = CreditState::Running;
-        true
+    }
+
+    fn credit_state(raw: u8) -> CreditState {
+        match raw & CREDIT_STATE_MASK {
+            value if value == CreditState::AcceptedQueued as u8 => CreditState::AcceptedQueued,
+            value if value == CreditState::Running as u8 => CreditState::Running,
+            value if value == CreditState::Abandoned as u8 => CreditState::Abandoned,
+            value if value == CreditState::TerminalPublished as u8 => {
+                CreditState::TerminalPublished
+            }
+            value if value == CreditState::RecoveryStaged as u8 => CreditState::RecoveryStaged,
+            _ => unreachable!("credit lease contains an invalid state"),
+        }
+    }
+
+    fn current_state(&self) -> CreditState {
+        Self::credit_state(self.state.load(Ordering::Acquire))
+    }
+
+    fn has_pending_rescued_ttft(&self) -> bool {
+        self.state.load(Ordering::Acquire) & CREDIT_PENDING_RESCUED_TTFT != 0
+    }
+
+    fn mark_running(&self) -> bool {
+        self.state
+            .compare_exchange(
+                CreditState::AcceptedQueued as u8,
+                CreditState::Running as u8,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .is_ok()
+    }
+
+    fn mark_abandoned(&self) {
+        let mut current = self.state.load(Ordering::Acquire);
+        loop {
+            if !matches!(
+                Self::credit_state(current),
+                CreditState::AcceptedQueued | CreditState::Running
+            ) {
+                return;
+            }
+            let abandoned = (current & CREDIT_PENDING_RESCUED_TTFT) | CreditState::Abandoned as u8;
+            match self.state.compare_exchange_weak(
+                current,
+                abandoned,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => return,
+                Err(observed) => current = observed,
+            }
+        }
+    }
+
+    fn try_hold_rescued_ttft(&self) -> bool {
+        let mut current = self.state.load(Ordering::Acquire);
+        loop {
+            if current & CREDIT_PENDING_RESCUED_TTFT != 0
+                || matches!(
+                    Self::credit_state(current),
+                    CreditState::TerminalPublished | CreditState::RecoveryStaged
+                )
+            {
+                return false;
+            }
+            match self.state.compare_exchange_weak(
+                current,
+                current | CREDIT_PENDING_RESCUED_TTFT,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => return true,
+                Err(observed) => current = observed,
+            }
+        }
+    }
+
+    fn clear_rescued_ttft(&self) {
+        self.state
+            .fetch_and(!CREDIT_PENDING_RESCUED_TTFT, Ordering::AcqRel);
+    }
+
+    fn claim_terminal(&self) -> bool {
+        let mut current = self.state.load(Ordering::Acquire);
+        loop {
+            if current & CREDIT_PENDING_RESCUED_TTFT != 0
+                || matches!(
+                    Self::credit_state(current),
+                    CreditState::TerminalPublished | CreditState::RecoveryStaged
+                )
+            {
+                return false;
+            }
+            match self.state.compare_exchange_weak(
+                current,
+                CreditState::TerminalPublished as u8,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => return true,
+                Err(observed) => current = observed,
+            }
+        }
+    }
+
+    fn claim_recovery(&self, include_owned: bool) -> bool {
+        let mut current = self.state.load(Ordering::Acquire);
+        loop {
+            let state = Self::credit_state(current);
+            let is_recoverable = state == CreditState::Abandoned
+                || (include_owned
+                    && matches!(state, CreditState::AcceptedQueued | CreditState::Running));
+            if current & CREDIT_PENDING_RESCUED_TTFT != 0 || !is_recoverable {
+                return false;
+            }
+            match self.state.compare_exchange_weak(
+                current,
+                CreditState::RecoveryStaged as u8,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => return true,
+                Err(observed) => current = observed,
+            }
+        }
     }
 }
 
@@ -560,12 +682,15 @@ struct CreditReportEnvelope {
 struct CreditReportTx {
     main: mpsc::Sender<CreditReportEnvelope>,
     rescue: mpsc::Sender<CreditReportEnvelope>,
-    registry: Arc<WorkerCreditRegistry>,
     worker: usize,
 }
 
 impl CreditReportTx {
-    fn try_send_first_token(&self, report: WorkerCreditReport) -> Option<oneshot::Receiver<()>> {
+    fn try_send_first_token(
+        &self,
+        lease: &CreditLease,
+        report: WorkerCreditReport,
+    ) -> Option<oneshot::Receiver<()>> {
         let envelope = CreditReportEnvelope {
             report,
             rescue_ack: None,
@@ -575,10 +700,7 @@ impl CreditReportTx {
             Err(mpsc::error::TrySendError::Full(envelope)) => envelope,
             Err(mpsc::error::TrySendError::Closed(_)) => return None,
         };
-        let uuid = envelope.report.uuid;
-        let mut entries = self.registry.entries.lock();
-        let entry = entries.get_mut(&uuid)?;
-        if entry.has_pending_rescued_ttft {
+        if !lease.try_hold_rescued_ttft() {
             return None;
         }
         let (acknowledge, acknowledged) = oneshot::channel();
@@ -587,60 +709,49 @@ impl CreditReportTx {
             rescue_ack: Some(acknowledge),
         };
         if self.rescue.try_send(envelope).is_ok() {
-            entry.has_pending_rescued_ttft = true;
             Some(acknowledged)
         } else {
+            lease.clear_rescued_ttft();
             None
         }
     }
 
-    async fn publish_terminal(&self, report: WorkerCreditReport) -> bool {
-        let uuid = report.uuid;
+    async fn publish_terminal(&self, lease: &CreditLease, report: WorkerCreditReport) -> bool {
         let Ok(permit) = self.main.reserve().await else {
             return false;
         };
-        let mut entries = self.registry.entries.lock();
-        let Some(entry) = entries.get_mut(&uuid) else {
-            return false;
-        };
-        if matches!(
-            entry.state,
-            CreditState::TerminalPublished | CreditState::RecoveryStaged
-        ) {
+        if !lease.claim_terminal() {
             return false;
         }
         permit.send(CreditReportEnvelope {
             report,
             rescue_ack: None,
         });
-        entry.state = CreditState::TerminalPublished;
         true
     }
 }
 
 struct CreditTaskGuard {
-    uuid: Uuid,
-    registry: Arc<WorkerCreditRegistry>,
+    lease: Arc<CreditLease>,
 }
 
 impl CreditTaskGuard {
-    fn new(uuid: Uuid, registry: Arc<WorkerCreditRegistry>) -> Self {
-        Self { uuid, registry }
+    fn new(lease: Arc<CreditLease>) -> Self {
+        Self { lease }
     }
 }
 
 impl Drop for CreditTaskGuard {
     fn drop(&mut self) {
-        let mut entries = self.registry.entries.lock();
-        if let Some(entry) = entries.get_mut(&self.uuid)
-            && matches!(
-                entry.state,
-                CreditState::AcceptedQueued | CreditState::Running
-            )
-        {
-            entry.state = CreditState::Abandoned;
-        }
+        self.lease.mark_abandoned();
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum RecoveryScope {
+    None,
+    AbandonedOnly,
+    UnexpectedExit,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -817,9 +928,10 @@ struct ThreadPerCoreExecutor<B: ExecutionSinkBuilder> {
     /// Push-mode return stream, shared by every worker and drained by one
     /// coordinator loop. Built eagerly because it costs one channel per run.
     credit_returns: CreditReturnStream,
-    /// Credits atomically accepted by each worker queue and retained until the
-    /// coordinator consumes their terminal publication.
-    credit_registries: Vec<Arc<WorkerCreditRegistry>>,
+    /// Coordinator-owned accepted credits, indexed by worker and retained until
+    /// the coordinator consumes their terminal publication. Workers share only
+    /// each entry's atomic lease, never this map.
+    credit_registries: Vec<RefCell<HashMap<Uuid, Arc<CreditLease>>>>,
     /// Per-worker routed-order backlog for pushed commands that did not fit in
     /// a worker's bounded queue.
     ///
@@ -833,7 +945,10 @@ struct ThreadPerCoreExecutor<B: ExecutionSinkBuilder> {
     credit_backlog: RefCell<Vec<std::collections::VecDeque<Box<CreditCommand>>>>,
     /// Workers whose unexpected exit still owns accepted or coordinator-
     /// backlog credits that have not yet fit in the bounded recovery queue.
-    recovering_workers: RefCell<Vec<bool>>,
+    recovering_workers: Vec<Cell<RecoveryScope>>,
+    /// Workers with recovery liabilities, queued once and revisited only when
+    /// an exit or synthetic dequeue creates useful recovery work.
+    recovery_queue: RefCell<VecDeque<usize>>,
     /// Placement-wide cancellation latch shared by every pushed command.
     credit_cancellation: PlacementCancellation,
 }
@@ -855,6 +970,7 @@ struct CreditReturnStream {
 
 enum CreditStreamItem {
     Report(CreditReportEnvelope),
+    Synthetic(CreditReportEnvelope),
     Exit(WorkerExitNotice),
 }
 
@@ -878,7 +994,7 @@ impl CreditReturnStream {
         {
             self.poll_rescue_first.set(true);
             self.poll_synthetic_first.set(false);
-            return Poll::Ready(Some(CreditStreamItem::Report(report)));
+            return Poll::Ready(Some(CreditStreamItem::Synthetic(report)));
         }
         if let Poll::Ready(Some(report)) = self.receiver.borrow_mut().poll_recv(context) {
             self.poll_rescue_first.set(true);
@@ -890,7 +1006,7 @@ impl CreditReturnStream {
         {
             self.poll_rescue_first.set(true);
             self.poll_synthetic_first.set(false);
-            return Poll::Ready(Some(CreditStreamItem::Report(report)));
+            return Poll::Ready(Some(CreditStreamItem::Synthetic(report)));
         }
 
         if !self.poll_rescue_first.get()
@@ -1079,19 +1195,13 @@ impl<B: ExecutionSinkBuilder> ThreadPerCoreExecutor<B> {
             .and_then(|senders| senders.get(worker).cloned())
             .ok_or_else(|| anyhow!("execution backend is shut down"))?;
         let uuid = command.turn.request.uuid;
-        let registry = &self.credit_registries[worker];
-        let mut entries = registry.entries.lock();
+        let lease = command.lease.clone();
+        let mut entries = self.credit_registries[worker].borrow_mut();
         ensure!(
             !entries.contains_key(&uuid),
             "routed credit {uuid} was already accepted by worker {worker}"
         );
-        entries.insert(
-            uuid,
-            CreditEntry {
-                state: CreditState::AcceptedQueued,
-                has_pending_rescued_ttft: false,
-            },
-        );
+        entries.insert(uuid, lease);
         match sender.try_send(WorkerMessage::Credit(command)) {
             Ok(()) => Ok(CreditEnqueueResult::Accepted),
             Err(mpsc::error::TrySendError::Full(WorkerMessage::Credit(command))) => {
@@ -1127,20 +1237,18 @@ impl<B: ExecutionSinkBuilder> ThreadPerCoreExecutor<B> {
         let (credit_tx, credit_rx) = mpsc::channel(CREDIT_RETURN_CAPACITY);
         let (rescue_tx, rescue_rx) = mpsc::channel(CREDIT_RETURN_CAPACITY);
         let (exit_tx, exit_rx) = mpsc::channel(workers);
-        let credit_registries: Vec<_> = (0..workers)
-            .map(|_| Arc::new(WorkerCreditRegistry::default()))
-            .collect();
+        let credit_registries: Vec<_> =
+            (0..workers).map(|_| RefCell::new(HashMap::new())).collect();
         let mut senders = Vec::with_capacity(workers);
         let mut threads = Vec::with_capacity(workers);
 
-        for (worker_id, registry) in credit_registries.iter().cloned().enumerate() {
+        for worker_id in 0..workers {
             let (sender, receiver) = mpsc::channel::<WorkerMessage>(WORKER_QUEUE_CAPACITY);
             let (started_tx, started_rx) = std::sync::mpsc::sync_channel(1);
             let builder = builder.clone();
             let credit_reports = CreditReportTx {
                 main: credit_tx.clone(),
                 rescue: rescue_tx.clone(),
-                registry,
                 worker: worker_id,
             };
             let exit_tx = exit_tx.clone();
@@ -1228,7 +1336,10 @@ impl<B: ExecutionSinkBuilder> ThreadPerCoreExecutor<B> {
                     .map(|_| std::collections::VecDeque::new())
                     .collect(),
             ),
-            recovering_workers: RefCell::new(vec![false; workers]),
+            recovering_workers: (0..workers)
+                .map(|_| Cell::new(RecoveryScope::None))
+                .collect(),
+            recovery_queue: RefCell::new(VecDeque::with_capacity(workers)),
             credit_cancellation: PlacementCancellation::new(),
         })
     }
@@ -1246,7 +1357,7 @@ impl<B: ExecutionSinkBuilder> ThreadPerCoreExecutor<B> {
             return;
         }
         for (index, queue) in backlog.iter_mut().enumerate() {
-            if self.recovering_workers.borrow()[index] {
+            if self.recovering_workers[index].get() == RecoveryScope::UnexpectedExit {
                 continue;
             }
             while let Some(command) = queue.pop_front() {
@@ -1258,7 +1369,7 @@ impl<B: ExecutionSinkBuilder> ThreadPerCoreExecutor<B> {
                     }
                     Ok(CreditEnqueueResult::Closed(command)) => {
                         queue.push_front(command);
-                        self.recovering_workers.borrow_mut()[index] = true;
+                        self.schedule_worker_recovery(index, RecoveryScope::UnexpectedExit);
                         break;
                     }
                     Err(error) => {
@@ -1270,24 +1381,17 @@ impl<B: ExecutionSinkBuilder> ThreadPerCoreExecutor<B> {
         }
     }
 
-    fn stage_registered_recovery(&self, worker: usize, uuid: Uuid) -> bool {
+    fn stage_registered_recovery(&self, worker: usize, uuid: Uuid, include_owned: bool) -> bool {
         let mut synthetic = self.credit_returns.synthetic_returns.borrow_mut();
         if synthetic.len() >= self.credit_returns.synthetic_capacity {
             return false;
         }
-        let mut entries = self.credit_registries[worker].entries.lock();
-        let Some(entry) = entries.get_mut(&uuid) else {
+        let Some(lease) = self.credit_registries[worker].borrow().get(&uuid).cloned() else {
             return false;
         };
-        if entry.has_pending_rescued_ttft
-            || !matches!(
-                entry.state,
-                CreditState::AcceptedQueued | CreditState::Running | CreditState::Abandoned
-            )
-        {
+        if !lease.claim_recovery(include_owned) {
             return false;
         }
-        entry.state = CreditState::RecoveryStaged;
         synthetic.push_back(CreditReportEnvelope {
             report: WorkerCreditReport {
                 uuid,
@@ -1311,19 +1415,18 @@ impl<B: ExecutionSinkBuilder> ThreadPerCoreExecutor<B> {
             return false;
         };
         let uuid = command.turn.request.uuid;
-        let mut entries = self.credit_registries[worker].entries.lock();
+        let mut entries = self.credit_registries[worker].borrow_mut();
         if entries.contains_key(&uuid) {
             tracing::error!(worker, %uuid, "backlogged credit duplicated accepted registry entry");
             self.credit_backlog.borrow_mut()[worker].push_front(command);
             return false;
         }
-        entries.insert(
-            uuid,
-            CreditEntry {
-                state: CreditState::RecoveryStaged,
-                has_pending_rescued_ttft: false,
-            },
-        );
+        if !command.lease.claim_recovery(true) {
+            tracing::error!(worker, %uuid, "backlogged credit had an invalid recovery lease");
+            self.credit_backlog.borrow_mut()[worker].push_front(command);
+            return false;
+        }
+        entries.insert(uuid, command.lease.clone());
         self.credit_returns
             .synthetic_returns
             .borrow_mut()
@@ -1340,7 +1443,8 @@ impl<B: ExecutionSinkBuilder> ThreadPerCoreExecutor<B> {
         true
     }
 
-    fn refill_worker_recovery(&self, worker: usize, include_owned: bool) {
+    fn refill_worker_recovery(&self, worker: usize, scope: RecoveryScope) -> bool {
+        let include_owned = scope == RecoveryScope::UnexpectedExit;
         loop {
             if self.credit_returns.synthetic_returns.borrow().len()
                 >= self.credit_returns.synthetic_capacity
@@ -1348,19 +1452,17 @@ impl<B: ExecutionSinkBuilder> ThreadPerCoreExecutor<B> {
                 break;
             }
             let candidate = {
-                let entries = self.credit_registries[worker].entries.lock();
-                entries.iter().find_map(|(uuid, entry)| {
-                    let is_recoverable = entry.state == CreditState::Abandoned
+                let entries = self.credit_registries[worker].borrow();
+                entries.iter().find_map(|(uuid, lease)| {
+                    let state = lease.current_state();
+                    let is_recoverable = state == CreditState::Abandoned
                         || (include_owned
-                            && matches!(
-                                entry.state,
-                                CreditState::AcceptedQueued | CreditState::Running
-                            ));
-                    (is_recoverable && !entry.has_pending_rescued_ttft).then_some(*uuid)
+                            && matches!(state, CreditState::AcceptedQueued | CreditState::Running));
+                    (is_recoverable && !lease.has_pending_rescued_ttft()).then_some(*uuid)
                 })
             };
             if let Some(uuid) = candidate
-                && self.stage_registered_recovery(worker, uuid)
+                && self.stage_registered_recovery(worker, uuid, include_owned)
             {
                 continue;
             }
@@ -1369,22 +1471,53 @@ impl<B: ExecutionSinkBuilder> ThreadPerCoreExecutor<B> {
             }
             break;
         }
-        if include_owned {
-            let has_registry_work =
-                self.credit_registries[worker]
-                    .entries
-                    .lock()
-                    .values()
-                    .any(|entry| {
-                        matches!(
-                            entry.state,
-                            CreditState::AcceptedQueued
-                                | CreditState::Running
-                                | CreditState::Abandoned
-                        )
-                    });
-            let has_backlog = !self.credit_backlog.borrow()[worker].is_empty();
-            self.recovering_workers.borrow_mut()[worker] = has_registry_work || has_backlog;
+        let has_registry_work = self.credit_registries[worker]
+            .borrow()
+            .values()
+            .any(|lease| {
+                let state = lease.current_state();
+                state == CreditState::Abandoned
+                    || (include_owned
+                        && matches!(state, CreditState::AcceptedQueued | CreditState::Running))
+            });
+        has_registry_work || (include_owned && !self.credit_backlog.borrow()[worker].is_empty())
+    }
+
+    fn schedule_worker_recovery(&self, worker: usize, scope: RecoveryScope) {
+        let Some(scheduled) = self.recovering_workers.get(worker) else {
+            return;
+        };
+        let previous = scheduled.get();
+        if scope > previous {
+            scheduled.set(scope);
+        }
+        if previous == RecoveryScope::None {
+            self.recovery_queue.borrow_mut().push_back(worker);
+        }
+    }
+
+    fn refill_recovery_queue(&self) {
+        if self.credit_returns.synthetic_returns.borrow().len()
+            >= self.credit_returns.synthetic_capacity
+        {
+            return;
+        }
+        let visits = self.recovery_queue.borrow().len();
+        for _ in 0..visits {
+            if self.credit_returns.synthetic_returns.borrow().len()
+                >= self.credit_returns.synthetic_capacity
+            {
+                break;
+            }
+            let Some(worker) = self.recovery_queue.borrow_mut().pop_front() else {
+                break;
+            };
+            let scope = self.recovering_workers[worker].get();
+            if self.refill_worker_recovery(worker, scope) {
+                self.recovery_queue.borrow_mut().push_back(worker);
+            } else {
+                self.recovering_workers[worker].set(RecoveryScope::None);
+            }
         }
     }
 
@@ -1392,23 +1525,8 @@ impl<B: ExecutionSinkBuilder> ThreadPerCoreExecutor<B> {
         if notice.reason == WorkerExitReason::Graceful {
             return;
         }
-        if let Some(recovering) = self.recovering_workers.borrow_mut().get_mut(notice.worker) {
-            *recovering = true;
-        }
-        self.refill_worker_recovery(notice.worker, true);
-    }
-
-    fn refill_unexpected_recoveries(&self) {
-        let workers: Vec<_> = self
-            .recovering_workers
-            .borrow()
-            .iter()
-            .enumerate()
-            .filter_map(|(worker, recovering)| recovering.then_some(worker))
-            .collect();
-        for worker in workers {
-            self.refill_worker_recovery(worker, true);
-        }
+        self.schedule_worker_recovery(notice.worker, RecoveryScope::UnexpectedExit);
+        self.refill_recovery_queue();
     }
 
     fn shutdown_workers(&self) -> Result<()> {
@@ -1560,16 +1678,16 @@ impl<B: ExecutionSinkBuilder> RequestExecutor for ThreadPerCoreExecutor<B> {
             events: CreditReportTx {
                 main: self.credit_returns.sender.clone(),
                 rescue: self.credit_returns.rescue_sender.clone(),
-                registry: self.credit_registries[index].clone(),
                 worker: index,
             },
+            lease: Arc::new(CreditLease::accepted()),
             cancellation: self.credit_cancellation.clone(),
         });
         let mut backlog = self.credit_backlog.borrow_mut();
         // Routed order is the contract: once this worker has a backlog every
         // later command for it must queue behind, never overtake.
         if !backlog[index].is_empty() {
-            if self.recovering_workers.borrow()[index] {
+            if self.recovering_workers[index].get() == RecoveryScope::UnexpectedExit {
                 chosen.inflight.set(chosen.inflight.get().saturating_sub(1));
                 return Err(anyhow!(
                     "execution worker stopped before accepting a routed credit"
@@ -1604,24 +1722,31 @@ impl<B: ExecutionSinkBuilder> RequestExecutor for ThreadPerCoreExecutor<B> {
 
     async fn next_credit_report(&self) -> Option<WorkerCreditReport> {
         loop {
-            self.refill_unexpected_recoveries();
             let item = poll_fn(|context| self.credit_returns.poll_next(context)).await?;
-            let mut envelope = match item {
+            let (mut envelope, is_synthetic) = match item {
                 CreditStreamItem::Exit(notice) => {
                     self.handle_worker_exit(notice);
                     continue;
                 }
-                CreditStreamItem::Report(envelope) => envelope,
+                CreditStreamItem::Report(envelope) => (envelope, false),
+                CreditStreamItem::Synthetic(envelope) => (envelope, true),
             };
             let report = &envelope.report;
             if let Some(acknowledge) = envelope.rescue_ack.take() {
-                if let Some(registry) = self.credit_registries.get(report.worker)
-                    && let Some(entry) = registry.entries.lock().get_mut(&report.uuid)
-                {
-                    entry.has_pending_rescued_ttft = false;
+                let lease = self
+                    .credit_registries
+                    .get(report.worker)
+                    .and_then(|registry| registry.borrow().get(&report.uuid).cloned());
+                if let Some(lease) = &lease {
+                    lease.clear_rescued_ttft();
                 }
                 let _ = acknowledge.send(());
-                self.refill_worker_recovery(report.worker, false);
+                if let Some(lease) = lease
+                    && lease.current_state() == CreditState::Abandoned
+                    && !self.stage_registered_recovery(report.worker, report.uuid, false)
+                {
+                    self.schedule_worker_recovery(report.worker, RecoveryScope::AbandonedOnly);
+                }
             }
             if !matches!(
                 &report.kind,
@@ -1632,13 +1757,16 @@ impl<B: ExecutionSinkBuilder> RequestExecutor for ThreadPerCoreExecutor<B> {
             let removed = self
                 .credit_registries
                 .get(report.worker)
-                .and_then(|registry| registry.entries.lock().remove(&report.uuid));
+                .and_then(|registry| registry.borrow_mut().remove(&report.uuid));
             if removed.is_none() {
                 tracing::error!(
                     worker = report.worker,
                     uuid = %report.uuid,
                     "discarding duplicate or unowned credit terminal"
                 );
+                if is_synthetic {
+                    self.refill_recovery_queue();
+                }
                 continue;
             }
             // The returned credit releases its worker's depth — the one
@@ -1648,7 +1776,9 @@ impl<B: ExecutionSinkBuilder> RequestExecutor for ThreadPerCoreExecutor<B> {
             }
             // A returned credit is exactly when that worker freed a queue slot.
             self.flush_credit_backlog();
-            self.refill_unexpected_recoveries();
+            if is_synthetic {
+                self.refill_recovery_queue();
+            }
             return Some(envelope.report);
         }
     }
@@ -1860,6 +1990,8 @@ async fn run_worker<S: WorkerSink + 'static>(
     credit_reports: CreditReportTx,
 ) -> bool {
     let mut jobs = JoinSet::new();
+    let credit_tasks: Rc<RefCell<HashMap<Uuid, Arc<CreditLease>>>> =
+        Rc::new(RefCell::new(HashMap::new()));
     let mut accepting = true;
     // Built lazily by `Configure`; shared (`Rc`) into every measured task so all
     // of this worker's requests accumulate into one observer that is drained
@@ -1893,11 +2025,12 @@ async fn run_worker<S: WorkerSink + 'static>(
                         let record_label = record_label.clone();
                         jobs.spawn_local(async move {
                             execute_worker_command(sink, observer, *command, record_label).await;
+                            None
                         });
                     }
                     Some(WorkerMessage::Credit(command)) => {
                         let uuid = command.turn.request.uuid;
-                        if !credit_reports.registry.mark_running(uuid) {
+                        if !command.lease.mark_running() {
                             continue;
                         }
                         let sink = sink.clone();
@@ -1908,17 +2041,21 @@ async fn run_worker<S: WorkerSink + 'static>(
                         let command = match materialize_credit(materializer.as_deref(), *command) {
                             Ok(command) => command,
                             Err(report) => {
-                                let _guard = CreditTaskGuard::new(
-                                    uuid,
-                                    credit_reports.registry.clone(),
-                                );
-                                report.events.publish_terminal(report.failure).await;
+                                let _guard = CreditTaskGuard::new(report.lease.clone());
+                                report
+                                    .events
+                                    .publish_terminal(&report.lease, report.failure)
+                                    .await;
                                 continue;
                             }
                         };
+                        credit_tasks
+                            .borrow_mut()
+                            .insert(uuid, command.lease.clone());
                         let record_label = record_label.clone();
                         jobs.spawn_local(async move {
                             execute_worker_credit(sink, observer, command, record_label).await;
+                            Some(uuid)
                         });
                     }
                     Some(WorkerMessage::Prewarm { turn, done }) => {
@@ -1926,6 +2063,7 @@ async fn run_worker<S: WorkerSink + 'static>(
                         jobs.spawn_local(async move {
                             let _ = sink.prewarm(*turn).await;
                             let _ = done.send(());
+                            None
                         });
                     }
                     Some(WorkerMessage::Drain { end_ns, reply }) => {
@@ -1947,9 +2085,15 @@ async fn run_worker<S: WorkerSink + 'static>(
                 }
             }
             completed = jobs.join_next(), if !jobs.is_empty() => {
-                if let Some(Err(error)) = completed {
-                    tracing::error!(error = %error, "execution task panicked");
-                    publish_abandoned_credits(&credit_reports).await;
+                match completed {
+                    Some(Ok(Some(uuid))) => {
+                        credit_tasks.borrow_mut().remove(&uuid);
+                    }
+                    Some(Ok(None)) | None => {}
+                    Some(Err(error)) => {
+                        tracing::error!(error = %error, "execution task panicked");
+                        publish_abandoned_credits(&credit_reports, &credit_tasks).await;
+                    }
                 }
             }
         }
@@ -1992,28 +2136,37 @@ async fn run_worker<S: WorkerSink + 'static>(
     had_drain && shutdown_succeeded
 }
 
-async fn publish_abandoned_credits(events: &CreditReportTx) {
+async fn publish_abandoned_credits(
+    events: &CreditReportTx,
+    credit_tasks: &RefCell<HashMap<Uuid, Arc<CreditLease>>>,
+) {
     loop {
-        let uuid = {
-            let entries = events.registry.entries.lock();
-            entries.iter().find_map(|(uuid, entry)| {
-                (entry.state == CreditState::Abandoned && !entry.has_pending_rescued_ttft)
-                    .then_some(*uuid)
+        let candidate = {
+            let tasks = credit_tasks.borrow();
+            tasks.iter().find_map(|(uuid, lease)| {
+                (lease.current_state() == CreditState::Abandoned
+                    && !lease.has_pending_rescued_ttft())
+                .then(|| (*uuid, lease.clone()))
             })
         };
-        let Some(uuid) = uuid else {
+        let Some((uuid, lease)) = candidate else {
             return;
         };
         let published = events
-            .publish_terminal(WorkerCreditReport {
-                uuid,
-                worker: events.worker,
-                kind: CreditReportKind::CreditReturn(Box::new(Err(anyhow!(
-                    "execution task panicked while driving a routed credit"
-                )))),
-            })
+            .publish_terminal(
+                &lease,
+                WorkerCreditReport {
+                    uuid,
+                    worker: events.worker,
+                    kind: CreditReportKind::CreditReturn(Box::new(Err(anyhow!(
+                        "execution task panicked while driving a routed credit"
+                    )))),
+                },
+            )
             .await;
-        if !published {
+        if published || lease.current_state() != CreditState::Abandoned {
+            credit_tasks.borrow_mut().remove(&uuid);
+        } else {
             return;
         }
     }
@@ -2156,6 +2309,7 @@ async fn execute_worker_command<S: WorkerSink + 'static>(
 /// A credit this worker could not materialize, plus the return it owes for it.
 struct CreditMaterializationFailure {
     events: CreditReportTx,
+    lease: Arc<CreditLease>,
     failure: WorkerCreditReport,
 }
 
@@ -2176,6 +2330,7 @@ fn materialize_credit(
     let worker = command.worker;
     let fail = |command: CreditCommand, message: String| CreditMaterializationFailure {
         events: command.events,
+        lease: command.lease,
         failure: WorkerCreditReport {
             uuid,
             worker,
@@ -2239,19 +2394,23 @@ async fn execute_worker_credit<S: WorkerSink + 'static>(
         context,
         worker,
         events,
+        lease,
         cancellation,
     } = command;
     let uuid = turn.request.uuid;
-    let _task_guard = CreditTaskGuard::new(uuid, events.registry.clone());
+    let _task_guard = CreditTaskGuard::new(lease.clone());
     let Some(observer) = worker_observer else {
         events
-            .publish_terminal(WorkerCreditReport {
-                uuid,
-                worker,
-                kind: CreditReportKind::CreditReturn(Box::new(Err(anyhow!(
-                    "worker-local measurement was not configured before a routed credit"
-                )))),
-            })
+            .publish_terminal(
+                &lease,
+                WorkerCreditReport {
+                    uuid,
+                    worker,
+                    kind: CreditReportKind::CreditReturn(Box::new(Err(anyhow!(
+                        "worker-local measurement was not configured before a routed credit"
+                    )))),
+                },
+            )
             .await;
         return;
     };
@@ -2262,11 +2421,14 @@ async fn execute_worker_credit<S: WorkerSink + 'static>(
         // dropped first-token report costs the issuer an early prefill release,
         // never a lost credit: the return below is sent with backpressure.
         if !first_token_sent.replace(true) {
-            *rescued_first_token.borrow_mut() = events.try_send_first_token(WorkerCreditReport {
-                uuid,
-                worker,
-                kind: CreditReportKind::FirstToken(ttft_ns),
-            });
+            *rescued_first_token.borrow_mut() = events.try_send_first_token(
+                &lease,
+                WorkerCreditReport {
+                    uuid,
+                    worker,
+                    kind: CreditReportKind::FirstToken(ttft_ns),
+                },
+            );
         }
     };
     let dispatch = measure::measure_dispatch(
@@ -2287,14 +2449,18 @@ async fn execute_worker_credit<S: WorkerSink + 'static>(
     let rescued_first_token = rescued_first_token.borrow_mut().take();
     if let Some(acknowledged) = rescued_first_token {
         let _ = acknowledged.await;
+        lease.clear_rescued_ttft();
     }
     let Some(result) = result else {
         events
-            .publish_terminal(WorkerCreditReport {
-                uuid,
-                worker,
-                kind: CreditReportKind::Cancelled,
-            })
+            .publish_terminal(
+                &lease,
+                WorkerCreditReport {
+                    uuid,
+                    worker,
+                    kind: CreditReportKind::Cancelled,
+                },
+            )
             .await;
         return;
     };
@@ -2328,11 +2494,14 @@ async fn execute_worker_credit<S: WorkerSink + 'static>(
     // Returning the credit is what releases the issuer's admission slot, so it
     // is sent with backpressure rather than dropped on a full stream.
     events
-        .publish_terminal(WorkerCreditReport {
-            uuid,
-            worker,
-            kind: CreditReportKind::CreditReturn(Box::new(outcome)),
-        })
+        .publish_terminal(
+            &lease,
+            WorkerCreditReport {
+                uuid,
+                worker,
+                kind: CreditReportKind::CreditReturn(Box::new(outcome)),
+            },
+        )
         .await;
 }
 
@@ -3045,9 +3214,10 @@ mod tests {
                 poll_rescue_first: Cell::new(true),
                 poll_synthetic_first: Cell::new(true),
             },
-            credit_registries: vec![Arc::new(WorkerCreditRegistry::default())],
+            credit_registries: vec![RefCell::new(HashMap::new())],
             credit_backlog: RefCell::new(vec![std::collections::VecDeque::new()]),
-            recovering_workers: RefCell::new(vec![false]),
+            recovering_workers: vec![Cell::new(RecoveryScope::None)],
+            recovery_queue: RefCell::new(VecDeque::with_capacity(1)),
             credit_cancellation: PlacementCancellation::new(),
         };
         let mut turn = streaming_turn();
@@ -3103,10 +3273,9 @@ mod tests {
         executor.send_credit(turn, measured_context()).unwrap();
         assert_eq!(
             executor.credit_registries[0]
-                .entries
-                .lock()
+                .borrow()
                 .get(&uuid)
-                .map(|entry| entry.state),
+                .map(|lease| lease.current_state()),
             Some(CreditState::AcceptedQueued)
         );
 
@@ -3124,7 +3293,7 @@ mod tests {
             CreditReportKind::CreditReturn(outcome) if outcome.is_err()
         ));
         assert_eq!(executor.inflight[0].inflight.get(), 0);
-        assert!(executor.credit_registries[0].entries.lock().is_empty());
+        assert!(executor.credit_registries[0].borrow().is_empty());
         assert!(executor.shutdown().await.is_err());
     }
 
@@ -3140,10 +3309,9 @@ mod tests {
         started.recv().unwrap();
         assert_eq!(
             executor.credit_registries[0]
-                .entries
-                .lock()
+                .borrow()
                 .get(&uuid)
-                .map(|entry| entry.state),
+                .map(|lease| lease.current_state()),
             Some(CreditState::Running)
         );
 
@@ -3226,10 +3394,9 @@ mod tests {
         executor.send_credit(turn, measured_context()).unwrap();
         for _ in 0..10_000 {
             if executor.credit_registries[0]
-                .entries
-                .lock()
+                .borrow()
                 .get(&uuid)
-                .is_some_and(|entry| entry.state == CreditState::TerminalPublished)
+                .is_some_and(|lease| lease.current_state() == CreditState::TerminalPublished)
             {
                 break;
             }
@@ -3237,16 +3404,21 @@ mod tests {
         }
         assert_eq!(
             executor.credit_registries[0]
-                .entries
-                .lock()
+                .borrow()
                 .get(&uuid)
-                .map(|entry| entry.state),
+                .map(|lease| lease.current_state()),
             Some(CreditState::TerminalPublished)
         );
         let worker = executor.senders.borrow().as_ref().unwrap()[0].clone();
         worker.send(WorkerMessage::PanicWorker).await.unwrap();
 
-        let report = executor.next_credit_report().await.unwrap();
+        let report = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            executor.next_credit_report(),
+        )
+        .await
+        .expect("terminal queued before worker panic was not returned")
+        .unwrap();
         assert_eq!(report.uuid, uuid);
         assert!(matches!(
             report.kind,
@@ -3286,7 +3458,51 @@ mod tests {
             executor
                 .credit_registries
                 .iter()
-                .all(|registry| registry.entries.lock().is_empty())
+                .all(|registry| registry.borrow().is_empty())
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn buffered_terminal_precedes_graceful_exit_without_duplicate_recovery() {
+        let state = Arc::new(CreditFaultState::default());
+        let executor = fault_executor(state.clone(), HopRouting::RoundRobin);
+        let mut turn = streaming_turn();
+        let uuid = Uuid::new_v4();
+        turn.request.uuid = uuid;
+        let started = state.insert(uuid, CreditFaultAction::Complete);
+        executor.send_credit(turn, measured_context()).unwrap();
+        started.recv().unwrap();
+
+        executor.drain_records(1).unwrap();
+        executor.shutdown().await.unwrap();
+
+        let report = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            executor.next_credit_report(),
+        )
+        .await
+        .expect("terminal buffered before graceful exit was not returned")
+        .unwrap();
+        assert_eq!(report.uuid, uuid);
+        assert!(matches!(
+            report.kind,
+            CreditReportKind::CreditReturn(outcome) if outcome.is_ok()
+        ));
+        assert!(
+            tokio::time::timeout(
+                std::time::Duration::from_millis(20),
+                executor.next_credit_report(),
+            )
+            .await
+            .is_err(),
+            "graceful exit duplicated a terminal buffered before shutdown"
+        );
+        assert_eq!(executor.inflight[0].inflight.get(), 0);
+        assert!(
+            executor
+                .credit_registries
+                .iter()
+                .all(|registry| registry.borrow().is_empty())
         );
     }
 
@@ -3325,9 +3541,10 @@ mod tests {
                 poll_rescue_first: Cell::new(true),
                 poll_synthetic_first: Cell::new(true),
             },
-            credit_registries: vec![Arc::new(WorkerCreditRegistry::default())],
+            credit_registries: vec![RefCell::new(HashMap::new())],
             credit_backlog: RefCell::new(vec![VecDeque::new()]),
-            recovering_workers: RefCell::new(vec![false]),
+            recovering_workers: vec![Cell::new(RecoveryScope::None)],
+            recovery_queue: RefCell::new(VecDeque::with_capacity(1)),
             credit_cancellation: PlacementCancellation::new(),
         };
         let mut expected = std::collections::BTreeSet::new();
@@ -3364,7 +3581,9 @@ mod tests {
         }
         assert_eq!(recovered, expected);
         assert!(executor.credit_backlog.borrow()[0].is_empty());
-        assert!(executor.credit_registries[0].entries.lock().is_empty());
+        assert!(executor.credit_registries[0].borrow().is_empty());
+        assert!(executor.recovery_queue.borrow().is_empty());
+        assert_eq!(executor.recovering_workers[0].get(), RecoveryScope::None);
         assert_eq!(executor.inflight[0].inflight.get(), 0);
     }
 
@@ -3394,11 +3613,10 @@ mod tests {
         started.recv().unwrap();
         assert!(
             executor.credit_registries[0]
-                .entries
-                .lock()
+                .borrow()
                 .get(&uuid)
                 .unwrap()
-                .has_pending_rescued_ttft
+                .has_pending_rescued_ttft()
         );
         executor.cancel_credits();
 
