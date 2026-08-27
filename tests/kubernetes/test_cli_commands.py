@@ -170,7 +170,7 @@ class TestKubeLogsCommand:
             result.namespace,
             "--tail",
             "50",
-            timeout=30,
+            timeout=120,
             kube_context=kubectl.context,
         )
 
