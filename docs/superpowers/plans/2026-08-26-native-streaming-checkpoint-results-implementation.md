@@ -777,7 +777,7 @@ pub struct CellId(u32);
 #[serde(transparent)]
 pub struct WorkerId(u32);
 
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(transparent)]
 pub struct ResultProjectionId(Box<str>);
 
@@ -820,7 +820,6 @@ pub struct ResultSegmentDescriptor {
 }
 
 pub struct ResultSegmentReader {
-    descriptor: ResultSegmentDescriptor,
     payload: BudgetedCheckpointBytes,
 }
 
@@ -918,6 +917,16 @@ impl ResultProjectionId {
     pub fn retained_allocation_bytes(&self) -> usize;
 }
 
+impl<'de> Deserialize<'de> for ResultProjectionId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Self::new(value).map_err(serde::de::Error::custom)
+    }
+}
+
 impl ResultPartition {
     pub fn new(
         descriptor: ResultSegmentDescriptor,
@@ -955,12 +964,11 @@ impl PreparedResultEpoch {
 
 impl ResultSegmentReader {
     pub(crate) fn new(
-        descriptor: ResultSegmentDescriptor,
+        descriptor: &ResultSegmentDescriptor,
         payload: BudgetedCheckpointBytes,
     ) -> Result<Self, CheckpointError>;
-    pub fn descriptor(&self) -> &ResultSegmentDescriptor;
     pub fn payload_bytes(&self) -> &[u8];
-    pub fn into_parts(self) -> (ResultSegmentDescriptor, BudgetedCheckpointBytes);
+    pub fn into_payload(self) -> BudgetedCheckpointBytes;
 }
 
 impl ResultIndexPage {
@@ -978,9 +986,13 @@ impl ResultIndexPage {
 ```
 
 `ResultProjectionId::new` rejects an empty value and compacts the accepted text
-with `String::into_boxed_str`. `ResultPartition::new` and
-`ResultSegmentReader::new` verify exact payload length and raw BLAKE3 digest
-against the descriptor. `BudgetedResultDescriptors::new` requires lease items
+with `String::into_boxed_str`. Its custom `Deserialize` implementation decodes
+through that checked constructor; derive must not bypass the nonempty invariant.
+`ResultPartition::new` and `ResultSegmentReader::new` verify exact payload length
+and raw BLAKE3 digest against the descriptor. The segment reader borrows that
+descriptor only for verification and retains no descriptor clone, so its payload
+lease is sufficient and `into_payload` cannot expose an uncharged allocation.
+`BudgetedResultDescriptors::new` requires lease items
 equal to descriptor count and lease bytes equal to the checked sum of
 `descriptors.len() * size_of::<ResultSegmentDescriptor>()` plus every compact
 `descriptor.projection.as_str().len()`. Empty descriptor slices use an exact
@@ -996,18 +1008,23 @@ inside its existing budgeted wrapper.
 
 `MemoryCheckpointBackend::new` is the only backend constructor. Validate all
 five `MemoryCheckpointLimits` entries in field order before retaining state or
-budgets. For each kind, zero `max_items` maps to `ItemCapacity`, zero
-`max_bytes` maps to `ByteCapacity`, and either value beyond Tokio semaphore
-representation maps to `Unrepresentable`. Direct RED calls use `.unwrap()`;
+budgets. For each kind, precheck zero `max_items` as `ItemCapacity` and zero
+`max_bytes` as `ByteCapacity`, then delegate construction to the existing
+`StreamingResourceBudget::new` validator. Map its `PermitCountTooLarge` from
+either dimension to `Unrepresentable`; do not duplicate a looser
+`Semaphore::MAX_PERMITS`-only check. Direct RED calls use `.unwrap()`;
 support fixture constructors perform that same unwrap internally and return a
 fully initialized backend. Do not add an infallible `new`, `new_unchecked`, or
 alternate `try_new`.
 
 `support::invalid_backend_limits()` is an exact 20-case matrix: for each of the
 five budget kinds, mutate only that kind to zero items, zero bytes, items above
-`tokio::sync::Semaphore::MAX_PERMITS`, or bytes above that limit while every
-other field remains valid. The expected tuple names that kind and respectively
-uses `ItemCapacity`, `ByteCapacity`, `Unrepresentable`, or `Unrepresentable`.
+the existing validator's `u32::MAX` `acquire_many` conversion boundary, or bytes
+above that same boundary while every other field remains valid. The expected
+tuple names that kind and respectively uses `ItemCapacity`, `ByteCapacity`,
+`Unrepresentable`, or `Unrepresentable`. A separate boundary case proves exact
+`u32::MAX` item and byte limits are accepted on the supported 64-bit target and
+`u32::MAX + 1` is the first conversion refusal.
 
 ```rust
 fn memory_backend(limits: MemoryCheckpointLimits) -> MemoryCheckpointBackend {
@@ -1132,6 +1149,31 @@ fn backend_constructor_rejects_invalid_limits_with_exact_kind_and_code() {
             }) if actual_budget == budget && actual_code == code
         ));
     }
+}
+
+#[test]
+fn backend_constructor_uses_existing_acquire_many_conversion_boundary() {
+    let boundary = u32::MAX as usize;
+    MemoryCheckpointBackend::new(support::backend_limits_with_each_capacity(boundary))
+        .unwrap();
+
+    let first_unrepresentable = usize::try_from(u64::from(u32::MAX) + 1).unwrap();
+    assert!(support::invalid_backend_limits().iter().any(|(limits, _, code)| {
+        support::contains_capacity(*limits, first_unrepresentable)
+            && *code == CheckpointBackendBudgetFailureCode::Unrepresentable
+    }));
+}
+
+#[test]
+fn result_projection_id_deserialization_rejects_empty_text() {
+    assert!(ResultProjectionId::new("").is_err());
+    assert!(serde_json::from_str::<ResultProjectionId>(r#""""#).is_err());
+    assert_eq!(
+        serde_json::from_str::<ResultProjectionId>(r#""tokens""#)
+            .unwrap()
+            .as_str(),
+        "tokens",
+    );
 }
 
 /// ```compile_fail
@@ -1329,6 +1371,27 @@ async fn oversized_next_descriptor_refuses_without_empty_cursor_loop() {
         .unwrap();
     assert_eq!(page.descriptors().len(), 1);
     assert!(page.next().is_none());
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn projection_allocation_participates_in_result_index_read_charge() {
+    let short = support::backend_with_projection("p").await;
+    let long = support::backend_with_projection("projection-with-retained-bytes").await;
+    let short_page = support::read_first_index_page(&short).await;
+    let long_page = support::read_first_index_page(&long).await;
+
+    assert_eq!(
+        long_page.charged_bytes() - short_page.charged_bytes(),
+        u64::try_from("projection-with-retained-bytes".len() - "p".len()).unwrap(),
+    );
+    assert_eq!(
+        short.budget_snapshots().reads.used_bytes,
+        usize::try_from(short_page.charged_bytes()).unwrap(),
+    );
+    assert_eq!(
+        long.budget_snapshots().reads.used_bytes,
+        usize::try_from(long_page.charged_bytes()).unwrap(),
+    );
 }
 
 #[tokio::test(flavor = "current_thread")]

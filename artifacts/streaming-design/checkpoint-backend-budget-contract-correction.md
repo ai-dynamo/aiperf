@@ -33,8 +33,11 @@ Temporary contention is not an error and waits cancellation-safely.
 validates the five transaction, prepared-index, storage, result-summary, and
 read item/byte limits in that order before retaining backend state. Zero item or
 byte capacity maps to the matching kind plus `ItemCapacity` or `ByteCapacity`;
-an unrepresentable semaphore limit maps to that kind plus `Unrepresentable`.
-RED covers both dimensions and both failure classes for all five kinds.
+each nonzero limit is then passed through the existing
+`StreamingResourceBudget::new` validator. Its `u32::MAX` `acquire_many`
+conversion boundary is authoritative: exact-boundary limits are accepted and
+the first larger representable `usize` maps to `Unrepresentable`. RED covers
+both dimensions and both failure classes for all five kinds.
 
 ## Move-only DTO ruling
 
@@ -50,7 +53,14 @@ enclosing wrappers move it intact.
 `ResultProjectionId` stores compact `Box<str>`. A budgeted descriptor slice
 charges its boxed inline allocation plus every nested projection byte, using
 checked arithmetic. The descriptor slice and exact lease remain inseparable
-until the wrapper is consumed.
+until the wrapper is consumed. Custom deserialization routes through the
+checked constructor, so an empty projection cannot bypass the public invariant.
+
+`ResultSegmentReader` retains only its separately budgeted payload. It borrows
+the caller's descriptor while verifying length and digest but does not clone or
+return that descriptor. Result-index pages do own descriptor clones, and their
+read charge therefore includes every compact projection allocation; RED varies
+only projection length and observes the exact charge delta.
 
 One aggregate immutable-storage acquisition cannot be divided among objects by
 the existing move-only `BudgetLease`. The memory backend therefore stores one
@@ -84,10 +94,14 @@ backend budget snapshots, and authoritative generation unchanged.
   preserves its exact object count, and releases every transaction/prepared
   charge.
 - Zero or unrepresentable capacity in each `MemoryCheckpointLimits` field is
-  rejected by the sole fallible constructor with the exact budget kind/code.
+  rejected by the sole fallible constructor with the exact budget kind/code;
+  exact `u32::MAX` capacities remain accepted and `u32::MAX + 1` is refused.
 - Moving or borrowing a lease independently from any lease-bearing result
   wrapper does not type-check; compact nested projection bytes participate in
   exact descriptor-summary charging.
+- Empty `ResultProjectionId` text is rejected both by direct construction and
+  deserialization, and projection length contributes exactly to index-page read
+  charging.
 - A valid next descriptor one byte larger than the caller page limit returns
   `ResultIndexReadBudgetTooSmall` with exact required and maximum values, does
   not acquire backend read capacity, and succeeds when retried with the exact
