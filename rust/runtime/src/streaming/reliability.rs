@@ -8,7 +8,7 @@
 //! only the host can construct a live decision or terminal failure outcome.
 
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     cmp::Ordering,
     collections::{BTreeMap, BTreeSet, VecDeque},
     fmt,
@@ -1671,6 +1671,8 @@ pub enum StreamingReliabilityError {
     ConflictingIssueSubmission,
     /// An input-scoped fact carries no deterministic source position.
     MissingInputSourcePosition,
+    /// The reporter owner has terminally closed its adapter endpoint.
+    ReporterClosed,
 }
 
 impl fmt::Display for StreamingReliabilityError {
@@ -2057,11 +2059,77 @@ pub fn submission_queue_charge_bytes() -> usize {
 struct ReporterSubmissionEndpoint {
     run: StreamRunIdentity,
     budget: StreamingResourceBudget,
+    /// Terminal liveness published across the shared `Rc` to every handle.
+    ///
+    /// Handles outlive the owner, and the owner is the sole drain authority, so
+    /// a queued reservation that arrives after the owner is gone can never be
+    /// classified. The flag makes that state observable instead of silently
+    /// accepting facts forever.
+    is_closed: Cell<bool>,
     queue: RefCell<VecDeque<QueuedHandleIssue>>,
-    // Charges the ring buffer allocated once at its constructed capacity; the
-    // queue never reallocates, so this charge stays exact for the endpoint's
-    // whole lifetime.
-    _queue_lease: BudgetLease,
+    /// Charges the ring buffer allocated once at its constructed capacity.
+    ///
+    /// The queue never reallocates, so the charge stays exact for the whole
+    /// endpoint lifetime. It is held in a `RefCell` because a terminal close
+    /// runs behind the shared `&self` endpoint and must return this charge
+    /// rather than park it until the last handle clone drops.
+    queue_lease: RefCell<Option<BudgetLease>>,
+}
+
+/// Exact capacity one terminal reporter close returned to the shared budget.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ReporterCloseAccounting {
+    /// Charged items the close released.
+    pub released_items: usize,
+    /// Charged bytes the close released.
+    pub released_bytes: usize,
+}
+
+impl ReporterSubmissionEndpoint {
+    /// Terminally close the endpoint and release every endpoint-owned charge.
+    ///
+    /// The first call performs the transition; a later call observes an already
+    /// closed endpoint, an empty queue, and a spent ring-buffer lease, so
+    /// repeated close, explicit close followed by owner drop, and owner drop
+    /// alone are all equivalent to one close. The caller-supplied
+    /// [`StreamingResourceBudget`] is shared with other participants and is
+    /// deliberately never closed here.
+    fn close(&self) -> ReporterCloseAccounting {
+        let was_open = !self.is_closed.replace(true);
+        // The `RefMut` temporaries end with their own statements, so the leases
+        // below are released with no outstanding borrow on either field.
+        let drained = std::mem::take(&mut *self.queue.borrow_mut());
+        let queue_lease = self.queue_lease.borrow_mut().take();
+        let mut released_items = 0usize;
+        let mut released_bytes = 0usize;
+        for queued in &drained {
+            released_items =
+                released_items.saturating_add(queued.pending.reservation.charged_items());
+            released_bytes =
+                released_bytes.saturating_add(queued.pending.reservation.charged_bytes());
+        }
+        if let Some(lease) = &queue_lease {
+            released_items = released_items.saturating_add(lease.charged_items());
+            released_bytes = released_bytes.saturating_add(lease.charged_bytes());
+        }
+        // Dropping each queued reservation and the ring-buffer lease returns
+        // their exact item and byte charges through `BudgetLease`'s RAII
+        // release; there is no manual release path.
+        drop(drained);
+        drop(queue_lease);
+        if was_open {
+            tracing::debug!(
+                released_items,
+                released_bytes,
+                component = "streaming_issue_ledger",
+                "closed streaming issue reporter endpoint"
+            );
+        }
+        ReporterCloseAccounting {
+            released_items,
+            released_bytes,
+        }
+    }
 }
 
 #[async_trait(?Send)]
@@ -2070,6 +2138,9 @@ impl StreamingIssueReporterEndpoint for ReporterSubmissionEndpoint {
         &self,
         issue: OrdinaryStreamingIssue,
     ) -> Result<StreamingIssueReportStatus, StreamingIssueReportError> {
+        if self.is_closed.get() {
+            return Err(StreamingIssueReportError::Closed);
+        }
         if issue.run != self.run || matches!(issue.scope, StreamingIssueScope::Action { .. }) {
             return Err(StreamingIssueReportError::InvalidIssue);
         }
@@ -2081,6 +2152,14 @@ impl StreamingIssueReporterEndpoint for ReporterSubmissionEndpoint {
             Err(_) => return Err(StreamingIssueReportError::InvalidIssue),
         };
         let mut queue = self.queue.borrow_mut();
+        if self.is_closed.get() {
+            // A close observed after the reservation must not park a charge on
+            // a queue no owner can drain. Release the borrow first so the lease
+            // drop runs with the queue unborrowed.
+            drop(queue);
+            drop(pending);
+            return Err(StreamingIssueReportError::Closed);
+        }
         if queue.len() == MAX_QUEUED_SUBMISSIONS {
             // Dropping `pending` releases its reservation, so a refused
             // submission costs the budget nothing.
@@ -2143,8 +2222,9 @@ impl BudgetOwnedStreamingIssueReporter {
         let submission = Rc::new(ReporterSubmissionEndpoint {
             run,
             budget: budget.clone(),
+            is_closed: Cell::new(false),
             queue: RefCell::new(queue),
-            _queue_lease: queue_lease,
+            queue_lease: RefCell::new(Some(queue_lease)),
         });
         Ok(Self {
             run,
@@ -2192,7 +2272,37 @@ impl BudgetOwnedStreamingIssueReporter {
         self.receipts.get(issue_id).map(|value| value.outcome)
     }
 
+    /// Terminally close the adapter endpoint and release its queued charges.
+    ///
+    /// Surviving [`StreamingIssueReporterHandle`] clones then observe
+    /// [`StreamingIssueReportError::Closed`], and further owner submissions
+    /// refuse with [`StreamingReliabilityError::ReporterClosed`]. Retained
+    /// receipts, counters, and the summary stay readable. The operation is
+    /// idempotent and is performed unconditionally by `Drop`, so a second call
+    /// reports no further released capacity.
+    ///
+    /// This is deliberately inherent rather than a [`StreamingIssueReporter`]
+    /// method: the trait must stay object safe for erased injection, and no
+    /// other implementation is forced to adopt this lifecycle.
+    pub fn close(&mut self) -> ReporterCloseAccounting {
+        self.submission.close()
+    }
+
+    /// Return whether the adapter endpoint still admits submissions.
+    #[must_use]
+    pub fn is_open(&self) -> bool {
+        !self.submission.is_closed.get()
+    }
+
+    fn ensure_open(&self) -> Result<(), StreamingReliabilityError> {
+        if self.submission.is_closed.get() {
+            return Err(StreamingReliabilityError::ReporterClosed);
+        }
+        Ok(())
+    }
+
     fn drain_submission_queue(&mut self) -> Result<(), StreamingReliabilityError> {
+        self.ensure_open()?;
         loop {
             // The `RefMut` temporary ends with this statement, so nothing below
             // runs while the shared queue is borrowed.
@@ -3193,6 +3303,21 @@ impl BudgetOwnedStreamingIssueReporter {
     }
 }
 
+impl Drop for BudgetOwnedStreamingIssueReporter {
+    fn drop(&mut self) {
+        // Handle clones outlive the owner through the shared `Rc` endpoint, so
+        // the endpoint's terminal state is published here. Unlike
+        // `blocking.rs`'s `ExecutorInner`, which constructs and exclusively owns
+        // its budgets, this reporter's `StreamingResourceBudget` is
+        // caller-supplied and shared with other participants; closing it would
+        // starve them. Only reporter-owned charges are released: the queued
+        // reservations and the ring-buffer lease by `close`, and every retained
+        // pending issue, action reservation, and receipt by the ordinary field
+        // drop that follows.
+        let _ = self.submission.close();
+    }
+}
+
 /// Outcome of resolving one deterministic issue identity against the ledger.
 ///
 /// Both the direct and the reserved submission paths resolve through this so an
@@ -3246,7 +3371,8 @@ fn is_retryable_submission_error(error: &StreamingReliabilityError) -> bool {
         | StreamingReliabilityError::CorruptActionAttemptIndex
         | StreamingReliabilityError::MissingPendingActionIssue
         | StreamingReliabilityError::ConflictingIssueSubmission
-        | StreamingReliabilityError::MissingInputSourcePosition => false,
+        | StreamingReliabilityError::MissingInputSourcePosition
+        | StreamingReliabilityError::ReporterClosed => false,
     }
 }
 
