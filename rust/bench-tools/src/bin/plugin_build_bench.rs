@@ -33,17 +33,32 @@ fn main() -> Result<(), Box<dyn Error>> {
     let options = parse_options(&arguments[..separator])?;
     let command = &arguments[separator + 1..];
     let executable = command.first().ok_or("missing measured build command")?;
+    let scenario = required_nonempty(&options, "--scenario")?;
+    let pair_id = required_nonempty(&options, "--pair-id")?;
+    let variant = match required(&options, "--variant")? {
+        "static" => Variant::Static,
+        "dynamic" => Variant::Dynamic,
+        value => return Err(format!("invalid variant {value}").into()),
+    };
+    let target_dir = required_nonempty(&options, "--target-dir")?;
+    let artifact_path = required_nonempty(&options, "--artifact")?;
+    let commit = required(&options, "--commit")?;
+    if !is_lower_hex(commit, 40) {
+        return Err("commit is not canonical 40-character lowercase hex".into());
+    }
+    let experiment_identity_digest = required(&options, "--experiment-identity-digest")?;
+    if !experiment_identity_digest
+        .strip_prefix("blake3:")
+        .is_some_and(|digest| is_lower_hex(digest, 64))
+    {
+        return Err("experiment identity digest is not canonical BLAKE3".into());
+    }
     if command
         .iter()
         .any(|argument| argument == "--target-dir" || argument.starts_with("--target-dir="))
     {
         return Err("measured command cannot override the explicit target path".into());
     }
-    let target_dir = required(&options, "--target-dir")?;
-    if target_dir.is_empty() {
-        return Err("target path must be explicit and non-empty".into());
-    }
-
     let mut child = Command::new(executable);
     child.args(&command[1..]);
     child.env("CARGO_INCREMENTAL", "1");
@@ -55,12 +70,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         return Err(format!("measured build command failed with {status}").into());
     }
 
-    let artifact = fs::read(required(&options, "--artifact")?)?;
-    let variant = match required(&options, "--variant")? {
-        "static" => Variant::Static,
-        "dynamic" => Variant::Dynamic,
-        value => return Err(format!("invalid variant {value}").into()),
-    };
+    let artifact = fs::read(artifact_path)?;
     let value = elapsed.as_secs_f64() * 1_000_000_000.0;
     if !value.is_finite() || value <= 0.0 {
         return Err("measured build duration is not finite and positive".into());
@@ -78,16 +88,15 @@ fn main() -> Result<(), Box<dyn Error>> {
     .collect();
     let measurement = BuildMeasurement {
         sample: PairedSample {
-            scenario: required(&options, "--scenario")?.to_owned(),
-            pair_id: required(&options, "--pair-id")?.to_owned(),
+            scenario: scenario.to_owned(),
+            pair_id: pair_id.to_owned(),
             variant,
             metric: "build_nanoseconds".to_owned(),
             value,
             unit: "nanoseconds".to_owned(),
-            commit: required(&options, "--commit")?.to_owned(),
+            commit: commit.to_owned(),
             artifact_digest: format!("blake3:{}", blake3::hash(&artifact).to_hex()),
-            experiment_identity_digest: required(&options, "--experiment-identity-digest")?
-                .to_owned(),
+            experiment_identity_digest: experiment_identity_digest.to_owned(),
         },
         command: command.to_vec(),
         target_dir: target_dir.to_owned(),
@@ -113,6 +122,7 @@ fn parse_options(arguments: &[String]) -> Result<BTreeMap<String, String>, Box<d
         "--target-dir",
         "--artifact",
         "--commit",
+        "--experiment-identity-digest",
     ];
     for pair in arguments.chunks_exact(2) {
         if !ALLOWED.contains(&pair[0].as_str())
@@ -122,6 +132,24 @@ fn parse_options(arguments: &[String]) -> Result<BTreeMap<String, String>, Box<d
         }
     }
     Ok(options)
+}
+
+fn required_nonempty<'a>(
+    options: &'a BTreeMap<String, String>,
+    name: &str,
+) -> Result<&'a str, Box<dyn Error>> {
+    let value = required(options, name)?;
+    if value.is_empty() {
+        return Err(format!("{name} must be non-empty").into());
+    }
+    Ok(value)
+}
+
+fn is_lower_hex(value: &str, expected_length: usize) -> bool {
+    value.len() == expected_length
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
 }
 
 fn required<'a>(

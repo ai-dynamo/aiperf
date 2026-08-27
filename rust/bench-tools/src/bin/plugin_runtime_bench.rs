@@ -10,8 +10,8 @@ use std::{
 };
 
 use aiperf_bench_tools::plugin_stats::{
-    NormativeInventory, SimultaneousGateInput, SimultaneousGatePolicy, decode_samples_jsonl,
-    encode_samples_jsonl, evaluate_simultaneous_gate,
+    ExperimentObservationReceipt, ObservedExperimentAuthority, SimultaneousGateInput,
+    SimultaneousGatePolicy, decode_samples_jsonl, encode_samples_jsonl, evaluate_simultaneous_gate,
 };
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -21,13 +21,14 @@ fn main() -> Result<(), Box<dyn Error>> {
             let samples = decode_samples_jsonl(&fs::read(input)?)?;
             io::stdout().write_all(&encode_samples_jsonl(&samples)?)?;
         }
-        [mode, inventory_path, expected_inventory_digest, input] if mode == "evaluate" => {
-            let inventory: NormativeInventory = serde_json::from_slice(&fs::read(inventory_path)?)?;
+        [mode, observation_path, input] if mode == "evaluate" => {
+            let observation: ExperimentObservationReceipt =
+                serde_json::from_slice(&fs::read(observation_path)?)?;
+            let authority = ObservedExperimentAuthority::acquire(&observation)?;
             let input: SimultaneousGateInput = serde_json::from_slice(&fs::read(input)?)?;
             let report = evaluate_simultaneous_gate(
                 &input,
-                &inventory,
-                expected_inventory_digest,
+                &authority,
                 &SimultaneousGatePolicy::normative(),
             )?;
             let stdout = io::stdout();
@@ -37,7 +38,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
         _ => {
             return Err(
-                "usage: plugin-runtime-bench canonicalize-jsonl <samples.jsonl> | evaluate <inventory.json> <expected-inventory-digest> <input.json>"
+                "usage: plugin-runtime-bench canonicalize-jsonl <samples.jsonl> | evaluate <harness-observation.json> <input.json>"
                     .into(),
             );
         }

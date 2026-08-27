@@ -3,7 +3,12 @@
 
 //! Deterministic paired-bootstrap statistics for native-plugin parity gates.
 
-use std::{collections::BTreeMap, error::Error, fmt};
+use std::{
+    collections::BTreeMap,
+    error::Error,
+    fmt, fs,
+    path::{Path, PathBuf},
+};
 
 use rand::{Rng, SeedableRng, seq::SliceRandom};
 use rand_pcg::Pcg64Mcg;
@@ -16,6 +21,9 @@ const NORMATIVE_MAX_EXPERIMENT_ATTEMPTS: u8 = 3;
 const NORMATIVE_MAX_CV: f64 = 0.02;
 const NORMATIVE_MAX_REGRESSION: f64 = 0.01;
 const NORMATIVE_CONFIDENCE: f64 = 0.95;
+const CHECKED_IN_PLUGIN_PARITY_YAML: &str = include_str!("../../benchmarks/plugin-parity.yaml");
+const ZERO_BLAKE3_DIGEST: &str =
+    "blake3:0000000000000000000000000000000000000000000000000000000000000000";
 
 /// One canonical JSONL member measurement.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -29,7 +37,13 @@ pub struct PairedSample {
     pub variant: Variant,
     /// Canonical metric name.
     pub metric: String,
-    /// Finite, positive member summary.
+    /// Finite, non-negative member summary.
+    ///
+    /// Zero/zero is a neutral ratio of `1.0`. A zero numerator with a positive
+    /// denominator maps to finite `f64::EPSILON`; a positive numerator with a
+    /// zero denominator maps to finite `1.0 / f64::EPSILON`. Thus a one-sided
+    /// zero remains ordered as a decisive regression or improvement without
+    /// introducing infinity into means, CVs, or bootstrap distributions.
     pub value: f64,
     /// Canonical metric unit.
     pub unit: String,
@@ -106,70 +120,56 @@ pub enum RatioDirection {
     StaticOverDynamic,
 }
 
-/// One normative metric and its fixed comparison direction.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct NormativeMetric {
-    /// Canonical metric name.
-    pub metric: String,
-    /// Direction fixed by the performance contract.
-    pub direction: RatioDirection,
-}
-
-/// Complete normative metric inventory for one benchmark case.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct NormativeCase {
+/// Read-only case plan derived from the checked-in Task-1 inventory.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct FrozenCasePlan {
     /// Canonical benchmark case name.
     pub scenario: String,
-    /// The one legal primary metric for this case.
+    /// The one legal primary metric.
     pub primary_metric: String,
-    /// Exact complete metric set, sorted by canonical metric name.
-    pub metrics: Vec<NormativeMetric>,
+    /// Exact measured metric names in canonical sorted order.
+    pub measured_metrics: Vec<String>,
+    /// Primary ratio direction frozen by Task 1.
+    pub primary_ratio_direction: RatioDirection,
+    /// Successful-request or processed-record budget.
+    pub request_budget: u64,
+    /// Unmeasured warmup sample count.
+    pub warmups: usize,
+    /// Exact retained pair count.
+    pub retained_pairs: usize,
+    /// Minimum valid active duration.
+    pub minimum_duration_seconds: u64,
+    /// Core assignment identity.
+    pub core_assignment: String,
+    /// Mock-server placement identity.
+    pub mock_placement: String,
+    /// Frozen response shape.
+    pub response_shape: String,
+    /// Frozen estimator name.
+    pub estimator: String,
+    /// Frozen bootstrap and schedule seed.
+    pub bootstrap_seed: u64,
+    /// Frozen blinded infrastructure classifier.
+    pub invalidation_classifier: String,
+    /// Digest of the complete authored YAML scenario mapping.
+    pub complete_case_digest: String,
 }
 
-/// Authenticated complete `(component, case, metric, direction)` inventory.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct NormativeInventory {
-    /// Inventory schema version.
-    pub schema_version: u32,
-    /// Migrated component governed by this inventory.
-    pub component: String,
-    /// Exact complete case set, sorted by scenario.
-    pub cases: Vec<NormativeCase>,
-    /// BLAKE3 digest of the preceding canonical fields.
-    #[serde(skip_serializing_if = "String::is_empty")]
-    pub digest: String,
+#[derive(Clone, Debug)]
+struct FrozenInventoryAuthority {
+    component: String,
+    digest: String,
+    cases: Vec<FrozenCasePlan>,
 }
 
-impl NormativeInventory {
-    /// Construct and authenticate a canonical complete inventory.
-    pub fn new(
-        component: impl Into<String>,
-        mut cases: Vec<NormativeCase>,
-    ) -> Result<Self, PluginStatsError> {
-        cases.sort_by(|left, right| left.scenario.cmp(&right.scenario));
-        for case in &mut cases {
-            case.metrics
-                .sort_by(|left, right| left.metric.cmp(&right.metric));
-        }
-        let mut inventory = Self {
-            schema_version: 1,
-            component: component.into(),
-            cases,
-            digest: String::new(),
-        };
-        validate_inventory_shape(&inventory)?;
-        inventory.digest = inventory.computed_digest()?;
-        Ok(inventory)
-    }
+/// Return the read-only full case plans from the compiled-in Task-1 inventory.
+pub fn checked_in_case_plans() -> Result<Vec<FrozenCasePlan>, PluginStatsError> {
+    Ok(checked_in_inventory_authority()?.cases)
+}
 
-    fn computed_digest(&self) -> Result<String, PluginStatsError> {
-        let mut canonical = self.clone();
-        canonical.digest.clear();
-        canonical_blake3(&canonical, "normative inventory")
-    }
+/// Return the verified canonical digest of the compiled-in Task-1 inventory.
+pub fn checked_in_inventory_digest() -> Result<String, PluginStatsError> {
+    Ok(checked_in_inventory_authority()?.digest)
 }
 
 /// One exact retained pair and its seeded member order.
@@ -185,7 +185,7 @@ pub struct PairSchedule {
 /// Complete authenticated identity for one parity experiment.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct ExperimentIdentity {
+struct ExperimentIdentity {
     /// Identity schema version.
     pub schema_version: u32,
     /// Exact source commit shared by both compared artifacts.
@@ -235,7 +235,7 @@ pub struct ExperimentIdentity {
     /// Mock-server placement identity.
     pub mock_server_placement: String,
     /// Every environment value admitted by the harness.
-    pub environment: BTreeMap<String, String>,
+    pub environment: BTreeMap<String, Option<String>>,
     /// Seed governing both the exact pair schedule and bootstrap.
     pub bootstrap_seed: u64,
     /// Complete exact 30-pair AB/BA schedule.
@@ -246,8 +246,7 @@ pub struct ExperimentIdentity {
 }
 
 impl ExperimentIdentity {
-    /// Validate, digest, and seal a complete experiment identity.
-    pub fn seal(mut self) -> Result<Self, PluginStatsError> {
+    fn seal(mut self) -> Result<Self, PluginStatsError> {
         validate_experiment_identity_shape(&self)?;
         self.identity_digest = self.computed_digest()?;
         Ok(self)
@@ -260,12 +259,158 @@ impl ExperimentIdentity {
     }
 }
 
+/// Machine and placement observations captured by the benchmark harness.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MachineObservation {
+    /// CPU model identity.
+    pub cpu_model: String,
+    /// CPU stepping identity.
+    pub cpu_stepping: String,
+    /// CPU microcode identity.
+    pub microcode: String,
+    /// Core topology identity.
+    pub core_topology: String,
+    /// Memory topology identity.
+    pub memory_topology: String,
+    /// Firmware identity.
+    pub firmware: String,
+    /// Kernel identity.
+    pub kernel: String,
+    /// Allocator/provider identity.
+    pub allocator_provider: String,
+    /// CPU frequency/governor identity.
+    pub frequency_governor: String,
+    /// Affinity and isolation identity.
+    pub affinity_isolation: String,
+    /// Mock-server placement identity.
+    pub mock_server_placement: String,
+}
+
+/// Paths and scalar observations acquired by the benchmark harness.
+///
+/// Digest fields are deliberately absent. Acquisition reads and hashes the
+/// named observed files, so an evidence producer cannot submit a checksum in
+/// place of the source, lock, compiler/sysroot receipt, or compared artifact.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExperimentObservationReceipt {
+    /// Exact source commit observed by the harness.
+    pub source_commit: String,
+    /// Rust compilation target.
+    pub target: String,
+    /// Optimized profile identity.
+    pub profile: String,
+    /// Receipt covering the exact materialized source tree.
+    pub source_tree_receipt_path: PathBuf,
+    /// Exact Cargo.lock used for the compared builds.
+    pub cargo_lock_path: PathBuf,
+    /// Captured compiler identity output.
+    pub rustc_receipt_path: PathBuf,
+    /// Receipt covering the exact compiler sysroot.
+    pub sysroot_receipt_path: PathBuf,
+    /// Actual static comparator artifact.
+    pub static_artifact_path: PathBuf,
+    /// Actual dynamic plugin artifact.
+    pub dynamic_artifact_path: PathBuf,
+    /// Actual benchmark harness artifact.
+    pub harness_artifact_path: PathBuf,
+    /// Actual mock-server artifact.
+    pub mock_server_artifact_path: PathBuf,
+    /// Harness-observed machine and placement state.
+    pub machine: MachineObservation,
+    /// Every admitted environment name, preserving unset versus empty values.
+    pub environment: BTreeMap<String, Option<String>>,
+    /// Seed observed before measurement and fixed by the checked-in inventory.
+    pub bootstrap_seed: u64,
+}
+
+/// Opaque experiment authority derived from observed receipts and artifacts.
+#[derive(Clone, Debug)]
+pub struct ObservedExperimentAuthority {
+    identity: ExperimentIdentity,
+}
+
+impl ObservedExperimentAuthority {
+    /// Acquire and hash every harness-owned observation before measurement.
+    pub fn acquire(receipt: &ExperimentObservationReceipt) -> Result<Self, PluginStatsError> {
+        let inventory = checked_in_inventory_authority()?;
+        let rustc_bytes = read_observed_file(&receipt.rustc_receipt_path, "rustc receipt")?;
+        let rustc = String::from_utf8(rustc_bytes)
+            .map_err(|_| PluginStatsError::new("rustc receipt is not UTF-8"))?;
+        let identity = ExperimentIdentity {
+            schema_version: 1,
+            source_commit: receipt.source_commit.clone(),
+            source_tree_digest: digest_observed_file(
+                &receipt.source_tree_receipt_path,
+                "source-tree receipt",
+            )?,
+            cargo_lock_digest: digest_observed_file(&receipt.cargo_lock_path, "Cargo.lock")?,
+            rustc,
+            sysroot_digest: digest_observed_file(&receipt.sysroot_receipt_path, "sysroot receipt")?,
+            target: receipt.target.clone(),
+            profile: receipt.profile.clone(),
+            static_artifact_digest: digest_observed_file(
+                &receipt.static_artifact_path,
+                "static artifact",
+            )?,
+            dynamic_artifact_digest: digest_observed_file(
+                &receipt.dynamic_artifact_path,
+                "dynamic artifact",
+            )?,
+            harness_artifact_digest: digest_observed_file(
+                &receipt.harness_artifact_path,
+                "harness artifact",
+            )?,
+            mock_server_artifact_digest: digest_observed_file(
+                &receipt.mock_server_artifact_path,
+                "mock-server artifact",
+            )?,
+            inventory_digest: inventory.digest.clone(),
+            cpu_model: receipt.machine.cpu_model.clone(),
+            cpu_stepping: receipt.machine.cpu_stepping.clone(),
+            microcode: receipt.machine.microcode.clone(),
+            core_topology: receipt.machine.core_topology.clone(),
+            memory_topology: receipt.machine.memory_topology.clone(),
+            firmware: receipt.machine.firmware.clone(),
+            kernel: receipt.machine.kernel.clone(),
+            allocator_provider: receipt.machine.allocator_provider.clone(),
+            frequency_governor: receipt.machine.frequency_governor.clone(),
+            affinity_isolation: receipt.machine.affinity_isolation.clone(),
+            mock_server_placement: receipt.machine.mock_server_placement.clone(),
+            environment: receipt.environment.clone(),
+            bootstrap_seed: receipt.bootstrap_seed,
+            pair_schedule: pair_schedule(receipt.bootstrap_seed),
+            identity_digest: String::new(),
+        }
+        .seal()?;
+        validate_experiment_identity(&identity, &inventory)?;
+        Ok(Self { identity })
+    }
+
+    /// Digest that the harness records on every subsequently produced sample.
+    pub fn identity_digest(&self) -> &str {
+        &self.identity.identity_digest
+    }
+
+    /// Expected artifact digest for one observed variant.
+    pub fn artifact_digest(&self, variant: Variant) -> &str {
+        match variant {
+            Variant::Static => &self.identity.static_artifact_digest,
+            Variant::Dynamic => &self.identity.dynamic_artifact_digest,
+        }
+    }
+
+    /// Exact seeded schedule acquired before measurement.
+    pub fn pair_schedule(&self) -> &[PairSchedule] {
+        &self.identity.pair_schedule
+    }
+}
+
 /// One authoritative simultaneous-gate input document.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct SimultaneousGateInput {
-    /// Complete experiment and artifact identity.
-    pub experiment_identity: ExperimentIdentity,
     /// Exact samples for every inventory case and metric.
     pub cases: Vec<PairedCase>,
 }
@@ -621,8 +766,12 @@ pub fn balanced_pair_orders(bootstrap_seed: u64) -> Vec<[Variant; 2]> {
     orders
 }
 
-/// Evaluate one metric with a deterministic one-sided paired bootstrap.
-pub fn evaluate_paired_gate(
+/// Evaluate one metric as a non-authoritative statistical fixture.
+///
+/// This helper does not authenticate inventory or experiment evidence and
+/// therefore cannot establish migration acceptance. The sole authoritative
+/// gate is [`evaluate_simultaneous_gate`].
+pub fn evaluate_non_authoritative_paired_fixture(
     samples: &[PairedSample],
     gate: &NonInferiorityGate,
     bootstrap_seed: u64,
@@ -653,20 +802,17 @@ pub fn evaluate_paired_gate(
 /// Evaluate the complete case/metric matrix with one max-degradation bootstrap.
 pub fn evaluate_simultaneous_gate(
     input: &SimultaneousGateInput,
-    inventory: &NormativeInventory,
-    expected_inventory_digest: &str,
+    observed: &ObservedExperimentAuthority,
     policy: &SimultaneousGatePolicy,
 ) -> Result<SimultaneousGateReport, PluginStatsError> {
     validate_policy(policy)?;
-    validate_inventory(inventory, expected_inventory_digest)?;
-    validate_experiment_identity(&input.experiment_identity, inventory)?;
+    let inventory = checked_in_inventory_authority()?;
+    validate_experiment_identity(&observed.identity, &inventory)?;
     if input
         .cases
         .iter()
         .flat_map(|case| &case.samples)
-        .any(|sample| {
-            sample.experiment_identity_digest != input.experiment_identity.identity_digest
-        })
+        .any(|sample| sample.experiment_identity_digest != observed.identity.identity_digest)
     {
         return Err(PluginStatsError::new(
             "a sample row is bound to a different experiment identity",
@@ -721,11 +867,7 @@ pub fn evaluate_simultaneous_gate(
             .collect::<Vec<_>>();
         metrics.sort();
         metrics.dedup();
-        let expected_metrics = normative_case
-            .metrics
-            .iter()
-            .map(|metric| metric.metric.clone())
-            .collect::<Vec<_>>();
+        let expected_metrics = normative_case.measured_metrics.clone();
         if metrics != expected_metrics {
             return Err(PluginStatsError::new(format!(
                 "case {} metric set differs from the authenticated normative inventory",
@@ -733,25 +875,22 @@ pub fn evaluate_simultaneous_gate(
             )));
         }
         for sample in &case.samples {
-            validate_sample_against_identity(sample, &input.experiment_identity)?;
+            validate_sample_against_identity(sample, &observed.identity)?;
         }
-        for normative_metric in &normative_case.metrics {
-            let vector = collect_metric(
-                &case.samples,
-                &normative_metric.metric,
-                normative_metric.direction,
-            )?;
-            validate_exact_schedule(&vector, &input.experiment_identity.pair_schedule)?;
+        for metric in &normative_case.measured_metrics {
+            let (direction, _) = metric_direction(metric)?;
+            let vector = collect_metric(&case.samples, metric, direction)?;
+            validate_exact_schedule(&vector, &observed.identity.pair_schedule)?;
             vectors.push(vector);
         }
-        validate_invalidations(case, policy, &input.experiment_identity)?;
+        validate_invalidations(case, policy, &observed.identity)?;
         invalidation_attempts.extend(case.invalidation_attempts.iter().cloned());
     }
     vectors.sort_by(|left, right| {
         (&left.scenario, &left.metric).cmp(&(&right.scenario, &right.metric))
     });
 
-    let observed = vectors
+    let observed_ratios = vectors
         .iter()
         .map(|vector| arithmetic_mean(&vector.ratios))
         .collect::<Result<Vec<_>, _>>()?;
@@ -765,7 +904,7 @@ pub fn evaluate_simultaneous_gate(
         ));
     }
 
-    let mut rng = Pcg64Mcg::seed_from_u64(input.experiment_identity.bootstrap_seed);
+    let mut rng = Pcg64Mcg::seed_from_u64(observed.identity.bootstrap_seed);
     let mut maximum_degradation_bootstrap_distribution =
         Vec::with_capacity(policy.bootstrap_resamples);
     let mut resampled_totals = vec![0.0; vectors.len()];
@@ -786,7 +925,7 @@ pub fn evaluate_simultaneous_gate(
                     "simultaneous bootstrap produced a non-finite ratio",
                 ));
             }
-            maximum_degradation = maximum_degradation.max(observed[index] - resampled_ratio);
+            maximum_degradation = maximum_degradation.max(observed_ratios[index] - resampled_ratio);
         }
         maximum_degradation_bootstrap_distribution.push(maximum_degradation);
     }
@@ -794,10 +933,9 @@ pub fn evaluate_simultaneous_gate(
         &maximum_degradation_bootstrap_distribution,
         policy.confidence,
     )?;
-    let threshold = 1.0 - policy.max_relative_regression;
     let mut noise_reasons = Vec::new();
     let mut metric_reports = Vec::with_capacity(vectors.len());
-    for (vector, observed_ratio) in vectors.into_iter().zip(observed) {
+    for (vector, observed_ratio) in vectors.into_iter().zip(observed_ratios) {
         let static_cv = coefficient_of_variation(&vector.static_values)?;
         let dynamic_cv = coefficient_of_variation(&vector.dynamic_values)?;
         let ratio_cv = coefficient_of_variation(&vector.ratios)?;
@@ -814,6 +952,7 @@ pub fn evaluate_simultaneous_gate(
             }
         }
         let lower_confidence_bound = observed_ratio - critical_degradation;
+        let threshold = metric_threshold(&vector.metric, policy);
         metric_reports.push(SimultaneousMetricReport {
             scenario: vector.scenario,
             metric: vector.metric,
@@ -833,13 +972,13 @@ pub fn evaluate_simultaneous_gate(
     let is_invalid = !noise_reasons.is_empty();
     let passed = !is_invalid && metric_reports.iter().all(|report| report.passed);
     Ok(SimultaneousGateReport {
-        component: inventory.component.clone(),
-        inventory_digest: inventory.digest.clone(),
-        experiment_identity_digest: input.experiment_identity.identity_digest.clone(),
-        bootstrap_seed: input.experiment_identity.bootstrap_seed,
-        pair_schedule: input.experiment_identity.pair_schedule.clone(),
-        static_artifact_digest: input.experiment_identity.static_artifact_digest.clone(),
-        dynamic_artifact_digest: input.experiment_identity.dynamic_artifact_digest.clone(),
+        component: inventory.component,
+        inventory_digest: inventory.digest,
+        experiment_identity_digest: observed.identity.identity_digest.clone(),
+        bootstrap_seed: observed.identity.bootstrap_seed,
+        pair_schedule: observed.identity.pair_schedule.clone(),
+        static_artifact_digest: observed.identity.static_artifact_digest.clone(),
+        dynamic_artifact_digest: observed.identity.dynamic_artifact_digest.clone(),
         metric_reports,
         maximum_degradation_bootstrap_distribution,
         invalidation_attempts,
@@ -998,81 +1137,257 @@ fn canonical_blake3<T: Serialize>(value: &T, label: &str) -> Result<String, Plug
     Ok(format!("blake3:{}", blake3::hash(&bytes).to_hex()))
 }
 
-fn validate_inventory_shape(inventory: &NormativeInventory) -> Result<(), PluginStatsError> {
-    if inventory.schema_version != 1 || inventory.component.is_empty() || inventory.cases.is_empty()
-    {
+#[derive(Deserialize, Serialize)]
+struct Task1InventoryDocument {
+    schema_version: u32,
+    rustc: String,
+    target: String,
+    cargo_profile: String,
+    experiment_identity_json: String,
+    experiment_identity_digest: String,
+    runtime_scenarios: Vec<Task1Scenario>,
+    canonical_inventory_digest: String,
+}
+
+#[derive(Deserialize, Serialize)]
+struct Task1Scenario {
+    artifact_digest: String,
+    bootstrap_seed: u64,
+    canonical_inventory_digest: String,
+    core_assignment: String,
+    estimator: String,
+    harness_blake3: String,
+    invalidation_classifier: String,
+    measured_metrics: Vec<String>,
+    minimum_duration_seconds: u64,
+    mock_placement: String,
+    mock_server_blake3: String,
+    name: String,
+    primary_metric: String,
+    ratio_direction: RatioDirection,
+    request_budget: u64,
+    response_shape: String,
+    retained_pairs: usize,
+    warmups: usize,
+    #[serde(flatten)]
+    remaining_fields: BTreeMap<String, serde_yaml::Value>,
+}
+
+fn checked_in_inventory_authority() -> Result<FrozenInventoryAuthority, PluginStatsError> {
+    let document: Task1InventoryDocument = serde_yaml::from_str(CHECKED_IN_PLUGIN_PARITY_YAML)
+        .map_err(|error| {
+            PluginStatsError::new(format!(
+                "checked-in plugin parity inventory is invalid: {error}"
+            ))
+        })?;
+    if document.schema_version != 1 || document.runtime_scenarios.is_empty() {
         return Err(PluginStatsError::new(
-            "normative inventory identity is incomplete",
+            "checked-in plugin parity inventory has an unsupported shape",
         ));
     }
-    if inventory
-        .cases
-        .windows(2)
-        .any(|pair| pair[0].scenario >= pair[1].scenario)
-    {
+    let normalized = zero_inventory_digest_fields(
+        CHECKED_IN_PLUGIN_PARITY_YAML,
+        document.runtime_scenarios.len() + 2,
+    )?;
+    let computed_digest = format!("blake3:{}", blake3::hash(normalized.as_bytes()).to_hex());
+    if document.canonical_inventory_digest != computed_digest {
+        return Err(PluginStatsError::new(format!(
+            "checked-in plugin parity inventory digest mismatch: expected {}, computed {computed_digest}",
+            document.canonical_inventory_digest
+        )));
+    }
+    let computed_identity_digest = format!(
+        "blake3:{}",
+        blake3::hash(document.experiment_identity_json.as_bytes()).to_hex()
+    );
+    if document.experiment_identity_digest != computed_identity_digest {
         return Err(PluginStatsError::new(
-            "normative inventory cases are not uniquely sorted",
+            "checked-in Task-1 experiment identity digest mismatch",
         ));
     }
-    for case in &inventory.cases {
-        if case.scenario.is_empty() || case.primary_metric.is_empty() || case.metrics.is_empty() {
-            return Err(PluginStatsError::new(
-                "normative inventory case is incomplete",
-            ));
-        }
-        if case
-            .metrics
-            .windows(2)
-            .any(|pair| pair[0].metric >= pair[1].metric)
+    let task1_identity: serde_json::Value =
+        serde_json::from_str(&document.experiment_identity_json).map_err(|error| {
+            PluginStatsError::new(format!("Task-1 experiment identity is invalid: {error}"))
+        })?;
+    for (field, expected) in [
+        ("rustc", document.rustc.as_str()),
+        ("target", document.target.as_str()),
+        ("cargo_profile", document.cargo_profile.as_str()),
+        (
+            "canonical_inventory_digest",
+            document.canonical_inventory_digest.as_str(),
+        ),
+    ] {
+        if task1_identity
+            .get(field)
+            .and_then(serde_json::Value::as_str)
+            != Some(expected)
         {
-            return Err(PluginStatsError::new(
-                "normative inventory metrics are not uniquely sorted",
-            ));
-        }
-        let mut has_primary = false;
-        for metric in &case.metrics {
-            let (expected_direction, is_primary) = metric_direction(&metric.metric)?;
-            if expected_direction != metric.direction {
-                return Err(PluginStatsError::new(format!(
-                    "inventory direction for {}/{} differs from the metric contract",
-                    case.scenario, metric.metric
-                )));
-            }
-            if metric.metric == case.primary_metric {
-                if !is_primary {
-                    return Err(PluginStatsError::new(format!(
-                        "{} is a secondary metric and cannot be primary",
-                        metric.metric
-                    )));
-                }
-                has_primary = true;
-            }
-        }
-        if !has_primary {
             return Err(PluginStatsError::new(format!(
-                "case {} omits its primary metric {}",
-                case.scenario, case.primary_metric
+                "Task-1 experiment identity does not bind {field}"
             )));
         }
     }
-    Ok(())
-}
 
-fn validate_inventory(
-    inventory: &NormativeInventory,
-    expected_inventory_digest: &str,
-) -> Result<(), PluginStatsError> {
-    validate_inventory_shape(inventory)?;
-    if !is_blake3_digest(expected_inventory_digest)
-        || !is_blake3_digest(&inventory.digest)
-        || inventory.computed_digest()? != inventory.digest
-        || inventory.digest != expected_inventory_digest
+    let mut cases = Vec::with_capacity(document.runtime_scenarios.len());
+    for scenario in document.runtime_scenarios {
+        if scenario.canonical_inventory_digest != document.canonical_inventory_digest
+            || !is_blake3_digest(&scenario.artifact_digest)
+            || !is_blake3_digest(&scenario.harness_blake3)
+            || !is_blake3_digest(&scenario.mock_server_blake3)
+            || scenario.request_budget == 0
+            || scenario.warmups != 5
+            || scenario.retained_pairs != NORMATIVE_RETAINED_PAIRS
+            || scenario.minimum_duration_seconds < 30
+            || scenario.core_assignment.is_empty()
+            || scenario.mock_placement.is_empty()
+            || scenario.response_shape.is_empty()
+            || scenario.estimator != "paired_hyndman_fan_type_7_max_degradation_bootstrap"
+            || scenario.invalidation_classifier.is_empty()
+        {
+            return Err(PluginStatsError::new(format!(
+                "checked-in case {} has an invalid load-bearing field",
+                scenario.name
+            )));
+        }
+        let (primary_direction, is_primary) = metric_direction(&scenario.primary_metric)?;
+        if !is_primary || primary_direction != scenario.ratio_direction {
+            return Err(PluginStatsError::new(format!(
+                "checked-in case {} has an invalid primary metric or direction",
+                scenario.name
+            )));
+        }
+        let mut measured_metrics = scenario.measured_metrics.clone();
+        measured_metrics.sort();
+        if measured_metrics.is_empty()
+            || measured_metrics.windows(2).any(|pair| pair[0] == pair[1])
+            || !measured_metrics.contains(&scenario.primary_metric)
+        {
+            return Err(PluginStatsError::new(format!(
+                "checked-in case {} has an incomplete measured metric set",
+                scenario.name
+            )));
+        }
+        for metric in &measured_metrics {
+            metric_direction(metric)?;
+        }
+        cases.push(FrozenCasePlan {
+            scenario: scenario.name.clone(),
+            primary_metric: scenario.primary_metric.clone(),
+            measured_metrics,
+            primary_ratio_direction: scenario.ratio_direction,
+            request_budget: scenario.request_budget,
+            warmups: scenario.warmups,
+            retained_pairs: scenario.retained_pairs,
+            minimum_duration_seconds: scenario.minimum_duration_seconds,
+            core_assignment: scenario.core_assignment.clone(),
+            mock_placement: scenario.mock_placement.clone(),
+            response_shape: scenario.response_shape.clone(),
+            estimator: scenario.estimator.clone(),
+            bootstrap_seed: scenario.bootstrap_seed,
+            invalidation_classifier: scenario.invalidation_classifier.clone(),
+            complete_case_digest: canonical_blake3(&scenario, "Task-1 scenario")?,
+        });
+    }
+    cases.sort_by(|left, right| left.scenario.cmp(&right.scenario));
+    if cases
+        .windows(2)
+        .any(|pair| pair[0].scenario == pair[1].scenario)
     {
         return Err(PluginStatsError::new(
-            "normative inventory does not match the independently bound expected digest",
+            "checked-in plugin parity inventory contains duplicate cases",
         ));
     }
-    Ok(())
+    let seed = cases[0].bootstrap_seed;
+    if cases.iter().any(|case| case.bootstrap_seed != seed) {
+        return Err(PluginStatsError::new(
+            "checked-in cases do not share one schedule/bootstrap seed",
+        ));
+    }
+    Ok(FrozenInventoryAuthority {
+        component: "native-plugin-generation-1-full-matrix".to_owned(),
+        digest: document.canonical_inventory_digest,
+        cases,
+    })
+}
+
+fn zero_inventory_digest_fields(
+    contents: &str,
+    expected_canonical_count: usize,
+) -> Result<String, PluginStatsError> {
+    let zeroed = replace_digest_field(
+        contents,
+        "canonical_inventory_digest",
+        expected_canonical_count,
+    )?;
+    replace_digest_field(&zeroed, "experiment_identity_digest", 1)
+}
+
+fn replace_digest_field(
+    contents: &str,
+    field_name: &str,
+    expected_count: usize,
+) -> Result<String, PluginStatsError> {
+    let mut found = 0;
+    let mut output = String::with_capacity(contents.len());
+    for line in contents.split_inclusive('\n') {
+        let Some(field_index) = line.find(field_name) else {
+            output.push_str(line);
+            continue;
+        };
+        let Some(relative_start) = line[field_index..].find("blake3:") else {
+            output.push_str(line);
+            continue;
+        };
+        let value_start = field_index + relative_start;
+        let value_end = value_start + ZERO_BLAKE3_DIGEST.len();
+        if value_end > line.len() || !is_blake3_digest(&line[value_start..value_end]) {
+            return Err(PluginStatsError::new(format!(
+                "checked-in {field_name} contains a truncated or invalid digest"
+            )));
+        }
+        output.push_str(&line[..value_start]);
+        output.push_str(ZERO_BLAKE3_DIGEST);
+        output.push_str(&line[value_end..]);
+        found += 1;
+    }
+    if found != expected_count {
+        return Err(PluginStatsError::new(format!(
+            "checked-in inventory has {found} {field_name} values instead of {expected_count}"
+        )));
+    }
+    Ok(output)
+}
+
+fn read_observed_file(path: &Path, label: &str) -> Result<Vec<u8>, PluginStatsError> {
+    let bytes = fs::read(path).map_err(|error| {
+        PluginStatsError::new(format!(
+            "cannot read observed {label} {}: {error}",
+            path.display()
+        ))
+    })?;
+    if bytes.is_empty() {
+        return Err(PluginStatsError::new(format!("observed {label} is empty")));
+    }
+    Ok(bytes)
+}
+
+fn digest_observed_file(path: &Path, label: &str) -> Result<String, PluginStatsError> {
+    Ok(format!(
+        "blake3:{}",
+        blake3::hash(&read_observed_file(path, label)?).to_hex()
+    ))
+}
+
+fn pair_schedule(seed: u64) -> Vec<PairSchedule> {
+    balanced_pair_orders(seed)
+        .into_iter()
+        .enumerate()
+        .map(|(pair, member_order)| PairSchedule {
+            pair_id: format!("pair-{pair:02}"),
+            member_order,
+        })
+        .collect()
 }
 
 fn validate_experiment_identity_shape(
@@ -1119,6 +1434,11 @@ fn validate_experiment_identity_shape(
             ));
         }
     }
+    if identity.static_artifact_digest == identity.dynamic_artifact_digest {
+        return Err(PluginStatsError::new(
+            "static and dynamic experiment artifacts are not distinct",
+        ));
+    }
     if identity.environment.is_empty()
         || identity.environment.iter().any(|(name, _)| name.is_empty())
     {
@@ -1147,12 +1467,17 @@ fn validate_experiment_identity_shape(
 
 fn validate_experiment_identity(
     identity: &ExperimentIdentity,
-    inventory: &NormativeInventory,
+    inventory: &FrozenInventoryAuthority,
 ) -> Result<(), PluginStatsError> {
     validate_experiment_identity_shape(identity)?;
-    if identity.inventory_digest != inventory.digest {
+    if identity.inventory_digest != inventory.digest
+        || inventory
+            .cases
+            .iter()
+            .any(|case| case.bootstrap_seed != identity.bootstrap_seed)
+    {
         return Err(PluginStatsError::new(
-            "experiment identity is bound to a different normative inventory",
+            "experiment identity is bound to a different inventory seed or digest",
         ));
     }
     if !is_blake3_digest(&identity.identity_digest)
@@ -1193,12 +1518,22 @@ fn metric_direction(metric: &str) -> Result<(RatioDirection, bool), PluginStatsE
         "cpu_nanoseconds_per_successful_request" | "exporter_nanoseconds_per_record" => {
             Ok((RatioDirection::StaticOverDynamic, true))
         }
+        "allocated_bytes_per_successful_request" | "allocation_count_per_successful_request" => {
+            Ok((RatioDirection::StaticOverDynamic, false))
+        }
         "ttft_p50" | "ttft_p90" | "ttft_p99" | "itl_p50" | "itl_p90" | "itl_p99" => {
             Ok((RatioDirection::StaticOverDynamic, false))
         }
         _ => Err(PluginStatsError::new(format!(
             "unsupported plugin parity metric {metric}"
         ))),
+    }
+}
+
+fn metric_threshold(metric: &str, policy: &SimultaneousGatePolicy) -> f64 {
+    match metric {
+        "allocated_bytes_per_successful_request" | "allocation_count_per_successful_request" => 1.0,
+        _ => 1.0 - policy.max_relative_regression,
     }
 }
 
