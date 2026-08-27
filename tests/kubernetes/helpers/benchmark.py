@@ -497,6 +497,7 @@ class BenchmarkDeployer:
         default_image_pull_secrets: list[str] | None = None,
         default_image_pull_secret_source_namespace: str | None = None,
         image_pull_policy: str = "Never",
+        default_tolerations: list[dict] | None = None,
     ) -> None:
         """Initialize benchmark deployer.
 
@@ -517,6 +518,10 @@ class BenchmarkDeployer:
                 namespace is searched when copying a missing pull secret.
             image_pull_policy: Image pull policy for benchmark pods (Never,
                 IfNotPresent, Always). Use IfNotPresent for remote clusters.
+            default_tolerations: Pod tolerations applied to every BenchmarkConfig
+                that does not already specify its own tolerations.  Used to allow
+                scheduling on GPU nodes that carry NoSchedule taints on remote
+                clusters.
         """
         self.kubectl = kubectl
         self.project_root = project_root
@@ -528,6 +533,7 @@ class BenchmarkDeployer:
             default_image_pull_secret_source_namespace
         )
         self.image_pull_policy = image_pull_policy
+        self.default_tolerations: list[dict] = default_tolerations or []
         self._deployments: list[BenchmarkResult] = []
 
     async def deploy(
@@ -779,11 +785,12 @@ class BenchmarkDeployer:
         if config.priority_class is not None:
             cmd.extend(["--priority-class", config.priority_class])
 
-        if config.tolerations or config.node_selector:
+        if config.tolerations or config.node_selector or self.default_tolerations:
             import json as _json
 
-            if config.tolerations:
-                cmd.extend(["--tolerations", _json.dumps(config.tolerations)])
+            effective_tolerations = config.tolerations or self.default_tolerations
+            if effective_tolerations:
+                cmd.extend(["--tolerations", _json.dumps(effective_tolerations)])
             if config.node_selector:
                 cmd.extend(["--node-selector", _json.dumps(config.node_selector)])
 

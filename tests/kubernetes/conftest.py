@@ -1414,6 +1414,9 @@ async def benchmark_deployer(
             [k8s_settings.image_pull_secret] if k8s_settings.image_pull_secret else []
         ),
         image_pull_policy=k8s_settings.image_pull_policy,
+        default_tolerations=_gpu_node_tolerations()
+        if k8s_settings.tolerate_gpu_nodes
+        else None,
     )
 
     yield deployer
