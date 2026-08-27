@@ -636,8 +636,9 @@ impl MemoryGenerationTransaction {
         {
             return Err(CheckpointError::ObjectVerification);
         }
-        let plan =
-            CheckedResultStagePlan::from_partitions(partitions.iter().chain(issue_partition))?;
+        let staged: Vec<&ResultPartition> = partitions.iter().chain(issue_partition).collect();
+        let plan = CheckedResultStagePlan::from_partitions(&staged)?;
+        drop(staged);
         let prepared_lease = self
             .backend
             .budgets
@@ -913,18 +914,15 @@ struct CheckedResultStagePlan {
 }
 
 impl CheckedResultStagePlan {
-    fn from_partitions<'a, I>(partitions: I) -> Result<Self, CheckpointError>
-    where
-        I: Iterator<Item = &'a ResultPartition> + Clone,
-    {
-        let descriptor_bytes = partitions.clone().try_fold(0usize, |total, partition| {
+    fn from_partitions(partitions: &[&ResultPartition]) -> Result<Self, CheckpointError> {
+        let descriptor_bytes = partitions.iter().try_fold(0usize, |total, partition| {
             total
                 .checked_add(descriptor_retained_bytes(partition.descriptor())?)
                 .ok_or(CheckpointError::ObjectVerification)
         })?;
         let (item_count, byte_length) =
             partitions
-                .clone()
+                .iter()
                 .try_fold((0u64, 0u64), |(items, bytes), partition| {
                     let descriptor = partition.descriptor();
                     Ok((
@@ -936,10 +934,11 @@ impl CheckedResultStagePlan {
                             .ok_or(CheckpointError::ObjectVerification)?,
                     ))
                 })?;
-        let (index_root, _) =
-            canonical_result_index_object(partitions.clone().map(ResultPartition::descriptor))?;
+        let (index_root, _) = canonical_result_index_object(
+            partitions.iter().copied().map(ResultPartition::descriptor),
+        )?;
         Ok(Self {
-            descriptor_items: partitions.count(),
+            descriptor_items: partitions.len(),
             descriptor_bytes,
             index_root,
             item_count,

@@ -387,7 +387,7 @@ impl PreparedResultEpoch {
 /// let _receipts = value.issue_receipts;
 /// # }
 /// ```
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct PreparedCheckpointResultInput {
     partitions: Vec<ResultPartition>,
     issue_receipts: Option<PreparedIssueReceiptResultPartition>,

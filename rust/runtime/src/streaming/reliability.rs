@@ -35,7 +35,7 @@ use super::{
     },
     budget::{BudgetError, BudgetLease, LeasedByteBuffer, StreamingResourceBudget},
     checkpoint::{
-        BudgetedCheckpointBytes, CheckpointBarrier, CheckpointEpoch, CheckpointError,
+        BudgetedCheckpointBytes, CheckpointBarrier, CheckpointCut, CheckpointEpoch, CheckpointError,
         CheckpointGeneration, CheckpointParticipantId, CommittedCheckpointGeneration,
         CommittedParticipantReceipt, CommittedParticipantState, PreparedParticipantState,
         StreamRunIdentity, StreamingCheckpointParticipant,
