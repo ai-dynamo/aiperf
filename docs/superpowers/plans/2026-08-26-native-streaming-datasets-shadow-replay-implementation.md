@@ -92,7 +92,10 @@ The individual plans contain the exact dependency clauses. If this overview and 
 ## Three-Worktree Execution Rules
 
 - The current user branch is the integration branch. It remains in the original worktree.
-- Task worktrees live at `/mnt/4tb/aiperf-streaming-worktrees/<task>` and all builds share `CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target`.
+- Task code worktrees live under the repository's ignored
+  `.worktrees/streaming/<task>` directory. `/mnt/4tb` is reserved for generated
+  Cargo targets/temp files and soak data; all builds share
+  `CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target`.
 - Each branch is cut from the current integrated `HEAD`, contains one task's focused commits and review fixes, and merges with `git merge --no-ff`. Never cherry-pick.
 - Keep three worktrees active whenever the DAG exposes three file-disjoint tasks. If fewer are ready, unused slots run Graham/behavior reviews and gates; they do not branch from stale state.
 - Every task branch owns the minimal nearest-parent module declaration needed for its GREEN build. The integration owner resolves declaration conflicts plus Cargo.lock, registry/protocol hotspots, cellular controller/cell hotspots, and `artifacts/streaming-design/implementation-progress.md` during `--no-ff` merges.
