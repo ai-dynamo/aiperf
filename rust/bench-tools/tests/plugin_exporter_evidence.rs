@@ -6,7 +6,8 @@
 use aiperf_bench_tools::plugin_stats::{
     ExporterEvidenceMode, ExporterMember, ExporterMemberBinding, ExporterMemberEvidence,
     ExporterObservableKind, ExporterSampleContract, RetainedExporterEvidence,
-    validate_exporter_member_evidence, validate_exporter_pair_evidence,
+    validate_exporter_member_evidence, validate_exporter_member_record,
+    validate_exporter_pair_evidence,
 };
 
 const DIGEST: &str = "blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -137,4 +138,72 @@ fn comparison_observable_must_match_across_the_pair() {
         error.to_string(),
         "static and dynamic exporter comparison observables differ"
     );
+}
+
+#[test]
+fn member_record_cannot_claim_a_duration_other_than_the_receipt_sum() {
+    let evidence = ExporterMemberEvidence {
+        repetition_receipt_bytes: paired_member_receipts(
+            ExporterMember::Dynamic,
+            RAW_OBSERVABLE_DIGEST,
+        ),
+        retained: RetainedExporterEvidence {
+            repetition_ordinal: 0,
+            raw_observable_bytes: RAW_OBSERVABLE.to_vec(),
+            comparison_observable_bytes: RAW_OBSERVABLE.to_vec(),
+            provenance_receipt_bytes: EMPTY_PROVENANCE.to_vec(),
+        },
+    };
+    let summary = validate_exporter_member_evidence(
+        &ExporterSampleContract::normative(),
+        &binding(ExporterMember::Dynamic),
+        &evidence,
+    )
+    .expect("member evidence validates");
+    let retained = &summary.repetitions[evidence.retained.repetition_ordinal];
+    let mut record = serde_json::json!({
+        "active_duration_ns": summary.active_duration_nanoseconds + 1,
+        "attempt_ordinal": 0,
+        "build_artifact_blake3": DIGEST,
+        "build_receipt_blake3": DIGEST,
+        "comparison_observable_blake3": RAW_OBSERVABLE_DIGEST,
+        "experiment_identity_blake3": DIGEST,
+        "member": "dynamic",
+        "observable_policy_blake3": DIGEST,
+        "pair_id": "pair-00",
+        "processed_records": 1_600_000,
+        "repetition_receipts_blake3": summary.repetition_receipts_blake3,
+        "retained_artifact_records": 100_000,
+        "retained_comparison_observable_blake3": retained.comparison_observable_blake3,
+        "retained_provenance_receipt_blake3": retained.provenance_receipt_blake3,
+        "retained_raw_observable_blake3": retained.raw_observable_blake3,
+        "retained_repetition_ordinal": 0,
+        "scenario_id": "exporter_100k",
+        "schema_version": 1
+    });
+    let mut record_bytes = serde_json::to_vec(&record).expect("literal record serializes");
+    record_bytes.push(b'\n');
+
+    let error = validate_exporter_member_record(
+        &ExporterSampleContract::normative(),
+        &binding(ExporterMember::Dynamic),
+        &evidence,
+        &record_bytes,
+    )
+    .expect_err("the member duration must equal the repetition sum");
+    assert_eq!(
+        error.to_string(),
+        "exporter member record does not match its validated evidence"
+    );
+
+    record["active_duration_ns"] = serde_json::json!(summary.active_duration_nanoseconds);
+    let mut valid_bytes = serde_json::to_vec(&record).expect("literal record serializes");
+    valid_bytes.push(b'\n');
+    validate_exporter_member_record(
+        &ExporterSampleContract::normative(),
+        &binding(ExporterMember::Dynamic),
+        &evidence,
+        &valid_bytes,
+    )
+    .expect("the exact receipt sum is valid");
 }

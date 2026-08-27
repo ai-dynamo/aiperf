@@ -1268,6 +1268,48 @@ pub struct ExporterPairSummary {
     pub dynamic_member: ExporterMemberSummary,
 }
 
+/// Canonical post-run record binding one exporter member to its evidence.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExporterMemberRecord {
+    /// Record schema version, exactly one.
+    pub schema_version: u8,
+    /// Digest of the immutable pre-run experiment identity.
+    pub experiment_identity_blake3: String,
+    /// Zero-based complete-attempt ordinal.
+    pub attempt_ordinal: u64,
+    /// Frozen inventory scenario.
+    pub scenario_id: String,
+    /// Pair identifier shared by both members.
+    pub pair_id: String,
+    /// Static or dynamic member.
+    pub member: ExporterMember,
+    /// Sum of the sixteen active repetition durations.
+    pub active_duration_ns: u64,
+    /// Exact processed-record divisor.
+    pub processed_records: u64,
+    /// Records represented by the retained repetition.
+    pub retained_artifact_records: u64,
+    /// Common comparison-observable digest across all repetitions.
+    pub comparison_observable_blake3: String,
+    /// Digest of the exact canonical repetition vector.
+    pub repetition_receipts_blake3: String,
+    /// Ordinal of the fully retained repetition.
+    pub retained_repetition_ordinal: u64,
+    /// Retained repetition's raw-observable digest.
+    pub retained_raw_observable_blake3: String,
+    /// Retained repetition's comparison-observable digest.
+    pub retained_comparison_observable_blake3: String,
+    /// Retained repetition's provenance-receipt digest.
+    pub retained_provenance_receipt_blake3: String,
+    /// Digest of the immutable observable policy.
+    pub observable_policy_blake3: String,
+    /// Digest of the executable artifact.
+    pub build_artifact_blake3: String,
+    /// Digest of the authenticated build receipt.
+    pub build_receipt_blake3: String,
+}
+
 /// Validated exporter member summary.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -1910,6 +1952,64 @@ pub fn validate_exporter_member_evidence(
         repetition_receipts_blake3: format!("blake3:{}", blake3::hash(&canonical)),
         repetitions,
     })
+}
+
+/// Validate the canonical post-run record for one exporter member.
+///
+/// The record cannot replace the controlled evidence: every post-run scalar and
+/// digest is recomputed from `evidence` before the record is accepted.
+pub fn validate_exporter_member_record(
+    contract: &ExporterSampleContract,
+    binding: &ExporterMemberBinding,
+    evidence: &ExporterMemberEvidence,
+    record_bytes: &[u8],
+) -> Result<ExporterMemberRecord, PluginStatsError> {
+    let value: serde_json::Value = serde_json::from_slice(record_bytes).map_err(|error| {
+        PluginStatsError::new(format!("invalid exporter member record JSON: {error}"))
+    })?;
+    let mut canonical = serde_json_canonicalizer::to_vec(&value).map_err(|error| {
+        PluginStatsError::new(format!(
+            "cannot canonicalize exporter member record: {error}"
+        ))
+    })?;
+    canonical.push(b'\n');
+    if canonical != record_bytes {
+        return Err(PluginStatsError::new(
+            "exporter member record is not canonical JSON with one trailing newline",
+        ));
+    }
+    let record: ExporterMemberRecord = serde_json::from_value(value).map_err(|error| {
+        PluginStatsError::new(format!("invalid exporter member record schema: {error}"))
+    })?;
+    let summary = validate_exporter_member_evidence(contract, binding, evidence)?;
+    let retained = summary
+        .repetitions
+        .get(evidence.retained.repetition_ordinal)
+        .ok_or_else(|| PluginStatsError::new("retained exporter repetition is out of range"))?;
+    if record.schema_version != 1
+        || record.experiment_identity_blake3 != binding.experiment_identity_blake3
+        || record.attempt_ordinal != binding.attempt_ordinal
+        || record.scenario_id != binding.scenario_id
+        || record.pair_id != binding.pair_id
+        || record.member != binding.member
+        || record.active_duration_ns != summary.active_duration_nanoseconds
+        || record.processed_records != summary.processed_records
+        || record.retained_artifact_records != summary.retained_artifact_records
+        || record.comparison_observable_blake3 != summary.comparison_observable_blake3
+        || record.repetition_receipts_blake3 != summary.repetition_receipts_blake3
+        || record.retained_repetition_ordinal != evidence.retained.repetition_ordinal as u64
+        || record.retained_raw_observable_blake3 != retained.raw_observable_blake3
+        || record.retained_comparison_observable_blake3 != retained.comparison_observable_blake3
+        || record.retained_provenance_receipt_blake3 != retained.provenance_receipt_blake3
+        || record.observable_policy_blake3 != binding.observable_policy_blake3
+        || record.build_artifact_blake3 != binding.build_artifact_blake3
+        || record.build_receipt_blake3 != binding.build_receipt_blake3
+    {
+        return Err(PluginStatsError::new(
+            "exporter member record does not match its validated evidence",
+        ));
+    }
+    Ok(record)
 }
 
 /// Validate the two complete members of one paired exporter comparison.
