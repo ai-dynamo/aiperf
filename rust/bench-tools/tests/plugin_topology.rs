@@ -79,8 +79,7 @@ struct PackageOwnership {
     package: String,
     owner: String,
     review_state: String,
-    #[serde(rename = "coupling_evidence")]
-    _coupling_evidence: String,
+    coupling_evidence: String,
     source_package: Option<String>,
     dependencies: Vec<OwnedDependency>,
 }
@@ -90,8 +89,7 @@ struct PackageOwnership {
 struct OwnedDependency {
     package: String,
     kind: String,
-    #[serde(rename = "justification")]
-    _justification: String,
+    justification: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -153,6 +151,17 @@ fn validate_projection(
     if matrix.schema_version != 2 {
         return Err("ownership schema must be version 2".to_owned());
     }
+    if matrix.topology_amendment
+        != (TopologyAmendment {
+            schema_version: 1,
+            producer_task: 3,
+            from_state: "task2_neutral".to_owned(),
+            to_state: "task3_reviewed".to_owned(),
+        })
+        || matrix.baseline_topology.state != "task3_reviewed"
+    {
+        return Err("ownership matrix is not the final Task-3 reviewed state".to_owned());
+    }
     if !matrix.symbol_ownership.iter().all(toml::Value::is_table) {
         return Err("symbol ownership rows must be tables".to_owned());
     }
@@ -180,8 +189,11 @@ fn validate_projection(
 
     let mut package_rows = BTreeMap::new();
     for row in &matrix.package_ownership {
-        if row.owner.is_empty() {
-            return Err(format!("empty owner for {}", row.package));
+        if row.owner.is_empty() || row.coupling_evidence.trim().is_empty() {
+            return Err(format!(
+                "empty owner or coupling evidence for {}",
+                row.package
+            ));
         }
         match row.review_state.as_str() {
             "measured" => {
@@ -210,6 +222,9 @@ fn validate_projection(
         }
         let mut dependencies = BTreeSet::new();
         for dependency in &row.dependencies {
+            if dependency.justification.trim().is_empty() {
+                return Err(format!("empty dependency justification in {}", row.package));
+            }
             insert_unique(
                 &mut dependencies,
                 (dependency.package.as_str(), dependency.kind.as_str()),
@@ -320,9 +335,9 @@ fn fixture() -> (OwnershipMatrix, BaselineTopology) {
         dependencies: vec![OwnedDependency {
             package: "aiperf-plugin-api".to_owned(),
             kind: "normal".to_owned(),
-            _justification: "fixture witness".to_owned(),
+            justification: "fixture witness".to_owned(),
         }],
-        _coupling_evidence: "non-authoritative fixture note".to_owned(),
+        coupling_evidence: "Task-1 fixture source coupling".to_owned(),
     })
     .collect();
     let matrix = OwnershipMatrix {
@@ -338,7 +353,7 @@ fn fixture() -> (OwnershipMatrix, BaselineTopology) {
             path: String::new(),
             host_commit: baseline.host_commit.clone(),
             blake3: String::new(),
-            state: "awaiting_approved_task1_task2_merge".to_owned(),
+            state: "task3_reviewed".to_owned(),
         },
         package_ownership: packages,
         feature_ownership: vec![FeatureOwnership {
@@ -442,6 +457,24 @@ fn projection_requires_concrete_task1_cargo_witnesses_and_exact_grpc_splits() {
             .unwrap_err()
             .contains("owner must be non-empty")
     );
+
+    let (mut unevidenced, baseline) = fixture();
+    unevidenced.package_ownership[0].coupling_evidence.clear();
+    assert!(
+        validate_projection(&unevidenced, &baseline)
+            .unwrap_err()
+            .contains("empty owner or coupling evidence")
+    );
+
+    let (mut unjustified, baseline) = fixture();
+    unjustified.package_ownership[0].dependencies[0]
+        .justification
+        .clear();
+    assert!(
+        validate_projection(&unjustified, &baseline)
+            .unwrap_err()
+            .contains("empty dependency justification")
+    );
 }
 
 #[test]
@@ -487,10 +520,7 @@ fn every_plugin_dependency_and_baseline_feature_has_one_reviewed_owner() {
             to_state: "task3_reviewed".to_owned(),
         }
     );
-    assert_eq!(
-        matrix.baseline_topology.state,
-        "awaiting_approved_task1_task2_merge"
-    );
+    assert_eq!(matrix.baseline_topology.state, "task3_reviewed");
     let topology_path = root.join("../").join(&matrix.baseline_topology.path);
     let topology_bytes = std::fs::read(&topology_path)
         .unwrap_or_else(|error| panic!("cannot read {}: {error}", topology_path.display()));

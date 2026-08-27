@@ -35,7 +35,7 @@ composition_state = "planned"
 path = "artifacts/native-plugin-baseline/package-topology.json"
 host_commit = "caa3ff6fcf20ffe36a7704abe16274bedadbb9fb"
 blake3 = "blake3:3d22fd2a8a9cf41d9b6af8f1e72c6e5b4be4c650d7d6d4a4afb5211c979cc3d1"
-state = "awaiting_approved_task1_task2_merge"
+state = "task3_reviewed"
 
 [[package_ownership]]
 package = "aiperf-core"

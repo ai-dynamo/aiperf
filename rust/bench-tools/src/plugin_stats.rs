@@ -14,6 +14,12 @@ use rand::{Rng, SeedableRng, seq::SliceRandom};
 use rand_pcg::Pcg64Mcg;
 use serde::{Deserialize, Serialize};
 
+use crate::exporter_policy::{
+    ExporterObservablePolicyV1, ProvenanceBindingV1, SelectedBackingPayloadV1,
+    apply_exporter_observable_policy_v1,
+};
+use crate::exporter_runner::CompletedExporterMember;
+
 const NORMATIVE_BOOTSTRAP_RESAMPLES: usize = 100_000;
 const NORMATIVE_RETAINED_PAIRS: usize = 30;
 const NORMATIVE_MAX_REPLACEMENTS: usize = 5;
@@ -163,6 +169,8 @@ pub struct FrozenCasePlan {
     pub invalidation_classifier: String,
     /// Digest of the complete authored YAML scenario mapping.
     pub complete_case_digest: String,
+    /// Exact checked-in command template tokenized without a shell.
+    pub command: Vec<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -222,6 +230,8 @@ struct ExperimentIdentity {
     pub mock_server_artifact_digest: String,
     /// Authenticated complete normative inventory digest.
     pub inventory_digest: String,
+    /// Digest of the sealed runtime authority contract that acquired all rows.
+    pub authority_contract_digest: String,
     /// CPU model identity.
     pub cpu_model: String,
     /// CPU stepping identity.
@@ -383,6 +393,10 @@ impl NonAuthoritativeExperimentFixture {
                 "mock-server artifact",
             )?,
             inventory_digest: inventory.digest.clone(),
+            authority_contract_digest: canonical_blake3(
+                receipt,
+                "non-authoritative observation contract",
+            )?,
             cpu_model: receipt.machine.cpu_model.clone(),
             cpu_stepping: receipt.machine.cpu_stepping.clone(),
             microcode: receipt.machine.microcode.clone(),
@@ -421,6 +435,107 @@ impl NonAuthoritativeExperimentFixture {
     pub fn pair_schedule(&self) -> &[PairSchedule] {
         &self.identity.pair_schedule
     }
+
+    pub(crate) fn canonical_identity_bytes(&self) -> Result<Vec<u8>, PluginStatsError> {
+        serde_json_canonicalizer::to_vec(&self.identity).map_err(|error| {
+            PluginStatsError::new(format!("cannot canonicalize experiment identity: {error}"))
+        })
+    }
+
+    pub(crate) fn identity_digest_preimage_bytes(&self) -> Result<Vec<u8>, PluginStatsError> {
+        let mut identity = self.identity.clone();
+        identity.identity_digest.clear();
+        serde_json::to_vec(&identity).map_err(|error| {
+            PluginStatsError::new(format!(
+                "cannot encode experiment identity preimage: {error}"
+            ))
+        })
+    }
+}
+
+pub(crate) struct AuthoritativeIdentityInput {
+    pub source_commit: String,
+    pub source_tree_digest: String,
+    pub cargo_lock_digest: String,
+    pub rustc: String,
+    pub sysroot_digest: String,
+    pub profile: String,
+    pub static_artifact_digest: String,
+    pub dynamic_artifact_digest: String,
+    pub harness_artifact_digest: String,
+    pub authority_contract_digest: String,
+    pub environment: BTreeMap<String, Option<String>>,
+}
+
+pub(crate) fn acquire_authoritative_identity(
+    input: AuthoritativeIdentityInput,
+) -> Result<NonAuthoritativeExperimentFixture, PluginStatsError> {
+    let inventory = checked_in_inventory_authority()?;
+    let document: Task1InventoryDocument = serde_yaml::from_str(CHECKED_IN_PLUGIN_PARITY_YAML)
+        .map_err(|error| {
+            PluginStatsError::new(format!(
+                "checked-in plugin parity inventory is invalid: {error}"
+            ))
+        })?;
+    let task1_identity: serde_json::Value =
+        serde_json::from_str(&document.experiment_identity_json).map_err(|error| {
+            PluginStatsError::new(format!("Task-1 experiment identity is invalid: {error}"))
+        })?;
+    let scalar = |name: &str| -> Result<String, PluginStatsError> {
+        task1_identity
+            .get(name)
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned)
+            .ok_or_else(|| {
+                PluginStatsError::new(format!(
+                    "Task-1 experiment identity omits controlled field {name}"
+                ))
+            })
+    };
+    let seed = inventory
+        .cases
+        .first()
+        .map(|case| case.bootstrap_seed)
+        .ok_or_else(|| PluginStatsError::new("checked-in inventory has no cases"))?;
+    let mock_server_artifact_digest = document
+        .runtime_scenarios
+        .first()
+        .map(|scenario| scenario.mock_server_blake3.clone())
+        .ok_or_else(|| PluginStatsError::new("checked-in inventory has no runtime scenarios"))?;
+    let identity = ExperimentIdentity {
+        schema_version: 1,
+        source_commit: input.source_commit,
+        source_tree_digest: input.source_tree_digest,
+        cargo_lock_digest: input.cargo_lock_digest,
+        rustc: input.rustc,
+        sysroot_digest: input.sysroot_digest,
+        target: document.target,
+        profile: input.profile,
+        static_artifact_digest: input.static_artifact_digest,
+        dynamic_artifact_digest: input.dynamic_artifact_digest,
+        harness_artifact_digest: input.harness_artifact_digest,
+        mock_server_artifact_digest,
+        inventory_digest: inventory.digest.clone(),
+        authority_contract_digest: input.authority_contract_digest,
+        cpu_model: scalar("cpu_model")?,
+        cpu_stepping: scalar("cpu_stepping")?,
+        microcode: scalar("microcode")?,
+        core_topology: scalar("affinity_isolation")?,
+        memory_topology: scalar("memory_topology")?,
+        firmware: scalar("firmware")?,
+        kernel: scalar("kernel")?,
+        allocator_provider: scalar("allocator_provider")?,
+        frequency_governor: scalar("frequency_governor")?,
+        affinity_isolation: scalar("affinity_isolation")?,
+        mock_server_placement: "checked-in per-scenario placement contract".to_owned(),
+        environment: input.environment,
+        bootstrap_seed: seed,
+        pair_schedule: pair_schedule(seed),
+        identity_digest: String::new(),
+    }
+    .seal()?;
+    validate_experiment_identity(&identity, &inventory)?;
+    Ok(NonAuthoritativeExperimentFixture { identity })
 }
 
 /// One non-authoritative simultaneous-gate fixture document.
@@ -476,7 +591,8 @@ pub enum AttemptDisposition {
 }
 
 /// One infrastructure event named by the frozen inventory classifier.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum InfrastructureEvent {
     /// The benchmark host rebooted during a pair.
     HostReboot,
@@ -497,7 +613,8 @@ impl InfrastructureEvent {
 }
 
 /// Raw terminal outcome observed by the same-process measurement controller.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum MemberTerminalOutcome {
     /// The member completed its frozen workload and emitted measurement rows.
     Completed,
@@ -521,7 +638,7 @@ pub enum MemberTerminalOutcome {
 }
 
 /// One member's raw terminal record in exact execution order.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct RawMemberTerminalRecord {
     /// Static or dynamic artifact that ran.
     pub variant: Variant,
@@ -530,7 +647,7 @@ pub struct RawMemberTerminalRecord {
 }
 
 /// One whole pair attempt observed by the same-process controller.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct RawPairTerminalRecord {
     /// Frozen inventory scenario name.
     pub scenario: String,
@@ -547,7 +664,8 @@ pub struct RawPairTerminalRecord {
 }
 
 /// Controller decision after observing one raw pair attempt.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum PairAttemptDecision {
     /// Both members completed; retain the pair's measured rows.
     RetainPair,
@@ -565,7 +683,8 @@ pub enum PairAttemptDecision {
 }
 
 /// Controller-derived outcome of one complete experiment attempt.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ControlledAttemptDecision {
     /// Infrastructure/noise rules invalidated the attempt.
     Invalid,
@@ -576,7 +695,7 @@ pub enum ControlledAttemptDecision {
 }
 
 /// One retained complete-attempt decision.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct ControlledAttemptRecord {
     /// One-based contiguous attempt ordinal.
     pub ordinal: u8,
@@ -584,10 +703,14 @@ pub struct ControlledAttemptRecord {
     pub decision: ControlledAttemptDecision,
     /// Controller-derived terminal diagnosis.
     pub reason: Option<String>,
+    /// Digest of the canonical statistical report, when one was produced.
+    pub report_blake3: Option<String>,
+    /// Digest of the canonical final evidence tree for this attempt.
+    pub evidence_tree_blake3: String,
 }
 
 /// One retained raw pair attempt and its controller-derived classification.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct ControlledPairAttemptRecord {
     /// Complete experiment attempt that owned this pair attempt.
     pub experiment_attempt: u8,
@@ -599,10 +722,60 @@ pub struct ControlledPairAttemptRecord {
     pub decision: PairAttemptDecision,
 }
 
+/// One retained exporter pair whose receipts were validated by the controller.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct ControlledExporterPairRecord {
+    /// One-based complete experiment attempt.
+    pub experiment_attempt: u8,
+    /// Frozen inventory scenario.
+    pub scenario: String,
+    /// Seeded pair identifier.
+    pub pair_id: String,
+    /// Matched controller-authenticated receiver protocol, only for receiver scenarios.
+    pub receiver_protocol: Option<String>,
+    /// Digest of the matched authenticated receiver-protocol authority.
+    pub receiver_protocol_authority_blake3: Option<String>,
+    /// Validated static member record.
+    pub static_record: ExporterMemberRecord,
+    /// Validated static member evidence summary.
+    pub static_member: ExporterMemberSummary,
+    /// Complete retained static evidence used to replay policy application.
+    pub static_evidence: ExporterMemberEvidence,
+    /// Exact static backing payloads selected by the observable policy.
+    pub static_backing_payloads: Vec<SelectedBackingPayloadV1>,
+    /// Validated dynamic member record.
+    pub dynamic_record: ExporterMemberRecord,
+    /// Validated dynamic member evidence summary.
+    pub dynamic_member: ExporterMemberSummary,
+    /// Complete retained dynamic evidence used to replay policy application.
+    pub dynamic_evidence: ExporterMemberEvidence,
+    /// Exact dynamic backing payloads selected by the observable policy.
+    pub dynamic_backing_payloads: Vec<SelectedBackingPayloadV1>,
+}
+
 #[derive(Debug)]
 struct ActiveControlledAttempt {
     ordinal: u8,
     replacements_by_scenario: BTreeMap<String, usize>,
+}
+
+struct AuthoritativeExporterRowIdentity<'a> {
+    experiment_identity_blake3: &'a str,
+    source_commit: &'a str,
+    static_artifact_blake3: &'a str,
+    dynamic_artifact_blake3: &'a str,
+}
+
+struct ExporterPairEvidenceInput<'a> {
+    static_binding: &'a ExporterMemberBinding,
+    static_evidence: &'a ExporterMemberEvidence,
+    static_backing_payloads: &'a [SelectedBackingPayloadV1],
+    static_record_bytes: &'a [u8],
+    dynamic_binding: &'a ExporterMemberBinding,
+    dynamic_evidence: &'a ExporterMemberEvidence,
+    dynamic_backing_payloads: &'a [SelectedBackingPayloadV1],
+    dynamic_record_bytes: &'a [u8],
+    receiver_identity: Option<(String, String)>,
 }
 
 /// Same-process authority for pair replacement and complete-attempt lifecycle.
@@ -619,6 +792,7 @@ pub struct ControlledMeasurementEvaluator {
     active: Option<ActiveControlledAttempt>,
     history: Vec<ControlledAttemptRecord>,
     raw_pair_history: Vec<ControlledPairAttemptRecord>,
+    exporter_pair_history: Vec<ControlledExporterPairRecord>,
     last_statistical_report: Option<SimultaneousGateReport>,
 }
 
@@ -637,6 +811,7 @@ impl ControlledMeasurementEvaluator {
             active: None,
             history: Vec::new(),
             raw_pair_history: Vec::new(),
+            exporter_pair_history: Vec::new(),
             last_statistical_report: None,
         })
     }
@@ -654,6 +829,11 @@ impl ControlledMeasurementEvaluator {
     /// Append-only raw pair history, including rejected caller assertions.
     pub fn raw_pair_history(&self) -> &[ControlledPairAttemptRecord] {
         &self.raw_pair_history
+    }
+
+    /// Append-only validated exporter evidence retained by this controller.
+    pub fn exporter_pair_history(&self) -> &[ControlledExporterPairRecord] {
+        &self.exporter_pair_history
     }
 
     /// Most recent report derived from complete controlled measurements.
@@ -684,6 +864,7 @@ impl ControlledMeasurementEvaluator {
         }
         let ordinal = u8::try_from(self.history.len() + 1)
             .map_err(|_| PluginStatsError::new("experiment attempt ordinal overflow"))?;
+        self.last_statistical_report = None;
         self.active = Some(ActiveControlledAttempt {
             ordinal,
             replacements_by_scenario: BTreeMap::new(),
@@ -828,12 +1009,229 @@ impl ControlledMeasurementEvaluator {
         Ok(decision)
     }
 
-    /// Evaluate complete same-process measurements and finish the active attempt.
+    /// Validate and classify one harness-sealed exporter pair inside the controller.
+    pub fn record_completed_exporter_pair(
+        &mut self,
+        policy: &ExporterObservablePolicyV1,
+        static_member: &CompletedExporterMember,
+        dynamic_member: &CompletedExporterMember,
+    ) -> Result<PairAttemptDecision, PluginStatsError> {
+        let receiver_identity = match (
+            static_member.binding().observable_kind,
+            dynamic_member.binding().observable_kind,
+        ) {
+            (
+                ExporterObservableKind::ReceiverTranscript,
+                ExporterObservableKind::ReceiverTranscript,
+            ) => match (
+                static_member.receiver_protocol(),
+                static_member.receiver_protocol_authority_blake3(),
+                dynamic_member.receiver_protocol(),
+                dynamic_member.receiver_protocol_authority_blake3(),
+            ) {
+                (
+                    Some(static_protocol),
+                    Some(static_authority),
+                    Some(dynamic_protocol),
+                    Some(dynamic_authority),
+                ) if static_protocol == dynamic_protocol
+                    && static_authority == dynamic_authority =>
+                {
+                    Some((static_protocol.to_owned(), static_authority.to_owned()))
+                }
+                _ => {
+                    self.finish_active(
+                        ControlledAttemptDecision::ValidFailure,
+                        Some(
+                            "controlled exporter evidence has mismatched receiver protocol identity"
+                                .to_owned(),
+                        ),
+                    )?;
+                    return Ok(PairAttemptDecision::ExperimentFailed);
+                }
+            },
+            (_, _) => {
+                if static_member.receiver_protocol().is_some()
+                    || static_member.receiver_protocol_authority_blake3().is_some()
+                    || dynamic_member.receiver_protocol().is_some()
+                    || dynamic_member
+                        .receiver_protocol_authority_blake3()
+                        .is_some()
+                {
+                    self.finish_active(
+                        ControlledAttemptDecision::ValidFailure,
+                        Some(
+                            "controlled non-receiver exporter evidence carries receiver protocol identity"
+                                .to_owned(),
+                        ),
+                    )?;
+                    return Ok(PairAttemptDecision::ExperimentFailed);
+                }
+                None
+            }
+        };
+        self.record_exporter_pair_evidence(
+            policy,
+            ExporterPairEvidenceInput {
+                static_binding: static_member.binding(),
+                static_evidence: static_member.evidence(),
+                static_backing_payloads: static_member.backing_payloads(),
+                static_record_bytes: static_member.record_bytes(),
+                dynamic_binding: dynamic_member.binding(),
+                dynamic_evidence: dynamic_member.evidence(),
+                dynamic_backing_payloads: dynamic_member.backing_payloads(),
+                dynamic_record_bytes: dynamic_member.record_bytes(),
+                receiver_identity,
+            },
+        )
+    }
+
+    /// Validate and classify one complete exporter pair inside the controller.
+    ///
+    /// Malformed receipts, retained bytes, member records, or cross-member
+    /// comparison output are measured-product failures. They terminate the
+    /// first valid attempt and can never be relabeled as infrastructure noise.
+    fn record_exporter_pair_evidence(
+        &mut self,
+        policy: &ExporterObservablePolicyV1,
+        input: ExporterPairEvidenceInput<'_>,
+    ) -> Result<PairAttemptDecision, PluginStatsError> {
+        let ExporterPairEvidenceInput {
+            static_binding,
+            static_evidence,
+            static_backing_payloads,
+            static_record_bytes,
+            dynamic_binding,
+            dynamic_evidence,
+            dynamic_backing_payloads,
+            dynamic_record_bytes,
+            receiver_identity,
+        } = input;
+        let active_ordinal = self
+            .active
+            .as_ref()
+            .map(|active| active.ordinal)
+            .ok_or_else(|| PluginStatsError::new("no controlled experiment attempt is active"))?;
+        let evidence_result = (|| {
+            let expected_attempt = u64::from(active_ordinal)
+                .checked_sub(1)
+                .ok_or_else(|| PluginStatsError::new("experiment attempt ordinal underflow"))?;
+            if static_binding.attempt_ordinal != expected_attempt
+                || dynamic_binding.attempt_ordinal != expected_attempt
+            {
+                return Err(PluginStatsError::new(
+                    "exporter evidence attempt does not match the active controller attempt",
+                ));
+            }
+            validate_exporter_policy_application(
+                policy,
+                static_binding,
+                static_evidence,
+                static_backing_payloads,
+            )?;
+            validate_exporter_policy_application(
+                policy,
+                dynamic_binding,
+                dynamic_evidence,
+                dynamic_backing_payloads,
+            )?;
+            let pair = validate_exporter_pair_evidence(
+                &ExporterSampleContract::normative(),
+                static_binding,
+                static_evidence,
+                dynamic_binding,
+                dynamic_evidence,
+            )?;
+            let static_record = validate_exporter_member_record(
+                &ExporterSampleContract::normative(),
+                static_binding,
+                static_evidence,
+                static_record_bytes,
+            )?;
+            let dynamic_record = validate_exporter_member_record(
+                &ExporterSampleContract::normative(),
+                dynamic_binding,
+                dynamic_evidence,
+                dynamic_record_bytes,
+            )?;
+            if !self
+                .inventory
+                .cases
+                .iter()
+                .any(|case| case.scenario == static_binding.scenario_id)
+            {
+                return Err(PluginStatsError::new(
+                    "exporter evidence names an unknown inventory scenario",
+                ));
+            }
+            let member_order = self
+                .pair_schedule
+                .iter()
+                .find(|scheduled| scheduled.pair_id == static_binding.pair_id)
+                .map(|scheduled| scheduled.member_order)
+                .ok_or_else(|| {
+                    PluginStatsError::new("exporter pair is absent from the schedule")
+                })?;
+            Ok((pair, static_record, dynamic_record, member_order))
+        })();
+        let (pair, static_record, dynamic_record, member_order) = match evidence_result {
+            Ok(validated) => validated,
+            Err(error) => {
+                self.finish_active(
+                    ControlledAttemptDecision::ValidFailure,
+                    Some(format!("controlled exporter evidence is invalid: {error}")),
+                )?;
+                return Ok(PairAttemptDecision::ExperimentFailed);
+            }
+        };
+
+        let members = member_order
+            .into_iter()
+            .map(|variant| RawMemberTerminalRecord {
+                variant,
+                outcome: MemberTerminalOutcome::Completed,
+            })
+            .collect();
+        let decision = self.record_pair(RawPairTerminalRecord {
+            scenario: static_binding.scenario_id.clone(),
+            pair_id: static_binding.pair_id.clone(),
+            member_order,
+            members,
+            asserted_reason: None,
+            asserted_disposition: None,
+        })?;
+        if decision == PairAttemptDecision::RetainPair {
+            let (receiver_protocol, receiver_protocol_authority_blake3) = receiver_identity
+                .map(|(protocol, authority)| (Some(protocol), Some(authority)))
+                .unwrap_or((None, None));
+            self.exporter_pair_history
+                .push(ControlledExporterPairRecord {
+                    experiment_attempt: active_ordinal,
+                    scenario: static_binding.scenario_id.clone(),
+                    pair_id: static_binding.pair_id.clone(),
+                    receiver_protocol,
+                    receiver_protocol_authority_blake3,
+                    static_record,
+                    static_member: pair.static_member,
+                    static_evidence: static_evidence.clone(),
+                    static_backing_payloads: static_backing_payloads.to_vec(),
+                    dynamic_record,
+                    dynamic_member: pair.dynamic_member,
+                    dynamic_evidence: dynamic_evidence.clone(),
+                    dynamic_backing_payloads: dynamic_backing_payloads.to_vec(),
+                });
+        }
+        Ok(decision)
+    }
+
+    /// Evaluate a caller-built fixture without granting production authority.
     ///
     /// Pair replacement is authorized only through [`Self::record_pair`]. Any
     /// caller-populated [`PairedCase::invalidation_attempts`] is therefore a
-    /// product/protocol failure, regardless of its asserted disposition.
-    pub fn finish_measurements(
+    /// product/protocol failure, regardless of its asserted disposition. Even a
+    /// statistically passing fixture terminates as a valid failure because the
+    /// caller also chose its observation paths and values.
+    pub fn finish_non_authoritative_measurements(
         &mut self,
         input: &SimultaneousGateInput,
         observed: &NonAuthoritativeExperimentFixture,
@@ -882,6 +1280,117 @@ impl ControlledMeasurementEvaluator {
                 report.invalidation_reason.clone(),
             )
         } else if report.passed {
+            (
+                ControlledAttemptDecision::ValidFailure,
+                Some(
+                    "non-authoritative measurement fixtures cannot pass a production parity gate"
+                        .to_owned(),
+                ),
+            )
+        } else {
+            (
+                ControlledAttemptDecision::ValidFailure,
+                Some("one or more controlled performance gates failed".to_owned()),
+            )
+        };
+        self.last_statistical_report = Some(report);
+        self.finish_active(decision, reason)?;
+        Ok(decision)
+    }
+
+    pub(crate) fn finish_authoritative_measurements(
+        &mut self,
+        input: &SimultaneousGateInput,
+        observed: NonAuthoritativeExperimentFixture,
+    ) -> Result<ControlledAttemptDecision, PluginStatsError> {
+        let active_ordinal = self
+            .active
+            .as_ref()
+            .map(|active| active.ordinal)
+            .ok_or_else(|| PluginStatsError::new("no controlled experiment attempt is active"))?;
+        if input
+            .cases
+            .iter()
+            .any(|case| !case.invalidation_attempts.is_empty())
+        {
+            return Err(PluginStatsError::new(
+                "authoritative measurements cannot contain caller-authored invalidations",
+            ));
+        }
+        let retained = self
+            .raw_pair_history
+            .iter()
+            .filter(|record| {
+                record.experiment_attempt == active_ordinal
+                    && record.decision == PairAttemptDecision::RetainPair
+            })
+            .collect::<Vec<_>>();
+        let expected_count = self
+            .inventory
+            .cases
+            .len()
+            .checked_mul(self.pair_schedule.len())
+            .ok_or_else(|| PluginStatsError::new("controlled matrix size overflow"))?;
+        let retained_keys = retained
+            .iter()
+            .map(|record| (record.raw.scenario.as_str(), record.raw.pair_id.as_str()))
+            .collect::<std::collections::BTreeSet<_>>();
+        if retained.len() != expected_count || retained_keys.len() != expected_count {
+            return Err(PluginStatsError::new(
+                "controlled runtime did not retain the complete exact scenario/pair matrix",
+            ));
+        }
+        for case in &self.inventory.cases {
+            for scheduled in &self.pair_schedule {
+                if !retained_keys.contains(&(case.scenario.as_str(), scheduled.pair_id.as_str())) {
+                    return Err(PluginStatsError::new(
+                        "controlled runtime omitted a checked-in scenario/pair",
+                    ));
+                }
+            }
+        }
+
+        let input = match self.derive_authoritative_exporter_rows(
+            active_ordinal,
+            input,
+            AuthoritativeExporterRowIdentity {
+                experiment_identity_blake3: &observed.identity.identity_digest,
+                source_commit: &observed.identity.source_commit,
+                static_artifact_blake3: &observed.identity.static_artifact_digest,
+                dynamic_artifact_blake3: &observed.identity.dynamic_artifact_digest,
+            },
+        ) {
+            Ok(input) => input,
+            Err(error) => {
+                let decision = ControlledAttemptDecision::ValidFailure;
+                self.finish_active(decision, Some(error.to_string()))?;
+                return Ok(decision);
+            }
+        };
+
+        let report = match evaluate_non_authoritative_simultaneous_fixture(
+            &input,
+            &observed,
+            &SimultaneousGatePolicy::normative(),
+        ) {
+            Ok(report) => report,
+            Err(error) => {
+                let decision = ControlledAttemptDecision::ValidFailure;
+                self.finish_active(
+                    decision,
+                    Some(format!(
+                        "controller-owned measurement evidence is incomplete: {error}"
+                    )),
+                )?;
+                return Ok(decision);
+            }
+        };
+        let (decision, reason) = if report.is_invalid {
+            (
+                ControlledAttemptDecision::Invalid,
+                report.invalidation_reason.clone(),
+            )
+        } else if report.passed {
             (ControlledAttemptDecision::ValidPass, None)
         } else {
             (
@@ -894,6 +1403,125 @@ impl ControlledMeasurementEvaluator {
         Ok(decision)
     }
 
+    fn derive_authoritative_exporter_rows(
+        &self,
+        active_ordinal: u8,
+        input: &SimultaneousGateInput,
+        identity: AuthoritativeExporterRowIdentity<'_>,
+    ) -> Result<SimultaneousGateInput, PluginStatsError> {
+        let exporter_cases = self
+            .inventory
+            .cases
+            .iter()
+            .filter(|case| {
+                case.measured_metrics
+                    .iter()
+                    .any(|metric| metric == "exporter_nanoseconds_per_record")
+            })
+            .collect::<Vec<_>>();
+        let expected_count = exporter_cases
+            .len()
+            .checked_mul(self.pair_schedule.len())
+            .ok_or_else(|| PluginStatsError::new("controlled exporter matrix size overflow"))?;
+        let retained = self
+            .exporter_pair_history
+            .iter()
+            .filter(|record| record.experiment_attempt == active_ordinal)
+            .collect::<Vec<_>>();
+        let retained_keys = retained
+            .iter()
+            .map(|record| (record.scenario.as_str(), record.pair_id.as_str()))
+            .collect::<std::collections::BTreeSet<_>>();
+        if retained.len() != expected_count || retained_keys.len() != expected_count {
+            return Err(PluginStatsError::new(
+                "controlled exporter history is incomplete for the exact scheduled matrix",
+            ));
+        }
+        for case in &exporter_cases {
+            for scheduled in &self.pair_schedule {
+                if !retained_keys.contains(&(case.scenario.as_str(), scheduled.pair_id.as_str())) {
+                    return Err(PluginStatsError::new(
+                        "controlled exporter history is incomplete for the exact scheduled matrix",
+                    ));
+                }
+            }
+        }
+
+        let expected_attempt = u64::from(active_ordinal)
+            .checked_sub(1)
+            .ok_or_else(|| PluginStatsError::new("experiment attempt ordinal underflow"))?;
+        let mut authoritative = input.clone();
+        for case in &mut authoritative.cases {
+            if !exporter_cases
+                .iter()
+                .any(|planned| planned.scenario == case.scenario)
+            {
+                continue;
+            }
+            case.samples
+                .retain(|sample| sample.metric != "exporter_nanoseconds_per_record");
+            for pair in retained
+                .iter()
+                .copied()
+                .filter(|pair| pair.scenario == case.scenario)
+            {
+                if pair.static_record.experiment_identity_blake3
+                    != identity.experiment_identity_blake3
+                    || pair.dynamic_record.experiment_identity_blake3
+                        != identity.experiment_identity_blake3
+                    || pair.static_record.attempt_ordinal != expected_attempt
+                    || pair.dynamic_record.attempt_ordinal != expected_attempt
+                    || pair.static_record.build_artifact_blake3 != identity.static_artifact_blake3
+                    || pair.dynamic_record.build_artifact_blake3 != identity.dynamic_artifact_blake3
+                {
+                    return Err(PluginStatsError::new(
+                        "controlled exporter history does not match the sealed experiment identity",
+                    ));
+                }
+                let scheduled = self
+                    .pair_schedule
+                    .iter()
+                    .find(|scheduled| scheduled.pair_id == pair.pair_id)
+                    .ok_or_else(|| {
+                        PluginStatsError::new(
+                            "controlled exporter history contains an unscheduled pair",
+                        )
+                    })?;
+                for variant in scheduled.member_order {
+                    let (value, artifact_digest) = match variant {
+                        Variant::Static => (
+                            pair.static_member.exporter_nanoseconds_per_record,
+                            identity.static_artifact_blake3,
+                        ),
+                        Variant::Dynamic => (
+                            pair.dynamic_member.exporter_nanoseconds_per_record,
+                            identity.dynamic_artifact_blake3,
+                        ),
+                    };
+                    case.samples.push(PairedSample {
+                        scenario: pair.scenario.clone(),
+                        pair_id: pair.pair_id.clone(),
+                        variant,
+                        metric: "exporter_nanoseconds_per_record".to_owned(),
+                        value,
+                        unit: "nanoseconds".to_owned(),
+                        commit: identity.source_commit.to_owned(),
+                        artifact_digest: artifact_digest.to_owned(),
+                        experiment_identity_digest: identity.experiment_identity_blake3.to_owned(),
+                    });
+                }
+            }
+        }
+        Ok(authoritative)
+    }
+
+    pub(crate) fn finish_authoritative_product_failure(
+        &mut self,
+        reason: String,
+    ) -> Result<(), PluginStatsError> {
+        self.finish_active(ControlledAttemptDecision::ValidFailure, Some(reason))
+    }
+
     fn finish_active(
         &mut self,
         decision: ControlledAttemptDecision,
@@ -903,13 +1531,99 @@ impl ControlledMeasurementEvaluator {
             .active
             .take()
             .ok_or_else(|| PluginStatsError::new("no controlled experiment attempt is active"))?;
+        let report_blake3 = self
+            .last_statistical_report
+            .as_ref()
+            .map(|report| canonical_jcs_blake3(report, "controlled statistical report"))
+            .transpose()?;
+        let raw_pairs = self
+            .raw_pair_history
+            .iter()
+            .filter(|record| record.experiment_attempt == active.ordinal)
+            .collect::<Vec<_>>();
+        let exporter_pairs = self
+            .exporter_pair_history
+            .iter()
+            .filter(|record| record.experiment_attempt == active.ordinal)
+            .collect::<Vec<_>>();
+        let evidence_tree = serde_json::json!({
+            "decision": decision,
+            "experiment_attempt": active.ordinal,
+            "exporter_pairs": exporter_pairs,
+            "raw_pair_history": raw_pairs,
+            "reason": reason,
+            "report_blake3": report_blake3,
+            "schema_version": 1
+        });
+        let evidence_tree_blake3 =
+            canonical_jcs_blake3(&evidence_tree, "controlled attempt evidence tree")?;
         self.history.push(ControlledAttemptRecord {
             ordinal: active.ordinal,
             decision,
             reason,
+            report_blake3,
+            evidence_tree_blake3,
         });
         Ok(())
     }
+}
+
+fn validate_exporter_policy_application(
+    policy: &ExporterObservablePolicyV1,
+    binding: &ExporterMemberBinding,
+    evidence: &ExporterMemberEvidence,
+    backing_payloads: &[SelectedBackingPayloadV1],
+) -> Result<(), PluginStatsError> {
+    if policy.evidence_mode() != binding.mode {
+        return Err(PluginStatsError::new(
+            "exporter observable policy mode does not match the member binding",
+        ));
+    }
+    if policy.observable_kind(&binding.scenario_id) != Some(binding.observable_kind) {
+        return Err(PluginStatsError::new(
+            "exporter observable policy class does not match the member binding",
+        ));
+    }
+    let policy_blake3 = policy
+        .canonical_blake3()
+        .map_err(|error| PluginStatsError::new(format!("invalid exporter policy: {error}")))?;
+    if policy_blake3 != binding.observable_policy_blake3 {
+        return Err(PluginStatsError::new(
+            "exporter observable policy digest does not match the member binding",
+        ));
+    }
+    let repetition_ordinal = u64::try_from(evidence.retained.repetition_ordinal)
+        .map_err(|_| PluginStatsError::new("retained repetition ordinal does not fit u64"))?;
+    let provenance_binding = ProvenanceBindingV1 {
+        experiment_identity_blake3: binding.experiment_identity_blake3.clone(),
+        attempt_ordinal: binding.attempt_ordinal,
+        scenario_id: binding.scenario_id.clone(),
+        pair_id: binding.pair_id.clone(),
+        member: binding.member,
+        repetition_ordinal,
+    };
+    let applied = apply_exporter_observable_policy_v1(
+        policy,
+        &provenance_binding,
+        &evidence.retained.raw_observable_bytes,
+        backing_payloads,
+    )
+    .map_err(|error| {
+        PluginStatsError::new(format!(
+            "exporter observable policy application failed: {error}"
+        ))
+    })?;
+    if applied.comparison_bytes != evidence.retained.comparison_observable_bytes {
+        return Err(PluginStatsError::new(
+            "retained comparison observable was not derived by the bound policy",
+        ));
+    }
+    if applied.provenance_receipt_bytes != evidence.retained.provenance_receipt_bytes {
+        return Err(PluginStatsError::new(
+            "retained provenance receipt was not derived by the bound policy",
+        ));
+    }
+    Ok(())
 }
 
 fn classifier_allows(classifier: &str, event: InfrastructureEvent) -> bool {
@@ -1106,7 +1820,7 @@ impl Default for ExporterSampleContract {
     }
 }
 
-/// Receipt for one active exporter pass.
+/// Non-authoritative fixture row for one active exporter pass.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ExporterRepetition {
@@ -1120,7 +1834,197 @@ pub struct ExporterRepetition {
     pub active_duration_nanoseconds: u64,
 }
 
-/// Validated exporter member summary.
+/// Lifecycle in which an exporter member was measured.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExporterEvidenceMode {
+    /// Original-static calibration used to freeze the repetition budget.
+    StaticCalibration,
+    /// Static or dynamic member of a parity pair.
+    Paired,
+}
+
+/// Artifact member represented by exporter evidence.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExporterMember {
+    /// Test-only monolithic comparator.
+    Static,
+    /// Native-plugin distribution.
+    Dynamic,
+}
+
+/// Observable boundary owned by one exporter scenario.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExporterObservableKind {
+    /// Canonical manifest of exporter-owned files and empty directories.
+    ArtifactTree,
+    /// Exact bytes written to the harness-owned output descriptor.
+    CapturedStream,
+    /// Canonical transcript recorded by the harness-owned receiver.
+    ReceiverTranscript,
+}
+
+/// Immutable pre-run facts one exporter member must match.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExporterMemberBinding {
+    /// Calibration or paired-measurement lifecycle.
+    pub mode: ExporterEvidenceMode,
+    /// Digest of the immutable experiment identity.
+    pub experiment_identity_blake3: String,
+    /// Zero-based complete-attempt ordinal.
+    pub attempt_ordinal: u64,
+    /// Frozen inventory scenario.
+    pub scenario_id: String,
+    /// Pair identifier shared by both members.
+    pub pair_id: String,
+    /// Static or dynamic member.
+    pub member: ExporterMember,
+    /// Digest of the deterministic 100,000-record input corpus.
+    pub corpus_blake3: String,
+    /// Frozen observable class.
+    pub observable_kind: ExporterObservableKind,
+    /// Digest of the pre-run observable policy.
+    pub observable_policy_blake3: String,
+    /// Digest of the executable artifact.
+    pub build_artifact_blake3: String,
+    /// Digest of the authenticated build receipt.
+    pub build_receipt_blake3: String,
+}
+
+/// Exact schema-1 receipt for one controlled exporter repetition.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExporterRepetitionReceipt {
+    /// Receipt schema version, exactly one.
+    pub schema_version: u8,
+    /// Digest of the immutable experiment identity.
+    pub experiment_identity_blake3: String,
+    /// Zero-based complete-attempt ordinal.
+    pub attempt_ordinal: u64,
+    /// Frozen inventory scenario.
+    pub scenario_id: String,
+    /// Pair identifier shared by both members.
+    pub pair_id: String,
+    /// Static or dynamic member.
+    pub member: ExporterMember,
+    /// Dense ordinal in `0..16`.
+    pub repetition_ordinal: u64,
+    /// Digest of the deterministic input corpus.
+    pub corpus_blake3: String,
+    /// Input records processed by this repetition, exactly 100,000.
+    pub processed_records: u64,
+    /// Frozen observable class.
+    pub observable_kind: ExporterObservableKind,
+    /// Digest of the exact retained raw observable.
+    pub raw_observable_blake3: String,
+    /// Digest after only policy-authorized provenance replacement.
+    pub comparison_observable_blake3: String,
+    /// Digest of the exact provenance receipt bytes.
+    pub provenance_receipt_blake3: String,
+    /// Active exporter write-and-flush duration.
+    pub active_duration_ns: u64,
+    /// Digest of the executable artifact.
+    pub build_artifact_blake3: String,
+    /// Digest of the authenticated build receipt.
+    pub build_receipt_blake3: String,
+}
+
+/// Complete retained bytes for one repetition selected as evidence.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct RetainedExporterEvidence {
+    /// Receipt ordinal whose evidence is retained.
+    pub repetition_ordinal: usize,
+    /// Exact class-specific raw observable bytes.
+    pub raw_observable_bytes: Vec<u8>,
+    /// Exact class-specific comparison observable bytes.
+    pub comparison_observable_bytes: Vec<u8>,
+    /// Exact canonical provenance receipt bytes.
+    pub provenance_receipt_bytes: Vec<u8>,
+}
+
+/// Canonical receipt vector and the retained bytes that authenticate one row.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct ExporterMemberEvidence {
+    /// Canonical compact receipt array with one trailing newline.
+    pub repetition_receipt_bytes: Vec<u8>,
+    /// Complete retained evidence for one repetition.
+    pub retained: RetainedExporterEvidence,
+}
+
+/// Validated exporter-member evidence ready for statistical reduction.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct ExporterMemberSummary {
+    /// Sum of the sixteen active repetition durations.
+    pub active_duration_nanoseconds: u64,
+    /// Exact processed-record divisor.
+    pub processed_records: u64,
+    /// Records represented by the retained repetition.
+    pub retained_artifact_records: u64,
+    /// Active nanoseconds divided by processed records.
+    pub exporter_nanoseconds_per_record: f64,
+    /// Common comparison-observable digest across all repetitions.
+    pub comparison_observable_blake3: String,
+    /// Digest of the exact canonical repetition vector.
+    pub repetition_receipts_blake3: String,
+    /// Validated per-repetition receipts.
+    pub repetitions: Vec<ExporterRepetitionReceipt>,
+}
+
+/// Validated static and dynamic members for one exporter pair.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct ExporterPairSummary {
+    /// Validated static comparator member.
+    pub static_member: ExporterMemberSummary,
+    /// Validated dynamic plugin member.
+    pub dynamic_member: ExporterMemberSummary,
+}
+
+/// Canonical post-run record binding one exporter member to its evidence.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExporterMemberRecord {
+    /// Record schema version, exactly one.
+    pub schema_version: u8,
+    /// Digest of the immutable pre-run experiment identity.
+    pub experiment_identity_blake3: String,
+    /// Zero-based complete-attempt ordinal.
+    pub attempt_ordinal: u64,
+    /// Frozen inventory scenario.
+    pub scenario_id: String,
+    /// Pair identifier shared by both members.
+    pub pair_id: String,
+    /// Static or dynamic member.
+    pub member: ExporterMember,
+    /// Sum of the sixteen active repetition durations.
+    pub active_duration_ns: u64,
+    /// Exact processed-record divisor.
+    pub processed_records: u64,
+    /// Records represented by the retained repetition.
+    pub retained_artifact_records: u64,
+    /// Common comparison-observable digest across all repetitions.
+    pub comparison_observable_blake3: String,
+    /// Digest of the exact canonical repetition vector.
+    pub repetition_receipts_blake3: String,
+    /// Ordinal of the fully retained repetition.
+    pub retained_repetition_ordinal: u64,
+    /// Retained repetition's raw-observable digest.
+    pub retained_raw_observable_blake3: String,
+    /// Retained repetition's comparison-observable digest.
+    pub retained_comparison_observable_blake3: String,
+    /// Retained repetition's provenance-receipt digest.
+    pub retained_provenance_receipt_blake3: String,
+    /// Digest of the immutable observable policy.
+    pub observable_policy_blake3: String,
+    /// Digest of the executable artifact.
+    pub build_artifact_blake3: String,
+    /// Digest of the authenticated build receipt.
+    pub build_receipt_blake3: String,
+}
+
+/// Validated non-authoritative exporter fixture summary.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ExporterSampleSummary {
@@ -1528,8 +2432,13 @@ pub fn validate_experiment_attempts(
     Ok(())
 }
 
-/// Validate and summarize the exact 16-pass exporter member construction.
-pub fn evaluate_exporter_sample(
+/// Validate a non-authoritative exact-pass exporter fixture.
+///
+/// This compatibility seam has no lifecycle mode, retained bytes, policy, or
+/// build authority and therefore cannot enforce static-calibration duration or
+/// pass a production parity gate. Use [`validate_exporter_member_evidence`] for
+/// controlled evidence.
+pub fn evaluate_non_authoritative_exporter_fixture(
     contract: &ExporterSampleContract,
     repetitions: &[ExporterRepetition],
 ) -> Result<ExporterSampleSummary, PluginStatsError> {
@@ -1581,11 +2490,6 @@ pub fn evaluate_exporter_sample(
             .checked_add(repetition.active_duration_nanoseconds)
             .ok_or_else(|| PluginStatsError::new("exporter active duration overflow"))?;
     }
-    if active_duration_nanoseconds < 30_000_000_000 {
-        return Err(PluginStatsError::new(
-            "summed active exporter duration is less than 30 seconds",
-        ));
-    }
     let exporter_nanoseconds_per_record =
         active_duration_nanoseconds as f64 / contract.processed_records as f64;
     Ok(ExporterSampleSummary {
@@ -1595,6 +2499,278 @@ pub fn evaluate_exporter_sample(
         exporter_nanoseconds_per_record,
         output_digest: first_digest.to_owned(),
         repetitions: repetitions.to_vec(),
+    })
+}
+
+/// Validate one complete exporter member against its immutable pre-run binding.
+///
+/// This function validates evidence already captured by the controlled runner;
+/// it does not grant caller-supplied files or JSON authority to pass a gate.
+pub fn validate_exporter_member_evidence(
+    contract: &ExporterSampleContract,
+    binding: &ExporterMemberBinding,
+    evidence: &ExporterMemberEvidence,
+) -> Result<ExporterMemberSummary, PluginStatsError> {
+    if contract != &ExporterSampleContract::normative() {
+        return Err(PluginStatsError::new(
+            "exporter sample parameters are an immutable performance contract",
+        ));
+    }
+    for digest in [
+        binding.experiment_identity_blake3.as_str(),
+        binding.corpus_blake3.as_str(),
+        binding.observable_policy_blake3.as_str(),
+        binding.build_artifact_blake3.as_str(),
+        binding.build_receipt_blake3.as_str(),
+    ] {
+        if !is_blake3_digest(digest) {
+            return Err(PluginStatsError::new(
+                "exporter member binding contains a malformed BLAKE3 digest",
+            ));
+        }
+    }
+    if binding.mode == ExporterEvidenceMode::StaticCalibration
+        && (binding.member != ExporterMember::Static
+            || binding.attempt_ordinal != 0
+            || binding.pair_id != "task1-static-calibration")
+    {
+        return Err(PluginStatsError::new(
+            "static exporter calibration binding is invalid",
+        ));
+    }
+
+    let value: serde_json::Value = serde_json::from_slice(&evidence.repetition_receipt_bytes)
+        .map_err(|error| {
+            PluginStatsError::new(format!("invalid exporter repetition receipt JSON: {error}"))
+        })?;
+    let mut canonical = serde_json_canonicalizer::to_vec(&value).map_err(|error| {
+        PluginStatsError::new(format!(
+            "cannot canonicalize exporter repetition receipts: {error}"
+        ))
+    })?;
+    canonical.push(b'\n');
+    if canonical != evidence.repetition_receipt_bytes {
+        return Err(PluginStatsError::new(
+            "exporter repetition receipts are not canonical JSON with one trailing newline",
+        ));
+    }
+    let repetitions: Vec<ExporterRepetitionReceipt> =
+        serde_json::from_value(value).map_err(|error| {
+            PluginStatsError::new(format!(
+                "invalid exporter repetition receipt schema: {error}"
+            ))
+        })?;
+    if repetitions.len() != contract.sample_repetitions {
+        return Err(PluginStatsError::new(
+            "exporter member must contain 16 repetitions",
+        ));
+    }
+
+    let mut active_duration_nanoseconds = 0_u64;
+    let mut comparison_observable_blake3 = None;
+    for (ordinal, repetition) in repetitions.iter().enumerate() {
+        if repetition.schema_version != 1
+            || repetition.repetition_ordinal != ordinal as u64
+            || repetition.experiment_identity_blake3 != binding.experiment_identity_blake3
+            || repetition.attempt_ordinal != binding.attempt_ordinal
+            || repetition.scenario_id != binding.scenario_id
+            || repetition.pair_id != binding.pair_id
+            || repetition.member != binding.member
+            || repetition.corpus_blake3 != binding.corpus_blake3
+            || repetition.processed_records != contract.corpus_records
+            || repetition.observable_kind != binding.observable_kind
+            || repetition.build_artifact_blake3 != binding.build_artifact_blake3
+            || repetition.build_receipt_blake3 != binding.build_receipt_blake3
+        {
+            return Err(PluginStatsError::new(
+                "exporter repetition does not match its immutable member binding",
+            ));
+        }
+        if repetition.active_duration_ns == 0 {
+            return Err(PluginStatsError::new(
+                "exporter active repetition duration must be positive",
+            ));
+        }
+        for digest in [
+            repetition.raw_observable_blake3.as_str(),
+            repetition.comparison_observable_blake3.as_str(),
+            repetition.provenance_receipt_blake3.as_str(),
+        ] {
+            if !is_blake3_digest(digest) {
+                return Err(PluginStatsError::new(
+                    "exporter repetition contains a malformed evidence digest",
+                ));
+            }
+        }
+        if comparison_observable_blake3
+            .as_deref()
+            .is_some_and(|expected| expected != repetition.comparison_observable_blake3)
+        {
+            return Err(PluginStatsError::new(
+                "exporter repetition comparison observables differ",
+            ));
+        }
+        comparison_observable_blake3 = Some(repetition.comparison_observable_blake3.clone());
+        active_duration_nanoseconds = active_duration_nanoseconds
+            .checked_add(repetition.active_duration_ns)
+            .ok_or_else(|| PluginStatsError::new("exporter active duration overflow"))?;
+    }
+    if binding.mode == ExporterEvidenceMode::StaticCalibration
+        && active_duration_nanoseconds < 30_000_000_000
+    {
+        return Err(PluginStatsError::new(
+            "static exporter calibration is shorter than 30 seconds",
+        ));
+    }
+
+    let retained = repetitions
+        .get(evidence.retained.repetition_ordinal)
+        .ok_or_else(|| PluginStatsError::new("retained exporter repetition is out of range"))?;
+    let raw_digest = format!(
+        "blake3:{}",
+        blake3::hash(&evidence.retained.raw_observable_bytes)
+    );
+    if raw_digest != retained.raw_observable_blake3 {
+        return Err(PluginStatsError::new(
+            "retained raw observable digest does not match its repetition receipt",
+        ));
+    }
+    let comparison_digest = format!(
+        "blake3:{}",
+        blake3::hash(&evidence.retained.comparison_observable_bytes)
+    );
+    if comparison_digest != retained.comparison_observable_blake3 {
+        return Err(PluginStatsError::new(
+            "retained comparison observable digest does not match its repetition receipt",
+        ));
+    }
+    let provenance_digest = format!(
+        "blake3:{}",
+        blake3::hash(&evidence.retained.provenance_receipt_bytes)
+    );
+    if provenance_digest != retained.provenance_receipt_blake3 {
+        return Err(PluginStatsError::new(
+            "retained provenance receipt digest does not match its repetition receipt",
+        ));
+    }
+
+    let comparison_observable_blake3 = comparison_observable_blake3
+        .ok_or_else(|| PluginStatsError::new("exporter repetitions are empty"))?;
+    Ok(ExporterMemberSummary {
+        active_duration_nanoseconds,
+        processed_records: contract.processed_records,
+        retained_artifact_records: contract.retained_artifact_records,
+        exporter_nanoseconds_per_record: active_duration_nanoseconds as f64
+            / contract.processed_records as f64,
+        comparison_observable_blake3,
+        repetition_receipts_blake3: format!("blake3:{}", blake3::hash(&canonical)),
+        repetitions,
+    })
+}
+
+/// Validate the canonical post-run record for one exporter member.
+///
+/// The record cannot replace the controlled evidence: every post-run scalar and
+/// digest is recomputed from `evidence` before the record is accepted.
+pub fn validate_exporter_member_record(
+    contract: &ExporterSampleContract,
+    binding: &ExporterMemberBinding,
+    evidence: &ExporterMemberEvidence,
+    record_bytes: &[u8],
+) -> Result<ExporterMemberRecord, PluginStatsError> {
+    let value: serde_json::Value = serde_json::from_slice(record_bytes).map_err(|error| {
+        PluginStatsError::new(format!("invalid exporter member record JSON: {error}"))
+    })?;
+    let mut canonical = serde_json_canonicalizer::to_vec(&value).map_err(|error| {
+        PluginStatsError::new(format!(
+            "cannot canonicalize exporter member record: {error}"
+        ))
+    })?;
+    canonical.push(b'\n');
+    if canonical != record_bytes {
+        return Err(PluginStatsError::new(
+            "exporter member record is not canonical JSON with one trailing newline",
+        ));
+    }
+    let record: ExporterMemberRecord = serde_json::from_value(value).map_err(|error| {
+        PluginStatsError::new(format!("invalid exporter member record schema: {error}"))
+    })?;
+    let summary = validate_exporter_member_evidence(contract, binding, evidence)?;
+    let retained = summary
+        .repetitions
+        .get(evidence.retained.repetition_ordinal)
+        .ok_or_else(|| PluginStatsError::new("retained exporter repetition is out of range"))?;
+    if record.schema_version != 1
+        || record.experiment_identity_blake3 != binding.experiment_identity_blake3
+        || record.attempt_ordinal != binding.attempt_ordinal
+        || record.scenario_id != binding.scenario_id
+        || record.pair_id != binding.pair_id
+        || record.member != binding.member
+        || record.active_duration_ns != summary.active_duration_nanoseconds
+        || record.processed_records != summary.processed_records
+        || record.retained_artifact_records != summary.retained_artifact_records
+        || record.comparison_observable_blake3 != summary.comparison_observable_blake3
+        || record.repetition_receipts_blake3 != summary.repetition_receipts_blake3
+        || record.retained_repetition_ordinal != evidence.retained.repetition_ordinal as u64
+        || record.retained_raw_observable_blake3 != retained.raw_observable_blake3
+        || record.retained_comparison_observable_blake3 != retained.comparison_observable_blake3
+        || record.retained_provenance_receipt_blake3 != retained.provenance_receipt_blake3
+        || record.observable_policy_blake3 != binding.observable_policy_blake3
+        || record.build_artifact_blake3 != binding.build_artifact_blake3
+        || record.build_receipt_blake3 != binding.build_receipt_blake3
+    {
+        return Err(PluginStatsError::new(
+            "exporter member record does not match its validated evidence",
+        ));
+    }
+    Ok(record)
+}
+
+/// Validate the two complete members of one paired exporter comparison.
+///
+/// This function validates evidence already captured by the controlled runner;
+/// it does not grant caller-supplied files or JSON authority to pass a gate.
+pub fn validate_exporter_pair_evidence(
+    contract: &ExporterSampleContract,
+    static_binding: &ExporterMemberBinding,
+    static_evidence: &ExporterMemberEvidence,
+    dynamic_binding: &ExporterMemberBinding,
+    dynamic_evidence: &ExporterMemberEvidence,
+) -> Result<ExporterPairSummary, PluginStatsError> {
+    if static_binding.mode != ExporterEvidenceMode::Paired
+        || dynamic_binding.mode != ExporterEvidenceMode::Paired
+        || static_binding.member != ExporterMember::Static
+        || dynamic_binding.member != ExporterMember::Dynamic
+    {
+        return Err(PluginStatsError::new(
+            "exporter pair must contain paired static and dynamic members",
+        ));
+    }
+    if static_binding.experiment_identity_blake3 != dynamic_binding.experiment_identity_blake3
+        || static_binding.attempt_ordinal != dynamic_binding.attempt_ordinal
+        || static_binding.scenario_id != dynamic_binding.scenario_id
+        || static_binding.pair_id != dynamic_binding.pair_id
+        || static_binding.corpus_blake3 != dynamic_binding.corpus_blake3
+        || static_binding.observable_kind != dynamic_binding.observable_kind
+        || static_binding.observable_policy_blake3 != dynamic_binding.observable_policy_blake3
+    {
+        return Err(PluginStatsError::new(
+            "static and dynamic exporter members do not share one immutable pair binding",
+        ));
+    }
+
+    let static_member =
+        validate_exporter_member_evidence(contract, static_binding, static_evidence)?;
+    let dynamic_member =
+        validate_exporter_member_evidence(contract, dynamic_binding, dynamic_evidence)?;
+    if static_member.comparison_observable_blake3 != dynamic_member.comparison_observable_blake3 {
+        return Err(PluginStatsError::new(
+            "static and dynamic exporter comparison observables differ",
+        ));
+    }
+    Ok(ExporterPairSummary {
+        static_member,
+        dynamic_member,
     })
 }
 
@@ -1626,6 +2802,12 @@ fn canonical_blake3<T: Serialize>(value: &T, label: &str) -> Result<String, Plug
     Ok(format!("blake3:{}", blake3::hash(&bytes).to_hex()))
 }
 
+fn canonical_jcs_blake3<T: Serialize>(value: &T, label: &str) -> Result<String, PluginStatsError> {
+    let bytes = serde_json_canonicalizer::to_vec(value)
+        .map_err(|error| PluginStatsError::new(format!("cannot canonicalize {label}: {error}")))?;
+    Ok(format!("blake3:{}", blake3::hash(&bytes)))
+}
+
 #[derive(Deserialize, Serialize)]
 struct Task1InventoryDocument {
     schema_version: u32,
@@ -1643,6 +2825,7 @@ struct Task1Scenario {
     artifact_digest: String,
     bootstrap_seed: u64,
     canonical_inventory_digest: String,
+    command: String,
     core_assignment: String,
     estimator: String,
     harness_blake3: String,
@@ -1776,6 +2959,7 @@ fn checked_in_inventory_authority() -> Result<FrozenInventoryAuthority, PluginSt
             bootstrap_seed: scenario.bootstrap_seed,
             invalidation_classifier: scenario.invalidation_classifier.clone(),
             complete_case_digest: canonical_blake3(&scenario, "Task-1 scenario")?,
+            command: parse_checked_in_command(&scenario.command)?,
         });
     }
     cases.sort_by(|left, right| left.scenario.cmp(&right.scenario));
@@ -1848,6 +3032,32 @@ fn replace_digest_field(
     Ok(output)
 }
 
+fn parse_checked_in_command(command: &str) -> Result<Vec<String>, PluginStatsError> {
+    let tokens = command
+        .split_ascii_whitespace()
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    if tokens.len() < 5
+        || tokens[0] != "taskset"
+        || tokens[1] != "-c"
+        || tokens[2].is_empty()
+        || !matches!(tokens[3].as_str(), "aiperf" | "cargo")
+        || tokens.iter().any(|token| {
+            token.is_empty()
+                || token.contains('\0')
+                || token
+                    .chars()
+                    .any(|character| matches!(character, ';' | '|' | '&' | '`'))
+                || token.contains("$(")
+        })
+    {
+        return Err(PluginStatsError::new(
+            "checked-in runtime command is not a direct taskset command template",
+        ));
+    }
+    Ok(tokens)
+}
+
 fn read_observed_file(path: &Path, label: &str) -> Result<Vec<u8>, PluginStatsError> {
     let bytes = fs::read(path).map_err(|error| {
         PluginStatsError::new(format!(
@@ -1916,6 +3126,7 @@ fn validate_experiment_identity_shape(
         &identity.harness_artifact_digest,
         &identity.mock_server_artifact_digest,
         &identity.inventory_digest,
+        &identity.authority_contract_digest,
     ] {
         if !is_blake3_digest(digest) {
             return Err(PluginStatsError::new(
@@ -2357,4 +3568,153 @@ fn type_7_quantile(values: &[f64], probability: f64) -> Result<f64, PluginStatsE
     let upper = index.ceil() as usize;
     let fraction = index - lower as f64;
     Ok(sorted[lower] + fraction * (sorted[upper] - sorted[lower]))
+}
+
+#[cfg(test)]
+mod authoritative_exporter_tests {
+    use super::*;
+
+    const EXPERIMENT: &str =
+        "blake3:1111111111111111111111111111111111111111111111111111111111111111";
+    const STATIC_ARTIFACT: &str =
+        "blake3:2222222222222222222222222222222222222222222222222222222222222222";
+    const DYNAMIC_ARTIFACT: &str =
+        "blake3:3333333333333333333333333333333333333333333333333333333333333333";
+    const OTHER_DIGEST: &str =
+        "blake3:4444444444444444444444444444444444444444444444444444444444444444";
+    const COMMIT: &str = "0123456789abcdef0123456789abcdef01234567";
+
+    fn member_record(
+        pair_id: &str,
+        member: ExporterMember,
+        artifact: &str,
+        value: f64,
+    ) -> (ExporterMemberRecord, ExporterMemberSummary) {
+        let active_duration_ns = (value * 1_600_000.0) as u64;
+        (
+            ExporterMemberRecord {
+                schema_version: 1,
+                experiment_identity_blake3: EXPERIMENT.to_owned(),
+                attempt_ordinal: 0,
+                scenario_id: "exporter_100k".to_owned(),
+                pair_id: pair_id.to_owned(),
+                member,
+                active_duration_ns,
+                processed_records: 1_600_000,
+                retained_artifact_records: 100_000,
+                comparison_observable_blake3: OTHER_DIGEST.to_owned(),
+                repetition_receipts_blake3: OTHER_DIGEST.to_owned(),
+                retained_repetition_ordinal: 0,
+                retained_raw_observable_blake3: OTHER_DIGEST.to_owned(),
+                retained_comparison_observable_blake3: OTHER_DIGEST.to_owned(),
+                retained_provenance_receipt_blake3: OTHER_DIGEST.to_owned(),
+                observable_policy_blake3: OTHER_DIGEST.to_owned(),
+                build_artifact_blake3: artifact.to_owned(),
+                build_receipt_blake3: OTHER_DIGEST.to_owned(),
+            },
+            ExporterMemberSummary {
+                active_duration_nanoseconds: active_duration_ns,
+                processed_records: 1_600_000,
+                retained_artifact_records: 100_000,
+                exporter_nanoseconds_per_record: value,
+                comparison_observable_blake3: OTHER_DIGEST.to_owned(),
+                repetition_receipts_blake3: OTHER_DIGEST.to_owned(),
+                repetitions: Vec::new(),
+            },
+        )
+    }
+
+    fn retained_pair(pair_id: &str) -> ControlledExporterPairRecord {
+        let (static_record, static_member) =
+            member_record(pair_id, ExporterMember::Static, STATIC_ARTIFACT, 10.0);
+        let (dynamic_record, dynamic_member) =
+            member_record(pair_id, ExporterMember::Dynamic, DYNAMIC_ARTIFACT, 5.0);
+        let evidence = ExporterMemberEvidence {
+            repetition_receipt_bytes: Vec::new(),
+            retained: RetainedExporterEvidence {
+                repetition_ordinal: 0,
+                raw_observable_bytes: Vec::new(),
+                comparison_observable_bytes: Vec::new(),
+                provenance_receipt_bytes: Vec::new(),
+            },
+        };
+        ControlledExporterPairRecord {
+            experiment_attempt: 1,
+            scenario: "exporter_100k".to_owned(),
+            pair_id: pair_id.to_owned(),
+            receiver_protocol: None,
+            receiver_protocol_authority_blake3: None,
+            static_record,
+            static_member,
+            static_evidence: evidence.clone(),
+            static_backing_payloads: Vec::new(),
+            dynamic_record,
+            dynamic_member,
+            dynamic_evidence: evidence,
+            dynamic_backing_payloads: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn authoritative_exporter_rows_replace_caller_values_with_validated_summaries() {
+        let mut evaluator = ControlledMeasurementEvaluator::new().expect("authority validates");
+        evaluator.exporter_pair_history = evaluator
+            .pair_schedule
+            .iter()
+            .map(|scheduled| retained_pair(&scheduled.pair_id))
+            .collect();
+        let raw_samples = evaluator
+            .pair_schedule
+            .iter()
+            .flat_map(|scheduled| {
+                [Variant::Static, Variant::Dynamic].map(|variant| PairedSample {
+                    scenario: "exporter_100k".to_owned(),
+                    pair_id: scheduled.pair_id.clone(),
+                    variant,
+                    metric: "exporter_nanoseconds_per_record".to_owned(),
+                    value: 999.0,
+                    unit: "nanoseconds".to_owned(),
+                    commit: COMMIT.to_owned(),
+                    artifact_digest: OTHER_DIGEST.to_owned(),
+                    experiment_identity_digest: OTHER_DIGEST.to_owned(),
+                })
+            })
+            .collect();
+        let input = SimultaneousGateInput {
+            cases: vec![PairedCase {
+                scenario: "exporter_100k".to_owned(),
+                primary_metric: "exporter_nanoseconds_per_record".to_owned(),
+                samples: raw_samples,
+                invalidation_attempts: Vec::new(),
+            }],
+        };
+
+        let derived = evaluator
+            .derive_authoritative_exporter_rows(
+                1,
+                &input,
+                AuthoritativeExporterRowIdentity {
+                    experiment_identity_blake3: EXPERIMENT,
+                    source_commit: COMMIT,
+                    static_artifact_blake3: STATIC_ARTIFACT,
+                    dynamic_artifact_blake3: DYNAMIC_ARTIFACT,
+                },
+            )
+            .expect("complete sealed exporter history derives rows");
+
+        assert_eq!(derived.cases[0].samples.len(), 60);
+        assert!(derived.cases[0].samples.iter().all(|sample| {
+            sample.value
+                == match sample.variant {
+                    Variant::Static => 10.0,
+                    Variant::Dynamic => 5.0,
+                }
+        }));
+        assert!(
+            derived.cases[0]
+                .samples
+                .iter()
+                .all(|sample| sample.experiment_identity_digest == EXPERIMENT)
+        );
+    }
 }

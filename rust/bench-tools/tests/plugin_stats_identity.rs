@@ -17,7 +17,7 @@ const COMMIT: &str = "0123456789abcdef0123456789abcdef01234567";
 const FORGED_DIGEST: &str =
     "blake3:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 const INVENTORY_DIGEST: &str =
-    "blake3:298ee51d2c9d319b9db3571681e4056d5b57e264661e6892d189a1179c901222";
+    "blake3:8147bb3971d1997fc3dbdeea2e78a457ebaf9ef5b7b6af4ce60603f2f12d9501";
 
 struct StatisticalFixture {
     directory: tempfile::TempDir,
@@ -408,7 +408,7 @@ fn controlled_evaluation_rejects_caller_asserted_invalidations_as_a_valid_failur
     evaluator.begin_attempt().expect("attempt starts");
     assert_eq!(
         evaluator
-            .finish_measurements(&fixture.input, &fixture.observed)
+            .finish_non_authoritative_measurements(&fixture.input, &fixture.observed)
             .expect("caller assertions are classified as a product failure"),
         ControlledAttemptDecision::ValidFailure
     );
@@ -456,7 +456,7 @@ fn controlled_evaluation_makes_the_first_statistical_failure_authoritative() {
     evaluator.begin_attempt().expect("attempt starts");
     assert_eq!(
         evaluator
-            .finish_measurements(&fixture.input, &fixture.observed)
+            .finish_non_authoritative_measurements(&fixture.input, &fixture.observed)
             .expect("complete controlled measurements evaluate"),
         ControlledAttemptDecision::ValidFailure
     );
@@ -466,7 +466,37 @@ fn controlled_evaluation_makes_the_first_statistical_failure_authoritative() {
             .expect("statistical report is retained")
             .passed
     );
+    let attempt = &evaluator.history()[0];
+    let report_bytes = serde_json_canonicalizer::to_vec(
+        evaluator
+            .last_statistical_report()
+            .expect("statistical report is retained"),
+    )
+    .expect("report canonicalizes");
+    assert_eq!(
+        attempt.report_blake3.as_deref(),
+        Some(format!("blake3:{}", blake3::hash(&report_bytes)).as_str())
+    );
+    assert!(attempt.evidence_tree_blake3.starts_with("blake3:"));
     assert!(evaluator.begin_attempt().is_err());
+}
+
+#[test]
+fn non_authoritative_fixture_cannot_create_a_valid_pass() {
+    let fixture = statistical_fixture();
+    let mut evaluator = ControlledMeasurementEvaluator::new().expect("authority validates");
+    evaluator.begin_attempt().expect("attempt starts");
+
+    assert_eq!(
+        evaluator
+            .finish_non_authoritative_measurements(&fixture.input, &fixture.observed)
+            .expect("fixture is classified without granting authority"),
+        ControlledAttemptDecision::ValidFailure
+    );
+    assert_eq!(
+        evaluator.history()[0].reason.as_deref(),
+        Some("non-authoritative measurement fixtures cannot pass a production parity gate")
+    );
 }
 
 #[test]
