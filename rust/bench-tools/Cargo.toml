@@ -51,6 +51,9 @@ tokio-stream = "0.1"
 # `sagemaker-logproxy` only: CRC32 (IEEE 802.3) checksums for AWS
 # `application/vnd.amazon.eventstream` binary frame encoding.
 crc32fast = "1"
+# The controlled-runtime affinity monitor reports a child that landed outside
+# its checked-in CPU pin without aborting the parity run.
+tracing = { workspace = true }
 
 [dev-dependencies]
 toml.workspace = true

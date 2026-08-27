@@ -13,6 +13,7 @@ use std::thread::{JoinHandle, sleep};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
+use tracing::warn;
 
 use crate::build_pair::{BuildPairReportV1, validate_authoritative_build_report_v1};
 use crate::exporter_policy::parse_exporter_observable_policy;
@@ -1638,7 +1639,7 @@ fn execute_monitored_child(
     command: &mut Command,
     deadline: Duration,
     output_limit: usize,
-    expected_affinity: Option<&BTreeSet<usize>>,
+    pinned_affinity: Option<&BTreeSet<usize>>,
 ) -> Result<BoundedChildResult, ControlledRuntimeError> {
     if deadline.is_zero() || output_limit == 0 {
         return Err(ControlledRuntimeError::new(
@@ -1683,7 +1684,7 @@ fn execute_monitored_child(
     owned.stdout_reader = Some(drain_bounded_output(stdout, output_limit));
     owned.stderr_reader = Some(drain_bounded_output(stderr, output_limit));
     let started = Instant::now();
-    let mut has_seen_expected_affinity = false;
+    let mut baseline_affinity: Option<BTreeSet<usize>> = None;
     let mut infrastructure_event = None;
     let terminal_status = loop {
         injected_child_fault("poll")?;
@@ -1693,14 +1694,33 @@ fn execute_monitored_child(
             break child_terminal_status(status);
         }
         if infrastructure_event.is_none()
-            && let Some(expected) = expected_affinity
+            && let Some(pinned) = pinned_affinity
         {
             injected_child_fault("affinity")?;
             if let Some(observed) = process_affinity(pid)? {
-                if observed == *expected {
-                    has_seen_expected_affinity = true;
-                } else if has_seen_expected_affinity {
-                    infrastructure_event = Some(InfrastructureEvent::AffinityLoss);
+                match baseline_affinity {
+                    // The kernel clamps the child against its own cpuset, not
+                    // against the controller's mask, so the first successful
+                    // observation is the only sound baseline.
+                    None => {
+                        if let FirstObservedAffinity::EscapesPin(escaped) =
+                            classify_first_observed_affinity(&observed, pinned)
+                        {
+                            warn!(
+                                pid,
+                                observed = %format_cpu_set(&observed),
+                                pinned = %format_cpu_set(pinned),
+                                escaped = %format_cpu_set(&escaped),
+                                "runtime member landed outside its checked-in CPU pin; \
+                                 monitoring the observed mask instead"
+                            );
+                        }
+                        baseline_affinity = Some(observed);
+                    }
+                    Some(ref baseline) if observed != *baseline => {
+                        infrastructure_event = Some(InfrastructureEvent::AffinityLoss);
+                    }
+                    Some(_) => {}
                 }
             }
         }
@@ -1976,29 +1996,43 @@ fn parse_cpu_list(value: &str) -> Result<BTreeSet<usize>, ControlledRuntimeError
     Ok(cpus)
 }
 
-/// Reduces a checked-in pin to the CPUs this host can actually install.
+/// How a child's first observed CPU-affinity mask relates to its checked-in pin.
+#[derive(Debug, PartialEq, Eq)]
+enum FirstObservedAffinity {
+    /// The child landed inside the checked-in pin, so the pin was honoured.
+    HonoursPin,
+    /// The child holds CPUs the pin never asked for, listed in ascending order.
+    EscapesPin(Vec<usize>),
+}
+
+/// Classifies a child's first observed mask against the checked-in pin.
 ///
-/// `taskset` asks for the checked-in list, but `sched_setaffinity` silently
-/// intersects it with the CPUs the controller is itself allowed to use. A
-/// matrix pinned above the host's CPU count would therefore leave the affinity
-/// monitor comparing the child against a set it can never hold, so the monitor
-/// would never arm and affinity loss would go unobserved with no diagnostic.
-/// The intersection is the set the child actually carries; an empty one means
-/// the pin is unrepresentable here and the member is refused rather than run
-/// unmonitored.
-fn representable_affinity(
+/// The controller cannot predict the mask a child will carry: `sched_setaffinity`
+/// clamps the request against the *target's* cpuset-allowed set, not against the
+/// caller's own mask, so a child can hold CPUs disjoint from its parent's. The
+/// monitor therefore arms on whatever the child is first observed holding and
+/// only uses the pin to judge whether that baseline is credible. A baseline that
+/// is a subset of (or equal to) the pin means `taskset` took effect; a baseline
+/// reaching outside the pin is reported and still monitored, because a stable
+/// wider mask is a weaker signal than no affinity monitoring at all.
+fn classify_first_observed_affinity(
+    observed: &BTreeSet<usize>,
     pinned: &BTreeSet<usize>,
-) -> Result<BTreeSet<usize>, ControlledRuntimeError> {
-    // pid 0 asks for the calling thread's own mask.
-    let host = process_affinity(0)?
-        .ok_or_else(|| ControlledRuntimeError::new("cannot inspect controller CPU affinity"))?;
-    let representable: BTreeSet<usize> = pinned.intersection(&host).copied().collect();
-    if representable.is_empty() {
-        return Err(ControlledRuntimeError::new(
-            "checked-in CPU-affinity list is unrepresentable on this host",
-        ));
+) -> FirstObservedAffinity {
+    let escaped: Vec<usize> = observed.difference(pinned).copied().collect();
+    if escaped.is_empty() {
+        FirstObservedAffinity::HonoursPin
+    } else {
+        FirstObservedAffinity::EscapesPin(escaped)
     }
-    Ok(representable)
+}
+
+/// Renders a CPU set as an ascending comma-separated list for diagnostics.
+fn format_cpu_set<'a, I: IntoIterator<Item = &'a usize>>(cpus: I) -> String {
+    cpus.into_iter()
+        .map(usize::to_string)
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 fn drain_bounded_output<R>(
@@ -2212,12 +2246,12 @@ fn execute_member(
     let deadline = Duration::from_secs(case.minimum_duration_seconds)
         .checked_mul(DEADLINE_MULTIPLIER)
         .ok_or_else(|| ControlledRuntimeError::new("runtime member deadline overflow"))?;
-    let expected_affinity = representable_affinity(&parse_cpu_list(&case.command[2])?)?;
+    let pinned_affinity = parse_cpu_list(&case.command[2])?;
     let result = execute_monitored_child(
         &mut command,
         deadline,
         MAX_MEMBER_OUTPUT_BYTES,
-        Some(&expected_affinity),
+        Some(&pinned_affinity),
     )?;
     let infrastructure_event = result.infrastructure_event;
     let terminal_evidence = TerminalMemberEvidenceV1 {
