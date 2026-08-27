@@ -52,8 +52,10 @@ use crate::endpoints::tier2::{
     SolidoRagEndpoint, TemplateEndpointFactory, VideoGenerationEndpoint,
 };
 
-pub(crate) fn legacy_descriptor_for(endpoint_type: EndpointType) -> &'static EndpointDescriptor {
-    match endpoint_type {
+pub(crate) fn legacy_descriptor_for(
+    endpoint_type: EndpointType,
+) -> Option<&'static EndpointDescriptor> {
+    Some(match endpoint_type {
         EndpointType::AudioTranscription => AudioTranscriptionEndpoint.descriptor(),
         EndpointType::Chat => ChatEndpoint.descriptor(),
         EndpointType::Completions => CompletionsEndpoint.descriptor(),
@@ -73,7 +75,8 @@ pub(crate) fn legacy_descriptor_for(endpoint_type: EndpointType) -> &'static End
         EndpointType::SolidoRag => SolidoRagEndpoint.descriptor(),
         EndpointType::Raw => crate::endpoints::RawEndpoint.descriptor(),
         EndpointType::Template => crate::endpoints::TemplateEndpoint.descriptor(),
-    }
+        _ => return None,
+    })
 }
 
 /// Open canonical endpoint identifier.

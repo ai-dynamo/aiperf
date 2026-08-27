@@ -368,7 +368,12 @@ impl EndpointConfig {
             self.endpoint_type = EndpointType::Template;
         }
         let endpoint_type = self.endpoint_type;
-        let descriptor = legacy_descriptor_for(endpoint_type);
+        let descriptor = legacy_descriptor_for(endpoint_type).ok_or_else(|| {
+            EndpointError::InvalidConfig(format!(
+                "endpoint type {:?} has no protocol-v1 compatibility descriptor",
+                endpoint_type.as_str()
+            ))
+        })?;
         let raw = RawEndpointConfig::from(self).validate_against(
             descriptor.supports_streaming,
             descriptor.requires_form_data,

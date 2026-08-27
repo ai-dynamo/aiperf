@@ -232,6 +232,11 @@ impl MetricTagId {
     }
 }
 
+/// Return the static catalog spelling for one built-in tag.
+pub(crate) const fn builtin_name(id: MetricTagId) -> &'static str {
+    BUILTIN_NAMES[id.index()]
+}
+
 impl Display for MetricTagId {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> FmtResult {
         formatter.write_str(self.as_str())
