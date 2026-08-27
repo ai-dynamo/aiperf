@@ -6712,6 +6712,147 @@ mod tests {
         );
     }
 
+    #[test]
+    fn receipt_partition_view_acquires_before_serializing() {
+        let run = StreamRunIdentity::new(LogicalReplayRunId::from_bytes([0xe5; 32]));
+        let budget = quarantine_reporter_budget();
+        let mut reporter = BudgetOwnedStreamingIssueReporter::new(
+            run,
+            session_quarantine_policy(),
+            budget.clone(),
+        )
+        .unwrap_or_else(|error| panic!("budget-owned reporter: {error}"));
+        let barrier = test_barrier(run, 2);
+        let view = futures::executor::block_on(reporter.receipt_partition_view(&barrier))
+            .unwrap_or_else(|error| panic!("prepare partition view: {error}"));
+
+        // The reporter's only prior charge is its exact submission-queue lease,
+        // so the peak equals the retained total exactly when — and only when —
+        // one aggregate acquisition precedes serialization and is split down to
+        // the realized payload and view leases with nothing over-acquired.
+        let snapshot = budget.snapshot();
+        assert_eq!(
+            snapshot.used_bytes,
+            QUEUE_CHARGE_BYTES + view.payload_charge_bytes() + view.view_charge_bytes()
+        );
+        assert_eq!(snapshot.high_water_bytes, snapshot.used_bytes);
+        assert_eq!(snapshot.high_water_items, snapshot.used_items);
+        assert_eq!(view.payload_charge_bytes(), view.payload_bytes().len());
+    }
+
+    #[test]
+    fn export_failure_acquires_aggregate_before_allocation() {
+        let run = StreamRunIdentity::new(LogicalReplayRunId::from_bytes([0xe6; 32]));
+        let generation = CheckpointGeneration::new(
+            CheckpointEpoch::new(2),
+            ContentDigest::from_bytes([0xe7; 32]),
+        );
+        let sink_id = component("native_report");
+        let reporter_budget = StreamingResourceBudget::new(super::super::budget::BudgetLimits {
+            max_items: 17,
+            max_bytes: QUEUE_CHARGE_BYTES + 32 * 1024,
+        })
+        .unwrap_or_else(|error| panic!("valid reporter budget: {error}"));
+        let export_budget = StreamingResourceBudget::new(super::super::budget::BudgetLimits {
+            max_items: 9,
+            max_bytes: 32 * 1024,
+        })
+        .unwrap_or_else(|error| panic!("valid export budget: {error}"));
+        let mut reporter = BudgetOwnedStreamingIssueReporter::new(
+            run,
+            export_recomputation_policy(),
+            reporter_budget,
+        )
+        .unwrap_or_else(|error| panic!("budget-owned reporter: {error}"));
+        let issue = OrdinaryStreamingIssue::export(
+            run,
+            sink_id.clone(),
+            generation.clone(),
+            StreamingIssueClass::Permanent,
+            ContentDigest::from_bytes([0xc3; 32]),
+            0,
+            ContentDigest::from_bytes([0xc4; 32]),
+            OrdinaryStreamingFailure::Export(ResultExportError::failure(
+                ResultExportFailureCode::Attempt,
+            )),
+        )
+        .unwrap_or_else(|error| panic!("valid export issue: {error}"));
+        let prepared = futures::executor::block_on(reporter.prepare_export_attempt_failure(
+            &run,
+            &generation,
+            &sink_id,
+            0,
+            ResultSinkAttemptOutcome::Failed(issue),
+            &export_budget,
+        ))
+        .unwrap_or_else(|error| panic!("prepare export failure: {error}"));
+
+        // The export budget is touched by this preparation alone, so its peak is
+        // the aggregate acquisition and its retained total is the exact split.
+        let expected = prepared.receipt.encoded.charged_bytes()
+            + prepared.receipt.parsed_charge_bytes();
+        let snapshot = export_budget.snapshot();
+        assert_eq!(snapshot.used_items, 2);
+        assert_eq!(snapshot.used_bytes, expected);
+        assert_eq!(snapshot.high_water_bytes, expected);
+        assert_eq!(
+            prepared.receipt.encoded.charged_bytes(),
+            prepared.receipt.encoded.as_bytes().len()
+        );
+        drop(prepared);
+        assert_eq!(export_budget.snapshot().used_bytes, 0);
+    }
+
+    #[test]
+    fn quarantine_install_acquires_before_payload_copy() {
+        let run = StreamRunIdentity::new(LogicalReplayRunId::from_bytes([0xe8; 32]));
+        let input_domain = StreamingInputDomainIdentity::new(
+            ContentDigest::from_bytes([0xe9; 32]),
+            ImmutableObjectIdentity::from_bytes([0xea; 32]),
+        );
+        let (mut reporter, issue_id) = quarantine_seeded_reporter(run, &input_domain, 0xb4, 7);
+        let entries = b"canonical-tombstones";
+        let root = ContentDigest::from_bytes(*blake3::hash(entries).as_bytes());
+        let view = CheckedSessionQuarantineTombstoneView::for_test(run, root, 4, entries);
+        let barrier = test_barrier(run, 3);
+
+        // A budget that cannot admit the aggregate refuses with a typed
+        // install-budget failure rather than panicking, and retains nothing.
+        let starved = StreamingResourceBudget::new(super::super::budget::BudgetLimits {
+            max_items: 2,
+            max_bytes: entries.len(),
+        })
+        .unwrap_or_else(|error| panic!("valid starved budget: {error}"));
+        assert!(matches!(
+            futures::executor::block_on(reporter.prepare_session_quarantine_install(
+                &view,
+                issue_id,
+                &barrier,
+                &starved,
+            )),
+            Err(StreamingReliabilityError::QuarantineInstallBudget(_))
+        ));
+        assert_eq!(starved.snapshot().used_items, 0);
+        assert_eq!(starved.snapshot().used_bytes, 0);
+
+        let install_budget = quarantine_install_budget();
+        let prepared = futures::executor::block_on(reporter.prepare_session_quarantine_install(
+            &view,
+            issue_id,
+            &barrier,
+            &install_budget,
+        ))
+        .unwrap_or_else(|error| panic!("prepare quarantine install: {error}"));
+        let expected = prepared.payload_charge_bytes() + prepared.view_charge_bytes();
+        let snapshot = install_budget.snapshot();
+        assert_eq!(snapshot.used_items, 2);
+        assert_eq!(snapshot.used_bytes, expected);
+        assert_eq!(snapshot.high_water_bytes, expected);
+        assert_eq!(prepared.payload_charge_bytes(), entries.len());
+        drop(prepared);
+        assert_eq!(install_budget.snapshot().used_bytes, 0);
+    }
+
     /// Mint one committed, final, participant-free checkpoint generation.
     fn committed_final_generation(
         run: StreamRunIdentity,
