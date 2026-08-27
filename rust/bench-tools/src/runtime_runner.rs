@@ -232,7 +232,8 @@ struct RuntimeMemberOutputV1 {
 /// Every field is sealed before the child starts. A child cannot widen its own
 /// admission: the controller compares the child's declared binding against this
 /// expectation before any exporter sample is constructed.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct ExporterChildExpectationV1 {
     /// Digest of the immutable experiment identity.
     pub experiment_identity_blake3: String,
