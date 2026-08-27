@@ -700,12 +700,13 @@ git commit -m "fix(runtime): bind checkpoint participants to logical runs"
 
 **Budget contract correction:**
 `artifacts/streaming-design/checkpoint-backend-budget-contract-correction.md`.
-Task 5B owns the backend/read vocabulary below; it does not reopen Task 5A-R's
-run-authority behavior.
+Task 5B owns the backend/read vocabulary and exact-successor epoch overflow
+below; it does not reopen Task 5A-R's run-authority behavior.
 
 **Files:**
 - Modify: `rust/runtime/src/streaming/checkpoint.rs`; Task 5B adds only the
-  stable backend/read budget error vocabulary and `Display` branches below.
+  stable backend/read budget errors, exact-successor epoch overflow, and
+  `Display` branches below.
 - Create: `rust/runtime/src/streaming/checkpoint_backend.rs`
 - Create: `rust/runtime/src/streaming/checkpoints.rs`
 - Create: `rust/runtime/src/streaming/checkpoints/memory.rs`
@@ -953,6 +954,46 @@ pub enum CheckpointError {
         required_bytes: u64,
         max_bytes: u64,
     },
+    GenerationEpochOverflow {
+        previous: CheckpointGeneration,
+    },
+}
+
+const INITIAL_CHECKPOINT_EPOCH: CheckpointEpoch = CheckpointEpoch::new(1);
+
+struct ValidatedCommitMetadata {
+    previous_digest: Option<ContentDigest>,
+    epoch: CheckpointEpoch,
+    metadata: CheckpointCommitMetadata,
+}
+
+fn validate_commit_metadata(
+    expected: &Option<CheckpointGeneration>,
+    metadata: CheckpointCommitMetadata,
+) -> Result<ValidatedCommitMetadata, CheckpointError> {
+    if metadata.previous.as_ref() != expected.as_ref() {
+        return Err(CheckpointError::ObjectVerification);
+    }
+    let epoch = match expected {
+        None => INITIAL_CHECKPOINT_EPOCH,
+        Some(previous) => CheckpointEpoch::new(
+            previous
+                .epoch()
+                .get()
+                .checked_add(1)
+                .ok_or_else(|| CheckpointError::GenerationEpochOverflow {
+                    previous: previous.clone(),
+                })?,
+        ),
+    };
+    if metadata.epoch != epoch {
+        return Err(CheckpointError::ObjectVerification);
+    }
+    Ok(ValidatedCommitMetadata {
+        previous_digest: expected.as_ref().map(|generation| generation.digest().clone()),
+        epoch,
+        metadata,
+    })
 }
 
 pub(crate) struct PrevalidatedCheckpointGenerationCandidate {
@@ -1154,16 +1195,43 @@ Self::ResultIndexReadBudgetTooSmall {
     formatter,
     "result-index page requires {required_bytes} retained bytes but the caller allowed {max_bytes}",
 ),
+Self::GenerationEpochOverflow { previous } => write!(
+    formatter,
+    "checkpoint generation epoch overflow after {previous:?}",
+),
 ```
 
 `begin_generation` first requires its explicit `run` to equal
 `expectations.run`, then freezes both into the transaction before any staging.
 Every staged `ResultSegmentDescriptor.run` must equal that transaction run.
-`commit` requires metadata's explicitly named semantic digests to match, builds
-the canonical candidate with the same run, and consumes it through complete
-prevalidation. Under exclusive state access it compares that run's expected
-head, performs the private infallible committed transition, and publishes
-prebuilt objects plus the new head without a later fallible call. The memory
+As `commit`'s first validation, `validate_commit_metadata` requires
+`metadata.previous` to equal the transaction's complete frozen expected
+`CheckpointGeneration` (epoch and digest), not merely its digest. With no
+expected generation, the only accepted epoch is
+`INITIAL_CHECKPOINT_EPOCH == 1`. With an expected generation, the only accepted
+epoch is `expected.epoch + 1` under `checked_add`; `u64::MAX` returns the typed
+`GenerationEpochOverflow { previous }` refusal. A mismatched predecessor or
+nonconsecutive epoch returns `ObjectVerification`. The validated token derives
+the candidate predecessor digest only from the frozen expected generation, so
+caller metadata cannot make the candidate lineage diverge from the later CAS
+comparison.
+
+`validate_commit_metadata` runs before acquiring storage, borrowing
+`MemoryState`, or looking up the current head. Its `ValidatedCommitMetadata`
+token is the only input accepted by candidate construction. The test-only
+`seed_nonempty_committed_generation_at_epoch` exists solely to reach the
+otherwise impractical `u64::MAX` overflow boundary; it installs a completely
+valid typed generation/object inventory. The test-only `live_budget_usage`
+snapshot contains current used items/bytes for all five backend budgets and
+deliberately excludes high-water telemetry, so failed attempts can be compared
+without mistaking historical telemetry for retained authority.
+
+Only after this lineage check does `commit` require metadata's explicitly named
+semantic digests to match, build the canonical candidate with the same run, and
+consume it through complete prevalidation. Under exclusive state access it
+compares that run's same frozen expected head, performs the private infallible
+committed transition, and publishes prebuilt objects plus the new head without a
+later fallible call. The memory
 reference stores a separate head and immutable object namespace for each
 `StreamRunIdentity`; a commit or stale writer on one run cannot observe, replace,
 or conflict with another run's head.
@@ -1396,33 +1464,110 @@ async fn stale_writer_cannot_merge_or_replace_head() {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn commit_metadata_must_match_frozen_predecessor_and_exact_next_epoch() {
+    let backend = MemoryCheckpointBackend::new(support::backend_limits()).unwrap();
+    let run = support::run_id(1);
+    let baseline = support::commit_generation_with_segment(&backend, run, None, 1)
+        .await
+        .unwrap();
+    let head_before = baseline.generation().clone();
+    let inventory_before = backend.immutable_object_inventory(&run);
+    let usage_before = backend.live_budget_usage();
+
+    for metadata in [
+        support::metadata_with_lineage(None, 2),
+        support::metadata_with_lineage(Some(support::same_epoch_wrong_digest(&head_before)), 2),
+        support::metadata_with_lineage(Some(head_before.clone()), 3),
+    ] {
+        let transaction = support::transaction_with_one_segment_after(
+            &backend,
+            run,
+            head_before.clone(),
+        )
+        .await;
+        assert_eq!(
+            transaction.commit(metadata).await.unwrap_err(),
+            CheckpointError::ObjectVerification,
+        );
+        assert_eq!(support::latest_generation(&backend, run).await, head_before);
+        assert_eq!(backend.immutable_object_inventory(&run), inventory_before);
+        assert_eq!(backend.live_budget_usage(), usage_before);
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn maximum_frozen_epoch_refuses_overflow_before_state_access() {
+    let backend = MemoryCheckpointBackend::new(support::backend_limits()).unwrap();
+    let run = support::run_id(1);
+    let maximum = support::seed_nonempty_committed_generation_at_epoch(
+        &backend,
+        run,
+        u64::MAX,
+    );
+    let inventory_before = backend.immutable_object_inventory(&run);
+    let usage_before = backend.live_budget_usage();
+    let transaction = support::transaction_with_one_segment_after(
+        &backend,
+        run,
+        maximum.clone(),
+    )
+    .await;
+
+    assert_eq!(
+        transaction
+            .commit(support::metadata_with_lineage(Some(maximum.clone()), u64::MAX))
+            .await
+            .unwrap_err(),
+        CheckpointError::GenerationEpochOverflow {
+            previous: maximum.clone(),
+        },
+    );
+    assert_eq!(support::latest_generation(&backend, run).await, maximum);
+    assert_eq!(backend.immutable_object_inventory(&run), inventory_before);
+    assert_eq!(backend.live_budget_usage(), usage_before);
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn fault_after_prevalidation_occurs_before_publication_and_changes_nothing() {
     let backend = MemoryCheckpointBackend::new(support::backend_limits()).unwrap();
     let run = support::run_id(1);
-    let head_before = backend
+    let baseline = support::commit_generation_with_segment(&backend, run, None, 1)
+        .await
+        .unwrap();
+    let reader = backend
         .open_latest(&run, &support::expectations(run))
         .await
         .unwrap()
-        .map(|reader| reader.generation().clone());
+        .unwrap();
+    let segment_reader = reader
+        .read_segment(baseline.only_result_descriptor())
+        .await
+        .unwrap();
+    let head_before = reader.generation().clone();
     let objects_before = backend.immutable_object_inventory(&run);
+    let usage_before = backend.live_budget_usage();
+    assert!(usage_before.storage.used_items > 0);
+    assert!(usage_before.reads.used_items > 0);
     backend.arm_test_fault(TestMemoryFault::AfterPrevalidationBeforePublication);
-    let transaction = support::transaction_with_one_segment(&backend, run).await;
+    let transaction = support::transaction_with_one_segment_after(
+        &backend,
+        run,
+        head_before.clone(),
+    )
+    .await;
 
-    assert!(transaction.commit(support::metadata_at(1)).await.is_err());
+    assert!(transaction.commit(support::metadata_at(2)).await.is_err());
     assert_eq!(
         backend
             .open_latest(&run, &support::expectations(run))
             .await
             .unwrap()
             .map(|reader| reader.generation().clone()),
-        head_before,
+        Some(head_before),
     );
     assert_eq!(backend.immutable_object_inventory(&run), objects_before);
-    assert_eq!(backend.budget_snapshots().storage.used_items, 0);
-    assert_eq!(backend.budget_snapshots().storage.used_bytes, 0);
-    assert_eq!(backend.budget_snapshots().transactions.used_items, 0);
-    assert_eq!(backend.budget_snapshots().prepared_indexes.used_items, 0);
-    assert_eq!(backend.budget_snapshots().result_summaries.used_items, 0);
+    assert_eq!(backend.live_budget_usage(), usage_before);
+    assert!(!segment_reader.payload_bytes().is_empty());
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -1545,13 +1690,25 @@ async fn existing_immutable_objects_do_not_grant_cross_generation_or_run_read_au
         .unwrap();
     let superseded_descriptor = superseded.only_result_descriptor().clone();
     let foreign_descriptor = foreign.only_result_descriptor().clone();
+    let superseded_participant = superseded.only_participant_descriptor().clone();
+    let foreign_participant = foreign.only_participant_descriptor().clone();
 
     assert!(backend
         .immutable_object_inventory(&run)
+        .result_payloads()
         .contains(&superseded_descriptor.payload_digest));
     assert!(backend
         .immutable_object_inventory(&other)
+        .result_payloads()
         .contains(&foreign_descriptor.payload_digest));
+    assert!(backend
+        .immutable_object_inventory(&run)
+        .participant_payloads()
+        .contains(&superseded_participant.content_digest));
+    assert!(backend
+        .immutable_object_inventory(&other)
+        .participant_payloads()
+        .contains(&foreign_participant.content_digest));
 
     let reader = backend
         .open_latest(&run, &support::expectations(run))
@@ -1568,6 +1725,16 @@ async fn existing_immutable_objects_do_not_grant_cross_generation_or_run_read_au
     assert_eq!(backend.budget_snapshots().reads, reads_before);
     assert_eq!(
         reader.read_segment(&foreign_descriptor).await.unwrap_err(),
+        CheckpointError::ObjectVerification,
+    );
+    assert_eq!(backend.budget_snapshots().reads, reads_before);
+    assert_eq!(
+        reader.read_participant(&superseded_participant).await.unwrap_err(),
+        CheckpointError::ObjectVerification,
+    );
+    assert_eq!(backend.budget_snapshots().reads, reads_before);
+    assert_eq!(
+        reader.read_participant(&foreign_participant).await.unwrap_err(),
         CheckpointError::ObjectVerification,
     );
     assert_eq!(backend.budget_snapshots().reads, reads_before);
@@ -1802,6 +1969,35 @@ fn compare_expected(
     Ok(())
 }
 
+fn build_prevalidated_candidate(
+    transaction: &MemoryGenerationTransaction,
+    validated: ValidatedCommitMetadata,
+) -> Result<PrevalidatedCheckpointGenerationCandidate, CheckpointError> {
+    let ValidatedCommitMetadata {
+        previous_digest,
+        epoch,
+        metadata,
+    } = validated;
+    CheckpointGenerationCandidate::new(
+        epoch,
+        previous_digest,
+        metadata.cut,
+        &transaction.expectations.participant_plan,
+        metadata.execution_plan_digest,
+        metadata.result_plan_digest,
+        transaction.participant_descriptors(),
+        transaction.result_index_root(),
+        metadata.is_final,
+        metadata.terminal_reason,
+    )?
+    .prevalidate_for_publication(
+        &transaction.run,
+        &transaction.expectations.participant_plan,
+        &transaction.expectations.execution_plan_digest,
+        &transaction.expectations.result_plan_digest,
+    )
+}
+
 fn publish_prevalidated(
     state: &mut MemoryState,
     run: StreamRunIdentity,
@@ -1827,6 +2023,12 @@ fn publish_prevalidated(
     Ok(committed)
 }
 ```
+
+`commit` calls `validate_commit_metadata(&self.expected, metadata)` before the
+first budget acquisition or `MemoryState` access and passes the returned token
+to `build_prevalidated_candidate`; there is no candidate-building overload that
+accepts raw `CheckpointCommitMetadata`. All storage objects and leases are also
+fully prepared before `publish_prevalidated` borrows `MemoryState`.
 
 Keep storage behind `Rc<RefCell<MemoryState>>`; it is test/reference state on one
 local runtime, not a shared hot-path lock. Resolve the `MemoryRunHead` by the
@@ -2129,6 +2331,58 @@ async fn post_commit_failure_does_not_roll_back_authoritative_head() {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn one_coordinator_commits_consecutive_barriers_against_its_advanced_head() {
+    let mut fixture = coordinator_support::coordinator_fixture();
+    let first = fixture
+        .coordinator
+        .commit_barrier(coordinator_support::barrier_at(3), Vec::new())
+        .await
+        .unwrap();
+    let second = fixture
+        .coordinator
+        .commit_barrier(coordinator_support::barrier_at(7), Vec::new())
+        .await
+        .unwrap();
+
+    assert_eq!(second.previous(), Some(first.generation_ref().digest()));
+    assert_eq!(
+        fixture
+            .backend
+            .open_latest(&fixture.run, &fixture.expectations)
+            .await
+            .unwrap()
+            .unwrap()
+            .generation(),
+        second.generation(),
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn notification_failure_advances_expected_before_same_coordinator_next_barrier() {
+    let mut fixture = coordinator_support::coordinator_fixture();
+    fixture.participant("session").fail_first_commit_notification();
+    assert!(matches!(
+        fixture
+            .coordinator
+            .commit_barrier(coordinator_support::barrier_at(3), Vec::new())
+            .await,
+        Err(CheckpointError::PostCommitNotification { .. })
+    ));
+    let first = fixture.backend.latest_generation(&fixture.run).unwrap();
+    assert_eq!(fixture.coordinator.expected(), Some(&first));
+    assert_eq!(fixture.coordinator.pending_notification_generation(), Some(&first));
+
+    let second = fixture
+        .coordinator
+        .commit_barrier(coordinator_support::barrier_at(7), Vec::new())
+        .await
+        .unwrap();
+    assert_eq!(second.previous(), Some(first.digest()));
+    assert_eq!(fixture.participant("session").commit_notifications(), 2);
+    assert!(fixture.coordinator.pending_notification_generation().is_none());
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn greater_epoch_receipt_from_another_run_never_reaches_participant() {
     let mut fixture = coordinator_support::coordinator_fixture_for_run(1);
     let foreign = fixture
@@ -2155,11 +2409,13 @@ CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime -
 
 ```rust
 // barrier -> views -> validate -> stage -> CAS -> notifications
+self.retry_pending_notifications().await?;
 let views = self.collect_views(&barrier).await?;
 self.plan.validate_exact_set(&views)?;
+let expected = self.expected.clone();
 let mut transaction = self.backend.begin_generation(
     self.run,
-    self.expected,
+    expected,
     self.generation_expectations.clone(),
 ).await?;
 for view in views {
@@ -2167,7 +2423,10 @@ for view in views {
 }
 transaction.stage_results(&mut result_partitions).await?;
 let committed = transaction.commit(self.metadata(&barrier)?).await?;
+self.expected = Some(committed.generation());
+self.pending_notification = Some(committed.clone());
 self.notify_committed(&committed).await?;
+self.pending_notification = None;
 Ok(committed)
 ```
 
@@ -2179,12 +2438,21 @@ receipt whose run differs from their initialized/frozen run before considering
 generation ordering or descriptor-digest idempotency. Thus a greater-epoch
 receipt from another run cannot be mistaken for progress. Failed staging/CAS
 drops the transaction and sends no notifications. Notification failure is
-surfaced after publication and is replayed from committed receipts during
-restore.
+surfaced after publication. The coordinator clones its non-`Copy` expected head
+for `begin_generation`; immediately after successful CAS it advances
+`self.expected` and retains the committed receipt as the pending notification
+before making any fallible callback. The next barrier on that same coordinator
+first retries the pending receipt idempotently, clears it only after every
+participant acknowledges it, and then uses the already-advanced expected head.
+Restore uses the same replay path. A notification error therefore cannot roll
+back authority, strand the coordinator on a stale CAS expectation, or allow the
+next generation to skip its predecessor.
 
 - [ ] **Step 4: Verify GREEN**
 
-Run Step 2. Expected: exact set, no-notify-before-CAS, frozen order, retry, and overlay reclamation tests pass.
+Run Step 2. Expected: exact set, no-notify-before-CAS, frozen order,
+same-coordinator consecutive barriers, post-notification-failure progress, retry,
+and overlay reclamation tests pass.
 
 - [ ] **Step 5: Commit**
 

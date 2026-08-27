@@ -11,7 +11,7 @@ reported truthfully as participant `StateBudget`, immutable-object
 
 ## Stable backend-budget ruling
 
-Task 5B owns two additions to `CheckpointError` and therefore adds
+Task 5B owns three additions to `CheckpointError` and therefore adds
 `rust/runtime/src/streaming/checkpoint.rs` to its file set. It does not change
 Task 5A-R's run identity, hashing, proof, receipt, barrier, or participant
 ordering.
@@ -21,6 +21,9 @@ ordering.
 `CheckpointBackendBudgetFailureCode` is the stable reason:
 `ItemCapacity`, `ByteCapacity`, `Closed`, or `Unrepresentable`.
 `CheckpointError::BackendBudget { budget, code }` carries both values.
+`CheckpointError::ResultIndexReadBudgetTooSmall` expresses a caller page limit,
+and `CheckpointError::GenerationEpochOverflow` expresses the absence of a
+representable exact successor to the frozen generation.
 
 `RequestExceedsCapacity` maps to item capacity when the requested item count
 exceeds its configured limit, otherwise byte capacity. If both exceed, item
@@ -93,6 +96,14 @@ earlier leases are held is forbidden.
 
 ## Infallible publication ruling
 
+Commit metadata is not independent authority. Before storage acquisition or
+state access, its complete predecessor generation (epoch and digest) must equal
+the transaction's frozen expected generation. An initial commit has exact epoch
+1; every later commit has the checked next epoch. A maximum predecessor epoch
+returns the typed `GenerationEpochOverflow` refusal. Candidate construction
+derives its predecessor digest and epoch only from this validated lineage token,
+so the candidate, CAS expectation, and published generation cannot diverge.
+
 Task 5B consumes a candidate through complete run/plan/shape/self-hash
 prevalidation before touching authoritative state. The resulting private
 `PrevalidatedCheckpointGenerationCandidate` has one infallible conversion to a
@@ -101,9 +112,18 @@ the expected head before mutation, performs that conversion, inserts prebuilt
 objects, and replaces the head without any later await or fallible call. The old
 post-CAS fallible promotion path is forbidden for backend commit. A test-only
 fault immediately after prevalidation is evaluated before the state borrow and
-must preserve exact head and object inventory and release all live budget
-charges (high-water telemetry may record the refused attempt); no post-publication
-fault seam exists.
+must be tested over a nonempty previously committed generation with live storage
+and reader leases. It preserves the exact prior head, typed object inventory,
+and current used charges for every budget (high-water telemetry may record the
+refused attempt); no post-publication fault seam exists.
+
+The Task 5E coordinator clones its non-`Copy` expected generation when opening a
+transaction. Immediately after successful CAS, and before any fallible
+participant notification, it advances that expected generation and retains the
+committed receipt as pending notification authority. A subsequent barrier on
+the same coordinator first retries the pending notification and then commits
+against the advanced head. Notification failure never rewinds CAS authority or
+leaves the coordinator expecting the predecessor.
 
 ## Non-looping result-index ruling
 
@@ -153,13 +173,22 @@ backend budget snapshots, and authoritative generation unchanged.
   `BackendBudget { Read, ByteCapacity }` without advancing the cursor.
 - Foreign-root, unreachable-block, and out-of-range cursors are rejected as
   object verification before either page-limit or backend-budget errors.
-- Result objects proven present under a superseded generation and another
-  logical run remain unreadable from the current generation, with no read-budget
-  mutation; mere content-addressed presence is not authority.
-- A fault after candidate prevalidation returns before the publication fence and
-  preserves exact head/object inventory and releases all live charges. The private prevalidated
+- Result and participant-state objects proven present under a superseded
+  generation and another logical run remain unreadable from the current
+  generation, with no read-budget mutation; mere content-addressed presence is
+  not authority.
+- Wrong predecessor identity, predecessor digest, or nonconsecutive epoch is
+  refused before state access without changing head, typed inventory, or live
+  budget use; a maximum predecessor epoch returns
+  `GenerationEpochOverflow` with the same guarantees.
+- A fault after candidate prevalidation over a nonempty prior generation returns
+  before the publication fence and preserves its exact head, typed object
+  inventory, and nonzero live storage/read charges. The private prevalidated
   promotion unit test has an infallible committed return type, proving no caller
   can observe `Err` after authoritative state changes.
+- One coordinator commits two consecutive barriers, and a notification failure
+  after the first CAS still leaves it able to retry that receipt and commit the
+  second barrier against the advanced expected generation.
 
 The privacy regressions live as `compile_fail` rustdoc directly on the public
 DTOs in `results.rs`; an integration-test comment is not executable coverage.
