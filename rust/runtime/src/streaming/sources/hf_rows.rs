@@ -114,8 +114,6 @@ const CURSOR_BASE_BYTES: usize = 138;
 const CURSOR_CREDENTIAL_TRAILER_BYTES: usize = 32;
 /// Committed cursor generations the state budget admits simultaneously.
 const CURSOR_BUDGET_ITEMS: usize = 4;
-/// Retained in-run page receipts, bounding the verification map.
-const MAX_RETAINED_RECEIPTS: usize = 4;
 
 /// BLAKE3 domain separator for one page's immutable identity.
 const PAGE_IDENTITY_DOMAIN: &[u8] = b"aiperf.stream.hf.page.v1";
@@ -1483,6 +1481,20 @@ impl PreparedStreamingDatasetSource for PreparedHfRowsSource {
         stop: StreamingStopReceiver,
     ) -> Result<OpenedStreamingDatasetSource, StreamSourceError> {
         let control = stop.control();
+        let source = self.open_source(stop).await?;
+        Ok(OpenedStreamingDatasetSource {
+            source: Box::new(source),
+            control,
+        })
+    }
+}
+
+impl PreparedHfRowsSource {
+    /// Resolve the revision, prove or refuse completeness, and freeze the source.
+    async fn open_source(
+        self: Box<Self>,
+        stop: StreamingStopReceiver,
+    ) -> Result<HfRowsSource, StreamSourceError> {
         let hub_endpoint = parse_endpoint(&self.config.hub_endpoint)?;
         let rows_endpoint = parse_endpoint(&self.config.rows_endpoint)?;
         let rows_url_base = rows_endpoint.join("/rows").map_err(|_| discovery_error())?;
@@ -1572,25 +1584,22 @@ impl PreparedStreamingDatasetSource for PreparedHfRowsSource {
             snapshot_digest,
         });
 
-        Ok(OpenedStreamingDatasetSource {
-            source: Box::new(HfRowsSource {
-                context,
-                stop,
-                snapshot: SourceSnapshotReceipt {
-                    digest: snapshot_digest,
-                },
-                participant_id: CheckpointParticipantId::new("streaming-source-hf-rows"),
-                initialization: ParticipantInitialization::default(),
-                cursor_budget,
-                poll_interval_ns: self.config.poll_interval_ns,
-                max_chunk_bytes: self.config.max_chunk_bytes,
-                inventory,
-                next_page_index: 0,
-                pending_frontier: None,
-                is_sealed_out: false,
-                receipts: BTreeMap::new(),
-            }),
-            control,
+        Ok(HfRowsSource {
+            context,
+            stop,
+            snapshot: SourceSnapshotReceipt {
+                digest: snapshot_digest,
+            },
+            participant_id: CheckpointParticipantId::new("streaming-source-hf-rows"),
+            initialization: ParticipantInitialization::default(),
+            cursor_budget,
+            poll_interval_ns: self.config.poll_interval_ns,
+            max_chunk_bytes: self.config.max_chunk_bytes,
+            inventory,
+            next_page_index: 0,
+            pending_frontier: None,
+            is_sealed_out: false,
+            receipts: BTreeMap::new(),
         })
     }
 }
@@ -1963,6 +1972,33 @@ mod tests {
             let (_control, stop) = streaming_stop_channel();
             prepared.open(stop).await
         }
+
+        /// Open the concrete source so a test can drive `restore` directly.
+        async fn open_source(
+            &self,
+            config: HfRowsSourceConfig,
+        ) -> Result<HfRowsSource, StreamSourceError> {
+            let context = StreamingSourcePrepareContext {
+                run: run_identity(),
+                stream_semantic_digest: ContentDigest::from_bytes([1; 32]),
+                clock: Rc::clone(&self.clock) as Rc<dyn Clock>,
+                acquisition_budget: acquisition_budget(),
+                issue_reporter: StreamingIssueReporterHandle::new(Rc::clone(&self.reporter)),
+            };
+            let (_control, stop) = streaming_stop_channel();
+            Box::new(PreparedHfRowsSource {
+                config,
+                transport_factory: Arc::new(FakeTransportFactory {
+                    transport: Rc::clone(&self.transport),
+                }),
+                run: context.run,
+                stream_identity: context.stream_semantic_digest,
+                clock: Rc::clone(&context.clock),
+                reporter: context.issue_reporter.clone(),
+            })
+            .open_source(stop)
+            .await
+        }
     }
 
     fn revision_ok() -> Vec<Reply> {
@@ -2130,8 +2166,7 @@ mod tests {
         );
         let clock = Rc::clone(&harness.clock);
         drive(&clock, async move {
-            let mut opened = harness.open(base_config()).await.expect("open");
-            let resolution = resolution(1, 2);
+            let mut source = harness.open_source(base_config()).await.expect("open");
             let mut commit = [0_u8; COMMIT_SHA_LEN];
             commit.copy_from_slice(COMMIT.as_bytes());
             let cursor = HfRowsCursor {
@@ -2140,31 +2175,53 @@ mod tests {
                 known_row_total: 6,
                 is_inventory_sealed: true,
                 content_authority: 1,
-                last_object_digest: *resolution.page_identity(1).as_bytes(),
+                last_object_digest: *source.context.resolution.page_identity(1).as_bytes(),
                 last_content_digest: [5; 32],
                 last_byte_length: 11,
                 commit_sha: commit,
                 credential_source_id: Some([7; 32]),
             };
+            assert_eq!(
+                HfRowsCursor::decode(&cursor.encode()).expect("decode"),
+                cursor
+            );
 
-            // The concrete source is behind `dyn StreamingDatasetSource`; drive the
-            // restore through the same encoded bytes a committed state carries.
-            let encoded = cursor.encode();
-            let decoded = HfRowsCursor::decode(&encoded).expect("decode");
-            assert_eq!(decoded, cursor);
-
-            // Announcement after a restore starts at the committed cursor.
+            source.restore(cursor).expect("restore");
             let SourceEvent::Partition(partition) =
-                opened.source.next_event().await.expect("event")
+                source.next_event().await.expect("event")
             else {
                 panic!("expected a partition");
             };
-            assert_eq!(partition.position(), SourcePosition::new(0));
+            // Pages 0 and 1 are never re-announced after a committed cursor.
+            assert_eq!(partition.position(), SourcePosition::new(2));
 
-            // A cursor naming a different commit is refused on sight.
             let mut moved = cursor;
             moved.commit_sha[0] = b'f';
-            assert_ne!(moved.commit_sha, cursor.commit_sha);
+            assert_eq!(
+                source.restore(moved),
+                Err(CheckpointError::SourceUnavailableOnResume)
+            );
+
+            let mut relengthed = cursor;
+            relengthed.page_len = 3;
+            assert_eq!(
+                source.restore(relengthed),
+                Err(CheckpointError::SourceUnavailableOnResume)
+            );
+
+            let mut recredentialed = cursor;
+            recredentialed.credential_source_id = Some([9; 32]);
+            assert_eq!(
+                source.restore(recredentialed),
+                Err(CheckpointError::SourceUnavailableOnResume)
+            );
+
+            let mut drifted = cursor;
+            drifted.last_object_digest = [0; 32];
+            assert_eq!(
+                source.restore(drifted),
+                Err(CheckpointError::SourceUnavailableOnResume)
+            );
         });
     }
 
