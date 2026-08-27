@@ -308,6 +308,24 @@ fn raw_member_stdout_cannot_authorize_an_exporter_parity_pass() {
 }
 
 #[test]
+fn cloned_build_report_revalidates_the_complete_source_tree() {
+    let fixture = Fixture::new();
+    let cloned_report = fixture.build_report().clone();
+    std::fs::write(
+        fixture.dynamic_source.join("source.identity"),
+        b"source changed after the build report was cloned\n",
+    )
+    .expect("retained dynamic source is changed");
+
+    let error = run_controlled_runtime_v1(&cloned_report)
+        .expect_err("a stale complete-source census must not authorize runtime measurement");
+    assert!(
+        error.to_string().contains("source tree"),
+        "unexpected refusal: {error}"
+    );
+}
+
+#[test]
 fn controller_owned_exporter_adapter_seals_history_without_invoking_exporter_child() {
     let mut fixture = Fixture::new();
     fixture.static_artifact = runtime_artifact_rejecting_exporter("static authority fixture");
