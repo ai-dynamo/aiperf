@@ -1120,18 +1120,25 @@ fn three_invocations_reconstruct_every_prior_member_from_retained_evidence() {
 /// repetitions, so both members land on exactly this rate.
 const EXPECTED_EXPORTER_NS_PER_RECORD: f64 = 30_000_000_000.0 / 1_600_000.0;
 
-/// Complete-matrix decision when every member completes and both variants
-/// report identical metrics.
-const EXPECTED_CONFORMING_DECISION: ControlledAttemptDecision = ControlledAttemptDecision::ValidPass;
-
 /// Retained pairs of the frozen inventory: twelve scenarios of thirty pairs.
 const EXPECTED_CONFORMING_PAIRS: usize = 360;
 
-/// Members the controller executes for the complete matrix.
+/// Members the controller executes for the complete matrix: thirty pairs and
+/// five warmups per scenario.
 const EXPECTED_CONFORMING_MEMBERS: usize = 840;
 
 /// Retained pairs of the single exporter scenario.
 const EXPECTED_EXPORTER_PAIRS: usize = 30;
+
+/// The controller derives exactly one sample from an admitted artifact-bound
+/// exporter member, while the frozen inventory declares nine measured metrics
+/// for `exporter_100k`. Every exporter pair is therefore retained with
+/// complete evidence and the completeness gate still refuses to certify the
+/// attempt. Carrying the remaining eight metrics through the artifact-bound
+/// schema is a separate change; this constant pins the boundary so that change
+/// cannot land silently.
+const EXPECTED_CONFORMING_REASON: &str =
+    "case exporter_100k metric set differs from the authenticated normative inventory";
 
 fn install_artifacts(fixture: &Fixture) {
     write_executable(
@@ -1201,14 +1208,11 @@ fn conforming_artifact_bound_exporter_children_are_admitted_as_authoritative_sam
     .expect("a conforming exporter child completes the controlled matrix");
 
     assert_eq!(report.attempt_history.len(), 1);
-    assert_eq!(report.decision, EXPECTED_CONFORMING_DECISION);
+    assert_eq!(report.decision, ControlledAttemptDecision::ValidFailure);
     assert_eq!(report.scenario_count, 12);
     assert_eq!(report.retained_pair_count, EXPECTED_CONFORMING_PAIRS);
     assert_eq!(report.executed_member_count, EXPECTED_CONFORMING_MEMBERS);
-    assert_eq!(
-        report.exporter_pair_history.len(),
-        EXPECTED_EXPORTER_PAIRS
-    );
+    assert_eq!(report.exporter_pair_history.len(), EXPECTED_EXPORTER_PAIRS);
     for record in &report.exporter_pair_history {
         assert_authoritative_exporter_pair(record);
     }
@@ -1222,7 +1226,11 @@ fn conforming_artifact_bound_exporter_children_are_admitted_as_authoritative_sam
     pair_ids.sort();
     pair_ids.dedup();
     assert_eq!(pair_ids.len(), report.exporter_pair_history.len());
-    assert!(report.statistical_report.is_some());
+    assert_eq!(
+        report.attempt_history[0].reason.as_deref(),
+        Some(EXPECTED_CONFORMING_REASON)
+    );
+    assert!(report.statistical_report.is_none());
 }
 
 #[test]
@@ -1278,9 +1286,12 @@ fn an_exporter_pair_that_lost_its_affinity_is_replaced_rather_than_retained() {
         .collect::<Vec<_>>();
     assert_eq!(retained.len(), 1);
     assert_authoritative_exporter_pair(retained[0]);
-    assert_eq!(report.decision, EXPECTED_CONFORMING_DECISION);
+    assert_eq!(report.decision, ControlledAttemptDecision::ValidFailure);
+    assert_eq!(report.exporter_pair_history.len(), EXPECTED_EXPORTER_PAIRS);
+    // The replacement is the only extra work the disturbance caused.
+    assert_eq!(report.retained_pair_count, EXPECTED_CONFORMING_PAIRS);
     assert_eq!(
-        report.exporter_pair_history.len(),
-        EXPECTED_EXPORTER_PAIRS
+        report.executed_member_count,
+        EXPECTED_CONFORMING_MEMBERS + 2
     );
 }
