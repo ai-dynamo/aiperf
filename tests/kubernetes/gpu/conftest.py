@@ -95,6 +95,9 @@ class GPUTestSettings:
     vllm_image: str = "vllm/vllm-openai:latest"
     """vLLM container image."""
 
+    vllm_command: list[str] = field(default_factory=list)
+    """Override container command for vLLM (for images without a built-in entrypoint)."""
+
     model: str = "Qwen/Qwen3-0.6B"
     """Model name to benchmark."""
 
@@ -237,6 +240,7 @@ _OPTIONS: list[tuple[str, str, str | None, str, str]] = [
     ("--gpu-stream-logs", "GPU_TEST_STREAM_LOGS", None, "bool", "Stream pod logs in real time during deploys"),
     # vLLM / model
     ("--gpu-vllm-image", "GPU_TEST_VLLM_IMAGE", "vllm/vllm-openai:latest", "str", "vLLM container image"),
+    ("--gpu-vllm-command", "GPU_TEST_VLLM_COMMAND", None, "json_list", "Override container command for vLLM (JSON array, e.g. '[\"python3\",\"-m\",\"vllm.entrypoints.openai.api_server\"]')"),
     ("--gpu-model", "GPU_TEST_MODEL", "Qwen/Qwen3-0.6B", "str", "Model name"),
     ("--gpu-count", "GPU_TEST_GPU_COUNT", "1", "int", "GPUs per instance"),
     ("--gpu-max-model-len", "GPU_TEST_MAX_MODEL_LEN", "4096", "int", "Max model context length"),

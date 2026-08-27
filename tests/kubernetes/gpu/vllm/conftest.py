@@ -56,6 +56,7 @@ def vllm_config(gpu_settings: GPUTestSettings) -> VLLMConfig:
         enforce_eager=True,
         gpu_memory_utilization=s.mem_util,
         runtime_class_name=s.runtime_class,
+        command=s.vllm_command or None,
     )
 
 
