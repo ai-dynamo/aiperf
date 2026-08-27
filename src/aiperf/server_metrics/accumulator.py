@@ -144,8 +144,13 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         # phase_index (currently just AGENTIC_REPLAY's synthesized warmup,
         # see _PhaseCapture and _resolve_sample_phase_index).
         self._last_phase_signature: tuple[CreditPhase, int | None, str] | None = None
+        self._last_unstamped_signature: tuple[CreditPhase, int | None, str] | None = (
+            None
+        )
         self._current_synthetic_phase_index: int | None = None
         self._next_synthetic_phase_index = -2
+        # (phase_instance_id, phase_name) -> synthesized negative index.
+        self._synthetic_phase_indices: dict[tuple[int, str], int] = {}
 
     def get_hierarchy_for_export(self) -> ServerMetricsHierarchy:
         """Get server metrics hierarchy for export purposes.
@@ -176,7 +181,10 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         if record.benchmark_phase is not None:
             phase_name = record.phase_name or str(record.benchmark_phase)
             sample_phase_index = self._resolve_sample_phase_index(
-                record.benchmark_phase, record.phase_index, phase_name
+                record.benchmark_phase,
+                record.phase_index,
+                phase_name,
+                record.phase_instance_id,
             )
             if record.phase_index is None:
                 # Storage keys samples by phase_index for filtering
@@ -212,32 +220,55 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         benchmark_phase: CreditPhase,
         phase_index: int | None,
         phase_name: str,
+        phase_instance_id: int | None,
     ) -> int:
         """Return the per-sample filter index for a record's concrete phase.
 
-        Reported phase indices are returned unchanged. When ``phase_index``
-        is ``None`` (synthesized AGENTIC_REPLAY warmup phases -- see
+        Reported phase indices are returned unchanged. When ``phase_index`` is
+        ``None`` (synthesized AGENTIC_REPLAY warmup phases -- see
         ``_PhaseCapture``), a synthesized negative index is assigned instead,
-        one per contiguous run of same-identity records. A new synthesized
-        index is minted whenever the (phase, phase_index, phase_name)
-        signature changes from the previous record processed, so a later
-        warmup instance with the same name (separated by an intervening
-        profiling phase) gets its own index rather than pooling with the
-        first. Real (non-negative) phase indices are never reused for this,
-        so synthesized and reported indices can't collide.
+        one per phase *occurrence*, so a later warmup instance with the same
+        name gets its own index rather than pooling with the first. Real
+        (non-negative) phase indices are never reused for this, so synthesized
+        and reported indices can't collide.
+
+        The occurrence is identified by ``phase_instance_id``, which the
+        manager mints once per CREDIT_PHASE_START and stamps onto every scrape
+        belonging to that phase. Arrival order cannot serve here: scrapes are
+        dispatched fire-and-forget and each holds the phase snapshot taken at
+        *its own* start, so when a scrape outlives the phase boundary its
+        records interleave with the next phase's. A previous
+        "new index whenever the signature changes from the last record"
+        heuristic therefore split one warmup instance across several indices.
+
+        Records predating the stamped id (or produced outside any phase) fall
+        back to that contiguity heuristic, which is still correct whenever
+        scrapes do not overlap.
         """
         if phase_index is not None:
             self._last_phase_signature = (benchmark_phase, phase_index, phase_name)
             return phase_index
 
         signature = (benchmark_phase, phase_index, phase_name)
+        self._last_phase_signature = signature
+
+        if phase_instance_id is not None:
+            key = (phase_instance_id, phase_name)
+            synthetic = self._synthetic_phase_indices.get(key)
+            if synthetic is None:
+                synthetic = self._next_synthetic_phase_index
+                self._next_synthetic_phase_index -= 1
+                self._synthetic_phase_indices[key] = synthetic
+            self._current_synthetic_phase_index = synthetic
+            return synthetic
+
         if (
-            signature != self._last_phase_signature
+            signature != self._last_unstamped_signature
             or self._current_synthetic_phase_index is None
         ):
             self._current_synthetic_phase_index = self._next_synthetic_phase_index
             self._next_synthetic_phase_index -= 1
-        self._last_phase_signature = signature
+        self._last_unstamped_signature = signature
         return self._current_synthetic_phase_index
 
     async def process_record(self, record: ServerMetricsRecord) -> None:

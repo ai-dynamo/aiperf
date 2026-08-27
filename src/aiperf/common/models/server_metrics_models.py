@@ -278,6 +278,14 @@ class ServerMetricsRecord(AIPerfBaseModel):
     phase_kind: PhaseKind | None = Field(
         default=None, description="Semantic kind of the concrete phase."
     )
+    phase_instance_id: int | None = Field(
+        default=None,
+        ge=0,
+        description="Monotonic per-run identifier of the phase *occurrence* this "
+        "scrape belongs to. Distinguishes two same-named instances of a phase "
+        "that carries no absolute phase_index (a synthesized warmup that runs "
+        "again after profiling). None for scrapes collected outside any phase.",
+    )
 
     def to_slim(self) -> SlimRecord:
         """Convert to slim record.

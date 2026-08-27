@@ -59,13 +59,21 @@ _SERVER_METRICS_RECORD_TYPE = "server_metrics"
 
 @dataclass(frozen=True, slots=True, eq=False)
 class _ServerMetricsPhaseIdentity:
-    """Concrete phase identity captured when a scrape starts."""
+    """Concrete phase identity captured when a scrape starts.
+
+    ``instance_id`` distinguishes two *occurrences* of an otherwise identical
+    phase (a warmup that runs, is followed by profiling, then runs again under
+    the same name). It is deliberately excluded from ``__eq__``/``__hash__``
+    below, which answer "is this the same phase?", not "is this the same
+    occurrence?".
+    """
 
     phase: CreditPhase
     phase_index: int | None = None
     profiling_index: int | None = None
     phase_name: str | None = None
     phase_kind: PhaseKind | None = None
+    instance_id: int | None = None
 
     def __eq__(self, other: object) -> bool:
         """Compare full identities, while tolerating legacy phase-only checks."""
@@ -204,6 +212,11 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
         # Task for delayed shutdown, created when no endpoints are reachable
         self._shutdown_task: asyncio.Task[None] | None = None
         self._active_phase: _ServerMetricsPhaseIdentity | None = None
+        # Monotonic per-run counter identifying each phase *occurrence*, so
+        # consumers can tell two same-named warmup instances apart without
+        # relying on record arrival order (scrapes overlap -- see
+        # ``_collect_metrics_loop``).
+        self._next_phase_instance_id = 0
         self._last_profiling_phase: _ServerMetricsPhaseIdentity | None = None
 
     def _load_server_metrics_processors(self) -> None:
@@ -421,12 +434,14 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
     async def _on_credit_phase_start(self, message: CreditPhaseStartMessage) -> None:
         """Track which benchmark phase subsequent server-metric scrapes belong to."""
         stats = message.stats
+        self._next_phase_instance_id += 1
         identity = _ServerMetricsPhaseIdentity(
             phase=stats.phase,
             phase_index=stats.phase_index,
             profiling_index=stats.profiling_index,
             phase_name=stats.phase_name or str(stats.phase),
             phase_kind=stats.phase_kind,
+            instance_id=self._next_phase_instance_id,
         )
         self._active_phase = identity
         self.debug(f"Server Metrics: active phase is now {identity.phase_name}")
@@ -862,6 +877,7 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
                         "profiling_index": scrape_phase.profiling_index,
                         "phase_name": scrape_phase.phase_name,
                         "phase_kind": scrape_phase.phase_kind,
+                        "phase_instance_id": scrape_phase.instance_id,
                     }
                 )
                 for record in records

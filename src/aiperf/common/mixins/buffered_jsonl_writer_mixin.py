@@ -18,6 +18,15 @@ from aiperf.common.mixins.aiperf_lifecycle_mixin import AIPerfLifecycleMixin
 from aiperf.common.types import BaseModelT
 from aiperf.common.utils import yield_to_event_loop
 
+_MAX_PENDING_FLUSH_TASKS = 8
+"""Cap on batch-triggered flush tasks in flight at once.
+
+A ceiling, not a tuning knob: healthy flushes complete and leave the tracking
+set long before this is reached. It exists so an append burst that never yields
+to the event loop cannot schedule an unbounded number of flushes against a
+handle whose first failure has not surfaced yet.
+"""
+
 
 class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
     """Mixin for buffered JSONL writing with automatic flushing.
@@ -142,15 +151,31 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
             self._buffer.append(json_bytes)
             self.lines_written += 1
 
-            # Check if we need to flush. Once a write has failed, further
-            # batch-size-triggered flushes are skipped: every attempt would
-            # re-detach the (now growing) buffer, fail again on the same
-            # broken handle, and restore it -- unbounded write amplification
-            # for a doomed write. Records still accumulate in ``self._buffer``
-            # so nothing is silently dropped, and ``flush_buffer()`` still
-            # raises from ``_write_error`` at the finalization barrier, so the
-            # failure is not lost -- just no longer retried on every append.
-            if self._write_error is None and len(self._buffer) >= self._batch_size:
+            # Check if we need to flush. Two independent bounds apply once a
+            # write has failed, because neither is sufficient alone:
+            #
+            # 1. ``_write_error``: skips batch-triggered flushes after a
+            #    failure has been *observed*. Every attempt would re-detach the
+            #    (now growing) buffer, fail again on the same broken handle,
+            #    and restore it -- unbounded write amplification for a doomed
+            #    write.
+            # 2. ``_MAX_PENDING_FLUSH_TASKS``: the flush is a task, not an
+            #    await, so a caller appending in a tight loop never yields and
+            #    no flush has run yet -- ``_write_error`` is still None and
+            #    bound 1 lets every batch through. Capping the in-flight set
+            #    bounds the burst regardless of whether the first failure has
+            #    surfaced. A healthy writer never reaches the cap, since its
+            #    flushes complete and drop out of the set.
+            #
+            # Records still accumulate in ``self._buffer`` either way so
+            # nothing is silently dropped, and ``flush_buffer()`` still raises
+            # from ``_write_error`` at the finalization barrier, so the failure
+            # is not lost -- just no longer retried on every append.
+            if (
+                self._write_error is None
+                and len(self._flush_tasks) < _MAX_PENDING_FLUSH_TASKS
+                and len(self._buffer) >= self._batch_size
+            ):
                 buffer_to_flush = self._buffer
                 self._buffer = []
 
