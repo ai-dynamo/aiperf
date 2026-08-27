@@ -25,6 +25,16 @@ repair and reported 1907 passing tests plus one pre-existing version-fixture
 failure (`0.0.0` expected versus package version `0.12.0`). The streaming work
 does not alter or mask that fixture.
 
+## Implementation rulings
+
+- Task 0 AWS compatibility: use exact `aws-config 1.8.14` and
+  `aws-sdk-s3 1.123.0` with the approved feature lists. The planned 1.11.0 /
+  1.144.0 pair requires Tokio 1.49 through Smithy 1.3, while pinned Dynamo and
+  Velo require exact Tokio 1.48 for their unstable runtime-metrics contract.
+  The selected pair is already present in the lock graph. Cost if wrong: the
+  later S3 adapter may require a reviewed API adaptation or coordinated
+  Dynamo/Velo/AWS dependency upgrade.
+
 This file is updated and force-added after every reviewed task merge. Detailed
 ephemeral RED/GREEN output, task briefs, review packages, and rulings live in
 the plan-owned SDD workspace; exact task commits and merge commits are retained
