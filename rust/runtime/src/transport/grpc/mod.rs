@@ -7,7 +7,7 @@
 //! protobuf bytes and decode responses back to endpoint JSON. The wire client
 //! operates on unframed message bytes over Tonic.
 
-pub mod binding;
+pub mod kserve_binding;
 pub mod codec;
 pub mod models;
 pub mod proto;
@@ -18,7 +18,7 @@ pub mod riva_proto;
 pub mod sink;
 pub mod transport;
 
-pub use binding::{
+pub use kserve_binding::{
     GrpcBindingRegistry, GrpcBindingRegistryBuilder, GrpcEndpointBinding,
     GrpcEndpointBindingFactory, GrpcEndpointBindingRegistryError, GrpcStreamChunk,
     KServeV2GrpcBindingFactory,

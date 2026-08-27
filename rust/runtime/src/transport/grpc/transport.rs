@@ -32,7 +32,7 @@ use url::{Host, Url};
 use crate::clock::Clock;
 use crate::transport::retry::retry_connect;
 
-use crate::transport::grpc::binding::GrpcEndpointBinding;
+use crate::transport::grpc::kserve_binding::GrpcEndpointBinding;
 use crate::transport::grpc::models::{
     ConnectionReuseStrategy, GrpcClientConfig, GrpcErrorDetails, GrpcErrorKind, GrpcRequestConfig,
     GrpcRequestRecord, GrpcResponse,

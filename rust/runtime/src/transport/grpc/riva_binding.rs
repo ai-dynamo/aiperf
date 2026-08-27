@@ -11,7 +11,7 @@ use serde_json::Value;
 
 use crate::endpoints::EndpointId;
 
-use crate::transport::grpc::binding::{
+use crate::transport::grpc::kserve_binding::{
     GrpcBindingRegistryBuilder, GrpcEndpointBinding, GrpcEndpointBindingFactory,
     GrpcEndpointBindingRegistryError, GrpcStreamChunk,
 };
