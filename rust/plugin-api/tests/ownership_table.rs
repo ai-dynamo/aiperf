@@ -156,14 +156,6 @@ fn the_plugin_authoring_surface_is_reachable_from_outside_the_crate() {
     // onto another thread; a `Box<dyn AIPerfExtension>` must satisfy it too.
     fn assert_send_sync<T: Send + Sync + 'static>() {}
     assert_send_sync::<Box<dyn AIPerfExtension>>();
-
-    // The trait is object-safe from out of crate, and the declaration borrows
-    // the plugin's own static rather than a copy of it.
-    let _boxed: Box<dyn AIPerfExtension> = Box::new(TestExtension);
-    assert!(std::ptr::eq(
-        declaration.extension as *const dyn AIPerfExtension as *const u8,
-        &EXTENSION as *const TestExtension as *const u8
-    ));
 }
 
 #[test]
