@@ -32,7 +32,7 @@ use crate::dataset::prompt::{
     CorpusPromptGeneratorFactory, PreparedCorpusPromptGeneratorFactory, PromptGeneratorFactory,
 };
 use crate::dataset::tokenizer::TextTokenizer;
-use crate::rng::{RandomGenerator, RngRoot, namespace};
+use crate::rng::{RngRoot, namespace};
 use crate::streaming::budget::StreamingResourceBudget;
 use crate::streaming::checkpoint::{
     BudgetedCheckpointBytes, CheckpointBarrier, CheckpointError, CheckpointParticipantId,
@@ -227,11 +227,22 @@ pub struct SynthesisFormatBudgets {
 ///
 /// Corpus tokenization is the only blocking work in this format and happens in
 /// `prepare`, before the run begins — never on a decode pull.
-#[derive(Debug)]
 pub struct SynthesisFormatFactory {
     tokenizer: Arc<dyn TextTokenizer>,
     tokenizer_receipt: ContentDigest,
     budgets: SynthesisFormatBudgets,
+}
+
+// `TextTokenizer` is not `Debug`, and the resolved tokenizer is named by its
+// semantic receipt anyway, which is the reproducibility-relevant identity.
+impl std::fmt::Debug for SynthesisFormatFactory {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("SynthesisFormatFactory")
+            .field("tokenizer_receipt", &self.tokenizer_receipt)
+            .field("budgets", &self.budgets)
+            .finish_non_exhaustive()
+    }
 }
 
 impl SynthesisFormatFactory {
@@ -325,7 +336,6 @@ impl StreamingDatasetFormatFactory for SynthesisFormatFactory {
 }
 
 /// Everything frozen before the first fragment is generated.
-#[derive(Debug)]
 struct SynthesisPlan {
     config: SynthesisFormatConfig,
     plan_digest: ContentDigest,
@@ -333,6 +343,17 @@ struct SynthesisPlan {
     shared_prefix: Vec<u32>,
     prepared: PreparedCorpusPromptGeneratorFactory,
     tokenizer: Arc<dyn TextTokenizer>,
+}
+
+impl std::fmt::Debug for SynthesisPlan {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("SynthesisPlan")
+            .field("config", &self.config)
+            .field("plan_digest", &self.plan_digest)
+            .field("prefix_tokens", &self.prefix_tokens)
+            .finish_non_exhaustive()
+    }
 }
 
 /// Exact decoder position within one shard.
