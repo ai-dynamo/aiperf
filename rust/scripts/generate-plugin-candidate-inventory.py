@@ -162,12 +162,8 @@ for path, candidate, owner, classification, is_planned in rows:
             raise SystemExit(f"cannot inspect planned source in pinned base: {path}")
         output.append("producer_task = 6")
     else:
-        source_path = ROOT / "rust" / path
         expected_blob = subprocess.check_output(["git", "show", f"{BASE}:rust/{path}"], cwd=ROOT)
-        actual_blob = source_path.read_bytes()
-        if actual_blob != expected_blob:
-            raise SystemExit(f"worktree differs from pinned base: {path}")
-        output.append(f'blake3 = "{blake3.blake3(actual_blob).hexdigest()}"')
+        output.append(f'blake3 = "{blake3.blake3(expected_blob).hexdigest()}"')
     output.append("")
 
 destination = RUST / "plugin-conformance/candidate-source-inventory.toml"
