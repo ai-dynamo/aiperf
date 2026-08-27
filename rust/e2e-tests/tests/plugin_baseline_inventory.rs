@@ -83,12 +83,83 @@ fn validation_root() -> PathBuf {
         .unwrap_or_else(repository_root)
 }
 
-fn refuse_interrupted_publication(root: &Path) -> Result<(), String> {
+fn publication_generation(root: &Path) -> Result<Option<Vec<u8>>, String> {
+    let path = root.join("artifacts/native-plugin-baseline/.publication-generation.json");
+    let bytes = match fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.to_string()),
+    };
+    if !fs::symlink_metadata(&path)
+        .map_err(|error| error.to_string())?
+        .file_type()
+        .is_file()
+    {
+        return Err("baseline publication generation is not a regular file".to_owned());
+    }
+    let generation: JsonValue =
+        serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
+    let object = generation
+        .as_object()
+        .ok_or_else(|| "baseline publication generation is not an object".to_owned())?;
+    if object.len() != 3
+        || generation["schema_version"] != 1
+        || generation["status"] != "committed"
+        || !generation["nonce"].is_u64()
+    {
+        return Err("baseline publication generation is not committed".to_owned());
+    }
+    Ok(Some(bytes))
+}
+
+fn refuse_interrupted_publication(root: &Path) -> Result<Option<Vec<u8>>, String> {
     let journal = root.join(".aiperf-baseline-refresh-transaction.json");
     if journal.exists() {
         return Err("baseline reader refuses an interrupted durable publication".to_owned());
     }
+    let generation = publication_generation(root)?;
+    if journal.exists() {
+        return Err("baseline reader refuses an interrupted durable publication".to_owned());
+    }
+    Ok(generation)
+}
+
+fn confirm_publication_generation(root: &Path, acquired: &Option<Vec<u8>>) -> Result<(), String> {
+    if root
+        .join(".aiperf-baseline-refresh-transaction.json")
+        .exists()
+        || &publication_generation(root)? != acquired
+    {
+        return Err("baseline publication generation changed during validation".to_owned());
+    }
     Ok(())
+}
+
+#[test]
+fn inventory_reader_rejects_a_generation_changed_across_validation() {
+    let directory = tempfile::tempdir().expect("inventory generation fixture root");
+    let generation = directory
+        .path()
+        .join("artifacts/native-plugin-baseline/.publication-generation.json");
+    fs::create_dir_all(generation.parent().expect("generation parent"))
+        .expect("generation parent is created");
+    fs::write(
+        &generation,
+        b"{\"nonce\":1,\"schema_version\":1,\"status\":\"committed\"}\n",
+    )
+    .expect("initial generation is written");
+    let acquired =
+        refuse_interrupted_publication(directory.path()).expect("initial generation is acquired");
+    fs::write(
+        generation,
+        b"{\"nonce\":2,\"schema_version\":1,\"status\":\"committed\"}\n",
+    )
+    .expect("replacement generation is written");
+
+    assert!(
+        confirm_publication_generation(directory.path(), &acquired).is_err(),
+        "inventory reader accepted a changed publication generation"
+    );
 }
 
 fn measurement_source_projection(root: &Path) -> Result<Vec<String>, String> {
@@ -1156,7 +1227,8 @@ fn validate_inventory(contents: &str, root: &Path) -> Result<(), String> {
 #[test]
 fn baseline_inventory_is_complete_and_self_authenticating() {
     let root = validation_root();
-    refuse_interrupted_publication(&root).unwrap_or_else(|error| panic!("{error}"));
+    let generation =
+        refuse_interrupted_publication(&root).unwrap_or_else(|error| panic!("{error}"));
     let contents = fs::read_to_string(root.join("rust/benchmarks/plugin-parity.yaml"))
         .expect("baseline inventory must be readable");
     let document: Value = serde_yaml::from_str(&contents).expect("inventory parses");
@@ -1175,10 +1247,11 @@ fn baseline_inventory_is_complete_and_self_authenticating() {
     } else {
         validate_inventory(&contents, &root).unwrap_or_else(|error| panic!("{error}"));
     }
+    confirm_publication_generation(&root, &generation).unwrap_or_else(|error| panic!("{error}"));
 }
 
 #[test]
-fn prepublication_gate_runs_from_only_the_tracked_measurement_package() {
+fn prepublication_inventory_is_deliberately_inadmissible_from_measurement_projection() {
     let source = repository_root();
     let directory = tempfile::tempdir().expect("clean measurement package root");
     let clean = directory.path();
@@ -1215,6 +1288,176 @@ fn prepublication_gate_runs_from_only_the_tracked_measurement_package() {
         validate_inventory(&contents, clean)
             .expect_err("prepublication inventory must remain deliberately inadmissible"),
         "canonical raw evidence is not published_and_verified"
+    );
+}
+
+#[test]
+fn prepublication_gate_runs_from_the_complete_current_tracked_package() {
+    let source = repository_root();
+    let directory = tempfile::tempdir().expect("clean tracked package root");
+    let clean = directory.path().join("source");
+    let cloned = std::process::Command::new("git")
+        .args(["clone", "--shared", "--no-checkout"])
+        .arg(&source)
+        .arg(&clean)
+        .output()
+        .expect("ephemeral tracked checkout starts");
+    assert!(
+        cloned.status.success(),
+        "ephemeral tracked checkout failed: {}",
+        String::from_utf8_lossy(&cloned.stderr)
+    );
+    let checked_out = std::process::Command::new("git")
+        .args(["-C"])
+        .arg(&clean)
+        .args(["checkout", "--detach", "HEAD"])
+        .output()
+        .expect("ephemeral checkout materialization starts");
+    assert!(
+        checked_out.status.success(),
+        "ephemeral checkout materialization failed: {}",
+        String::from_utf8_lossy(&checked_out.stderr)
+    );
+    let tracked = std::process::Command::new("git")
+        .args([
+            "-C",
+            source.to_str().expect("source root is UTF-8"),
+            "ls-files",
+            "--cached",
+            "-z",
+        ])
+        .output()
+        .expect("tracked-file inventory starts");
+    assert!(
+        tracked.status.success(),
+        "tracked-file inventory failed: {}",
+        String::from_utf8_lossy(&tracked.stderr)
+    );
+    let tracked_paths = tracked
+        .stdout
+        .split(|byte| *byte == 0)
+        .filter(|path| !path.is_empty())
+        .map(|path| std::str::from_utf8(path).expect("tracked path is UTF-8"))
+        .collect::<Vec<_>>();
+    assert!(!tracked_paths.is_empty(), "tracked-file inventory is empty");
+    assert!(
+        tracked_paths.iter().all(|path| {
+            !path.contains(['\n', '\r'])
+                && !Path::new(path).is_absolute()
+                && Path::new(path)
+                    .components()
+                    .all(|component| matches!(component, std::path::Component::Normal(_)))
+        }),
+        "tracked-file inventory contains an unsafe archive path"
+    );
+    let path_list = directory.path().join("tracked-files.txt");
+    fs::write(&path_list, tracked_paths.join("\n") + "\n").expect("tracked path list is written");
+    let archive = directory.path().join("tracked-source.tar");
+    let archived = std::process::Command::new("tar")
+        .args(["-cf"])
+        .arg(&archive)
+        .arg("-C")
+        .arg(&source)
+        .arg("-T")
+        .arg(&path_list)
+        .output()
+        .expect("current tracked package archive starts");
+    assert!(
+        archived.status.success(),
+        "current tracked package archive failed: {}",
+        String::from_utf8_lossy(&archived.stderr)
+    );
+    let extracted = std::process::Command::new("tar")
+        .arg("-xf")
+        .arg(&archive)
+        .arg("-C")
+        .arg(&clean)
+        .output()
+        .expect("current tracked package extraction starts");
+    assert!(
+        extracted.status.success(),
+        "current tracked package extraction failed: {}",
+        String::from_utf8_lossy(&extracted.stderr)
+    );
+    let staged = std::process::Command::new("git")
+        .args(["-C"])
+        .arg(&clean)
+        .args(["add", "-A"])
+        .output()
+        .expect("current tracked bytes are staged");
+    assert!(
+        staged.status.success(),
+        "current tracked bytes failed to stage"
+    );
+    let committed = std::process::Command::new("git")
+        .args(["-C"])
+        .arg(&clean)
+        .args([
+            "-c",
+            "user.name=AIPerf test fixture",
+            "-c",
+            "user.email=aiperf-test@example.invalid",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "materialize current tracked Task 1 bytes",
+        ])
+        .output()
+        .expect("current tracked fixture commit starts");
+    assert!(
+        committed.status.success(),
+        "current tracked fixture commit failed: {}",
+        String::from_utf8_lossy(&committed.stderr)
+    );
+    let status = std::process::Command::new("git")
+        .args(["-C"])
+        .arg(&clean)
+        .args(["status", "--short", "--untracked-files=all"])
+        .output()
+        .expect("ephemeral tracked status starts");
+    assert!(status.status.success() && status.stdout.is_empty());
+    assert!(clean.join(".git").is_dir());
+    assert!(!clean.join("rust/target").exists());
+    for relative in [
+        "artifacts/native-plugin-baseline/evidence-manifest.json",
+        "artifacts/native-plugin-baseline/bundle-locator.json",
+        "artifacts/native-plugin-baseline/raw",
+    ] {
+        assert!(
+            !clean.join(relative).exists(),
+            "clean tracked package contains ignored canonical evidence: {relative}"
+        );
+    }
+
+    let output = std::process::Command::new("cargo")
+        .current_dir(clean.join("rust"))
+        .args([
+            "test",
+            "--locked",
+            "-p",
+            "aiperf-e2e-tests",
+            "--test",
+            "plugin_baseline_inventory",
+            "prepublication_inventory_is_deliberately_inadmissible_from_measurement_projection",
+            "--",
+            "--exact",
+            "--test-threads=1",
+        ])
+        .env("CARGO_TARGET_DIR", directory.path().join("target"))
+        .env("AIPERF_PLUGIN_BASELINE_VALIDATION_ROOT", &clean)
+        .output()
+        .expect("clean-package Cargo gate starts");
+    assert!(
+        output.status.success(),
+        "clean-package Cargo gate failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains(
+            "test prepublication_inventory_is_deliberately_inadmissible_from_measurement_projection ... ok"
+        ),
+        "clean-package Cargo gate did not execute the exact inner behavior test"
     );
 }
 
@@ -1409,7 +1652,7 @@ fn capture_harness_bounds_every_long_lived_command_site() {
         "run_owned 300 evidence-manifest",
         "run_owned 300 evidence-verify",
         "run_owned 1800 evidence-bundle",
-        "run_owned 1800 bundle-verify",
+        "run_owned 1800 bundle-verify-and-receipt",
         "verify-staged-bundle",
         "run_owned 300 locator",
         "run_owned 300 locator-verify",

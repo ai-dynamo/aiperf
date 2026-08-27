@@ -156,10 +156,9 @@ verify_completed_bundle() {
     completed_manifest=$4
     completed_extraction_root=$5
     completed_verification_receipt=$6
-    run_owned 1800 bundle-verify "$completed_tool" verify-staged-bundle \
-        "$completed_bundle" "$completed_manifest" "$completed_extraction_root"
-    run_owned 300 bundle-verification "$completed_tool" bundle-verification \
+    run_owned 1800 bundle-verify-and-receipt "$completed_tool" verify-staged-bundle \
         "$completed_generation" "$completed_bundle" "$completed_manifest" \
+        "$completed_extraction_root" \
         "$completed_verification_receipt"
     require_output nonempty bundle-verification "$completed_verification_receipt"
 }

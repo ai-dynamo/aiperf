@@ -11,9 +11,9 @@
       "cargo tree --locked --workspace --edges normal,build --prefix depth",
       "cargo tree --locked -p aiperf-cli --edges normal,build --prefix depth"
     ],
-    "cargo_lock_blake3": "blake3:1d77e8320f0207f9005eaff539c5ab74cae423ccbe4d9b5c01f0d88d9c039081",
-    "cargo_metadata_blake3": "blake3:4af675a684d2615baedab8ec86d5aee2b1018cc844fe6feb6f858fd91e4f8e85",
-    "cargo_tree_blake3": "blake3:623d3e4ec8b4212b5aade5307503d1f645e3ee0355d62cc15a9971f01d07277e",
+    "cargo_lock_blake3": "blake3:64a9e677f3338954f25297f1546446f4c5c2ea4fa57b78e45f60e3569c7e3a0c",
+    "cargo_metadata_blake3": "blake3:f9985d31cebd93070a2843be4fcd8939be0c4b7ba058116b5fef909d9f64745a",
+    "cargo_tree_blake3": "blake3:af0418df68ec3dae01e711ade423324ac9e6eee9140c87b12afd1d8e35c37794",
     "cargo_cli_tree_blake3": "blake3:523024637b9e16e442db7e3626ad572150da34450bdca825a391155a3a15e6e0",
     "raw_metadata": "identity/cargo-metadata.json",
     "raw_tree": "identity/cargo-tree-workspace.txt",
@@ -23,9 +23,9 @@
     {
       "name": "aiperf-bench-tools",
       "version": "0.12.0",
-      "direct_dependency_count": 15,
+      "direct_dependency_count": 16,
       "dependency_kind_counts": {
-        "normal": 15
+        "normal": 16
       },
       "direct_dependencies": [
         {
@@ -75,6 +75,11 @@
         },
         {
           "name": "serde_json",
+          "kind": "normal",
+          "is_workspace": false
+        },
+        {
+          "name": "serde_json_canonicalizer",
           "kind": "normal",
           "is_workspace": false
         },

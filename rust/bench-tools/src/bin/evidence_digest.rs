@@ -9,6 +9,7 @@ use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 
+use serde::de::{Error as _, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize, Serialize)]
@@ -58,14 +59,17 @@ struct BundleVerification {
 
 fn write_bundle_verification(
     generation: &str,
-    bundle: &Path,
-    manifest: &Path,
+    bundle_bytes: u64,
+    bundle_digest: blake3::Hash,
+    manifest_bytes: &[u8],
     output: &Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
     validate_generation(generation)?;
-    let (bundle_bytes, bundle_digest) = digest_file(bundle)?;
-    let (manifest_bytes, manifest_digest) = digest_file(manifest)?;
-    let mut file = File::create(output)?;
+    let manifest_digest = blake3::hash(manifest_bytes);
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(output)?;
     serde_json::to_writer_pretty(
         &mut file,
         &BundleVerification {
@@ -74,7 +78,7 @@ fn write_bundle_verification(
             status: "extracted_manifest_verified".to_owned(),
             bundle_bytes,
             bundle_blake3: format!("blake3:{bundle_digest}"),
-            manifest_bytes,
+            manifest_bytes: manifest_bytes.len() as u64,
             manifest_blake3: format!("blake3:{manifest_digest}"),
         },
     )?;
@@ -106,9 +110,8 @@ fn extract_and_verify_downloaded_archive(
     authenticated_bytes: u64,
     authenticated_digest: blake3::Hash,
     extraction_parent: &Path,
+    limits: ArchiveLimits,
 ) -> Result<(Manifest, u64, blake3::Hash), Box<dyn std::error::Error>> {
-    let limits = downloaded_archive_limits()?;
-
     let initial_metadata = bundle.metadata()?;
     if initial_metadata.len() != authenticated_bytes {
         return Err("downloaded archive length changed after authentication".into());
@@ -236,9 +239,12 @@ fn extract_and_verify_downloaded_archive(
 }
 
 fn verify_staged_bundle(
+    generation: &str,
     bundle_path: &Path,
     manifest_path: &Path,
     extraction_parent: &Path,
+    receipt_path: &Path,
+    limits: ArchiveLimits,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if !extraction_parent.is_absolute()
         || !fs::symlink_metadata(extraction_parent)?
@@ -248,6 +254,11 @@ fn verify_staged_bundle(
         return Err("staged-bundle extraction parent must be an absolute directory".into());
     }
     let manifest = snapshot_regular_file(manifest_path)?;
+    #[cfg(debug_assertions)]
+    rewrite_authenticated_file_for_test(
+        "AIPERF_TEST_REWRITE_STAGED_MANIFEST_AFTER_SNAPSHOT",
+        manifest_path,
+    )?;
     let mut bundle = open_regular_nofollow(bundle_path)?;
     let (authenticated_bytes, authenticated_digest) = digest_open_file(&mut bundle)?;
     #[cfg(debug_assertions)]
@@ -255,18 +266,39 @@ fn verify_staged_bundle(
         "AIPERF_TEST_REPLACE_STAGED_BUNDLE_AFTER_AUTHENTICATION",
         bundle_path,
     )?;
+    let (mut owned_bundle, snapshot_bytes, snapshot_digest) =
+        immutable_owned_snapshot(&mut bundle, extraction_parent)?;
+    if snapshot_bytes != authenticated_bytes || snapshot_digest != authenticated_digest {
+        return Err("staged bundle changed while creating its immutable owned snapshot".into());
+    }
+    let reopened = open_regular_nofollow(bundle_path)?;
+    if !same_file_identity(&bundle, &reopened)? {
+        return Err("staged bundle path changed before immutable snapshot admission".into());
+    }
+    #[cfg(debug_assertions)]
+    rewrite_authenticated_file_for_test(
+        "AIPERF_TEST_REWRITE_STAGED_BUNDLE_AFTER_SNAPSHOT",
+        bundle_path,
+    )?;
+    let (final_bytes, final_digest) = digest_open_file(&mut bundle)?;
+    if final_bytes != authenticated_bytes || final_digest != authenticated_digest {
+        return Err("staged bundle changed before immutable snapshot admission".into());
+    }
     extract_and_verify_downloaded_archive(
-        &mut bundle,
+        &mut owned_bundle,
         &manifest,
         authenticated_bytes,
         authenticated_digest,
         extraction_parent,
+        limits,
     )?;
-    let reopened = open_regular_nofollow(bundle_path)?;
-    if !same_file_identity(&bundle, &reopened)? {
-        return Err("staged bundle path changed during descriptor-held verification".into());
-    }
-    Ok(())
+    write_bundle_verification(
+        generation,
+        authenticated_bytes,
+        authenticated_digest,
+        &manifest,
+        receipt_path,
+    )
 }
 
 #[cfg(unix)]
@@ -351,6 +383,18 @@ fn snapshot_regular_file(path: &Path) -> io::Result<Vec<u8>> {
     Ok(bytes)
 }
 
+fn immutable_owned_snapshot(
+    source: &mut File,
+    parent: &Path,
+) -> io::Result<(File, u64, blake3::Hash)> {
+    source.seek(SeekFrom::Start(0))?;
+    let mut snapshot = tempfile::tempfile_in(parent)?;
+    io::copy(source, &mut snapshot)?;
+    snapshot.sync_all()?;
+    let (bytes, digest) = digest_open_file(&mut snapshot)?;
+    Ok((snapshot, bytes, digest))
+}
+
 fn same_file_identity(left: &File, right: &File) -> io::Result<bool> {
     #[cfg(unix)]
     {
@@ -385,6 +429,25 @@ fn replace_authenticated_path_for_test(environment: &str, path: &Path) -> io::Re
     Ok(())
 }
 
+#[cfg(debug_assertions)]
+fn rewrite_authenticated_file_for_test(environment: &str, path: &Path) -> io::Result<()> {
+    let Some(replacement) = std::env::var_os(environment) else {
+        return Ok(());
+    };
+    let mut replacement = open_regular_nofollow(Path::new(&replacement))?;
+    let mut options = OpenOptions::new();
+    options.write(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+
+        options.custom_flags(libc::O_NOFOLLOW);
+    }
+    let mut destination = options.open(path)?;
+    io::copy(&mut replacement, &mut destination)?;
+    destination.sync_all()
+}
+
 #[derive(Clone, Copy)]
 struct ArchiveLimits {
     max_members: usize,
@@ -404,54 +467,30 @@ const DOWNLOADED_ARCHIVE_LIMITS: ArchiveLimits = ArchiveLimits {
     max_expanded_bytes: 16 * 1024 * 1024 * 1024,
 };
 
-fn downloaded_archive_limits() -> Result<ArchiveLimits, Box<dyn std::error::Error>> {
-    let mut limits = DOWNLOADED_ARCHIVE_LIMITS;
-    if cfg!(debug_assertions) {
-        if let Some(value) = std::env::var_os("AIPERF_TEST_DOWNLOADED_MAX_MEMBERS") {
-            limits.max_members = value
-                .to_str()
-                .ok_or("test downloaded member limit is not UTF-8")?
-                .parse()?;
-        }
-        if let Some(value) = std::env::var_os("AIPERF_TEST_DOWNLOADED_MAX_MEMBER_BYTES") {
-            limits.max_member_bytes = value
-                .to_str()
-                .ok_or("test downloaded member-byte limit is not UTF-8")?
-                .parse()?;
-        }
-        if let Some(value) = std::env::var_os("AIPERF_TEST_DOWNLOADED_MAX_EXPANDED_BYTES") {
-            limits.max_expanded_bytes = value
-                .to_str()
-                .ok_or("test downloaded aggregate-byte limit is not UTF-8")?
-                .parse()?;
-        }
-    }
-    Ok(limits)
-}
-
-fn captured_source_archive_limits() -> Result<ArchiveLimits, Box<dyn std::error::Error>> {
-    let mut limits = CAPTURED_SOURCE_ARCHIVE_LIMITS;
-    if cfg!(debug_assertions) {
-        if let Some(value) = std::env::var_os("AIPERF_TEST_CAPTURED_SOURCE_MAX_MEMBERS") {
-            limits.max_members = value
-                .to_str()
-                .ok_or("test captured-source member limit is not UTF-8")?
-                .parse()?;
-        }
-        if let Some(value) = std::env::var_os("AIPERF_TEST_CAPTURED_SOURCE_MAX_MEMBER_BYTES") {
-            limits.max_member_bytes = value
-                .to_str()
-                .ok_or("test captured-source member-byte limit is not UTF-8")?
-                .parse()?;
-        }
-        if let Some(value) = std::env::var_os("AIPERF_TEST_CAPTURED_SOURCE_MAX_EXPANDED_BYTES") {
-            limits.max_expanded_bytes = value
-                .to_str()
-                .ok_or("test captured-source aggregate-byte limit is not UTF-8")?
-                .parse()?;
-        }
-    }
-    Ok(limits)
+#[cfg(debug_assertions)]
+fn archive_limits_from_test_environment(
+    prefix: &str,
+    defaults: ArchiveLimits,
+) -> Result<ArchiveLimits, Box<dyn std::error::Error>> {
+    let parse = |suffix: &str, default| -> Result<u64, Box<dyn std::error::Error>> {
+        let name = format!("AIPERF_TEST_{prefix}_{suffix}");
+        std::env::var_os(&name)
+            .map(|value| {
+                value
+                    .to_str()
+                    .ok_or_else(|| format!("{name} is not UTF-8"))?
+                    .parse::<u64>()
+                    .map_err(Into::into)
+            })
+            .unwrap_or(Ok(default))
+    };
+    Ok(ArchiveLimits {
+        max_members: parse("MAX_MEMBERS", defaults.max_members as u64)?
+            .try_into()
+            .map_err(|_| "test archive member limit does not fit usize")?,
+        max_member_bytes: parse("MAX_MEMBER_BYTES", defaults.max_member_bytes)?,
+        max_expanded_bytes: parse("MAX_EXPANDED_BYTES", defaults.max_expanded_bytes)?,
+    })
 }
 
 fn normalized_source_archive_member(
@@ -489,36 +528,78 @@ fn normalized_source_archive_member(
     Ok(Some(member.to_owned()))
 }
 
+fn reviewed_capture_identity(
+    inventory_path: &Path,
+) -> Result<(Vec<u8>, String), Box<dyn std::error::Error>> {
+    let inventory = String::from_utf8(snapshot_regular_file(inventory_path)?)?;
+    let mut identity = identity_from_inventory(&inventory)?;
+    let effective_source_tree_blake3 = identity
+        .get("effective_source_tree_blake3")
+        .and_then(serde_json::Value::as_str)
+        .filter(|digest| is_lower_blake3(digest))
+        .ok_or("reviewed pre-capture identity lacks an effective source-tree digest")?
+        .to_owned();
+    if identity.remove("canonical_inventory_digest").is_none() {
+        return Err("reviewed pre-capture identity lacks its canonical inventory binding".into());
+    }
+    let mut captured_identity = serde_json::to_vec_pretty(&identity)?;
+    captured_identity.push(b'\n');
+    Ok((captured_identity, effective_source_tree_blake3))
+}
+
+fn unique_manifest_file<'a>(
+    manifest: &'a Manifest,
+    path: &str,
+) -> Result<&'a ManifestFile, Box<dyn std::error::Error>> {
+    let matching = manifest
+        .files
+        .iter()
+        .filter(|entry| entry.path == path)
+        .collect::<Vec<_>>();
+    if matching.len() != 1 {
+        return Err(format!("captured evidence manifest must bind one `{path}`").into());
+    }
+    Ok(matching[0])
+}
+
 fn extract_authenticated_captured_source(
+    reviewed_inventory: &Path,
     capture_root: &Path,
     destination: &Path,
+    limits: ArchiveLimits,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let (reviewed_identity, reviewed_source_digest) =
+        reviewed_capture_identity(reviewed_inventory)?;
     let manifest_path = capture_root.join("evidence-manifest.json");
     let manifest_bytes = snapshot_regular_file(&manifest_path)?;
     let manifest: Manifest = serde_json::from_slice(&manifest_bytes)?;
     if manifest.schema_version != 1 {
         return Err("captured evidence manifest schema must be 1".into());
     }
-    let matching = manifest
-        .files
-        .iter()
-        .filter(|entry| entry.path == "identity/effective-source-tree.tar")
-        .collect::<Vec<_>>();
-    if matching.len() != 1 {
-        return Err(
-            "captured evidence manifest must bind one effective-source-tree archive".into(),
-        );
-    }
-    let expected = matching[0];
+    let expected = unique_manifest_file(&manifest, "identity/effective-source-tree.tar")?;
     if !is_lower_blake3(&expected.blake3) {
         return Err("captured source archive manifest digest is not lower-case BLAKE3".into());
+    }
+    if expected.blake3 != reviewed_source_digest {
+        return Err("captured source does not match the reviewed pre-capture identity".into());
+    }
+    let captured_identity_path = capture_root.join("evidence/identity/experiment-identity.json");
+    let captured_identity = snapshot_regular_file(&captured_identity_path)?;
+    let identity_entry = unique_manifest_file(&manifest, "identity/experiment-identity.json")?;
+    if identity_entry.bytes != captured_identity.len() as u64
+        || identity_entry.blake3 != format!("blake3:{}", blake3::hash(&captured_identity))
+        || captured_identity != reviewed_identity
+    {
+        return Err(
+            "captured manifest identity does not match the reviewed pre-capture identity".into(),
+        );
     }
     let archive_path = capture_root.join("evidence/identity/effective-source-tree.tar");
     let mut archive_file = open_regular_nofollow(&archive_path)?;
     let initial_metadata = archive_file.metadata()?;
     let (authenticated_bytes, authenticated_digest) = digest_open_file(&mut archive_file)?;
     if authenticated_bytes != expected.bytes
-        || format!("blake3:{authenticated_digest}") != expected.blake3
+        || format!("blake3:{authenticated_digest}") != reviewed_source_digest
     {
         return Err("captured source archive does not match its authenticated manifest".into());
     }
@@ -532,6 +613,32 @@ fn extract_authenticated_captured_source(
     if !destination_metadata.file_type().is_dir() || fs::read_dir(destination)?.next().is_some() {
         return Err("captured source destination must be an empty controlled directory".into());
     }
+    let snapshot_parent = destination
+        .parent()
+        .ok_or("captured source destination has no controlled parent")?;
+    let (mut owned_archive, snapshot_bytes, snapshot_digest) =
+        immutable_owned_snapshot(&mut archive_file, snapshot_parent)?;
+    if snapshot_bytes != authenticated_bytes || snapshot_digest != authenticated_digest {
+        return Err("captured source changed while creating its immutable owned snapshot".into());
+    }
+    let reopened = open_regular_nofollow(&archive_path)?;
+    if !same_file_identity(&archive_file, &reopened)? {
+        return Err("captured source path changed before immutable snapshot admission".into());
+    }
+    #[cfg(debug_assertions)]
+    rewrite_authenticated_file_for_test(
+        "AIPERF_TEST_REWRITE_CAPTURED_SOURCE_AFTER_SNAPSHOT",
+        &archive_path,
+    )?;
+    let final_metadata = archive_file.metadata()?;
+    let (final_bytes, final_digest) = digest_open_file(&mut archive_file)?;
+    if final_bytes != authenticated_bytes
+        || final_digest != authenticated_digest
+        || final_metadata.len() != initial_metadata.len()
+        || final_metadata.modified().ok() != initial_metadata.modified().ok()
+    {
+        return Err("captured source changed before immutable snapshot admission".into());
+    }
     if let Ok(marker) = std::env::var("AIPERF_CAPTURED_SOURCE_EXTRACTION_MARKER") {
         fs::write(
             marker,
@@ -541,10 +648,9 @@ fn extract_authenticated_captured_source(
 
     let mut members = BTreeSet::new();
     let mut expanded_bytes = 0_u64;
-    let limits = captured_source_archive_limits()?;
-    archive_file.seek(SeekFrom::Start(0))?;
+    owned_archive.seek(SeekFrom::Start(0))?;
     {
-        let mut archive = tar::Archive::new(&mut archive_file);
+        let mut archive = tar::Archive::new(&mut owned_archive);
         for entry in archive.entries()? {
             let entry = entry?;
             if members.len() >= limits.max_members {
@@ -579,9 +685,9 @@ fn extract_authenticated_captured_source(
         return Err("captured source archive contains no source members".into());
     }
 
-    archive_file.seek(SeekFrom::Start(0))?;
+    owned_archive.seek(SeekFrom::Start(0))?;
     {
-        let mut archive = tar::Archive::new(&mut archive_file);
+        let mut archive = tar::Archive::new(&mut owned_archive);
         for entry in archive.entries()? {
             if !entry?.unpack_in(destination)? {
                 return Err("captured source archive member escaped controlled storage".into());
@@ -590,17 +696,6 @@ fn extract_authenticated_captured_source(
     }
     let mut extracted_paths = Vec::new();
     visit(destination, &mut extracted_paths)?;
-    let final_metadata = archive_file.metadata()?;
-    let (final_bytes, final_digest) = digest_open_file(&mut archive_file)?;
-    let reopened = open_regular_nofollow(&archive_path)?;
-    if final_bytes != authenticated_bytes
-        || final_digest != authenticated_digest
-        || final_metadata.len() != initial_metadata.len()
-        || final_metadata.modified().ok() != initial_metadata.modified().ok()
-        || !same_file_identity(&archive_file, &reopened)?
-    {
-        return Err("captured source archive changed during descriptor-held extraction".into());
-    }
     Ok(())
 }
 
@@ -1397,8 +1492,16 @@ fn atomic_write(path: &Path, contents: &[u8]) -> Result<(), Box<dyn std::error::
 struct PublicationJournal {
     schema_version: u8,
     phase: String,
-    nonce: u32,
+    nonce: u64,
     entries: Vec<PublicationJournalEntry>,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct PublicationGeneration {
+    nonce: u64,
+    schema_version: u8,
+    status: String,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -1458,6 +1561,63 @@ fn write_publication_journal(
     file.sync_all()?;
     fs::rename(&temporary, journal_path)?;
     sync_directory(parent)?;
+    Ok(())
+}
+
+fn publication_generation_path(root: &Path) -> PathBuf {
+    root.join("artifacts/native-plugin-baseline/.publication-generation.json")
+}
+
+fn read_publication_generation(root: &Path) -> Result<Option<Vec<u8>>, Box<dyn std::error::Error>> {
+    let path = publication_generation_path(root);
+    let bytes = match snapshot_regular_file(&path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    let generation: PublicationGeneration = serde_json::from_slice(&bytes)?;
+    if generation.schema_version != 1 || generation.status != "committed" {
+        return Err("baseline publication generation is not committed".into());
+    }
+    let mut canonical = serde_json::to_vec(&generation)?;
+    canonical.push(b'\n');
+    if canonical != bytes {
+        return Err("baseline publication generation is not canonical".into());
+    }
+    Ok(Some(bytes))
+}
+
+fn write_publication_generation(
+    root: &Path,
+    nonce: u64,
+    status: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let path = publication_generation_path(root);
+    let parent = path
+        .parent()
+        .ok_or("publication generation has no parent")?
+        .to_path_buf();
+    fs::create_dir_all(&parent)?;
+    let temporary = parent.join(".publication-generation.json.tmp");
+    if temporary.exists() {
+        fs::remove_file(&temporary)?;
+    }
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temporary)?;
+    serde_json::to_writer(
+        &mut file,
+        &PublicationGeneration {
+            nonce,
+            schema_version: 1,
+            status: status.to_owned(),
+        },
+    )?;
+    file.write_all(b"\n")?;
+    file.sync_all()?;
+    fs::rename(temporary, &path)?;
+    sync_directory(&parent)?;
     Ok(())
 }
 
@@ -1555,6 +1715,7 @@ fn recover_publication(
     for parent in parents {
         sync_directory(parent)?;
     }
+    write_publication_generation(root, journal.nonce, "committed")?;
     fs::remove_file(journal_path)?;
     sync_directory(root)?;
     Ok(())
@@ -1574,7 +1735,13 @@ fn transactional_write_all(
     let journal_path = root.join(".aiperf-baseline-refresh-transaction.json");
     recover_publication(&journal_path, outputs)?;
 
-    let nonce = std::process::id();
+    let nonce = read_publication_generation(&root)?
+        .map(|bytes| serde_json::from_slice::<PublicationGeneration>(&bytes))
+        .transpose()?
+        .map(|generation| generation.nonce)
+        .unwrap_or(0)
+        .checked_add(1)
+        .ok_or("publication generation nonce overflow")?;
     let entries = outputs
         .iter()
         .enumerate()
@@ -1599,6 +1766,7 @@ fn transactional_write_all(
         entries,
     };
     write_publication_journal(&journal_path, &journal)?;
+    write_publication_generation(&root, nonce, "publishing")?;
     maybe_kill_publication("journal");
 
     let stage_result = (|| -> Result<(), Box<dyn std::error::Error>> {
@@ -1668,7 +1836,10 @@ fn transactional_write_all(
         }
         maybe_kill_publication(&format!("cleanup:{}", index + 1));
     }
+    write_publication_generation(&root, nonce, "committed")?;
+    maybe_kill_publication("journal-removal-ready");
     fs::remove_file(&journal_path)?;
+    maybe_kill_publication("journal-removal");
     sync_directory(&root)?;
     Ok(())
 }
@@ -1696,6 +1867,26 @@ fn verify_baseline_publication(
     if journal.exists() {
         return Err("baseline publication has an interrupted durable transaction".into());
     }
+    let generation = read_publication_generation(repository_root)?;
+    #[cfg(debug_assertions)]
+    if let Some(marker) = std::env::var_os("AIPERF_TEST_BASELINE_READER_PAUSE_MARKER") {
+        let marker = PathBuf::from(marker);
+        fs::write(&marker, b"reader acquired generation\n")?;
+        let resume = marker.with_file_name(format!(
+            "{}.continue",
+            marker
+                .file_name()
+                .and_then(|name| name.to_str())
+                .ok_or("reader test marker name is not UTF-8")?
+        ));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !resume.exists() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        if !resume.exists() {
+            return Err("reader test continuation was not provided".into());
+        }
+    }
     for relative in baseline_relative_paths(mode) {
         let path = repository_root.join(relative);
         if !fs::symlink_metadata(&path)?.file_type().is_file() {
@@ -1705,6 +1896,9 @@ fn verify_baseline_publication(
             )
             .into());
         }
+    }
+    if journal.exists() || read_publication_generation(repository_root)? != generation {
+        return Err("baseline publication generation changed during the whole read".into());
     }
     Ok(())
 }
@@ -1989,6 +2183,7 @@ fn published_evidence_facts(
         bundle_bytes,
         bundle_digest,
         &extraction_parent,
+        DOWNLOADED_ARCHIVE_LIMITS,
     )?;
     Ok(EvidenceFacts {
         repository: locator.repository,
@@ -2524,6 +2719,67 @@ fn validate_json_pointer(pointer: &str) -> Result<(), Box<dyn std::error::Error>
     Ok(())
 }
 
+fn decoded_json_pointer(pointer: &str) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    validate_json_pointer(pointer)?;
+    if pointer.is_empty() {
+        return Ok(Vec::new());
+    }
+    pointer[1..]
+        .split('/')
+        .map(|token| {
+            let mut decoded = String::new();
+            let mut characters = token.chars();
+            while let Some(character) = characters.next() {
+                if character == '~' {
+                    decoded.push(match characters.next() {
+                        Some('0') => '~',
+                        Some('1') => '/',
+                        _ => return Err("exporter policy contains malformed JSON pointer".into()),
+                    });
+                } else {
+                    decoded.push(character);
+                }
+            }
+            Ok(decoded)
+        })
+        .collect()
+}
+
+fn exporter_locators_overlap(
+    left: &ExporterLocator,
+    right: &ExporterLocator,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    match (left, right) {
+        (ExporterLocator::WholeOutput, _) | (_, ExporterLocator::WholeOutput) => Ok(true),
+        (
+            ExporterLocator::ByteRange {
+                length: left_length,
+                offset: left_offset,
+            },
+            ExporterLocator::ByteRange {
+                length: right_length,
+                offset: right_offset,
+            },
+        ) => {
+            Ok(*left_offset < right_offset + right_length
+                && *right_offset < left_offset + left_length)
+        }
+        (
+            ExporterLocator::JsonPointer {
+                pointer: left_pointer,
+            },
+            ExporterLocator::JsonPointer {
+                pointer: right_pointer,
+            },
+        ) => {
+            let left = decoded_json_pointer(left_pointer)?;
+            let right = decoded_json_pointer(right_pointer)?;
+            Ok(left.starts_with(&right) || right.starts_with(&left))
+        }
+        _ => Ok(false),
+    }
+}
+
 fn validate_exporter_expected(
     value: &ExporterExpectedValue,
     locator: &ExporterLocator,
@@ -2577,6 +2833,16 @@ fn validate_exporter_policy(
             previous_key = Some(key.as_str());
         }
     }
+    if !policy.receiver_transport_fields_removed.is_empty()
+        && !policy
+            .scenarios
+            .iter()
+            .any(|scenario| scenario.observable_kind == ExporterObservableKind::ReceiverTranscript)
+    {
+        return Err(
+            "exporter policy contains a transport removal unused by every receiver scenario".into(),
+        );
+    }
     let mut previous_scenario = None;
     for scenario in &policy.scenarios {
         if !is_policy_identifier(&scenario.scenario_id)
@@ -2587,6 +2853,7 @@ fn validate_exporter_policy(
         previous_scenario = Some(scenario.scenario_id.as_str());
         let mut previous_slot = None;
         let mut selector_locators = BTreeSet::new();
+        let mut locators_by_selector = BTreeMap::<String, Vec<&ExporterLocator>>::new();
         for slot in &scenario.provenance_slots {
             if !is_policy_identifier(&slot.slot_id)
                 || previous_slot.is_some_and(|previous| previous >= slot.slot_id.as_str())
@@ -2648,17 +2915,106 @@ fn validate_exporter_policy(
             if !selector_locators.insert(selector_locator) {
                 return Err("exporter policy contains duplicate selector/locator pair".into());
             }
+            let selector = serde_json::to_string(&slot.output_selector)?;
+            let peer_locators = locators_by_selector.entry(selector).or_default();
+            for peer in peer_locators.iter() {
+                if exporter_locators_overlap(peer, &slot.locator)? {
+                    return Err("exporter policy contains overlapping output slots".into());
+                }
+            }
+            peer_locators.push(&slot.locator);
         }
     }
+    Ok(())
+}
+
+struct DuplicateRejectingJson;
+
+impl<'de> Deserialize<'de> for DuplicateRejectingJson {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct JsonVisitor;
+
+        impl<'de> Visitor<'de> for JsonVisitor {
+            type Value = DuplicateRejectingJson;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a JSON value without duplicate object keys")
+            }
+
+            fn visit_bool<E>(self, _value: bool) -> Result<Self::Value, E> {
+                Ok(DuplicateRejectingJson)
+            }
+
+            fn visit_i64<E>(self, _value: i64) -> Result<Self::Value, E> {
+                Ok(DuplicateRejectingJson)
+            }
+
+            fn visit_u64<E>(self, _value: u64) -> Result<Self::Value, E> {
+                Ok(DuplicateRejectingJson)
+            }
+
+            fn visit_f64<E>(self, _value: f64) -> Result<Self::Value, E> {
+                Ok(DuplicateRejectingJson)
+            }
+
+            fn visit_str<E>(self, _value: &str) -> Result<Self::Value, E> {
+                Ok(DuplicateRejectingJson)
+            }
+
+            fn visit_none<E>(self) -> Result<Self::Value, E> {
+                Ok(DuplicateRejectingJson)
+            }
+
+            fn visit_unit<E>(self) -> Result<Self::Value, E> {
+                Ok(DuplicateRejectingJson)
+            }
+
+            fn visit_seq<A>(self, mut sequence: A) -> Result<Self::Value, A::Error>
+            where
+                A: SeqAccess<'de>,
+            {
+                while sequence.next_element::<DuplicateRejectingJson>()?.is_some() {}
+                Ok(DuplicateRejectingJson)
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                let mut keys = BTreeSet::new();
+                while let Some(key) = map.next_key::<String>()? {
+                    if !keys.insert(key.clone()) {
+                        return Err(A::Error::custom(format!(
+                            "duplicate JSON object key `{key}`"
+                        )));
+                    }
+                    map.next_value::<DuplicateRejectingJson>()?;
+                }
+                Ok(DuplicateRejectingJson)
+            }
+        }
+
+        deserializer.deserialize_any(JsonVisitor)
+    }
+}
+
+fn reject_duplicate_json_keys(bytes: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
+    let mut deserializer = serde_json::Deserializer::from_slice(bytes);
+    DuplicateRejectingJson::deserialize(&mut deserializer)?;
+    deserializer.end()?;
     Ok(())
 }
 
 fn parse_exporter_observable_policy(
     bytes: &[u8],
 ) -> Result<ExporterObservablePolicyV1, Box<dyn std::error::Error>> {
+    reject_duplicate_json_keys(bytes)?;
     let policy: ExporterObservablePolicyV1 = serde_json::from_slice(bytes)?;
     validate_exporter_policy(&policy)?;
-    let mut canonical = serde_json::to_vec(&policy)?;
+    let mut canonical = serde_json_canonicalizer::to_vec(&policy)?;
     canonical.push(b'\n');
     if canonical != bytes {
         return Err("exporter observable policy is not exact RFC 8785 JCS plus newline".into());
@@ -2694,6 +3050,7 @@ fn is_lower_blake3(value: &str) -> bool {
 fn parse_artifact_tree_observable(
     bytes: &[u8],
 ) -> Result<Vec<ArtifactTreeEntry>, Box<dyn std::error::Error>> {
+    reject_duplicate_json_keys(bytes)?;
     let entries: Vec<ArtifactTreeEntry> = serde_json::from_slice(bytes)?;
     let empty_digest = format!("blake3:{}", blake3::hash(b""));
     let mut previous_path = None;
@@ -2712,7 +3069,7 @@ fn parse_artifact_tree_observable(
             return Err("empty artifact-tree directory has nonempty content identity".into());
         }
     }
-    let mut canonical = serde_json::to_vec(&entries)?;
+    let mut canonical = serde_json_canonicalizer::to_vec(&entries)?;
     canonical.push(b'\n');
     if canonical != bytes {
         return Err("artifact-tree observable is not exact RFC 8785 JCS plus newline".into());
@@ -4084,40 +4441,107 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "usage: evidence_digest [manifest ROOT | verify MANIFEST ROOT | locator REPOSITORY TAG BUNDLE MANIFEST OUTPUT | verify-locator LOCATOR | topology HOST_COMMIT RUSTC TARGET LOCK METADATA WORKSPACE_TREE CLI_TREE | refresh-inventory INVENTORY | FILE ...]".into(),
         );
     };
-    if first == "verify-staged-bundle" {
-        let bundle = arguments
-            .next()
-            .ok_or("verify-staged-bundle requires BUNDLE MANIFEST EXTRACTION_PARENT")?;
-        let manifest = arguments
-            .next()
-            .ok_or("verify-staged-bundle requires BUNDLE MANIFEST EXTRACTION_PARENT")?;
-        let extraction_parent = arguments
-            .next()
-            .ok_or("verify-staged-bundle requires BUNDLE MANIFEST EXTRACTION_PARENT")?;
+    #[cfg(debug_assertions)]
+    if first == "verify-staged-bundle-test-limits" {
+        let generation = arguments.next().ok_or(
+            "verify-staged-bundle-test-limits requires GENERATION BUNDLE MANIFEST EXTRACTION_PARENT RECEIPT",
+        )?;
+        let bundle = arguments.next().ok_or(
+            "verify-staged-bundle-test-limits requires GENERATION BUNDLE MANIFEST EXTRACTION_PARENT RECEIPT",
+        )?;
+        let manifest = arguments.next().ok_or(
+            "verify-staged-bundle-test-limits requires GENERATION BUNDLE MANIFEST EXTRACTION_PARENT RECEIPT",
+        )?;
+        let extraction_parent = arguments.next().ok_or(
+            "verify-staged-bundle-test-limits requires GENERATION BUNDLE MANIFEST EXTRACTION_PARENT RECEIPT",
+        )?;
+        let receipt = arguments.next().ok_or(
+            "verify-staged-bundle-test-limits requires GENERATION BUNDLE MANIFEST EXTRACTION_PARENT RECEIPT",
+        )?;
         if arguments.next().is_some() {
-            return Err(
-                "verify-staged-bundle accepts exactly BUNDLE MANIFEST EXTRACTION_PARENT".into(),
-            );
+            return Err("verify-staged-bundle-test-limits accepts exactly GENERATION BUNDLE MANIFEST EXTRACTION_PARENT RECEIPT".into());
         }
         return verify_staged_bundle(
+            generation.to_str().ok_or("generation must be UTF-8")?,
             Path::new(&bundle),
             Path::new(&manifest),
             Path::new(&extraction_parent),
+            Path::new(&receipt),
+            archive_limits_from_test_environment("DOWNLOADED", DOWNLOADED_ARCHIVE_LIMITS)?,
+        );
+    }
+    #[cfg(debug_assertions)]
+    if first == "extract-captured-source-test-limits" {
+        let reviewed_inventory = arguments.next().ok_or(
+            "extract-captured-source-test-limits requires REVIEWED_INVENTORY CAPTURE_ROOT DESTINATION",
+        )?;
+        let capture_root = arguments.next().ok_or(
+            "extract-captured-source-test-limits requires REVIEWED_INVENTORY CAPTURE_ROOT DESTINATION",
+        )?;
+        let destination = arguments.next().ok_or(
+            "extract-captured-source-test-limits requires REVIEWED_INVENTORY CAPTURE_ROOT DESTINATION",
+        )?;
+        if arguments.next().is_some() {
+            return Err("extract-captured-source-test-limits accepts exactly REVIEWED_INVENTORY CAPTURE_ROOT DESTINATION".into());
+        }
+        return extract_authenticated_captured_source(
+            Path::new(&reviewed_inventory),
+            Path::new(&capture_root),
+            Path::new(&destination),
+            archive_limits_from_test_environment(
+                "CAPTURED_SOURCE",
+                CAPTURED_SOURCE_ARCHIVE_LIMITS,
+            )?,
+        );
+    }
+    if first == "verify-staged-bundle" {
+        let generation = arguments.next().ok_or(
+            "verify-staged-bundle requires GENERATION BUNDLE MANIFEST EXTRACTION_PARENT RECEIPT",
+        )?;
+        let bundle = arguments.next().ok_or(
+            "verify-staged-bundle requires GENERATION BUNDLE MANIFEST EXTRACTION_PARENT RECEIPT",
+        )?;
+        let manifest = arguments.next().ok_or(
+            "verify-staged-bundle requires GENERATION BUNDLE MANIFEST EXTRACTION_PARENT RECEIPT",
+        )?;
+        let extraction_parent = arguments.next().ok_or(
+            "verify-staged-bundle requires GENERATION BUNDLE MANIFEST EXTRACTION_PARENT RECEIPT",
+        )?;
+        let receipt = arguments.next().ok_or(
+            "verify-staged-bundle requires GENERATION BUNDLE MANIFEST EXTRACTION_PARENT RECEIPT",
+        )?;
+        if arguments.next().is_some() {
+            return Err(
+                "verify-staged-bundle accepts exactly GENERATION BUNDLE MANIFEST EXTRACTION_PARENT RECEIPT".into(),
+            );
+        }
+        return verify_staged_bundle(
+            generation.to_str().ok_or("generation must be UTF-8")?,
+            Path::new(&bundle),
+            Path::new(&manifest),
+            Path::new(&extraction_parent),
+            Path::new(&receipt),
+            DOWNLOADED_ARCHIVE_LIMITS,
         );
     }
     if first == "extract-captured-source" {
-        let capture_root = arguments
-            .next()
-            .ok_or("extract-captured-source requires CAPTURE_ROOT DESTINATION")?;
-        let destination = arguments
-            .next()
-            .ok_or("extract-captured-source requires CAPTURE_ROOT DESTINATION")?;
+        let reviewed_inventory = arguments.next().ok_or(
+            "extract-captured-source requires REVIEWED_INVENTORY CAPTURE_ROOT DESTINATION",
+        )?;
+        let capture_root = arguments.next().ok_or(
+            "extract-captured-source requires REVIEWED_INVENTORY CAPTURE_ROOT DESTINATION",
+        )?;
+        let destination = arguments.next().ok_or(
+            "extract-captured-source requires REVIEWED_INVENTORY CAPTURE_ROOT DESTINATION",
+        )?;
         if arguments.next().is_some() {
-            return Err("extract-captured-source accepts exactly CAPTURE_ROOT DESTINATION".into());
+            return Err("extract-captured-source accepts exactly REVIEWED_INVENTORY CAPTURE_ROOT DESTINATION".into());
         }
         return extract_authenticated_captured_source(
+            Path::new(&reviewed_inventory),
             Path::new(&capture_root),
             Path::new(&destination),
+            CAPTURED_SOURCE_ARCHIVE_LIMITS,
         );
     }
     if first == "manifest" {
@@ -4357,30 +4781,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Path::new(&mock_server),
         );
     }
-    if first == "bundle-verification" {
-        let generation = arguments
-            .next()
-            .ok_or("bundle-verification requires GENERATION")?;
-        let bundle = arguments
-            .next()
-            .ok_or("bundle-verification requires BUNDLE")?;
-        let manifest = arguments
-            .next()
-            .ok_or("bundle-verification requires MANIFEST")?;
-        let output = arguments
-            .next()
-            .ok_or("bundle-verification requires OUTPUT")?;
-        if arguments.next().is_some() {
-            return Err("bundle-verification accepts GENERATION BUNDLE MANIFEST OUTPUT".into());
-        }
-        return write_bundle_verification(
-            generation.to_str().ok_or("generation must be UTF-8")?,
-            Path::new(&bundle),
-            Path::new(&manifest),
-            Path::new(&output),
-        );
-    }
-
     for path in std::iter::once(first).chain(arguments) {
         let path = PathBuf::from(path);
         let (bytes, digest) = digest_file(&path)?;
@@ -4400,8 +4800,8 @@ mod archive_tests {
     use tar::{Builder, EntryType, Header};
 
     use super::{
-        Manifest, ManifestFile, digest_open_file, extract_and_verify_downloaded_archive,
-        open_regular_nofollow,
+        DOWNLOADED_ARCHIVE_LIMITS, Manifest, ManifestFile, digest_open_file,
+        extract_and_verify_downloaded_archive, open_regular_nofollow,
     };
 
     fn extract(
@@ -4416,6 +4816,7 @@ mod archive_tests {
             bytes,
             digest,
             extraction_parent,
+            DOWNLOADED_ARCHIVE_LIMITS,
         )
     }
 
@@ -4640,6 +5041,131 @@ mod tests {
         let bytes = b"{\"mode\":\"static_calibration\",\"receiver_transport_fields_removed\":[],\"scenarios\":[{\"allows_empty\":false,\"observable_kind\":\"artifact_tree\",\"provenance_slots\":[{\"locator\":{\"kind\":\"json_pointer\",\"pointer\":\"/digest\"},\"output_selector\":{\"kind\":\"captured_stream\"},\"replacement\":{\"encoding\":\"canonical_json\",\"value\":\"replacement\"},\"slot_id\":\"lock\",\"static_expected\":{\"encoding\":\"canonical_json\",\"value\":\"static\"}}],\"scenario_id\":\"exporter\"}],\"schema_version\":1}\n";
 
         assert!(parse_exporter_observable_policy(bytes).is_err());
+    }
+
+    #[test]
+    fn exporter_policy_accepts_normative_rfc8785_numbers_and_utf16_key_order() {
+        let bytes = "{\"mode\":\"static_calibration\",\"receiver_transport_fields_removed\":[],\"scenarios\":[{\"allows_empty\":false,\"observable_kind\":\"artifact_tree\",\"provenance_slots\":[{\"locator\":{\"kind\":\"json_pointer\",\"pointer\":\"/identity\"},\"output_selector\":{\"kind\":\"artifact_content\",\"path\":\"out.json\"},\"replacement\":{\"encoding\":\"canonical_json\",\"value\":{\"𐀀\":0,\"\":1e+30}},\"slot_id\":\"identity\",\"static_expected\":{\"encoding\":\"canonical_json\",\"value\":{\"𐀀\":0,\"\":1e+30}}}],\"scenario_id\":\"exporter\"}],\"schema_version\":1}\n";
+
+        parse_exporter_observable_policy(bytes.as_bytes())
+            .expect("the literal RFC 8785 counterexample must validate");
+
+        for noncanonical in [
+            bytes.replace("\"𐀀\":0", "\"𐀀\":-0.0"),
+            bytes.replace("\"𐀀\":0,\"\":1e+30", "\"\":1e+30,\"𐀀\":0"),
+            bytes.replace("\"𐀀\":0", "\"𐀀\":9007199254740993"),
+            bytes.replace("\"𐀀\":0", "\"𐀀\":1e-07"),
+            bytes.replace("\"𐀀\":0", "\"𐀀\":0,\"𐀀\":1"),
+        ] {
+            assert!(
+                parse_exporter_observable_policy(noncanonical.as_bytes()).is_err(),
+                "noncanonical RFC 8785 mutation was accepted"
+            );
+        }
+    }
+
+    #[test]
+    fn exporter_policy_rejects_unused_transport_and_overlapping_output_slots() {
+        let cases = [
+            serde_json::json!({
+                "mode": "static_calibration",
+                "receiver_transport_fields_removed": [{"keys": ["date"], "protocol": "otel_http_v1"}],
+                "scenarios": [{
+                    "allows_empty": false,
+                    "observable_kind": "artifact_tree",
+                    "provenance_slots": [],
+                    "scenario_id": "artifact",
+                }],
+                "schema_version": 1,
+            }),
+            serde_json::json!({
+                "mode": "static_calibration",
+                "receiver_transport_fields_removed": [],
+                "scenarios": [{
+                    "allows_empty": false,
+                    "observable_kind": "captured_stream",
+                    "provenance_slots": [
+                        {
+                            "locator": {"kind": "byte_range", "length": 4, "offset": 0},
+                            "output_selector": {"kind": "captured_stream"},
+                            "replacement": {"encoding": "hex_bytes", "value": "00"},
+                            "slot_id": "first",
+                            "static_expected": {"encoding": "hex_bytes", "value": "00"},
+                        },
+                        {
+                            "locator": {"kind": "byte_range", "length": 2, "offset": 3},
+                            "output_selector": {"kind": "captured_stream"},
+                            "replacement": {"encoding": "hex_bytes", "value": "00"},
+                            "slot_id": "second",
+                            "static_expected": {"encoding": "hex_bytes", "value": "00"},
+                        },
+                    ],
+                    "scenario_id": "stream",
+                }],
+                "schema_version": 1,
+            }),
+            serde_json::json!({
+                "mode": "static_calibration",
+                "receiver_transport_fields_removed": [],
+                "scenarios": [{
+                    "allows_empty": false,
+                    "observable_kind": "artifact_tree",
+                    "provenance_slots": [
+                        {
+                            "locator": {"kind": "json_pointer", "pointer": "/a"},
+                            "output_selector": {"kind": "artifact_content", "path": "out.json"},
+                            "replacement": {"encoding": "canonical_json", "value": 0},
+                            "slot_id": "ancestor",
+                            "static_expected": {"encoding": "canonical_json", "value": 0},
+                        },
+                        {
+                            "locator": {"kind": "json_pointer", "pointer": "/a/b"},
+                            "output_selector": {"kind": "artifact_content", "path": "out.json"},
+                            "replacement": {"encoding": "canonical_json", "value": 0},
+                            "slot_id": "descendant",
+                            "static_expected": {"encoding": "canonical_json", "value": 0},
+                        },
+                    ],
+                    "scenario_id": "json",
+                }],
+                "schema_version": 1,
+            }),
+            serde_json::json!({
+                "mode": "static_calibration",
+                "receiver_transport_fields_removed": [],
+                "scenarios": [{
+                    "allows_empty": false,
+                    "observable_kind": "captured_stream",
+                    "provenance_slots": [
+                        {
+                            "locator": {"kind": "whole_output"},
+                            "output_selector": {"kind": "captured_stream"},
+                            "replacement": {"encoding": "hex_bytes", "value": "00"},
+                            "slot_id": "all",
+                            "static_expected": {"encoding": "hex_bytes", "value": "00"},
+                        },
+                        {
+                            "locator": {"kind": "byte_range", "length": 1, "offset": 0},
+                            "output_selector": {"kind": "captured_stream"},
+                            "replacement": {"encoding": "hex_bytes", "value": "00"},
+                            "slot_id": "part",
+                            "static_expected": {"encoding": "hex_bytes", "value": "00"},
+                        },
+                    ],
+                    "scenario_id": "whole",
+                }],
+                "schema_version": 1,
+            }),
+        ];
+
+        for case in cases {
+            let policy: ExporterObservablePolicyV1 =
+                serde_json::from_value(case).expect("counterexample policy parses");
+            assert!(
+                validate_exporter_policy(&policy).is_err(),
+                "structurally overlapping policy was accepted"
+            );
+        }
     }
 
     #[test]

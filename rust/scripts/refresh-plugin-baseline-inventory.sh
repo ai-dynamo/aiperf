@@ -11,23 +11,24 @@ usage() {
 
 trusted_extract_captured_source() {
     run_owned 600 refresh-extract-captured-source "$1" \
-        extract-captured-source "$2" "$3"
+        extract-captured-source "$2" "$3" "$4"
 }
 
 if [ "${1:-}" = "--captured-source-verification-self-test" ]; then
-    [ "$#" -eq 5 ] || usage
+    [ "$#" -eq 6 ] || usage
     selftest_tool=$2
-    selftest_capture_root=$3
-    selftest_destination=$4
-    selftest_post_authentication_marker=$5
+    selftest_reviewed_inventory=$3
+    selftest_capture_root=$4
+    selftest_destination=$5
+    selftest_post_authentication_marker=$6
     repository=$(git rev-parse --show-toplevel)
     ownership_helper=$repository/rust/scripts/plugin-baseline-owned-command.sh
     . "$ownership_helper"
     failure_ledger=$(dirname "$selftest_post_authentication_marker")/refresh-failures.txt
     acquire_baseline_lock
     trap 'status=$?; trap - EXIT; release_baseline_lock || status=74; exit "$status"' EXIT
-    trusted_extract_captured_source "$selftest_tool" "$selftest_capture_root" \
-        "$selftest_destination"
+    trusted_extract_captured_source "$selftest_tool" "$selftest_reviewed_inventory" \
+        "$selftest_capture_root" "$selftest_destination"
     printf '%s\n' authenticated >"$selftest_post_authentication_marker"
     exit 0
 fi
@@ -192,7 +193,8 @@ else
         echo "trusted refresh evidence tool was not built" >&2
         exit 70
     }
-    trusted_extract_captured_source "$trusted_digest_tool" "$capture_root" "$source_root"
+    trusted_extract_captured_source "$trusted_digest_tool" "$inventory" "$capture_root" \
+        "$source_root"
 fi
 
 candidate_inventory=$source_root/rust/benchmarks/plugin-parity.yaml

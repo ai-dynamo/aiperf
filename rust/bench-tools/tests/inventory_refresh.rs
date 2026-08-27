@@ -176,20 +176,118 @@ fn append_tar_file_with_raw_name<W: std::io::Write>(
         .expect("raw-name tar fixture member is appended");
 }
 
-fn write_captured_source_manifest(capture: &Path, archive: &Path) {
+fn write_captured_source_trust_fixture(capture: &Path, archive: &Path) -> std::path::PathBuf {
+    let mut trusted_identity = serde_json::Map::from_iter([
+        (
+            "canonical_inventory_digest".to_owned(),
+            serde_json::json!(
+                "blake3:0000000000000000000000000000000000000000000000000000000000000000"
+            ),
+        ),
+        (
+            "effective_source_tree_blake3".to_owned(),
+            serde_json::json!(digest(archive)),
+        ),
+    ]);
+    let mut captured_identity = trusted_identity.clone();
+    captured_identity.remove("canonical_inventory_digest");
+    let mut captured_identity_bytes =
+        serde_json::to_vec_pretty(&captured_identity).expect("captured identity serializes");
+    captured_identity_bytes.push(b'\n');
+    let captured_identity_path = capture.join("evidence/identity/experiment-identity.json");
+    fs::write(&captured_identity_path, &captured_identity_bytes)
+        .expect("captured identity is written");
     let manifest = serde_json::json!({
         "schema_version": 1,
-        "files": [{
-            "path": "identity/effective-source-tree.tar",
-            "bytes": fs::metadata(archive).expect("archive metadata").len(),
-            "blake3": digest(archive),
-        }],
+        "files": [
+            {
+                "path": "identity/effective-source-tree.tar",
+                "bytes": fs::metadata(archive).expect("archive metadata").len(),
+                "blake3": digest(archive),
+            },
+            {
+                "path": "identity/experiment-identity.json",
+                "bytes": captured_identity_bytes.len(),
+                "blake3": format!("blake3:{}", blake3::hash(&captured_identity_bytes)),
+            },
+        ],
     });
     fs::write(
         capture.join("evidence-manifest.json"),
         serde_json::to_vec(&manifest).expect("manifest serializes"),
     )
     .expect("manifest is written");
+    trusted_identity.insert(
+        "canonical_inventory_digest".to_owned(),
+        serde_json::json!(
+            "blake3:0000000000000000000000000000000000000000000000000000000000000000"
+        ),
+    );
+    let trusted_identity =
+        serde_json::to_string_pretty(&trusted_identity).expect("trusted identity serializes");
+    let inventory = capture.join("reviewed-plugin-parity.yaml");
+    let indented = trusted_identity
+        .lines()
+        .map(|line| format!("  {line}\n"))
+        .collect::<String>();
+    fs::write(
+        &inventory,
+        format!("experiment_identity_json: |\n{indented}"),
+    )
+    .expect("reviewed inventory is written");
+    inventory
+}
+
+fn write_captured_source_manifest(capture: &Path, archive: &Path) {
+    let _ = write_captured_source_trust_fixture(capture, archive);
+}
+
+#[test]
+fn captured_source_and_manifest_must_match_the_reviewed_pre_capture_identity() {
+    let directory = tempfile::tempdir().expect("reviewed captured-source fixture root");
+    let capture = directory.path().join("capture");
+    let identity = capture.join("evidence/identity");
+    let destination = directory.path().join("extracted");
+    fs::create_dir_all(&identity).expect("capture identity root is created");
+    fs::create_dir(&destination).expect("controlled extraction root is created");
+    let archive = identity.join("effective-source-tree.tar");
+    let mut builder = Builder::new(File::create(&archive).expect("source archive is created"));
+    append_tar_file(&mut builder, "safe.txt", b"reviewed source");
+    builder.finish().expect("reviewed archive is finished");
+    let reviewed_inventory = write_captured_source_trust_fixture(&capture, &archive);
+    let reviewed_inventory_bytes =
+        fs::read(&reviewed_inventory).expect("reviewed inventory is retained");
+
+    let mut builder = Builder::new(File::create(&archive).expect("archive is replaced"));
+    append_tar_file(&mut builder, "build.rs", b"malicious replacement");
+    builder.finish().expect("replacement archive is finished");
+    write_captured_source_trust_fixture(&capture, &archive);
+    fs::write(&reviewed_inventory, reviewed_inventory_bytes)
+        .expect("reviewed inventory remains authoritative");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_evidence_digest"))
+        .arg("extract-captured-source")
+        .arg(&reviewed_inventory)
+        .arg(&capture)
+        .arg(&destination)
+        .output()
+        .expect("trusted extraction command starts");
+    assert!(
+        !output.status.success(),
+        "caller-rebound source was accepted"
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("reviewed pre-capture identity"),
+        "unexpected trust refusal: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read_dir(&destination)
+            .expect("destination remains readable")
+            .count(),
+        0,
+        "unreviewed captured source was written"
+    );
 }
 
 #[test]
@@ -204,23 +302,11 @@ fn trusted_tool_authenticates_captured_source_before_extraction() {
     let mut builder = Builder::new(File::create(&archive).expect("source archive is created"));
     append_tar_file(&mut builder, "rust/Cargo.toml", b"[workspace]\n");
     builder.finish().expect("source archive is finished");
-    let archive_bytes = fs::metadata(&archive).expect("archive metadata").len();
-    let manifest = serde_json::json!({
-        "schema_version": 1,
-        "files": [{
-            "path": "identity/effective-source-tree.tar",
-            "bytes": archive_bytes,
-            "blake3": digest(&archive),
-        }],
-    });
-    fs::write(
-        capture.join("evidence-manifest.json"),
-        serde_json::to_vec(&manifest).expect("manifest serializes"),
-    )
-    .expect("manifest is written");
+    let reviewed_inventory = write_captured_source_trust_fixture(&capture, &archive);
 
     let output = Command::new(env!("CARGO_BIN_EXE_evidence_digest"))
         .arg("extract-captured-source")
+        .arg(&reviewed_inventory)
         .arg(&capture)
         .arg(&destination)
         .output()
@@ -251,12 +337,14 @@ fn refresh_shell_executes_post_authentication_work_only_after_trusted_source_ext
         Builder::new(File::create(&valid_archive).expect("valid source archive is created"));
     append_tar_file(&mut builder, "rust/Cargo.toml", b"[workspace]\n");
     builder.finish().expect("valid source archive is finished");
-    write_captured_source_manifest(&valid_capture, &valid_archive);
+    let valid_reviewed_inventory =
+        write_captured_source_trust_fixture(&valid_capture, &valid_archive);
     let valid_marker = directory.path().join("valid-post-authentication-work");
     let valid = Command::new("sh")
         .arg(&script)
         .arg("--captured-source-verification-self-test")
         .arg(env!("CARGO_BIN_EXE_evidence_digest"))
+        .arg(&valid_reviewed_inventory)
         .arg(&valid_capture)
         .arg(&valid_destination)
         .arg(&valid_marker)
@@ -288,7 +376,8 @@ fn refresh_shell_executes_post_authentication_work_only_after_trusted_source_ext
     builder
         .finish()
         .expect("tampered source archive is finished");
-    write_captured_source_manifest(&tampered_capture, &tampered_archive);
+    let tampered_reviewed_inventory =
+        write_captured_source_trust_fixture(&tampered_capture, &tampered_archive);
     fs::write(&tampered_archive, b"bytes changed after manifest")
         .expect("captured source is tampered after manifest");
     let tampered_marker = directory.path().join("unexpected-post-authentication-work");
@@ -296,6 +385,7 @@ fn refresh_shell_executes_post_authentication_work_only_after_trusted_source_ext
         .arg(script)
         .arg("--captured-source-verification-self-test")
         .arg(env!("CARGO_BIN_EXE_evidence_digest"))
+        .arg(&tampered_reviewed_inventory)
         .arg(&tampered_capture)
         .arg(&tampered_destination)
         .arg(&tampered_marker)
@@ -335,22 +425,11 @@ fn captured_source_archive_enforces_member_count_before_writing_destination() {
     append_tar_file(&mut builder, "one.txt", b"one");
     append_tar_file(&mut builder, "two.txt", b"two");
     builder.finish().expect("source archive is finished");
-    let manifest = serde_json::json!({
-        "schema_version": 1,
-        "files": [{
-            "path": "identity/effective-source-tree.tar",
-            "bytes": fs::metadata(&archive).expect("archive metadata").len(),
-            "blake3": digest(&archive),
-        }],
-    });
-    fs::write(
-        capture.join("evidence-manifest.json"),
-        serde_json::to_vec(&manifest).expect("manifest serializes"),
-    )
-    .expect("manifest is written");
+    let reviewed_inventory = write_captured_source_trust_fixture(&capture, &archive);
 
     let output = Command::new(env!("CARGO_BIN_EXE_evidence_digest"))
-        .arg("extract-captured-source")
+        .arg("extract-captured-source-test-limits")
+        .arg(&reviewed_inventory)
         .arg(&capture)
         .arg(&destination)
         .env("AIPERF_TEST_CAPTURED_SOURCE_MAX_MEMBERS", "1")
@@ -367,6 +446,38 @@ fn captured_source_archive_enforces_member_count_before_writing_destination() {
         0,
         "archive validation wrote destination bytes before refusal"
     );
+}
+
+#[test]
+fn production_captured_source_limits_ignore_ambient_test_overrides() {
+    let directory = tempfile::tempdir().expect("production source-limit fixture root");
+    let capture = directory.path().join("capture");
+    let identity = capture.join("evidence/identity");
+    let destination = directory.path().join("extracted");
+    fs::create_dir_all(&identity).expect("capture identity root is created");
+    fs::create_dir(&destination).expect("controlled extraction root is created");
+    let archive = identity.join("effective-source-tree.tar");
+    let mut builder = Builder::new(File::create(&archive).expect("source archive is created"));
+    append_tar_file(&mut builder, "one.txt", b"one");
+    append_tar_file(&mut builder, "two.txt", b"two");
+    builder.finish().expect("source archive is finished");
+    let reviewed_inventory = write_captured_source_trust_fixture(&capture, &archive);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_evidence_digest"))
+        .arg("extract-captured-source")
+        .arg(&reviewed_inventory)
+        .arg(&capture)
+        .arg(&destination)
+        .env("AIPERF_TEST_CAPTURED_SOURCE_MAX_MEMBERS", "1")
+        .output()
+        .expect("production extraction starts");
+    assert!(
+        output.status.success(),
+        "ambient test limit changed production policy: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(destination.join("one.txt").is_file());
+    assert!(destination.join("two.txt").is_file());
 }
 
 #[test]
@@ -394,18 +505,91 @@ fn completed_bundle_is_verified_through_the_trusted_archive_entrypoint() {
     .expect("manifest is written");
     let bundle = directory.path().join("bundle.tar.gz");
     create_bundle(&capture, &bundle);
+    let receipt = directory.path().join("bundle-verification.json");
 
     let output = Command::new(env!("CARGO_BIN_EXE_evidence_digest"))
         .arg("verify-staged-bundle")
+        .arg("review1i")
         .arg(&bundle)
         .arg(&manifest)
         .arg(&extraction_parent)
+        .arg(&receipt)
         .output()
         .expect("trusted staged-bundle verifier starts");
     assert!(
         output.status.success(),
         "trusted staged-bundle verification failed: {}",
         String::from_utf8_lossy(&output.stderr)
+    );
+    let receipt: serde_json::Value = serde_json::from_slice(
+        &fs::read(&receipt).expect("verification receipt is authored by the trusted command"),
+    )
+    .expect("verification receipt parses");
+    assert_eq!(receipt["status"], "extracted_manifest_verified");
+    assert_eq!(receipt["bundle_blake3"], digest(&bundle));
+    assert_eq!(receipt["manifest_blake3"], digest(&manifest));
+}
+
+#[test]
+fn staged_manifest_receipt_uses_the_owned_authenticated_snapshot() {
+    let directory = tempfile::tempdir().expect("staged manifest snapshot fixture root");
+    let capture = directory.path().join("capture");
+    let evidence = capture.join("evidence");
+    let extraction_parent = directory.path().join("controlled");
+    fs::create_dir_all(&evidence).expect("evidence root is created");
+    fs::create_dir(&extraction_parent).expect("controlled root is created");
+    fs::write(evidence.join("sample.txt"), b"sealed evidence").expect("evidence is written");
+    let manifest = capture.join("evidence-manifest.json");
+    fs::write(
+        &manifest,
+        serde_json::to_vec(&serde_json::json!({
+            "schema_version": 1,
+            "files": [{
+                "path": "sample.txt",
+                "bytes": 15,
+                "blake3": format!("blake3:{}", blake3::hash(b"sealed evidence")),
+            }],
+        }))
+        .expect("manifest serializes"),
+    )
+    .expect("manifest is written");
+    let authenticated_manifest = fs::read(&manifest).expect("authenticated manifest is readable");
+    let bundle = directory.path().join("bundle.tar.gz");
+    create_bundle(&capture, &bundle);
+    let replacement = directory.path().join("replacement-manifest.json");
+    fs::write(&replacement, b"{\"files\":[],\"schema_version\":1}\n")
+        .expect("replacement manifest is written");
+    let receipt = directory.path().join("bundle-verification.json");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_evidence_digest"))
+        .arg("verify-staged-bundle")
+        .arg("review1i")
+        .arg(&bundle)
+        .arg(&manifest)
+        .arg(&extraction_parent)
+        .arg(&receipt)
+        .env(
+            "AIPERF_TEST_REWRITE_STAGED_MANIFEST_AFTER_SNAPSHOT",
+            &replacement,
+        )
+        .output()
+        .expect("staged manifest snapshot verification starts");
+    assert!(
+        output.status.success(),
+        "owned manifest snapshot was not verified: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read(&manifest).expect("caller manifest remains readable"),
+        fs::read(&replacement).expect("replacement manifest remains readable"),
+        "same-inode manifest mutation seam did not run"
+    );
+    let receipt: serde_json::Value =
+        serde_json::from_slice(&fs::read(receipt).expect("snapshot receipt is readable"))
+            .expect("snapshot receipt parses");
+    assert_eq!(
+        receipt["manifest_blake3"],
+        format!("blake3:{}", blake3::hash(&authenticated_manifest))
     );
 }
 
@@ -535,12 +719,15 @@ fn staged_bundle_verifier_rejects_unsafe_archive_before_extraction() {
         fs::create_dir(&controlled).expect("controlled extraction root is created");
         let outside = directory.path().join("outside");
         fs::write(&outside, b"sentinel").expect("outside sentinel is written");
+        let receipt = directory.path().join("bundle-verification.json");
         let mut command = Command::new(env!("CARGO_BIN_EXE_evidence_digest"));
         command
-            .arg("verify-staged-bundle")
+            .arg("verify-staged-bundle-test-limits")
+            .arg("review1i")
             .arg(&bundle)
             .arg(&manifest)
-            .arg(&controlled);
+            .arg(&controlled)
+            .arg(&receipt);
         if case == "member_count" {
             command.env("AIPERF_TEST_DOWNLOADED_MAX_MEMBERS", "2");
         }
@@ -604,11 +791,14 @@ fn staged_bundle_verifier_rejects_uncontrolled_extraction_parents() {
         std::path::PathBuf::from("relative-extraction-root"),
         directory.path().join("missing-extraction-root"),
     ] {
+        let receipt = directory.path().join("bundle-verification.json");
         let output = Command::new(env!("CARGO_BIN_EXE_evidence_digest"))
             .arg("verify-staged-bundle")
+            .arg("review1i")
             .arg(&bundle)
             .arg(&manifest)
             .arg(&uncontrolled)
+            .arg(receipt)
             .output()
             .expect("staged bundle verifier starts");
         assert!(
@@ -678,10 +868,11 @@ fn captured_source_archive_rejects_unsafe_types_paths_and_sizes() {
             _ => unreachable!(),
         }
         builder.finish().expect("adversarial archive is finished");
-        write_captured_source_manifest(&capture, &archive);
+        let reviewed_inventory = write_captured_source_trust_fixture(&capture, &archive);
         let mut command = Command::new(env!("CARGO_BIN_EXE_evidence_digest"));
         command
-            .arg("extract-captured-source")
+            .arg("extract-captured-source-test-limits")
+            .arg(&reviewed_inventory)
             .arg(&capture)
             .arg(&destination);
         if case == "member_size" {
@@ -725,7 +916,7 @@ fn captured_source_authentication_precedes_extraction_and_rejects_symlinks() {
     let mut builder = Builder::new(File::create(&archive).expect("archive is created"));
     append_tar_file(&mut builder, "safe.txt", b"safe");
     builder.finish().expect("archive is finished");
-    write_captured_source_manifest(&capture, &archive);
+    let reviewed_inventory = write_captured_source_trust_fixture(&capture, &archive);
     let manifest_path = capture.join("evidence-manifest.json");
     let mut manifest: serde_json::Value =
         serde_json::from_slice(&fs::read(&manifest_path).expect("manifest is readable"))
@@ -741,6 +932,7 @@ fn captured_source_authentication_precedes_extraction_and_rejects_symlinks() {
     let marker = directory.path().join("extraction-entered");
     let mismatched = Command::new(env!("CARGO_BIN_EXE_evidence_digest"))
         .arg("extract-captured-source")
+        .arg(&reviewed_inventory)
         .arg(&capture)
         .arg(&destination)
         .env("AIPERF_CAPTURED_SOURCE_EXTRACTION_MARKER", &marker)
@@ -764,6 +956,7 @@ fn captured_source_authentication_precedes_extraction_and_rejects_symlinks() {
     symlink(&original, &archive).expect("archive symlink is created");
     let symlinked = Command::new(env!("CARGO_BIN_EXE_evidence_digest"))
         .arg("extract-captured-source")
+        .arg(&reviewed_inventory)
         .arg(&capture)
         .arg(&destination)
         .status()
@@ -786,7 +979,7 @@ fn captured_source_path_replacement_after_authentication_is_refused() {
     let mut builder = Builder::new(File::create(&archive).expect("source archive is created"));
     append_tar_file(&mut builder, "safe.txt", b"authenticated bytes");
     builder.finish().expect("source archive is finished");
-    write_captured_source_manifest(&capture, &archive);
+    let reviewed_inventory = write_captured_source_trust_fixture(&capture, &archive);
 
     let replacement = directory.path().join("replacement-source.tar");
     let mut builder = Builder::new(File::create(&replacement).expect("replacement is created"));
@@ -795,6 +988,7 @@ fn captured_source_path_replacement_after_authentication_is_refused() {
 
     let output = Command::new(env!("CARGO_BIN_EXE_evidence_digest"))
         .arg("extract-captured-source")
+        .arg(&reviewed_inventory)
         .arg(&capture)
         .arg(&destination)
         .env(
@@ -806,6 +1000,52 @@ fn captured_source_path_replacement_after_authentication_is_refused() {
     assert!(
         !output.status.success(),
         "captured source path replacement was accepted"
+    );
+}
+
+#[test]
+fn captured_source_extraction_uses_an_owned_immutable_snapshot() {
+    let directory = tempfile::tempdir().expect("captured source snapshot fixture root");
+    let capture = directory.path().join("capture");
+    let identity = capture.join("evidence/identity");
+    let destination = directory.path().join("extracted");
+    fs::create_dir_all(&identity).expect("capture identity root is created");
+    fs::create_dir(&destination).expect("controlled extraction root is created");
+    let archive = identity.join("effective-source-tree.tar");
+    let mut builder = Builder::new(File::create(&archive).expect("source archive is created"));
+    append_tar_file(&mut builder, "safe.txt", b"reviewed bytes");
+    builder.finish().expect("source archive is finished");
+    let reviewed_inventory = write_captured_source_trust_fixture(&capture, &archive);
+
+    let replacement = directory.path().join("same-inode-replacement.tar");
+    let mut builder = Builder::new(File::create(&replacement).expect("replacement is created"));
+    append_tar_file(&mut builder, "build.rs", b"unreviewed bytes");
+    builder.finish().expect("replacement archive is finished");
+    let replacement_bytes = fs::read(&replacement).expect("replacement bytes are readable");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_evidence_digest"))
+        .arg("extract-captured-source")
+        .arg(&reviewed_inventory)
+        .arg(&capture)
+        .arg(&destination)
+        .env(
+            "AIPERF_TEST_REWRITE_CAPTURED_SOURCE_AFTER_SNAPSHOT",
+            &replacement,
+        )
+        .output()
+        .expect("snapshot extraction starts");
+    assert!(!output.status.success(), "same-inode mutation was accepted");
+    assert_eq!(
+        fs::read_dir(&destination)
+            .expect("destination remains readable")
+            .count(),
+        0,
+        "caller mutation caused source bytes to be written"
+    );
+    assert_eq!(
+        fs::read(&archive).expect("caller archive remains readable"),
+        replacement_bytes,
+        "same-inode mutation seam did not run"
     );
 }
 
@@ -850,12 +1090,15 @@ fn staged_bundle_path_replacement_after_authentication_is_refused() {
     .expect("replacement manifest is written");
     let replacement = directory.path().join("replacement.tar.gz");
     create_bundle(&replacement_capture, &replacement);
+    let receipt = directory.path().join("bundle-verification.json");
 
     let output = Command::new(env!("CARGO_BIN_EXE_evidence_digest"))
         .arg("verify-staged-bundle")
+        .arg("review1i")
         .arg(&bundle)
         .arg(&manifest)
         .arg(&extraction_parent)
+        .arg(&receipt)
         .env(
             "AIPERF_TEST_REPLACE_STAGED_BUNDLE_AFTER_AUTHENTICATION",
             &replacement,
@@ -2146,6 +2389,66 @@ fn publication_recovers_after_process_death_at_a_destination_rename() {
     );
 }
 
+#[test]
+fn publication_reader_rejects_a_generation_changed_during_the_whole_read() {
+    let directory = tempfile::tempdir().expect("publication reader race fixture root");
+    let candidate = directory.path().join("candidate");
+    let repository = directory.path().join("repository");
+    for (index, relative) in publication_paths("pre-capture").iter().enumerate() {
+        let candidate_path = candidate.join(relative);
+        let repository_path = repository.join(relative);
+        fs::create_dir_all(candidate_path.parent().expect("candidate parent"))
+            .expect("candidate parent is created");
+        fs::create_dir_all(repository_path.parent().expect("repository parent"))
+            .expect("repository parent is created");
+        fs::write(candidate_path, format!("new-{index}\n")).expect("candidate is written");
+        fs::write(repository_path, format!("old-{index}\n")).expect("original is written");
+    }
+    fs::write(
+        repository.join("artifacts/native-plugin-baseline/.publication-generation.json"),
+        b"{\"nonce\":1,\"schema_version\":1,\"status\":\"committed\"}\n",
+    )
+    .expect("initial generation marker is written");
+    let pause = directory.path().join("reader-paused");
+    let resume = directory.path().join("reader-paused.continue");
+    let mut reader = Command::new(env!("CARGO_BIN_EXE_evidence_digest"))
+        .args(["verify-baseline-publication", "pre-capture"])
+        .arg(&repository)
+        .env("AIPERF_TEST_BASELINE_READER_PAUSE_MARKER", &pause)
+        .spawn()
+        .expect("publication reader starts");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while !pause.exists() && std::time::Instant::now() < deadline {
+        if reader
+            .try_wait()
+            .expect("reader state is available")
+            .is_some()
+        {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(
+        pause.is_file(),
+        "reader did not enter the whole-read boundary"
+    );
+
+    let published = Command::new(env!("CARGO_BIN_EXE_evidence_digest"))
+        .args(["publish-baseline", "pre-capture"])
+        .arg(&candidate)
+        .arg(&repository)
+        .output()
+        .expect("concurrent publication starts");
+    assert!(
+        published.status.success(),
+        "concurrent publication failed: {}",
+        String::from_utf8_lossy(&published.stderr)
+    );
+    fs::write(resume, b"continue\n").expect("reader is resumed");
+    let status = reader.wait().expect("publication reader exits");
+    assert!(!status.success(), "reader accepted a mixed-generation read");
+}
+
 fn publication_paths(mode: &str) -> Vec<&'static str> {
     let mut paths = vec![
         "rust/benchmarks/plugin-parity.yaml",
@@ -2194,6 +2497,10 @@ fn publication_is_crash_durable_at_every_commit_boundary() {
                 format!("cleanup:{ordinal}"),
             ]);
         }
+        boundaries.extend([
+            "journal-removal-ready".to_owned(),
+            "journal-removal".to_owned(),
+        ]);
         for boundary in boundaries {
             let directory = tempfile::tempdir().expect("publication boundary fixture root");
             let candidate = directory.path().join("candidate");
@@ -2207,7 +2514,10 @@ fn publication_is_crash_durable_at_every_commit_boundary() {
                 fs::create_dir_all(repository_path.parent().expect("repository parent"))
                     .expect("repository parent is created");
                 fs::write(&candidate_path, format!("new-{index}\n")).expect("candidate is written");
-                fs::write(&repository_path, format!("old-{index}\n")).expect("original is written");
+                if mode == "pre-capture" || index < 3 {
+                    fs::write(&repository_path, format!("old-{index}\n"))
+                        .expect("original is written");
+                }
             }
             let killed = Command::new(env!("CARGO_BIN_EXE_evidence_digest"))
                 .args(["publish-baseline", mode])
@@ -2222,10 +2532,17 @@ fn publication_is_crash_durable_at_every_commit_boundary() {
                 .arg(&repository)
                 .status()
                 .expect("interrupted reader starts");
-            assert!(
-                !reader.success(),
-                "{mode} boundary {boundary} did not fail closed"
-            );
+            if boundary == "journal-removal" {
+                assert!(
+                    reader.success(),
+                    "{mode} boundary {boundary} refused the complete committed generation"
+                );
+            } else {
+                assert!(
+                    !reader.success(),
+                    "{mode} boundary {boundary} did not fail closed"
+                );
+            }
             let recovery = Command::new(env!("CARGO_BIN_EXE_evidence_digest"))
                 .args(["recover-baseline-publication", mode])
                 .arg(&repository)
@@ -2238,18 +2555,19 @@ fn publication_is_crash_durable_at_every_commit_boundary() {
             );
             let recovered = paths
                 .iter()
-                .map(|relative| {
-                    fs::read_to_string(repository.join(relative)).expect("recovered file exists")
-                })
+                .map(|relative| fs::read_to_string(repository.join(relative)).ok())
                 .collect::<Vec<_>>();
-            let is_old = recovered
-                .iter()
-                .enumerate()
-                .all(|(index, bytes)| bytes == &format!("old-{index}\n"));
+            let is_old = recovered.iter().enumerate().all(|(index, bytes)| {
+                if mode == "pre-capture" || index < 3 {
+                    bytes.as_deref() == Some(format!("old-{index}\n").as_str())
+                } else {
+                    bytes.is_none()
+                }
+            });
             let is_new = recovered
                 .iter()
                 .enumerate()
-                .all(|(index, bytes)| bytes == &format!("new-{index}\n"));
+                .all(|(index, bytes)| bytes.as_deref() == Some(format!("new-{index}\n").as_str()));
             assert!(
                 is_old || is_new,
                 "{mode} boundary {boundary} recovered a mixed generation: {recovered:?}"
