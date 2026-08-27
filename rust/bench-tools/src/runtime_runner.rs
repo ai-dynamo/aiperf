@@ -2744,8 +2744,13 @@ mod tests {
         );
         assert!(first_stderr.is_some());
 
-        // A second run would signal a pid the host has already recycled.
+        // A second run would signal a pid the host has already recycled. Arming
+        // the cleanup fault makes the skip observable: the guard returns before
+        // it reaches the seam, so an unguarded second pass would surface the
+        // injected error instead of nothing.
+        set_injected_child_fault(Some("cleanup"));
         let (second_error, second_stdout, second_stderr) = owned.cleanup();
+        set_injected_child_fault(None);
         assert!(second_error.is_none(), "{second_error:?}");
         assert!(second_stdout.is_none());
         assert!(second_stderr.is_none());
