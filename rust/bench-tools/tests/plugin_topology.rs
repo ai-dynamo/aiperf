@@ -941,3 +941,20 @@ fn configured_task_requires_its_implemented_topology_witness() {
     validate_configured_implementation_task(&workspace_root(), task)
         .expect("configured implementation topology witness");
 }
+
+#[test]
+fn configured_topology_task_rejects_a_present_but_invalid_value() {
+    assert_eq!(configured_topology_task(None), Ok(None));
+    assert_eq!(
+        configured_topology_task(Some(std::ffi::OsString::from("4"))),
+        Ok(Some(4))
+    );
+    for invalid in ["task-4", "12-elf", ""] {
+        assert!(
+            configured_topology_task(Some(std::ffi::OsString::from(invalid)))
+                .unwrap_err()
+                .contains("is not a task number"),
+            "{invalid} must fail the gate rather than skip it"
+        );
+    }
+}
