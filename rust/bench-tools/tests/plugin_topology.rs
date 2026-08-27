@@ -1002,6 +1002,28 @@ fn implemented_witness_census_failures_name_the_exact_difference() {
         "source census failure must name both sides: {error}"
     );
 
+    let mut empty_source = synthetic.witness.clone();
+    empty_source.packages[0].source_files.clear();
+    assert!(
+        synthetic
+            .validate(&empty_source)
+            .unwrap_err()
+            .contains("source-file census"),
+        "an empty census must never satisfy a package that has sources"
+    );
+
+    let mut duplicate_source = synthetic.witness.clone();
+    duplicate_source.packages[0]
+        .source_files
+        .push("core/src/lib.rs".to_owned());
+    assert!(
+        synthetic
+            .validate(&duplicate_source)
+            .unwrap_err()
+            .contains("duplicate source-file census"),
+        "a duplicated census row must be rejected as a duplicate"
+    );
+
     let mut wrong_dependency = synthetic.witness.clone();
     wrong_dependency.packages[0].dependencies[0].package = "aiperf-core-utils".to_owned();
     let error = synthetic.validate(&wrong_dependency).unwrap_err();
@@ -1027,6 +1049,25 @@ fn implemented_witness_census_failures_name_the_exact_difference() {
         error.contains("aiperf-plugin-api") && error.contains("aiperf-core"),
         "package-set failure must name both sides: {error}"
     );
+}
+
+/// Resolves the implementation task the gate was configured for. An absent
+/// variable is the only legitimate skip: a present value that is not a task
+/// number is a gate failure, so a typo cannot report a green topology gate
+/// having validated no witness at all.
+fn configured_topology_task(value: Option<std::ffi::OsString>) -> Result<Option<u64>, String> {
+    let Some(raw) = value else {
+        return Ok(None);
+    };
+    let text = raw.to_str().ok_or_else(|| {
+        format!(
+            "AIPERF_PLUGIN_TOPOLOGY_TASK={} is not a task number",
+            raw.to_string_lossy()
+        )
+    })?;
+    text.parse::<u64>().map(Some).map_err(|error| {
+        format!("AIPERF_PLUGIN_TOPOLOGY_TASK={text} is not a task number: {error}")
+    })
 }
 
 #[test]
