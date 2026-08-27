@@ -59,6 +59,7 @@ from aiperf.operator.handlers._job_identity import (
     StaleAIPerfJobCallback,
     body_name,
     body_uid,
+    clear_patch_fence,
     current_aiperfjob_resource_version,
     delete_owned_aiperfjob_jobset,
 )
@@ -462,7 +463,7 @@ async def _publish_completion_after_jobset_delete(
     # completion-claimed annotation, bumping the RV), so leaving it causes kopf's MERGE
     # PATCH to fail 409 → silent drop → phase never leaves Running.  This is a no-op
     # when called directly from on_benchmark_complete (no fence was written).
-    _clear_patch_fence(target_sb)
+    clear_patch_fence(target_sb)
     _emit_accepted_completion_events(
         body=body,
         namespace=namespace,
@@ -474,24 +475,6 @@ async def _publish_completion_after_jobset_delete(
         key_names=key_names,
         duration_sec=duration_sec,
     )
-
-
-def _clear_patch_fence(sb: StatusBuilder) -> None:
-    """Remove any metadata.resourceVersion written by fence_status_patch.
-
-    fence_status_patch is not called in the completion path, but the monitor
-    may have already called it before dispatching here via orphan-claim
-    recovery.  Leaving the fence causes kopf's MERGE PATCH to fail with 409
-    Conflict when the RV is stale (e.g. the completion-claimed annotation write
-    already bumped it), silently dropping the phase transition.  Clearing it
-    makes the patch unconditional; stale-write safety comes from
-    try_claim_completion's durable annotation and the UID fence.
-    """
-    patch_metadata = getattr(sb._patch, "metadata", None)
-    if patch_metadata is not None:
-        patch_metadata.pop("resourceVersion", None)
-    elif isinstance(sb._patch, dict):
-        (sb._patch.get("metadata") or {}).pop("resourceVersion", None)
 
 
 def _merge_staged_status(

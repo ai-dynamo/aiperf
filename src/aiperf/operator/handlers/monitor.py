@@ -70,6 +70,7 @@ from aiperf.operator.handlers._job_identity import (
     aiperfjob_jobset_uid,
     body_name,
     body_uid,
+    clear_patch_fence,
     current_aiperfjob_body,
     current_aiperfjob_resource_version,
     delete_owned_aiperfjob_jobset,
@@ -2236,6 +2237,14 @@ async def monitor_progress(
                 key=key,
                 sb=sb,
             )
+        # If _monitor_tick wrote a terminal phase via any completion or salvage
+        # path, the fence RV is now stale: try_claim_completion already bumped it
+        # when it wrote the completion-claimed annotation.  Leaving a stale RV
+        # causes kopf's MERGE PATCH to 409-conflict and silently drop the phase
+        # transition.  Clear it unconditionally when a phase was written; the
+        # completion-claimed annotation + UID fence carry the stale-write safety.
+        if sb.get_phase() is not None:
+            clear_patch_fence(sb)
         # observedGeneration is a success-path-only stamp: a tick that
         # terminally FAILED/CANCELLED the job must not signal spec acceptance.
         # sb.get_phase() returns the phase the failure helpers just wrote (None

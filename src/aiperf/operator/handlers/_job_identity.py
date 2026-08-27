@@ -276,3 +276,20 @@ def fence_status_patch(sb: StatusBuilder, resource_version: str | None) -> None:
         return
     if isinstance(patch, dict):
         patch.setdefault("metadata", {})["resourceVersion"] = resource_version
+
+
+def clear_patch_fence(sb: StatusBuilder) -> None:
+    """Remove any metadata.resourceVersion written by fence_status_patch.
+
+    After monitor_progress writes a terminal phase (via any completion or
+    salvage path), the fence RV is guaranteed stale because try_claim_completion
+    already bumped it by writing the completion-claimed annotation.  Leaving
+    the stale RV causes kopf's MERGE PATCH to 409-conflict and silently drop
+    the phase transition.  Clearing it makes the patch unconditional; the
+    completion-claimed annotation + UID fence provide the stale-write safety.
+    """
+    patch_metadata = getattr(sb._patch, "metadata", None)
+    if patch_metadata is not None:
+        patch_metadata.pop("resourceVersion", None)
+    elif isinstance(sb._patch, dict):
+        (sb._patch.get("metadata") or {}).pop("resourceVersion", None)
