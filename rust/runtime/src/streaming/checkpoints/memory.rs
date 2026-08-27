@@ -132,6 +132,9 @@ fn map_budget_error(
             CheckpointBackendBudgetFailureCode::ByteCapacity
         }
         BudgetError::Closed => CheckpointBackendBudgetFailureCode::Closed,
+        // Backend budgets use only async acquisition, which cannot return the
+        // nonblocking-only capacity refusal.
+        BudgetError::CapacityUnavailable => CheckpointBackendBudgetFailureCode::Unrepresentable,
         BudgetError::PermitCountTooLarge
         | BudgetError::AccountingOverflow
         | BudgetError::CannotGrowLease

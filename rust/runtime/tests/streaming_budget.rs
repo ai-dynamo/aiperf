@@ -4,7 +4,7 @@
 use std::time::Duration;
 
 use aiperf_runtime::streaming::{
-    budget::{BudgetError, BudgetLimits, StreamingResourceBudget},
+    budget::{BudgetCharge, BudgetError, BudgetLimits, StreamingResourceBudget},
     identity::{
         ContentDigest, ImmutableObjectIdentity, StableActionId, StableOrderKey, StableSessionKey,
     },
@@ -114,6 +114,185 @@ async fn cancelling_after_item_acquisition_rolls_back_the_item_permit() {
         .await
         .expect("cancelled acquisition must return its partial item permit")
         .expect("budget remains open");
+}
+
+#[test]
+fn synchronous_acquisition_refuses_unavailable_capacity_without_changing_accounting() {
+    let budget = budget(2, 2);
+    let held = budget.try_acquire(1, 2).expect("initial capacity");
+    let before = budget.snapshot();
+
+    assert!(matches!(
+        budget.try_acquire(1, 1),
+        Err(BudgetError::CapacityUnavailable)
+    ));
+    assert_eq!(
+        budget.snapshot(),
+        before,
+        "refusal cannot charge either axis"
+    );
+
+    drop(held);
+    let full = budget
+        .try_acquire(2, 2)
+        .expect("failed byte acquisition returned its item permits");
+    drop(full);
+
+    assert!(matches!(
+        budget.try_acquire(3, 1),
+        Err(BudgetError::RequestExceedsCapacity)
+    ));
+    if usize::BITS > u32::BITS {
+        let unrepresentable = usize::try_from(u64::from(u32::MAX) + 1).expect("64-bit usize");
+        assert!(matches!(
+            budget.try_acquire(unrepresentable, 1),
+            Err(BudgetError::PermitCountTooLarge)
+        ));
+    }
+    budget.close();
+    assert!(matches!(budget.try_acquire(1, 1), Err(BudgetError::Closed)));
+    assert_eq!(budget.snapshot().used_items, 0);
+    assert_eq!(budget.snapshot().used_bytes, 0);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn combined_pair_acquisition_cannot_hold_one_sublease_while_waiting_for_other() {
+    let budget = budget(2, 2);
+    let held = budget.acquire(1, 2).await.expect("held byte capacity");
+    let mut pending = Box::pin(budget.acquire_pair(
+        BudgetCharge { items: 1, bytes: 0 },
+        BudgetCharge { items: 0, bytes: 1 },
+    ));
+
+    assert!(
+        tokio::time::timeout(Duration::from_millis(10), &mut pending)
+            .await
+            .is_err()
+    );
+    assert_eq!(budget.snapshot().used_items, 1);
+    assert_eq!(budget.snapshot().used_bytes, 2);
+
+    drop(held);
+    let (first, second) = tokio::time::timeout(Duration::from_millis(100), pending)
+        .await
+        .expect("combined capacity became available")
+        .expect("budget remains open");
+    assert_eq!((first.charged_items(), first.charged_bytes()), (1, 0));
+    assert_eq!((second.charged_items(), second.charged_bytes()), (0, 1));
+    assert_eq!(budget.snapshot().used_items, 1);
+    assert_eq!(budget.snapshot().used_bytes, 1);
+
+    drop(first);
+    assert_eq!(budget.snapshot().used_items, 0);
+    assert_eq!(budget.snapshot().used_bytes, 1);
+    drop(second);
+    assert_eq!(budget.snapshot().used_items, 0);
+    assert_eq!(budget.snapshot().used_bytes, 0);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn cancelled_combined_pair_acquisition_leaves_zero_charge() {
+    let budget = budget(2, 1);
+    let held = budget.acquire(0, 1).await.expect("held byte capacity");
+    let mut pending = Box::pin(budget.acquire_pair(
+        BudgetCharge { items: 1, bytes: 0 },
+        BudgetCharge { items: 1, bytes: 1 },
+    ));
+
+    assert!(
+        tokio::time::timeout(Duration::from_millis(10), &mut pending)
+            .await
+            .is_err()
+    );
+    drop(pending);
+    drop(held);
+
+    assert_eq!(budget.snapshot().used_items, 0);
+    assert_eq!(budget.snapshot().used_bytes, 0);
+    tokio::time::timeout(Duration::from_millis(100), budget.acquire(2, 1))
+        .await
+        .expect("cancelled pair returned its partial item permits")
+        .expect("budget remains open");
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn split_off_subdivides_one_charge_without_reacquiring_or_minting_capacity() {
+    let budget = budget(3, 30);
+    let mut retained = budget.acquire(3, 30).await.expect("combined charge");
+
+    assert!(matches!(
+        retained.split_off(1, 31),
+        Err(BudgetError::CannotGrowLease)
+    ));
+    assert_eq!(
+        (retained.charged_items(), retained.charged_bytes()),
+        (3, 30)
+    );
+    assert_eq!(budget.snapshot().used_items, 3);
+    assert_eq!(budget.snapshot().used_bytes, 30);
+
+    let split = retained.split_off(1, 10).expect("exact subdivision");
+    assert_eq!(
+        (retained.charged_items(), retained.charged_bytes()),
+        (2, 20)
+    );
+    assert_eq!((split.charged_items(), split.charged_bytes()), (1, 10));
+    assert_eq!(budget.snapshot().used_items, 3);
+    assert_eq!(budget.snapshot().used_bytes, 30);
+
+    drop(split);
+    assert_eq!(budget.snapshot().used_items, 2);
+    assert_eq!(budget.snapshot().used_bytes, 20);
+    drop(retained);
+    assert_eq!(budget.snapshot().used_items, 0);
+    assert_eq!(budget.snapshot().used_bytes, 0);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn pair_charge_sums_are_checked_before_acquisition() {
+    let budget = budget(1, 1);
+
+    assert!(matches!(
+        budget
+            .acquire_pair(
+                BudgetCharge {
+                    items: usize::MAX,
+                    bytes: 0,
+                },
+                BudgetCharge { items: 1, bytes: 0 },
+            )
+            .await,
+        Err(BudgetError::AccountingOverflow)
+    ));
+    assert!(matches!(
+        budget
+            .acquire_pair(
+                BudgetCharge {
+                    items: 0,
+                    bytes: usize::MAX,
+                },
+                BudgetCharge { items: 0, bytes: 1 },
+            )
+            .await,
+        Err(BudgetError::AccountingOverflow)
+    ));
+    if usize::BITS > u32::BITS {
+        let unrepresentable = usize::try_from(u64::from(u32::MAX) + 1).expect("64-bit usize");
+        assert!(matches!(
+            budget
+                .acquire_pair(
+                    BudgetCharge {
+                        items: unrepresentable,
+                        bytes: 0,
+                    },
+                    BudgetCharge { items: 0, bytes: 0 },
+                )
+                .await,
+            Err(BudgetError::PermitCountTooLarge)
+        ));
+    }
+    assert_eq!(budget.snapshot().used_items, 0);
+    assert_eq!(budget.snapshot().used_bytes, 0);
 }
 
 #[tokio::test(flavor = "current_thread")]

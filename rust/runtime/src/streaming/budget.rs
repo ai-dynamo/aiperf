@@ -11,7 +11,7 @@ use std::{
     },
 };
 
-use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore, TryAcquireError};
 
 const ITEM_SHIFT: u32 = u32::BITS;
 const COUNT_MASK: u64 = u32::MAX as u64;
@@ -23,6 +23,15 @@ pub struct BudgetLimits {
     pub max_items: usize,
     /// Maximum simultaneously retained bytes.
     pub max_bytes: usize,
+}
+
+/// Exact item-and-byte charge for one sub-reservation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BudgetCharge {
+    /// Objects retained by the sub-reservation.
+    pub items: usize,
+    /// Bytes retained by the sub-reservation.
+    pub bytes: usize,
 }
 
 /// Current and peak resource use for one budget.
@@ -47,6 +56,8 @@ pub enum BudgetError {
     PermitCountTooLarge,
     /// A request exceeds the configured budget.
     RequestExceedsCapacity,
+    /// The requested capacity is currently in use.
+    CapacityUnavailable,
     /// The budget was closed.
     Closed,
     /// A lease can only shrink its charge.
@@ -214,6 +225,60 @@ impl StreamingResourceBudget {
         })
     }
 
+    /// Acquire available item and byte capacity without waiting.
+    ///
+    /// Item capacity is attempted before byte capacity. If byte capacity is
+    /// unavailable, the item permit is returned before this method reports the
+    /// refusal.
+    pub fn try_acquire(&self, items: usize, bytes: usize) -> Result<BudgetLease, BudgetError> {
+        let item_permits = checked_permit_count(items)?;
+        let byte_permits = checked_permit_count(bytes)?;
+        if items > self.inner.limits.max_items || bytes > self.inner.limits.max_bytes {
+            return Err(BudgetError::RequestExceedsCapacity);
+        }
+
+        let item_permit = Arc::clone(&self.inner.item_semaphore)
+            .try_acquire_many_owned(item_permits)
+            .map_err(map_try_acquire_error)?;
+        let byte_permit = Arc::clone(&self.inner.byte_semaphore)
+            .try_acquire_many_owned(byte_permits)
+            .map_err(map_try_acquire_error)?;
+        if self.inner.item_semaphore.is_closed() || self.inner.byte_semaphore.is_closed() {
+            return Err(BudgetError::Closed);
+        }
+
+        self.inner.charge(items, bytes)?;
+        Ok(BudgetLease {
+            inner: Arc::clone(&self.inner),
+            item_permit,
+            byte_permit,
+            charged_items: items,
+            charged_bytes: bytes,
+        })
+    }
+
+    /// Atomically acquire two exact sub-reservations.
+    ///
+    /// The combined charge is acquired once and synchronously subdivided, so
+    /// neither sub-reservation can be held while waiting for the other.
+    pub async fn acquire_pair(
+        &self,
+        first: BudgetCharge,
+        second: BudgetCharge,
+    ) -> Result<(BudgetLease, BudgetLease), BudgetError> {
+        let combined_items = first
+            .items
+            .checked_add(second.items)
+            .ok_or(BudgetError::AccountingOverflow)?;
+        let combined_bytes = first
+            .bytes
+            .checked_add(second.bytes)
+            .ok_or(BudgetError::AccountingOverflow)?;
+        let mut first_lease = self.acquire(combined_items, combined_bytes).await?;
+        let second_lease = first_lease.split_off(second.items, second.bytes)?;
+        Ok((first_lease, second_lease))
+    }
+
     /// Close both capacity dimensions and wake pending acquisitions.
     pub fn close(&self) {
         self.inner.item_semaphore.close();
@@ -258,6 +323,38 @@ impl BudgetLease {
         self.charged_bytes
     }
 
+    /// Move an exact sub-reservation into a separate lease.
+    ///
+    /// This divides the already-owned permits and recorded charge without
+    /// releasing or reacquiring capacity.
+    pub fn split_off(&mut self, items: usize, bytes: usize) -> Result<BudgetLease, BudgetError> {
+        if items > self.charged_items || bytes > self.charged_bytes {
+            return Err(BudgetError::CannotGrowLease);
+        }
+
+        let item_permit = self
+            .item_permit
+            .split(items)
+            .ok_or(BudgetError::AccountingOverflow)?;
+        let byte_permit = match self.byte_permit.split(bytes) {
+            Some(permit) => permit,
+            None => {
+                self.item_permit.merge(item_permit);
+                return Err(BudgetError::AccountingOverflow);
+            }
+        };
+
+        self.charged_items -= items;
+        self.charged_bytes -= bytes;
+        Ok(BudgetLease {
+            inner: Arc::clone(&self.inner),
+            item_permit,
+            byte_permit,
+            charged_items: items,
+            charged_bytes: bytes,
+        })
+    }
+
     /// Return excess capacity while retaining the requested smaller charge.
     pub fn shrink_to(&mut self, items: usize, bytes: usize) -> Result<(), BudgetError> {
         if items > self.charged_items || bytes > self.charged_bytes {
@@ -298,6 +395,13 @@ fn checked_permit_count(count: usize) -> Result<u32, BudgetError> {
         return Err(BudgetError::PermitCountTooLarge);
     }
     u32::try_from(count).map_err(|_| BudgetError::PermitCountTooLarge)
+}
+
+fn map_try_acquire_error(error: TryAcquireError) -> BudgetError {
+    match error {
+        TryAcquireError::Closed => BudgetError::Closed,
+        TryAcquireError::NoPermits => BudgetError::CapacityUnavailable,
+    }
 }
 
 fn pack_counts(items: usize, bytes: usize) -> Result<u64, BudgetError> {
