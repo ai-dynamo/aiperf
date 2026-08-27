@@ -983,20 +983,39 @@ class BenchmarkDeployer:
                 pass
 
         if result.jobset_name:
-            try:
-                result.status = await self.kubectl.get_jobset(
-                    result.jobset_name, result.namespace
-                )
-            except RuntimeError:
-                # JobSet deleted by operator - synthesize status from result
-                if result.success:
-                    result.status = JobSetStatus(
-                        name=result.jobset_name,
-                        namespace=result.namespace,
-                        terminal_state="Completed",
-                        completed=True,
-                        restarts=0,
+            # Poll briefly for the JobSet to reach a terminal state. The AIPerfJob
+            # CR completes before the Kubernetes JobSet controller sets the
+            # Completed condition, and the operator may take a few seconds to
+            # delete the JobSet — both leave terminal_state=None on an immediate
+            # read. Give it up to 60 s to settle.
+            import asyncio as _asyncio
+
+            _deadline = 60
+            _poll = 5
+            _elapsed = 0
+            while _elapsed <= _deadline:
+                try:
+                    _status = await self.kubectl.get_jobset(
+                        result.jobset_name, result.namespace
                     )
+                    result.status = _status
+                    if _status.terminal_state is not None:
+                        break
+                except RuntimeError:
+                    # JobSet deleted by operator - synthesize status from result
+                    if result.success:
+                        result.status = JobSetStatus(
+                            name=result.jobset_name,
+                            namespace=result.namespace,
+                            terminal_state="Completed",
+                            completed=True,
+                            restarts=0,
+                        )
+                    break
+                if _elapsed >= _deadline:
+                    break
+                await _asyncio.sleep(_poll)
+                _elapsed += _poll
 
         # Collect final pods (may be empty if operator deleted JobSet)
         result.pods = await self.kubectl.get_pods(result.namespace)
