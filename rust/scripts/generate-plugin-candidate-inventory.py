@@ -11,13 +11,13 @@ import blake3
 
 BASE = "057d116850cd059bcfa8e259c1e929e913e6ef07"
 ROOT = Path(sys.argv[1]).resolve()
-CHECK = "--check" in sys.argv[2:]
+IS_CHECK_MODE = "--check" in sys.argv[2:]
 RUST = ROOT / "rust"
 
 rows = []
 
 
-def source(path, package, owner, classification="implementation_leaf", planned=False):
+def source(path, package, owner, classification="implementation_leaf", is_planned=False):
     path = Path(path).as_posix()
     if path.startswith("runtime/src/"):
         candidate = f"plugins/{package}/src/{path.removeprefix('runtime/src/')}"
@@ -27,7 +27,7 @@ def source(path, package, owner, classification="implementation_leaf", planned=F
         candidate = f"plugins/{package}/tests/baseline/{path.removeprefix('dry-run-tests/tests/')}"
     else:
         raise ValueError(path)
-    rows.append((path, candidate, owner, classification, planned))
+    rows.append((path, candidate, owner, classification, is_planned))
 
 
 def leaves(package, owner, paths):
@@ -93,7 +93,7 @@ for path in [
     "runtime/src/transport/grpc/riva_binding.rs", "runtime/src/transport/grpc/riva_codec.rs",
     "runtime/src/transport/grpc/riva_proto.rs",
 ]:
-    source(path, "endpoints", 30, planned=path.endswith("kserve_binding.rs"))
+    source(path, "endpoints", 30, is_planned=path.endswith("kserve_binding.rs"))
 leaves("transport-grpc", 32, [
     "runtime/src/transport/grpc/codec.rs", "runtime/src/transport/grpc/models.rs",
     "runtime/src/transport/grpc/raw_codec.rs", "runtime/src/transport/grpc/sink.rs",
@@ -110,16 +110,16 @@ for path in [
     "runtime/src/transport/ws/dialect.rs", "runtime/src/transport/ws/driver.rs",
     "runtime/src/transport/ws/sink.rs",
 ]:
-    source(path, "transport-websocket", 33, planned=path.endswith("ws/sink.rs"))
+    source(path, "transport-websocket", 33, is_planned=path.endswith("ws/sink.rs"))
 source("runtime/tests/websocket_transport_config.rs", "transport-websocket", 33)
-source("runtime/src/transport/dry_run.rs", "transport-dry-run", 33, planned=True)
+source("runtime/src/transport/dry_run.rs", "transport-dry-run", 33, is_planned=True)
 leaves("transport-dry-run", 33, [
     "dry-run-tests/tests/common/mod.rs", "dry-run-tests/tests/component_packages.rs",
     "dry-run-tests/tests/dry_run.rs", "dry-run-tests/tests/random_pool_batches.rs",
     "dry-run-tests/tests/timing.rs", "dry-run-tests/tests/timing_extended.rs",
     "dry-run-tests/tests/tracelab.rs", "dry-run-tests/tests/virtual_workers.rs",
 ])
-source("runtime/src/dynosim/direct.rs", "transport-dynosim", 34, planned=True)
+source("runtime/src/dynosim/direct.rs", "transport-dynosim", 34, is_planned=True)
 source("runtime/src/endpoints/dynosim.rs", "transport-dynosim", 34)
 
 if len(rows) != 126:
@@ -138,16 +138,30 @@ output = [
     'provisional_against = "Task 1 pending integration"',
     "",
 ]
-for path, candidate, owner, classification, planned in rows:
+for path, candidate, owner, classification, is_planned in rows:
     output.extend([
         "[[source]]",
         f'source_path = "{path}"',
         f'candidate_path = "{candidate}"',
         f"owner_task = {owner}",
         f'classification = "{classification}"',
-        f'state = "{("planned" if planned else "present")}"',
+        f'state = "{("planned" if is_planned else "present")}"',
     ])
-    if planned:
+    if is_planned:
+        source_path = ROOT / "rust" / path
+        if source_path.exists():
+            raise SystemExit(f"planned source exists in worktree: {path}")
+        base_probe = subprocess.run(
+            ["git", "cat-file", "-e", f"{BASE}:rust/{path}"],
+            cwd=ROOT,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        if base_probe.returncode == 0:
+            raise SystemExit(f"planned source exists in pinned base: {path}")
+        if base_probe.returncode != 128:
+            raise SystemExit(f"cannot inspect planned source in pinned base: {path}")
         output.append("producer_task = 6")
     else:
         source_path = ROOT / "rust" / path
@@ -160,7 +174,7 @@ for path, candidate, owner, classification, planned in rows:
 
 destination = RUST / "plugin-conformance/candidate-source-inventory.toml"
 rendered = "\n".join(output)
-if CHECK:
+if IS_CHECK_MODE:
     if destination.read_text() != rendered:
         raise SystemExit("candidate inventory is not the generator fixed point")
 else:

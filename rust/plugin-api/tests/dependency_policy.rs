@@ -9,7 +9,7 @@ use std::{
     process::Command,
 };
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 const FORBIDDEN: &[&str] = &[
     "aiperf-runtime",
@@ -67,6 +67,19 @@ const FOUNDATION_PACKAGES: &[(&str, &str)] = &[
     ("aiperf-allocator-shim", "allocator-shim"),
 ];
 
+const DISTRIBUTION_BOUNDARY_INPUTS: &[(&str, &str)] = &[
+    ("native", "Makefile"),
+    ("native", "rust/cli/Cargo.toml"),
+    ("wheel", "pyproject.toml"),
+    ("wheel", "tools/wheel_repack.py"),
+    ("container", "Dockerfile"),
+    ("kubernetes", "aiperf-k8s-operator/Dockerfile"),
+    (
+        "kubernetes",
+        "deploy/aiperf-k8s-operator/helm/aiperf-k8s-operator/values.yaml",
+    ),
+];
+
 #[derive(Debug, Deserialize)]
 struct Metadata {
     packages: Vec<Package>,
@@ -79,6 +92,7 @@ struct Package {
     id: String,
     name: String,
     version: String,
+    edition: String,
     manifest_path: String,
     publish: Option<Vec<String>>,
     dependencies: Vec<Dependency>,
@@ -90,20 +104,19 @@ struct Dependency {
     name: String,
     kind: Option<String>,
     rename: Option<String>,
-}
-
-impl Dependency {
-    fn package_name(&self) -> &str {
-        &self.name
-    }
-
-    fn local_name(&self) -> &str {
-        self.rename.as_deref().unwrap_or(&self.name)
-    }
+    source: Option<String>,
+    req: String,
+    optional: bool,
+    uses_default_features: bool,
+    features: Vec<String>,
+    target: Option<String>,
+    registry: Option<String>,
+    path: Option<String>,
 }
 
 #[derive(Deserialize)]
 struct BaselineTopology {
+    host_commit: String,
     workspace_packages: Vec<BaselinePackage>,
 }
 #[derive(Deserialize)]
@@ -118,6 +131,100 @@ struct BaselineDependency {
     name: String,
     kind: String,
     is_workspace: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Task1CargoAuthority {
+    schema_version: u32,
+    host_commit: String,
+    topology_blake3: String,
+    cargo_projection_blake3: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TopologyAmendmentPolicy {
+    schema_version: u32,
+    matrix: Vec<TopologyMatrix>,
+    task3_transition: Task3Transition,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TopologyMatrix {
+    state: String,
+    dependency_projection_blake3: String,
+    test_support_dev_consumers: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+struct Task3Transition {
+    schema_version: u32,
+    producer_task: u32,
+    from_state: String,
+    to_state: String,
+    ownership_record_path: String,
+}
+
+#[derive(Debug, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+struct Task3ActivationRecord {
+    schema_version: u32,
+    producer_task: u32,
+    from_state: String,
+    to_state: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct PackageManifest {
+    package: PackageManifestBoundary,
+}
+
+#[derive(Debug, Deserialize)]
+struct PackageManifestBoundary {
+    name: String,
+    version: WorkspaceInheritance,
+    edition: WorkspaceInheritance,
+    license: WorkspaceInheritance,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WorkspaceInheritance {
+    workspace: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+struct CargoDependencyIdentity {
+    package: String,
+    local_name: String,
+    kind: String,
+    source: Option<String>,
+    requirement: String,
+    registry: Option<String>,
+    path: Option<String>,
+    target: Option<String>,
+    is_optional: bool,
+    uses_default_features: bool,
+    features: Vec<String>,
+    is_workspace: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct CargoPackageProjection {
+    name: String,
+    version: String,
+    edition: String,
+    dependencies: Vec<CargoDependencyIdentity>,
+    features: BTreeMap<String, Vec<String>>,
+}
+
+#[derive(Debug, Serialize)]
+struct ShellPackageProjection {
+    name: String,
+    dependencies: Vec<CargoDependencyIdentity>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -224,20 +331,201 @@ fn package_map(metadata: Metadata) -> BTreeMap<String, Package> {
     packages
 }
 
+fn normalized_path(root: &Path, path: Option<&str>) -> Option<String> {
+    path.map(|path| {
+        let path = Path::new(path);
+        path.strip_prefix(root)
+            .unwrap_or(path)
+            .to_string_lossy()
+            .replace('\\', "/")
+    })
+}
+
+fn dependency_identity(
+    root: &Path,
+    workspace_names: &BTreeSet<&str>,
+    dependency: &Dependency,
+) -> CargoDependencyIdentity {
+    let mut features = dependency.features.clone();
+    features.sort();
+    CargoDependencyIdentity {
+        package: dependency.name.clone(),
+        local_name: dependency
+            .rename
+            .clone()
+            .unwrap_or_else(|| dependency.name.clone()),
+        kind: dependency
+            .kind
+            .clone()
+            .unwrap_or_else(|| "normal".to_owned()),
+        source: dependency.source.clone(),
+        requirement: dependency.req.clone(),
+        registry: dependency.registry.clone(),
+        path: normalized_path(root, dependency.path.as_deref()),
+        target: dependency.target.clone(),
+        is_optional: dependency.optional,
+        uses_default_features: dependency.uses_default_features,
+        features,
+        is_workspace: workspace_names.contains(dependency.name.as_str()),
+    }
+}
+
+fn package_dependencies(
+    root: &Path,
+    workspace_names: &BTreeSet<&str>,
+    package: &Package,
+) -> Vec<CargoDependencyIdentity> {
+    let mut dependencies = package
+        .dependencies
+        .iter()
+        .map(|dependency| dependency_identity(root, workspace_names, dependency))
+        .collect::<Vec<_>>();
+    dependencies.sort();
+    dependencies
+}
+
+fn canonical_blake3<T: Serialize>(value: &T) -> String {
+    let bytes = serde_json::to_vec(value).expect("policy projection must serialize");
+    format!("blake3:{}", blake3::hash(&bytes).to_hex())
+}
+
+fn parse_toml<T: for<'de> Deserialize<'de>>(path: &Path, description: &str) -> T {
+    toml::from_str(
+        &std::fs::read_to_string(path)
+            .unwrap_or_else(|error| panic!("cannot read {}: {error}", path.display())),
+    )
+    .unwrap_or_else(|error| panic!("{description} must have the exact supported shape: {error}"))
+}
+
+fn git_object_exists(repository_root: &Path, revision_path: &str) -> bool {
+    let output = Command::new("git")
+        .args(["cat-file", "-e", revision_path])
+        .current_dir(repository_root)
+        .output()
+        .expect("git cat-file must execute");
+    match output.status.code() {
+        Some(0) => true,
+        Some(128) => false,
+        code => panic!("git cat-file returned unexpected status {code:?} for {revision_path}"),
+    }
+}
+
+fn task1_projection(
+    root: &Path,
+    packages: &BTreeMap<String, Package>,
+    baseline: &BaselineTopology,
+) -> Vec<CargoPackageProjection> {
+    let workspace_names = packages.keys().map(String::as_str).collect::<BTreeSet<_>>();
+    let mut projection = baseline
+        .workspace_packages
+        .iter()
+        .map(|captured| {
+            let package = &packages[&captured.name];
+            let mut features = package.features.clone();
+            for values in features.values_mut() {
+                values.sort();
+            }
+            if package.name == "aiperf-e2e-tests" {
+                for task2_feature in ["grpc", "websocket", "dynosim"] {
+                    features.remove(task2_feature);
+                }
+            }
+            CargoPackageProjection {
+                name: package.name.clone(),
+                version: package.version.clone(),
+                edition: package.edition.clone(),
+                dependencies: package_dependencies(root, &workspace_names, package),
+                features,
+            }
+        })
+        .collect::<Vec<_>>();
+    projection.sort_by(|left, right| left.name.cmp(&right.name));
+    projection
+}
+
+fn shell_projection(
+    root: &Path,
+    packages: &BTreeMap<String, Package>,
+) -> Vec<ShellPackageProjection> {
+    let workspace_names = packages.keys().map(String::as_str).collect::<BTreeSet<_>>();
+    let mut projection = FOUNDATION_PACKAGES
+        .iter()
+        .chain(DISTRIBUTABLE_PACKAGES)
+        .map(|(name, _)| {
+            let package = &packages[*name];
+            ShellPackageProjection {
+                name: package.name.clone(),
+                dependencies: package_dependencies(root, &workspace_names, package),
+            }
+        })
+        .collect::<Vec<_>>();
+    projection.sort_by(|left, right| left.name.cmp(&right.name));
+    projection
+}
+
+fn active_topology_state(root: &Path, transition: &Task3Transition) -> String {
+    assert_eq!(
+        transition.ownership_record_path,
+        "plugin-api/feature-ownership.toml"
+    );
+    let ownership: toml::Value =
+        std::fs::read_to_string(root.join(&transition.ownership_record_path))
+            .expect("feature ownership policy")
+            .parse()
+            .expect("feature ownership policy TOML");
+    let Some(record) = ownership.get("topology_amendment") else {
+        return transition.from_state.clone();
+    };
+    let activation: Task3ActivationRecord = record
+        .clone()
+        .try_into()
+        .expect("Task 3 topology amendment record must be typed and exact");
+    let expected = Task3ActivationRecord {
+        schema_version: transition.schema_version,
+        producer_task: transition.producer_task,
+        from_state: transition.from_state.clone(),
+        to_state: transition.to_state.clone(),
+    };
+    assert_eq!(
+        activation, expected,
+        "unauthorized topology amendment record"
+    );
+    transition.to_state.clone()
+}
+
+fn production_dependency_closure(
+    packages: &BTreeMap<String, Package>,
+    roots: &[&str],
+) -> BTreeSet<String> {
+    let mut pending = roots
+        .iter()
+        .map(|root| (*root).to_owned())
+        .collect::<Vec<_>>();
+    let mut closure = BTreeSet::new();
+    while let Some(name) = pending.pop() {
+        if !closure.insert(name.clone()) {
+            continue;
+        }
+        let Some(package) = packages.get(&name) else {
+            continue;
+        };
+        pending.extend(
+            package
+                .dependencies
+                .iter()
+                .filter(|dependency| dependency.kind.as_deref() != Some("dev"))
+                .filter(|dependency| packages.contains_key(&dependency.name))
+                .map(|dependency| dependency.name.clone()),
+        );
+    }
+    closure
+}
+
 fn normal_and_build_dependencies(package: &Package) -> BTreeSet<&str> {
     package
         .dependencies
         .iter()
         .filter(|dependency| dependency.kind.as_deref() != Some("dev"))
-        .map(|dependency| dependency.name.as_str())
-        .collect()
-}
-
-fn dev_dependencies(package: &Package) -> BTreeSet<&str> {
-    package
-        .dependencies
-        .iter()
-        .filter(|dependency| dependency.kind.as_deref() == Some("dev"))
         .map(|dependency| dependency.name.as_str())
         .collect()
 }
@@ -260,6 +548,36 @@ fn workspace_and_template_policy() {
         .expect("Task 1 package topology must exist"),
     )
     .expect("Task 1 package topology must be JSON");
+    let authority: Task1CargoAuthority = parse_toml(
+        &root.join("plugin-api/task1-cargo-authority.toml"),
+        "Task 1 Cargo authority",
+    );
+    assert_eq!(authority.schema_version, 1);
+    assert_eq!(
+        authority.host_commit,
+        "caa3ff6fcf20ffe36a7704abe16274bedadbb9fb"
+    );
+    assert_eq!(baseline.host_commit, authority.host_commit);
+    assert_eq!(
+        format!(
+            "blake3:{}",
+            blake3::hash(
+                &std::fs::read(
+                    root.parent()
+                        .expect("repository root")
+                        .join("artifacts/native-plugin-baseline/package-topology.json"),
+                )
+                .expect("Task 1 topology bytes")
+            )
+            .to_hex()
+        ),
+        authority.topology_blake3
+    );
+    assert_eq!(
+        canonical_blake3(&task1_projection(&root, &packages, &baseline)),
+        authority.cargo_projection_blake3,
+        "complete Task 1 Cargo dependency or feature identity drift"
+    );
     let baseline_names = baseline
         .workspace_packages
         .iter()
@@ -278,11 +596,18 @@ fn workspace_and_template_policy() {
         packages.keys().cloned().collect::<BTreeSet<_>>(),
         expected_names
     );
-    let expected_workspace_identities = packages
-        .values()
+    let expected_workspace_identities = baseline
+        .workspace_packages
+        .iter()
         .map(|package| (package.name.clone(), package.version.clone()))
+        .chain(
+            FOUNDATION_PACKAGES
+                .iter()
+                .chain(DISTRIBUTABLE_PACKAGES)
+                .map(|(name, _)| ((*name).to_owned(), "0.12.0".to_owned())),
+        )
         .collect::<BTreeSet<_>>();
-    assert_eq!(expected_workspace_identities.len(), packages.len());
+    assert_eq!(expected_workspace_identities.len(), expected_names.len());
     let lock: CargoLock =
         toml::from_str(&std::fs::read_to_string(root.join("Cargo.lock")).expect("parent lock"))
             .expect("parent lock TOML");
@@ -333,8 +658,7 @@ fn workspace_and_template_policy() {
             .dependencies
             .iter()
             .map(|edge| {
-                let package_name = edge.package_name();
-                assert!(!edge.local_name().is_empty());
+                let package_name = edge.name.as_str();
                 (
                     package_name,
                     edge.kind.as_deref().unwrap_or("normal"),
@@ -356,6 +680,22 @@ fn workspace_and_template_policy() {
         );
     }
 
+    let root_manifest: toml::Value = std::fs::read_to_string(root.join("Cargo.toml"))
+        .expect("workspace manifest")
+        .parse()
+        .expect("workspace manifest TOML");
+    assert_eq!(
+        root_manifest["workspace"]["package"]["version"].as_str(),
+        Some("0.12.0")
+    );
+    assert_eq!(
+        root_manifest["workspace"]["package"]["edition"].as_str(),
+        Some("2024")
+    );
+    assert_eq!(
+        root_manifest["workspace"]["package"]["license"].as_str(),
+        Some("Apache-2.0")
+    );
     for (name, relative_manifest_dir) in FOUNDATION_PACKAGES.iter().chain(DISTRIBUTABLE_PACKAGES) {
         let package = packages
             .get(*name)
@@ -364,6 +704,25 @@ fn workspace_and_template_policy() {
             Path::new(&package.manifest_path),
             root.join(relative_manifest_dir).join("Cargo.toml"),
             "{name} must retain its assigned package directory"
+        );
+        assert_eq!(package.version, "0.12.0", "{name} package version drift");
+        assert_eq!(package.edition, "2024", "{name} package edition drift");
+        let manifest: PackageManifest = parse_toml(
+            &root.join(relative_manifest_dir).join("Cargo.toml"),
+            "plugin shell manifest",
+        );
+        assert_eq!(manifest.package.name, *name);
+        assert!(
+            manifest.package.version.workspace,
+            "{name} must inherit version"
+        );
+        assert!(
+            manifest.package.edition.workspace,
+            "{name} must inherit edition"
+        );
+        assert!(
+            manifest.package.license.workspace,
+            "{name} must inherit license"
         );
     }
 
@@ -478,10 +837,6 @@ fn workspace_and_template_policy() {
         BTreeSet::from(["aiperf-core", "tempfile"])
     );
     assert!(!normal_and_build_dependencies(api).contains("aiperf-plugin-test-support"));
-    assert!(
-        dev_dependencies(&packages["aiperf-export-sdk"]).contains("aiperf-plugin-test-support"),
-        "export SDK must reserve its independent-leaf test seam"
-    );
     for package in packages.values() {
         assert!(
             !normal_and_build_dependencies(package).contains("aiperf-plugin-test-support"),
@@ -489,38 +844,51 @@ fn workspace_and_template_policy() {
             package.name
         );
     }
-    let expected_new_edges = BTreeSet::from([
-        ("aiperf-plugin-api", "aiperf-core", "normal"),
-        ("aiperf-plugin-test-support", "aiperf-core", "normal"),
-        ("aiperf-plugin-test-support", "tempfile", "normal"),
-        ("aiperf-export-sdk", "aiperf-plugin-test-support", "dev"),
-    ]);
-    let new_names = FOUNDATION_PACKAGES
+    let topology_policy: TopologyAmendmentPolicy = parse_toml(
+        &root.join("plugin-api/topology-amendment.toml"),
+        "topology amendment policy",
+    );
+    assert_eq!(topology_policy.schema_version, 1);
+    assert_eq!(topology_policy.matrix.len(), 2);
+    assert_eq!(topology_policy.task3_transition.schema_version, 1);
+    assert_eq!(topology_policy.task3_transition.producer_task, 3);
+    assert_eq!(topology_policy.task3_transition.from_state, "task2_neutral");
+    assert_eq!(topology_policy.task3_transition.to_state, "task3_reviewed");
+    let matrices = topology_policy
+        .matrix
         .iter()
-        .chain(DISTRIBUTABLE_PACKAGES)
-        .map(|(name, _)| *name)
-        .collect::<BTreeSet<_>>();
-    let new_edges = packages
+        .map(|matrix| (matrix.state.as_str(), matrix))
+        .collect::<BTreeMap<_, _>>();
+    assert_eq!(matrices.len(), topology_policy.matrix.len());
+    assert_eq!(
+        matrices.keys().copied().collect::<BTreeSet<_>>(),
+        BTreeSet::from(["task2_neutral", "task3_reviewed"])
+    );
+    let active_state = active_topology_state(&root, &topology_policy.task3_transition);
+    let active_matrix = matrices[active_state.as_str()];
+    assert_eq!(
+        canonical_blake3(&shell_projection(&root, &packages)),
+        active_matrix.dependency_projection_blake3,
+        "complete {active_state} shell dependency matrix drift"
+    );
+    let test_support_dev_consumers = packages
         .values()
-        .filter(|package| new_names.contains(package.name.as_str()))
-        .flat_map(|package| {
-            package
-                .dependencies
-                .iter()
-                .filter(|dependency| {
-                    dependency.kind.as_deref() != Some("dev")
-                        || dependency.name == "aiperf-plugin-test-support"
-                })
-                .map(|dependency| {
-                    (
-                        package.name.as_str(),
-                        dependency.name.as_str(),
-                        dependency.kind.as_deref().unwrap_or("normal"),
-                    )
-                })
+        .filter(|package| {
+            package.dependencies.iter().any(|dependency| {
+                dependency.name == "aiperf-plugin-test-support"
+                    && dependency.kind.as_deref() == Some("dev")
+            })
         })
+        .map(|package| package.name.as_str())
         .collect::<BTreeSet<_>>();
-    assert_eq!(new_edges, expected_new_edges);
+    assert_eq!(
+        test_support_dev_consumers,
+        active_matrix
+            .test_support_dev_consumers
+            .iter()
+            .map(String::as_str)
+            .collect()
+    );
     assert_eq!(
         packages["aiperf-e2e-tests"].features.get("grpc"),
         Some(&vec![
@@ -549,9 +917,31 @@ fn workspace_and_template_policy() {
                 || !(dependencies.contains("aiperf-plugin-host")
                     && dependencies.contains("aiperf-runtime"))
         );
+    }
+}
+
+#[test]
+fn distribution_exclusion_policy() {
+    let root = workspace_root();
+    let packages = package_map(metadata(&root));
+    let host_universe = production_dependency_closure(
+        &packages,
+        &["aiperf-cli", "aiperf-runtime", "aiperf-plugin-host"],
+    );
+    assert!(
+        !host_universe.contains("aiperf-plugin-test-support"),
+        "host-universe dependency closure includes test support"
+    );
+    let repository_root = root.parent().expect("repository root");
+    for (boundary, relative_path) in DISTRIBUTION_BOUNDARY_INPUTS {
+        let path = repository_root.join(relative_path);
+        let contents = std::fs::read_to_string(&path).unwrap_or_else(|error| {
+            panic!("cannot read {boundary} input {}: {error}", path.display())
+        });
         assert!(
-            package.name == "aiperf-export-sdk"
-                || !dev_dependencies(package).contains("aiperf-plugin-test-support")
+            !contents.contains("aiperf-plugin-test-support"),
+            "{boundary} distribution input {} includes test support",
+            path.display()
         );
     }
 }
@@ -628,19 +1018,6 @@ fn candidate_inventory_policy() {
     let source_root = workspace_root();
     let repository_root = source_root.parent().expect("repository root");
     let generator = source_root.join("scripts/generate-plugin-candidate-inventory.py");
-    let output = Command::new("python")
-        .args([
-            generator.to_str().expect("generator path"),
-            repository_root.to_str().expect("repository path"),
-            "--check",
-        ])
-        .output()
-        .expect("candidate generator must execute");
-    assert!(
-        output.status.success(),
-        "candidate generator failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
     let value: toml::Value = std::fs::read_to_string(&inventory_path)
         .unwrap_or_else(|error| panic!("cannot read {}: {error}", inventory_path.display()))
         .parse()
@@ -733,6 +1110,17 @@ fn candidate_inventory_policy() {
                 assert!(planned.contains(source_path));
                 assert_eq!(table["producer_task"].as_integer(), Some(6));
                 assert!(!table.contains_key("blake3"));
+                assert!(
+                    !source_root.join(source_path).exists(),
+                    "planned source exists in worktree: {source_path}"
+                );
+                assert!(
+                    !git_object_exists(
+                        repository_root,
+                        &format!("057d116850cd059bcfa8e259c1e929e913e6ef07:rust/{source_path}")
+                    ),
+                    "planned source exists in pinned base: {source_path}"
+                );
             }
             ("asset", "present") => {
                 present += 1;
@@ -759,4 +1147,17 @@ fn candidate_inventory_policy() {
     assert_eq!(implementation_leaves, 115);
     assert_eq!(assets, 9);
     assert_eq!(facade_rows, 2);
+    let output = Command::new("python")
+        .args([
+            generator.to_str().expect("generator path"),
+            repository_root.to_str().expect("repository path"),
+            "--check",
+        ])
+        .output()
+        .expect("candidate generator must execute");
+    assert!(
+        output.status.success(),
+        "candidate generator failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }

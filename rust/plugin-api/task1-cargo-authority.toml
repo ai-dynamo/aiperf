@@ -1,0 +1,7 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+schema_version = 1
+host_commit = "caa3ff6fcf20ffe36a7704abe16274bedadbb9fb"
+topology_blake3 = "blake3:ee9947119edd74d67edf928d344c68b7bddb0f9fd4ef8e3157e5477920471879"
+cargo_projection_blake3 = "blake3:930987433d7758612084cd9e61de0bf73ec50036d7719bde7348ff5c38b7b4fa"
