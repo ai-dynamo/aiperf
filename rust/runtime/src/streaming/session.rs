@@ -59,6 +59,57 @@ pub trait SessionQuarantineTombstoneView:
     fn canonical_encoded_entries(&self) -> &[u8];
 }
 
+/// Crate-owned sealed borrow of the session owner's retained tombstone map.
+///
+/// The borrowed entry slice prevents reliability preparation from moving or
+/// cloning the retained map, while the crate-private constructor keeps the
+/// proof unavailable to adapters.
+pub(crate) struct CheckedSessionQuarantineTombstoneView<'a> {
+    run: StreamRunIdentity,
+    tombstone_root: ContentDigest,
+    revision: u64,
+    canonical_encoded_entries: &'a [u8],
+}
+
+impl<'a> CheckedSessionQuarantineTombstoneView<'a> {
+    pub(crate) const fn new(
+        run: StreamRunIdentity,
+        tombstone_root: ContentDigest,
+        revision: u64,
+        canonical_encoded_entries: &'a [u8],
+    ) -> Self {
+        Self {
+            run,
+            tombstone_root,
+            revision,
+            canonical_encoded_entries,
+        }
+    }
+}
+
+impl reliability_view_seal::SessionQuarantineTombstoneView
+    for CheckedSessionQuarantineTombstoneView<'_>
+{
+}
+
+impl SessionQuarantineTombstoneView for CheckedSessionQuarantineTombstoneView<'_> {
+    fn run(&self) -> &StreamRunIdentity {
+        &self.run
+    }
+
+    fn tombstone_root(&self) -> ContentDigest {
+        self.tombstone_root
+    }
+
+    fn revision(&self) -> u64 {
+        self.revision
+    }
+
+    fn canonical_encoded_entries(&self) -> &[u8] {
+        self.canonical_encoded_entries
+    }
+}
+
 /// Immutable registry metadata for one session-program implementation.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct StreamingSessionProgramDescriptor {
