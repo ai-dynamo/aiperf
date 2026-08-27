@@ -6360,4 +6360,186 @@ mod tests {
             .unwrap_or_else(|error| panic!("representable entry: {error}"))
         );
     }
+
+    /// Build one reporter over a budget sized for the whole reserved-submission
+    /// inventory these tests exercise.
+    fn submission_test_reporter(
+        max_items: usize,
+        max_bytes: usize,
+    ) -> (
+        StreamingResourceBudget,
+        BudgetOwnedStreamingIssueReporter,
+        StreamingInputDomainIdentity,
+    ) {
+        let budget = StreamingResourceBudget::new(super::super::budget::BudgetLimits {
+            max_items,
+            max_bytes,
+        })
+        .unwrap_or_else(|error| panic!("valid budget: {error}"));
+        let policy = PreparedStreamingIssuePolicy::new([rule("record_default", None, 0)])
+            .unwrap_or_else(|error| panic!("valid policy: {error}"));
+        let reporter = BudgetOwnedStreamingIssueReporter::new(
+            StreamRunIdentity::new(LogicalReplayRunId::from_bytes([0x11; 32])),
+            policy,
+            budget.clone(),
+        )
+        .unwrap_or_else(|error| panic!("budget-owned reporter: {error}"));
+        let input_domain = StreamingInputDomainIdentity::new(
+            ContentDigest::from_bytes([0x21; 32]),
+            ImmutableObjectIdentity::from_bytes([0x20; 32]),
+        );
+        (budget, reporter, input_domain)
+    }
+
+    #[test]
+    fn duplicate_reserved_submission_is_idempotent() {
+        let (budget, mut reporter, input_domain) =
+            submission_test_reporter(64, QUEUE_CHARGE_BYTES + 256 * 1024);
+        let issue_id = record_issue().issue_id();
+        futures::executor::block_on(reporter.report(IssueSequenceUpdate::Issue(record_issue())))
+            .unwrap_or_else(|error| panic!("retain record issue: {error}"));
+        futures::executor::block_on(reporter.report(IssueSequenceUpdate::NoMoreBefore {
+            input_domain,
+            through: SourcePosition::new(7),
+        }))
+        .unwrap_or_else(|error| panic!("classify record issue: {error}"));
+        let classified = reporter
+            .retained_outcome(&issue_id)
+            .unwrap_or_else(|| panic!("classified receipt"));
+        let settled_bytes = budget.snapshot().used_bytes;
+        let settled_items = budget.snapshot().used_items;
+
+        let handle = reporter.handle();
+        assert!(matches!(
+            futures::executor::block_on(handle.report(record_issue())),
+            Ok(StreamingIssueReportStatus::Accepted)
+        ));
+        assert!(budget.snapshot().used_bytes > settled_bytes);
+
+        reporter
+            .drain_submission_queue()
+            .unwrap_or_else(|error| panic!("drain replayed submission: {error}"));
+
+        // The replay neither re-enters classification nor retains a second
+        // receipt, and dropping its reservation returns the exact charge.
+        assert_eq!(reporter.retained_outcome(&issue_id), Some(classified));
+        assert_eq!(reporter.receipts.len(), 1);
+        assert!(reporter.submission.queue.borrow().is_empty());
+        assert_eq!(budget.snapshot().used_bytes, settled_bytes);
+        assert_eq!(budget.snapshot().used_items, settled_items);
+    }
+
+    #[test]
+    fn requeue_preserves_entry_lease_and_bounds_attempts() {
+        let max_items = 64;
+        let (budget, mut reporter, _input_domain) =
+            submission_test_reporter(max_items, QUEUE_CHARGE_BYTES + 256 * 1024);
+        let pending = reserve_pending_issue(&budget, record_issue())
+            .unwrap_or_else(|error| panic!("reserve pending issue: {error}"));
+        reporter
+            .submission
+            .queue
+            .borrow_mut()
+            .push_back(QueuedHandleIssue {
+                pending,
+                requeue_attempts: 0,
+            });
+        let reserved_bytes = budget.snapshot().used_bytes;
+        let held = budget
+            .try_acquire(max_items - budget.snapshot().used_items, 0)
+            .unwrap_or_else(|error| panic!("hold remaining items: {error}"));
+
+        assert!(matches!(
+            reporter.drain_submission_queue(),
+            Err(StreamingReliabilityError::StateBudget(_))
+        ));
+        {
+            let queue = reporter.submission.queue.borrow();
+            assert_eq!(queue.len(), 1);
+            assert_eq!(
+                queue
+                    .front()
+                    .unwrap_or_else(|| panic!("requeued submission"))
+                    .requeue_attempts,
+                1
+            );
+        }
+        // The reservation went back with its lease intact, so a later drain can
+        // retry against fresher headroom without a second charge.
+        assert_eq!(budget.snapshot().used_bytes, reserved_bytes);
+
+        reporter
+            .submission
+            .queue
+            .borrow_mut()
+            .front_mut()
+            .unwrap_or_else(|| panic!("requeued submission"))
+            .requeue_attempts = MAX_SUBMISSION_REQUEUE_ATTEMPTS;
+        assert!(matches!(
+            reporter.drain_submission_queue(),
+            Err(StreamingReliabilityError::StateBudget(_))
+        ));
+        assert!(reporter.submission.queue.borrow().is_empty());
+        assert!(budget.snapshot().used_bytes < reserved_bytes);
+        drop(held);
+    }
+
+    #[test]
+    fn submit_reserved_issue_without_source_position_returns_typed_error() {
+        let (budget, mut reporter, _input_domain) =
+            submission_test_reporter(64, QUEUE_CHARGE_BYTES + 256 * 1024);
+        let mut pending = reserve_pending_issue(&budget, record_issue())
+            .unwrap_or_else(|error| panic!("reserve pending issue: {error}"));
+        // An adapter-minted fact can carry an input domain without the position
+        // the scope constructors always set.
+        pending.issue.order.source_position = None;
+        let reserved_bytes = budget.snapshot().used_bytes;
+
+        let Err((error, pending)) = reporter.submit_reserved_issue(pending) else {
+            panic!("a positionless input-scoped fact must not classify");
+        };
+
+        assert!(matches!(
+            error,
+            StreamingReliabilityError::MissingInputSourcePosition
+        ));
+        assert!(reporter.pending_inputs.is_empty());
+        // The unwind returned the intact lease rather than aborting the worker.
+        assert_eq!(budget.snapshot().used_bytes, reserved_bytes);
+        drop(pending);
+        assert!(budget.snapshot().used_bytes < reserved_bytes);
+    }
+
+    #[test]
+    fn queue_at_capacity_rejects_without_allocating() {
+        let (budget, reporter, _input_domain) =
+            submission_test_reporter(4 * MAX_QUEUED_SUBMISSIONS, QUEUE_CHARGE_BYTES + 8 * 1024 * 1024);
+        let handle = reporter.handle();
+        for _ in 0..MAX_QUEUED_SUBMISSIONS {
+            assert!(matches!(
+                futures::executor::block_on(handle.report(record_issue())),
+                Ok(StreamingIssueReportStatus::Accepted)
+            ));
+        }
+        assert_eq!(
+            reporter.submission.queue.borrow().len(),
+            MAX_QUEUED_SUBMISSIONS
+        );
+        let full_bytes = budget.snapshot().used_bytes;
+        let full_items = budget.snapshot().used_items;
+
+        assert!(matches!(
+            futures::executor::block_on(handle.report(record_issue())),
+            Ok(StreamingIssueReportStatus::Backpressured)
+        ));
+
+        // The refused submission released its reservation, so backpressure
+        // costs the shared budget nothing and never grows the ring buffer.
+        assert_eq!(
+            reporter.submission.queue.borrow().len(),
+            MAX_QUEUED_SUBMISSIONS
+        );
+        assert_eq!(budget.snapshot().used_bytes, full_bytes);
+        assert_eq!(budget.snapshot().used_items, full_items);
+    }
 }
