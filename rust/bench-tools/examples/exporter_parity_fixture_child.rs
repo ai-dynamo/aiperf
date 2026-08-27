@@ -31,11 +31,22 @@ use aiperf_bench_tools::runtime_runner::{
 const PAIRED_POLICY_BYTES: &[u8] =
     include_bytes!("../../benchmarks/exporter-paired-runtime-policy.json");
 
-/// Artifact tree both members publish; parity requires byte-identical output.
-const RAW_OBSERVABLE: &[u8] = b"[{\"kind\":\"regular_file\",\"path\":\"records.json\"}]\n";
+/// Exact retained artifact content both members publish.
+const RECORDS_JSON: &[u8] = b"{\"status\":\"complete\"}";
 
 fn digest(bytes: &[u8]) -> String {
     format!("blake3:{}", blake3::hash(bytes))
+}
+
+/// One-entry artifact tree; parity is defined over these exact bytes, so both
+/// members must publish the identical retained artifact.
+fn raw_observable() -> Result<Vec<u8>, String> {
+    canonical_line(&serde_json::json!([{
+        "blake3": digest(RECORDS_JSON),
+        "kind": "regular_file",
+        "length": RECORDS_JSON.len(),
+        "path": "records.json",
+    }]))
 }
 
 fn canonical_line<T: serde::Serialize>(value: &T) -> Result<Vec<u8>, String> {
@@ -53,6 +64,7 @@ fn emit() -> Result<Vec<u8>, String> {
     let policy = parse_exporter_observable_policy(PAIRED_POLICY_BYTES, &BTreeSet::new())
         .map_err(|error| format!("checked-in paired policy is invalid: {error}"))?;
     let contract = ExporterSampleContract::normative();
+    let raw_observable = raw_observable()?;
 
     let binding = ExporterMemberBinding {
         mode: ExporterEvidenceMode::Paired,
@@ -88,7 +100,7 @@ fn emit() -> Result<Vec<u8>, String> {
                 member: binding.member,
                 repetition_ordinal: ordinal,
             },
-            RAW_OBSERVABLE,
+            &raw_observable,
             &[],
         )
         .map_err(|error| format!("policy application failed: {error}"))?;
@@ -119,8 +131,8 @@ fn emit() -> Result<Vec<u8>, String> {
         repetition_receipt_bytes: canonical_line(&receipts)?,
         retained: RetainedExporterEvidence {
             repetition_ordinal: 0,
-            raw_observable_bytes: RAW_OBSERVABLE.to_vec(),
-            comparison_observable_bytes: RAW_OBSERVABLE.to_vec(),
+            raw_observable_bytes: raw_observable.clone(),
+            comparison_observable_bytes: raw_observable.clone(),
             provenance_receipt_bytes: retained_provenance,
         },
     };
@@ -135,11 +147,11 @@ fn emit() -> Result<Vec<u8>, String> {
         active_duration_ns,
         processed_records: contract.processed_records,
         retained_artifact_records: contract.retained_artifact_records,
-        comparison_observable_blake3: digest(RAW_OBSERVABLE),
+        comparison_observable_blake3: digest(&raw_observable),
         repetition_receipts_blake3: digest(&evidence.repetition_receipt_bytes),
         retained_repetition_ordinal: 0,
-        retained_raw_observable_blake3: digest(RAW_OBSERVABLE),
-        retained_comparison_observable_blake3: digest(RAW_OBSERVABLE),
+        retained_raw_observable_blake3: digest(&raw_observable),
+        retained_comparison_observable_blake3: digest(&raw_observable),
         retained_provenance_receipt_blake3: digest(&evidence.retained.provenance_receipt_bytes),
         observable_policy_blake3: binding.observable_policy_blake3.clone(),
         build_artifact_blake3: binding.build_artifact_blake3.clone(),
