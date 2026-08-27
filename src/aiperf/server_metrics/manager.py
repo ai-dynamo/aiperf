@@ -446,13 +446,27 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
         land after an intervening phase's records, splitting a single warmup
         occurrence in two.
 
-        ``__eq__`` deliberately ignores ``instance_id``, so this equality means
-        "same phase", which is the precondition for sharing its occurrence id.
+        Matching is on ``(phase, phase_index, profiling_index)`` -- the fields
+        that actually identify a configured phase -- and deliberately NOT on
+        ``phase_name``. Full ``__eq__`` was tried first and silently failed to
+        stamp the baseline scrape, because the two publishers of the same
+        logical phase in ``timing/phase/publisher.py`` fall back to *different*
+        display names when ``config.phase_name`` is unset: the start path lands
+        on ``str(stats.phase)`` -> ``"warmup"`` while the baseline path builds
+        ``f"{config.phase.value}_{config.phase_index}"`` -> ``"warmup_0"``.
+        Comparing a cosmetic label would drop the scrape back onto the
+        arrival-contiguity fallback that stamping exists to retire.
         """
         active = self._active_phase
-        if active is not None and active.instance_id is not None and identity == active:
-            return replace(identity, instance_id=active.instance_id)
-        return identity
+        if active is None or active.instance_id is None:
+            return identity
+        if (identity.phase, identity.phase_index, identity.profiling_index) != (
+            active.phase,
+            active.phase_index,
+            active.profiling_index,
+        ):
+            return identity
+        return replace(identity, instance_id=active.instance_id)
 
     @on_message(MessageType.CREDIT_PHASE_START)
     async def _on_credit_phase_start(self, message: CreditPhaseStartMessage) -> None:
