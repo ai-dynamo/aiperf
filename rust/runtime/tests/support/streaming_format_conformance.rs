@@ -102,7 +102,7 @@ impl FormatEventSink for CapturingFormatEventSink {
 /// Panics with a described failure on any contract violation.
 pub async fn assert_format_conformance(
     factory: &dyn StreamingDatasetFormatFactory,
-    mut reporter: Box<dyn StreamingIssueReporter>,
+    reporter: Box<dyn StreamingIssueReporter>,
     mut cases: FormatConformanceCases,
 ) {
     assert_strict_validation(factory, &cases);
