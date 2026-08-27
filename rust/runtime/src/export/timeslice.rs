@@ -18,7 +18,8 @@ use anyhow::{Context, bail, ensure};
 use serde_json::{Map, Value};
 
 use crate::export::{ExportConfig, Exporter, crlf_csv_writer};
-use crate::metrics_core::report::{MetricSeries, NativeReport, ReportStats, ReportValue};
+use crate::metrics_core::ReportView;
+use crate::metrics_core::report::{MetricSeries, ReportStats, ReportValue};
 
 /// Canonical percentile field order shared by the JSON `JsonMetricResult`
 /// declaration and the CSV `STAT_KEYS` list. A `BTreeMap` key sort is *not*
@@ -101,7 +102,7 @@ impl Exporter for TimesliceExporter {
 
     fn export(
         &self,
-        report: &NativeReport,
+        report: &dyn ReportView,
         artifact_dir: &Path,
         cfg: &ExportConfig,
     ) -> anyhow::Result<()> {
@@ -132,12 +133,12 @@ impl Exporter for TimesliceExporter {
 /// Filter configured tags, select summary series, and group slices by
 /// `(start_ns, end_ns, complete)` in sorted order.
 fn regroup_timeslices(
-    report: &NativeReport,
+    report: &dyn ReportView,
     cfg: &TimesliceExportConfig,
 ) -> anyhow::Result<Vec<SliceGroup>> {
     let mut groups: BTreeMap<(i64, i64, bool), Vec<SliceMetric>> = BTreeMap::new();
 
-    for (tag, entry) in &report.metrics {
+    for (tag, entry) in report.metrics() {
         // Registered INTERNAL/EXPERIMENTAL metrics are dropped; a tag outside the
         // projected set is always kept (including unregistered native-runtime tags).
         if cfg.filtered_tags.contains(tag) {

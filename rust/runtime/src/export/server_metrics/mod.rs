@@ -15,9 +15,10 @@ use std::path::Path;
 use serde_json::{Map, Value};
 
 use crate::export::{ExportConfig, Exporter, crlf_csv_writer, normalize_endpoint_display};
+use crate::metrics_core::ReportView;
 use crate::metrics_core::{
-    MetricEntry, MetricSeries, NativeReport, ReportServerMetricsEndpointInfo,
-    ReportServerMetricsMetadata, ReportStats, ReportTimeslice, ReportValue, Unit,
+    MetricEntry, MetricSeries, ReportServerMetricsEndpointInfo, ReportServerMetricsMetadata,
+    ReportStats, ReportTimeslice, ReportValue, Unit,
 };
 use crate::server_metrics::infer_unit;
 
@@ -73,16 +74,16 @@ impl Exporter for ServerMetricsExporter {
 
     fn export(
         &self,
-        report: &NativeReport,
+        report: &dyn ReportView,
         artifact_dir: &Path,
         cfg: &ExportConfig,
     ) -> anyhow::Result<()> {
         let policy = &cfg.server_metrics;
         // Missing metadata or metric data produces no artifacts.
-        let Some(meta) = report.summary.server_metrics.as_ref() else {
+        let Some(meta) = report.run_summary().server_metrics.as_ref() else {
             return Ok(());
         };
-        if report.server_metrics.is_empty() {
+        if report.server_metrics().is_empty() {
             return Ok(());
         }
 
@@ -216,7 +217,7 @@ fn isoformat_naive(naive: chrono::NaiveDateTime, micros: u32) -> String {
 
 /// Builds the hybrid `server_metrics_export.json` content.
 fn build_json(
-    report: &NativeReport,
+    report: &dyn ReportView,
     meta: &ReportServerMetricsMetadata,
     policy: &ServerMetricsExportConfig,
 ) -> String {
@@ -232,7 +233,7 @@ fn build_json(
             policy
                 .aiperf_version
                 .clone()
-                .unwrap_or_else(|| report.aiperf_version.clone()),
+                .unwrap_or_else(|| report.aiperf_version().to_owned()),
         ),
     );
     if let Some(benchmark_id) = &policy.benchmark_id {
@@ -243,9 +244,9 @@ fn build_json(
     root.insert("metrics_phase".into(), Value::String("profiling".into()));
     root.insert(
         "metrics".into(),
-        build_json_metrics(&report.server_metrics, meta),
+        build_json_metrics(report.server_metrics(), meta),
     );
-    let warmup = build_json_metrics(&report.warmup_server_metrics, meta);
+    let warmup = build_json_metrics(report.warmup_server_metrics(), meta);
     if let Value::Object(map) = &warmup
         && !map.is_empty()
     {
@@ -267,7 +268,7 @@ fn build_json(
 }
 
 /// Builds the `summary` object (endpoints, phase datetimes, endpoint metadata).
-fn build_json_summary(report: &NativeReport, meta: &ReportServerMetricsMetadata) -> Value {
+fn build_json_summary(report: &dyn ReportView, meta: &ReportServerMetricsMetadata) -> Value {
     let mut summary = Map::new();
     summary.insert(
         "endpoints_configured".into(),
@@ -303,7 +304,7 @@ fn build_json_summary(report: &NativeReport, meta: &ReportServerMetricsMetadata)
 
     // Include only endpoints that contributed profiling series, sorted by URL.
     let mut endpoints: BTreeSet<&str> = BTreeSet::new();
-    for entry in report.server_metrics.values() {
+    for entry in report.server_metrics().values() {
         for series in &entry.series {
             if let Some(url) = &series.endpoint_url {
                 endpoints.insert(url.as_str());
@@ -722,7 +723,7 @@ fn csv_stat(stats: &ReportStats, key: &str) -> StatCell {
 }
 
 /// Builds the full `server_metrics_export.csv` content.
-fn build_csv(report: &NativeReport, policy: &ServerMetricsExportConfig) -> String {
+fn build_csv(report: &dyn ReportView, policy: &ServerMetricsExportConfig) -> String {
     // Comment header lines use `\n`; the CSV body below uses `\r\n`.
     let mut content = String::new();
     content.push_str("# AIPerf Server Metrics Export (CSV)\n");
@@ -731,7 +732,7 @@ fn build_csv(report: &NativeReport, policy: &ServerMetricsExportConfig) -> Strin
         policy
             .aiperf_version
             .as_deref()
-            .unwrap_or(report.aiperf_version.as_str())
+            .unwrap_or(report.aiperf_version())
     ));
     content.push_str(&format!("# schema_version: {CSV_SCHEMA_VERSION}\n"));
     content.push_str(&format!(
@@ -742,14 +743,14 @@ fn build_csv(report: &NativeReport, policy: &ServerMetricsExportConfig) -> Strin
     content.push_str("#\n");
 
     let meta = report
-        .summary
+        .run_summary()
         .server_metrics
         .as_ref()
         .expect("caller guarantees server-metrics metadata is present");
 
     // Group every series into its Prometheus type bucket.
     let mut by_type: BTreeMap<String, Vec<CsvMetricInfo<'_>>> = BTreeMap::new();
-    for (name, entry) in &report.server_metrics {
+    for (name, entry) in report.server_metrics() {
         let kind = prometheus_type(meta, name, entry);
         let description = meta
             .descriptions

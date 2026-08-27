@@ -22,7 +22,7 @@ use arrow::record_batch::RecordBatch;
 use crate::export::parquet_util::{float_column, string_column};
 
 use crate::export::{ExportConfig, Exporter};
-use crate::metrics_core::NativeReport;
+use crate::metrics_core::ReportView;
 
 mod units;
 
@@ -67,7 +67,7 @@ impl Exporter for ParquetExporter {
 
     fn export(
         &self,
-        report: &NativeReport,
+        report: &dyn ReportView,
         artifact_dir: &Path,
         _cfg: &ExportConfig,
     ) -> anyhow::Result<()> {
@@ -120,9 +120,9 @@ fn resolve_wire_path(artifact_dir: &Path) -> std::path::PathBuf {
 }
 
 /// Resolve a positive profiling `[start_ns, end_ns]` filter.
-fn profiling_boundary(report: &NativeReport) -> Result<(i64, i64)> {
+fn profiling_boundary(report: &dyn ReportView) -> Result<(i64, i64)> {
     let range = report
-        .summary
+        .run_summary()
         .server_metrics
         .as_ref()
         .and_then(|meta| meta.profiling.as_ref())

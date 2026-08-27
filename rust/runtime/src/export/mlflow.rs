@@ -27,7 +27,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::export::{ExportConfig, Exporter, SummarySeries, summary_series};
-use crate::metrics_core::{MetricEntry, NativeReport, ReportStats, ReportValue};
+use crate::metrics_core::{MetricEntry, ReportStats, ReportValue, ReportView};
 
 /// Percentile keys logged to MLflow, in payload order. Other percentiles are omitted.
 const PERCENTILE_STAT_KEYS: &[&str] =
@@ -92,7 +92,7 @@ impl Exporter for MlflowExporter {
 
     fn export(
         &self,
-        report: &NativeReport,
+        report: &dyn ReportView,
         artifact_dir: &Path,
         cfg: &ExportConfig,
     ) -> anyhow::Result<()> {
@@ -143,7 +143,7 @@ struct ResolvedArtifact {
 }
 
 impl ExportPlan {
-    fn build(report: &NativeReport, artifact_dir: &Path, cfg: &MlflowExportConfig) -> Self {
+    fn build(report: &dyn ReportView, artifact_dir: &Path, cfg: &MlflowExportConfig) -> Self {
         Self {
             metrics: build_metric_payload(report, cfg),
             params: cfg.params.clone(),
@@ -170,9 +170,12 @@ fn derive_default_run_name(benchmark_id: Option<&str>) -> String {
 
 /// Emit a bare metric tag for the representative value and `tag.stat` for other
 /// selected finite stats.
-fn build_metric_payload(report: &NativeReport, cfg: &MlflowExportConfig) -> BTreeMap<String, f64> {
+fn build_metric_payload(
+    report: &dyn ReportView,
+    cfg: &MlflowExportConfig,
+) -> BTreeMap<String, f64> {
     let mut payload = BTreeMap::new();
-    for (name, entry) in &report.metrics {
+    for (name, entry) in report.metrics() {
         match summary_series(&entry.series) {
             SummarySeries::Selected(series) => push_stat_fields(&mut payload, name, &series.stats),
             SummarySeries::Empty => {}
@@ -191,7 +194,7 @@ fn build_metric_payload(report: &NativeReport, cfg: &MlflowExportConfig) -> BTre
 
     // `request_count` supplies the synthetic completed-request metric.
     if let Some(completed) = report
-        .metrics
+        .metrics()
         .get("request_count")
         .and_then(representative_value)
     {
@@ -264,16 +267,19 @@ fn finite(value: ReportValue) -> Option<f64> {
 }
 
 /// Build version, cancellation, benchmark, and user tags; user tags may override.
-fn build_tag_payload(report: &NativeReport, cfg: &MlflowExportConfig) -> BTreeMap<String, String> {
+fn build_tag_payload(
+    report: &dyn ReportView,
+    cfg: &MlflowExportConfig,
+) -> BTreeMap<String, String> {
     let mut tags = BTreeMap::new();
     let aiperf_version = cfg
         .aiperf_version
         .clone()
-        .unwrap_or_else(|| report.aiperf_version.clone());
+        .unwrap_or_else(|| report.aiperf_version().to_owned());
     tags.insert("aiperf.version".to_string(), aiperf_version);
     tags.insert(
         "aiperf.was_cancelled".to_string(),
-        report.summary.was_cancelled.to_string(),
+        report.run_summary().was_cancelled.to_string(),
     );
     if let Some(id) = cfg.benchmark_id.as_deref()
         && !id.is_empty()

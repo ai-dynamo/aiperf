@@ -15,7 +15,7 @@ use std::fs::File;
 use std::path::Path;
 
 use crate::export::{ExportConfig, Exporter, crlf_csv_writer};
-use crate::metrics_core::{AccuracyRollup, NativeReport};
+use crate::metrics_core::{AccuracyRollup, ReportView};
 
 /// Fixed output file name, joined onto the run's artifact directory. A constant
 /// literal, so no path-traversal component can enter the join.
@@ -43,11 +43,11 @@ impl Exporter for AccuracyCsvExporter {
 
     fn export(
         &self,
-        report: &NativeReport,
+        report: &dyn ReportView,
         artifact_dir: &Path,
         _cfg: &ExportConfig,
     ) -> anyhow::Result<()> {
-        let Some(analysis) = report.accuracy.as_ref() else {
+        let Some(analysis) = report.accuracy() else {
             // No analysis produces no artifact.
             return Ok(());
         };

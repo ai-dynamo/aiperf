@@ -1170,11 +1170,59 @@ impl NativeReport {
 }
 
 impl crate::metrics_core::report_view::ReportView for NativeReport {
+    fn aiperf_version(&self) -> &str {
+        &self.aiperf_version
+    }
+
+    fn run_summary(&self) -> &ReportSummary {
+        &self.summary
+    }
+
+    fn metric(&self, tag: MetricTag) -> Option<&MetricEntry> {
+        self.metrics.get(tag.as_str())
+    }
+
     fn metric_names(&self) -> Vec<Arc<str>> {
         self.metrics
             .keys()
             .map(|name| Arc::<str>::from(name.as_str()))
             .collect()
+    }
+
+    fn metrics(&self) -> &BTreeMap<String, MetricEntry> {
+        &self.metrics
+    }
+
+    fn warmup_metrics(&self) -> Option<&BTreeMap<String, MetricEntry>> {
+        self.warmup_metrics.as_ref()
+    }
+
+    fn server_metrics(&self) -> &BTreeMap<String, MetricEntry> {
+        &self.server_metrics
+    }
+
+    fn warmup_server_metrics(&self) -> &BTreeMap<String, MetricEntry> {
+        &self.warmup_server_metrics
+    }
+
+    fn accuracy(&self) -> Option<&AccuracyAnalysis> {
+        self.accuracy.as_ref()
+    }
+
+    fn errors(&self) -> &[ReportError] {
+        &self.errors
+    }
+
+    fn steady_state(&self) -> Option<&ReportSteadyState> {
+        self.steady_state.as_ref()
+    }
+
+    fn pooled_spec_decode_acceptance_histogram(&self) -> Option<&BTreeMap<u64, u128>> {
+        self.pooled_spec_decode_acceptance_histogram.as_ref()
+    }
+
+    fn per_record(&self) -> Option<&crate::export::otel::OtelRecordAccumulator> {
+        self.otel_per_record.as_ref()
     }
 }
 

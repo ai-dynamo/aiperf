@@ -20,7 +20,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::extensions::{DuplicateName, RegistryId};
-use crate::metrics_core::NativeReport;
+use crate::metrics_core::ReportView;
 use crate::metrics_core::report::{MetricSeries, ReportStats, ReportValue};
 
 /// Classification of a metric's series for summary selection.
@@ -319,7 +319,7 @@ pub trait Exporter {
     /// output name onto it via the runner's path-traversal-safe helper.
     fn export(
         &self,
-        report: &NativeReport,
+        report: &dyn ReportView,
         artifact_dir: &Path,
         cfg: &ExportConfig,
     ) -> anyhow::Result<()>;
@@ -460,7 +460,7 @@ impl ExporterRegistry {
     /// Best-effort: an exporter error is logged and does not abort the run (the
     /// native-v2 report is the committed authority). Returns the number of
     /// exporters that ran without error, for auditing and telemetry.
-    pub fn run(&self, report: &NativeReport, artifact_dir: &Path, cfg: &ExportConfig) -> usize {
+    pub fn run(&self, report: &dyn ReportView, artifact_dir: &Path, cfg: &ExportConfig) -> usize {
         let mut succeeded = 0usize;
         for exporter in self.iter() {
             if !exporter.enabled(cfg) {
@@ -497,13 +497,14 @@ impl Default for ExporterRegistry {
 /// Run every enabled built-in exporter over the finalized report. Thin wrapper
 /// over [`ExporterRegistry::with_builtin_exporters`] + [`ExporterRegistry::run`]
 /// for the runner call sites that emit the stock exporter set.
-pub fn run_exporters(report: &NativeReport, artifact_dir: &Path, cfg: &ExportConfig) -> usize {
+pub fn run_exporters(report: &dyn ReportView, artifact_dir: &Path, cfg: &ExportConfig) -> usize {
     ExporterRegistry::with_builtin_exporters().run(report, artifact_dir, cfg)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::metrics_core::NativeReport;
 
     #[test]
     fn absent_export_block_decodes_to_all_disabled() {

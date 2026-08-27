@@ -28,7 +28,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 
 use crate::export::{ExportConfig, Exporter, crlf_csv_writer, normalize_endpoint_display};
-use crate::metrics_core::{MetricEntry, MetricSeries, NativeReport, ReportStats, ReportValue};
+use crate::metrics_core::{MetricEntry, MetricSeries, ReportStats, ReportValue, ReportView};
 use chrono::{Local, TimeZone};
 use serde::Serialize;
 use serde::ser::SerializeMap;
@@ -145,7 +145,7 @@ impl Exporter for GenaiPerfV1Exporter {
 
     fn export(
         &self,
-        report: &NativeReport,
+        report: &dyn ReportView,
         artifact_dir: &Path,
         cfg: &ExportConfig,
     ) -> anyhow::Result<()> {
@@ -360,11 +360,11 @@ struct TelemetryEndpoint {
 /// [`metric_object`] so gauge/counter rendering is byte-identical to the
 /// top-level metrics. Returns `None` when the run collected no GPU telemetry, so
 /// the caller omits the whole block (`exclude_none`).
-fn render_telemetry_data(report: &NativeReport) -> Option<Value> {
+fn render_telemetry_data(report: &dyn ReportView) -> Option<Value> {
     let mut endpoint_order: Vec<String> = Vec::new();
     let mut endpoints: HashMap<String, TelemetryEndpoint> = HashMap::new();
 
-    for (name, entry) in &report.metrics {
+    for (name, entry) in report.metrics() {
         for series in &entry.series {
             let Some(labels) = &series.labels else {
                 continue;
@@ -475,11 +475,11 @@ fn render_telemetry_data(report: &NativeReport) -> Option<Value> {
     summary.insert("endpoints_successful".to_owned(), Value::Array(raw_urls));
     summary.insert(
         "start_time".to_owned(),
-        Value::String(format_native_time(report.summary.start_time)),
+        Value::String(format_native_time(report.run_summary().start_time)),
     );
     summary.insert(
         "end_time".to_owned(),
-        Value::String(format_native_time(report.summary.end_time)),
+        Value::String(format_native_time(report.run_summary().end_time)),
     );
 
     let mut telemetry = Map::new();
@@ -525,8 +525,8 @@ fn format_native_time(ns: Option<i64>) -> String {
 /// GPU-telemetry series (see [`render_telemetry_data`]) and omitted when the run
 /// carried none; `steady_state` and the pooled histogram are omitted when the run
 /// produced neither.
-fn render_json(report: &NativeReport, cfg: &GenaiPerfExportConfig) -> String {
-    let collected = collect_metrics(&report.metrics, cfg);
+fn render_json(report: &dyn ReportView, cfg: &GenaiPerfExportConfig) -> String {
+    let collected = collect_metrics(report.metrics(), cfg);
     let mut by_name: HashMap<&str, &Projected> = HashMap::new();
     for (name, projected) in &collected {
         by_name.insert(name.as_str(), projected);
@@ -542,7 +542,7 @@ fn render_json(report: &NativeReport, cfg: &GenaiPerfExportConfig) -> String {
         .envelope
         .aiperf_version
         .clone()
-        .unwrap_or_else(|| report.aiperf_version.clone());
+        .unwrap_or_else(|| report.aiperf_version().to_owned());
     root.insert("aiperf_version".to_owned(), Value::String(aiperf_version));
     if let Some(benchmark_id) = &cfg.envelope.benchmark_id {
         root.insert("benchmark_id".to_owned(), benchmark_id.clone());
@@ -571,13 +571,13 @@ fn render_json(report: &NativeReport, cfg: &GenaiPerfExportConfig) -> String {
 
     root.insert(
         "was_cancelled".to_owned(),
-        Value::Bool(report.summary.was_cancelled),
+        Value::Bool(report.run_summary().was_cancelled),
     );
     // `error_summary` is always present, including as an empty array.
     root.insert("error_summary".to_owned(), error_summary(report));
 
     // Warmup metrics (declared field), alphabetical by tag.
-    if let Some(warmup) = &report.warmup_metrics {
+    if let Some(warmup) = report.warmup_metrics() {
         let warmup_metrics = collect_metrics(warmup, cfg);
         if !warmup_metrics.is_empty() {
             let mut object = Map::new();
@@ -591,7 +591,7 @@ fn render_json(report: &NativeReport, cfg: &GenaiPerfExportConfig) -> String {
     // Closed-loop steady-state summary (declared field), omitted unless the run
     // enabled it with a concurrency target. Metrics use the same per-metric
     // object shape as the whole-run summary, scoped to the saturated window.
-    if let Some(steady_state) = &report.steady_state {
+    if let Some(steady_state) = report.steady_state() {
         let mut object = Map::new();
         object.insert(
             "window_start_ns".to_owned(),
@@ -638,8 +638,7 @@ fn render_json(report: &NativeReport, cfg: &GenaiPerfExportConfig) -> String {
     serde_json::to_string_pretty(&V1JsonRoot {
         fields: &root,
         pooled_spec_decode_acceptance_histogram: report
-            .pooled_spec_decode_acceptance_histogram
-            .as_ref()
+            .pooled_spec_decode_acceptance_histogram()
             .filter(|histogram| !histogram.is_empty()),
     })
     .expect("v1 summary JSON value is always serializable")
@@ -676,9 +675,9 @@ impl Serialize for V1JsonRoot<'_> {
 /// Build `error_summary` from grouped errors. Each item is
 /// `{"error_details": {code?, type, message}, "count": N}` with `code` present
 /// only when the report carried one.
-fn error_summary(report: &NativeReport) -> Value {
-    let mut items = Vec::with_capacity(report.errors.len());
-    for error in &report.errors {
+fn error_summary(report: &dyn ReportView) -> Value {
+    let mut items = Vec::with_capacity(report.errors().len());
+    for error in report.errors() {
         let mut details = Map::new();
         if let Some(code) = error.code {
             details.insert("code".to_owned(), Value::from(code));
@@ -732,8 +731,8 @@ fn stat_value(projected: &Projected, stat: &str) -> Option<f64> {
 /// blank row, then the system section (scalar metrics), each sorted by tag. The
 /// CSV uses CRLF with minimal quoting. The empty separator record is emitted
 /// manually because the crate would quote a zero-field record.
-fn render_csv(report: &NativeReport, cfg: &GenaiPerfExportConfig) -> anyhow::Result<String> {
-    let collected = collect_metrics(&report.metrics, cfg);
+fn render_csv(report: &dyn ReportView, cfg: &GenaiPerfExportConfig) -> anyhow::Result<String> {
+    let collected = collect_metrics(report.metrics(), cfg);
 
     let mut request: Vec<&(String, Projected)> = collected
         .iter()
