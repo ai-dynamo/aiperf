@@ -5,11 +5,18 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
+use std::ops::Range;
 use std::path::{Component, Path};
 
 use serde::de::{Error as _, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Serialize};
 
+use crate::exporter_observable::{
+    ArtifactTreeEntry, ArtifactTreeKind, ReceiverTranscriptEntry, parse_artifact_tree_observable,
+    parse_receiver_transcript_observable,
+    reject_duplicate_json_keys as reject_observable_duplicates,
+    validate_captured_stream_observable,
+};
 use crate::plugin_stats::ExporterMember;
 
 const COMPARISON_MAGIC: &[u8] = b"AIPERF_EXPORTER_COMPARISON_V1\0";
@@ -150,6 +157,621 @@ pub fn parse_exporter_observable_policy(
     Ok(policy)
 }
 
+/// Exact backing bytes for one selector named by a policy slot.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SelectedBackingPayloadV1 {
+    /// Exact bytes of one retained regular file at `path`.
+    ArtifactContent {
+        /// Normalized logical artifact path.
+        path: String,
+        /// Exact retained regular-file bytes.
+        bytes: Vec<u8>,
+    },
+    /// Exact captured stream bytes, identical to the raw observable bytes.
+    CapturedStream {
+        /// Exact captured bytes.
+        bytes: Vec<u8>,
+    },
+    /// Exact retained body bytes for one receiver acceptance sequence.
+    TranscriptBody {
+        /// Dense receiver acceptance sequence.
+        sequence: u64,
+        /// Exact decoder-accepted body bytes.
+        bytes: Vec<u8>,
+    },
+}
+
+/// Complete result of applying one scenario's observable policy.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AppliedExporterObservableV1 {
+    /// BLAKE3 of the validated class-specific raw observable bytes.
+    pub raw_observable_blake3: String,
+    /// Rebuilt class-specific comparison bytes.
+    pub comparison_bytes: Vec<u8>,
+    /// BLAKE3 of `comparison_bytes`.
+    pub comparison_observable_blake3: String,
+    /// Canonical `ProvenanceReceiptV1` bytes.
+    pub provenance_receipt_bytes: Vec<u8>,
+    /// BLAKE3 of `provenance_receipt_bytes`.
+    pub provenance_receipt_blake3: String,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+enum BackingPayloadKey {
+    ArtifactContent(String),
+    CapturedStream,
+    TranscriptBody(u64),
+}
+
+enum ParsedObservable {
+    ArtifactTree(Vec<ArtifactTreeEntry>),
+    CapturedStream,
+    ReceiverTranscript(Vec<ReceiverTranscriptEntry>),
+}
+
+/// Apply every slot for the binding's scenario to exact retained evidence.
+///
+/// The backing list must contain exactly one payload for every distinct output
+/// selector used by the scenario and no other payloads. Raw tree/transcript
+/// acquisition remains outside this API; the supplied bytes are authenticated
+/// against their class-specific raw observable before any provenance value is
+/// replaced.
+pub fn apply_exporter_observable_policy_v1(
+    policy: &ExporterObservablePolicyV1,
+    binding: &ProvenanceBindingV1,
+    raw_observable: &[u8],
+    backing_payloads: &[SelectedBackingPayloadV1],
+) -> Result<AppliedExporterObservableV1, ExporterPolicyError> {
+    validate_provenance_binding(policy, binding)?;
+    let scenario = policy
+        .scenarios
+        .iter()
+        .find(|scenario| scenario.scenario_id == binding.scenario_id)
+        .ok_or_else(|| ExporterPolicyError::new("application scenario is absent from policy"))?;
+    let parsed = parse_raw_observable(scenario, raw_observable)?;
+    let raw_observable_blake3 = format!("blake3:{}", blake3::hash(raw_observable));
+
+    let expected_keys = scenario
+        .provenance_slots
+        .iter()
+        .map(|slot| backing_key_for_selector(&slot.output_selector))
+        .collect::<BTreeSet<_>>();
+    let mut supplied = BTreeMap::<BackingPayloadKey, &[u8]>::new();
+    for payload in backing_payloads {
+        let (key, bytes) = backing_payload_parts(payload);
+        if supplied.insert(key, bytes).is_some() {
+            return Err(ExporterPolicyError::new(
+                "application contains an ambiguous duplicate backing payload",
+            ));
+        }
+    }
+    if supplied.keys().cloned().collect::<BTreeSet<_>>() != expected_keys {
+        return Err(ExporterPolicyError::new(
+            "application backing payloads do not exactly match policy selectors",
+        ));
+    }
+    for key in &expected_keys {
+        let bytes = supplied.get(key).ok_or_else(|| {
+            ExporterPolicyError::new("application is missing a selected backing payload")
+        })?;
+        validate_backing_identity(&parsed, key, bytes, raw_observable)?;
+    }
+
+    if scenario.provenance_slots.is_empty() {
+        let provenance = generate_provenance_receipt_v1(policy, binding, &[])?;
+        return Ok(AppliedExporterObservableV1 {
+            raw_observable_blake3: raw_observable_blake3.clone(),
+            comparison_bytes: raw_observable.to_vec(),
+            comparison_observable_blake3: raw_observable_blake3,
+            provenance_receipt_bytes: provenance.bytes,
+            provenance_receipt_blake3: provenance.blake3,
+        });
+    }
+
+    let mut observations = Vec::with_capacity(scenario.provenance_slots.len());
+    let mut selections = BTreeMap::<BackingPayloadKey, Vec<ComparisonSelectionV1>>::new();
+    for slot in &scenario.provenance_slots {
+        let key = backing_key_for_selector(&slot.output_selector);
+        let payload = supplied.get(&key).ok_or_else(|| {
+            ExporterPolicyError::new("application is missing a selected backing payload")
+        })?;
+        let span = resolve_locator_span(payload, &slot.locator)?;
+        observations.push(ProvenanceObservationV1 {
+            slot_id: slot.slot_id.clone(),
+            observed_raw: payload[span.clone()].to_vec(),
+        });
+        selections
+            .entry(key)
+            .or_default()
+            .push(ComparisonSelectionV1 {
+                slot_id: slot.slot_id.clone(),
+                offset: u64::try_from(span.start).map_err(|_| {
+                    ExporterPolicyError::new("selected span offset does not fit unsigned 64-bit")
+                })?,
+                length: u64::try_from(span.len()).map_err(|_| {
+                    ExporterPolicyError::new("selected span length does not fit unsigned 64-bit")
+                })?,
+                replacement: replacement_for_comparison(&slot.replacement)?,
+            });
+    }
+    let provenance = generate_provenance_receipt_v1(policy, binding, &observations)?;
+    let mut transformed = BTreeMap::new();
+    for (key, payload_selections) in &selections {
+        let payload = supplied.get(key).ok_or_else(|| {
+            ExporterPolicyError::new("application is missing a selected backing payload")
+        })?;
+        transformed.insert(
+            key.clone(),
+            build_comparison_payload_v1(payload, payload_selections)?,
+        );
+    }
+    let comparison_bytes = rebuild_comparison_observable(parsed, &transformed)?;
+    let comparison_observable_blake3 = format!("blake3:{}", blake3::hash(&comparison_bytes));
+    Ok(AppliedExporterObservableV1 {
+        raw_observable_blake3,
+        comparison_bytes,
+        comparison_observable_blake3,
+        provenance_receipt_bytes: provenance.bytes,
+        provenance_receipt_blake3: provenance.blake3,
+    })
+}
+
+fn parse_raw_observable(
+    scenario: &ExporterObservableScenario,
+    raw: &[u8],
+) -> Result<ParsedObservable, ExporterPolicyError> {
+    match scenario.observable_kind {
+        ExporterObservableKind::ArtifactTree => parse_artifact_tree_observable(raw)
+            .map(ParsedObservable::ArtifactTree)
+            .map_err(|error| {
+                ExporterPolicyError::new(format!("invalid artifact-tree observable: {error}"))
+            }),
+        ExporterObservableKind::CapturedStream => {
+            validate_captured_stream_observable(raw, scenario.allows_empty).map_err(|error| {
+                ExporterPolicyError::new(format!("invalid captured-stream observable: {error}"))
+            })?;
+            Ok(ParsedObservable::CapturedStream)
+        }
+        ExporterObservableKind::ReceiverTranscript => {
+            parse_receiver_transcript_observable(raw, scenario.allows_empty)
+                .map(ParsedObservable::ReceiverTranscript)
+                .map_err(|error| {
+                    ExporterPolicyError::new(format!(
+                        "invalid receiver-transcript observable: {error}"
+                    ))
+                })
+        }
+    }
+}
+
+fn backing_key_for_selector(selector: &ExporterOutputSelector) -> BackingPayloadKey {
+    match selector {
+        ExporterOutputSelector::ArtifactContent { path } => {
+            BackingPayloadKey::ArtifactContent(path.clone())
+        }
+        ExporterOutputSelector::CapturedStream => BackingPayloadKey::CapturedStream,
+        ExporterOutputSelector::TranscriptBody { sequence } => {
+            BackingPayloadKey::TranscriptBody(*sequence)
+        }
+    }
+}
+
+fn backing_payload_parts(payload: &SelectedBackingPayloadV1) -> (BackingPayloadKey, &[u8]) {
+    match payload {
+        SelectedBackingPayloadV1::ArtifactContent { path, bytes } => {
+            (BackingPayloadKey::ArtifactContent(path.clone()), bytes)
+        }
+        SelectedBackingPayloadV1::CapturedStream { bytes } => {
+            (BackingPayloadKey::CapturedStream, bytes)
+        }
+        SelectedBackingPayloadV1::TranscriptBody { sequence, bytes } => {
+            (BackingPayloadKey::TranscriptBody(*sequence), bytes)
+        }
+    }
+}
+
+fn validate_backing_identity(
+    observable: &ParsedObservable,
+    key: &BackingPayloadKey,
+    bytes: &[u8],
+    raw_observable: &[u8],
+) -> Result<(), ExporterPolicyError> {
+    match (observable, key) {
+        (ParsedObservable::ArtifactTree(entries), BackingPayloadKey::ArtifactContent(path)) => {
+            let entry = entries
+                .iter()
+                .find(|entry| entry.path == *path)
+                .ok_or_else(|| {
+                    ExporterPolicyError::new(
+                        "selected artifact path is absent from the raw observable",
+                    )
+                })?;
+            if entry.kind != ArtifactTreeKind::RegularFile {
+                return Err(ExporterPolicyError::new(
+                    "selected artifact path is not a regular file",
+                ));
+            }
+            validate_length_and_digest(entry.length, &entry.blake3, bytes, "artifact file")
+        }
+        (ParsedObservable::CapturedStream, BackingPayloadKey::CapturedStream) => {
+            if bytes != raw_observable {
+                return Err(ExporterPolicyError::new(
+                    "selected captured-stream backing differs from the raw observable",
+                ));
+            }
+            Ok(())
+        }
+        (
+            ParsedObservable::ReceiverTranscript(entries),
+            BackingPayloadKey::TranscriptBody(sequence),
+        ) => {
+            let entry = entries
+                .iter()
+                .find(|entry| entry.sequence == *sequence)
+                .ok_or_else(|| {
+                    ExporterPolicyError::new(
+                        "selected receiver sequence is absent from the raw observable",
+                    )
+                })?;
+            validate_length_and_digest(
+                entry.body.length,
+                &entry.body.blake3,
+                bytes,
+                "receiver body",
+            )
+        }
+        _ => Err(ExporterPolicyError::new(
+            "selected backing payload class disagrees with the policy scenario",
+        )),
+    }
+}
+
+fn validate_length_and_digest(
+    expected_length: u64,
+    expected_digest: &str,
+    bytes: &[u8],
+    description: &str,
+) -> Result<(), ExporterPolicyError> {
+    let length = u64::try_from(bytes.len()).map_err(|_| {
+        ExporterPolicyError::new(format!("selected {description} length does not fit u64"))
+    })?;
+    let digest = format!("blake3:{}", blake3::hash(bytes));
+    if length != expected_length || digest != expected_digest {
+        return Err(ExporterPolicyError::new(format!(
+            "selected {description} does not match its raw-observable identity"
+        )));
+    }
+    Ok(())
+}
+
+fn replacement_for_comparison(
+    replacement: &ExporterEncodedValue,
+) -> Result<ComparisonReplacementV1, ExporterPolicyError> {
+    match replacement.encoding.as_str() {
+        "canonical_json" => Ok(ComparisonReplacementV1::CanonicalJson(
+            replacement.value.clone(),
+        )),
+        "hex_bytes" => replacement
+            .value
+            .as_str()
+            .map(|value| ComparisonReplacementV1::HexBytes(value.to_owned()))
+            .ok_or_else(|| ExporterPolicyError::new("hex comparison replacement is not a string")),
+        _ => Err(ExporterPolicyError::new(
+            "comparison replacement uses an unknown encoding",
+        )),
+    }
+}
+
+fn resolve_locator_span(
+    payload: &[u8],
+    locator: &ExporterLocator,
+) -> Result<Range<usize>, ExporterPolicyError> {
+    match locator {
+        ExporterLocator::ByteRange { length, offset } => {
+            let start = usize::try_from(*offset).map_err(|_| {
+                ExporterPolicyError::new("byte_range offset does not fit this platform")
+            })?;
+            let length = usize::try_from(*length).map_err(|_| {
+                ExporterPolicyError::new("byte_range length does not fit this platform")
+            })?;
+            let end = start
+                .checked_add(length)
+                .filter(|end| *end <= payload.len())
+                .ok_or_else(|| {
+                    ExporterPolicyError::new("byte_range is outside its selected payload")
+                })?;
+            Ok(start..end)
+        }
+        ExporterLocator::JsonPointer { pointer } => json_pointer_raw_span(payload, pointer),
+        ExporterLocator::WholeOutput => Ok(0..payload.len()),
+    }
+}
+
+fn rebuild_comparison_observable(
+    observable: ParsedObservable,
+    transformed: &BTreeMap<BackingPayloadKey, Vec<u8>>,
+) -> Result<Vec<u8>, ExporterPolicyError> {
+    match observable {
+        ParsedObservable::ArtifactTree(entries) => {
+            let mut value = serde_json::to_value(&entries).map_err(|error| {
+                ExporterPolicyError::new(format!("cannot rebuild artifact tree: {error}"))
+            })?;
+            let array = value.as_array_mut().ok_or_else(|| {
+                ExporterPolicyError::new("artifact-tree projection is not an array")
+            })?;
+            for (key, payload) in transformed {
+                let BackingPayloadKey::ArtifactContent(path) = key else {
+                    return Err(ExporterPolicyError::new(
+                        "artifact-tree comparison contains a foreign payload class",
+                    ));
+                };
+                let index = entries
+                    .iter()
+                    .position(|entry| entry.path == *path)
+                    .ok_or_else(|| {
+                        ExporterPolicyError::new("selected artifact vanished during rebuild")
+                    })?;
+                replace_length_and_digest(&mut array[index], payload)?;
+            }
+            canonical_array_bytes(&value, "artifact-tree comparison")
+        }
+        ParsedObservable::CapturedStream => transformed
+            .get(&BackingPayloadKey::CapturedStream)
+            .cloned()
+            .ok_or_else(|| {
+                ExporterPolicyError::new("captured-stream comparison payload is missing")
+            }),
+        ParsedObservable::ReceiverTranscript(entries) => {
+            let mut value = serde_json::to_value(&entries).map_err(|error| {
+                ExporterPolicyError::new(format!("cannot rebuild receiver transcript: {error}"))
+            })?;
+            let array = value.as_array_mut().ok_or_else(|| {
+                ExporterPolicyError::new("receiver-transcript projection is not an array")
+            })?;
+            for (key, payload) in transformed {
+                let BackingPayloadKey::TranscriptBody(sequence) = key else {
+                    return Err(ExporterPolicyError::new(
+                        "receiver comparison contains a foreign payload class",
+                    ));
+                };
+                let index = entries
+                    .iter()
+                    .position(|entry| entry.sequence == *sequence)
+                    .ok_or_else(|| {
+                        ExporterPolicyError::new("selected receiver body vanished during rebuild")
+                    })?;
+                let body = array[index].get_mut("body").ok_or_else(|| {
+                    ExporterPolicyError::new("receiver projection lacks its body")
+                })?;
+                replace_length_and_digest(body, payload)?;
+            }
+            canonical_array_bytes(&value, "receiver comparison")
+        }
+    }
+}
+
+fn replace_length_and_digest(
+    value: &mut serde_json::Value,
+    payload: &[u8],
+) -> Result<(), ExporterPolicyError> {
+    let object = value.as_object_mut().ok_or_else(|| {
+        ExporterPolicyError::new("comparison identity projection is not an object")
+    })?;
+    object.insert(
+        "length".to_owned(),
+        serde_json::Value::from(
+            u64::try_from(payload.len()).map_err(|_| {
+                ExporterPolicyError::new("comparison payload length does not fit u64")
+            })?,
+        ),
+    );
+    object.insert(
+        "blake3".to_owned(),
+        serde_json::Value::String(format!("blake3:{}", blake3::hash(payload))),
+    );
+    Ok(())
+}
+
+fn canonical_array_bytes(
+    value: &serde_json::Value,
+    description: &str,
+) -> Result<Vec<u8>, ExporterPolicyError> {
+    let mut bytes = serde_json_canonicalizer::to_vec(value).map_err(|error| {
+        ExporterPolicyError::new(format!("cannot canonicalize {description}: {error}"))
+    })?;
+    bytes.push(b'\n');
+    Ok(bytes)
+}
+
+fn json_pointer_raw_span(
+    payload: &[u8],
+    pointer: &str,
+) -> Result<Range<usize>, ExporterPolicyError> {
+    reject_observable_duplicates(payload).map_err(|error| {
+        ExporterPolicyError::new(format!("selected JSON payload is not strict: {error}"))
+    })?;
+    let target = decoded_json_pointer(pointer)?;
+    let mut finder = JsonSpanFinder {
+        bytes: payload,
+        position: 0,
+        target: &target,
+        found: None,
+    };
+    finder.skip_whitespace();
+    let mut path = Vec::new();
+    finder.parse_value(&mut path)?;
+    finder.skip_whitespace();
+    if finder.position != payload.len() {
+        return Err(ExporterPolicyError::new(
+            "selected JSON payload contains trailing bytes",
+        ));
+    }
+    finder
+        .found
+        .ok_or_else(|| ExporterPolicyError::new("JSON pointer is absent from its selected payload"))
+}
+
+struct JsonSpanFinder<'a> {
+    bytes: &'a [u8],
+    position: usize,
+    target: &'a [String],
+    found: Option<Range<usize>>,
+}
+
+impl JsonSpanFinder<'_> {
+    fn skip_whitespace(&mut self) {
+        while self
+            .bytes
+            .get(self.position)
+            .is_some_and(|byte| matches!(byte, b' ' | b'\n' | b'\r' | b'\t'))
+        {
+            self.position += 1;
+        }
+    }
+
+    fn parse_value(&mut self, path: &mut Vec<String>) -> Result<(), ExporterPolicyError> {
+        self.skip_whitespace();
+        let start = self.position;
+        match self.bytes.get(self.position).copied() {
+            Some(b'{') => self.parse_object(path)?,
+            Some(b'[') => self.parse_array(path)?,
+            Some(b'"') => {
+                self.scan_string()?;
+            }
+            Some(_) => self.scan_primitive(),
+            None => {
+                return Err(ExporterPolicyError::new(
+                    "selected JSON payload ended before its value",
+                ));
+            }
+        }
+        let end = self.position;
+        if path == self.target {
+            if self.found.replace(start..end).is_some() {
+                return Err(ExporterPolicyError::new(
+                    "JSON pointer maps to more than one raw token span",
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn parse_object(&mut self, path: &mut Vec<String>) -> Result<(), ExporterPolicyError> {
+        self.position += 1;
+        self.skip_whitespace();
+        if self.bytes.get(self.position) == Some(&b'}') {
+            self.position += 1;
+            return Ok(());
+        }
+        loop {
+            self.skip_whitespace();
+            let key_start = self.position;
+            self.scan_string()?;
+            let key: String = serde_json::from_slice(&self.bytes[key_start..self.position])
+                .map_err(|error| {
+                    ExporterPolicyError::new(format!("cannot decode JSON object key: {error}"))
+                })?;
+            self.skip_whitespace();
+            self.consume(b':')?;
+            path.push(key);
+            self.parse_value(path)?;
+            path.pop();
+            self.skip_whitespace();
+            match self.bytes.get(self.position) {
+                Some(b',') => self.position += 1,
+                Some(b'}') => {
+                    self.position += 1;
+                    return Ok(());
+                }
+                _ => {
+                    return Err(ExporterPolicyError::new(
+                        "selected JSON object has invalid framing",
+                    ));
+                }
+            }
+        }
+    }
+
+    fn parse_array(&mut self, path: &mut Vec<String>) -> Result<(), ExporterPolicyError> {
+        self.position += 1;
+        self.skip_whitespace();
+        if self.bytes.get(self.position) == Some(&b']') {
+            self.position += 1;
+            return Ok(());
+        }
+        let mut index = 0_u64;
+        loop {
+            path.push(index.to_string());
+            self.parse_value(path)?;
+            path.pop();
+            index = index
+                .checked_add(1)
+                .ok_or_else(|| ExporterPolicyError::new("selected JSON array index overflow"))?;
+            self.skip_whitespace();
+            match self.bytes.get(self.position) {
+                Some(b',') => self.position += 1,
+                Some(b']') => {
+                    self.position += 1;
+                    return Ok(());
+                }
+                _ => {
+                    return Err(ExporterPolicyError::new(
+                        "selected JSON array has invalid framing",
+                    ));
+                }
+            }
+        }
+    }
+
+    fn scan_string(&mut self) -> Result<(), ExporterPolicyError> {
+        self.consume(b'"')?;
+        loop {
+            match self.bytes.get(self.position).copied() {
+                Some(b'"') => {
+                    self.position += 1;
+                    return Ok(());
+                }
+                Some(b'\\') => {
+                    self.position = self.position.checked_add(2).ok_or_else(|| {
+                        ExporterPolicyError::new("selected JSON string offset overflow")
+                    })?;
+                    if self.position > self.bytes.len() {
+                        return Err(ExporterPolicyError::new(
+                            "selected JSON string has a truncated escape",
+                        ));
+                    }
+                }
+                Some(_) => self.position += 1,
+                None => {
+                    return Err(ExporterPolicyError::new(
+                        "selected JSON string is unterminated",
+                    ));
+                }
+            }
+        }
+    }
+
+    fn scan_primitive(&mut self) {
+        while self
+            .bytes
+            .get(self.position)
+            .is_some_and(|byte| !matches!(byte, b',' | b']' | b'}' | b' ' | b'\n' | b'\r' | b'\t'))
+        {
+            self.position += 1;
+        }
+    }
+
+    fn consume(&mut self, expected: u8) -> Result<(), ExporterPolicyError> {
+        if self.bytes.get(self.position) != Some(&expected) {
+            return Err(ExporterPolicyError::new(
+                "selected JSON payload has invalid token framing",
+            ));
+        }
+        self.position += 1;
+        Ok(())
+    }
+}
+
 /// Replacement bytes installed into one selected comparison frame.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ComparisonReplacementV1 {
@@ -187,6 +809,7 @@ pub fn build_comparison_payload_v1(
     })?;
     let mut ordered = selections.iter().collect::<Vec<_>>();
     ordered.sort_by_key(|selection| selection.offset);
+    let permits_empty_whole_output = raw_length == 0 && ordered.len() == 1;
     let mut slot_ids = BTreeSet::new();
     let mut cursor = 0_u64;
     let mut output = COMPARISON_MAGIC.to_vec();
@@ -199,7 +822,9 @@ pub fn build_comparison_payload_v1(
         let end = selection
             .offset
             .checked_add(selection.length)
-            .filter(|end| selection.length > 0 && *end <= raw_length)
+            .filter(|end| {
+                (selection.length > 0 || permits_empty_whole_output) && *end <= raw_length
+            })
             .ok_or_else(|| {
                 ExporterPolicyError::new(
                     "comparison selection is empty, overflowing, or outside its payload",
