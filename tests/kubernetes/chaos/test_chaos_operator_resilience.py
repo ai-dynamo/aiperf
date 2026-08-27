@@ -53,7 +53,7 @@ async def test_c4_kill_operator_mid_benchmark_recovers(
             name,
             phases=("Running",),
             current_phase="profiling",
-            timeout=180.0,
+            timeout=300.0,  # stressed kind clusters (after H1/H2/K1 work) can take 180s+
         )
 
         await chaos_injector.kill_operator_pod(force=True)
@@ -112,7 +112,7 @@ async def test_c5_orphaned_claim_recovers(
             name,
             phases=("Running",),
             current_phase="profiling",
-            timeout=180.0,
+            timeout=300.0,  # stressed kind clusters (after H1/H2/K1 work) can take 180s+
         )
 
         await chaos_injector.stamp_completion_claim(operator_job_namespace, name)
