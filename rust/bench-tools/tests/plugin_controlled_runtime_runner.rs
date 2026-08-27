@@ -492,5 +492,43 @@ fn controller_affinity_monitor_replaces_the_whole_pair_in_seeded_order() {
         pair_attempts[0].raw.member_order,
         pair_attempts[1].raw.member_order
     );
+    assert_eq!(pair_attempts[0].raw.members.len(), 2);
+    for member in &pair_attempts[0].raw.members {
+        assert!(!member.samples.is_empty());
+        let terminal = &report.terminal_member_evidence[member
+            .terminal_evidence_index
+            .expect("raw member references bounded terminal evidence")];
+        assert_eq!(terminal.scenario, pair_attempts[0].raw.scenario);
+        assert_eq!(terminal.pair_id, pair_attempts[0].raw.pair_id);
+        assert_eq!(terminal.variant, member.variant);
+    }
     assert_eq!(pair_attempts[1].decision, PairAttemptDecision::RetainPair);
+    let statistical_report = report
+        .statistical_report
+        .as_ref()
+        .expect("replacement remains a complete statistical attempt");
+    assert_eq!(statistical_report.invalidation_attempts.len(), 1);
+    assert_eq!(statistical_report.invalidation_attempts[0].reason, "affinity_loss");
+    assert_eq!(
+        digest(&report.attempt_evidence_tree_bytes),
+        report.attempt_evidence_tree_blake3
+    );
+    assert_eq!(
+        report.attempt_evidence_tree_blake3,
+        report.attempt_history[0].evidence_tree_blake3
+    );
+    let runtime_evidence: serde_json::Value =
+        serde_json::from_slice(&report.runtime_evidence_bytes)
+            .expect("runtime evidence is canonical JSON");
+    assert_eq!(
+        runtime_evidence["attempt_evidence_tree_blake3"],
+        report.attempt_evidence_tree_blake3
+    );
+    assert_eq!(
+        runtime_evidence["raw_pair_history"]
+            .as_array()
+            .expect("raw pair history is retained")
+            .len(),
+        report.raw_pair_history.len()
+    );
 }
