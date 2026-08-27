@@ -132,10 +132,8 @@ if len({row[1] for row in rows}) != len(rows):
 output = [
     "# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.",
     "# SPDX-License-Identifier: Apache-2.0",
-    "# Generated mechanically from the Task-2 base tree; do not edit individual rows.",
-    "# Provisional: regenerate and revalidate after Task 1 records are integrated.",
+    "# Generated mechanically from the immutable Task-1 base tree; do not edit individual rows.",
     f'base_commit = "{BASE}"',
-    'provisional_against = "Task 1 pending integration"',
     "",
 ]
 for path, candidate, owner, classification, is_planned in rows:

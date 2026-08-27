@@ -5,12 +5,12 @@ schema_version = 1
 
 [[matrix]]
 state = "task2_neutral"
-dependency_projection_blake3 = "blake3:d7baa308220d3b295bb1c3bb8aaf7c5d59ddc985baed16c2eb05474af4bcf2be"
+dependency_projection_blake3 = "blake3:abf887c2a5947da0854f0e04c90d17240c978839063e64bcf82f093f3ab783d7"
 test_support_dev_consumers = ["aiperf-export-sdk"]
 
 [[matrix]]
 state = "task3_reviewed"
-dependency_projection_blake3 = "blake3:96d35fefdfe09f005bdefb91d349893473a79286b8128d507749730c48fb60fd"
+dependency_projection_blake3 = "blake3:a194e94568ae4e0dec27d957ee75e8a47f4e94f47e97ca8c9932e0902fdec6f5"
 test_support_dev_consumers = ["aiperf-export-sdk"]
 
 [task3_transition]

@@ -67,19 +67,6 @@ const FOUNDATION_PACKAGES: &[(&str, &str)] = &[
     ("aiperf-allocator-shim", "allocator-shim"),
 ];
 
-const DISTRIBUTION_BOUNDARY_INPUTS: &[(&str, &str)] = &[
-    ("native", "Makefile"),
-    ("native", "rust/cli/Cargo.toml"),
-    ("wheel", "pyproject.toml"),
-    ("wheel", "tools/wheel_repack.py"),
-    ("container", "Dockerfile"),
-    ("kubernetes", "aiperf-k8s-operator/Dockerfile"),
-    (
-        "kubernetes",
-        "deploy/aiperf-k8s-operator/helm/aiperf-k8s-operator/values.yaml",
-    ),
-];
-
 #[derive(Debug, Deserialize)]
 struct Metadata {
     packages: Vec<Package>,
@@ -118,6 +105,7 @@ struct Dependency {
 struct BaselineTopology {
     host_commit: String,
     workspace_packages: Vec<BaselinePackage>,
+    cargo_projection: Vec<CargoPackageProjection>,
 }
 #[derive(Deserialize)]
 struct BaselinePackage {
@@ -131,15 +119,6 @@ struct BaselineDependency {
     name: String,
     kind: String,
     is_workspace: bool,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Task1CargoAuthority {
-    schema_version: u32,
-    host_commit: String,
-    topology_blake3: String,
-    cargo_projection_blake3: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -196,7 +175,8 @@ struct WorkspaceInheritance {
     workspace: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[serde(deny_unknown_fields)]
 struct CargoDependencyIdentity {
     package: String,
     local_name: String,
@@ -212,7 +192,8 @@ struct CargoDependencyIdentity {
     is_workspace: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
 struct CargoPackageProjection {
     name: String,
     version: String,
@@ -225,6 +206,7 @@ struct CargoPackageProjection {
 struct ShellPackageProjection {
     name: String,
     dependencies: Vec<CargoDependencyIdentity>,
+    features: BTreeMap<String, Vec<String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -397,7 +379,7 @@ fn parse_toml<T: for<'de> Deserialize<'de>>(path: &Path, description: &str) -> T
     .unwrap_or_else(|error| panic!("{description} must have the exact supported shape: {error}"))
 }
 
-fn git_object_exists(repository_root: &Path, revision_path: &str) -> bool {
+fn is_git_object_present(repository_root: &Path, revision_path: &str) -> bool {
     let output = Command::new("git")
         .args(["cat-file", "-e", revision_path])
         .current_dir(repository_root)
@@ -453,9 +435,14 @@ fn shell_projection(
         .chain(DISTRIBUTABLE_PACKAGES)
         .map(|(name, _)| {
             let package = &packages[*name];
+            let mut features = package.features.clone();
+            for values in features.values_mut() {
+                values.sort();
+            }
             ShellPackageProjection {
                 name: package.name.clone(),
                 dependencies: package_dependencies(root, &workspace_names, package),
+                features,
             }
         })
         .collect::<Vec<_>>();
@@ -548,35 +535,14 @@ fn workspace_and_template_policy() {
         .expect("Task 1 package topology must exist"),
     )
     .expect("Task 1 package topology must be JSON");
-    let authority: Task1CargoAuthority = parse_toml(
-        &root.join("plugin-api/task1-cargo-authority.toml"),
-        "Task 1 Cargo authority",
-    );
-    assert_eq!(authority.schema_version, 1);
     assert_eq!(
-        authority.host_commit,
+        baseline.host_commit,
         "caa3ff6fcf20ffe36a7704abe16274bedadbb9fb"
     );
-    assert_eq!(baseline.host_commit, authority.host_commit);
     assert_eq!(
-        format!(
-            "blake3:{}",
-            blake3::hash(
-                &std::fs::read(
-                    root.parent()
-                        .expect("repository root")
-                        .join("artifacts/native-plugin-baseline/package-topology.json"),
-                )
-                .expect("Task 1 topology bytes")
-            )
-            .to_hex()
-        ),
-        authority.topology_blake3
-    );
-    assert_eq!(
-        canonical_blake3(&task1_projection(&root, &packages, &baseline)),
-        authority.cargo_projection_blake3,
-        "complete Task 1 Cargo dependency or feature identity drift"
+        task1_projection(&root, &packages, &baseline),
+        baseline.cargo_projection,
+        "complete Task 1 Cargo projection drift"
     );
     let baseline_names = baseline
         .workspace_packages
@@ -933,17 +899,19 @@ fn distribution_exclusion_policy() {
         "host-universe dependency closure includes test support"
     );
     let repository_root = root.parent().expect("repository root");
-    for (boundary, relative_path) in DISTRIBUTION_BOUNDARY_INPUTS {
-        let path = repository_root.join(relative_path);
-        let contents = std::fs::read_to_string(&path).unwrap_or_else(|error| {
-            panic!("cannot read {boundary} input {}: {error}", path.display())
-        });
-        assert!(
-            !contents.contains("aiperf-plugin-test-support"),
-            "{boundary} distribution input {} includes test support",
-            path.display()
-        );
-    }
+    let verifier = root.join("scripts/verify-plugin-test-support-boundaries.py");
+    let current_executable = std::env::current_exe().expect("current policy-test executable");
+    let output = Command::new("python")
+        .arg(&verifier)
+        .arg(repository_root)
+        .arg(current_executable)
+        .output()
+        .expect("distribution boundary verifier must execute");
+    assert!(
+        output.status.success(),
+        "distribution boundary verification failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 #[test]
@@ -1031,8 +999,13 @@ fn candidate_inventory_policy() {
         Some("057d116850cd059bcfa8e259c1e929e913e6ef07")
     );
     assert_eq!(
-        value["provisional_against"].as_str(),
-        Some("Task 1 pending integration")
+        value
+            .as_table()
+            .expect("candidate inventory top level")
+            .keys()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from(["base_commit", "source"])
     );
 
     let planned = BTreeSet::from([
@@ -1115,7 +1088,7 @@ fn candidate_inventory_policy() {
                     "planned source exists in worktree: {source_path}"
                 );
                 assert!(
-                    !git_object_exists(
+                    !is_git_object_present(
                         repository_root,
                         &format!("057d116850cd059bcfa8e259c1e929e913e6ef07:rust/{source_path}")
                     ),

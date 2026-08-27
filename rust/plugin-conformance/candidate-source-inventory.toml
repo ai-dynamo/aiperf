@@ -1,9 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-# Generated mechanically from the Task-2 base tree; do not edit individual rows.
-# Provisional: regenerate and revalidate after Task 1 records are integrated.
+# Generated mechanically from the immutable Task-1 base tree; do not edit individual rows.
 base_commit = "057d116850cd059bcfa8e259c1e929e913e6ef07"
-provisional_against = "Task 1 pending integration"
 
 [[source]]
 source_path = "runtime/src/export/accuracy_csv.rs"
