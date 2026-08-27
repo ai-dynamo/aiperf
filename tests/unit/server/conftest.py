@@ -79,7 +79,7 @@ def test_client():
 @pytest.fixture
 def mock_server_config():
     """Mock server config with error_rate=0."""
-    with patch("tests.aiperf_mock_server.utils.server_config") as config:
+    with patch("aiperf_mock_server.utils.server_config") as config:
         config.error_rate = 0.0
         config.ttft = 20.0
         config.itl = 5.0

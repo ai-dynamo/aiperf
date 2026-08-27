@@ -19,7 +19,7 @@ class TestParameterSweep:
     async def test_sweep_with_confidence_repeated_mode(
         self,
         cli: AIPerfCLI,
-        tests.aiperf_mock_server: AIPerfMockServer,
+        aiperf_mock_server: AIPerfMockServer,
         temp_output_dir: Path,
     ):
         """Test sweep + confidence reporting in repeated mode.
@@ -38,7 +38,7 @@ class TestParameterSweep:
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {tests.aiperf_mock_server.url} \
+                --url {aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --concurrency 2,4,6 \
                 --num-profile-runs 3 \
@@ -310,7 +310,7 @@ class TestParameterSweep:
     async def test_sweep_with_confidence_independent_mode(
         self,
         cli: AIPerfCLI,
-        tests.aiperf_mock_server: AIPerfMockServer,
+        aiperf_mock_server: AIPerfMockServer,
         temp_output_dir: Path,
     ):
         """Test sweep + confidence reporting in independent mode.
@@ -329,7 +329,7 @@ class TestParameterSweep:
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {tests.aiperf_mock_server.url} \
+                --url {aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --concurrency 2,4,6 \
                 --num-profile-runs 3 \
@@ -601,7 +601,7 @@ class TestParameterSweep:
     async def test_artifact_directory_structure_repeated_mode(
         self,
         cli: AIPerfCLI,
-        tests.aiperf_mock_server: AIPerfMockServer,
+        aiperf_mock_server: AIPerfMockServer,
         temp_output_dir: Path,
     ):
         """Test artifact directory structure for repeated mode.
@@ -629,7 +629,7 @@ class TestParameterSweep:
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {tests.aiperf_mock_server.url} \
+                --url {aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --concurrency 2,4 \
                 --num-profile-runs 2 \
@@ -729,7 +729,7 @@ class TestParameterSweep:
     async def test_artifact_directory_structure_independent_mode(
         self,
         cli: AIPerfCLI,
-        tests.aiperf_mock_server: AIPerfMockServer,
+        aiperf_mock_server: AIPerfMockServer,
         temp_output_dir: Path,
     ):
         """Test artifact directory structure for independent mode.
@@ -757,7 +757,7 @@ class TestParameterSweep:
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {tests.aiperf_mock_server.url} \
+                --url {aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --concurrency 2,4 \
                 --num-profile-runs 2 \
@@ -893,7 +893,7 @@ class TestParameterSweep:
     async def test_partial_failure_scenarios(
         self,
         cli: AIPerfCLI,
-        tests.aiperf_mock_server: AIPerfMockServer,
+        aiperf_mock_server: AIPerfMockServer,
         temp_output_dir: Path,
     ):
         """Test that parameter sweep system can handle partial failures gracefully.
@@ -922,7 +922,7 @@ class TestParameterSweep:
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {tests.aiperf_mock_server.url} \
+                --url {aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --concurrency 2,4 \
                 --num-profile-runs 2 \
@@ -1075,7 +1075,7 @@ class TestParameterSweep:
     async def test_backward_compatibility_single_concurrency(
         self,
         cli: AIPerfCLI,
-        tests.aiperf_mock_server: AIPerfMockServer,
+        aiperf_mock_server: AIPerfMockServer,
         temp_output_dir: Path,
     ):
         """Test backward compatibility with single concurrency value.
@@ -1094,7 +1094,7 @@ class TestParameterSweep:
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {tests.aiperf_mock_server.url} \
+                --url {aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --concurrency 5 \
                 --request-count 10 \
@@ -1153,7 +1153,7 @@ class TestParameterSweep:
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {tests.aiperf_mock_server.url} \
+                --url {aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --concurrency 5 \
                 --num-profile-runs 3 \
@@ -1303,7 +1303,7 @@ class TestParameterSweep:
     async def test_aggregate_file_generation(
         self,
         cli: AIPerfCLI,
-        tests.aiperf_mock_server: AIPerfMockServer,
+        aiperf_mock_server: AIPerfMockServer,
         temp_output_dir: Path,
     ):
         """Test comprehensive aggregate file generation for parameter sweeps.
@@ -1322,7 +1322,7 @@ class TestParameterSweep:
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {tests.aiperf_mock_server.url} \
+                --url {aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --concurrency 2,4,6 \
                 --num-profile-runs 3 \
@@ -1636,7 +1636,7 @@ class TestParameterSweep:
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {tests.aiperf_mock_server.url} \
+                --url {aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --concurrency 2,4,6 \
                 --num-profile-runs 3 \
@@ -1814,7 +1814,7 @@ class TestParameterSweep:
     async def test_per_value_confidence_statistics(
         self,
         cli: AIPerfCLI,
-        tests.aiperf_mock_server: AIPerfMockServer,
+        aiperf_mock_server: AIPerfMockServer,
         temp_output_dir: Path,
     ):
         """Test per-value confidence statistics computation.
@@ -1835,7 +1835,7 @@ class TestParameterSweep:
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {tests.aiperf_mock_server.url} \
+                --url {aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --concurrency 2,4,6 \
                 --num-profile-runs 3 \
@@ -2146,7 +2146,7 @@ class TestParameterSweep:
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {tests.aiperf_mock_server.url} \
+                --url {aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --concurrency 2,4,6 \
                 --num-profile-runs 3 \
@@ -2312,7 +2312,7 @@ class TestParameterSweep:
     async def test_sweep_level_statistics(
         self,
         cli: AIPerfCLI,
-        tests.aiperf_mock_server: AIPerfMockServer,
+        aiperf_mock_server: AIPerfMockServer,
         temp_output_dir: Path,
     ):
         """Test sweep-level statistics computation.
@@ -2337,7 +2337,7 @@ class TestParameterSweep:
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {tests.aiperf_mock_server.url} \
+                --url {aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --concurrency 2,4,6,8 \
                 --num-profile-runs 3 \
@@ -2574,7 +2574,7 @@ class TestParameterSweep:
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {tests.aiperf_mock_server.url} \
+                --url {aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --concurrency 2,4,6,8 \
                 --num-profile-runs 3 \
@@ -2665,7 +2665,7 @@ class TestParameterSweep:
     async def test_sweep_only_mode_without_confidence(
         self,
         cli: AIPerfCLI,
-        tests.aiperf_mock_server: AIPerfMockServer,
+        aiperf_mock_server: AIPerfMockServer,
         temp_output_dir: Path,
     ):
         """Test sweep-only mode without confidence aggregation.
@@ -2685,7 +2685,7 @@ class TestParameterSweep:
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {tests.aiperf_mock_server.url} \
+                --url {aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --concurrency 2,4,6 \
                 --request-count 10 \
@@ -2776,7 +2776,7 @@ class TestParameterSweep:
     async def test_sweep_directory_structure_consumable_by_plot(
         self,
         cli: AIPerfCLI,
-        tests.aiperf_mock_server: AIPerfMockServer,
+        aiperf_mock_server: AIPerfMockServer,
         temp_output_dir: Path,
     ):
         """Test that sweep directory structure is consumable by plot command.
@@ -2800,7 +2800,7 @@ class TestParameterSweep:
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {tests.aiperf_mock_server.url} \
+                --url {aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --concurrency 2,4,6 \
                 --num-profile-runs 2 \
@@ -2869,7 +2869,7 @@ class TestParameterSweep:
     async def test_sweep_aggregate_structure_validation(
         self,
         cli: AIPerfCLI,
-        tests.aiperf_mock_server: AIPerfMockServer,
+        aiperf_mock_server: AIPerfMockServer,
         temp_output_dir: Path,
     ):
         """Test sweep aggregate structure with new multi-parameter format.
@@ -2890,7 +2890,7 @@ class TestParameterSweep:
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {tests.aiperf_mock_server.url} \
+                --url {aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --concurrency 2,4,6 \
                 --num-profile-runs 2 \
@@ -2955,7 +2955,7 @@ class TestParameterSweep:
     async def test_sweep_with_cooldown_flag_succeeds(
         self,
         cli: AIPerfCLI,
-        tests.aiperf_mock_server: AIPerfMockServer,
+        aiperf_mock_server: AIPerfMockServer,
         temp_output_dir: Path,
     ):
         """Test that --parameter-sweep-cooldown-seconds does not break sweep runs.
@@ -2969,7 +2969,7 @@ class TestParameterSweep:
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {tests.aiperf_mock_server.url} \
+                --url {aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --concurrency 2,4 \
                 --parameter-sweep-cooldown-seconds 1 \
@@ -2993,7 +2993,7 @@ class TestParameterSweep:
     async def test_sweep_with_same_seed_flag_succeeds(
         self,
         cli: AIPerfCLI,
-        tests.aiperf_mock_server: AIPerfMockServer,
+        aiperf_mock_server: AIPerfMockServer,
         temp_output_dir: Path,
     ):
         """Test that --parameter-sweep-same-seed does not break sweep runs.
@@ -3005,7 +3005,7 @@ class TestParameterSweep:
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {tests.aiperf_mock_server.url} \
+                --url {aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --concurrency 2,4 \
                 --parameter-sweep-same-seed \

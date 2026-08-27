@@ -15,7 +15,7 @@ class TestRequestCancellation:
     """Tests for request cancellation functionality."""
 
     async def test_request_cancellation(
-        self, cli: AIPerfCLI, tests.aiperf_mock_server: AIPerfMockServer
+        self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer
     ):
         """Request cancellation doesn't break pipeline."""
         # Heavier per-stream throughput is required on Windows for the same
@@ -27,7 +27,7 @@ class TestRequestCancellation:
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {tests.aiperf_mock_server.url} \
+                --url {aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --streaming \
                 --request-count 50 \

@@ -14,7 +14,7 @@ class TestSolidoRAGEndpoint:
     """Tests for /rag/api/prompt endpoint."""
 
     async def test_basic_solido_rag(
-        self, cli: AIPerfCLI, tests.aiperf_mock_server: AIPerfMockServer
+        self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer
     ):
         """Basic SOLIDO RAG request."""
         result = await cli.run(
@@ -22,7 +22,7 @@ class TestSolidoRAGEndpoint:
             aiperf profile \
                 --model rag-model \
                 --tokenizer builtin \
-                --url {tests.aiperf_mock_server.url} \
+                --url {aiperf_mock_server.url} \
                 --endpoint-type solido_rag \
                 --request-count {defaults.request_count} \
                 --concurrency {defaults.concurrency} \

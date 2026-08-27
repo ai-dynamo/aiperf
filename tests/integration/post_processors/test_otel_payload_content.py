@@ -134,7 +134,7 @@ class TestOTelPayloadContent:
     async def test_resource_attributes_and_aiperf_metrics_present(
         self,
         cli: AIPerfCLI,
-        tests.aiperf_mock_server: AIPerfMockServer,
+        aiperf_mock_server: AIPerfMockServer,
         decoding_otlp_sink: tuple[_DecodingOTLPSinkServer, int],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
@@ -154,7 +154,7 @@ class TestOTelPayloadContent:
         cli_cmd = f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {tests.aiperf_mock_server.url} \
+                --url {aiperf_mock_server.url} \
                 --concurrency 2 \
                 --request-count 20 \
                 --streaming \

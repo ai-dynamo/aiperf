@@ -21,7 +21,7 @@ class TestAgenticCodeGenProfile:
     async def test_synthesized_dataset_runs_through_profile(
         self,
         cli: AIPerfCLI,
-        tests.aiperf_mock_server: AIPerfMockServer,
+        aiperf_mock_server: AIPerfMockServer,
         tmp_path: Path,
     ) -> None:
         """Synthesize a small dataset and run it through aiperf profile with session concurrency."""
@@ -47,7 +47,7 @@ class TestAgenticCodeGenProfile:
             aiperf profile \
                 --model {defaults.model} \
                 --tokenizer {defaults.tokenizer} \
-                --url {tests.aiperf_mock_server.url} \
+                --url {aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --input-file {jsonl_path} \
                 --custom-dataset-type mooncake_trace \
@@ -81,7 +81,7 @@ class TestAgenticCodeGenProfile:
     async def test_synthesized_dataset_with_shared_partial_prefix_blocks(
         self,
         cli: AIPerfCLI,
-        tests.aiperf_mock_server: AIPerfMockServer,
+        aiperf_mock_server: AIPerfMockServer,
         tmp_path: Path,
     ) -> None:
         """Regression: a synthesized dataset whose sessions have small L2 tails
@@ -132,7 +132,7 @@ class TestAgenticCodeGenProfile:
             aiperf profile \
                 --model {defaults.model} \
                 --tokenizer {defaults.tokenizer} \
-                --url {tests.aiperf_mock_server.url} \
+                --url {aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --input-file {jsonl_path} \
                 --custom-dataset-type mooncake_trace \

@@ -75,7 +75,7 @@ class TestWekaHashIdScopeEndToEnd:
     async def test_subagents_share_parent_hash_id_scope_on_the_wire(
         self,
         cli: AIPerfCLI,
-        tests.aiperf_mock_server: AIPerfMockServer,
+        aiperf_mock_server: AIPerfMockServer,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ):
@@ -113,7 +113,7 @@ class TestWekaHashIdScopeEndToEnd:
             f"""
             aiperf profile \
                 --model test-model \
-                --url {tests.aiperf_mock_server.url} \
+                --url {aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --input-file {trace_file} \
                 --custom-dataset-type weka_trace \

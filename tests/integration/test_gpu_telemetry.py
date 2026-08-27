@@ -23,17 +23,17 @@ class TestGpuTelemetry:
     """Tests for GPU telemetry collection and reporting."""
 
     async def test_gpu_telemetry(
-        self, cli: AIPerfCLI, tests.aiperf_mock_server: AIPerfMockServer
+        self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer
     ):
         """GPU telemetry collection with DCGM endpoint."""
         result = await cli.run(
             f"""
             aiperf profile \
                 --model nvidia/llama-3.1-nemotron-70b-instruct \
-                --url {tests.aiperf_mock_server.url} \
+                --url {aiperf_mock_server.url} \
                 --tokenizer builtin \
                 --endpoint-type chat \
-                --gpu-telemetry {" ".join(tests.aiperf_mock_server.dcgm_urls)} \
+                --gpu-telemetry {" ".join(aiperf_mock_server.dcgm_urls)} \
                 --streaming \
                 --request-count 100 \
                 --concurrency 2 \
@@ -77,17 +77,17 @@ class TestGpuTelemetry:
                         assert metric_value.max is not None
 
     async def test_gpu_telemetry_export(
-        self, cli: AIPerfCLI, tests.aiperf_mock_server: AIPerfMockServer
+        self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer
     ):
         """Test GPU telemetry export to JSONL file with validation."""
         result = await cli.run(
             f"""
             aiperf profile \
                 --model nvidia/llama-3.1-nemotron-70b-instruct \
-                --url {tests.aiperf_mock_server.url} \
+                --url {aiperf_mock_server.url} \
                 --tokenizer builtin \
                 --endpoint-type chat \
-                --gpu-telemetry {" ".join(tests.aiperf_mock_server.dcgm_urls)} \
+                --gpu-telemetry {" ".join(aiperf_mock_server.dcgm_urls)} \
                 --streaming \
                 --request-count 50 \
                 --concurrency 2 \
@@ -134,17 +134,17 @@ class TestGpuTelemetry:
         # nature of the telemetry collection.
 
     async def test_gpu_telemetry_export_with_custom_prefix(
-        self, cli: AIPerfCLI, tests.aiperf_mock_server: AIPerfMockServer
+        self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer
     ):
         """Test GPU telemetry export with custom filename prefix."""
         result = await cli.run(
             f"""
             aiperf profile \
                 --model nvidia/llama-3.1-nemotron-70b-instruct \
-                --url {tests.aiperf_mock_server.url} \
+                --url {aiperf_mock_server.url} \
                 --tokenizer builtin \
                 --endpoint-type chat \
-                --gpu-telemetry {" ".join(tests.aiperf_mock_server.dcgm_urls)} \
+                --gpu-telemetry {" ".join(aiperf_mock_server.dcgm_urls)} \
                 --streaming \
                 --request-count 25 \
                 --concurrency 1 \
@@ -167,7 +167,7 @@ class TestGpuTelemetry:
             assert first_record.telemetry_source_url is not None
 
     async def test_gpu_telemetry_disabled(
-        self, cli: AIPerfCLI, tests.aiperf_mock_server: AIPerfMockServer
+        self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer
     ):
         """GPU telemetry collection is disabled with --no-gpu-telemetry flag.
 
@@ -179,7 +179,7 @@ class TestGpuTelemetry:
             f"""
             aiperf profile \
                 --model nvidia/llama-3.1-nemotron-70b-instruct \
-                --url {tests.aiperf_mock_server.url} \
+                --url {aiperf_mock_server.url} \
                 --tokenizer builtin \
                 --endpoint-type chat \
                 --streaming \
@@ -213,14 +213,14 @@ class TestAMDSMITelemetry:
         monkeypatch.setenv("AIPERF_MOCK_AMDSMI", "1")
 
     async def test_amd_gpu_telemetry(
-        self, cli: AIPerfCLI, tests.aiperf_mock_server: AIPerfMockServer
+        self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer
     ) -> None:
         """AMD telemetry collection populates amd_* metrics end-to-end."""
         result = await cli.run(
             f"""
             aiperf profile \
                 --model nvidia/llama-3.1-nemotron-70b-instruct \
-                --url {tests.aiperf_mock_server.url} \
+                --url {aiperf_mock_server.url} \
                 --tokenizer builtin \
                 --endpoint-type chat \
                 --gpu-telemetry amdsmi \
@@ -259,14 +259,14 @@ class TestAMDSMITelemetry:
                         assert metric_value.max is not None
 
     async def test_amd_gpu_telemetry_export(
-        self, cli: AIPerfCLI, tests.aiperf_mock_server: AIPerfMockServer
+        self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer
     ) -> None:
         """AMD telemetry JSONL export contains valid TelemetryRecord entries."""
         result = await cli.run(
             f"""
             aiperf profile \
                 --model nvidia/llama-3.1-nemotron-70b-instruct \
-                --url {tests.aiperf_mock_server.url} \
+                --url {aiperf_mock_server.url} \
                 --tokenizer builtin \
                 --endpoint-type chat \
                 --gpu-telemetry amdsmi \
@@ -300,14 +300,14 @@ class TestAMDSMITelemetry:
         assert len(gpu_uuids) >= 2, "Should have records from at least two GPUs"
 
     async def test_amd_gpu_telemetry_export_with_custom_prefix(
-        self, cli: AIPerfCLI, tests.aiperf_mock_server: AIPerfMockServer
+        self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer
     ) -> None:
         """AMD telemetry JSONL export respects --profile-export-prefix."""
         result = await cli.run(
             f"""
             aiperf profile \
                 --model nvidia/llama-3.1-nemotron-70b-instruct \
-                --url {tests.aiperf_mock_server.url} \
+                --url {aiperf_mock_server.url} \
                 --tokenizer builtin \
                 --endpoint-type chat \
                 --gpu-telemetry amdsmi \
@@ -330,14 +330,14 @@ class TestAMDSMITelemetry:
         assert first.telemetry_source_url == AMDSMI_SOURCE_IDENTIFIER
 
     async def test_amd_gpu_telemetry_disabled(
-        self, cli: AIPerfCLI, tests.aiperf_mock_server: AIPerfMockServer
+        self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer
     ) -> None:
         """--no-gpu-telemetry suppresses AMD collection even when mock is active."""
         result = await cli.run(
             f"""
             aiperf profile \
                 --model nvidia/llama-3.1-nemotron-70b-instruct \
-                --url {tests.aiperf_mock_server.url} \
+                --url {aiperf_mock_server.url} \
                 --tokenizer builtin \
                 --endpoint-type chat \
                 --streaming \
@@ -353,7 +353,7 @@ class TestAMDSMITelemetry:
         assert len(jsonl_files) == 0, f"Unexpected GPU telemetry files: {jsonl_files}"
 
     async def test_amd_derived_efficiency_metrics(
-        self, cli: AIPerfCLI, tests.aiperf_mock_server: AIPerfMockServer
+        self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer
     ) -> None:
         """AMD energy-efficiency derived metrics are present and internally consistent.
 
@@ -366,7 +366,7 @@ class TestAMDSMITelemetry:
             f"""
             aiperf profile \
                 --model nvidia/llama-3.1-nemotron-70b-instruct \
-                --url {tests.aiperf_mock_server.url} \
+                --url {aiperf_mock_server.url} \
                 --tokenizer builtin \
                 --endpoint-type chat \
                 --gpu-telemetry amdsmi \
@@ -486,7 +486,7 @@ class TestTelemetryVendorIsolation:
         self,
         collector: str,
         cli: AIPerfCLI,
-        tests.aiperf_mock_server: AIPerfMockServer,
+        aiperf_mock_server: AIPerfMockServer,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Each GPU only carries metrics prefixed for its own platform.
@@ -501,13 +501,13 @@ class TestTelemetryVendorIsolation:
             monkeypatch.setenv("AIPERF_MOCK_AMDSMI", "1")
             telemetry_arg = "amdsmi"
         else:
-            telemetry_arg = " ".join(tests.aiperf_mock_server.dcgm_urls)
+            telemetry_arg = " ".join(aiperf_mock_server.dcgm_urls)
 
         result = await cli.run(
             f"""
             aiperf profile \
                 --model nvidia/llama-3.1-nemotron-70b-instruct \
-                --url {tests.aiperf_mock_server.url} \
+                --url {aiperf_mock_server.url} \
                 --tokenizer builtin \
                 --endpoint-type chat \
                 --gpu-telemetry {telemetry_arg} \

@@ -230,8 +230,8 @@ def mock_server_tokenize():
     cycling through prompt tokens (which will be 'tok$' strings).
     """
     with (
-        patch("tests.aiperf_mock_server.tokens._tokenize", _mock_tokenize),
-        patch("tests.aiperf_mock_server.tokens.CORPUS_TOKENS", None),
+        patch("aiperf_mock_server.tokens._tokenize", _mock_tokenize),
+        patch("aiperf_mock_server.tokens.CORPUS_TOKENS", None),
     ):
         yield
 

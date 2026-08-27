@@ -13,13 +13,13 @@ from tests.integration.conftest import IntegrationTestDefaults as defaults
 class TestMultimodal:
     """Tests for multimodal inputs (images, audio)."""
 
-    async def test_images(self, cli: AIPerfCLI, tests.aiperf_mock_server: AIPerfMockServer):
+    async def test_images(self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer):
         """Chat with image inputs."""
         result = await cli.run(
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {tests.aiperf_mock_server.url} \
+                --url {aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --request-count {defaults.request_count} \
                 --concurrency {defaults.concurrency} \
@@ -32,13 +32,13 @@ class TestMultimodal:
         assert result.request_count == defaults.request_count
         assert result.has_input_images
 
-    async def test_audio(self, cli: AIPerfCLI, tests.aiperf_mock_server: AIPerfMockServer):
+    async def test_audio(self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer):
         """Chat with audio inputs."""
         result = await cli.run(
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {tests.aiperf_mock_server.url} \
+                --url {aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --request-count {defaults.request_count} \
                 --concurrency {defaults.concurrency} \
@@ -51,14 +51,14 @@ class TestMultimodal:
         assert result.has_input_audio
 
     async def test_images_and_audio(
-        self, cli: AIPerfCLI, tests.aiperf_mock_server: AIPerfMockServer
+        self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer
     ):
         """Chat with combined image and audio inputs."""
         result = await cli.run(
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {tests.aiperf_mock_server.url} \
+                --url {aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --request-count {defaults.request_count} \
                 --concurrency {defaults.concurrency} \

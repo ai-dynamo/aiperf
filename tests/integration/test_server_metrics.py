@@ -39,12 +39,12 @@ class TestServerMetrics:
         scrape server metrics from the inference endpoint's base URL + /metrics.
         """
         # Use isolated mock server with workers=1 to avoid Prometheus metrics issues
-        async with mock_server_factory(fast=True, workers=1) as tests.aiperf_mock_server:
+        async with mock_server_factory(fast=True, workers=1) as aiperf_mock_server:
             result = await cli.run(
                 f"""
                 aiperf profile \
                     --model nvidia/llama-3.1-nemotron-70b-instruct \
-                    --url {tests.aiperf_mock_server.url} \
+                    --url {aiperf_mock_server.url} \
                     --tokenizer builtin \
                     --endpoint-type chat \
                     --streaming \
@@ -69,7 +69,7 @@ class TestServerMetrics:
             # Verify the auto-collected endpoint is correct
             # Note: endpoints_successful contains full URLs
             expected_endpoint = (
-                f"http://{tests.aiperf_mock_server.host}:{tests.aiperf_mock_server.port}/metrics"
+                f"http://{aiperf_mock_server.host}:{aiperf_mock_server.port}/metrics"
             )
             assert expected_endpoint in result.server_metrics_endpoints_successful, (
                 f"Expected {expected_endpoint} in successful endpoints: "
@@ -81,17 +81,17 @@ class TestServerMetrics:
     # ========================================================================
 
     async def test_server_metrics_multiple_endpoints_vllm_sglang(
-        self, cli: AIPerfCLI, tests.aiperf_mock_server: AIPerfMockServer
+        self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer
     ):
         """Server metrics collection from multiple endpoints (vLLM + SGLang)."""
-        vllm_url = tests.aiperf_mock_server.server_metrics_urls["vllm"]
-        sglang_url = tests.aiperf_mock_server.server_metrics_urls["sglang"]
+        vllm_url = aiperf_mock_server.server_metrics_urls["vllm"]
+        sglang_url = aiperf_mock_server.server_metrics_urls["sglang"]
 
         result = await cli.run(
             f"""
             aiperf profile \
                 --model nvidia/llama-3.1-nemotron-70b-instruct \
-                --url {tests.aiperf_mock_server.url} \
+                --url {aiperf_mock_server.url} \
                 --tokenizer builtin \
                 --endpoint-type chat \
                 --streaming \
@@ -146,8 +146,8 @@ class TestServerMetrics:
         Total: 6 different server metrics endpoints scraped simultaneously!
         """
         # Use isolated mock server with workers=1 to avoid Prometheus metrics issues
-        async with mock_server_factory(fast=True, workers=1) as tests.aiperf_mock_server:
-            all_urls = tests.aiperf_mock_server.get_server_metrics_url(
+        async with mock_server_factory(fast=True, workers=1) as aiperf_mock_server:
+            all_urls = aiperf_mock_server.get_server_metrics_url(
                 "vllm",
                 "sglang",
                 "trtllm",
@@ -160,7 +160,7 @@ class TestServerMetrics:
                 f"""
                 aiperf profile \
                     --model nvidia/llama-3.1-nemotron-70b-instruct \
-                    --url {tests.aiperf_mock_server.url} \
+                    --url {aiperf_mock_server.url} \
                     --tokenizer builtin \
                     --endpoint-type chat \
                     --streaming \
@@ -217,16 +217,16 @@ class TestServerMetrics:
     # ========================================================================
 
     async def test_server_metrics_export_files(
-        self, cli: AIPerfCLI, tests.aiperf_mock_server: AIPerfMockServer
+        self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer
     ):
         """Test server metrics export files (JSON, JSONL, CSV, Parquet) are valid."""
-        urls = tests.aiperf_mock_server.get_server_metrics_url("vllm", "sglang")
+        urls = aiperf_mock_server.get_server_metrics_url("vllm", "sglang")
 
         result = await cli.run(
             f"""
             aiperf profile \
                 --model nvidia/llama-3.1-nemotron-70b-instruct \
-                --url {tests.aiperf_mock_server.url} \
+                --url {aiperf_mock_server.url} \
                 --tokenizer builtin \
                 --endpoint-type chat \
                 --streaming \
@@ -265,7 +265,7 @@ class TestServerMetrics:
         assert len(csv_lines) > 1  # Header + data rows
 
     async def test_config_file_cli_server_metrics_formats_generates_jsonl(
-        self, cli: AIPerfCLI, tests.aiperf_mock_server: AIPerfMockServer, tmp_path
+        self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer, tmp_path
     ):
         """Config-v2 honors CLI --server-metrics-formats jsonl override."""
         cfg_file = tmp_path / "server_metrics_config_v2.yaml"
@@ -276,7 +276,7 @@ class TestServerMetrics:
             benchmark:
               model: nvidia/llama-3.1-nemotron-70b-instruct
               endpoint:
-                url: {tests.aiperf_mock_server.url}/v1/chat/completions
+                url: {aiperf_mock_server.url}/v1/chat/completions
                 type: chat
                 streaming: true
               dataset:
@@ -292,7 +292,7 @@ class TestServerMetrics:
               server_metrics:
                 enabled: true
                 urls:
-                  - {tests.aiperf_mock_server.server_metrics_urls["vllm"]}
+                  - {aiperf_mock_server.server_metrics_urls["vllm"]}
                 formats:
                   - json
                   - csv
@@ -327,14 +327,14 @@ class TestServerMetrics:
         assert len(jsonl_lines) >= len(result.server_metrics_jsonl)
 
     async def test_server_metrics_jsonl_records(
-        self, cli: AIPerfCLI, tests.aiperf_mock_server: AIPerfMockServer
+        self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer
     ):
         """Test JSONL records contain expected metrics with valid data."""
         result = await cli.run(
             f"""
             aiperf profile \
                 --model nvidia/llama-3.1-nemotron-70b-instruct \
-                --url {tests.aiperf_mock_server.url} \
+                --url {aiperf_mock_server.url} \
                 --tokenizer builtin \
                 --endpoint-type chat \
                 --streaming \
@@ -342,7 +342,7 @@ class TestServerMetrics:
                 --concurrency 2 \
                 --workers-max 2 \
                 --server-metrics-formats jsonl \
-                --server-metrics {tests.aiperf_mock_server.server_metrics_urls["vllm"]}
+                --server-metrics {aiperf_mock_server.server_metrics_urls["vllm"]}
             """
         )
 
@@ -380,19 +380,19 @@ class TestServerMetrics:
     ):
         """Test histogram metrics are properly captured and exported."""
         # Use isolated mock server with workers=1 to avoid Prometheus metrics issues
-        async with mock_server_factory(fast=True, workers=1) as tests.aiperf_mock_server:
+        async with mock_server_factory(fast=True, workers=1) as aiperf_mock_server:
             result = await cli.run(
                 f"""
                 aiperf profile \
                     --model nvidia/llama-3.1-nemotron-70b-instruct \
-                    --url {tests.aiperf_mock_server.url} \
+                    --url {aiperf_mock_server.url} \
                     --tokenizer builtin \
                     --endpoint-type chat \
                     --streaming \
                     --request-count 50 \
                     --concurrency 2 \
                     --workers-max 2 \
-                    --server-metrics {tests.aiperf_mock_server.server_metrics_urls["vllm"]}
+                    --server-metrics {aiperf_mock_server.server_metrics_urls["vllm"]}
                 """
             )
             result.assert_server_metrics_valid()
@@ -423,20 +423,20 @@ class TestServerMetrics:
     # ========================================================================
 
     async def test_server_metrics_non_streaming(
-        self, cli: AIPerfCLI, tests.aiperf_mock_server: AIPerfMockServer
+        self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer
     ):
         """Server metrics collection works with non-streaming requests."""
         result = await cli.run(
             f"""
             aiperf profile \
                 --model nvidia/llama-3.1-nemotron-70b-instruct \
-                --url {tests.aiperf_mock_server.url} \
+                --url {aiperf_mock_server.url} \
                 --tokenizer builtin \
                 --endpoint-type chat \
                 --request-count 50 \
                 --concurrency 2 \
                 --workers-max 2 \
-                --server-metrics {tests.aiperf_mock_server.server_metrics_urls["vllm"]}
+                --server-metrics {aiperf_mock_server.server_metrics_urls["vllm"]}
             """
         )
         assert result.request_count == 50
@@ -450,21 +450,21 @@ class TestServerMetrics:
     # ========================================================================
 
     async def test_server_metrics_custom_prefix(
-        self, cli: AIPerfCLI, tests.aiperf_mock_server: AIPerfMockServer
+        self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer
     ):
         """Test server metrics export with custom filename prefix."""
         result = await cli.run(
             f"""
             aiperf profile \
                 --model nvidia/llama-3.1-nemotron-70b-instruct \
-                --url {tests.aiperf_mock_server.url} \
+                --url {aiperf_mock_server.url} \
                 --tokenizer builtin \
                 --endpoint-type chat \
                 --streaming \
                 --request-count 25 \
                 --concurrency 1 \
                 --workers-max 1 \
-                --server-metrics {tests.aiperf_mock_server.server_metrics_urls["vllm"]} \
+                --server-metrics {aiperf_mock_server.server_metrics_urls["vllm"]} \
                 --profile-export-prefix custom_test
             """
         )
@@ -489,7 +489,7 @@ class TestServerMetrics:
     # ========================================================================
 
     async def test_server_metrics_disabled(
-        self, cli: AIPerfCLI, tests.aiperf_mock_server: AIPerfMockServer
+        self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer
     ):
         """Server metrics collection is disabled with --no-server-metrics flag.
 
@@ -500,7 +500,7 @@ class TestServerMetrics:
             f"""
             aiperf profile \
                 --model nvidia/llama-3.1-nemotron-70b-instruct \
-                --url {tests.aiperf_mock_server.url} \
+                --url {aiperf_mock_server.url} \
                 --tokenizer builtin \
                 --endpoint-type chat \
                 --streaming \
@@ -533,14 +533,14 @@ class TestServerMetrics:
         import pyarrow.parquet as pq
 
         # Use isolated mock server with workers=1 to avoid Prometheus metrics issues
-        async with mock_server_factory(fast=True, workers=1) as tests.aiperf_mock_server:
-            urls = tests.aiperf_mock_server.get_server_metrics_url("vllm", "sglang")
+        async with mock_server_factory(fast=True, workers=1) as aiperf_mock_server:
+            urls = aiperf_mock_server.get_server_metrics_url("vllm", "sglang")
 
             result = await cli.run(
                 f"""
                 aiperf profile \
                     --model nvidia/llama-3.1-nemotron-70b-instruct \
-                    --url {tests.aiperf_mock_server.url} \
+                    --url {aiperf_mock_server.url} \
                     --tokenizer builtin \
                     --endpoint-type chat \
                     --streaming \

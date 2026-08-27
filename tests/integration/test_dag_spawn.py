@@ -57,7 +57,7 @@ class TestDagSpawnEndToEnd:
     async def test_spawn_child_has_fresh_context(
         self,
         cli: AIPerfCLI,
-        tests.aiperf_mock_server: AIPerfMockServer,
+        aiperf_mock_server: AIPerfMockServer,
     ):
         assert FIXTURE.exists(), f"fixture missing: {FIXTURE}"
 
@@ -65,7 +65,7 @@ class TestDagSpawnEndToEnd:
             f"""
             aiperf profile \
                 --model test-model \
-                --url {tests.aiperf_mock_server.url} \
+                --url {aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --input-file {FIXTURE} \
                 --custom-dataset-type dag_jsonl \

@@ -34,7 +34,7 @@ class TestPlotMLflowUploadRoundTrip:
     async def test_plot_mlflow_upload_reuses_live_run(
         self,
         cli: AIPerfCLI,
-        tests.aiperf_mock_server: AIPerfMockServer,
+        aiperf_mock_server: AIPerfMockServer,
         tmp_path: Path,
     ) -> None:
         """Profile with --mlflow-tracking-uri then plot --mlflow-upload should reuse the same run_id.
@@ -56,7 +56,7 @@ class TestPlotMLflowUploadRoundTrip:
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {tests.aiperf_mock_server.url} \
+                --url {aiperf_mock_server.url} \
                 --concurrency 2 \
                 --request-count 10 \
                 --streaming \

@@ -35,14 +35,14 @@ class TestNetworkLatencyCalibration:
     """Tests for the --network-latency-automatic feature."""
 
     async def test_calibration_writes_jsonl_and_adjusted_metrics(
-        self, cli: AIPerfCLI, tests.aiperf_mock_server: AIPerfMockServer
+        self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer
     ):
         """Active probing emits the JSONL artifact and adjusted metric keys."""
         results = await cli.run(
             f"""
             aiperf profile \
                 --model Qwen/Qwen2.5-32B-Instruct \
-                --url {tests.aiperf_mock_server.url} \
+                --url {aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --streaming \
                 --network-latency-automatic \
@@ -70,14 +70,14 @@ class TestNetworkLatencyCalibration:
             assert key in export, f"{key} missing from JSON export"
 
     async def test_baseline_without_flag_has_no_network_artifacts(
-        self, cli: AIPerfCLI, tests.aiperf_mock_server: AIPerfMockServer
+        self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer
     ):
         """Non-regression: omitting the flag emits no network latency outputs."""
         results = await cli.run(
             f"""
             aiperf profile \
                 --model Qwen/Qwen2.5-32B-Instruct \
-                --url {tests.aiperf_mock_server.url} \
+                --url {aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --streaming \
                 --request-count {defaults.request_count} \

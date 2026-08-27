@@ -34,12 +34,12 @@ class TestUseServerTokenCounts:
         - Usage diff metrics should NOT be present (they compare client vs server)
         """
         streaming_flag = "--streaming" if streaming else ""
-        async with mock_server_factory(fast=True, workers=1) as tests.aiperf_mock_server:
+        async with mock_server_factory(fast=True, workers=1) as aiperf_mock_server:
             result = await cli.run(
                 f"""
                 aiperf profile \
                     --model openai/gpt-oss-120b \
-                    --url {tests.aiperf_mock_server.url} \
+                    --url {aiperf_mock_server.url} \
                     --endpoint-type chat \
                     {streaming_flag} \
                     {extra_inputs} \

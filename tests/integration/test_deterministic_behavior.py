@@ -13,7 +13,7 @@ class TestDeterministicBehavior:
     """Tests for deterministic behavior with random seeds."""
 
     async def test_same_seed_identical_inputs(
-        self, cli: AIPerfCLI, tests.aiperf_mock_server: AIPerfMockServer
+        self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer
     ):
         """Same random seed produces identical payloads across runs."""
 
@@ -22,7 +22,7 @@ class TestDeterministicBehavior:
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {tests.aiperf_mock_server.url} \
+                --url {aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --request-count {defaults.request_count} \
                 --concurrency 2 \
@@ -39,7 +39,7 @@ class TestDeterministicBehavior:
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {tests.aiperf_mock_server.url} \
+                --url {aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --request-count {defaults.request_count} \
                 --concurrency 2 \
@@ -64,14 +64,14 @@ class TestDeterministicBehavior:
             assert s1.payloads == s2.payloads
 
     async def test_different_seeds_different_inputs(
-        self, cli: AIPerfCLI, tests.aiperf_mock_server: AIPerfMockServer
+        self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer
     ):
         """Different random seeds produce different payloads."""
         result1 = await cli.run(
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {tests.aiperf_mock_server.url} \
+                --url {aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --request-count {defaults.request_count} \
                 --concurrency 2 \
@@ -87,7 +87,7 @@ class TestDeterministicBehavior:
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {tests.aiperf_mock_server.url} \
+                --url {aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --request-count {defaults.request_count} \
                 --concurrency 2 \

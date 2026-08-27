@@ -16,7 +16,7 @@ class TestCustomMultimodalTemplate:
     """Tests for custom multi-modal endpoint using custom template."""
 
     async def test_custom_multimodal_with_images_and_audio(
-        self, cli: AIPerfCLI, tests.aiperf_mock_server: AIPerfMockServer, tmp_path: Path
+        self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer, tmp_path: Path
     ):
         """Test custom multi-modal endpoint with images and audio using custom template.
 
@@ -49,7 +49,7 @@ class TestCustomMultimodalTemplate:
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {tests.aiperf_mock_server.url}/v1/custom-multimodal \
+                --url {aiperf_mock_server.url}/v1/custom-multimodal \
                 --endpoint-type template \
                 --extra-inputs payload_template:{template_file} \
                 --request-count {defaults.request_count} \

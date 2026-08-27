@@ -20,7 +20,7 @@ class TestMooncakeTraceIntegration:
     async def test_basic_mooncake_trace_with_input_length(
         self,
         cli: AIPerfCLI,
-        tests.aiperf_mock_server: AIPerfMockServer,
+        aiperf_mock_server: AIPerfMockServer,
         tmp_path: Path,
     ):
         """Test basic Mooncake trace with input_length, output_length, and hash_ids."""
@@ -39,7 +39,7 @@ class TestMooncakeTraceIntegration:
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {tests.aiperf_mock_server.url} \
+                --url {aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --input-file {trace_file} \
                 --custom-dataset-type mooncake_trace \
@@ -57,7 +57,7 @@ class TestMooncakeTraceIntegration:
     async def test_mooncake_trace_with_text_input(
         self,
         cli: AIPerfCLI,
-        tests.aiperf_mock_server: AIPerfMockServer,
+        aiperf_mock_server: AIPerfMockServer,
         tmp_path: Path,
     ):
         """Test Mooncake trace with literal text inputs instead of input_length."""
@@ -76,7 +76,7 @@ class TestMooncakeTraceIntegration:
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {tests.aiperf_mock_server.url} \
+                --url {aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --input-file {trace_file} \
                 --custom-dataset-type mooncake_trace \
@@ -94,7 +94,7 @@ class TestMooncakeTraceIntegration:
     async def test_mooncake_trace_with_messages_field(
         self,
         cli: AIPerfCLI,
-        tests.aiperf_mock_server: AIPerfMockServer,
+        aiperf_mock_server: AIPerfMockServer,
         tmp_path: Path,
     ):
         """Test mooncake_trace with OpenAI-compatible messages field."""
@@ -110,7 +110,7 @@ class TestMooncakeTraceIntegration:
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {tests.aiperf_mock_server.url} \
+                --url {aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --input-file {trace_file} \
                 --custom-dataset-type mooncake_trace \
@@ -128,7 +128,7 @@ class TestMooncakeTraceIntegration:
     async def test_mooncake_trace_with_messages_and_tools(
         self,
         cli: AIPerfCLI,
-        tests.aiperf_mock_server: AIPerfMockServer,
+        aiperf_mock_server: AIPerfMockServer,
         tmp_path: Path,
     ):
         """Test mooncake_trace with messages and tools fields."""
@@ -143,7 +143,7 @@ class TestMooncakeTraceIntegration:
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {tests.aiperf_mock_server.url} \
+                --url {aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --input-file {trace_file} \
                 --custom-dataset-type mooncake_trace \
@@ -161,7 +161,7 @@ class TestMooncakeTraceIntegration:
     async def test_mooncake_trace_multi_turn_with_session_id(
         self,
         cli: AIPerfCLI,
-        tests.aiperf_mock_server: AIPerfMockServer,
+        aiperf_mock_server: AIPerfMockServer,
         tmp_path: Path,
     ):
         """Test Mooncake trace with session_id for multi-turn conversations."""
@@ -184,7 +184,7 @@ class TestMooncakeTraceIntegration:
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {tests.aiperf_mock_server.url} \
+                --url {aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --input-file {trace_file} \
                 --custom-dataset-type mooncake_trace \
@@ -202,7 +202,7 @@ class TestMooncakeTraceIntegration:
     async def test_mooncake_trace_text_input_with_synthesis_speedup(
         self,
         cli: AIPerfCLI,
-        tests.aiperf_mock_server: AIPerfMockServer,
+        aiperf_mock_server: AIPerfMockServer,
         tmp_path: Path,
     ):
         """Test that text_input traces work with synthesis speedup parameter.
@@ -226,7 +226,7 @@ class TestMooncakeTraceIntegration:
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {tests.aiperf_mock_server.url} \
+                --url {aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --input-file {trace_file} \
                 --custom-dataset-type mooncake_trace \

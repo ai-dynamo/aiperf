@@ -36,7 +36,7 @@ class TestChatCommand:
     """End-to-end checks that ``aiperf chat`` streams a reply and prints stats."""
 
     async def test_quick_prints_stats(
-        self, aiperf_runner: AIPerfRunnerFn, tests.aiperf_mock_server: AIPerfMockServer
+        self, aiperf_runner: AIPerfRunnerFn, aiperf_mock_server: AIPerfMockServer
     ) -> None:
         """``--quick`` streams one reply and prints the stats block, including
         the cache line (prefix caches are server-side, so even a single-shot
@@ -47,7 +47,7 @@ class TestChatCommand:
                 "--model",
                 "mock-model",
                 "--url",
-                tests.aiperf_mock_server.url,
+                aiperf_mock_server.url,
                 "--tokenizer",
                 "builtin",
                 "--quick",
@@ -60,12 +60,12 @@ class TestChatCommand:
         assert "Cache:" in result.stdout
 
     async def test_multi_turn_resends_history(
-        self, tests.aiperf_mock_server: AIPerfMockServer
+        self, aiperf_mock_server: AIPerfMockServer
     ) -> None:
         """Default mode prints the ITL/decode + cache lines per turn, and the
         prompt grows turn over turn because history is resent."""
         stdout = await _run_chat_over_stdin(
-            tests.aiperf_mock_server.url, "tell me a short story\ncontinue the story\n"
+            aiperf_mock_server.url, "tell me a short story\ncontinue the story\n"
         )
         # The full per-turn block (all four metrics) prints for each turn.
         assert stdout.count("TTFT:") == 2
@@ -77,12 +77,12 @@ class TestChatCommand:
         assert prompts[1] > prompts[0]
 
     async def test_no_history_is_stateless(
-        self, tests.aiperf_mock_server: AIPerfMockServer
+        self, aiperf_mock_server: AIPerfMockServer
     ) -> None:
         """``--no-history`` sends each message independently: an identical
         message yields an identical prompt size across turns (no history)."""
         stdout = await _run_chat_over_stdin(
-            tests.aiperf_mock_server.url,
+            aiperf_mock_server.url,
             "repeat this exactly\nrepeat this exactly\n",
             extra_args=["--no-history"],
         )

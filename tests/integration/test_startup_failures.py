@@ -18,7 +18,7 @@ class TestStartupFailures:
     """Tests for startup failure scenarios that should exit with errors."""
 
     async def test_invalid_model_name_exits_with_error(
-        self, cli: AIPerfCLI, tests.aiperf_mock_server: AIPerfMockServer
+        self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer
     ):
         """Test that an invalid model name causes aiperf to exit with an error.
 
@@ -31,7 +31,7 @@ class TestStartupFailures:
             aiperf profile \
                 --model this-model-does-not-exist-and-will-fail \
                 --tokenizer this-model-does-not-exist-and-will-fail \
-                --url {tests.aiperf_mock_server.url} \
+                --url {aiperf_mock_server.url} \
                 --request-count 10 \
                 --concurrency 2
             """,

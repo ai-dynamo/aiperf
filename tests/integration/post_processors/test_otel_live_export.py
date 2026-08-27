@@ -69,7 +69,7 @@ class TestOTelLiveExport:
     async def test_otlp_export_arrives_before_run_completes(
         self,
         cli: AIPerfCLI,
-        tests.aiperf_mock_server: AIPerfMockServer,
+        aiperf_mock_server: AIPerfMockServer,
         otlp_sink: tuple[_OTLPSinkServer, int],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
@@ -93,7 +93,7 @@ class TestOTelLiveExport:
         cli_cmd = f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {tests.aiperf_mock_server.url} \
+                --url {aiperf_mock_server.url} \
                 --concurrency 4 \
                 --request-count 40 \
                 --streaming \

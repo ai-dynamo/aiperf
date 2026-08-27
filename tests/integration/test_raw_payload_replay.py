@@ -21,7 +21,7 @@ class TestRawPayloadReplayIntegration:
     async def test_raw_payload_replays_authored_body_verbatim(
         self,
         cli: AIPerfCLI,
-        tests.aiperf_mock_server: AIPerfMockServer,
+        aiperf_mock_server: AIPerfMockServer,
         tmp_path: Path,
     ) -> None:
         payload = {
@@ -39,7 +39,7 @@ class TestRawPayloadReplayIntegration:
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {tests.aiperf_mock_server.url} \
+                --url {aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --custom-dataset-type raw_payload \
                 --input-file {input_file} \
@@ -59,7 +59,7 @@ class TestRawPayloadReplayIntegration:
     async def test_inputs_json_replays_stored_payload_verbatim(
         self,
         cli: AIPerfCLI,
-        tests.aiperf_mock_server: AIPerfMockServer,
+        aiperf_mock_server: AIPerfMockServer,
         tmp_path: Path,
     ) -> None:
         payload = {
@@ -87,7 +87,7 @@ class TestRawPayloadReplayIntegration:
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {tests.aiperf_mock_server.url} \
+                --url {aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --custom-dataset-type inputs_json \
                 --input-file {input_file} \

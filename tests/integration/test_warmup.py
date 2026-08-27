@@ -14,14 +14,14 @@ class TestWarmup:
     """Tests for warmup phase functionality."""
 
     async def test_warmup_phase(
-        self, cli: AIPerfCLI, tests.aiperf_mock_server: AIPerfMockServer
+        self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer
     ):
         """Warmup requests excluded from profiling metrics."""
         result = await cli.run(
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {tests.aiperf_mock_server.url} \
+                --url {aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --warmup-request-count 5 \
                 --request-count 15 \

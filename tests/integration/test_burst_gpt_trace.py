@@ -46,7 +46,7 @@ class TestBurstGPTTraceIntegration:
     async def test_fixed_schedule_with_explicit_dataset_type(
         self,
         cli: AIPerfCLI,
-        tests.aiperf_mock_server: AIPerfMockServer,
+        aiperf_mock_server: AIPerfMockServer,
         tmp_path: Path,
     ) -> None:
         """``--custom-dataset-type burst_gpt_trace --fixed-schedule`` runs end-to-end.
@@ -62,7 +62,7 @@ class TestBurstGPTTraceIntegration:
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {tests.aiperf_mock_server.url} \
+                --url {aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --input-file {csv_file} \
                 --custom-dataset-type burst_gpt_trace \
@@ -82,7 +82,7 @@ class TestBurstGPTTraceIntegration:
     async def test_fixed_schedule_auto_detected(
         self,
         cli: AIPerfCLI,
-        tests.aiperf_mock_server: AIPerfMockServer,
+        aiperf_mock_server: AIPerfMockServer,
         tmp_path: Path,
     ) -> None:
         """No ``--custom-dataset-type`` flag — the loader's ``can_load``
@@ -97,7 +97,7 @@ class TestBurstGPTTraceIntegration:
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {tests.aiperf_mock_server.url} \
+                --url {aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --input-file {csv_file} \
                 --request-count {len(rows)} \

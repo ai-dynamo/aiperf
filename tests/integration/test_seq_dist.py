@@ -16,7 +16,7 @@ class TestSequenceLengthDistribution:
     """Test SequenceLengthDistribution functionality."""
 
     async def test_sequence_length_distribution(
-        self, cli: AIPerfCLI, tests.aiperf_mock_server: AIPerfMockServer
+        self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer
     ):
         """Test sequence length distribution."""
         result = await cli.run(
@@ -26,7 +26,7 @@ class TestSequenceLengthDistribution:
                 --endpoint-type chat \
                 --endpoint /v1/chat/completions \
                 --streaming \
-                --url {tests.aiperf_mock_server.url} \
+                --url {aiperf_mock_server.url} \
                 --sequence-distribution "64|10,32|8:70;256|40,128|20:20;1024|100,512|50:10" \
                 --workers-max {defaults.workers_max} \
                 --ui {defaults.ui}

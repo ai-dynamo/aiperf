@@ -28,13 +28,13 @@ FIXTURE = (
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_aiforward_spine_runs_all_rounds_request_free(
-    cli: AIPerfCLI, tests.aiperf_mock_server: AIPerfMockServer
+    cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer
 ):
     result = await cli.run(
         f"""
         aiperf profile \
             --model test-model \
-            --url {tests.aiperf_mock_server.url} \
+            --url {aiperf_mock_server.url} \
             --endpoint-type chat \
             --input-file {FIXTURE} \
             --custom-dataset-type dag_jsonl \

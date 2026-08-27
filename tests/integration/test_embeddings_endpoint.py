@@ -14,7 +14,7 @@ class TestEmbeddingsEndpoint:
     """Tests for /v1/embeddings endpoint."""
 
     async def test_basic_embeddings(
-        self, cli: AIPerfCLI, tests.aiperf_mock_server: AIPerfMockServer
+        self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer
     ):
         """Basic embeddings request completes with expected request count."""
         result = await cli.run(
@@ -22,7 +22,7 @@ class TestEmbeddingsEndpoint:
             aiperf profile \
                 --model nomic-ai/nomic-embed-text-v1.5 \
                 --tokenizer builtin \
-                --url {tests.aiperf_mock_server.url} \
+                --url {aiperf_mock_server.url} \
                 --endpoint-type embeddings \
                 --request-count {defaults.request_count} \
                 --concurrency {defaults.concurrency} \

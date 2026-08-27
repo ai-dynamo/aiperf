@@ -16,14 +16,14 @@ class TestOutputFormats:
     """Tests for different output export formats."""
 
     async def test_csv_export(
-        self, cli: AIPerfCLI, tests.aiperf_mock_server: AIPerfMockServer
+        self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer
     ):
         """CSV export format validation."""
         result = await cli.run(
             f"""
             aiperf profile \
                 --model Qwen/Qwen2.5-Coder-32B-Instruct \
-                --url {tests.aiperf_mock_server.url} \
+                --url {aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --streaming \
                 --request-count {defaults.request_count} \
@@ -36,14 +36,14 @@ class TestOutputFormats:
         assert "Request Latency" in result.csv
 
     async def test_json_export(
-        self, cli: AIPerfCLI, tests.aiperf_mock_server: AIPerfMockServer
+        self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer
     ):
         """JSON export format validation."""
         result = await cli.run(
             f"""
             aiperf profile \
                 --model microsoft/Phi-4-reasoning \
-                --url {tests.aiperf_mock_server.url} \
+                --url {aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --request-count {defaults.request_count} \
                 --concurrency {defaults.concurrency} \
@@ -60,14 +60,14 @@ class TestOutputFormats:
         reason="This test is flaky on macOS in Github Actions.",
     )
     async def test_raw_export_level(
-        self, cli: AIPerfCLI, tests.aiperf_mock_server: AIPerfMockServer
+        self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer
     ):
         """Test that raw records are properly created using --export-level raw."""
         result = await cli.run(
             f"""
             aiperf profile \
                 --model Qwen/Qwen2.5-Coder-32B-Instruct \
-                --url {tests.aiperf_mock_server.url} \
+                --url {aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --streaming \
                 --request-count {defaults.request_count} \

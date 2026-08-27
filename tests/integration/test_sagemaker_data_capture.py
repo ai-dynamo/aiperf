@@ -22,7 +22,7 @@ class TestSageMakerDataCaptureIntegration:
     async def test_basic_capture_replay(
         self,
         cli: AIPerfCLI,
-        tests.aiperf_mock_server: AIPerfMockServer,
+        aiperf_mock_server: AIPerfMockServer,
         tmp_path: Path,
     ):
         """Test replaying captured chat completion requests."""
@@ -51,7 +51,7 @@ class TestSageMakerDataCaptureIntegration:
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {tests.aiperf_mock_server.url} \
+                --url {aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --input-file {capture_file} \
                 --custom-dataset-type sagemaker_data_capture \
@@ -71,7 +71,7 @@ class TestSageMakerDataCaptureIntegration:
     async def test_capture_with_system_message(
         self,
         cli: AIPerfCLI,
-        tests.aiperf_mock_server: AIPerfMockServer,
+        aiperf_mock_server: AIPerfMockServer,
         tmp_path: Path,
     ):
         """Test replaying captures with system messages in the messages array."""
@@ -99,7 +99,7 @@ class TestSageMakerDataCaptureIntegration:
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {tests.aiperf_mock_server.url} \
+                --url {aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --input-file {capture_file} \
                 --custom-dataset-type sagemaker_data_capture \
@@ -117,7 +117,7 @@ class TestSageMakerDataCaptureIntegration:
     async def test_capture_directory_input(
         self,
         cli: AIPerfCLI,
-        tests.aiperf_mock_server: AIPerfMockServer,
+        aiperf_mock_server: AIPerfMockServer,
         tmp_path: Path,
     ):
         """Test loading captures from a directory with hourly-partitioned files."""
@@ -152,7 +152,7 @@ class TestSageMakerDataCaptureIntegration:
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {tests.aiperf_mock_server.url} \
+                --url {aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --input-file {tmp_path} \
                 --custom-dataset-type sagemaker_data_capture \
@@ -171,7 +171,7 @@ class TestSageMakerDataCaptureIntegration:
     async def test_capture_auto_detection(
         self,
         cli: AIPerfCLI,
-        tests.aiperf_mock_server: AIPerfMockServer,
+        aiperf_mock_server: AIPerfMockServer,
         tmp_path: Path,
     ):
         """Test that the loader auto-detects SageMaker Data Capture format."""
@@ -188,7 +188,7 @@ class TestSageMakerDataCaptureIntegration:
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {tests.aiperf_mock_server.url} \
+                --url {aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --input-file {capture_file} \
                 --request-count 1 \
@@ -205,7 +205,7 @@ class TestSageMakerDataCaptureIntegration:
     async def test_capture_with_base64_encoding(
         self,
         cli: AIPerfCLI,
-        tests.aiperf_mock_server: AIPerfMockServer,
+        aiperf_mock_server: AIPerfMockServer,
         tmp_path: Path,
     ):
         """Test replaying captures with BASE64-encoded payloads."""
@@ -229,7 +229,7 @@ class TestSageMakerDataCaptureIntegration:
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {tests.aiperf_mock_server.url} \
+                --url {aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --input-file {capture_file} \
                 --custom-dataset-type sagemaker_data_capture \

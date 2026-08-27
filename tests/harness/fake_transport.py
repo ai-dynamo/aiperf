@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """In-process fake transport for testing without network overhead.
 
-The fake bypasses HTTP entirely, directly invoking tests.aiperf_mock_server logic for
+The fake bypasses HTTP entirely, directly invoking aiperf_mock_server logic for
 fast, isolated testing with configurable latency simulation.
 """
 
@@ -95,7 +95,7 @@ HandlerFn: TypeAlias = Callable[[HandlerInput], Awaitable[RequestRecord]]
 class FakeTransport(BaseTransport):
     """In-process fake transport that bypasses HTTP (test double: Fake).
 
-    Directly invokes tests.aiperf_mock_server logic for fast, isolated testing.
+    Directly invokes aiperf_mock_server logic for fast, isolated testing.
     Supports all endpoint types: chat, completions, embeddings, rankings, images.
     """
 

@@ -78,7 +78,7 @@ class TestPlotIntegration:
     """Integration tests for aiperf profile + plot workflow."""
 
     async def test_profile_then_plot_single_run(
-        self, cli: AIPerfCLI, tests.aiperf_mock_server: AIPerfMockServer
+        self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer
     ):
         """Test running profile then generating PNG plots for single run.
 
@@ -92,7 +92,7 @@ class TestPlotIntegration:
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {tests.aiperf_mock_server.url} \
+                --url {aiperf_mock_server.url} \
                 --request-count {defaults.request_count} \
                 --concurrency {defaults.concurrency} \
                 --streaming
@@ -145,7 +145,7 @@ class TestPlotIntegration:
         assert "plots:" in summary_content
 
     async def test_profile_then_plot_with_timeslices(
-        self, cli: AIPerfCLI, tests.aiperf_mock_server: AIPerfMockServer
+        self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer
     ):
         """Test plot generation with timeslice data.
 
@@ -159,7 +159,7 @@ class TestPlotIntegration:
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {tests.aiperf_mock_server.url} \
+                --url {aiperf_mock_server.url} \
                 --concurrency {defaults.concurrency} \
                 --streaming \
                 --benchmark-duration 3 \
@@ -209,7 +209,7 @@ class TestPlotIntegration:
     # ========================================================================
 
     async def test_plot_with_server_metrics_parquet_and_json(
-        self, cli: AIPerfCLI, tests.aiperf_mock_server: AIPerfMockServer
+        self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer
     ):
         """Test plot generation with server metrics from both Parquet and JSON.
 
@@ -228,11 +228,11 @@ class TestPlotIntegration:
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {tests.aiperf_mock_server.url} \
+                --url {aiperf_mock_server.url} \
                 --request-count 50 \
                 --concurrency 2 \
                 --streaming \
-                --server-metrics {tests.aiperf_mock_server.server_metrics_urls["vllm"]} \
+                --server-metrics {aiperf_mock_server.server_metrics_urls["vllm"]} \
                 --server-metrics-formats parquet json
             """
         )
@@ -278,7 +278,7 @@ class TestPlotIntegration:
             )
 
     async def test_plot_with_server_metrics_parquet_only(
-        self, cli: AIPerfCLI, tests.aiperf_mock_server: AIPerfMockServer
+        self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer
     ):
         """Test plot generation with only Parquet export (no JSON).
 
@@ -291,11 +291,11 @@ class TestPlotIntegration:
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {tests.aiperf_mock_server.url} \
+                --url {aiperf_mock_server.url} \
                 --request-count 50 \
                 --concurrency 2 \
                 --streaming \
-                --server-metrics {tests.aiperf_mock_server.server_metrics_urls["vllm"]} \
+                --server-metrics {aiperf_mock_server.server_metrics_urls["vllm"]} \
                 --server-metrics-formats parquet
             """
         )
