@@ -17,3 +17,4 @@ crate-type = ["cdylib", "rlib"]
 libmimalloc-sys.workspace = true
 
 [build-dependencies]
+cc = "1"
