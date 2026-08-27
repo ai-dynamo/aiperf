@@ -84,6 +84,12 @@ pub const MOCK_DCGM: &str = "mock.dcgm";
 pub const MOCK_ERRORS: &str = "mock.errors";
 /// Sequence-length pair sampling.
 pub const MODELS_SEQUENCE_DISTRIBUTION: &str = "models.sequence.distribution";
+/// Shared warm-prefix generation for the streaming synthesis format.
+pub const STREAMING_SYNTHESIS_PREFIX: &str = "streaming.synthesis.prefix";
+/// Per-record stream of the streaming synthesis format.
+pub const STREAMING_SYNTHESIS_RECORD: &str = "streaming.synthesis.record";
+/// Per-shard root of the streaming synthesis format.
+pub const STREAMING_SYNTHESIS_SHARD: &str = "streaming.synthesis.shard";
 /// Session-concurrency ramp sampling.
 ///
 /// User-centric session admission uses this same actuator stream; there is no
@@ -144,6 +150,9 @@ pub const ALL: &[&str] = &[
     MOCK_DCGM,
     MOCK_ERRORS,
     MODELS_SEQUENCE_DISTRIBUTION,
+    STREAMING_SYNTHESIS_PREFIX,
+    STREAMING_SYNTHESIS_RECORD,
+    STREAMING_SYNTHESIS_SHARD,
     TIMING_RAMP_CONCURRENCY,
     TIMING_RAMP_POISSON,
     TIMING_RAMP_PREFILL_CONCURRENCY,
