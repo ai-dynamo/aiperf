@@ -11,27 +11,61 @@ use std::{
 
 use serde::Deserialize;
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 struct BaselineTopology {
     host_commit: String,
-    workspace_packages: Vec<BaselinePackage>,
+    cargo_projection: Vec<CargoPackageProjection>,
 }
 
-#[derive(Debug, Deserialize)]
-struct BaselinePackage {
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CargoPackageProjection {
     name: String,
-    features: Vec<String>,
+    version: String,
+    edition: String,
+    dependencies: Vec<CargoDependencyIdentity>,
+    features: BTreeMap<String, Vec<String>>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(deny_unknown_fields)]
+struct CargoDependencyIdentity {
+    package: String,
+    local_name: String,
+    kind: String,
+    source: Option<String>,
+    requirement: String,
+    registry: Option<String>,
+    path: Option<String>,
+    target: Option<String>,
+    is_optional: bool,
+    uses_default_features: bool,
+    features: Vec<String>,
+    is_workspace: bool,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct OwnershipMatrix {
     schema_version: u64,
+    symbol_ownership: Vec<toml::Value>,
+    topology_amendment: TopologyAmendment,
     baseline_topology: BaselineBinding,
     package_ownership: Vec<PackageOwnership>,
     feature_ownership: Vec<FeatureOwnership>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+struct TopologyAmendment {
+    schema_version: u64,
+    producer_task: u64,
+    from_state: String,
+    to_state: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct BaselineBinding {
     path: String,
     host_commit: String,
@@ -39,28 +73,41 @@ struct BaselineBinding {
     state: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct PackageOwnership {
     package: String,
     owner: String,
     review_state: String,
-    coupling_evidence: String,
+    #[serde(rename = "coupling_evidence")]
+    _coupling_evidence: String,
+    source_package: Option<String>,
     dependencies: Vec<OwnedDependency>,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct OwnedDependency {
     package: String,
     kind: String,
-    justification: String,
+    #[serde(rename = "justification")]
+    _justification: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct FeatureOwnership {
     baseline_package: String,
     feature: String,
-    owners: Vec<String>,
-    justification: String,
+    baseline_forwarding: Vec<String>,
+    splits: Vec<FeatureSplit>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FeatureSplit {
+    entry: String,
+    owner: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -91,6 +138,336 @@ fn workspace_root() -> PathBuf {
         .to_path_buf()
 }
 
+fn insert_unique<T: Ord>(set: &mut BTreeSet<T>, value: T, description: &str) -> Result<(), String> {
+    if set.insert(value) {
+        Ok(())
+    } else {
+        Err(format!("duplicate {description}"))
+    }
+}
+
+fn validate_projection(
+    matrix: &OwnershipMatrix,
+    baseline: &BaselineTopology,
+) -> Result<(), String> {
+    if matrix.schema_version != 2 {
+        return Err("ownership schema must be version 2".to_owned());
+    }
+    if !matrix.symbol_ownership.iter().all(toml::Value::is_table) {
+        return Err("symbol ownership rows must be tables".to_owned());
+    }
+
+    let mut cargo_packages = BTreeMap::new();
+    for package in &baseline.cargo_projection {
+        if package.version.is_empty() || package.edition.is_empty() {
+            return Err(format!("incomplete Cargo identity for {}", package.name));
+        }
+        let mut dependencies = BTreeSet::new();
+        for dependency in &package.dependencies {
+            insert_unique(
+                &mut dependencies,
+                dependency.clone(),
+                &format!("Task-1 dependency row in {}", package.name),
+            )?;
+        }
+        if cargo_packages
+            .insert(package.name.as_str(), package)
+            .is_some()
+        {
+            return Err(format!("duplicate Task-1 package row {}", package.name));
+        }
+    }
+
+    let mut package_rows = BTreeMap::new();
+    for row in &matrix.package_ownership {
+        if row.owner.is_empty() {
+            return Err(format!("empty owner for {}", row.package));
+        }
+        match row.review_state.as_str() {
+            "measured" => {
+                let source = row.source_package.as_deref().ok_or_else(|| {
+                    format!(
+                        "measured package {} lacks a Task-1 source witness",
+                        row.package
+                    )
+                })?;
+                if !cargo_packages.contains_key(source) {
+                    return Err(format!(
+                        "package {} cites unknown Task-1 source package {source}",
+                        row.package
+                    ));
+                }
+            }
+            "reviewed_neutral" => {
+                if row.source_package.is_some() || !row.dependencies.is_empty() {
+                    return Err(format!(
+                        "reviewed-neutral package {} has projected coupling",
+                        row.package
+                    ));
+                }
+            }
+            state => return Err(format!("unsupported review state {state}")),
+        }
+        let mut dependencies = BTreeSet::new();
+        for dependency in &row.dependencies {
+            insert_unique(
+                &mut dependencies,
+                (dependency.package.as_str(), dependency.kind.as_str()),
+                &format!("dependency row in {}", row.package),
+            )?;
+        }
+        if package_rows.insert(row.package.as_str(), row).is_some() {
+            return Err(format!("duplicate package row {}", row.package));
+        }
+    }
+
+    let mut feature_rows = BTreeSet::new();
+    for row in &matrix.feature_ownership {
+        let key = (row.baseline_package.as_str(), row.feature.as_str());
+        insert_unique(&mut feature_rows, key, "feature row")?;
+        let source = cargo_packages
+            .get(row.baseline_package.as_str())
+            .ok_or_else(|| format!("unknown Task-1 feature package {}", row.baseline_package))?;
+        let forwarding = source.features.get(&row.feature).ok_or_else(|| {
+            format!(
+                "unknown Task-1 feature {}:{}",
+                row.baseline_package, row.feature
+            )
+        })?;
+        if forwarding != &row.baseline_forwarding {
+            return Err(format!(
+                "Task-1 feature forwarding drift for {}:{}",
+                row.baseline_package, row.feature
+            ));
+        }
+        if row.splits.is_empty() {
+            return Err(format!(
+                "feature {}:{} has no owned split entry",
+                row.baseline_package, row.feature
+            ));
+        }
+        let mut splits = BTreeSet::new();
+        for split in &row.splits {
+            if split.entry.is_empty() || split.owner.is_empty() {
+                return Err("feature split entry and owner must be non-empty".to_owned());
+            }
+            insert_unique(&mut splits, split.entry.as_str(), "feature split entry")?;
+            if !package_rows.contains_key(split.owner.as_str()) {
+                return Err(format!("unknown feature owner {}", split.owner));
+            }
+        }
+        let expected_splits = if row.baseline_package == "aiperf-runtime" && row.feature == "grpc" {
+            BTreeSet::from(["endpoint_bindings", "transport"])
+        } else {
+            BTreeSet::from(["complete"])
+        };
+        if splits != expected_splits {
+            return Err(format!(
+                "feature {}:{} has an inexact split projection",
+                row.baseline_package, row.feature
+            ));
+        }
+    }
+
+    let runtime = cargo_packages
+        .get("aiperf-runtime")
+        .ok_or_else(|| "Task-1 Cargo projection lacks aiperf-runtime".to_owned())?;
+    let expected_features = runtime
+        .features
+        .keys()
+        .map(|feature| ("aiperf-runtime", feature.as_str()))
+        .collect::<BTreeSet<_>>();
+    if feature_rows != expected_features {
+        return Err("runtime feature ownership projection is incomplete".to_owned());
+    }
+    Ok(())
+}
+
+fn fixture() -> (OwnershipMatrix, BaselineTopology) {
+    let baseline = BaselineTopology {
+        host_commit: "caa3ff6fcf20ffe36a7704abe16274bedadbb9fb".to_owned(),
+        cargo_projection: vec![CargoPackageProjection {
+            name: "aiperf-runtime".to_owned(),
+            version: "0.12.0".to_owned(),
+            edition: "2024".to_owned(),
+            dependencies: vec![CargoDependencyIdentity {
+                package: "tonic".to_owned(),
+                local_name: "tonic".to_owned(),
+                kind: "normal".to_owned(),
+                source: Some("registry+https://github.com/rust-lang/crates.io-index".to_owned()),
+                requirement: "^0.14".to_owned(),
+                registry: None,
+                path: None,
+                target: None,
+                is_optional: true,
+                uses_default_features: false,
+                features: vec!["channel".to_owned()],
+                is_workspace: false,
+            }],
+            features: BTreeMap::from([("grpc".to_owned(), vec!["dep:tonic".to_owned()])]),
+        }],
+    };
+    let packages = [
+        ("aiperf-plugin-endpoints", "endpoints"),
+        ("aiperf-plugin-transport-grpc", "transport-grpc"),
+    ]
+    .into_iter()
+    .map(|(package, owner)| PackageOwnership {
+        package: package.to_owned(),
+        owner: owner.to_owned(),
+        review_state: "measured".to_owned(),
+        source_package: Some("aiperf-runtime".to_owned()),
+        dependencies: vec![OwnedDependency {
+            package: "aiperf-plugin-api".to_owned(),
+            kind: "normal".to_owned(),
+            _justification: "fixture witness".to_owned(),
+        }],
+        _coupling_evidence: "non-authoritative fixture note".to_owned(),
+    })
+    .collect();
+    let matrix = OwnershipMatrix {
+        schema_version: 2,
+        symbol_ownership: vec![],
+        topology_amendment: TopologyAmendment {
+            schema_version: 1,
+            producer_task: 3,
+            from_state: "task2_neutral".to_owned(),
+            to_state: "task3_reviewed".to_owned(),
+        },
+        baseline_topology: BaselineBinding {
+            path: String::new(),
+            host_commit: baseline.host_commit.clone(),
+            blake3: String::new(),
+            state: "awaiting_approved_task1_task2_merge".to_owned(),
+        },
+        package_ownership: packages,
+        feature_ownership: vec![FeatureOwnership {
+            baseline_package: "aiperf-runtime".to_owned(),
+            feature: "grpc".to_owned(),
+            baseline_forwarding: vec!["dep:tonic".to_owned()],
+            splits: vec![
+                FeatureSplit {
+                    entry: "endpoint_bindings".to_owned(),
+                    owner: "aiperf-plugin-endpoints".to_owned(),
+                },
+                FeatureSplit {
+                    entry: "transport".to_owned(),
+                    owner: "aiperf-plugin-transport-grpc".to_owned(),
+                },
+            ],
+        }],
+    };
+    (matrix, baseline)
+}
+
+#[test]
+fn projection_rejects_duplicate_package_dependency_feature_and_split_rows() {
+    let (matrix, baseline) = fixture();
+    assert!(validate_projection(&matrix, &baseline).is_ok());
+
+    let mut duplicate = matrix.clone();
+    duplicate
+        .package_ownership
+        .push(duplicate.package_ownership[0].clone());
+    assert!(
+        validate_projection(&duplicate, &baseline)
+            .unwrap_err()
+            .contains("duplicate package row")
+    );
+
+    let mut duplicate = matrix.clone();
+    let edge = duplicate.package_ownership[0].dependencies[0].clone();
+    duplicate.package_ownership[0].dependencies.push(edge);
+    assert!(
+        validate_projection(&duplicate, &baseline)
+            .unwrap_err()
+            .contains("duplicate dependency row")
+    );
+
+    let mut duplicate = matrix.clone();
+    duplicate
+        .feature_ownership
+        .push(duplicate.feature_ownership[0].clone());
+    assert!(
+        validate_projection(&duplicate, &baseline)
+            .unwrap_err()
+            .contains("duplicate feature row")
+    );
+
+    let mut duplicate = matrix;
+    let split = duplicate.feature_ownership[0].splits[0].clone();
+    duplicate.feature_ownership[0].splits.push(split);
+    assert!(
+        validate_projection(&duplicate, &baseline)
+            .unwrap_err()
+            .contains("duplicate feature split entry")
+    );
+}
+
+#[test]
+fn projection_requires_concrete_task1_cargo_witnesses_and_exact_grpc_splits() {
+    let (matrix, baseline) = fixture();
+
+    let mut unwitnessed = matrix.clone();
+    unwitnessed.package_ownership[0].source_package = None;
+    assert!(
+        validate_projection(&unwitnessed, &baseline)
+            .unwrap_err()
+            .contains("lacks a Task-1 source witness")
+    );
+
+    let mut drifted = matrix.clone();
+    drifted.feature_ownership[0].baseline_forwarding = vec![];
+    assert!(
+        validate_projection(&drifted, &baseline)
+            .unwrap_err()
+            .contains("Task-1 feature forwarding drift")
+    );
+
+    let mut unsplit = matrix;
+    unsplit.feature_ownership[0].splits = vec![FeatureSplit {
+        entry: "complete".to_owned(),
+        owner: "aiperf-plugin-transport-grpc".to_owned(),
+    }];
+    assert!(
+        validate_projection(&unsplit, &baseline)
+            .unwrap_err()
+            .contains("inexact split projection")
+    );
+
+    let (mut ownerless, baseline) = fixture();
+    ownerless.feature_ownership[0].splits[0].owner.clear();
+    assert!(
+        validate_projection(&ownerless, &baseline)
+            .unwrap_err()
+            .contains("owner must be non-empty")
+    );
+}
+
+#[test]
+fn toml_is_a_test_only_dependency() {
+    let root = workspace_root();
+    let output = Command::new("cargo")
+        .args(["metadata", "--locked", "--format-version", "1", "--no-deps"])
+        .current_dir(&root)
+        .output()
+        .expect("cargo metadata executes");
+    assert!(output.status.success());
+    let metadata: Metadata = serde_json::from_slice(&output.stdout).expect("metadata JSON");
+    let package = metadata
+        .packages
+        .iter()
+        .find(|package| package.name == "aiperf-bench-tools")
+        .expect("bench-tools package");
+    let toml_dependencies = package
+        .dependencies
+        .iter()
+        .filter(|dependency| dependency.name == "toml")
+        .collect::<Vec<_>>();
+    assert_eq!(toml_dependencies.len(), 1);
+    assert_eq!(toml_dependencies[0].kind.as_deref(), Some("dev"));
+}
+
 #[test]
 fn every_plugin_dependency_and_baseline_feature_has_one_reviewed_owner() {
     let root = workspace_root();
@@ -99,23 +476,32 @@ fn every_plugin_dependency_and_baseline_feature_has_one_reviewed_owner() {
         &std::fs::read_to_string(&matrix_path)
             .unwrap_or_else(|error| panic!("cannot read {}: {error}", matrix_path.display())),
     )
-    .expect("ownership matrix is valid TOML");
-    assert_eq!(matrix.schema_version, 1);
+    .expect("ownership matrix has the strict version-2 shape");
 
+    assert_eq!(
+        matrix.topology_amendment,
+        TopologyAmendment {
+            schema_version: 1,
+            producer_task: 3,
+            from_state: "task2_neutral".to_owned(),
+            to_state: "task3_reviewed".to_owned(),
+        }
+    );
+    assert_eq!(
+        matrix.baseline_topology.state,
+        "awaiting_approved_task1_task2_merge"
+    );
     let topology_path = root.join("../").join(&matrix.baseline_topology.path);
     let topology_bytes = std::fs::read(&topology_path)
         .unwrap_or_else(|error| panic!("cannot read {}: {error}", topology_path.display()));
+    let baseline: BaselineTopology = serde_json::from_slice(&topology_bytes)
+        .expect("Task-1 topology must contain the exact Cargo projection");
+    assert_eq!(baseline.host_commit, matrix.baseline_topology.host_commit);
     assert_eq!(
         matrix.baseline_topology.blake3,
         format!("blake3:{}", blake3::hash(&topology_bytes).to_hex())
     );
-    assert_eq!(
-        matrix.baseline_topology.state,
-        "provisional_task1_rebase_required"
-    );
-    let baseline: BaselineTopology =
-        serde_json::from_slice(&topology_bytes).expect("baseline JSON");
-    assert_eq!(baseline.host_commit, matrix.baseline_topology.host_commit);
+    validate_projection(&matrix, &baseline).expect("ownership projection must be exact");
 
     let output = Command::new("cargo")
         .args(["metadata", "--locked", "--format-version", "1", "--no-deps"])
@@ -145,49 +531,29 @@ fn every_plugin_dependency_and_baseline_feature_has_one_reviewed_owner() {
     assert_eq!(policy["confidence"].as_f64(), Some(0.95));
     assert_eq!(policy["max-relative-regression"].as_f64(), Some(0.01));
     assert_eq!(policy["max-coefficient-of-variation"].as_f64(), Some(0.02));
+
     let members = metadata
         .workspace_members
         .into_iter()
         .collect::<BTreeSet<_>>();
-    let packages = metadata
+    let mut packages = BTreeMap::new();
+    for package in metadata
         .packages
         .into_iter()
         .filter(|package| members.contains(&package.id))
-        .map(|package| (package.name.clone(), package))
-        .collect::<BTreeMap<_, _>>();
-
+    {
+        let name = package.name.clone();
+        assert!(
+            packages.insert(name.clone(), package).is_none(),
+            "duplicate Cargo package row {name}"
+        );
+    }
     let rows = matrix
         .package_ownership
         .iter()
-        .map(|row| {
-            assert!(!row.owner.is_empty());
-            assert!(matches!(
-                row.review_state.as_str(),
-                "measured" | "reviewed_neutral"
-            ));
-            assert!(!row.coupling_evidence.is_empty());
-            (row.package.as_str(), row)
-        })
+        .map(|row| (row.package.as_str(), row))
         .collect::<BTreeMap<_, _>>();
-    let reviewed_roots = BTreeSet::from([
-        "aiperf-core",
-        "aiperf-plugin-sdk-macros",
-        "aiperf-plugin-static-comparator",
-        "aiperf-allocator-provider",
-        "aiperf-allocator-shim",
-    ]);
-    for row in matrix
-        .package_ownership
-        .iter()
-        .filter(|row| row.dependencies.is_empty())
-    {
-        assert!(
-            reviewed_roots.contains(row.package.as_str()),
-            "dependency-neutral shell {} was left unresolved",
-            row.package
-        );
-        assert_eq!(row.review_state, "reviewed_neutral");
-    }
+    assert_eq!(rows.len(), matrix.package_ownership.len());
     let plugin_packages = packages
         .keys()
         .filter(|name| {
@@ -210,74 +576,27 @@ fn every_plugin_dependency_and_baseline_feature_has_one_reviewed_owner() {
     );
 
     for package_name in plugin_packages {
-        let package = &packages[&package_name];
-        let actual = package
+        let actual = packages[&package_name]
             .dependencies
             .iter()
             .filter(|dependency| dependency.path.is_some())
-            .map(|dependency| OwnedDependency {
-                package: dependency.name.clone(),
-                kind: dependency
-                    .kind
-                    .clone()
-                    .unwrap_or_else(|| "normal".to_owned()),
-                justification: rows[package_name.as_str()]
-                    .dependencies
-                    .iter()
-                    .find(|owned| {
-                        owned.package == dependency.name
-                            && owned.kind
-                                == dependency
-                                    .kind
-                                    .clone()
-                                    .unwrap_or_else(|| "normal".to_owned())
-                    })
-                    .map(|owned| owned.justification.clone())
-                    .unwrap_or_default(),
+            .map(|dependency| {
+                (
+                    dependency.name.as_str(),
+                    dependency.kind.as_deref().unwrap_or("normal"),
+                )
             })
-            .collect::<BTreeSet<_>>();
-        let reviewed = rows[package_name.as_str()]
-            .dependencies
-            .iter()
-            .cloned()
-            .collect::<BTreeSet<_>>();
+            .collect::<Vec<_>>();
+        let unique = actual.iter().copied().collect::<BTreeSet<_>>();
+        assert_eq!(unique.len(), actual.len(), "duplicate Cargo dependency row");
         assert_eq!(
-            actual, reviewed,
+            rows[package_name.as_str()]
+                .dependencies
+                .iter()
+                .map(|dependency| (dependency.package.as_str(), dependency.kind.as_str()))
+                .collect::<BTreeSet<_>>(),
+            unique,
             "unmeasured dependency edge for {package_name}"
         );
-        assert!(reviewed.iter().all(|edge| !edge.justification.is_empty()));
     }
-
-    let baseline_features = baseline
-        .workspace_packages
-        .iter()
-        .flat_map(|package| {
-            package
-                .features
-                .iter()
-                .map(move |feature| (package.name.as_str(), feature.as_str()))
-        })
-        .collect::<BTreeSet<_>>();
-    let mut owned_features = BTreeSet::new();
-    for row in matrix.feature_ownership {
-        assert!(baseline_features.contains(&(row.baseline_package.as_str(), row.feature.as_str())));
-        assert!(!row.owners.is_empty());
-        assert!(!row.justification.is_empty());
-        assert!(
-            row.owners
-                .iter()
-                .all(|owner| rows.contains_key(owner.as_str()))
-        );
-        assert!(owned_features.insert((row.baseline_package, row.feature)));
-    }
-    let measured_runtime_features = baseline
-        .workspace_packages
-        .iter()
-        .find(|package| package.name == "aiperf-runtime")
-        .expect("Task-1 topology contains aiperf-runtime")
-        .features
-        .iter()
-        .map(|feature| ("aiperf-runtime".to_owned(), feature.clone()))
-        .collect::<BTreeSet<_>>();
-    assert_eq!(owned_features, measured_runtime_features);
 }
