@@ -243,31 +243,32 @@ mod tests {
 
     #[test]
     fn each_stat_shape_flattens_to_its_own_columns() {
-        let scalar = flatten_stats(&serde_json::json!({ "value": 3.0 })).expect("scalar");
+        let scalar_stats = serde_json::json!({ "value": 3.0 });
+        let scalar = flatten_stats(&scalar_stats).expect("scalar");
         assert!(scalar.single_value);
         assert_eq!(scalar.avg, Some(&serde_json::json!(3.0)));
         assert!(scalar.percentiles.is_empty());
 
-        let counter = flatten_stats(&serde_json::json!({ "total": 7.0, "rate": 1.0 }))
-            .expect("counter");
+        let counter_stats = serde_json::json!({ "total": 7.0, "rate": 1.0 });
+        let counter = flatten_stats(&counter_stats).expect("counter");
         assert!(counter.single_value);
         assert_eq!(counter.avg, Some(&serde_json::json!(7.0)));
 
-        let distribution = flatten_stats(&serde_json::json!({
+        let distribution_stats = serde_json::json!({
             "count": 4, "avg": 1.0, "min": 0.5, "max": 2.0, "std": 0.25,
             "percentiles": { "p99": 1.9 }
-        }))
-        .expect("distribution");
+        });
+        let distribution = flatten_stats(&distribution_stats).expect("distribution");
         assert!(!distribution.single_value);
         assert_eq!(distribution.count, Some(4));
         assert_eq!(distribution.max, Some(&serde_json::json!(2.0)));
         assert_eq!(distribution.sum, None);
         assert_eq!(distribution.percentiles.len(), 1);
 
-        let histogram = flatten_stats(&serde_json::json!({
+        let histogram_stats = serde_json::json!({
             "count": 2, "sum": 6.0, "avg": 3.0, "percentiles": {}, "buckets": { "1": 1 }
-        }))
-        .expect("histogram");
+        });
+        let histogram = flatten_stats(&histogram_stats).expect("histogram");
         assert_eq!(histogram.sum, Some(&serde_json::json!(6.0)));
         assert_eq!(histogram.min, None);
     }

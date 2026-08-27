@@ -108,7 +108,11 @@ mod tests {
     use super::*;
 
     fn identifier() -> RegistryId {
-        RegistryId::new("closure-exporter").expect("valid identifier")
+        RegistryId::new(
+            "closure-exporter",
+            aiperf_plugin_api::REGISTRY_ID_NORMALIZATION_VERSION,
+        )
+        .expect("valid identifier")
     }
 
     #[test]
