@@ -1,0 +1,281 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Four-target allocator conformance for the shared provider topology.
+#
+# Validates that the provider cdylib exports the exact `mi_*` boundary symbols,
+# that fixture host and plugin binaries import them dynamically without an
+# AIPerf wrapper, and that the shared-instance check passes on all four
+# production targets before the `aiperf` CLI cutover is authorized.
+#
+# Each job uploads:
+#   - The provider cdylib binary and its `nm` export map.
+#   - The fixture host binary and its `nm` import map.
+#   - The runtime `mi_version` and `mi_subproc_main` receipt from the host.
+#
+# All four job IDs and artifact digests are mandatory tracker evidence for
+# the Task-7 allocator authority table before the production cutover commit.
+
+name: rust-plugin-allocator
+
+on:
+  push:
+    branches:
+      - "ajc/native-rust-runtime-plugins"
+      - "ajc/native-plugin-task*"
+    paths:
+      - "rust/allocator-provider/**"
+      - "rust/allocator-shim/**"
+      - "rust/plugin-conformance/tests/allocator.rs"
+      - "rust/plugin-conformance/fixtures/allocator-candidate-*/**"
+      - ".github/workflows/rust-plugin-allocator.yml"
+  pull_request:
+    paths:
+      - "rust/allocator-provider/**"
+      - "rust/allocator-shim/**"
+      - "rust/plugin-conformance/tests/allocator.rs"
+      - "rust/plugin-conformance/fixtures/allocator-candidate-*/**"
+      - ".github/workflows/rust-plugin-allocator.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  # ── Linux x86_64 ───────────────────────────────────────────────────────────
+  linux-x86_64:
+    name: "allocator / Linux x86_64"
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/target
+          key: allocator-linux-x86_64-${{ hashFiles('rust/Cargo.lock') }}
+          restore-keys: allocator-linux-x86_64-
+
+      - name: Build provider cdylib
+        working-directory: rust
+        run: cargo build -p aiperf-allocator-provider
+
+      - name: Build shim (rlib)
+        working-directory: rust
+        run: cargo build -p aiperf-allocator-shim
+
+      - name: Run allocator conformance suite
+        working-directory: rust
+        run: cargo test -p aiperf-plugin-conformance --test allocator -- --nocapture
+
+      - name: Capture provider export map
+        working-directory: rust
+        run: |
+          nm -D --defined-only target/debug/libaiperf_alloc_v1.so \
+            | grep -E "^[0-9a-f]+ [A-Za-z] mi_" \
+            | tee /tmp/provider-exports.txt
+
+      - name: Capture fixture host import map
+        working-directory: rust
+        run: |
+          nm -D --undefined-only target/debug/allocator-candidate-host \
+            | grep mi_ \
+            | tee /tmp/host-imports.txt
+
+      - name: Capture runtime receipts
+        working-directory: rust
+        run: |
+          LD_LIBRARY_PATH=target/debug \
+            target/debug/allocator-candidate-host \
+            target/debug/liballocator_candidate_plugin.so \
+            2>&1 | tee /tmp/runtime-receipt.txt
+
+      - name: Upload conformance artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: allocator-linux-x86_64
+          path: |
+            /tmp/provider-exports.txt
+            /tmp/host-imports.txt
+            /tmp/runtime-receipt.txt
+
+  # ── macOS ARM64 ────────────────────────────────────────────────────────────
+  macos-arm64:
+    name: "allocator / macOS ARM64"
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/target
+          key: allocator-macos-arm64-${{ hashFiles('rust/Cargo.lock') }}
+          restore-keys: allocator-macos-arm64-
+
+      - name: Build provider cdylib
+        working-directory: rust
+        run: cargo build -p aiperf-allocator-provider
+
+      - name: Build shim (rlib)
+        working-directory: rust
+        run: cargo build -p aiperf-allocator-shim
+
+      - name: Run allocator conformance suite
+        working-directory: rust
+        run: cargo test -p aiperf-plugin-conformance --test allocator -- --nocapture
+
+      - name: Capture provider export map
+        working-directory: rust
+        run: |
+          nm -gU target/debug/libaiperf_alloc_v1.dylib \
+            | grep " mi_" \
+            | tee /tmp/provider-exports.txt
+
+      - name: Capture fixture host import map
+        working-directory: rust
+        run: |
+          nm -u target/debug/allocator-candidate-host \
+            | grep mi_ \
+            | tee /tmp/host-imports.txt
+
+      - name: Capture runtime receipts
+        working-directory: rust
+        run: |
+          DYLD_LIBRARY_PATH=target/debug \
+            target/debug/allocator-candidate-host \
+            target/debug/liballocator_candidate_plugin.dylib \
+            2>&1 | tee /tmp/runtime-receipt.txt
+
+      - name: Upload conformance artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: allocator-macos-arm64
+          path: |
+            /tmp/provider-exports.txt
+            /tmp/host-imports.txt
+            /tmp/runtime-receipt.txt
+
+  # ── Windows x86_64 ────────────────────────────────────────────────────────
+  windows-x86_64:
+    name: "allocator / Windows x86_64"
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/target
+          key: allocator-windows-x86_64-${{ hashFiles('rust/Cargo.lock') }}
+          restore-keys: allocator-windows-x86_64-
+
+      - name: Build provider cdylib
+        working-directory: rust
+        run: cargo build -p aiperf-allocator-provider
+
+      - name: Build shim (rlib)
+        working-directory: rust
+        run: cargo build -p aiperf-allocator-shim
+
+      - name: Run allocator conformance suite
+        working-directory: rust
+        run: cargo test -p aiperf-plugin-conformance --test allocator -- --nocapture
+
+      - name: Capture provider export map (dumpbin)
+        shell: pwsh
+        working-directory: rust
+        run: |
+          dumpbin /EXPORTS target/debug/aiperf_alloc_v1.dll `
+            | Select-String "mi_" `
+            | Out-File /tmp/provider-exports.txt
+
+      - name: Capture runtime receipts
+        shell: pwsh
+        working-directory: rust
+        run: |
+          $env:PATH = "$(Resolve-Path target/debug);$env:PATH"
+          .\target\debug\allocator-candidate-host.exe `
+            .\target\debug\allocator_candidate_plugin.dll `
+            2>&1 | Out-File /tmp/runtime-receipt.txt
+
+      - name: Upload conformance artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: allocator-windows-x86_64
+          path: |
+            /tmp/provider-exports.txt
+            /tmp/runtime-receipt.txt
+
+  # ── Windows ARM64 ─────────────────────────────────────────────────────────
+  windows-arm64:
+    name: "allocator / Windows ARM64"
+    runs-on: windows-11-arm
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-pc-windows-msvc
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/target
+          key: allocator-windows-arm64-${{ hashFiles('rust/Cargo.lock') }}
+          restore-keys: allocator-windows-arm64-
+
+      - name: Build provider cdylib
+        working-directory: rust
+        run: cargo build -p aiperf-allocator-provider
+
+      - name: Build shim (rlib)
+        working-directory: rust
+        run: cargo build -p aiperf-allocator-shim
+
+      - name: Run allocator conformance suite
+        working-directory: rust
+        run: cargo test -p aiperf-plugin-conformance --test allocator -- --nocapture
+
+      - name: Capture runtime receipts
+        shell: pwsh
+        working-directory: rust
+        run: |
+          $env:PATH = "$(Resolve-Path target/debug);$env:PATH"
+          .\target\debug\allocator-candidate-host.exe `
+            .\target\debug\allocator_candidate_plugin.dll `
+            2>&1 | Out-File /tmp/runtime-receipt.txt
+
+      - name: Upload conformance artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: allocator-windows-arm64
+          path: |
+            /tmp/runtime-receipt.txt

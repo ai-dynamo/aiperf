@@ -1,0 +1,17 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "allocator-candidate-plugin"
+version = "0.1.0"
+edition = "2024"
+publish = false
+build = "build.rs"
+
+[lib]
+name = "allocator_candidate_plugin"
+crate-type = ["cdylib"]
+
+[dependencies]
+# The shim provides the GlobalAlloc impl; mi_* resolved from provider cdylib.
+aiperf-allocator-shim = { path = "../../../allocator-shim" }

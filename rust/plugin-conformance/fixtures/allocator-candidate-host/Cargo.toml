@@ -1,0 +1,22 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "allocator-candidate-host"
+version = "0.1.0"
+edition = "2024"
+publish = false
+build = "build.rs"
+
+[[bin]]
+name = "allocator-candidate-host"
+path = "src/main.rs"
+
+[dependencies]
+# The shim provides the GlobalAlloc impl; its mi_* extern "C" symbols are
+# resolved at link time from the provider cdylib (via the build.rs below).
+aiperf-allocator-shim = { path = "../../../allocator-shim" }
+libloading = "0.8"
+
+[build-dependencies]
+# cc is unused but included so the build.rs compiles without extra setup.

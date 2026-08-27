@@ -6,6 +6,7 @@ name = "aiperf-plugin-conformance"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+build = "build.rs"
 
 [dependencies]
 aiperf-core.workspace = true
@@ -15,3 +16,12 @@ aiperf-plugin-api.workspace = true
 aiperf-plugin-host.workspace = true
 aiperf-plugin-sdk.workspace = true
 aiperf-transport-sdk.workspace = true
+
+[dev-dependencies]
+# Task-7 allocator conformance tests need the provider (rlib) to satisfy
+# the shim's extern "C" mi_* references at test-binary link time, and the
+# shim itself to verify the GlobalAlloc implementation compiles correctly.
+aiperf-allocator-provider = { path = "../allocator-provider" }
+aiperf-allocator-shim = { path = "../allocator-shim" }
+serde_json.workspace = true
+tempfile.workspace = true

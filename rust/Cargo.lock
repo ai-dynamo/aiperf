@@ -49,6 +49,10 @@ dependencies = [
 [[package]]
 name = "aiperf-allocator-provider"
 version = "0.12.0"
+dependencies = [
+ "cc",
+ "libmimalloc-sys",
+]
 
 [[package]]
 name = "aiperf-allocator-shim"
@@ -263,6 +267,8 @@ dependencies = [
 name = "aiperf-plugin-conformance"
 version = "0.12.0"
 dependencies = [
+ "aiperf-allocator-provider",
+ "aiperf-allocator-shim",
  "aiperf-core",
  "aiperf-endpoint-sdk",
  "aiperf-export-sdk",
@@ -270,6 +276,8 @@ dependencies = [
  "aiperf-plugin-host",
  "aiperf-plugin-sdk",
  "aiperf-transport-sdk",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]

@@ -1,6 +1,117 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Placeholder build script for the allocator-provider package identity.
+//! Build script for the allocator provider.
+//!
+//! When building the cdylib, exports the required `mi_*` symbols from the
+//! statically linked mimalloc so that host and plugin processes share one
+//! allocator instance through the provider shared library.
 
-fn main() {}
+use std::env;
+use std::io::Write;
+use std::path::PathBuf;
+
+/// Symbols that must be exported from the provider cdylib.
+///
+/// These are the symbols that `aiperf-allocator-shim` imports directly.
+/// The list is the canonical boundary: add here only, never remove.
+const EXPORTED_SYMBOLS: &[&str] = &[
+    "mi_malloc",
+    "mi_zalloc",
+    "mi_malloc_aligned",
+    "mi_zalloc_aligned",
+    "mi_realloc",
+    "mi_realloc_aligned",
+    "mi_free",
+    "mi_free_size",
+    "mi_free_aligned",
+    "mi_free_size_aligned",
+    "mi_subproc_main",
+    "mi_version",
+    "mi_malloc_size",
+    "mi_malloc_good_size",
+    "mi_malloc_usable_size",
+];
+
+fn main() {
+    let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap();
+
+    match target_os.as_str() {
+        "linux" | "android" => export_linux(),
+        "macos" | "ios" => export_macos(),
+        "windows" => export_windows(),
+        other => {
+            println!("cargo:warning=aiperf-allocator-provider: unknown target_os={other}; skipping symbol export");
+        }
+    }
+
+    // Emit the cdylib filename pattern so that conformance tests can locate
+    // the built artifact without hard-coding platform-specific names.
+    let cdylib_name = cdylib_filename(&target_os);
+    println!("cargo:CDYLIB_NAME={cdylib_name}");
+
+    // Propagate the mimalloc include directory for any C bridge consumers.
+    if let Ok(include) = env::var("DEP_MIMALLOC_INCLUDE_DIR") {
+        println!("cargo:MIMALLOC_INCLUDE_DIR={include}");
+    }
+}
+
+fn export_linux() {
+    // Write a version script that exports exactly the required symbols and
+    // hides everything else.  This gives the cdylib a minimal, stable ABI.
+    let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
+    let script_path = out_dir.join("aiperf_alloc_v1.map");
+    let mut script = std::fs::File::create(&script_path).unwrap();
+
+    writeln!(script, "AIPERF_ALLOC_V1 {{").unwrap();
+    writeln!(script, "    global:").unwrap();
+    for sym in EXPORTED_SYMBOLS {
+        writeln!(script, "        {sym};").unwrap();
+    }
+    writeln!(script, "    local: *;").unwrap();
+    writeln!(script, "}};").unwrap();
+
+    println!(
+        "cargo:rustc-link-arg=-Wl,--version-script={}",
+        script_path.display()
+    );
+}
+
+fn export_macos() {
+    // On macOS, write an exported symbols list and pass it to the linker.
+    let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
+    let list_path = out_dir.join("aiperf_alloc_v1.exp");
+    let mut list = std::fs::File::create(&list_path).unwrap();
+
+    for sym in EXPORTED_SYMBOLS {
+        // macOS exported symbols lists use a leading underscore.
+        writeln!(list, "_{sym}").unwrap();
+    }
+
+    println!(
+        "cargo:rustc-link-arg=-Wl,-exported_symbols_list,{}",
+        list_path.display()
+    );
+}
+
+fn export_windows() {
+    // On Windows, write a module-definition file listing all exports.
+    let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
+    let def_path = out_dir.join("aiperf_alloc_v1.def");
+    let mut def = std::fs::File::create(&def_path).unwrap();
+
+    writeln!(def, "EXPORTS").unwrap();
+    for sym in EXPORTED_SYMBOLS {
+        writeln!(def, "    {sym}").unwrap();
+    }
+
+    println!("cargo:rustc-link-arg=/DEF:{}", def_path.display());
+}
+
+fn cdylib_filename(target_os: &str) -> String {
+    match target_os {
+        "windows" => "aiperf_alloc_v1.dll".to_string(),
+        "macos" | "ios" => "libaiperf_alloc_v1.dylib".to_string(),
+        _ => "libaiperf_alloc_v1.so".to_string(),
+    }
+}

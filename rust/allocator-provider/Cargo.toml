@@ -7,3 +7,14 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 build = "build.rs"
+
+# cdylib: the shared provider binary loaded by host and plugin processes.
+# rlib: makes the static mimalloc available for workspace-internal test linking.
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+libmimalloc-sys.workspace = true
+
+[build-dependencies]
+cc = "1"
