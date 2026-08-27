@@ -1,7 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Contract for the reviewed native-plugin package and feature projection.
+//! Contract for the reviewed native-plugin package and feature projection, and
+//! for the per-task implemented-topology witnesses that make it real.
+//!
+//! The projection half binds Task 3's reviewed ownership matrix to the exact
+//! Task-1 Cargo census. The witness half is not projection: it derives each
+//! finalizing task's package set, Rust source census, local dependency edges,
+//! and feature map from the live workspace and rejects any drift.
 
 use std::{
     collections::{BTreeMap, BTreeSet},
