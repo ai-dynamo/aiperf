@@ -1210,7 +1210,7 @@ fn child_terminal_status(status: std::process::ExitStatus) -> ChildTerminalStatu
     {
         use std::os::unix::process::ExitStatusExt as _;
 
-        return ChildTerminalStatus::Signaled(status.signal().unwrap_or_default());
+        ChildTerminalStatus::Signaled(status.signal().unwrap_or_default())
     }
     #[cfg(not(unix))]
     ChildTerminalStatus::Exited(-1)
@@ -1226,9 +1226,9 @@ fn kill_process_group(pid: libc::pid_t) -> Result<(), ControlledRuntimeError> {
         if error.raw_os_error() == Some(libc::ESRCH) {
             return Ok(());
         }
-        return Err(ControlledRuntimeError::new(format!(
+        Err(ControlledRuntimeError::new(format!(
             "cannot kill runtime member process group: {error}"
-        )));
+        )))
     }
     #[cfg(not(unix))]
     Err(ControlledRuntimeError::new(
