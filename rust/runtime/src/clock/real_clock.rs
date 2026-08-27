@@ -263,7 +263,8 @@ mod tests {
     }
 
     #[test]
-    fn clocks_from_one_anchor_share_a_timeline() {        let anchor = RealClockAnchor::now();
+    fn clocks_from_one_anchor_share_a_timeline() {
+        let anchor = RealClockAnchor::now();
         let first = RealClock::from_anchor(anchor);
         std::thread::sleep(std::time::Duration::from_millis(1));
         let second = RealClock::from_anchor(anchor);
