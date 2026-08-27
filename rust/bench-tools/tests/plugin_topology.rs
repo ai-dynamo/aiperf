@@ -930,12 +930,30 @@ fn implemented_witness_matches_real_package_sources_dependencies_and_features() 
     );
 }
 
+/// Resolves the implementation task the gate was configured for. An absent
+/// variable is the only legitimate skip: a present value that is not a task
+/// number is a gate failure, so a typo cannot report a green topology gate
+/// having validated no witness at all.
+fn configured_topology_task(value: Option<std::ffi::OsString>) -> Result<Option<u64>, String> {
+    let Some(raw) = value else {
+        return Ok(None);
+    };
+    let text = raw.to_str().ok_or_else(|| {
+        format!(
+            "AIPERF_PLUGIN_TOPOLOGY_TASK={} is not a task number",
+            raw.to_string_lossy()
+        )
+    })?;
+    text.parse::<u64>().map(Some).map_err(|error| {
+        format!("AIPERF_PLUGIN_TOPOLOGY_TASK={text} is not a task number: {error}")
+    })
+}
+
 #[test]
 fn configured_task_requires_its_implemented_topology_witness() {
-    let Some(task) = std::env::var("AIPERF_PLUGIN_TOPOLOGY_TASK")
-        .ok()
-        .and_then(|task| task.parse::<u64>().ok())
-    else {
+    let configured = configured_topology_task(std::env::var_os("AIPERF_PLUGIN_TOPOLOGY_TASK"))
+        .expect("AIPERF_PLUGIN_TOPOLOGY_TASK must name a task number when it is set");
+    let Some(task) = configured else {
         return;
     };
     validate_configured_implementation_task(&workspace_root(), task)
