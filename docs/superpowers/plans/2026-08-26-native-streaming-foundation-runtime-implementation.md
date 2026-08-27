@@ -7,13 +7,13 @@ SPDX-License-Identifier: Apache-2.0
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Land the feature gates, typed streaming vocabulary, resource ownership, object-safe extension contracts, frozen registries, strict Protocol-v2 configuration, bounded scheduled-runtime terminal processing, reusable phase/capture construction, and UTC/event-time authority required by every later native streaming dataset and shadow-replay subsystem.
+**Goal:** Land the feature gates, typed streaming vocabulary, resource ownership, object-safe extension contracts, host-owned reliability continuation authority, frozen registries, strict Protocol-v2 configuration, bounded scheduled-runtime terminal processing, reusable phase/capture construction, and UTC/event-time authority required by every later native streaming dataset and shadow-replay subsystem.
 
-**Architecture:** This plan builds only the foundation and existing-runtime adaptations from master Tasks 0, 1A–1E, 2, 3, 4A–4B, and 7A. The lightweight `streaming` feature owns all host contracts and local execution prerequisites; `streaming-s3` adds only AWS dependencies and advertises no S3 factory until its later executable adapter lands. Existing finite execution remains the reference path and is migrated onto reusable seams without adding a `NativeDatasetPlan::Streaming` variant or a non-executable `shadow_replay` factory.
+**Architecture:** This plan builds only the foundation and existing-runtime adaptations from master Tasks 0, 1A–1E, 1D-R, 2, 3, 4A–4B, and 7A. The lightweight `streaming` feature owns all host contracts and local execution prerequisites, including deterministic scoped issue classification and disposition; `streaming-s3` adds only AWS dependencies and advertises no S3 factory until its later executable adapter lands. Existing finite execution remains the reference path and is migrated onto reusable seams without adding a `NativeDatasetPlan::Streaming` variant or a non-executable `shadow_replay` factory.
 
 **Tech Stack:** Rust 2024, Tokio current-thread runtimes and `LocalSet`, `async_trait(?Send)`, BLAKE3, strict Serde DTOs, `chacha20poly1305` and `zeroize` behind `streaming`, optional `aws-config` and `aws-sdk-s3` behind `streaming-s3`, existing `Clock`, `ScheduledRuntime`, `RunCapture`, `TransactionalRegistry`, Protocol v2, and Config v2.
 
-**Spec:** `artifacts/streaming-design/streaming-dataset-shadow-replay-design.md` at base approval `505efc06b0`, amended by `3fea6f2fe0`; master plan: `docs/superpowers/plans/2026-08-26-native-streaming-datasets-shadow-replay-implementation.md`.
+**Spec:** `artifacts/streaming-design/streaming-dataset-shadow-replay-design.md` at base approval `505efc06b0`, amended by `3fea6f2fe0` and `artifacts/streaming-design/reliability-continuation-course-correction.md`; master plan: `docs/superpowers/plans/2026-08-26-native-streaming-datasets-shadow-replay-implementation.md`.
 
 ## Global Constraints
 
@@ -28,6 +28,7 @@ SPDX-License-Identifier: Apache-2.0
 - Every queue owns item and byte permits. Moving a value moves its permits; cloning payload storage does not mint capacity.
 - Runtime async traits use `#[async_trait(?Send)]`; factory traits are `Debug + Send + Sync`.
 - Library APIs use explicit error enums with `Display` and `Error`; `anyhow` stays at engine/application boundaries.
+- Ordinary partition, record, session, action, export, and checkpoint-attempt faults are host-classified scoped issues. Only the authority/invariant boundary in the reliability course correction may select `FailRun`.
 - Every public item has `///` documentation. Every new Rust file has exactly the two NVIDIA SPDX lines and `//!` module documentation.
 - Each task has one focused test-suite invocation, two reviews, one focused commit, and no unrelated changes.
 - Cargo commands run from the nested `rust/` workspace after activating `/home/anthony/nvidia/projects/aiperf/ajc/rust/.venv/bin/activate`; git commands run from the repository root.
@@ -49,13 +50,14 @@ rust/runtime/src/streaming/format.rs          format/decoder contract
 rust/runtime/src/streaming/session.rs         session-program contract
 rust/runtime/src/streaming/action.rs          action binding/driver contract
 rust/runtime/src/streaming/checkpoint.rs      participant/backend/result I/O contract
+rust/runtime/src/streaming/reliability.rs     scoped issue policy, receipts, thresholds, checkpoint ledger
 rust/runtime/src/streaming/terminal_lane.rs   bounded scheduled terminal processing
 rust/runtime/src/streaming/event_time.rs      UTC mapping, watermark, late policy, horizon
 rust/runtime/src/config/model/dataset_stream.rs strict public Config-v2 types
 rust/runtime/src/engine/execute/capture_service.rs reusable finite/streaming construction
 ```
 
-The cross-plan foundation order is `0 → 1A → 1B → checkpoint 5A → 1C → checkpoint 5A-R → checkpoint 5B → 1D → 1E`. Task 5A lands the participant vocabulary used by the blocking owner; Task 5A-R then binds the landed checkpoint and blocking-participant APIs to one logical run; Task 5B lands the run-scoped backend vocabulary consumed by the remaining contracts. After Task 1E merges, Tasks 2 and 4A may run in parallel. Task 3 depends on Task 2. Task 4B depends on Task 4A. Task 7A depends on Tasks 1D and 5A-R.
+The cross-plan foundation order is `0 → 1A → 1B → checkpoint 5A → 1C → checkpoint 5A-R → checkpoint 5B → 1D → 1D-R → 1E`. Task 5A lands the participant vocabulary used by the blocking owner; Task 5A-R then binds the landed checkpoint and blocking-participant APIs to one logical run; Task 5B lands the run-scoped backend vocabulary consumed by the remaining contracts. Task 1D-R binds typed failures to host-owned reliability dispositions without adding adapter-specific behavior. After Task 1E merges, Tasks 2 and 4A may run in parallel. Task 3 depends on Tasks 2 and 1D-R. Task 4B depends on Task 4A. Task 7A depends on Tasks 1D-R and 5A-R.
 
 ### Task 0: Freeze Native Streaming Features and Dependencies
 
@@ -941,6 +943,290 @@ git add rust/runtime/src/streaming.rs rust/runtime/src/streaming/source.rs rust/
 git commit -m "feat(runtime): define streaming extension contracts"
 ```
 
+### Task 1D-R: Host-Owned Scoped Issue and Disposition Authority
+
+**Depends on:** Task 1D plus checkpoint Tasks 5A-R and 5B.
+
+**Files:**
+- Create: `rust/runtime/src/streaming/reliability.rs`
+- Modify: `rust/runtime/src/streaming/failure.rs`
+- Modify: `rust/runtime/src/streaming/action.rs`
+- Modify: `rust/runtime/src/streaming/session.rs`
+- Modify: `rust/runtime/src/streaming/checkpoint.rs`
+- Modify: `rust/runtime/src/streaming/checkpoint_backend.rs`
+- Modify: `rust/runtime/src/streaming/checkpoints/memory.rs`
+- Modify: `rust/runtime/src/streaming.rs`
+- Unit tests: `#[cfg(test)]` in `rust/runtime/src/streaming/reliability.rs`
+- Unit tests: `#[cfg(test)]` in `rust/runtime/src/streaming/checkpoint_backend.rs`
+- Extend: `rust/runtime/tests/support/streaming_checkpoint.rs`
+- Extend: `rust/runtime/tests/streaming_checkpoint_backend.rs`
+- Create: `rust/runtime/tests/streaming_reliability.rs`
+
+**Interfaces:**
+- Consumes: concrete typed failure enums, `StreamRunIdentity`, `StreamingCheckpointParticipant`, `CheckpointGeneration`, stable record/session/action identities, typed source positions, `ContentDigest`, and `StreamingResourceBudget`.
+- Produces: the exact live/persisted split, prepared policy, ordered sequencer, budget-owned receipt/view, handled-cut, action/tombstone/export preparation methods, and reporter vocabulary in the reliability course correction. `CheckpointCut` gains `HandledIssueCut`; canonical generation hashing moves to v4. Backend open returns sealed versioned leased authority, and generation begin accepts only `CurrentV4CheckpointGeneration` as predecessor; legacy participant reads return only non-convertible `LegacyParticipantState`.
+- Contract: public owners construct only ordinary live facts. A module-private exhaustive classifier is the sole `FailRun` authority; serde cannot restore live authority. The central sequencer, not worker arrival, owns threshold order.
+
+- [ ] **Step 1: Add the RED policy, receipt, and restore matrix**
+
+Create `rust/runtime/tests/streaming_reliability.rs` with current-thread Tokio tests and pure golden checks:
+
+```rust
+#[test]
+fn policy_matching_is_order_invariant_exact_before_wildcard_and_unambiguous() {
+    let left = PreparedStreamingIssuePolicy::new(reversed_rules()).unwrap();
+    let right = PreparedStreamingIssuePolicy::new(forward_rules()).unwrap();
+    assert_eq!(left.digest(), right.digest());
+    assert_eq!(left.rule_for(&coded_record_fact()).unwrap().rule_id(), exact_rule_id());
+    assert!(PreparedStreamingIssuePolicy::new(duplicate_exact_rules()).is_err());
+    assert!(PreparedStreamingIssuePolicy::new(duplicate_wildcard_rules()).is_err());
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn reverse_skew_and_worker_count_produce_identical_receipt_order() {
+    let one = run_ordered_issue_script(1, reverse_and_skewed_updates()).await;
+    let eight = run_ordered_issue_script(8, forward_updates()).await;
+    assert_eq!(one.receipt_ids, eight.receipt_ids);
+    assert_eq!(one.decisions, eight.decisions);
+    assert_eq!(one.receipt_root, eight.receipt_root);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn late_domain_and_action_arrival_do_not_change_thresholds_across_restart() {
+    let forward = run_domain_and_action_script(
+        1,
+        forward_domains_and_terminal_actions(),
+        RestartAt::AfterFirstFailure,
+    ).await;
+    let reversed = run_domain_and_action_script(
+        8,
+        late_second_domain_and_reverse_terminal_actions(),
+        RestartAt::BeforeNoMoreActions,
+    ).await;
+    assert_eq!(forward.domain_local_counters, reversed.domain_local_counters);
+    assert_eq!(forward.action_counters, reversed.action_counters);
+    assert_eq!(forward.decisions, reversed.decisions);
+    assert_eq!(forward.receipt_root, reversed.receipt_root);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn raw_action_issue_cannot_bypass_verified_failure_membership() {
+    assert!(reporter().report(IssueSequenceUpdate::Issue(raw_action_issue())).await.is_err());
+}
+
+// The following checked-view cases live in reliability.rs's #[cfg(test)]
+// module, where the foundation may implement its private test seals.
+#[tokio::test(flavor = "current_thread")]
+async fn quarantine_is_not_handled_before_same_generation_tombstone_ack() {
+    let mut ledger = ledger_with_session_quarantine_issue().await;
+    assert!(ledger.receipt_partition_view(&barrier(1)).await.is_err());
+    let tombstones = test_quarantine_view_at(frontier(4));
+    let prepared = ledger.prepare_session_quarantine_install(
+        &tombstones,
+        quarantined_issue_id(),
+        &barrier(1),
+        &tombstone_ack_budget(),
+    ).await.unwrap();
+    assert_eq!(prepared.payload_charge_bytes(), expected_compact_ack_bytes());
+    assert_eq!(prepared.view_charge_bytes(), expected_view_metadata_bytes());
+    ledger.report(IssueSequenceUpdate::PreparedSessionQuarantineInstall(prepared)).await.unwrap();
+    let view = ledger.receipt_partition_view(&barrier(1)).await.unwrap();
+    assert_eq!(view.handled_cut().quarantine_tombstone_root(), ledger.tombstone_root());
+    assert!(tombstones.was_borrowed_not_consumed());
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn stale_tombstone_root_refuses_and_reprepare_charges_exactly() {
+    let mut ledger = ledger_with_session_quarantine_issue().await;
+    let tombstones = test_quarantine_view_at(frontier(4));
+    let stale = ledger.prepare_session_quarantine_install(
+        &tombstones, quarantined_issue_id(), &barrier(1), &tombstone_ack_budget(),
+    ).await.unwrap();
+    tombstones.checked_extend(frontier(5)).unwrap();
+    assert!(ledger.verify_session_quarantine_install(&stale, &tombstones, &barrier(1)).is_err());
+    let fresh = ledger.prepare_session_quarantine_install(
+        &tombstones, quarantined_issue_id(), &barrier(1), &tombstone_ack_budget(),
+    ).await.unwrap();
+    ledger.verify_session_quarantine_install(&fresh, &tombstones, &barrier(1)).unwrap();
+    assert_eq!(fresh.payload_charge_bytes(), expected_reencoded_ack_bytes());
+    assert_eq!(fresh.view_charge_bytes(), expected_view_metadata_bytes());
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn reporter_prepares_bound_exactly_charged_export_attempt_failure() {
+    let mut reporter = reporter_with_retained_export_issue(run(1), generation(3), sink("jsonl"), 4).await;
+    let prepared = reporter.prepare_export_attempt_failure(
+        &run(1),
+        &generation(3),
+        &sink("jsonl"),
+        4,
+        ResultSinkAttemptOutcome::Failed(ordinary_export_issue()),
+        &export_receipt_budget(),
+    ).await.unwrap();
+    assert_eq!(prepared.receipt().encoded_charge_bytes(), expected_export_encoded_bytes());
+    assert_eq!(prepared.receipt().parsed_charge_bytes(), expected_export_parsed_bytes());
+    assert!(reporter.prepare_export_attempt_failure(
+        &run(2), &generation(3), &sink("jsonl"), 4,
+        ResultSinkAttemptOutcome::Failed(ordinary_export_issue()), &export_receipt_budget(),
+    ).await.is_err());
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn pre_cas_failure_retains_receipt_view_and_resume_commits_once() {
+    let mut ledger = ledger_with_one_ordered_issue().await;
+    let first = ledger.receipt_partition_view(&barrier(1)).await.unwrap();
+    fail_transaction_before_cas(first).await;
+    let retry = ledger.receipt_partition_view(&barrier(1)).await.unwrap();
+    let committed = commit_view_and_ledger(retry, &mut ledger).await;
+    ledger.checkpoint_committed(committed.receipt()).await.unwrap();
+    let restored = restore_ledger(committed).await;
+    assert_eq!(restored.committed_receipt_count(), 1);
+    assert_eq!(restored.pending_receipt_count(), 0);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn high_fault_receipts_never_escape_budget_or_clone_heap_state() {
+    let report = run_many_issues_with_tiny_receipt_budget(100_000).await;
+    assert!(report.high_water_items <= report.authored_items);
+    assert!(report.high_water_bytes <= report.authored_bytes);
+    assert_eq!(report.committed_receipt_count, report.observed_issue_count);
+}
+```
+
+In the reliability module unit tests add `ordinary_and_deserialized_receipts_cannot_reach_fail_run`,
+`exhaustive_classifier_maps_only_terminal_boundary`,
+`tampered_terminal_marker_cannot_restore_live_authority`, and
+`continue_requires_private_no_membership_loss_proof`,
+`failed_action_preparation_retains_issue_without_advancing_frontier`,
+`dropped_failed_action_preparation_retries_same_id_without_double_count`,
+`dropped_queued_action_failure_reenqueues_same_decision_without_double_count`,
+`action_retry_and_backpressure_cannot_construct_terminal_receipt`,
+`terminal_action_receipt_is_the_only_disposition_with_failure_identity`,
+`dense_action_classification_enqueue_and_poll_never_borrows_across_await`,
+`conflicting_failure_content_for_same_terminal_evidence_is_rejected`,
+`checked_action_fact_rejects_foreign_membership_action_or_sequence`, and
+`checked_gap_rejects_incomplete_frozen_inventory`, and
+`tampered_or_foreign_export_receipt_cannot_restore_live_authority`. These in-crate tests use the
+crate-private checked view fixtures; public integration tests use only the
+host fixture and public behavior. Rustdoc compile-fail tests
+prove callers cannot name/implement the private classifier or proof, construct
+private receipt fields, clone `BudgetOwnedStreamingIssueReceipt`, or deserialize
+a live fact/decision. They also prove callers cannot implement the action/
+session sealed view traits or literal-construct checked action facts, gap
+proofs, tombstone acknowledgements, export decisions, or export receipts. Pin v2 issue ID
+`92e68da0eae7dc5acf38db5f66eeb0f2214cbe358fdbfc43c4c0dcdd59892db6`
+and add `v4_generation_digest_binds_handled_issue_roots_and_refuses_v3_bytes`.
+Add `record_and_session_hashes_change_with_stream_or_source_identity`,
+`frontier_cannot_advance_without_contiguous_or_no_more_before_evidence`, and the
+complete scope-by-disposition table test. Add
+`valid_v3_generation_restores_read_only_under_v3_hash_domain`,
+`v3_cannot_be_previous_of_v4`, `mixed_v3_v4_run_is_refused`, and
+`malformed_or_oversized_current_bytes_never_infer_legacy_version`. In the
+backend integration suite add `open_latest_returns_explicit_current_v4_or_legacy_v3`
+and the compile-fail cases `legacy_v3_public_handle_cannot_be_passed_to_begin`
+and `legacy_participant_state_cannot_initialize_checkpoint_participant`. The
+public behavior fixture reads a legacy participant for export, observes zero
+participant-initialize calls, and proves its descriptor/payload remain readable
+only through `LegacyParticipantState` borrow accessors. Its compile-fail case
+also copies those bytes into a newly budgeted payload and proves the retired public
+`CommittedParticipantState::new` cannot bypass current-v4 context promotion. Add
+`begin_with_none_over_legacy_v3_returns_legacy_read_only_head_without_mutation`
+so omission cannot replace the legacy head.
+In `checkpoint_backend.rs`'s crate unit module add
+`current_v4_projection_exists_only_for_verified_v4` and
+`legacy_v3_has_no_current_predecessor_projection`; memory/backend behavior adds
+`begin_with_none_over_legacy_v3_returns_legacy_read_only_head_without_mutation`.
+Those unit tests alone may
+invoke crate-private `CurrentV4PredecessorProjection`.
+
+- [ ] **Step 2: Run the suite and verify RED**
+
+Run:
+
+```bash
+source /home/anthony/nvidia/projects/aiperf/ajc/rust/.venv/bin/activate
+cd rust
+CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime --features streaming --test streaming_reliability --test streaming_checkpoint_backend
+```
+
+Expected: compilation fails because the sealed classifier/action authority, v4
+handled cut, versioned backend authority, non-destructive tombstone install,
+ordered sequencer, and budget-owned receipt view do not exist.
+
+- [ ] **Step 3: Implement the minimal host authority**
+
+Implement the exact public vocabulary frozen in
+`artifacts/streaming-design/reliability-continuation-course-correction.md`.
+Implement the exact course-correction vocabulary. Keep the host failure enum,
+verified terminal/no-membership-loss proofs, classifier, persisted-wire
+verifier, and decision constructor module-private. The public reporter accepts
+only `IssueSequenceUpdate` and returns a fixed-size outcome. Detailed encoded
+receipts remain non-Clone and budget-owned inside the ledger until the exact
+generation callback proves their partition reachable.
+
+The central sequencer owns per-input-domain pending maps, domain-local rule
+counters, and checkpointed contiguous/no-more-before frontiers. It separately
+owns the bounded action pending map and terminal/no-more-actions-before global
+frontier, receiving only reporter-minted checked terminal facts and gap
+proofs. Failed terminals use the two-stage reporter API: sealed P2 terminal
+evidence plus an ordinary action issue produces a move-only retained identity
+without frontier advancement; P2 consumes that identity into its terminal
+receipt, after which the finalized membership view can produce the fact. The reporter revalidates exact action/sequence membership, failure issue
+scope, and contiguous gap closure; public raw success/failure/gap updates do not
+exist. Exact-code rules precede one wildcard;
+ambiguous rules refuse preparation. Record/session scope and order include the
+same stream/source identity. Extend `CheckpointCut` with `HandledIssueCut`,
+update canonical generation hashing to v4, and require cut/participant/receipt
+root equality. No hole/quarantine frontier crosses missing data without its
+same-generation receipt or the separately budgeted move-only tombstone install
+acknowledgement prepared non-destructively from P1B's retained map. Dropping a
+pre-CAS acknowledgement preserves P1B for identical retry; a checked late
+fragment extension invalidates its root and requires re-acknowledgement.
+Implement the bounded strict v3/v4 decoder and version-selected hash verifier;
+extend `checkpoint_backend.rs` and memory support so open returns explicit
+`CurrentV4` versus `LegacyV3ReadOnly` leased authority. Only sealed
+`CurrentV4CheckpointGeneration` is accepted by `begin_generation`; v3 cannot be
+erased into a raw predecessor or participate in v4 succession. The versioned
+common reader exposes no participant initializer state; its legacy branch
+returns only opaque `LegacyParticipantState`, which has no conversion to
+`CommittedParticipantState` and cannot enter `StreamingCheckpointParticipant::initialize`.
+Committed-state storage promotion becomes crate-private and requires the
+private current-v4 reader context; test support must obtain current state
+through the verified current reader rather than a public constructor.
+
+Define the public borrowed view traits in `action.rs` and `session.rs`, each
+with a private sealed supertrait in that same parent module. Later P2/P4 child
+action modules and the P1B child session module can implement those seals for
+their host-owned private state, while unrelated siblings and external callers
+cannot. Reliability owns only the checked constructors that consume the views;
+it never asks P2, P4, or P1B to construct a reliability-private token.
+
+- [ ] **Step 4: Run the suite and verify GREEN**
+
+Run Step 2, then:
+
+```bash
+CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime --features streaming --lib
+CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime --features streaming --doc
+```
+
+Expected: privacy,
+serde refusal, policy precedence, the v2 golden and v4 handled-cut domain proof, order independence, non-
+destructive receipt/tombstone view retry, sealed action/gap refusal, restore
+once-only, handled-cut/tombstone acknowledgement and invalidation, explicit
+v3 read-only backend refusal, doctest privacy, and budget high-water
+cases pass.
+
+- [ ] **Step 5: Review and commit**
+
+Review that no adapter-specific code or Config-v2 surface entered this task,
+then commit:
+
+```bash
+git add rust/runtime/src/streaming.rs rust/runtime/src/streaming/failure.rs rust/runtime/src/streaming/action.rs rust/runtime/src/streaming/session.rs rust/runtime/src/streaming/checkpoint.rs rust/runtime/src/streaming/checkpoint_backend.rs rust/runtime/src/streaming/checkpoints/memory.rs rust/runtime/src/streaming/reliability.rs rust/runtime/tests/support/streaming_checkpoint.rs rust/runtime/tests/streaming_checkpoint_backend.rs rust/runtime/tests/streaming_reliability.rs
+git commit -m "feat(runtime): classify streaming issues for continuation"
+```
+
 ### Task 1E: Reusable Source and Format Conformance Harnesses
 
 **Files:**
@@ -949,7 +1235,7 @@ git commit -m "feat(runtime): define streaming extension contracts"
 - Create: `rust/runtime/tests/streaming_contract_conformance.rs`
 
 **Interfaces:**
-- Consumes: Task 1D public contracts.
+- Consumes: Tasks 1D and 1D-R public contracts.
 - Produces:
 
 ```rust
@@ -1126,9 +1412,10 @@ git commit -m "feat(runtime): register streaming capabilities"
 - Test: `rust/runtime/tests/streaming_protocol_v2.rs`
 
 **Interfaces:**
-- Consumes: Task 2 lookups and `StreamingCapabilityAgreement`.
-- Produces strict Config-v2 types `DatasetStreams`, `DatasetStream`, `StreamingComponent`, `StreamLimits`, and `ShadowReplay`; Protocol-v2 `DatasetStreamsSpecV2`; `RunResourceV2::DatasetStreams`; `ResourceRequirementsV2::shadow_replay()`.
+- Consumes: Task 2 lookups, `StreamingCapabilityAgreement`, and Task 1D-R's checked prepared reliability policy/digest.
+- Produces strict Config-v2 types `DatasetStreams`, `DatasetStream`, `StreamingComponent`, `StreamLimits`, and `ShadowReplay`; Protocol-v2 `DatasetStreamsSpecV2`; `RunResourceV2::DatasetStreams`; `ResourceRequirementsV2::shadow_replay()`; an internal/test-injected reliability-policy digest carried through capability agreement. Product Task V1 later owns the strict public reliability-policy Config-v2 fields and exact projection into this seam.
 - Does not register a stock `shadow_replay` workload or placeholder factory.
+- Rejects a reliability-policy digest mismatch before construction, polling, or issue. Add `protocol_rejects_reliability_digest_mismatch_before_effects` to the existing RED/GREEN suite; no adapter-specific default may replace the prepared policy.
 
 Representative Config-v2 types:
 
@@ -1258,7 +1545,7 @@ git commit -m "feat(engine): add dataset stream resources"
 - Test: `rust/runtime/tests/streaming_terminal_lane.rs`
 
 **Interfaces:**
-- Consumes: `BudgetLease`, existing `TurnRecordProcessor`, `IssuedCredit`, and `TurnDispatchOutcome`.
+- Consumes: `BudgetLease`, existing `TurnRecordProcessor`, `IssuedCredit`, `TurnDispatchOutcome`, and Task 1D-R `StreamingIssueReporter`.
 - Produces `TerminalLaneLimits`, `TerminalLanePermit`, `BoundedTerminalProcessorLane`, `TerminalLaneControl`, `TerminalLaneSnapshot`, `ScheduledSessionIdentity`, and a new opt-in issue method. Existing issue methods retain their signatures.
 
 ```rust
@@ -1309,7 +1596,7 @@ async fn record_count_does_not_increase_drain_task_count() {
 }
 ```
 
-Add full-lane backpressure, first-error latch/wakeup, cancellation permit return, 100,000 one-turn sessions with zero active map entries, stable external ordinal, and finite-default compatibility tests.
+Add full-lane backpressure, checked-invariant latch/wakeup, cancellation permit return, 100,000 one-turn sessions with zero active map entries, stable external ordinal, and finite-default compatibility tests. Add `ordinary_terminal_processor_error_reports_export_issue_and_drain_continues` and `terminal_lane_accounting_corruption_wakes_failed_run`; Task 4A consumes the Task 1D-R reporter and cannot promote an ordinary processor/export fault to the invariant latch.
 
 - [ ] **Step 2: Run the task suite and verify RED**
 
@@ -1321,7 +1608,7 @@ CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime -
 
 - [ ] **Step 3: Implement reservation-before-issue**
 
-Capability agreement constructs a conservative `TerminalRecordSizeBound` from endpoint response limits, maximum output tokens/bytes, usage/metric envelopes, and the configured raw-capture policy. If no finite bound can be proven, streaming execution is refused before dispatch. The streaming caller asynchronously reserves one item plus that exact conservative maximum before issue; settlement computes the actual terminal size, verifies it is within the validated bound, shrinks the owned byte lease to actual size, and moves it into `TerminalWork`. Add RED cases `unbounded_terminal_payload_is_refused_before_dispatch` and `actual_terminal_bytes_never_exceed_reserved_bound`. Settlement cannot block or fail for capacity after reservation. One `spawn_local` drain owner invokes existing processors in order, retains the first typed failure plus bounded counters, wakes the phase owner, and never stores a per-record `JoinHandle` or error string.
+Capability agreement constructs a conservative `TerminalRecordSizeBound` from endpoint response limits, maximum output tokens/bytes, usage/metric envelopes, and the configured raw-capture policy. If no finite bound can be proven, streaming execution is refused before dispatch. The streaming caller asynchronously reserves one item plus that exact conservative maximum before issue; settlement computes the actual terminal size, verifies it is within the validated bound, shrinks the owned byte lease to actual size, and moves it into `TerminalWork`. Add RED cases `unbounded_terminal_payload_is_refused_before_dispatch` and `actual_terminal_bytes_never_exceed_reserved_bound`. Settlement cannot block or fail for capacity after reservation. One `spawn_local` drain owner invokes existing processors in order, reports ordinary export/processor failures through the scoped issue reporter, retains only the first checked invariant plus bounded counters, wakes the phase owner only for that invariant, and never stores a per-record `JoinHandle` or error string.
 
 - [ ] **Step 4: Bound active session numbering without changing finite IDs**
 
@@ -1329,7 +1616,7 @@ Replace `sessions.len()` allocation with `next_session_number: Cell<u64>` plus a
 
 - [ ] **Step 5: Join the lane through phase finalization**
 
-Replace `wait_record_processors` with a mode-aware drain: legacy finite mode reaps its existing tasks continuously; streaming mode closes and drains `TerminalLaneControl`. Surface the first lane error before report construction.
+Replace `wait_record_processors` with a mode-aware drain: legacy finite mode reaps its existing tasks continuously; streaming mode closes and drains `TerminalLaneControl`. Surface a checked authority/accounting invariant before report construction; otherwise return the issue and derived-sink status needed for degraded or export-incomplete reporting.
 
 - [ ] **Step 6: Run the suite and verify GREEN**
 
@@ -1631,14 +1918,14 @@ After Task 7A is merged, run one consolidated foundation gate from `rust/`:
 
 ```bash
 source /home/anthony/nvidia/projects/aiperf/ajc/rust/.venv/bin/activate
-CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime --features streaming --test streaming_feature_inventory --test streaming_identity --test streaming_budget --test streaming_blocking --test streaming_contracts --test streaming_contract_conformance --test streaming_registry --test extensions_compile_time_extension --test streaming_protocol_v2 --test streaming_terminal_lane --test streaming_phase_runtime --test streaming_event_time
+CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime --features streaming --test streaming_feature_inventory --test streaming_identity --test streaming_budget --test streaming_blocking --test streaming_contracts --test streaming_reliability --test streaming_checkpoint_backend --test streaming_contract_conformance --test streaming_registry --test extensions_compile_time_extension --test streaming_protocol_v2 --test streaming_terminal_lane --test streaming_phase_runtime --test streaming_event_time
 ```
 
 Then run `cargo fmt --check` and `cargo clippy -p aiperf-runtime --all-targets --features streaming -- -D warnings` as review gates. Confirm the stock catalog still lacks `shadow_replay`, `s3`, and `object_store` factories; `streaming-s3` only enables dependencies and later adapter compilation authority. Confirm no file outside the paths named in this plan changed.
 
 ## Self-Review Checklist
 
-- Spec invariants covered here: stable topology-independent identity; typed source/format/session/action/checkpoint seams; bounded memory and blocking ownership; feature-accurate absence; strict resource ownership; cross-format capability agreement; bounded terminal processing; reusable phase/capture construction; one immutable UTC anchor; deterministic event-time ordering; no task per far-future action.
+- Spec invariants covered here: stable topology-independent identity; typed source/format/session/action/checkpoint seams; host-owned scoped issue/disposition authority; deterministic checkpointed issue receipts and thresholds; bounded memory and blocking ownership; feature-accurate absence; strict resource ownership; cross-format capability agreement; bounded terminal processing; reusable phase/capture construction; one immutable UTC anchor; deterministic event-time ordering; no task per far-future action.
 - Deferred intentionally to later subsystem plans: checkpoint storage implementation, result segments/compaction, session state machines, pipeline execution, concrete local/HF/Baseten/Dynamo/S3 adapters, executable shadow workload, graph action sink, sensitive state, and cellular execution.
-- Type consistency: checkpoint Tasks 5A, 5A-R, and 5B own run-bound participant/backend I/O vocabulary; Task 1D owns the five factory and source/format/session/action contracts; Task 2 registers those exact traits; Task 3 references their descriptor lookups; Task 4A consumes Task 1B permits; Task 7A consumes Task 1A IDs, Task 1B budget, and Task 5A-R run-bound checkpoint cuts.
+- Type consistency: checkpoint Tasks 5A, 5A-R, and 5B own run-bound participant/backend I/O vocabulary; Task 1D owns the five factory and source/format/session/action contracts; Task 1D-R owns neutral issue/disposition authority; Task 2 registers those exact traits; Task 3 references their descriptor lookups and freezes the reliability-policy digest; Task 4A consumes Task 1B permits; Task 7A consumes Task 1A IDs, Task 1B budget, Task 1D-R issue authority, and Task 5A-R run-bound checkpoint cuts.
 - Placeholder scan: production registration is deliberately absent until executable implementations exist; no task asks for a rejecting placeholder, temporary workload, source-format switch, or `NativeDatasetPlan` variant.
