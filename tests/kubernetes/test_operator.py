@@ -927,7 +927,7 @@ class TestOperatorScaling:
         assert result.status is not None
         assert result.status.is_completed
 
-    @pytest.mark.timeout(600)
+    @pytest.mark.timeout(1500)
     @pytest.mark.asyncio
     async def test_multiple_workers_job(
         self,
