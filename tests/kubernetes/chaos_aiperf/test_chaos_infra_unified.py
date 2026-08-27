@@ -108,8 +108,9 @@ async def test_k1_image_pull_backoff_surfaces_pending_unified(
     """A non-existent image surfaces ``ImagePullBackOff`` on JobSet pods.
 
     Applies an AIPerfJob whose ``spec.image`` is
-    ``ghcr.io/does-not-exist/nope:404`` with ``imagePullPolicy=IfNotPresent``
-    so kubelet actually attempts the pull. Asserts:
+    ``127.0.0.1:12345/nope:latest`` with ``imagePullPolicy=IfNotPresent``
+    so kubelet actually attempts the pull and gets an immediate ECONNREFUSED.
+    Asserts:
 
     * Within 90 s, at least one pod in ``operator_job_namespace`` has a
       container status whose ``waiting.reason`` is ``ImagePullBackOff`` or
@@ -130,7 +131,7 @@ async def test_k1_image_pull_backoff_surfaces_pending_unified(
         concurrency=1,
         request_count=10,
         warmup_request_count=0,
-        image="ghcr.io/does-not-exist/nope:404",
+        image="127.0.0.1:12345/nope:latest",
         image_pull_policy="IfNotPresent",
         tolerations=_gpu_node_tolerations() if k8s_settings.tolerate_gpu_nodes else [],
     )

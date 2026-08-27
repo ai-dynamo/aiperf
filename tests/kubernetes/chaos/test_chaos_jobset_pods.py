@@ -167,6 +167,7 @@ async def _find_pid_by_cmdline(
     script = (
         "for d in /proc/[0-9]*; do "
         "  pid=${d##*/}; "
+        '  [ "$pid" = "$$" ] && continue; '
         f'  if cat "$d/cmdline" 2>/dev/null | tr "\\0" " " | grep -q "{cmdline_match}"; then '
         '    echo "$pid"; '
         "    exit 0; "
@@ -364,15 +365,23 @@ async def test_c6_kill_controller_container_salvages(
         )
 
         pod = await chaos_injector.get_controller_pod_name(operator_job_namespace, name)
-        # Kill PID 1 inside the control-plane container directly. The shared-PID
-        # approach via _find_pid_by_cmdline is unreliable on kind: the bash script
-        # used for the search embeds the match string in its own cmdline, so it can
-        # self-match if /proc directory ordering is non-numeric. The test's goal is
-        # verifying the operator's salvage path, not the PID-namespace mechanism.
-        await chaos_injector.kill_container_in_pod(
-            namespace=operator_job_namespace,
+        # Find the system-controller PID in the shared PID namespace and kill
+        # it directly. We exec into results-sidecar (neutral container) to
+        # avoid confusing the search with the control-plane's own process list.
+        # The self-exclude ([ "$pid" = "$$" ]) in _find_pid_by_cmdline prevents
+        # the bash search script from matching itself in /proc.
+        ctrl_pid = await _find_pid_by_cmdline(
+            kubectl,
             pod=pod,
-            container="control-plane",
+            namespace=operator_job_namespace,
+            exec_container="results-sidecar",
+            cmdline_match=CONTROL_PLANE_CMDLINE_MATCH,
+        )
+        await chaos_injector.kill_container_by_pid(
+            pod,
+            ctrl_pid,
+            namespace=operator_job_namespace,
+            exec_container="results-sidecar",
         )
 
         # Within ~60s the control-plane container should show terminated.

@@ -263,6 +263,11 @@
     ],
     [
       "keyword-only-args",
+      "src/aiperf/workers/clock_offset_tracker.py",
+      "ClockOffsetTracker.__init__"
+    ],
+    [
+      "keyword-only-args",
       "src/aiperf/workers/session_manager.py",
       "UserSessionManager.create_and_store"
     ],
@@ -315,11 +320,6 @@
       "nesting-depth",
       "src/aiperf/dataset/generator/coding_content.py",
       "CodingContentGenerator._gen_config_file"
-    ],
-    [
-      "nesting-depth",
-      "src/aiperf/operator/health.py",
-      "check_endpoint_health"
     ],
     [
       "nesting-depth",
