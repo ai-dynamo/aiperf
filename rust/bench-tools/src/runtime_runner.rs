@@ -927,3 +927,44 @@ fn digest_file(path: &Path, label: &str) -> Result<String, ControlledRuntimeErro
 fn digest(bytes: &[u8]) -> String {
     format!("blake3:{}", blake3::hash(bytes))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn invalid_attempt(ordinal: u8, evidence: &[u8]) -> ControlledAttemptRecord {
+        ControlledAttemptRecord {
+            ordinal,
+            decision: ControlledAttemptDecision::Invalid,
+            reason: Some(format!("invalid attempt {ordinal}")),
+            report_blake3: None,
+            evidence_tree_blake3: digest(evidence),
+        }
+    }
+
+    #[test]
+    fn ledger_hash_chain_survives_reopen_and_three_invalid_attempts_block() {
+        let directory = tempfile::tempdir().expect("ledger directory");
+        let path = directory.path().join("attempts.jsonl");
+        let identity = "blake3:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let mut previous_entry = None;
+
+        for ordinal in 1..=3 {
+            let evidence = format!("{{\"attempt\":{ordinal}}}").into_bytes();
+            let mut ledger = AttemptLedger::acquire(&path, identity).expect("ledger reopens");
+            assert_eq!(ledger.next_attempt_ordinal().expect("attempt is allowed"), ordinal);
+            let entry = ledger
+                .append_attempt(invalid_attempt(ordinal, &evidence), &evidence)
+                .expect("invalid attempt appends");
+            assert_eq!(entry.previous_entry_blake3, previous_entry);
+            previous_entry = Some(entry.entry_blake3.clone());
+        }
+
+        let ledger = AttemptLedger::acquire(&path, identity).expect("ledger validates");
+        let error = ledger
+            .next_attempt_ordinal()
+            .expect_err("three invalid attempts block another invocation");
+        assert!(error.to_string().contains("three invalid attempts block"));
+        assert_eq!(ledger.history().len(), 3);
+    }
+}
