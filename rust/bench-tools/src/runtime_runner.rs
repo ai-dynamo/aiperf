@@ -31,8 +31,14 @@ use crate::plugin_stats::{
 };
 
 const OUTPUT_SCHEMA_V1: &[u8] = b"plugin_runtime_member_output/v1;closed-jcs-line;scenario,pair_id,variant,experiment_identity_blake3,completed_budget,active_duration_nanoseconds,metrics";
-const CALIBRATION_POLICY_BYTES: &[u8] =
-    include_bytes!("../../benchmarks/exporter-observable-policy.json");
+/// Observable policy bound by controlled runtime execution.
+///
+/// The controlled runtime always executes both members of a pair, so its
+/// exporter evidence is `paired`. The static-calibration policy is the
+/// authority for the separate task-1 calibration measurement and cannot admit
+/// a dynamic member at all.
+const PAIRED_POLICY_BYTES: &[u8] =
+    include_bytes!("../../benchmarks/exporter-paired-runtime-policy.json");
 const TASKSET: &str = "/usr/bin/taskset";
 const MAX_MEMBER_OUTPUT_BYTES: usize = 1024 * 1024;
 const DEADLINE_MULTIPLIER: u32 = 4;
@@ -729,7 +735,7 @@ pub fn run_controlled_runtime_with_ledger_v1(
     run_controlled_runtime_internal(
         build_report,
         None,
-        CALIBRATION_POLICY_BYTES,
+        PAIRED_POLICY_BYTES,
         attempt_ledger_path,
         &HostLivenessSourceV1::new(
             PathBuf::from(HOST_BOOT_IDENTITY_PATH),
@@ -769,7 +775,7 @@ pub fn run_controlled_runtime_with_liveness_v1(
     run_controlled_runtime_internal(
         build_report,
         None,
-        CALIBRATION_POLICY_BYTES,
+        PAIRED_POLICY_BYTES,
         attempt_ledger_path,
         liveness,
     )
@@ -1221,9 +1227,15 @@ fn run_controlled_runtime_internal(
         resumed_pair_context: resumed_pair_context.as_ref(),
     };
 
+    // Exporter evidence numbers attempts from zero, while controller attempt
+    // ordinals start at one. A child handed the controller's ordinal would be
+    // refused by the pair evidence check it is meant to satisfy.
+    let exporter_attempt_ordinal = u64::from(expected_attempt_ordinal)
+        .checked_sub(1)
+        .ok_or_else(|| ControlledRuntimeError::new("controller attempt ordinal underflow"))?;
     let expectation_context = ExporterExpectationContext {
         experiment_identity_blake3: &experiment_identity_blake3,
-        attempt_ordinal: u64::from(expected_attempt_ordinal),
+        attempt_ordinal: exporter_attempt_ordinal,
         corpus_blake3: &corpus_blake3,
         observable_policy_blake3: &observable_policy_blake3,
         policy: &policy,
@@ -2155,6 +2167,21 @@ fn execute_member(
                 Variant::Dynamic => "dynamic",
             },
         );
+    // The controller owns every value in the expectation and re-checks the
+    // returned evidence against its own copy, so handing it to the child
+    // grants no authority: it only lets a conforming child name the digests
+    // the controller will require of it.
+    if let Some(expectation) = exporter_expectation {
+        let expectation_bytes = serde_json_canonicalizer::to_vec(expectation).map_err(|error| {
+            ControlledRuntimeError::new(format!(
+                "cannot canonicalize exporter child expectation: {error}"
+            ))
+        })?;
+        let expectation_json = String::from_utf8(expectation_bytes).map_err(|_| {
+            ControlledRuntimeError::new("canonical exporter child expectation is not UTF-8")
+        })?;
+        command.env("AIPERF_PARITY_EXPORTER_EXPECTATION", expectation_json);
+    }
     let deadline = Duration::from_secs(case.minimum_duration_seconds)
         .checked_mul(DEADLINE_MULTIPLIER)
         .ok_or_else(|| ControlledRuntimeError::new("runtime member deadline overflow"))?;
