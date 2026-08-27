@@ -50,7 +50,6 @@ dependencies = [
 name = "aiperf-allocator-provider"
 version = "0.12.0"
 dependencies = [
- "cc",
  "libmimalloc-sys",
 ]
 
@@ -276,6 +275,7 @@ dependencies = [
  "aiperf-plugin-host",
  "aiperf-plugin-sdk",
  "aiperf-transport-sdk",
+ "libmimalloc-sys",
  "serde_json",
  "tempfile",
 ]
