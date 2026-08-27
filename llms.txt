@@ -796,6 +796,15 @@ Inputs, endpoints, and graph:
   native OTLP/HTTP JSON OpenInference and GenAI graph input, including strict
   decoding, trace-local span topology, and replay-span folding into static
   Graph-IR state and timing.
+- [`docs/specs/e2e-rag-benchmark.md`](docs/specs/e2e-rag-benchmark.md) —
+  planned native end-to-end RAG benchmark: the `rag_corpus` ingestion dataset
+  format over the existing batch path, the registered `VectorIndex` seam
+  (`flat`, `hnsw`, `http`), the `ExecutableGraphNode::Retrieval` variant, the
+  staged multi-hop `rag_qna` graph format with a declarative verdict decoder,
+  the role dimension on labeled metric series, and the four prerequisites this
+  design gates on (graph-path embed/rerank request and reply construction, a
+  staged `GraphTraceProgram` family in the benchmark phase runtime, an
+  `endpointProfiles:` authoring surface, and per-profile input token counters).
 - [`docs/specs/agentx-rust-port.md`](docs/specs/agentx-rust-port.md) — the standalone,
   always-compiled byte-exact Rust port of the Python AgentX (WEKA replay +
   agentic-replay timing + scenario locks); parallel to and switchable against
