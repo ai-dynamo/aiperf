@@ -42,8 +42,13 @@ Priorities mean:
   `runtime.dispatch` resolves to `global` when `runtime.cells <= 1` and to
   `sharded` when `cells > 1`
   (`parse_dispatch_mode`, `rust/runtime/src/engine/protocol_v2.rs:265-278`),
-  unset `runtime.workers` auto-selects the machine's parallelism, and `grpc`,
+  unset `runtime.workers` auto-selects the machine's parallelism and is then
+  capped so every sub-cell owns at least one conversation
+  (`rust/runtime/src/engine/execute/entrypoints.rs:88-100`), and `grpc`,
   `cellular`, `parquet`, and `websocket` are in the default CLI feature set.
+  `runtime.workers` is the only way to author that count: `--workers-max` reaches
+  the native process and is discarded (P0.18), so a measurement's worker count is
+  a property of the host and the dataset unless a config file pinned it.
 - **P3**: intentional native-only capability or low-risk polish. P3 has no
   chapter of its own: a native-only capability belongs in
   `# Intentional architecture and capability differences`, and a limitation both
@@ -117,6 +122,12 @@ an error:
 14. The tests guarding aggregate admission and rate pacing either skip their
     decisive assertion or assert the current behavior as required, so the
     admission gaps cannot be closed without failing the suite that names them.
+15. The native worker count — an input to load shape, admission, arrival spacing,
+    and per-record identity — is unauthorable from the CLI. `--workers-max` is
+    accepted, warned about as inert, and dropped on both the pure-CLI and
+    `--config` paths, and the resolved count appears in no artifact, so a native
+    measurement's topology cannot be read from either its command line or its
+    outputs.
 
 The Python `kubernetes` and `operator` packages are absent from the tree, so the
 remaining Kubernetes items are native-only defects rather than parity gaps.
@@ -659,10 +670,16 @@ declared, so the same named metric means two things.
   between the last content frame and the transport terminal.
 - The size of that gap is the server's, not the client's, and it concentrates in
   the tail. Against `aiperf-mock-server`, `chat_stream` yields the usage chunk
-  and `sse_done()` with no intervening await, so the offset is small: measured at
-  four workers, TTFT p90 diverges 11.25% and `request_latency` p90 7.02% while
-  both averages stay inside 3%. A real server that computes usage after the last
-  content token widens it without bound.
+  and `sse_done()` with no intervening await, so the offset is small: TTFT p90
+  diverges 11.25% and `request_latency` p90 7.02% while both averages stay inside
+  3%. That measurement's configuration passed `--workers-max 4`, which the native
+  engine discards (P0.18), so it was taken at the unpinned worker count —
+  `min(available_parallelism, conversations / cells)` on the measuring host — and
+  not at four workers. The divergence it demonstrates is a per-response boundary
+  difference that does not depend on the thread count, so the finding stands and
+  only its topology label was wrong; the percentages need re-reading at an
+  authored `runtime.workers` before they are quoted as a tolerance. A real server
+  that computes usage after the last content token widens it without bound.
 - A native-versus-Python latency comparison is invalid without either engine
   reporting a problem, and an average-only comparison is the projection least
   likely to detect it.
@@ -819,6 +836,17 @@ observed inter-arrivals (`request_start_ns` from `profile_export.jsonl`): Python
 1.061, Rust `global-hop` 1.074, Rust `global` 0.546. A true Poisson process has
 CV = 1.
 
+That configuration passed `--workers-max 4`, which the native engine discards
+(P0.18), so the native legs ran at the unpinned worker count rather than at four
+threads. The realized CV under `global` is itself worker-count dependent — the
+mean-zero offset is drawn per thread over the shared grid — and the same
+400-request configuration measures CV 0.360 at the unpinned default (32 sub-cells
+on a 32-core host) against CV 0.727 at authored `runtime.workers: 4`. Every one of
+those values is far below the authored 1.0, so the finding is unchanged and the
+quoted numbers keep their force as evidence of the distortion; what they cannot
+carry is a topology label, and the three-way comparison needs re-reading at an
+authored worker count before it is used as an acceptance band.
+
 **Impact**
 
 - `poisson` is the default arrival distribution
@@ -963,41 +991,67 @@ Python leg produces no records, no artifact directory, and no captured requests,
 then re-establish all three suites' assertions against a Python run that
 actually executes.
 
-## P0.15 Native `session_num` is constant across distinct sessions
+## P0.15 Native `session_num` restarts from zero in every runtime
 
 **Direction:** Python to Rust
 
-Native session numbering is keyed on the turn's correlation ID and assigned by
-first-seen order: a turn whose `x_correlation_id` is already in the map reuses its
-number, and only an unseen ID takes the next one
-(`rust/runtime/src/scheduled.rs:1229-1238`). Whenever that field is constant
-across a phase — which it is for every workload that does not derive a distinct
-correlation ID per session — every record receives session number zero. Measured
-over four single-turn sessions, native `outputs.json` rows report `session_num`
-`[0, 0, 0, 0]` where Python reports `[0, 1, 2, 3]`.
+On the scheduled path the published `session_num` is a credit index whose
+sequence is scoped to one runtime instead of one run. Every artifact takes it from
+`credit.id`: `label` stores `session_num: credit.id` on the finish-time join
+(`rust/runtime/src/engine/execute/capture.rs:427`), `patch_joined_ingest` applies
+that stored value (`:935`), and `fold_streaming` passes `credit.id` straight into
+`fold_record` (`:683`, `:718`). `credit.id` is `CreditCounter::increment_sent`'s
+`requests_sent` (`rust/runtime/src/multiturn.rs:1929-1953`), a per-turn counter
+owned by one `ScheduledRuntime` (`counter`, `rust/runtime/src/scheduled.rs:436`,
+built at `:553`, one per phase). Each worker sub-cell builds its own runtime on
+its own OS thread (`rust/runtime/src/engine/sharded_scheduled.rs:321-328`,
+`rust/runtime/src/phase_runtime.rs:1029`), as does each cell process, so `W`
+runtimes each number their own credits from zero into one merged artifact set.
 
-The map holding those assignments is a field of one `ScheduledRuntime`
-(`session_numbers`, `rust/runtime/src/scheduled.rs:500`), and each worker
-sub-cell builds its own on its own OS thread
-(`rust/runtime/src/engine/sharded_scheduled.rs:324-326`,
-`rust/runtime/src/phase_runtime.rs:1029`), as does each cell process. The
-sequence is therefore dense from zero per runtime rather than per run, so at
-`workers > 1` or `--cells N` several runtimes contribute the same session number
-to one merged artifact set. The two failures compose: the numbers do not
-distinguish sessions within a runtime and do not distinguish runtimes within a
-run.
+Measured on a 32-core host against `aiperf-mock-server --fast`, labelled by the
+topology each run actually reached: a four-conversation four-request run at the
+unpinned default resolves to four sub-cells through the
+`(conversations / cells).max(1)` conversation cap
+(`rust/runtime/src/engine/execute/entrypoints.rs:88-100`), and its four
+`profile_export.jsonl` rows carry `worker_id` `rust-0` through `rust-3` and
+`session_num` `[0, 0, 0, 0]` — one credit per runtime, each numbered zero — while
+`x_correlation_id` is distinct on all four. The same configuration with authored
+`runtime.workers: 1` runs one sub-cell and its four rows carry the four distinct
+numbers `0` through `3`, which is what Python's central per-phase credit counter
+produces. A 64-conversation 64-request run at the unpinned default resolves to 32
+sub-cells and its 64 rows carry only `session_num` `0` and `1`, two credits per
+runtime. The collapse scales with the runtime count, and `--workers-max` cannot
+pin it (P0.18).
 
-P1.31 records that `session_num` changed meaning from a credit index to a
-conversation index. This is the separate defect that the field does not identify a
-session under either meaning.
+The correlation-ID map in `ScheduledRuntime` (`session_numbers`,
+`rust/runtime/src/scheduled.rs:437`, built at `:554`, assigned at `:1166-1175`)
+is not the mechanism. Its value reaches only `register_local_measurement`
+(`:1183-1185`), which is gated on `feeds_local_measurement` and skipped on every
+engine path: `execute_scheduled_pipeline` declares
+`with_discarded_local_measurement(true)` for every dispatch mode and every worker
+count (`rust/runtime/src/engine/execute/sharding.rs:555-569`) because the report
+is built from the drained worker records. Even where that plane runs, the three
+coordinator sites above overwrite `session_num` with `credit.id` before any
+artifact is written. A fix addressing correlation-keyed numbering would change
+nothing observable.
+
+The graph path is exempt and shows what the scheduled path lacks: it numbers one
+session per trace instance and shifts the worker id into the high 16 bits
+(`rust/runtime/src/engine/graph_execution.rs:1523-1528`), so two graph workers
+cannot mint the same number.
+
+P1.31 records that `session_num` changed meaning. Both engines publish a credit
+index at the same grain; what diverges is the sequence's scope, and this section
+is the defect that a per-runtime scope makes the number non-unique in a run.
 
 **Impact**
 
 - `outputs.json` rows are keyed by `session_num` plus `turn_index`
   (`rust/runtime/src/engine/records.rs:350-360`,
-  `src/aiperf/exporters/outputs_json_exporter.py:65-77`), so a constant session
-  number collapses the key and a consumer grouping by it sees one session with
-  every turn in it.
+  `src/aiperf/exporters/outputs_json_exporter.py:65-77`), so a repeated session
+  number collapses the key and a consumer grouping by it sees `W` sessions where
+  the run had `N`, one per runtime, with every other session's turns folded into
+  them.
 - `write_outputs_json` sorts rows by that same pair and the projection's doc
   comment states the key makes a set comparison of two documents exact
   (`rust/runtime/src/engine/records.rs:927, 959`). A repeated number makes the key
@@ -1016,19 +1070,31 @@ session under either meaning.
   per runtime rather than per cell, so a single-cell run at `workers > 1` collides
   the same way, and the exclusion is what keeps it unobserved.
 - Any per-session aggregation a downstream tool computes from per-record output —
-  turns per session, session duration, per-session token totals — is computed
-  over the whole run natively and per session in Python, with no error.
+  turns per session, session duration, per-session token totals — mixes records
+  from unrelated sessions on different runtimes natively and is per session in
+  Python, with no error.
+- The number of colliding groups is the worker count, which the operator cannot
+  author from the CLI (P0.18), so the same configuration degrades differently on
+  every host and the degradation is not recoverable from the summary artifact.
 - `conversation_id` remains distinct on the same rows, so the artifact is
   internally inconsistent rather than uniformly degraded, and a reader cannot tell
   from the file which field to trust.
 
 **Executable evidence**
 
-- Python numbering: `src/aiperf/common/models/record_models.py`
+- Python per-phase credit numbering: `src/aiperf/timing/phase/credit_counter.py`,
+  `src/aiperf/credit/issuer.py`
+- Python record field: `src/aiperf/common/models/record_models.py`,
+  `src/aiperf/records/record_processor_service.py`
 - Python outputs projection: `src/aiperf/exporters/outputs_json_exporter.py`
-- Rust numbering: `rust/runtime/src/scheduled.rs`
+- Rust credit numbering: `rust/runtime/src/multiturn.rs`,
+  `rust/runtime/src/scheduled.rs`
+- Rust coordinator stamping: `rust/runtime/src/engine/execute/capture.rs`
 - Rust per-runtime ownership: `rust/runtime/src/phase_runtime.rs`,
-  `rust/runtime/src/engine/sharded_scheduled.rs`
+  `rust/runtime/src/engine/sharded_scheduled.rs`,
+  `rust/runtime/src/engine/execute/sharding.rs`
+- Rust worker-count resolution:
+  `rust/runtime/src/engine/execute/entrypoints.rs`
 - Rust outputs projection: `rust/runtime/src/engine/records.rs`
 - Rust Parquet schema: `rust/runtime/src/export/per_record_parquet.rs`
 - Rust parity case that cannot observe it:
@@ -1040,14 +1106,24 @@ session under either meaning.
 
 **Convergence target**
 
-Number sessions from the identity that distinguishes them — the conversation or
-session identity the dataset already carries — rather than from a header value
-that a workload may hold constant, and assign from a run-wide space so the
-sequence stays unique when several runtimes merge into one artifact set. Assert
-the full `session_num` sequence across several sessions from both engines in a
-product test, and include the field in the cellular and multi-worker projections
-instead of excluding it, so a collision fails a test rather than being described
-in a comment.
+Assign `session_num` from a run-wide space so the sequence stays unique when
+several runtimes merge into one artifact set. The mechanism already exists beside
+it: the coordinator maps each runtime's phase-local dispatch index onto its own
+residue class of the run's `0..total` slot space for `global_dispatch_index`
+(`rust/runtime/src/engine/execute/capture.rs:651-670, 937-949`), and every
+per-record artifact carrying the colliding `session_num` carries that dense,
+collision-free ordinal on the same row. Either scope the credit sequence the same
+way or number from the conversation identity the dataset already carries; the
+choice is between Python's credit grain and a true session grain, and P1.31 owns
+which one the field is named for.
+
+Assert the full `session_num` sequence across several sessions from both engines
+in a product test at a stated worker count, and include the field in the cellular
+and multi-worker projections instead of excluding it, so a collision fails a test
+rather than being described in a comment. That test authors its topology through
+`runtime.workers`: while `--workers-max` is inert (P0.18), a case that passes it
+pins its Python leg and leaves its native leg unpinned, so the case would not
+compare the topology it names.
 
 ## P0.16 Assistant tool-call turns tokenize to different input lengths
 
@@ -1134,9 +1210,9 @@ only rate assertion accepts 2 000 to 8 000 req/s against a 5 000 req/s target
 `completed_requests`, and the turn count are each compared for equality against
 the authored count (`:109-117`) — but a 40 percent deficit and a 60 percent
 overshoot both pass under a `constant` arrival pattern, which is the pattern
-P2.18 measures at CV 5.6 with 160 ms gaps against a 5 ms authored interval. The
-module doc calls the file a characterization, which is accurate; two gaps
-nonetheless cite it as their timing gate.
+P2.18 measures at CV 5.6 with 160 ms gaps against a 5 ms authored interval on a
+32-thread host. The module doc calls the file a characterization, which is
+accurate; two gaps nonetheless cite it as their timing gate.
 
 **Impact**
 
@@ -1171,6 +1247,113 @@ returns, since it reads only wall-clock record boundaries, and emit a diagnostic
 on the macOS path. Narrow the achieved-rate band to what a correct issuer
 delivers and add the inter-arrival distribution assertion P0.13 requires, so the
 rate path fails on a distorted process and not only on a collapsed rate.
+
+## P0.18 The authored worker count is discarded on both native authoring paths
+
+**Direction:** Python to Rust
+
+`--workers-max` (visible alias `--max-workers`) is declared as
+`pub workers_max: Option<u32>` (`rust/cli/src/flags.rs:545-547`) and is the only
+worker flag the native CLI has: there is no `--workers` and no `--workers-min`.
+It selects nothing. `profile.rs:412` lists
+`("--workers-max", |f| f.workers_max.is_some())` in `UNIMPLEMENTED_FLAGS`, and
+`warn_unimplemented_flags` (`rust/cli/src/profile.rs:419-432`) reports it as
+`ignored by the native runtime; these flags are accepted for compatibility with
+the Python CLI and have no effect on this run`.
+
+Two separate holes drop it. On the pure-CLI path `rust/cli/src/load.rs:564`
+hardcodes `runtime_workers: None`, two lines above
+`runtime_cells: flags.cells.unwrap_or(1)` (`:566`), which reads its flag in the
+same `RuntimeInputs { .. }` struct literal. On the `--config` path
+`apply_cli_overrides` (`rust/cli/src/yaml.rs:221-468`) overlays `--cells` at
+`:378-380` and `--dispatch` at `:383-385`, and never reads `runtime_workers`,
+whose only mentions in that file are the two struct literals at `:2358` and
+`:2634`. The single way to set the native worker count is Config-v2
+`runtime.workers` (`rust/cli/src/yaml.rs:943`, read at `:2364-2375`; a top-level
+`runtime:` block is hoisted into `benchmark.runtime` at `:86-87`). There is no
+environment variable.
+
+Python acts on the flag as exactly `runtime_dict["workers"] = cli.workers_max`,
+gated on `cli_set` (`src/aiperf/config/flags/_converter_runtime.py:86-87`), and
+`WorkerManager` spawns that count: `initial_workers = max_workers`
+(`src/aiperf/workers/worker_manager.py:65-92`), lowered only by the profiling
+concurrency cap and raised only by `workers_min` as a floor.
+
+The native count an unpinned run resolves to is not the core count alone.
+`default_worker_count()` returns `std::thread::available_parallelism()`
+(`rust/runtime/src/engine/protocol_v2.rs:243-247`, read at `:385-390`), and
+`execute_native` then caps `plan.workers` at `(conversations / cells).max(1)` so
+every thread of the sub-cell grid owns at least one conversation
+(`rust/runtime/src/engine/execute/entrypoints.rs:88-100`). An unpinned run
+therefore lands on `min(available_parallelism, conversations / cells)`, and on a
+small dataset the cap rather than the core count is what decides it. Measured on
+a 32-core host against `aiperf-mock-server --fast`: a four-conversation
+four-request run passing `--workers-max 1` produces records from four distinct
+`worker_id` values (`rust-0` through `rust-3`), the same run through `--config`
+with `--workers-max 1` also produces four, a 64-conversation 64-request run
+passing `--workers-max 1` produces 32, and authored `runtime.workers: 1`
+produces one.
+
+**Impact**
+
+- The gap is silent in the way that matters: the operator authors a topology,
+  receives a different one, and the only signal names the flag rather than the
+  resolved count. A warning that a flag "has no effect on this run" reads as
+  "this knob is inert", not as "this run is at 32 workers".
+- The resolved count is absent from the artifact set.
+  `profile_export_aiperf.json` echoes the authored value at
+  `input_config.runtime.workers` (`workers: inputs.runtime_workers`,
+  `rust/runtime/src/config/resolve.rs:1601`), so an unpinned run and a
+  `--workers-max 32` run both publish `null` and neither publishes what ran. The
+  only witness in the artifacts is the set of distinct `worker_id` values in
+  per-record output, which is unavailable under `--sketch-metrics`.
+- Worker count is a first-class input to native load shape, not an efficiency
+  knob. P0.10 floors `users` and `concurrency` per thread, P0.13's `global`
+  arrival grid carries a per-thread offset, P1.15 restarts URL selection per
+  worker, P1.57 slices per-user cadence, and P2.18's sharded burst amplitude
+  grows with the thread count. Every one of those is parameterized by a number
+  the operator cannot author from the CLI.
+- The blast radius in this repository's own suites is 190 literal
+  `--workers-max` occurrences across 66 Rust test files, 96 of them
+  `--workers-max 1` and a further 62 rendered from a per-file `WORKERS_MAX`
+  constant that is `1` in ten of the twelve files that define one. Each of those
+  intends pinned single-worker determinism and instead runs at
+  `min(available_parallelism, conversations / cells)`, so a suite named for
+  single-worker behavior exercises the multi-worker paths, and its Python leg —
+  which honors the flag — is pinned while its native leg is not.
+- Any measurement in this document taken with `--workers-max` was not taken at
+  the authored worker count. That covers P0.11's latency percentiles, P0.13's
+  inter-arrival coefficient of variation, and P2.18's burst figures, each carrying
+  its corrected topology in place. Two of the three quantities are worker-count
+  dependent, so the label is not cosmetic.
+
+**Executable evidence**
+
+- Python flag mapping: `src/aiperf/config/flags/_converter_runtime.py`
+- Python worker spawning: `src/aiperf/workers/worker_manager.py`
+- Python authoring model: `src/aiperf/config/runtime.py`
+- Rust flag declaration: `rust/cli/src/flags.rs`
+- Rust ignored-flag table and warning: `rust/cli/src/profile.rs`
+- Rust pure-CLI projection: `rust/cli/src/load.rs`
+- Rust config projection and CLI overlay: `rust/cli/src/yaml.rs`
+- Rust default worker count: `rust/runtime/src/engine/protocol_v2.rs`
+- Rust conversation cap: `rust/runtime/src/engine/execute/entrypoints.rs`
+- Rust summary projection of the authored value:
+  `rust/runtime/src/config/resolve.rs`
+
+**Convergence target**
+
+Read the flag on both authoring paths — `runtime_workers: flags.workers_max` in
+`load.rs` and a `runtime_workers` overlay in `apply_cli_overrides` beside the
+existing `--cells` overlay — and remove the `UNIMPLEMENTED_FLAGS` row, so the
+native mapping is Python's own `workers = workers_max` rather than a
+reinterpretation of a maximum as a count. Publish the *resolved* worker count in
+the summary artifact alongside the authored one, so a run's topology is
+recoverable from its artifacts whether or not it was authored, and report it at
+`info` when the conversation cap lowers it below the authored or default value.
+P1.4 lists this flag among the dead ones; this section owns the consequence,
+which is that a topology-sensitive native measurement cannot be labelled from
+the argument string that produced it.
 
 ---
 
@@ -1227,7 +1410,8 @@ Still dead / differently defined (intentionally retired or unfinished):
 - `--auto-plot` and `--plot-required` without the Python completion callback;
 - `--stats-interval` without native runtime wiring;
 - API/UI/ZMQ/record-processor options that belong to the retired service mesh;
-- `--workers-max` not affecting native worker resolution;
+- `--workers-max` not affecting native worker resolution (P0.18 owns the
+  consequence);
 - `--num-conversations` and `--num-sessions` represented as independent Rust
   fields rather than aliases.
 
@@ -1611,7 +1795,19 @@ distribution accumulation.
 
 Examples:
 
-- `session_num`: Python credit index versus Rust conversation index;
+- `session_num`: a per-phase credit index in Python
+  (`credit_index = self._dispatch_seq` over turns,
+  `src/aiperf/timing/phase/credit_counter.py:246-247`, published as
+  `session_num=record.request_info.credit_num`,
+  `src/aiperf/records/record_processor_service.py:265`) versus a credit index of
+  the same grain on the engine path, stamped from `credit.id`
+  (`rust/runtime/src/engine/execute/capture.rs:427, 683, 935`). The grain matches;
+  the sequence's scope does not — Python's counter is central, so one phase's
+  numbers are unique across the run, while the native one is per runtime (P0.15).
+  Native graph execution numbers on a third
+  grain again — one per trace instance, with the worker id in the high 16 bits
+  (`rust/runtime/src/engine/graph_execution.rs:1523-1528`) — so the field's
+  meaning also depends on which native workload wrote it;
 - `request_ack_ns`: Python response acknowledgment versus Rust first token;
 - cancellation time: dedicated instant versus request end;
 - record-processor ID: a live service identity versus the constant
@@ -1620,11 +1816,17 @@ Examples:
 
 **Evidence:** `src/aiperf/common/models/record_models.py`,
 `src/aiperf/records/record_processor_service.py`,
+`src/aiperf/timing/phase/credit_counter.py`,
 `rust/runtime/src/engine/records.rs`,
+`rust/runtime/src/engine/execute/capture.rs`,
+`rust/runtime/src/engine/graph_execution.rs`,
 `rust/runtime/src/scheduled.rs`.
 
 **Target:** restore legacy meanings or introduce a versioned schema with
-unambiguous renamed fields.
+unambiguous renamed fields. For `session_num` the rename decision precedes the
+scope repair P0.15 owns: a field named for a session and published as a credit
+index is ambiguous at every scope, and the two native workload families do not
+agree with each other on which one it is.
 
 ## P1.32 Native raw traces and errors are lossy
 
@@ -2453,11 +2655,24 @@ another: with no shared gate, every thread anchors its first target at the same
 (`rust/runtime/src/request_rate.rs:593-595`), and thereafter advances by the same
 sliced interval, so under `constant` arrival all `W` threads fire together and
 then idle for `W` times the authored gap. The union has the right mean but not
-the right spacing. Measured at 200 req/s, `--request-rate-mode constant`, 8 workers,
-400 requests: effective rate 207.8/s, inter-arrival CV 5.6, maximum gap 160 ms
+the right spacing. Measured at 200 req/s, `--request-rate-mode constant`, 400
+requests: effective rate 207.8/s, inter-arrival CV 5.6, maximum gap 160 ms
 against a 5 ms authored interval; `global` gives CV 0.21 and `global-hop` 0.033
 on the same config. Python's single issuer paces one grid, so `constant` is
 effectively CV 0.
+
+That run was labelled as eight workers because it passed `--workers-max 8`, which
+the native engine discards (P0.18); it ran at 32, the measuring host's core count.
+The label is recoverable from the numbers themselves: each burst contributes
+`W - 1` near-zero gaps against one gap of `W` times the authored interval, so the
+maximum gap is `W * 5 ms` and the CV of the union is about `sqrt(W - 1)`, and 160
+ms with CV 5.6 is `W = 32` rather than `W = 8`. Re-measured at 200 req/s,
+`constant`, 400 requests, `--dispatch sharded`: the unpinned default on a 32-core
+host reproduces 32 sub-cells, CV 5.50, maximum gap 159.1 ms, and 207.5 req/s,
+while authored `runtime.workers: 8` gives eight sub-cells, CV 2.64, maximum gap
+39.9 ms, and 205.2 req/s. The defect is unchanged and is worse than the original
+label implied, because its severity grows with a worker count the operator cannot
+author from the CLI.
 
 **Risk:** a `constant` arrival pattern under `sharded` measures a bursty
 workload, so latency tails and any concurrency-derived metric differ from Python
