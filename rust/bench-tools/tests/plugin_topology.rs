@@ -890,6 +890,135 @@ fn implementation_task_map_assigns_every_projected_package_once() {
     );
 }
 
+/// A self-contained `aiperf-core` package tree, Cargo projection, and exact
+/// witness. Witness validation is behavior, so its positive and negative arms
+/// are asserted here rather than against the live workspace, whose contents 36
+/// later tasks rewrite.
+struct SyntheticPackage {
+    _directory: tempfile::TempDir,
+    workspace: PathBuf,
+    matrix: OwnershipMatrix,
+    metadata: Metadata,
+    witness: ImplementationWitness,
+}
+
+fn synthetic_core_package() -> SyntheticPackage {
+    let directory = tempfile::tempdir().expect("temporary workspace");
+    let workspace = directory.path().to_path_buf();
+    let sources = [
+        "core/src/lib.rs",
+        "core/src/clock.rs",
+        "core/tests/public_contract.rs",
+    ];
+    for source in sources {
+        let path = workspace.join(source);
+        std::fs::create_dir_all(path.parent().expect("source has a parent"))
+            .expect("source directory");
+        std::fs::write(&path, "// synthetic\n").expect("source file");
+    }
+    std::fs::write(workspace.join("core/Cargo.toml"), "# synthetic\n").expect("manifest");
+    // A non-Rust sibling proves the census walks by extension, not by entry.
+    std::fs::write(workspace.join("core/README.md"), "synthetic\n").expect("sibling");
+
+    let features = BTreeMap::from([("default".to_owned(), vec!["clock".to_owned()])]);
+    let metadata = Metadata {
+        packages: vec![MetadataPackage {
+            id: "aiperf-core 0.0.0".to_owned(),
+            name: "aiperf-core".to_owned(),
+            dependencies: vec![MetadataDependency {
+                name: "aiperf-plugin-api".to_owned(),
+                kind: None,
+                path: Some(workspace.join("plugin-api").display().to_string()),
+            }],
+            features: features.clone(),
+            manifest_path: workspace.join("core/Cargo.toml").display().to_string(),
+        }],
+        workspace_members: vec!["aiperf-core 0.0.0".to_owned()],
+        metadata: serde_json::Value::Null,
+    };
+    let (mut matrix, _) = fixture();
+    matrix.package_ownership[0].package = "aiperf-core".to_owned();
+    let mut source_files = sources.map(str::to_owned).to_vec();
+    source_files.sort();
+    let witness = ImplementationWitness {
+        schema_version: 1,
+        task: 4,
+        packages: vec![ImplementedPackageWitness {
+            package: "aiperf-core".to_owned(),
+            source_files,
+            dependencies: vec![WitnessDependency {
+                package: "aiperf-plugin-api".to_owned(),
+                kind: "normal".to_owned(),
+            }],
+            features,
+        }],
+    };
+    SyntheticPackage {
+        _directory: directory,
+        workspace,
+        matrix,
+        metadata,
+        witness,
+    }
+}
+
+impl SyntheticPackage {
+    fn validate(&self, witness: &ImplementationWitness) -> Result<(), String> {
+        validate_implementation_witness(
+            &self.workspace,
+            &self.matrix,
+            &self.metadata,
+            witness.task,
+            witness,
+        )
+    }
+}
+
+#[test]
+fn implemented_witness_census_failures_name_the_exact_difference() {
+    let synthetic = synthetic_core_package();
+    synthetic
+        .validate(&synthetic.witness)
+        .expect("exact synthetic witness");
+
+    let mut stale_source = synthetic.witness.clone();
+    stale_source.packages[0].source_files =
+        vec!["core/src/gone.rs".to_owned(), "core/src/lib.rs".to_owned()];
+    let error = synthetic.validate(&stale_source).unwrap_err();
+    assert!(
+        error.contains("core/src/gone.rs")
+            && error.contains("core/src/clock.rs")
+            && error.contains("core/tests/public_contract.rs"),
+        "source census failure must name both sides: {error}"
+    );
+
+    let mut wrong_dependency = synthetic.witness.clone();
+    wrong_dependency.packages[0].dependencies[0].package = "aiperf-core-utils".to_owned();
+    let error = synthetic.validate(&wrong_dependency).unwrap_err();
+    assert!(
+        error.contains("aiperf-core-utils") && error.contains("aiperf-plugin-api"),
+        "dependency census failure must name both sides: {error}"
+    );
+
+    let mut wrong_feature = synthetic.witness.clone();
+    wrong_feature.packages[0]
+        .features
+        .insert("extra".to_owned(), vec![]);
+    let error = synthetic.validate(&wrong_feature).unwrap_err();
+    assert!(
+        error.contains("extra"),
+        "feature census failure must name the differing entry: {error}"
+    );
+
+    let mut wrong_packages = synthetic.witness.clone();
+    wrong_packages.packages[0].package = "aiperf-plugin-api".to_owned();
+    let error = synthetic.validate(&wrong_packages).unwrap_err();
+    assert!(
+        error.contains("aiperf-plugin-api") && error.contains("aiperf-core"),
+        "package-set failure must name both sides: {error}"
+    );
+}
+
 #[test]
 fn implemented_witness_matches_real_package_sources_dependencies_and_features() {
     let root = workspace_root();
