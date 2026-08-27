@@ -495,6 +495,18 @@ fn validate_plan(plan: &BuildPairPlanV1) -> Result<(), BuildPairError> {
     validate_rustc_executable(plan)?;
     validate_member(&plan.static_member, Variant::Static)?;
     validate_member(&plan.dynamic_member, Variant::Dynamic)?;
+    if plan.static_member.source_identity_blake3
+        != plan.dynamic_member.source_identity_blake3
+    {
+        return Err(BuildPairError::new(
+            "paired build members must share one complete source identity",
+        ));
+    }
+    if plan.static_member.cargo_lock_blake3 != plan.dynamic_member.cargo_lock_blake3 {
+        return Err(BuildPairError::new(
+            "paired build members must share one Cargo.lock identity",
+        ));
+    }
 
     let static_source = canonical_directory(&plan.static_member.source_root, "static source_root")?;
     let dynamic_source =
