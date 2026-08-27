@@ -2073,27 +2073,31 @@ class _Environment(BaseSettings):
         """Validate the router's stale-worker cutoff outlives the heartbeat cadence.
 
         ``StickyCreditRouter.evict_stale_workers`` computes its cutoff as
-        ``WORKER.STALE_TIME * 3``, fed only by the generic ``HeartbeatMessage``
-        cadence (``SERVICE.HEARTBEAT_INTERVAL`` /
-        ``SERVICE.HEARTBEAT_MISSED_THRESHOLD``). If the cutoff is shorter than
-        the worst-case gap between heartbeats, every worker looks stale on the
-        very first sweep and gets evicted -- terminal when it owns in-flight
-        credits or sticky sessions, regardless of ``WORKER.MIN_ALIVE_FRACTION``.
+        ``WORKER.STALE_TIME * 3`` against ``last_heartbeat_ns``, which is fed
+        solely by ``TimingManager``'s ``HeartbeatMessage`` handler. Workers
+        emit those on their own ``SERVICE.HEARTBEAT_INTERVAL`` timer, so the
+        expected gap between two heartbeats from a healthy worker is one
+        interval -- ``SERVICE.HEARTBEAT_MISSED_THRESHOLD`` is the *controller
+        watchdog's* tolerance for missed beats and never reaches this path.
+        Validating against ``INTERVAL * THRESHOLD`` therefore rejected safe
+        configurations (raising from an import-time singleton, which makes the
+        package unimportable): with the defaults, merely raising the watchdog
+        threshold to 6 was enough to trip it.
+
+        The cutoff must still outlive the emission cadence with room for
+        scheduling jitter, or every worker looks stale on the very first sweep
+        and gets evicted -- terminal when it owns in-flight credits or sticky
+        sessions, regardless of ``WORKER.MIN_ALIVE_FRACTION``.
         """
-        heartbeat_worst_case = (
-            self.SERVICE.HEARTBEAT_INTERVAL * self.SERVICE.HEARTBEAT_MISSED_THRESHOLD
-        )
         stale_cutoff = self.WORKER.STALE_TIME * 3
-        if stale_cutoff <= heartbeat_worst_case:
+        if stale_cutoff <= self.SERVICE.HEARTBEAT_INTERVAL:
             raise ValueError(
                 f"AIPERF_WORKER_STALE_TIME: {self.WORKER.STALE_TIME} "
                 f"(eviction cutoff = STALE_TIME * 3 = {stale_cutoff}) must satisfy "
-                f"STALE_TIME * 3 > AIPERF_SERVICE_HEARTBEAT_INTERVAL * "
-                f"AIPERF_SERVICE_HEARTBEAT_MISSED_THRESHOLD "
-                f"({self.SERVICE.HEARTBEAT_INTERVAL} * "
-                f"{self.SERVICE.HEARTBEAT_MISSED_THRESHOLD} = {heartbeat_worst_case}), "
-                "otherwise workers appear stale to the router before their "
-                "heartbeat cadence could plausibly reach it."
+                f"STALE_TIME * 3 > AIPERF_SERVICE_HEARTBEAT_INTERVAL "
+                f"({self.SERVICE.HEARTBEAT_INTERVAL}), otherwise workers appear "
+                "stale to the router before their heartbeat cadence could "
+                "plausibly reach it."
             )
         return self
 

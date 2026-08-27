@@ -89,6 +89,15 @@ _PRE_BENCHMARK_STATES = frozenset(
 )
 """States in which no benchmark result can legitimately have been produced yet."""
 
+_FAILURE_SHUTDOWN_TIMEOUT_SEC: float = 600.0
+"""Cap on ``SystemController``'s failure-path teardown.
+
+Deliberately far above ``Environment.SERVICE.FAILURE_SHUTDOWN_TIMEOUT``: this
+teardown exports every artifact and reaps every child service before its own
+``os._exit()``, so the generic per-service bound would truncate a large export.
+It is still finite -- an unbounded await here is a zombie container.
+"""
+
 
 class SystemController(SignalHandlerMixin, BaseService):
     """System Controller service.
@@ -99,11 +108,24 @@ class SystemController(SignalHandlerMixin, BaseService):
 
     @property
     def failure_shutdown_timeout(self) -> float | None:
-        """Its on_stop hook exports results, renders the console, and then calls
-        os._exit() itself, so bounding that teardown would cut the export short
-        and skip the terminal exit the zombie-prevention path depends on.
+        """Widen, rather than remove, the bound on failure-path teardown.
+
+        ``_stop_system_controller`` exports results, renders the console,
+        broadcasts shutdown, reaps every child service, and only then calls
+        ``os._exit()``. The global default is too tight for that -- it would
+        cut a large export short. But returning ``None`` reinstated exactly the
+        hang the bound exists to prevent, and did so in the one process whose
+        teardown *is* the exit path: every unbounded await before the
+        ``os._exit()`` (``ui.stop()`` first among them) could wedge, and with
+        no timeout the controller would never reach ``_set_state(FAILED)``, the
+        ``os._exit()``, or any other terminal step -- a zombie holding its
+        container open forever.
+
+        A generous finite cap keeps both properties: a healthy teardown always
+        finishes inside it, and a wedged one still unwinds to the FAILED state
+        rather than hanging.
         """
-        return None
+        return _FAILURE_SHUTDOWN_TIMEOUT_SEC
 
     def __init__(
         self,

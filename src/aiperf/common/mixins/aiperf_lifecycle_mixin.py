@@ -318,8 +318,10 @@ class AIPerfLifecycleMixin(TaskManagerMixin, HooksMixin):
             # client stuck in a C-extension recv) otherwise turns a failed
             # service into a silent zombie that keeps its container alive.
             # We are already on the failure path, so losing cleanup state
-            # beats never exiting -- but only in a container. See
-            # ``_hard_exit_on_wedged_shutdown``.
+            # beats never exiting. Subclasses whose teardown legitimately runs
+            # long widen this bound via ``failure_shutdown_timeout``; None
+            # removes it entirely and is only correct for a lifecycle that
+            # cannot wedge.
             timeout = self.failure_shutdown_timeout
             if timeout is None:
                 await self.stop()

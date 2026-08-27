@@ -223,7 +223,18 @@ def _dominates(
     other: SearchIteration,
     objectives: list,
 ) -> bool:
-    """Return whether ``candidate`` is no worse everywhere and better somewhere."""
+    """Return whether ``candidate`` is no worse everywhere and better somewhere.
+
+    An objective that is unavailable on either side (absent from a short
+    vector, or non-finite) makes the comparison undecidable, so no domination
+    is claimed. Skipping such an objective instead let a trial win on the
+    strength of its own broken value: with objectives ``[throughput MAX,
+    latency MIN]``, ``[100.0, NaN]`` compared against ``[50.0, 8.0]`` won on
+    throughput, had its NaN latency skipped, and dominated a trial that was
+    strictly better on the objective it silently dropped -- then serialized as
+    ``[100.0, null]``. Returning False keeps both points in the front, which
+    is the safe outcome for an incomparable pair.
+    """
     from aiperf.common.enums import OptimizationDirection
 
     strictly_better = False
@@ -231,7 +242,7 @@ def _dominates(
         candidate_value = _objective_at(candidate, index)
         other_value = _objective_at(other, index)
         if candidate_value is None or other_value is None:
-            continue
+            return False
         maximize = objective.direction == OptimizationDirection.MAXIMIZE
         if (maximize and candidate_value < other_value) or (
             not maximize and candidate_value > other_value
