@@ -182,6 +182,30 @@ failure_codes! {
     }
 }
 
+failure_codes! {
+    /// Stable ordinary checkpoint-attempt failure classification.
+    pub enum CheckpointAttemptFailureCode {
+        /// A participant, object write, or synchronization operation failed with I/O.
+        Io => "checkpoint_io",
+        /// A required checkpoint participant or backend is temporarily unavailable.
+        Unavailable => "checkpoint_unavailable",
+        /// The current checkpoint attempt failed without changing authoritative state.
+        Attempt => "checkpoint_attempt",
+    }
+}
+
+failure_codes! {
+    /// Stable ordinary result-processing or export failure classification.
+    pub enum ResultExportFailureCode {
+        /// A result compaction, persistence, or export operation failed with I/O.
+        Io => "result_export_io",
+        /// A required result processor or exporter is unavailable.
+        Unavailable => "result_export_unavailable",
+        /// The current result or export attempt failed without changing its source generation.
+        Attempt => "result_export_attempt",
+    }
+}
+
 const fn budget_code(code: StateBudgetFailureCode) -> &'static str {
     match code {
         StateBudgetFailureCode::ItemCapacity => "item_capacity",
@@ -378,6 +402,76 @@ impl ActionExecutionError {
     }
 }
 
+/// Ordinary checkpoint-attempt I/O, availability, attempt, or state-budget error.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CheckpointAttemptError {
+    /// Checkpoint-owned failure with a closed stable classification.
+    Failure(CheckpointAttemptFailureCode),
+    /// Checkpoint attempt state exceeded an explicit capacity.
+    StateBudget(StateBudgetFailureCode),
+}
+
+impl CheckpointAttemptError {
+    /// Construct an ordinary checkpoint-attempt failure.
+    pub const fn failure(code: CheckpointAttemptFailureCode) -> Self {
+        Self::Failure(code)
+    }
+
+    /// Construct a checkpoint-attempt state-budget failure.
+    pub const fn state_budget(code: StateBudgetFailureCode) -> Self {
+        Self::StateBudget(code)
+    }
+
+    const fn failure_stage(&self) -> StreamingFailureStage {
+        match self {
+            Self::Failure(_) => StreamingFailureStage::Checkpoint,
+            Self::StateBudget(_) => StreamingFailureStage::StateBudget,
+        }
+    }
+
+    const fn failure_code(&self) -> &'static str {
+        match self {
+            Self::Failure(code) => code.code(),
+            Self::StateBudget(code) => budget_code(*code),
+        }
+    }
+}
+
+/// Ordinary result-processing or export I/O, availability, attempt, or state-budget error.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ResultExportError {
+    /// Result/export-owned failure with a closed stable classification.
+    Failure(ResultExportFailureCode),
+    /// Result or export state exceeded an explicit capacity.
+    StateBudget(StateBudgetFailureCode),
+}
+
+impl ResultExportError {
+    /// Construct an ordinary result-processing or export failure.
+    pub const fn failure(code: ResultExportFailureCode) -> Self {
+        Self::Failure(code)
+    }
+
+    /// Construct a result/export state-budget failure.
+    pub const fn state_budget(code: StateBudgetFailureCode) -> Self {
+        Self::StateBudget(code)
+    }
+
+    const fn failure_stage(&self) -> StreamingFailureStage {
+        match self {
+            Self::Failure(_) => StreamingFailureStage::Result,
+            Self::StateBudget(_) => StreamingFailureStage::StateBudget,
+        }
+    }
+
+    const fn failure_code(&self) -> &'static str {
+        match self {
+            Self::Failure(code) => code.code(),
+            Self::StateBudget(code) => budget_code(*code),
+        }
+    }
+}
+
 macro_rules! impl_failure {
     ($error:ty) => {
         impl fmt::Display for $error {
@@ -401,6 +495,8 @@ impl_failure!(StreamSourceError);
 impl_failure!(StreamFormatError);
 impl_failure!(SessionCoordinatorError);
 impl_failure!(ActionExecutionError);
+impl_failure!(CheckpointAttemptError);
+impl_failure!(ResultExportError);
 
 impl StableStreamingFailure for CheckpointError {
     fn stage(&self) -> StreamingFailureStage {
@@ -443,7 +539,7 @@ impl StableStreamingFailure for CheckpointError {
     }
 }
 
-/// Closed ordinary failures accepted from source, format, session, and action adapters.
+/// Closed ordinary failures accepted from their scope-specific owners.
 #[derive(Debug, Eq, PartialEq)]
 pub enum OrdinaryStreamingFailure {
     /// Source-owned failure.
@@ -454,6 +550,10 @@ pub enum OrdinaryStreamingFailure {
     Session(SessionCoordinatorError),
     /// Action-binding failure.
     Action(ActionExecutionError),
+    /// Ordinary checkpoint-attempt failure.
+    CheckpointAttempt(CheckpointAttemptError),
+    /// Ordinary result-processing or export failure.
+    Export(ResultExportError),
 }
 
 impl OrdinaryStreamingFailure {
@@ -465,6 +565,8 @@ impl OrdinaryStreamingFailure {
             Self::Format(error) => error.stage(),
             Self::Session(error) => error.stage(),
             Self::Action(error) => error.stage(),
+            Self::CheckpointAttempt(error) => error.stage(),
+            Self::Export(error) => error.stage(),
         }
     }
 
@@ -476,6 +578,8 @@ impl OrdinaryStreamingFailure {
             Self::Format(error) => error.code(),
             Self::Session(error) => error.code(),
             Self::Action(error) => error.code(),
+            Self::CheckpointAttempt(error) => error.code(),
+            Self::Export(error) => error.code(),
         }
     }
 }

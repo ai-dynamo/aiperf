@@ -4,19 +4,25 @@
 use std::num::NonZeroU64;
 
 use aiperf_runtime::streaming::{
-    checkpoint::StreamRunIdentity,
-    failure::{DecodeFailureCode, OrdinaryStreamingFailure, StreamFormatError},
+    checkpoint::{CheckpointEpoch, CheckpointGeneration, StreamRunIdentity},
+    failure::{
+        AcquisitionFailureCode, ActionExecutionError, ActionFailureCode, CheckpointAttemptError,
+        CheckpointAttemptFailureCode, DecodeFailureCode, OrdinaryStreamingFailure,
+        ResultExportError, ResultExportFailureCode, SessionCoordinatorError, SessionFailureCode,
+        StreamFormatError, StreamSourceError, StreamingFailureStage,
+    },
     identity::{
         ContentDigest, GlobalSequence, ImmutableObjectIdentity, LogicalReplayRunId, StableActionId,
-        StableRecordId,
+        StableRecordId, StableSessionKey,
     },
     reliability::{
         ActionFailureDisposition, OrdinaryStreamingIssue, PreparedActionFailureIdentity,
         PreparedStreamingIssuePolicy, StreamingInputDomainIdentity, StreamingIssueClass,
-        StreamingIssueComponentId, StreamingIssueDisposition, StreamingIssueScope,
-        StreamingIssueScopeKind, StreamingIssueThresholdRule,
+        StreamingIssueComponentId, StreamingIssueDisposition, StreamingIssueOrderKey,
+        StreamingIssueScope, StreamingIssueScopeKind, StreamingIssueThresholdRule,
+        StreamingIssueValidationError,
     },
-    unit::SourcePosition,
+    unit::{SourcePosition, StateBudgetFailureCode},
 };
 
 fn component(value: &str) -> StreamingIssueComponentId {
@@ -169,7 +175,7 @@ fn record_and_action_constructors_derive_their_exact_order_domains() {
         GlobalSequence::new(11),
         12,
         ContentDigest::from_bytes([13; 32]),
-        OrdinaryStreamingFailure::Format(StreamFormatError::decode(DecodeFailureCode::Syntax)),
+        OrdinaryStreamingFailure::Action(ActionExecutionError::action(ActionFailureCode::Endpoint)),
     )
     .unwrap_or_else(|error| panic!("valid action issue: {error}"));
     assert_eq!(action.scope().kind(), StreamingIssueScopeKind::Action);
@@ -179,6 +185,231 @@ fn record_and_action_constructors_derive_their_exact_order_domains() {
         action.order().global_sequence,
         Some(GlobalSequence::new(11))
     );
+}
+
+#[test]
+fn action_scope_rejects_decode_failure_before_identity() {
+    let rejected = OrdinaryStreamingIssue::action(
+        run(3),
+        StableActionId::from_bytes([9; 32]),
+        StreamingIssueClass::Permanent,
+        ContentDigest::from_bytes([10; 32]),
+        GlobalSequence::new(11),
+        12,
+        ContentDigest::from_bytes([13; 32]),
+        OrdinaryStreamingFailure::Format(StreamFormatError::decode(DecodeFailureCode::Syntax)),
+    );
+
+    assert!(rejected.is_err());
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TestScopeFamily {
+    Partition,
+    Record,
+    Session,
+    Action,
+    CheckpointAttempt,
+    Export,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TestFailureFamily {
+    Source,
+    Format,
+    Session,
+    Action,
+    CheckpointAttempt,
+    Export,
+}
+
+fn representative_failure(family: TestFailureFamily) -> OrdinaryStreamingFailure {
+    match family {
+        TestFailureFamily::Source => OrdinaryStreamingFailure::Source(
+            StreamSourceError::acquisition(AcquisitionFailureCode::Read),
+        ),
+        TestFailureFamily::Format => {
+            OrdinaryStreamingFailure::Format(StreamFormatError::decode(DecodeFailureCode::Syntax))
+        }
+        TestFailureFamily::Session => OrdinaryStreamingFailure::Session(
+            SessionCoordinatorError::session(SessionFailureCode::MissingPredecessor),
+        ),
+        TestFailureFamily::Action => OrdinaryStreamingFailure::Action(
+            ActionExecutionError::action(ActionFailureCode::Endpoint),
+        ),
+        TestFailureFamily::CheckpointAttempt => OrdinaryStreamingFailure::CheckpointAttempt(
+            CheckpointAttemptError::failure(CheckpointAttemptFailureCode::Io),
+        ),
+        TestFailureFamily::Export => OrdinaryStreamingFailure::Export(ResultExportError::failure(
+            ResultExportFailureCode::Io,
+        )),
+    }
+}
+
+fn representative_scope_and_order(
+    family: TestScopeFamily,
+) -> (StreamingIssueScope, StreamingIssueOrderKey) {
+    let input_domain = domain(0x71, 0x72);
+    let tiebreaker = ContentDigest::from_bytes([0x73; 32]);
+    match family {
+        TestScopeFamily::Partition => (
+            StreamingIssueScope::Partition {
+                input_domain: input_domain.clone(),
+                object: ImmutableObjectIdentity::from_bytes([0x74; 32]),
+            },
+            StreamingIssueOrderKey::input(input_domain, SourcePosition::new(4), 2, tiebreaker),
+        ),
+        TestScopeFamily::Record => (
+            StreamingIssueScope::Record {
+                input_domain: input_domain.clone(),
+                record_id: StableRecordId::from_bytes([0x75; 32]),
+            },
+            StreamingIssueOrderKey::input(input_domain, SourcePosition::new(4), 2, tiebreaker),
+        ),
+        TestScopeFamily::Session => (
+            StreamingIssueScope::Session {
+                input_domain: input_domain.clone(),
+                session_key: StableSessionKey::from_bytes([0x76; 32]),
+            },
+            StreamingIssueOrderKey::input(input_domain, SourcePosition::new(4), 2, tiebreaker),
+        ),
+        TestScopeFamily::Action => (
+            StreamingIssueScope::Action {
+                action_id: StableActionId::from_bytes([0x77; 32]),
+            },
+            StreamingIssueOrderKey::action(GlobalSequence::new(4), 2, tiebreaker),
+        ),
+        TestScopeFamily::CheckpointAttempt => (
+            StreamingIssueScope::CheckpointAttempt {
+                generation: CheckpointEpoch::new(4),
+                attempt_ordinal: 2,
+            },
+            StreamingIssueOrderKey::run(2, tiebreaker),
+        ),
+        TestScopeFamily::Export => (
+            StreamingIssueScope::Export {
+                exporter_id: component("jsonl"),
+                generation: CheckpointGeneration::new(
+                    CheckpointEpoch::new(4),
+                    ContentDigest::from_bytes([0x78; 32]),
+                ),
+            },
+            StreamingIssueOrderKey::run(2, tiebreaker),
+        ),
+    }
+}
+
+#[test]
+fn every_ordinary_scope_accepts_only_its_typed_failure_family() {
+    let scopes = [
+        TestScopeFamily::Partition,
+        TestScopeFamily::Record,
+        TestScopeFamily::Session,
+        TestScopeFamily::Action,
+        TestScopeFamily::CheckpointAttempt,
+        TestScopeFamily::Export,
+    ];
+    let failures = [
+        TestFailureFamily::Source,
+        TestFailureFamily::Format,
+        TestFailureFamily::Session,
+        TestFailureFamily::Action,
+        TestFailureFamily::CheckpointAttempt,
+        TestFailureFamily::Export,
+    ];
+
+    for scope_family in scopes {
+        for failure_family in failures {
+            let (scope, order) = representative_scope_and_order(scope_family);
+            let result = OrdinaryStreamingIssue::new(
+                run(0x70),
+                scope,
+                StreamingIssueClass::Retryable,
+                ContentDigest::from_bytes([0x79; 32]),
+                order,
+                representative_failure(failure_family),
+            );
+            let is_matching_family = matches!(
+                (scope_family, failure_family),
+                (TestScopeFamily::Partition, TestFailureFamily::Source)
+                    | (TestScopeFamily::Record, TestFailureFamily::Format)
+                    | (TestScopeFamily::Session, TestFailureFamily::Session)
+                    | (TestScopeFamily::Action, TestFailureFamily::Action)
+                    | (
+                        TestScopeFamily::CheckpointAttempt,
+                        TestFailureFamily::CheckpointAttempt
+                    )
+                    | (TestScopeFamily::Export, TestFailureFamily::Export)
+            );
+            if is_matching_family {
+                assert!(
+                    result.is_ok(),
+                    "{scope_family:?} rejected {failure_family:?}"
+                );
+            } else {
+                assert_eq!(
+                    result,
+                    Err(StreamingIssueValidationError::FailureScopeMismatch),
+                    "{scope_family:?} accepted {failure_family:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn checkpoint_attempt_mismatch_cannot_mint_a_second_dedup_identity() {
+    let issue = |run_byte, epoch, attempt_ordinal, retry_ordinal| {
+        OrdinaryStreamingIssue::new(
+            run(run_byte),
+            StreamingIssueScope::CheckpointAttempt {
+                generation: CheckpointEpoch::new(epoch),
+                attempt_ordinal,
+            },
+            StreamingIssueClass::Retryable,
+            ContentDigest::from_bytes([0x81; 32]),
+            StreamingIssueOrderKey::run(retry_ordinal, ContentDigest::from_bytes([0x82; 32])),
+            OrdinaryStreamingFailure::CheckpointAttempt(CheckpointAttemptError::failure(
+                CheckpointAttemptFailureCode::Attempt,
+            )),
+        )
+    };
+
+    assert_eq!(
+        issue(0x80, 5, 7, 8),
+        Err(StreamingIssueValidationError::OrderScopeMismatch)
+    );
+    let first = issue(0x80, 5, 7, 7).unwrap_or_else(|error| panic!("valid issue: {error}"));
+    let replay = issue(0x80, 5, 7, 7).unwrap_or_else(|error| panic!("valid replay: {error}"));
+    let other_run = issue(0x81, 5, 7, 7).unwrap_or_else(|error| panic!("valid run: {error}"));
+    let other_epoch = issue(0x80, 6, 7, 7).unwrap_or_else(|error| panic!("valid epoch: {error}"));
+    assert_eq!(first.issue_id(), replay.issue_id());
+    assert_ne!(first.issue_id(), other_run.issue_id());
+    assert_ne!(first.issue_id(), other_epoch.issue_id());
+}
+
+#[test]
+fn checkpoint_and_export_failure_codes_retain_exact_stages() {
+    let checkpoint = OrdinaryStreamingFailure::CheckpointAttempt(CheckpointAttemptError::failure(
+        CheckpointAttemptFailureCode::Unavailable,
+    ));
+    assert_eq!(checkpoint.stage(), StreamingFailureStage::Checkpoint);
+    assert_eq!(checkpoint.code(), "checkpoint_unavailable");
+
+    let checkpoint_capacity = OrdinaryStreamingFailure::CheckpointAttempt(
+        CheckpointAttemptError::state_budget(StateBudgetFailureCode::ItemCapacity),
+    );
+    assert_eq!(
+        checkpoint_capacity.stage(),
+        StreamingFailureStage::StateBudget
+    );
+    assert_eq!(checkpoint_capacity.code(), "item_capacity");
+
+    let export = OrdinaryStreamingFailure::Export(ResultExportError::failure(
+        ResultExportFailureCode::Attempt,
+    ));
+    assert_eq!(export.stage(), StreamingFailureStage::Result);
+    assert_eq!(export.code(), "result_export_attempt");
 }
 
 #[test]

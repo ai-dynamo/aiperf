@@ -414,6 +414,8 @@ pub enum StreamingIssueValidationError {
     ControlledStopIsNotOrdinary,
     /// Invariant classification is reserved for the private host classifier.
     InvariantIsHostOwned,
+    /// The typed failure does not belong to the selected issue scope.
+    FailureScopeMismatch,
     /// A supposedly closed failure exposed an invalid stable component code.
     InvalidComponentId,
 }
@@ -464,6 +466,9 @@ impl OrdinaryStreamingIssue {
         }
         if class == StreamingIssueClass::Invariant {
             return Err(StreamingIssueValidationError::InvariantIsHostOwned);
+        }
+        if !failure_matches_scope(&scope, &failure) {
+            return Err(StreamingIssueValidationError::FailureScopeMismatch);
         }
         if !scope_order_matches(&scope, &order) {
             return Err(StreamingIssueValidationError::OrderScopeMismatch);
@@ -734,14 +739,49 @@ impl OrdinaryStreamingIssue {
     }
 }
 
+fn failure_matches_scope(scope: &StreamingIssueScope, failure: &OrdinaryStreamingFailure) -> bool {
+    match (scope, failure) {
+        (StreamingIssueScope::Run, _) => true,
+        (StreamingIssueScope::Partition { .. }, OrdinaryStreamingFailure::Source(_))
+        | (StreamingIssueScope::Record { .. }, OrdinaryStreamingFailure::Format(_))
+        | (StreamingIssueScope::Session { .. }, OrdinaryStreamingFailure::Session(_))
+        | (StreamingIssueScope::Action { .. }, OrdinaryStreamingFailure::Action(_))
+        | (
+            StreamingIssueScope::CheckpointAttempt { .. },
+            OrdinaryStreamingFailure::CheckpointAttempt(_),
+        )
+        | (StreamingIssueScope::Export { .. }, OrdinaryStreamingFailure::Export(_)) => true,
+        (
+            StreamingIssueScope::Partition { .. }
+            | StreamingIssueScope::Record { .. }
+            | StreamingIssueScope::Session { .. }
+            | StreamingIssueScope::Action { .. }
+            | StreamingIssueScope::Export { .. }
+            | StreamingIssueScope::CheckpointAttempt { .. },
+            OrdinaryStreamingFailure::Source(_)
+            | OrdinaryStreamingFailure::Format(_)
+            | OrdinaryStreamingFailure::Session(_)
+            | OrdinaryStreamingFailure::Action(_)
+            | OrdinaryStreamingFailure::CheckpointAttempt(_)
+            | OrdinaryStreamingFailure::Export(_),
+        ) => false,
+    }
+}
+
 fn scope_order_matches(scope: &StreamingIssueScope, order: &StreamingIssueOrderKey) -> bool {
     match scope {
-        StreamingIssueScope::Run
-        | StreamingIssueScope::Export { .. }
-        | StreamingIssueScope::CheckpointAttempt { .. } => {
+        StreamingIssueScope::Run | StreamingIssueScope::Export { .. } => {
             order.input_domain.is_none()
                 && order.source_position.is_none()
                 && order.global_sequence.is_none()
+        }
+        StreamingIssueScope::CheckpointAttempt {
+            attempt_ordinal, ..
+        } => {
+            order.input_domain.is_none()
+                && order.source_position.is_none()
+                && order.global_sequence.is_none()
+                && order.retry_ordinal == *attempt_ordinal
         }
         StreamingIssueScope::Partition { input_domain, .. }
         | StreamingIssueScope::Record { input_domain, .. }
@@ -1259,6 +1299,7 @@ impl From<StreamingIssueValidationError> for StreamingReliabilityError {
             StreamingIssueValidationError::OrderScopeMismatch => Self::InvalidScopeOrder,
             StreamingIssueValidationError::ControlledStopIsNotOrdinary => Self::IllegalDisposition,
             StreamingIssueValidationError::InvariantIsHostOwned => Self::IllegalTerminalInvariant,
+            StreamingIssueValidationError::FailureScopeMismatch => Self::IllegalDisposition,
             StreamingIssueValidationError::InvalidComponentId => Self::InvalidComponentId,
         }
     }
@@ -1843,7 +1884,7 @@ mod tests {
     use super::*;
     use crate::streaming::{
         action::ActionTerminalMembershipOutcomeView,
-        failure::{DecodeFailureCode, StreamFormatError},
+        failure::{ActionExecutionError, ActionFailureCode, DecodeFailureCode, StreamFormatError},
         identity::LogicalReplayRunId,
     };
 
@@ -2101,6 +2142,17 @@ mod tests {
     }
 
     #[test]
+    fn checkpoint_attempt_order_requires_attempt_ordinal_equality() {
+        let scope = StreamingIssueScope::CheckpointAttempt {
+            generation: CheckpointEpoch::new(5),
+            attempt_ordinal: 7,
+        };
+        let mismatched = StreamingIssueOrderKey::run(8, ContentDigest::from_bytes([0x55; 32]));
+
+        assert!(!scope_order_matches(&scope, &mismatched));
+    }
+
+    #[test]
     fn ordinary_policy_never_constructs_fail_run_or_invariant() {
         assert!(
             StreamingIssueThresholdRule::new(
@@ -2166,7 +2218,9 @@ mod tests {
             GlobalSequence::new(9),
             0,
             ContentDigest::from_bytes([0x68; 32]),
-            OrdinaryStreamingFailure::Format(StreamFormatError::decode(DecodeFailureCode::Syntax)),
+            OrdinaryStreamingFailure::Action(ActionExecutionError::action(
+                ActionFailureCode::Endpoint,
+            )),
         )
         .unwrap_or_else(|error| panic!("valid action issue: {error}"));
         assert_eq!(
