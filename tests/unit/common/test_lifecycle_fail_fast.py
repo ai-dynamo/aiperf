@@ -96,3 +96,79 @@ class TestFailureShutdownIsBounded:
         from aiperf.common.environment import Environment
 
         assert Environment.SERVICE.FAILURE_SHUTDOWN_TIMEOUT > 0
+
+
+class TestFailureShutdownTimeoutOverride:
+    """A subclass can opt its terminal on_stop teardown out of the global bound.
+
+    Regression coverage for the case where a subclass's on_stop hook does
+    long-running work (result export, console rendering) before its own
+    terminal exit, and the global FAILURE_SHUTDOWN_TIMEOUT would otherwise
+    cut that work off mid-flight.
+    """
+
+    @pytest.mark.asyncio
+    async def test_default_uses_environment_timeout(self) -> None:
+        from aiperf.common.environment import Environment
+
+        component = AIPerfLifecycleMixin()
+        assert (
+            component.failure_shutdown_timeout
+            == Environment.SERVICE.FAILURE_SHUTDOWN_TIMEOUT
+        )
+
+    @pytest.mark.asyncio
+    async def test_none_override_disables_the_bound(self) -> None:
+        """A subclass returning None from the property must not be wrapped in wait_for."""
+        ran: list[str] = []
+
+        class _UnboundedStopper(AIPerfLifecycleMixin):
+            @property
+            def failure_shutdown_timeout(self) -> float | None:
+                return None
+
+            @on_init
+            async def _fail_init(self) -> None:
+                raise RuntimeError("init failed")
+
+            @on_stop
+            async def _slow_stop(self) -> None:
+                # Longer than FAILURE_SHUTDOWN_TIMEOUT would allow, but the
+                # auto-fast-forwarding asyncio.sleep fixture keeps this cheap;
+                # the point is that no wait_for wraps this call at all.
+                await asyncio.sleep(0)
+                ran.append("slow_stop")
+
+        component = _UnboundedStopper()
+        with pytest.raises(asyncio.CancelledError):
+            await component.initialize()
+        assert ran == ["slow_stop"]
+        assert component.state is LifecycleState.FAILED
+
+    @pytest.mark.asyncio
+    async def test_override_value_is_honored_as_the_wait_for_timeout(self) -> None:
+        """A subclass returning a custom float is used as the wait_for bound."""
+        seen_timeouts: list[float | None] = []
+        real_wait_for = asyncio.wait_for
+
+        async def _spy_wait_for(aw, timeout):
+            seen_timeouts.append(timeout)
+            return await real_wait_for(aw, timeout=timeout)
+
+        class _CustomTimeoutStopper(AIPerfLifecycleMixin):
+            @property
+            def failure_shutdown_timeout(self) -> float | None:
+                return 123.0
+
+            @on_init
+            async def _fail_init(self) -> None:
+                raise RuntimeError("init failed")
+
+        component = _CustomTimeoutStopper()
+        with (
+            pytest.MonkeyPatch.context() as mp,
+            pytest.raises(asyncio.CancelledError),
+        ):
+            mp.setattr(asyncio, "wait_for", _spy_wait_for)
+            await component.initialize()
+        assert seen_timeouts == [123.0]

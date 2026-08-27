@@ -95,6 +95,20 @@ class AIPerfLifecycleMixin(TaskManagerMixin, HooksMixin):
         return self.state == LifecycleState.RUNNING
 
     @property
+    def failure_shutdown_timeout(self) -> float | None:
+        """Wall-clock cap applied to ``self.stop()`` when ``_fail`` tears down
+        after a failed on_init/on_start transition. Defaults to
+        ``Environment.SERVICE.FAILURE_SHUTDOWN_TIMEOUT``.
+
+        Subclasses whose ``on_stop`` hooks legitimately need longer than the
+        global default (e.g. a terminal hook that exports results and calls
+        ``os._exit()`` itself, which the bound would otherwise cut off mid-export)
+        should override this to return a larger value, or ``None`` to disable
+        the bound entirely and rely on the subclass's own exit path.
+        """
+        return Environment.SERVICE.FAILURE_SHUTDOWN_TIMEOUT
+
+    @property
     def stop_requested(self) -> bool:
         """Whether the lifecycle has been requested to stop."""
         return self._stop_requested_event.is_set()
@@ -306,14 +320,17 @@ class AIPerfLifecycleMixin(TaskManagerMixin, HooksMixin):
             # We are already on the failure path, so losing cleanup state
             # beats never exiting -- but only in a container. See
             # ``_hard_exit_on_wedged_shutdown``.
-            timeout = Environment.SERVICE.FAILURE_SHUTDOWN_TIMEOUT
-            try:
-                await asyncio.wait_for(self.stop(), timeout=timeout)
-            except TimeoutError:
-                self.error(
-                    f"Shutdown after failure did not complete in {timeout}s; "
-                    f"continuing teardown and reporting the failure"
-                )
+            timeout = self.failure_shutdown_timeout
+            if timeout is None:
+                await self.stop()
+            else:
+                try:
+                    await asyncio.wait_for(self.stop(), timeout=timeout)
+                except TimeoutError:
+                    self.error(
+                        f"Shutdown after failure did not complete in {timeout}s; "
+                        f"continuing teardown and reporting the failure"
+                    )
         await self._set_state(LifecycleState.FAILED)
         raise asyncio.CancelledError(f"Failed for {self}: {e}") from e
 
