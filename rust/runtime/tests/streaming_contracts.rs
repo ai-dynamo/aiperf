@@ -35,7 +35,10 @@ use aiperf_runtime::streaming::{
         StreamingDatasetFormatFactory, StreamingFormatDescriptor, StreamingPartitionDecoder,
         ValidatedStreamingFormatConfig,
     },
-    identity::{ContentDigest, ImmutableObjectIdentity, LogicalReplayRunId},
+    identity::{
+        ContentDigest, GlobalSequence, ImmutableObjectIdentity, LogicalReplayRunId, StableActionId,
+        StableSessionKey,
+    },
     session::{
         DatasetActionSink, SessionClosureCapability, SessionPlacement, SessionStateRetention,
         StreamingSessionCoordinator, StreamingSessionProgramDescriptor,
@@ -188,6 +191,78 @@ fn issue_order_distinguishes_equal_positions_in_different_input_domains() {
 
     assert_ne!(left, right);
     assert_ne!(left.cmp(&right), std::cmp::Ordering::Equal);
+}
+
+fn checked_scope_order(
+    scope: StreamingIssueScope,
+    order: StreamingIssueOrderKey,
+) -> Result<OrdinaryStreamingIssue, StreamingIssueValidationError> {
+    OrdinaryStreamingIssue::new(
+        StreamRunIdentity::new(LogicalReplayRunId::from_bytes([21; 32])),
+        scope,
+        StreamingIssueClass::Permanent,
+        ContentDigest::from_bytes([22; 32]),
+        order,
+        OrdinaryStreamingFailure::Format(StreamFormatError::decode(DecodeFailureCode::Syntax)),
+    )
+}
+
+#[test]
+fn session_and_action_scopes_enforce_their_exact_order_domains() {
+    let domain = StreamingInputDomainIdentity::new(
+        ContentDigest::from_bytes([1; 32]),
+        ImmutableObjectIdentity::from_bytes([2; 32]),
+    );
+    let foreign_domain = StreamingInputDomainIdentity::new(
+        ContentDigest::from_bytes([1; 32]),
+        ImmutableObjectIdentity::from_bytes([3; 32]),
+    );
+    let session = || StreamingIssueScope::Session {
+        input_domain: domain.clone(),
+        session_key: StableSessionKey::from_bytes([4; 32]),
+    };
+    let input_order = || {
+        StreamingIssueOrderKey::input(
+            domain.clone(),
+            SourcePosition::new(5),
+            0,
+            ContentDigest::from_bytes([6; 32]),
+        )
+    };
+    let action = || StreamingIssueScope::Action {
+        action_id: StableActionId::from_bytes([7; 32]),
+    };
+    let action_order = || {
+        StreamingIssueOrderKey::action(
+            GlobalSequence::new(8),
+            0,
+            ContentDigest::from_bytes([9; 32]),
+        )
+    };
+
+    assert!(checked_scope_order(session(), input_order()).is_ok());
+    assert!(checked_scope_order(action(), action_order()).is_ok());
+    assert_eq!(
+        checked_scope_order(session(), action_order()).expect_err("session/global must fail"),
+        StreamingIssueValidationError::OrderScopeMismatch
+    );
+    assert_eq!(
+        checked_scope_order(action(), input_order()).expect_err("action/input must fail"),
+        StreamingIssueValidationError::OrderScopeMismatch
+    );
+    assert_eq!(
+        checked_scope_order(
+            session(),
+            StreamingIssueOrderKey::input(
+                foreign_domain,
+                SourcePosition::new(5),
+                0,
+                ContentDigest::from_bytes([6; 32]),
+            ),
+        )
+        .expect_err("cross-domain session order must fail"),
+        StreamingIssueValidationError::OrderScopeMismatch
+    );
 }
 
 #[allow(dead_code)]
@@ -544,7 +619,7 @@ fn resource_budget(max_items: usize, max_bytes: usize) -> StreamingResourceBudge
 }
 
 #[tokio::test]
-async fn sequential_acquisition_streams_a_large_object_with_bounded_resident_bytes() {
+async fn sequential_acquisition_reaches_exact_eof_under_resident_cap() {
     let memory = resource_budget(2, 4);
     let disk = resource_budget(1, 1);
     let budget = AcquisitionBudget::new(memory.clone(), disk);
@@ -555,7 +630,7 @@ async fn sequential_acquisition_streams_a_large_object_with_bounded_resident_byt
     let partition = AcquiredPartition::sequential(
         SourcePosition::new(9),
         ImmutableObjectIdentity::from_bytes([9; 32]),
-        Some(1_000_000),
+        Some(10),
         0,
         Box::new(GeneratedSequential {
             remaining: 10,
@@ -565,23 +640,23 @@ async fn sequential_acquisition_streams_a_large_object_with_bounded_resident_byt
     )
     .unwrap_or_else(|error| panic!("partition: {error}"));
     assert_eq!(partition.position(), SourcePosition::new(9));
-    assert_eq!(partition.size_bytes(), Some(1_000_000));
+    assert_eq!(partition.size_bytes(), Some(10));
     let AcquiredPartitionAccess::Sequential(mut reader) = partition.into_access() else {
         panic!("sequential acquisition returned another access shape");
     };
 
-    let chunk = reader
+    let mut observed = 0;
+    while let Some(chunk) = reader
         .next_chunk(NonZeroUsize::new(4).unwrap(), &budget)
         .await
         .unwrap_or_else(|error| panic!("chunk: {error}"))
-        .unwrap_or_else(|| panic!("missing generated chunk"));
-    assert_eq!(chunk.as_bytes(), b"xxxx");
-    assert_eq!(chunk.end_offset(), 4);
-    assert_eq!(
-        (memory.snapshot().used_items, memory.snapshot().used_bytes),
-        (2, 4)
-    );
-    drop(chunk);
+    {
+        observed += chunk.as_bytes().len();
+        assert!(chunk.as_bytes().len() <= 4);
+        assert!(memory.snapshot().used_bytes <= 4);
+        drop(chunk);
+    }
+    assert_eq!(observed, 10);
     assert_eq!(
         (memory.snapshot().used_items, memory.snapshot().used_bytes),
         (1, 0)
@@ -591,6 +666,73 @@ async fn sequential_acquisition_streams_a_large_object_with_bounded_resident_byt
         (memory.snapshot().used_items, memory.snapshot().used_bytes),
         (0, 0)
     );
+}
+
+#[tokio::test]
+async fn sequential_acquisition_rejects_eof_before_advertised_length() {
+    let memory = resource_budget(2, 4);
+    let budget = AcquisitionBudget::new(memory.clone(), resource_budget(1, 1));
+    let authority = budget
+        .acquire_memory(1, 0)
+        .await
+        .unwrap_or_else(|error| panic!("authority: {error}"));
+    let partition = AcquiredPartition::sequential(
+        SourcePosition::new(1),
+        ImmutableObjectIdentity::from_bytes([1; 32]),
+        Some(1_000_000),
+        0,
+        Box::new(GeneratedSequential {
+            remaining: 4,
+            offset: 0,
+        }),
+        authority,
+    )
+    .unwrap_or_else(|error| panic!("partition: {error}"));
+    let AcquiredPartitionAccess::Sequential(mut reader) = partition.into_access() else {
+        panic!("sequential acquisition returned another access shape");
+    };
+    let chunk = reader
+        .next_chunk(NonZeroUsize::new(4).unwrap(), &budget)
+        .await
+        .unwrap_or_else(|error| panic!("first chunk: {error}"))
+        .unwrap_or_else(|| panic!("missing first chunk"));
+    drop(chunk);
+    let error = reader
+        .next_chunk(NonZeroUsize::new(4).unwrap(), &budget)
+        .await
+        .expect_err("premature EOF must not validate an advertised object");
+    assert_eq!(error.stage(), StreamingFailureStage::Acquisition);
+    assert_eq!(error.code(), "truncated_object");
+}
+
+#[tokio::test]
+async fn sequential_acquisition_rejects_chunk_overshoot() {
+    let memory = resource_budget(2, 4);
+    let budget = AcquisitionBudget::new(memory, resource_budget(1, 1));
+    let authority = budget
+        .acquire_memory(1, 0)
+        .await
+        .unwrap_or_else(|error| panic!("authority: {error}"));
+    let partition = AcquiredPartition::sequential(
+        SourcePosition::new(1),
+        ImmutableObjectIdentity::from_bytes([1; 32]),
+        Some(3),
+        0,
+        Box::new(GeneratedSequential {
+            remaining: 4,
+            offset: 0,
+        }),
+        authority,
+    )
+    .unwrap_or_else(|error| panic!("partition: {error}"));
+    let AcquiredPartitionAccess::Sequential(mut reader) = partition.into_access() else {
+        panic!("sequential acquisition returned another access shape");
+    };
+    let error = reader
+        .next_chunk(NonZeroUsize::new(4).unwrap(), &budget)
+        .await
+        .expect_err("chunk beyond advertised size must fail");
+    assert_eq!(error.code(), "invalid_chunk");
 }
 
 struct FixedSeekableSnapshot;

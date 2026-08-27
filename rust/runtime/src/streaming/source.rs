@@ -525,6 +525,7 @@ pub struct AcquiredSequentialPartition {
     authority_lease: BudgetLease,
     next_offset: u64,
     size_bytes: Option<u64>,
+    is_eof: bool,
 }
 
 impl AcquiredSequentialPartition {
@@ -534,7 +535,25 @@ impl AcquiredSequentialPartition {
         max_bytes: NonZeroUsize,
         budget: &AcquisitionBudget,
     ) -> Result<Option<SequentialSourceChunk>, StreamSourceError> {
+        if self.is_eof {
+            return Ok(None);
+        }
         let Some(chunk) = self.reader.next_chunk(max_bytes, budget).await? else {
+            match self.size_bytes {
+                Some(size) if self.next_offset < size => {
+                    return Err(StreamSourceError::acquisition(
+                        AcquisitionFailureCode::TruncatedObject,
+                    ));
+                }
+                Some(size) if self.next_offset > size => {
+                    return Err(StreamSourceError::acquisition(
+                        AcquisitionFailureCode::InvalidChunk,
+                    ));
+                }
+                Some(_) => {}
+                None => self.size_bytes = Some(self.next_offset),
+            }
+            self.is_eof = true;
             return Ok(None);
         };
         let length = u64::try_from(chunk.as_bytes().len()).map_err(|_| {
@@ -560,6 +579,12 @@ impl AcquiredSequentialPartition {
     #[must_use]
     pub fn charged_bytes(&self) -> usize {
         self.authority_lease.charged_bytes()
+    }
+
+    /// Return the advertised or EOF-frozen immutable length.
+    #[must_use]
+    pub const fn observed_size_bytes(&self) -> Option<u64> {
+        self.size_bytes
     }
 }
 
@@ -692,6 +717,7 @@ impl AcquiredPartition {
                 authority_lease,
                 next_offset: resume_offset,
                 size_bytes,
+                is_eof: false,
             }),
         })
     }

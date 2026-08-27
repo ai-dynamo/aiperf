@@ -106,6 +106,8 @@ failure_codes! {
         BudgetInvariant => "budget_invariant",
         /// A reader returned an empty, oversized, or discontinuous sequential chunk.
         InvalidChunk => "invalid_chunk",
+        /// A sequential reader ended before its immutable advertised length.
+        TruncatedObject => "truncated_object",
     }
 }
 
