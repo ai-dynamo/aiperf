@@ -95,7 +95,12 @@ fn authority_fixture() -> AuthorityFixture {
             for (pair, scheduled) in authority.pair_schedule().iter().enumerate() {
                 for metric in &plan.measured_metrics {
                     let static_value = 100.0 + (pair % 5) as f64 * 0.1;
-                    let ratio = if is_pattern_case {
+                    let is_allocation_metric = matches!(
+                        metric.as_str(),
+                        "allocated_bytes_per_successful_request"
+                            | "allocation_count_per_successful_request"
+                    );
+                    let ratio = if is_pattern_case && !is_allocation_metric {
                         0.996 + (pair % 3) as f64 * 0.0005
                     } else {
                         1.0

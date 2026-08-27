@@ -124,7 +124,7 @@ fn parse_options(arguments: &[String]) -> Result<BTreeMap<String, String>, Box<d
         "--commit",
         "--experiment-identity-digest",
     ];
-    for pair in arguments.chunks_exact(2) {
+    for pair in arguments.as_chunks::<2>().0 {
         if !ALLOWED.contains(&pair[0].as_str())
             || options.insert(pair[0].clone(), pair[1].clone()).is_some()
         {
