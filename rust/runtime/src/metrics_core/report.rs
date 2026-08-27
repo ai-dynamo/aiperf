@@ -1416,6 +1416,18 @@ fn console_group_name(group: MetricConsoleGroup) -> &'static str {
 }
 
 #[cfg(test)]
+pub(crate) mod test_util {
+    use super::*;
+
+    pub(crate) fn two_metric_report() -> NativeReport {
+        let mut summary = AccumulatorSummary::new();
+        summary.insert_finite(MetricTag::RequestCount, 2.0);
+        summary.insert_finite(MetricTag::BenchmarkDuration, 1.0);
+        NativeReport::new(&summary, None)
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::dispatch::sink::ObservedSpecDecodeAcceptance;

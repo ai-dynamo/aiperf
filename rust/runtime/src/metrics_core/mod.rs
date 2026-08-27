@@ -13,6 +13,7 @@ pub mod ingest;
 pub(crate) mod itl;
 pub mod kernel;
 pub mod report;
+pub mod report_view;
 pub mod sidecar;
 pub mod steady_state;
 pub mod store;
