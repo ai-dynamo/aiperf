@@ -677,6 +677,60 @@ class TestPhaseRunnerCancellation:
         assert result.grace_period_timeout_triggered is False
 
 
+class TestSendingCompleteExecutionTaskFailure:
+    async def test_request_count_phase_raises_instead_of_hanging(
+        self, runner: PhaseRunner
+    ) -> None:
+        """A request-count phase has no ``expected_duration_sec``, so the
+        sending-complete wait has no timeout to fall back on. If the execution
+        task raises before the last credit is sent, the wait must fail fast and
+        the failure must propagate out of ``_wait_for_sending_complete`` (not
+        be logged and swallowed), matching ``run()``'s existing
+        except -> phase-failure path (#1041)."""
+        runner._lifecycle.start()
+        assert runner._lifecycle.time_left_in_seconds() is None
+
+        async def boom() -> None:
+            raise RuntimeError("send_credit: no workers available for routing")
+
+        runner._execution_task = runner.execute_async(boom())
+
+        with pytest.raises(RuntimeError, match="no workers available"):
+            await asyncio.wait_for(
+                runner._wait_for_sending_complete(MockStrategy()), timeout=5.0
+            )
+
+        # The finally block still ran: sending is marked complete so the rest
+        # of teardown (returning-wait, stats) does not also hang.
+        assert runner._lifecycle.is_sending_complete
+
+    async def test_duration_phase_still_times_out_normally(
+        self,
+        conv_src: MagicMock,
+        pub: MagicMock,
+        router: MagicMock,
+        conc: MagicMock,
+        cancel: MagicMock,
+        cb: MagicMock,
+        time_traveler: MagicMock,
+    ) -> None:
+        """Duration-based phases keep their existing bounded-timeout behavior:
+        an execution task that never finishes still surfaces as a normal
+        timeout, not an exception, since #1041 only affects the timeout=None
+        (request-count) branch."""
+        r = make_runner(
+            cfg(reqs=None, dur=0.001), conv_src, pub, router, conc, cancel, cb
+        )
+        r._lifecycle.start()
+        never = asyncio.Event()
+        r._execution_task = r.execute_async(never.wait())
+
+        await r._wait_for_sending_complete(MockStrategy())
+
+        assert r._lifecycle.is_sending_complete
+        assert r._lifecycle.timeout_triggered
+
+
 class TestTimeoutHandling:
     async def test_returns_false_when_event_set(
         self, runner: PhaseRunner, time_traveler: MagicMock
@@ -742,6 +796,70 @@ class TestTimeoutHandling:
         asyncio.create_task(set_later())
         result = await runner._wait_for_event_with_timeout(
             name="t", event=event, timeout=None, task_to_cancel=None
+        )
+        assert result is False
+
+    async def test_indefinite_wait_raises_task_exception_instead_of_hanging(
+        self, runner: PhaseRunner, time_traveler: MagicMock
+    ) -> None:
+        """timeout=None has no bound to fall back on, so a raced task that
+        raises before the event is set must fail the wait fast (#1041) rather
+        than hang forever."""
+        event = asyncio.Event()
+
+        async def boom() -> None:
+            raise RuntimeError("send_credit: no workers available for routing")
+
+        task = asyncio.create_task(boom())
+
+        with pytest.raises(RuntimeError, match="no workers available"):
+            await asyncio.wait_for(
+                runner._wait_for_event_with_timeout(
+                    name="t", event=event, timeout=None, task_to_cancel=task
+                ),
+                timeout=5.0,
+            )
+
+    async def test_indefinite_wait_ignores_cancelled_task_and_keeps_waiting(
+        self, runner: PhaseRunner, time_traveler: MagicMock
+    ) -> None:
+        """A cancelled raced task is not a failure: the wait must keep
+        waiting for the event rather than raising CancelledError."""
+        event = asyncio.Event()
+        never = asyncio.Event()
+        task = asyncio.create_task(never.wait())
+        task.cancel()
+
+        async def set_later() -> None:
+            await asyncio.sleep(0.01)
+            event.set()
+
+        asyncio.create_task(set_later())
+        result = await runner._wait_for_event_with_timeout(
+            name="t", event=event, timeout=None, task_to_cancel=task
+        )
+        assert result is False
+
+    async def test_indefinite_wait_falls_through_when_task_finishes_cleanly(
+        self, runner: PhaseRunner, time_traveler: MagicMock
+    ) -> None:
+        """A raced task that finishes with no exception is not a failure
+        either: the wait must keep waiting for the event rather than
+        returning early just because the task is done."""
+        event = asyncio.Event()
+
+        async def finish_quietly() -> None:
+            return None
+
+        task = asyncio.create_task(finish_quietly())
+
+        async def set_later() -> None:
+            await asyncio.sleep(0.01)
+            event.set()
+
+        asyncio.create_task(set_later())
+        result = await runner._wait_for_event_with_timeout(
+            name="t", event=event, timeout=None, task_to_cancel=task
         )
         assert result is False
 

@@ -1065,6 +1065,7 @@ class PhaseRunner(TaskManagerMixin):
             self.error(
                 f"Error waiting for phase {self._config.phase} to send all credits: {e!r}"
             )
+            raise
         finally:
             if not self._lifecycle.is_sending_complete:
                 self._lifecycle.mark_sending_complete(timeout_triggered=timed_out)
@@ -1235,7 +1236,10 @@ class PhaseRunner(TaskManagerMixin):
             timeout: The timeout in seconds.
                 If None, the event will be waited for indefinitely.
                 If timeout is <= 0, returns immediately with timeout.
-            task_to_cancel: The optional task to cancel when the timeout occurs.
+            task_to_cancel: The optional task to cancel when the timeout occurs. When
+                timeout is None, this task is also raced against the event: if it
+                finishes first with an exception, that exception is raised instead
+                of waiting forever (see ``_wait_for_event_or_task_exception``).
             set_event_on_timeout: If True, the event will also be set when the timeout occurs.
 
         Returns:
@@ -1243,7 +1247,12 @@ class PhaseRunner(TaskManagerMixin):
         """
         if timeout is None:
             self.debug(lambda: f"Waiting for event '{name}' indefinitely")
-            await event.wait()
+            if task_to_cancel is None:
+                await event.wait()
+            else:
+                await self._wait_for_event_or_task_exception(
+                    event, task_to_cancel, name
+                )
             return False
 
         def _on_timeout() -> bool:
@@ -1270,6 +1279,29 @@ class PhaseRunner(TaskManagerMixin):
         except Exception as e:
             self.error(f"Error waiting for event '{name}' with timeout: {e!r}")
             raise
+
+    async def _wait_for_event_or_task_exception(
+        self, event: asyncio.Event, task: asyncio.Task, name: str
+    ) -> None:
+        """Wait for ``event``, but fail fast if ``task`` finishes first with an
+        exception, instead of waiting on it forever.
+
+        An indefinite wait (timeout=None, request-count phases) has no bound to
+        fall back on, and ``execute_async`` runs ``task`` fire-and-forget: its
+        done-callback only discards it from the task set, so an exception it
+        raises is otherwise never retrieved and the wait hangs forever (#1041).
+        """
+        event_task = asyncio.ensure_future(event.wait())
+        try:
+            await asyncio.wait({event_task, task}, return_when=asyncio.FIRST_COMPLETED)
+            if event_task.done():
+                return
+            if not task.cancelled() and (exc := task.exception()) is not None:
+                raise exc
+            await event_task
+        finally:
+            if not event_task.done():
+                event_task.cancel()
 
     async def _progress_report_loop(self) -> None:
         """Publish phase progress stats at regular intervals.
