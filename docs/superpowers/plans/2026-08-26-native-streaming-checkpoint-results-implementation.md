@@ -697,7 +697,14 @@ git commit -m "fix(runtime): bind checkpoint participants to logical runs"
 
 **Depends on:** Task 5A-R. Foundation Task 1D starts only after this task lands.
 
+**Budget contract correction:**
+`artifacts/streaming-design/checkpoint-backend-budget-contract-correction.md`.
+Task 5B owns the backend/read vocabulary below; it does not reopen Task 5A-R's
+run-authority behavior.
+
 **Files:**
+- Modify: `rust/runtime/src/streaming/checkpoint.rs`; Task 5B adds only the
+  stable backend/read budget error vocabulary and `Display` branches below.
 - Create: `rust/runtime/src/streaming/checkpoint_backend.rs`
 - Create: `rust/runtime/src/streaming/checkpoints.rs`
 - Create: `rust/runtime/src/streaming/checkpoints/memory.rs`
@@ -856,6 +863,60 @@ pub struct CheckpointGenerationExpectations {
     pub execution_plan_digest: ContentDigest,
     pub result_plan_digest: ContentDigest,
 }
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CheckpointBackendBudgetKind {
+    Transaction,
+    PreparedIndex,
+    Storage,
+    ResultSummary,
+    Read,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CheckpointBackendBudgetFailureCode {
+    ItemCapacity,
+    ByteCapacity,
+    Closed,
+    Unrepresentable,
+}
+
+pub enum CheckpointError {
+    // Existing Task 5A/5A-R variants remain unchanged.
+    BackendBudget {
+        budget: CheckpointBackendBudgetKind,
+        code: CheckpointBackendBudgetFailureCode,
+    },
+    ResultIndexReadBudgetTooSmall {
+        required_bytes: u64,
+        max_bytes: u64,
+    },
+}
+```
+
+`BackendBudget` is exclusively for capacity owned by the checkpoint backend; it
+must not be collapsed into participant `StateBudget`, `Storage`, or
+`ObjectVerification`. Map one request that exceeds configured item capacity to
+`ItemCapacity`, otherwise a request that exceeds configured byte capacity to
+`ByteCapacity`; item capacity wins if both are exceeded. Map a closed budget to
+`Closed`, and an unrepresentable permit count or accounting transition to
+`Unrepresentable`. Ordinary contention waits cancellation-safely and is not an
+error. Add these exact `Display` branches to the existing match:
+
+```rust
+Self::BackendBudget { budget, code } => write!(
+    formatter,
+    "checkpoint backend {budget:?} budget failed: {code:?}",
+),
+Self::ResultIndexReadBudgetTooSmall {
+    required_bytes,
+    max_bytes,
+} => write!(
+    formatter,
+    "result-index page requires {required_bytes} retained bytes but the caller allowed {max_bytes}",
+),
 ```
 
 `begin_generation` first requires its explicit `run` to equal
@@ -914,9 +975,31 @@ complete supplied descriptor to be reachable from that generation's verified
 result-index root. A content-addressed object existing elsewhere in the backend,
 including another generation or run, is not read authority.
 
+Cursor and reachability validation precede every read-budget decision. Once the
+next reachable descriptor is known, compute the actual compact retained
+allocation of a one-descriptor page. If it exceeds
+`ResultIndexReadBudget.max_bytes`, return
+`ResultIndexReadBudgetTooSmall { required_bytes, max_bytes }` before acquiring
+backend read capacity. Never return an empty page with an unchanged cursor. If
+the caller limit is sufficient but the configured backend read budget cannot
+admit that page, return `BackendBudget { budget: Read, ... }`. Neither refusal
+advances the cursor, changes the reader, or changes the authoritative head.
+
 - [ ] **Step 1: Write representative RED tests**
 
 ```rust
+#[test]
+fn backend_budget_codes_have_stable_names() {
+    assert_eq!(
+        serde_json::to_string(&CheckpointBackendBudgetKind::Storage).unwrap(),
+        "\"storage\"",
+    );
+    assert_eq!(
+        serde_json::to_string(&CheckpointBackendBudgetFailureCode::ByteCapacity).unwrap(),
+        "\"byte_capacity\"",
+    );
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn stale_writer_cannot_merge_or_replace_head() {
     let backend = MemoryCheckpointBackend::new(support::backend_limits());
@@ -1037,6 +1120,101 @@ async fn result_epoch_and_reader_reachability_are_generation_scoped() {
         .await
         .is_err());
 }
+
+#[tokio::test(flavor = "current_thread")]
+async fn storage_capacity_refusal_is_typed_and_publishes_nothing() {
+    let limits = support::backend_limits_with_storage_bytes(
+        support::one_segment_commit_storage_bytes() - 1,
+    );
+    let backend = MemoryCheckpointBackend::new(limits).unwrap();
+    let run = support::run_id(1);
+    let before = backend.budget_snapshots();
+    let transaction = support::transaction_with_one_segment(&backend, run).await;
+
+    assert!(matches!(
+        transaction.commit(support::metadata_at(1)).await,
+        Err(CheckpointError::BackendBudget {
+            budget: CheckpointBackendBudgetKind::Storage,
+            code: CheckpointBackendBudgetFailureCode::ByteCapacity,
+        })
+    ));
+    assert!(backend
+        .open_latest(&run, &support::expectations(run))
+        .await
+        .unwrap()
+        .is_none());
+    assert_eq!(backend.budget_snapshots().storage, before.storage);
+    assert_eq!(backend.budget_snapshots().transactions.used_items, 0);
+    assert_eq!(backend.budget_snapshots().prepared_indexes.used_items, 0);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn oversized_next_descriptor_refuses_without_empty_cursor_loop() {
+    let backend = support::backend_with_one_committed_segment().await;
+    let reader = support::latest_reader(&backend).await;
+    let required = support::first_descriptor_retained_bytes(&reader);
+    let before = backend.budget_snapshots().reads;
+
+    assert!(matches!(
+        reader
+            .scan_result_index(None, support::index_budget(1, required - 1))
+            .await,
+        Err(CheckpointError::ResultIndexReadBudgetTooSmall {
+            required_bytes,
+            max_bytes,
+        }) if required_bytes == required && max_bytes == required - 1
+    ));
+    assert_eq!(backend.budget_snapshots().reads, before);
+
+    let page = reader
+        .scan_result_index(None, support::index_budget(1, required))
+        .await
+        .unwrap();
+    assert_eq!(page.descriptors().len(), 1);
+    assert!(page.next().is_none());
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn invalid_cursor_refuses_before_page_or_backend_budget() {
+    let backend = support::backend_with_one_committed_segment().await;
+    let reader = support::latest_reader(&backend).await;
+    let before = backend.budget_snapshots().reads;
+
+    for cursor in support::foreign_unreachable_and_out_of_range_cursors(&reader) {
+        assert!(matches!(
+            reader
+                .scan_result_index(
+                    Some(cursor),
+                    support::index_budget(1, 1),
+                )
+                .await,
+            Err(CheckpointError::ObjectVerification)
+        ));
+        assert_eq!(backend.budget_snapshots().reads, before);
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn sufficient_page_limit_does_not_hide_backend_read_capacity_refusal() {
+    let fixture = support::one_segment_fixture();
+    let required = fixture.descriptor_retained_bytes();
+    let backend = fixture
+        .commit_with_read_byte_limit(required - 1)
+        .await;
+    let reader = support::latest_reader(&backend).await;
+    let before = backend.budget_snapshots().reads;
+
+    assert!(matches!(
+        reader
+            .scan_result_index(None, support::index_budget(1, required))
+            .await,
+        Err(CheckpointError::BackendBudget {
+            budget: CheckpointBackendBudgetKind::Read,
+            code: CheckpointBackendBudgetFailureCode::ByteCapacity,
+        })
+    ));
+    assert_eq!(backend.budget_snapshots().reads, before);
+}
 ```
 
 - [ ] **Step 2: Verify RED**
@@ -1080,6 +1258,21 @@ separate read-budget lease before cheaply cloning underlying `Bytes`; the
 returned wrapper owns that full logical-byte charge, so storage and concurrent
 readers remain independently bounded.
 
+Keep transaction, prepared-index, immutable-storage, returned-summary, and read
+budgets distinct. A returned `PreparedResultEpoch` owns a summary lease separate
+from the transaction's prepared-index lease, so dropping either owner cannot
+release the other's charge. Precompute the complete set of missing immutable
+objects and acquire one aggregate storage reservation before publication; do
+not sequentially await per-object reservations while retaining earlier ones.
+The memory reference may attach that aggregate charge through one shared
+commit-bundle owner to every newly inserted object. It safely over-retains until
+the last object from that bundle is reclaimed and cannot undercharge storage.
+
+Validate cursor root, block reachability, and offset before inspecting page or
+backend capacity. Validate the one-descriptor page limit next, and acquire the
+backend read lease last. This fixes error precedence and proves every refusal is
+side-effect-free.
+
 - [ ] **Step 4: Verify GREEN**
 
 Run Step 2. Expected: atomic participant+result publication, same-run stale-writer
@@ -1089,7 +1282,7 @@ run mismatch refusal, immutable read verification, and RAII abort pass.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add rust/runtime/src/streaming.rs rust/runtime/src/streaming/checkpoint_backend.rs rust/runtime/src/streaming/checkpoints.rs rust/runtime/src/streaming/checkpoints/memory.rs rust/runtime/src/streaming/results.rs rust/runtime/tests/support/streaming_checkpoint.rs rust/runtime/tests/streaming_checkpoint_backend.rs
+git add rust/runtime/src/streaming.rs rust/runtime/src/streaming/checkpoint.rs rust/runtime/src/streaming/checkpoint_backend.rs rust/runtime/src/streaming/checkpoints.rs rust/runtime/src/streaming/checkpoints/memory.rs rust/runtime/src/streaming/results.rs rust/runtime/tests/support/streaming_checkpoint.rs rust/runtime/tests/streaming_checkpoint_backend.rs
 git commit -m "feat(runtime): add atomic checkpoint backend contract"
 ```
 
