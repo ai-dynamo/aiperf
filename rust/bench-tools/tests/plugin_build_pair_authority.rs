@@ -306,6 +306,21 @@ fn one_controller_executes_both_members_with_one_frozen_command_and_environment(
 }
 
 #[test]
+fn ordinary_same_stem_file_and_directory_layout_is_accepted() {
+    let fixture = Fixture::new();
+    for source in [&fixture.static_source, &fixture.dynamic_source] {
+        std::fs::write(source.join("foo.rs"), b"pub mod foo;\n")
+            .expect("same-stem Rust source file is written");
+        std::fs::create_dir(source.join("foo")).expect("same-stem module directory is created");
+        std::fs::write(source.join("foo/child.rs"), b"pub fn child() {}\n")
+            .expect("nested Rust source file is written");
+    }
+
+    run_paired_build_v1(&fixture.plan())
+        .expect("ordinary same-stem Rust module layouts must build authoritatively");
+}
+
+#[test]
 fn duration_only_observations_leave_build_authority_identity_unchanged() {
     let fixture = Fixture::new();
     let report = run_paired_build_v1(&fixture.plan()).expect("paired build completes");
