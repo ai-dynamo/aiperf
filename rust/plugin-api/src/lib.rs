@@ -25,7 +25,10 @@
 //! recoverable failure is a typed value. Plugin-allocated storage is borrowed
 //! for `'static` at the entry call and is never freed by the host: plugin
 //! library handles are retained until process teardown, so plugin code outlives
-//! every host value derived from it.
+//! every host value derived from it. Where a row does transfer plugin-allocated
+//! storage into host ownership, it is sound only under
+//! [`ownership::SHARED_ALLOCATOR_PRECONDITION`]: the host and every plugin
+//! `cdylib` must link one global allocator.
 
 #![deny(missing_docs)]
 
@@ -41,7 +44,9 @@ pub use extension::{
     AIPerfExtension, PLUGIN_ENTRY_SYMBOL_V1, PluginDeclarationV1, PluginEntryV1, PluginRegistrar,
 };
 pub use id::{REGISTRY_ID_MAX_LEN, REGISTRY_ID_NORMALIZATION_VERSION, RegistryId};
-pub use ownership::{CallPhase, GENERATION_1_SURFACE, OwnershipRow, StorageOwner};
+pub use ownership::{
+    CallPhase, GENERATION_1_SURFACE, OwnershipRow, SHARED_ALLOCATOR_PRECONDITION, StorageOwner,
+};
 
 /// The source API version this crate implements, as a canonical string.
 ///

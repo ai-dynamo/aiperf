@@ -24,7 +24,7 @@ therefore cannot land undocumented.
 
 ### Boundary rules
 
-Three rules hold for every row below and are the reason the ownership column is
+Four rules hold for every row below and are the reason the ownership column is
 answerable at all.
 
 **No unwind crosses the boundary.** Every artifact that can be loaded — host,
@@ -47,6 +47,34 @@ ASCII-lowercase, fold each `-` to `_`, then require
 `^[a-z0-9][a-z0-9_]{0,127}$`. Consecutive-separator rejection reads the authored
 spelling, before the fold, so `a--b`, `a__b`, and `a-_b` are all rejected rather
 than collapsing onto one identifier. Authored spelling is display-only.
+
+**One global allocator is linked by every loaded artifact.** This is the
+shared-allocator precondition, stated in
+`aiperf_plugin_api::ownership::SHARED_ALLOCATOR_PRECONDITION`. The host binary
+and every plugin `cdylib` must link the same allocator: the `aiperf` binary
+installs mimalloc through `aiperf-allocator-provider`, and a plugin must declare
+that same provider as its `#[global_allocator]` before the host loads it. This
+rule is what makes the rows below with an alloc owner of `plugin` and a drop
+owner of `host` sound; without it the host issues the free to an allocator that
+never owned the block, which is heap corruption. The rule is stated here and in
+the crate; the loader that enforces it lands with the allocator provider, whose
+crate is a placeholder in this generation.
+
+### Shared allocator precondition
+
+These four rows transfer plugin-allocated heap storage into host ownership and
+therefore depend on the rule above:
+
+- `AIPerfExtension::register` → `Result<(), ExtensionError>` (`ExtensionError`
+  owns a `Box<str>` reason and an optional `RegistryId`).
+- `PluginRegistrar::record_registration` → `Result<(), ExtensionError>`.
+- `PluginRegistrar::describe` → `PluginCategoryDescriptor` (owns a
+  `RegistryId`).
+- `PluginCategoryDescriptor::new` → `PluginCategoryDescriptor`.
+
+Library residency is a separate and insufficient fact: it guarantees the drop
+glue the host runs is still mapped, not that the free lands in the allocator the
+block came from.
 
 ### Generation-1 surface
 
@@ -76,7 +104,10 @@ a hot-path allocation argument.
 An "alloc owner" of `plugin` with a "drop owner" of `host` is the deliberate
 transfer case: the value is constructed from plugin-supplied parts, moved into
 host storage, and dropped there while the producing library is still resident.
-Because libraries are never unloaded, that drop always runs against live code.
+Because libraries are never unloaded, that drop always runs against live code —
+and because every loaded artifact links one global allocator, it also runs
+against the allocator the block came from. Both facts are load-bearing; see
+[Shared allocator precondition](#shared-allocator-precondition).
 
 ### Entry shape
 

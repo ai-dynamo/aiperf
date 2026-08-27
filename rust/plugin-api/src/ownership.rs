@@ -14,6 +14,24 @@
 //! binary compares the two and fails when a row is missing from the spec, so a
 //! new boundary item cannot land undocumented.
 
+/// The precondition that makes every `alloc owner = plugin` /
+/// `drop owner = host` row in [`GENERATION_1_SURFACE`] sound.
+///
+/// Library residency guarantees the drop glue is still mapped when the host
+/// runs it; it says nothing about which allocator the free lands in. Rows that
+/// transfer plugin-allocated storage to the host therefore additionally require
+/// one global allocator across every loaded artifact. This constant is the
+/// stated rule, not its enforcement: the loader that checks it lands with the
+/// allocator provider.
+pub const SHARED_ALLOCATOR_PRECONDITION: &str = "\
+Every boundary row with alloc_owner = plugin and drop_owner = host requires \
+that the host binary and every plugin cdylib link the same allocator. The \
+aiperf binary installs mimalloc through aiperf-allocator-provider; a plugin \
+must declare the same provider as its #[global_allocator] before the host \
+loads it. A cdylib that allocates from a different allocator produces heap \
+corruption when the host drops the transferred value, because the free is \
+issued to an allocator that never owned the block.";
+
 /// Who allocates or drops the storage a boundary item names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StorageOwner {
@@ -84,6 +102,10 @@ pub struct OwnershipRow {
 /// Every row is `panic = abort` and every row is startup-phase: generation 1
 /// deliberately crosses the boundary only during load and registration, so no
 /// per-request or per-token call pays a boundary cost yet.
+///
+/// Rows whose allocation owner is [`StorageOwner::Plugin`] and whose drop owner
+/// is [`StorageOwner::Host`] are sound only under
+/// [`SHARED_ALLOCATOR_PRECONDITION`].
 pub const GENERATION_1_SURFACE: &[OwnershipRow] = &[
     OwnershipRow {
         item: "aiperf_plugin_entry_v1",
