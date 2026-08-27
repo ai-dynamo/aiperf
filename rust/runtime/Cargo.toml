@@ -272,3 +272,10 @@ required-features = ["cellular"]
 name = "prompt_gen"
 path = "benches/prompt_gen.rs"
 harness = false
+
+# Static-vs-erased dispatch boundary criterion for the thread-per-core executor.
+[[bench]]
+name = "executor_dispatch_bench"
+path = "benches/executor_dispatch_bench.rs"
+harness = false
+required-features = ["engine"]
