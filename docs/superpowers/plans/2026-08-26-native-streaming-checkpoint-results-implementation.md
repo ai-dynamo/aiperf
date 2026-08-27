@@ -263,6 +263,10 @@ pub enum CheckpointError {
     },
     ParticipantSetMismatch,
     CutBlockedByInflight { participant: CheckpointParticipantId, job_count: usize },
+    StateBudget {
+        participant: CheckpointParticipantId,
+        code: StateBudgetFailureCode,
+    },
     ObjectVerification,
     LeaseLost { generation: CheckpointGeneration },
     PostCommitNotification { participant: CheckpointParticipantId },
@@ -272,6 +276,11 @@ pub enum CheckpointError {
 ```
 
 Implement `Display` and `std::error::Error` directly, following existing runtime library error enums; do not add `thiserror` or another dependency.
+
+`StateBudgetFailureCode` is owned by foundation Task 1A. Foundation Task 1D's
+`StableStreamingFailure` mapping reports `CheckpointError::StateBudget` at
+`StreamingFailureStage::StateBudget` with the exact nested stable code; it must
+not collapse this variant into checkpoint storage failure.
 
 - [ ] **Step 1: Write representative RED tests**
 

@@ -185,7 +185,7 @@ git commit -m "build: add native streaming feature gates"
 
 **Interfaces:**
 - Consumes: BLAKE3 and Serde.
-- Produces: checked `EventTimeUtc`, `SourcePosition`, `GlobalSequence`, `ImmutableObjectIdentity`, `StableRecordId`, `StableSessionKey`, `StableActionId`, `ActionAttemptId`, `LogicalReplayRunId`, `RunIncarnationId`, `StableOrderKey`, `SessionCausalFrontier`, `SessionOwnershipEpoch`, `UnitProvenance`, `StreamingSessionFragment`, and `ExecutableDatasetAction`.
+- Produces: checked `EventTimeUtc`, `SourcePosition`, `GlobalSequence`, `ImmutableObjectIdentity`, `StableRecordId`, `StableSessionKey`, `StableActionId`, `ActionAttemptId`, `LogicalReplayRunId`, `RunIncarnationId`, `StableOrderKey`, `SessionCausalFrontier`, `SessionOwnershipEpoch`, `StateBudgetFailureCode`, `UnitProvenance`, `StreamingSessionFragment`, and `ExecutableDatasetAction`.
 
 The public identity constructors are:
 
@@ -253,6 +253,15 @@ pub struct LogicalRecordReceipt {
 }
 
 pub enum DuplicateDisposition { Identical, New }
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StateBudgetFailureCode {
+    ItemCapacity,
+    ByteCapacity,
+    SpillCapacity,
+    ProvisionalCapacity,
+}
 ```
 
 - [ ] **Step 1: Add representative RED identity tests**
@@ -670,7 +679,8 @@ pub enum SourceFailureCode { Discovery, Snapshot, MutatedObject, SourceUnavailab
 pub enum AcquisitionFailureCode { Open, Read, IdentityMismatch, ObjectLimitExceeded }
 pub enum DecodeFailureCode { Syntax, Schema, OversizedRecord, InvalidCursor }
 pub enum OrderingFailureCode { LateData, WatermarkViolation, CoordinateOverflow }
-pub enum StateBudgetFailureCode { ItemCapacity, ByteCapacity, SpillCapacity, ProvisionalCapacity }
+// `StateBudgetFailureCode` is the neutral vocabulary owned by Task 1A so
+// checkpoint Task 5A can preserve it without a dependency cycle.
 pub enum SessionFailureCode { MissingPredecessor, ConflictingMutation, UnboundedCausalityState }
 pub enum PlacementFailureCode { RouteUnavailable, StaleOwnershipEpoch, DigestMismatch, TargetOverflow, Cancelled }
 pub enum ActionFailureCode { MissingBinding, Dispatch, Endpoint, Cancelled }
