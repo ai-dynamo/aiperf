@@ -5306,7 +5306,7 @@ mod tests {
             max_bytes: 64 * 1024,
         })
         .unwrap_or_else(|error| panic!("valid action budget: {error}"));
-        let reporter = {
+        let mut reporter = {
             let mut reporter = typed_error_action_reporter(
                 budget.clone(),
                 StreamingIssueDisposition::TerminalActionReceipt,
