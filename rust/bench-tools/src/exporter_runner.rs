@@ -326,16 +326,27 @@ impl HostExporterCapture {
             CaptureStorage::ArtifactTree(capture) => {
                 for file in capture.files.values_mut() {
                     file.flush().map_err(io_error("flush artifact file"))?;
-                    file.sync_all().map_err(io_error("sync artifact file"))?;
                 }
             }
             CaptureStorage::CapturedStream(writer) => {
                 writer.flush().map_err(io_error("flush captured stream"))?;
-                writer
-                    .get_mut()
-                    .sync_all()
-                    .map_err(io_error("sync captured stream"))?;
             }
+            CaptureStorage::ReceiverTranscript { .. } => {}
+        }
+        Ok(())
+    }
+
+    fn sync_all(&mut self) -> Result<(), ExporterHarnessError> {
+        match &mut self.storage {
+            CaptureStorage::ArtifactTree(capture) => {
+                for file in capture.files.values_mut() {
+                    file.sync_all().map_err(io_error("sync artifact file"))?;
+                }
+            }
+            CaptureStorage::CapturedStream(writer) => writer
+                .get_mut()
+                .sync_all()
+                .map_err(io_error("sync captured stream"))?,
             CaptureStorage::ReceiverTranscript { .. } => {}
         }
         Ok(())
@@ -451,6 +462,7 @@ pub struct ExporterHarnessRunner {
     policy: ExporterObservablePolicyV1,
     corpus: Vec<Vec<u8>>,
     corpus_blake3: String,
+    durability_barrier: fn(&mut HostExporterCapture) -> Result<(), ExporterHarnessError>,
 }
 
 impl ExporterHarnessRunner {
@@ -465,7 +477,20 @@ impl ExporterHarnessRunner {
             policy,
             corpus,
             corpus_blake3: format!("blake3:{}", hasher.finalize()),
+            durability_barrier: HostExporterCapture::sync_all,
         })
+    }
+
+    #[cfg(test)]
+    fn new_with_durability_barrier(
+        policy: ExporterObservablePolicyV1,
+        durability_barrier: fn(
+            &mut HostExporterCapture,
+        ) -> Result<(), ExporterHarnessError>,
+    ) -> Result<Self, ExporterHarnessError> {
+        let mut runner = Self::new(policy)?;
+        runner.durability_barrier = durability_barrier;
+        Ok(runner)
     }
 
     /// Digest of the internally generated fixed corpus.
@@ -519,6 +544,7 @@ impl ExporterHarnessRunner {
             let active_duration_ns = u64::try_from(started.elapsed().as_nanos()).map_err(|_| {
                 ExporterHarnessError::acquisition("active exporter duration does not fit u64")
             })?;
+            (self.durability_barrier)(&mut capture)?;
 
             if records.processed_records() != CORPUS_RECORDS {
                 return Err(ExporterHarnessError::product(
@@ -895,7 +921,7 @@ mod tests {
     #[test]
     fn durability_barrier_runs_after_the_active_exporter_timer_stops() {
         let policy = parse_exporter_observable_policy(
-            br#"{"mode":"paired","receiver_transport_fields_removed":[],"scenarios":[{"allows_empty":false,"observable_kind":"artifact_tree","provenance_slots":[],"scenario_id":"exporter_100k"}],"schema_version":1}"#,
+            b"{\"mode\":\"paired\",\"receiver_transport_fields_removed\":[],\"scenarios\":[{\"allows_empty\":false,\"observable_kind\":\"artifact_tree\",\"provenance_slots\":[],\"scenario_id\":\"exporter_100k\"}],\"schema_version\":1}\n",
             &BTreeSet::new(),
         )
         .expect("test policy validates");
