@@ -264,6 +264,20 @@ fn collect_rust_sources(
     Ok(())
 }
 
+/// Renders the symmetric difference of a hand-authored census and the census
+/// derived from the live workspace. Twenty later tasks author these by hand, so
+/// a failure has to say which entries are absent and which are surplus.
+fn census_difference<T: Ord + std::fmt::Debug>(
+    declared: &BTreeSet<T>,
+    actual: &BTreeSet<T>,
+) -> String {
+    format!(
+        "missing {:?}, unexpected {:?}",
+        actual.difference(declared).collect::<Vec<_>>(),
+        declared.difference(actual).collect::<Vec<_>>()
+    )
+}
+
 fn validate_implementation_witness(
     workspace: &std::path::Path,
     matrix: &OwnershipMatrix,
@@ -285,10 +299,17 @@ fn validate_implementation_witness(
         .iter()
         .map(|package| package.package.as_str())
         .collect::<BTreeSet<_>>();
-    if witnessed.len() != witness.packages.len()
-        || witnessed != required.iter().copied().collect::<BTreeSet<_>>()
-    {
-        return Err(format!("inexact implemented package set for Task {task}"));
+    if witnessed.len() != witness.packages.len() {
+        return Err(format!(
+            "duplicate implemented package rows for Task {task}"
+        ));
+    }
+    let required = required.iter().copied().collect::<BTreeSet<_>>();
+    if witnessed != required {
+        return Err(format!(
+            "inexact implemented package set for Task {task}: {}",
+            census_difference(&witnessed, &required)
+        ));
     }
     let matrix_packages = matrix
         .package_ownership
@@ -312,17 +333,26 @@ fn validate_implementation_witness(
             .ok_or_else(|| format!("manifest has no parent for {}", package.package))?;
         let mut source_files = Vec::new();
         collect_rust_sources(workspace, package_root, &mut source_files)?;
-        source_files.sort();
-        let mut declared_sources = package.source_files.clone();
-        declared_sources.sort();
-        declared_sources.dedup();
-        if package.source_files.is_empty()
-            || declared_sources.len() != package.source_files.len()
-            || declared_sources != source_files
-        {
+        let actual_sources = source_files.into_iter().collect::<BTreeSet<_>>();
+        let declared_sources = package
+            .source_files
+            .iter()
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        if package.source_files.is_empty() {
+            return Err(format!("empty source-file census for {}", package.package));
+        }
+        if declared_sources.len() != package.source_files.len() {
             return Err(format!(
-                "source-file census mismatch for {}",
+                "duplicate source-file census rows for {}",
                 package.package
+            ));
+        }
+        if declared_sources != actual_sources {
+            return Err(format!(
+                "source-file census mismatch for {}: {}",
+                package.package,
+                census_difference(&declared_sources, &actual_sources)
             ));
         }
         let actual_dependencies = actual
@@ -341,16 +371,28 @@ fn validate_implementation_witness(
             .iter()
             .map(|dependency| (dependency.package.as_str(), dependency.kind.as_str()))
             .collect::<BTreeSet<_>>();
-        if declared_dependencies.len() != package.dependencies.len()
-            || declared_dependencies != actual_dependencies
-        {
+        if declared_dependencies.len() != package.dependencies.len() {
             return Err(format!(
-                "dependency census mismatch for {}",
+                "duplicate dependency census rows for {}",
                 package.package
             ));
         }
+        if declared_dependencies != actual_dependencies {
+            return Err(format!(
+                "dependency census mismatch for {}: {}",
+                package.package,
+                census_difference(&declared_dependencies, &actual_dependencies)
+            ));
+        }
         if package.features != actual.features {
-            return Err(format!("feature census mismatch for {}", package.package));
+            return Err(format!(
+                "feature census mismatch for {}: {}",
+                package.package,
+                census_difference(
+                    &package.features.iter().collect::<BTreeSet<_>>(),
+                    &actual.features.iter().collect::<BTreeSet<_>>()
+                )
+            ));
         }
     }
     Ok(())
