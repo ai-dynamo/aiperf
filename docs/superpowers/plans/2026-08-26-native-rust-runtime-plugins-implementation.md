@@ -895,7 +895,10 @@ misleading names, and orchestration leakage; commit as
 - Create: `rust/plugin-api/src/category.rs`
 - Create: `rust/plugin-api/src/factory.rs`
 - Create: `rust/plugin-api/src/prepared.rs`
+- Create: `rust/plugin-api/src/transport.rs`
 - Modify: `rust/core/src/endpoint.rs`
+- Create: `rust/core/src/capture.rs`
+- Create: `rust/core/src/services.rs`
 - Modify: `rust/runtime/Cargo.toml`
 - Modify: `rust/runtime/src/endpoints/mod.rs`
 - Modify: `rust/runtime/src/endpoints/config.rs`
@@ -980,11 +983,15 @@ misleading names, and orchestration leakage; commit as
   `GrpcEndpointBindingFactory`, exporter capture requirements,
   `FactoryValidationReceiptV1`, category descriptors, category errors/outcomes,
   and every other concrete value that appears in those exported method
-  signatures or trait-object vtables. `aiperf-core` solely owns the
-  transport-neutral product values used by those contracts, including
+  signatures or trait-object vtables. In particular,
+  `aiperf-plugin-api::transport` owns `ExecutionSinkBuilder`, `WorkerSink`, and
+  the boundary request/terminal contexts. `aiperf-core` solely owns the
+  transport-neutral product and service values used by those contracts,
+  including
   `RawEndpointConfig`, `EffectiveEndpointConfig`, reset/profiler/content-type
   policy values, request/response/turn/media DTOs, `PreparedRequest`, finalized
-  report/capture projections, and histogram vocabulary. The runtime endpoint
+  report/capture projections, histogram vocabulary, and the narrow
+  clock/graph/metrics/artifact/cancellation service traits. The runtime endpoint
   modules become temporary compatibility re-export/adapter homes; runtime-only
   `EndpointRegistryBuilder`, frozen lookup/table state, legacy descriptor
   mapping, and concrete dialects remain in runtime until their owning tasks.
@@ -993,8 +1000,8 @@ misleading names, and orchestration leakage; commit as
   It does not copy or independently redefine config/model/descriptor/trait
   vocabulary in a category SDK or candidate package.
 - `aiperf-endpoint-sdk`, `aiperf-transport-sdk`, and `aiperf-export-sdk` own
-  only pure reusable helpers and plugin implementation leaves with isolated
-  dependency surfaces. A category-SDK-defined concrete type MUST NOT occur in
+  only shared pure plugin-private helpers with isolated dependency surfaces. A
+  category-SDK-defined concrete type MUST NOT occur in
   an exported plugin-API/core boundary signature, trait-object vtable,
   allocation/drop contract, or host-owned stored value. The category SDKs may
   supply helper implementations for endpoint formatting/binding,
@@ -1002,12 +1009,10 @@ misleading names, and orchestration leakage; commit as
   service adapters, but those helpers consume and produce API/core-owned
   boundary values. Their compiled artifacts remain plugin-private inputs and
   are selectively rebuilt only for actual consumers.
-- `ExecutionSinkBuilder`, `WorkerSink`, transport request/terminal contexts,
-  and capability-limited clock/graph/metrics/artifact/cancellation service
-  traits that cross the host/plugin boundary live in API/core. The transport
-  SDK owns their reusable implementation helpers, not their boundary type
-  identities. Runtime retains scheduling, admission, phase orchestration,
-  capture, and adapters, but no plugin implementation leaf names `RunContext`,
+- The transport SDK owns reusable implementation helpers for the API-owned
+  transport traits and core-owned services, not their boundary type identities.
+  Runtime retains scheduling, admission, phase orchestration, capture, and
+  adapters, but no plugin implementation leaf names `RunContext`,
   `aiperf-runtime`, or a private engine/metrics/scheduled/multiturn type.
 - This task performs the behavior-preserving production source split required
   for later equality copies. HTTP and gRPC sink leaves are rewritten against
@@ -1018,6 +1023,13 @@ misleading names, and orchestration leakage; commit as
   `dynosim/direct.rs`; `dynosim.rs` and `engine/offline_execution.rs` remain
   host orchestration/adapters. Later candidates hash/copy only those
   plugin-owned leaves, never the engine adapters.
+- Those runtime leaf paths are temporary source-staging locations while static
+  parity remains active. Their final compiled owners are the named plugin
+  packages in `candidate-source-inventory.toml`, not core or a category SDK.
+  Tasks 24–34 copy the pinned sources into those packages; Task 39 removes the
+  runtime-compiled static copies. After Task 39, runtime compiles only host
+  adapters and each backend-specific leaf is compiled only by its plugin
+  package.
 - Task 2 records not-yet-existing split leaves as `planned` rows with exact
   `producer_task = 6` and destination. This task atomically changes those rows
   to `implementation_leaf`, records their post-split BLAKE3 digests, and proves
@@ -1064,10 +1076,12 @@ misleading names, and orchestration leakage; commit as
   `FactoryValidationReceiptV1`, including selected **category**, canonical
   factory ID, descriptor digest, authored-config digest, semantic-config digest,
   sorted host resources, and canonical capture
-  requirements. It also defines the complete public `ExactRecordV1`,
-  `ExactRecordsV1`, `GenAiClientHistogramsV1`, `ExplicitHistogramV1`, projection
-  schema/version, metric/dimension/bounds, ordering, and error DTO vocabulary;
-  Task 19 implements but never redefines these types.
+  requirements. `aiperf-core::capture` solely defines the complete public
+  `ExactRecordV1`, `ExactRecordsV1`, `GenAiClientHistogramsV1`,
+  `ExplicitHistogramV1`, projection schema/version, metric/dimension/bounds,
+  ordering, and capture error DTO vocabulary. Plugin API references or
+  re-exports those exact core types and never redefines them; Task 19 implements
+  behavior but never redefines the types.
 - Direct transport services are narrow host traits for clock, graph, metrics,
   artifacts, and cancellation; `RunContext` is not representable.
 
@@ -1092,7 +1106,7 @@ definitions in runtime/category SDKs and any `aiperf-runtime` dependency from
 API/core/category SDKs.
 Compile the actual post-split HTTP, gRPC, WebSocket, dry-run, Dynosim-direct,
 KServe-binding, and Riva-binding implementation leaves in a standalone fixture
-using only core/category SDK dependencies. `leaf-ownership.toml` classifies
+using only plugin API/core/category SDK dependencies. `leaf-ownership.toml` classifies
 every source as `host_adapter` or `plugin_leaf`, pins its candidate owner and
 BLAKE3, and rejects an unclassified leaf, private runtime import, `RunContext`,
 or duplicate shared reduction/measurement/retry implementation.

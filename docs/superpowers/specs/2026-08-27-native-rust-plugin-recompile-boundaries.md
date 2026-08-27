@@ -55,7 +55,7 @@ its declared executable artifact closure. Those dependencies are separate
 runtime libraries only when the plugin's implementation dependency requires
 that native topology. They are not AIPerf API/core/SDK libraries, and they are
 acquired into an owned immutable snapshot, hashed, closure-checked, and bound in
-the installation lock as part of that plugin package. Generation 1 does not
+the canonical plugin lock as part of that plugin package. Generation 1 does not
 authenticate a third-party author's identity or signature: local installation
 authority is the trust root. Only first-party distribution inventory has the
 additional authenticated-distribution guarantee.
@@ -88,7 +88,7 @@ plugins:
 - clock handles and contracts;
 - dispatch and observation contracts;
 - measurement contracts;
-- endpoint body-planning and response-reduction helpers;
+- endpoint body-plan and response-reduction boundary values/contracts;
 - report and metric types; and
 - other narrowly reviewed types that both host and plugin must interpret.
 
@@ -132,8 +132,9 @@ factory traits or concrete boundary values; those live in
 `aiperf-plugin-api`/`aiperf-core`.
 
 Only endpoint plugins that use these helpers link them. A helper's concrete
-plugin-private types must not cross into the host unless they are deliberately
-promoted into the common ABI universe.
+plugin-private types must not cross into the host. If one becomes a boundary
+type, its single definition moves into API/core; the endpoint SDK artifact
+itself remains plugin-private.
 
 ### `aiperf-transport-sdk`
 
@@ -181,8 +182,7 @@ same change also modifies an API/core universe input or emitted build contract.
 These are host-side crates, not plugin SDK crates. They retain process-owned
 facilities:
 
-- application bootstrap and plugin discovery/loading;
-- registry staging, validation, priority resolution, and freezing;
+- CLI application bootstrap and wiring of plugin-host to runtime;
 - scheduling, admission, cancellation, drain, and orchestration;
 - worker and cellular construction;
 - CLI parsing and command routing; and
@@ -327,7 +327,7 @@ native boundary and therefore create a new host ABI universe.
 
 Changing only an existing entry's signed priority, a discovery-root ordering
 input, or the selected immutable installation generation does not recompile
-code. Reacquire the package, regenerate the canonical installation lock, and
+code. Reacquire the package, regenerate the canonical plugin lock, and
 start a new AIPerf process. Plugin selection is frozen at startup; there is no
 live registry mutation or hot reload.
 
@@ -360,10 +360,12 @@ only its actual consumers.
 
 A dependency or helper remains private only while the host cannot instantiate,
 interpret, lay out, drop, or otherwise rely on its concrete values or code. If
-a private type becomes concrete at the boundary, or the host begins to rely on
-its representation, validity, vtable, auto-traits, drop behavior, panic
-behavior, allocator behavior, or native handles, the SDK must promote its exact
-compiled-artifact closure into the common host ABI universe.
+a category-SDK-private type becomes concrete at the boundary, its single type
+definition moves into API/core; the category SDK artifact itself remains
+private. The host universe then adds the exact compiled closure of every
+representation, validity, vtable, auto-trait, drop, panic, allocator, or native-
+handle dependency required by that new API/core boundary type. It does not add
+unrelated category helper code.
 
 That promotion intentionally changes the rebuild result from “one plugin” to
 “host and every plugin.” It may not be hidden by claiming that the source API

@@ -572,8 +572,8 @@ aiperf-plugin-api
 aiperf-core
 |-- request and response models
 |-- clocks, dispatch, observation, and measurement contracts
-|-- endpoint body and response-reduction helpers
-`-- report and metric types
+|-- artifact, cancellation, graph, and metrics service contracts
+`-- endpoint, report, capture, and histogram value types
 
 aiperf-plugin-sdk
 |-- plugin declaration and entry-symbol macros
@@ -584,21 +584,29 @@ aiperf-plugin-sdk
 aiperf-endpoint-sdk
 aiperf-transport-sdk
 aiperf-export-sdk
-`-- category-specific helpers with isolated dependency surfaces
+`-- shared plugin-private category helpers with isolated dependency surfaces
 ```
 
 The factory traits and every value that appears in their method signatures are
 not category-SDK helpers. `aiperf-plugin-api` owns the endpoint, transport, and
 exporter factory traits, descriptors, opaque prepared handles, execution-shape
 vocabulary, validation receipts, and category capability vocabulary;
-`aiperf-core` owns the transport-neutral product values those traits consume or
-produce. Category SDKs may implement pure helpers and implementation leaves in
-terms of those API/core contracts, but no category-SDK-defined concrete type may
+`aiperf-core` owns the transport-neutral product and service values those traits
+consume or produce. Category SDKs may implement shared pure helpers in terms of
+those API/core contracts, but no category-SDK-defined concrete type may
 appear in an exported boundary method, trait-object vtable, allocation/drop
 contract, or host-owned stored value. Promoting such a type to the boundary
 requires moving its single definition into API/core and regenerating the common
 host ABI universe; leaving it in a category SDK while treating that SDK as a
 selectively rebuilt private dependency is forbidden.
+
+Compiled ownership is exact: API/core own the common boundary artifacts;
+category SDKs own only shared plugin-private helper algorithms; and each plugin
+package owns its backend-specific implementation leaves and private dependency
+closure. A source file may be staged temporarily under `aiperf-runtime` during
+the behavior-preserving migration, but that is not its final compiled owner.
+After extraction, runtime contains only host adapters and never compiles a
+plugin implementation leaf.
 
 The host runtime depends downward on the API and core crates. Plugin crates
 depend on the API plus only the core or category SDK crates they need. Plugins
