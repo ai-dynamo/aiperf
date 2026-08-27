@@ -99,3 +99,31 @@ def test_eviction_leaves_other_producers_required() -> None:
     assert coord.pending_domains == (DOMAIN,)
     coord.complete(DOMAIN, "records-1")
     assert coord.ready is True
+
+
+def test_evicting_a_completed_producer_is_not_degraded() -> None:
+    """A telemetry pod that delivered results and is then OOMKilled must not
+    be reported as a missing producer: its results are already present and
+    correct in the export, so eviction must not degrade the run.
+    """
+    coord = ResultJoinCoordinator()
+    coord.register(OTHER_DOMAIN, "tm-1")
+    coord.register(DOMAIN, "records-1")
+    coord.complete_domain(OTHER_DOMAIN)
+
+    assert coord.evict_service("tm-1", "pod OOMKilled") is True
+    assert coord.evicted == {}
+    assert coord.pending_domains == (DOMAIN,)
+
+
+def test_evicting_a_producer_still_pending_in_another_domain_still_degrades() -> None:
+    """A producer that completed one domain but is still pending in another
+    must still be reported as degraded if it dies before finishing.
+    """
+    coord = ResultJoinCoordinator()
+    coord.register(DOMAIN, "svc-1")
+    coord.register(OTHER_DOMAIN, "svc-1")
+    coord.complete_domain(DOMAIN)
+
+    assert coord.evict_service("svc-1", "missed heartbeats") is True
+    assert coord.evicted == {"svc-1": "missed heartbeats"}

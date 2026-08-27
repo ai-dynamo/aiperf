@@ -63,7 +63,11 @@ class ResultJoinCoordinator:
         phase").
 
         The eviction is recorded rather than silently satisfying the barrier, so
-        the run can be reported as degraded and name the member that vanished.
+        the run can be reported as degraded and name the member that vanished --
+        but only when the service was still pending somewhere. A producer that
+        already delivered every domain it was required for (``complete_domain``
+        marks it done) is fully represented in the export, so its later death
+        must not retroactively mark the run degraded.
 
         Returns True if the service was actually required (i.e. the barrier
         changed), so callers can skip a redundant readiness re-check.
@@ -71,8 +75,12 @@ class ResultJoinCoordinator:
         was_required = any(
             service_id in required for required in self._required.values()
         )
+        was_pending = any(
+            service_id in required - self._completed.get(domain, set())
+            for domain, required in self._required.items()
+        )
         self.unregister_service(service_id)
-        if was_required:
+        if was_pending:
             self._evicted[service_id] = reason
         return was_required
 
