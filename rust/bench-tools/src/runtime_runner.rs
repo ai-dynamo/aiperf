@@ -645,8 +645,8 @@ impl AttemptLedger {
             .map_err(|_| ControlledRuntimeError::new("attempt ledger ordinal overflow"))
     }
 
-    /// Complete ordered ledger history, including every retained evidence tree.
-    /// Take the complete ordered history; the ledger is finished with it.
+    /// Take the complete ordered history, including every retained evidence
+    /// tree. The ledger is finished with its entries once this returns.
     fn take_entries(&mut self) -> Vec<AttemptLedgerEntryV1> {
         std::mem::take(&mut self.entries)
     }
@@ -2359,8 +2359,9 @@ fn runtime_report(
             })?;
     let attempt_evidence_tree_blake3 = digest(&attempt_evidence_tree_bytes);
     let appended = attempt_ledger.append_attempt(terminal_attempt, attempt_evidence_tree_bytes)?;
-    // The ledger is finished with its entries here, so the retained history
-    // moves out of it instead of copying every evidence tree again.
+    // The ledger is finished with its entries here, so every retained evidence
+    // tree moves out of it. The report additionally names the terminal tree on
+    // its own field, and that one tree is therefore copied exactly once below.
     let retained_attempt_evidence = attempt_ledger
         .take_entries()
         .into_iter()
@@ -2375,7 +2376,7 @@ fn runtime_report(
         .collect::<Vec<_>>();
     let attempt_evidence_tree_bytes = retained_attempt_evidence
         .last()
-        .map(|entry| entry.evidence_tree_bytes.clone())
+        .map(|terminal| terminal.evidence_tree_bytes.clone())
         .ok_or_else(|| ControlledRuntimeError::new("attempt ledger retained no terminal entry"))?;
     let retained_pair_count = evaluator
         .raw_pair_history()
