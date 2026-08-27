@@ -490,6 +490,7 @@ class BenchmarkDeployer:
         default_timeout: int = 300,
         default_image_pull_secrets: list[str] | None = None,
         default_image_pull_secret_source_namespace: str | None = None,
+        image_pull_policy: str = "Never",
     ) -> None:
         """Initialize benchmark deployer.
 
@@ -508,6 +509,8 @@ class BenchmarkDeployer:
                 cluster (e.g. nvcr.io). Ignored when empty or None.
             default_image_pull_secret_source_namespace: If set, only this
                 namespace is searched when copying a missing pull secret.
+            image_pull_policy: Image pull policy for benchmark pods (Never,
+                IfNotPresent, Always). Use IfNotPresent for remote clusters.
         """
         self.kubectl = kubectl
         self.project_root = project_root
@@ -518,6 +521,7 @@ class BenchmarkDeployer:
         self.default_image_pull_secret_source_namespace = (
             default_image_pull_secret_source_namespace
         )
+        self.image_pull_policy = image_pull_policy
         self._deployments: list[BenchmarkResult] = []
 
     async def deploy(
@@ -755,6 +759,9 @@ class BenchmarkDeployer:
         if self.default_namespace is not None:
             cmd.extend(["--namespace", self.default_namespace])
 
+        for secret in self.default_image_pull_secrets:
+            cmd.extend(["--image-pull-secrets", secret])
+
         if config.concurrency_ramp_duration is not None:
             cmd.extend(
                 ["--concurrency-ramp-duration", str(config.concurrency_ramp_duration)]
@@ -855,7 +862,7 @@ class BenchmarkDeployer:
                     pass
 
     def _patch_image_pull_policy(self, manifest: str, image: str) -> str:
-        """Patch AIPerfJob CR manifest to set imagePullPolicy: Never.
+        """Patch AIPerfJob CR manifest to set the configured imagePullPolicy.
 
         Parses the YAML, sets spec.imagePullPolicy, and re-serializes.
         This is the native CR field - no string hacks needed.
@@ -869,7 +876,7 @@ class BenchmarkDeployer:
         """
         cr = yaml.safe_load(manifest)
         if cr and cr.get("kind") == "AIPerfJob":
-            cr.setdefault("spec", {})["imagePullPolicy"] = "Never"
+            cr.setdefault("spec", {})["imagePullPolicy"] = self.image_pull_policy
         return yaml.dump(cr, default_flow_style=False, sort_keys=False)
 
     def _extract_namespace(

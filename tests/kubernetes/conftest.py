@@ -1410,6 +1410,10 @@ async def benchmark_deployer(
         default_image=k8s_settings.aiperf_image,
         default_namespace=benchmark_namespace,
         default_timeout=k8s_settings.benchmark_timeout,
+        default_image_pull_secrets=(
+            [k8s_settings.image_pull_secret] if k8s_settings.image_pull_secret else []
+        ),
+        image_pull_policy=k8s_settings.image_pull_policy,
     )
 
     yield deployer
