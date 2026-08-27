@@ -58,3 +58,6 @@ src/aiperf/_build_info.py
 # Chaos/adversarial test run artifacts
 tests/scripts/.chaos_runs/
 .worktrees/
+
+# Session-scoped subagent-driven-development scratch (briefs, reports, review diffs)
+.superpowers/
