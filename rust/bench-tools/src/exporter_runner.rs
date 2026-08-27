@@ -411,6 +411,13 @@ pub struct CompletedExporterMember {
     receiver_protocol: Option<AuthenticatedReceiverProtocolV1>,
 }
 
+pub(crate) struct CompletedExporterMemberParts {
+    pub(crate) binding: ExporterMemberBinding,
+    pub(crate) evidence: ExporterMemberEvidence,
+    pub(crate) backing_payloads: Vec<SelectedBackingPayloadV1>,
+    pub(crate) record_bytes: Vec<u8>,
+}
+
 impl CompletedExporterMember {
     /// Controller-authenticated receiver protocol retained with this member.
     pub fn receiver_protocol(&self) -> Option<&str> {
@@ -454,6 +461,15 @@ impl CompletedExporterMember {
     /// Validated member summary used by statistical assembly.
     pub fn summary(&self) -> &ExporterMemberSummary {
         &self.summary
+    }
+
+    pub(crate) fn into_parts(self) -> CompletedExporterMemberParts {
+        CompletedExporterMemberParts {
+            binding: self.binding,
+            evidence: self.evidence,
+            backing_payloads: self.backing_payloads,
+            record_bytes: self.record_bytes,
+        }
     }
 }
 

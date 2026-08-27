@@ -18,7 +18,7 @@ use crate::exporter_policy::{
     ExporterObservablePolicyV1, ProvenanceBindingV1, SelectedBackingPayloadV1,
     apply_exporter_observable_policy_v1,
 };
-use crate::exporter_runner::CompletedExporterMember;
+use crate::exporter_runner::{CompletedExporterMember, CompletedExporterMemberParts};
 
 const NORMATIVE_BOOTSTRAP_RESAMPLES: usize = 100_000;
 const NORMATIVE_RETAINED_PAIRS: usize = 30;
@@ -771,15 +771,9 @@ struct AuthoritativeExporterRowIdentity<'a> {
     dynamic_artifact_blake3: &'a str,
 }
 
-struct ExporterPairEvidenceInput<'a> {
-    static_binding: &'a ExporterMemberBinding,
-    static_evidence: &'a ExporterMemberEvidence,
-    static_backing_payloads: &'a [SelectedBackingPayloadV1],
-    static_record_bytes: &'a [u8],
-    dynamic_binding: &'a ExporterMemberBinding,
-    dynamic_evidence: &'a ExporterMemberEvidence,
-    dynamic_backing_payloads: &'a [SelectedBackingPayloadV1],
-    dynamic_record_bytes: &'a [u8],
+struct ExporterPairEvidenceInput {
+    static_member: CompletedExporterMemberParts,
+    dynamic_member: CompletedExporterMemberParts,
     receiver_identity: Option<(String, String)>,
 }
 
@@ -800,6 +794,14 @@ pub struct ControlledMeasurementEvaluator {
     exporter_pair_history: Vec<ControlledExporterPairRecord>,
     last_statistical_report: Option<SimultaneousGateReport>,
     last_attempt_evidence_bytes: Option<Vec<u8>>,
+}
+
+pub(crate) struct ControlledMeasurementReportParts {
+    pub(crate) history: Vec<ControlledAttemptRecord>,
+    pub(crate) raw_pair_history: Vec<ControlledPairAttemptRecord>,
+    pub(crate) exporter_pair_history: Vec<ControlledExporterPairRecord>,
+    pub(crate) statistical_report: Option<SimultaneousGateReport>,
+    pub(crate) attempt_evidence_bytes: Vec<u8>,
 }
 
 impl ControlledMeasurementEvaluator {
@@ -870,6 +872,20 @@ impl ControlledMeasurementEvaluator {
 
     pub(crate) fn last_attempt_evidence_bytes(&self) -> Option<&[u8]> {
         self.last_attempt_evidence_bytes.as_deref()
+    }
+
+    pub(crate) fn into_report_parts(
+        self,
+    ) -> Result<ControlledMeasurementReportParts, PluginStatsError> {
+        Ok(ControlledMeasurementReportParts {
+            history: self.history,
+            raw_pair_history: self.raw_pair_history,
+            exporter_pair_history: self.exporter_pair_history,
+            statistical_report: self.last_statistical_report,
+            attempt_evidence_bytes: self.last_attempt_evidence_bytes.ok_or_else(|| {
+                PluginStatsError::new("controlled attempt lacks exact evidence bytes")
+            })?,
+        })
     }
 
     /// Start the next attempt after no attempt or an invalid attempt.
@@ -1045,8 +1061,8 @@ impl ControlledMeasurementEvaluator {
     pub fn record_completed_exporter_pair(
         &mut self,
         policy: &ExporterObservablePolicyV1,
-        static_member: &CompletedExporterMember,
-        dynamic_member: &CompletedExporterMember,
+        static_member: CompletedExporterMember,
+        dynamic_member: CompletedExporterMember,
     ) -> Result<PairAttemptDecision, PluginStatsError> {
         let receiver_identity = match (
             static_member.binding().observable_kind,
@@ -1105,14 +1121,8 @@ impl ControlledMeasurementEvaluator {
         self.record_exporter_pair_evidence(
             policy,
             ExporterPairEvidenceInput {
-                static_binding: static_member.binding(),
-                static_evidence: static_member.evidence(),
-                static_backing_payloads: static_member.backing_payloads(),
-                static_record_bytes: static_member.record_bytes(),
-                dynamic_binding: dynamic_member.binding(),
-                dynamic_evidence: dynamic_member.evidence(),
-                dynamic_backing_payloads: dynamic_member.backing_payloads(),
-                dynamic_record_bytes: dynamic_member.record_bytes(),
+                static_member: static_member.into_parts(),
+                dynamic_member: dynamic_member.into_parts(),
                 receiver_identity,
             },
         )
@@ -1126,19 +1136,25 @@ impl ControlledMeasurementEvaluator {
     fn record_exporter_pair_evidence(
         &mut self,
         policy: &ExporterObservablePolicyV1,
-        input: ExporterPairEvidenceInput<'_>,
+        input: ExporterPairEvidenceInput,
     ) -> Result<PairAttemptDecision, PluginStatsError> {
         let ExporterPairEvidenceInput {
-            static_binding,
-            static_evidence,
-            static_backing_payloads,
-            static_record_bytes,
-            dynamic_binding,
-            dynamic_evidence,
-            dynamic_backing_payloads,
-            dynamic_record_bytes,
+            static_member,
+            dynamic_member,
             receiver_identity,
         } = input;
+        let CompletedExporterMemberParts {
+            binding: static_binding,
+            evidence: static_evidence,
+            backing_payloads: static_backing_payloads,
+            record_bytes: static_record_bytes,
+        } = static_member;
+        let CompletedExporterMemberParts {
+            binding: dynamic_binding,
+            evidence: dynamic_evidence,
+            backing_payloads: dynamic_backing_payloads,
+            record_bytes: dynamic_record_bytes,
+        } = dynamic_member;
         let active_ordinal = self
             .active
             .as_ref()
@@ -1157,34 +1173,34 @@ impl ControlledMeasurementEvaluator {
             }
             validate_exporter_policy_application(
                 policy,
-                static_binding,
-                static_evidence,
-                static_backing_payloads,
+                &static_binding,
+                &static_evidence,
+                &static_backing_payloads,
             )?;
             validate_exporter_policy_application(
                 policy,
-                dynamic_binding,
-                dynamic_evidence,
-                dynamic_backing_payloads,
+                &dynamic_binding,
+                &dynamic_evidence,
+                &dynamic_backing_payloads,
             )?;
             let pair = validate_exporter_pair_evidence(
                 &ExporterSampleContract::normative(),
-                static_binding,
-                static_evidence,
-                dynamic_binding,
-                dynamic_evidence,
+                &static_binding,
+                &static_evidence,
+                &dynamic_binding,
+                &dynamic_evidence,
             )?;
             let static_record = validate_exporter_member_record(
                 &ExporterSampleContract::normative(),
-                static_binding,
-                static_evidence,
-                static_record_bytes,
+                &static_binding,
+                &static_evidence,
+                &static_record_bytes,
             )?;
             let dynamic_record = validate_exporter_member_record(
                 &ExporterSampleContract::normative(),
-                dynamic_binding,
-                dynamic_evidence,
-                dynamic_record_bytes,
+                &dynamic_binding,
+                &dynamic_evidence,
+                &dynamic_record_bytes,
             )?;
             if !self
                 .inventory
@@ -1247,12 +1263,12 @@ impl ControlledMeasurementEvaluator {
                     receiver_protocol_authority_blake3,
                     static_record,
                     static_member: pair.static_member,
-                    static_evidence: static_evidence.clone(),
-                    static_backing_payloads: static_backing_payloads.to_vec(),
+                    static_evidence,
+                    static_backing_payloads,
                     dynamic_record,
                     dynamic_member: pair.dynamic_member,
-                    dynamic_evidence: dynamic_evidence.clone(),
-                    dynamic_backing_payloads: dynamic_backing_payloads.to_vec(),
+                    dynamic_evidence,
+                    dynamic_backing_payloads,
                 });
         }
         Ok(decision)

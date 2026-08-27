@@ -538,8 +538,8 @@ fn evaluator_classifies_a_sealed_pair_under_the_wrong_policy_as_product_failure(
         evaluator
             .record_completed_exporter_pair(
                 &stream_policy("paired"),
-                &static_completed,
-                &dynamic_completed,
+                static_completed,
+                dynamic_completed,
             )
             .expect("policy mismatch is classified"),
         PairAttemptDecision::ExperimentFailed
@@ -579,7 +579,7 @@ fn evaluator_classifies_a_sealed_unknown_pair_as_product_failure() {
 
     assert_eq!(
         evaluator
-            .record_completed_exporter_pair(&policy, &static_completed, &dynamic_completed)
+            .record_completed_exporter_pair(&policy, static_completed, dynamic_completed)
             .expect("unknown pair is classified"),
         PairAttemptDecision::ExperimentFailed
     );
@@ -716,7 +716,7 @@ fn evaluator_retains_matching_receiver_protocol_identity_and_rejects_mismatched_
 
     assert_eq!(
         evaluator
-            .record_completed_exporter_pair(&policy, &static_completed, &dynamic_completed)
+            .record_completed_exporter_pair(&policy, static_completed, dynamic_completed)
             .expect("matching receiver identities validate"),
         PairAttemptDecision::RetainPair
     );
@@ -755,7 +755,7 @@ fn evaluator_retains_matching_receiver_protocol_identity_and_rejects_mismatched_
     evaluator.begin_attempt().expect("first attempt starts");
     assert_eq!(
         evaluator
-            .record_completed_exporter_pair(&policy, &static_completed, &mismatched_dynamic)
+            .record_completed_exporter_pair(&policy, static_completed, mismatched_dynamic)
             .expect("protocol mismatch is classified"),
         PairAttemptDecision::ExperimentFailed
     );

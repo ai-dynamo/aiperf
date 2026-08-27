@@ -741,7 +741,7 @@ fn run_controlled_runtime_internal(
                             ))
                             .map_err(|error| ControlledRuntimeError::new(error.to_string()))?;
                         return runtime_report(
-                            &evaluator,
+                            evaluator,
                             &mut attempt_ledger,
                             &report_context,
                             executed_member_count,
@@ -774,7 +774,7 @@ fn run_controlled_runtime_internal(
                             ))
                             .map_err(|error| ControlledRuntimeError::new(error.to_string()))?;
                         return runtime_report(
-                            &evaluator,
+                            evaluator,
                             &mut attempt_ledger,
                             &report_context,
                             executed_member_count,
@@ -822,7 +822,7 @@ fn run_controlled_runtime_internal(
                                         ControlledRuntimeError::new(error.to_string())
                                     })?;
                                 return runtime_report(
-                                    &evaluator,
+                                    evaluator,
                                     &mut attempt_ledger,
                                     &report_context,
                                     executed_member_count,
@@ -870,24 +870,20 @@ fn run_controlled_runtime_internal(
                     && exporter_factory.is_some()
                     && completed_exporters.len() == 2
                 {
-                    let static_member = completed_exporters
-                        .iter()
-                        .find(|(variant, _)| *variant == Variant::Static)
-                        .map(|(_, completed)| completed)
-                        .ok_or_else(|| {
-                            ControlledRuntimeError::new(
-                                "static completed exporter member is absent",
-                            )
-                        })?;
-                    let dynamic_member = completed_exporters
-                        .iter()
-                        .find(|(variant, _)| *variant == Variant::Dynamic)
-                        .map(|(_, completed)| completed)
-                        .ok_or_else(|| {
-                            ControlledRuntimeError::new(
-                                "dynamic completed exporter member is absent",
-                            )
-                        })?;
+                    let mut static_member = None;
+                    let mut dynamic_member = None;
+                    for (variant, completed) in completed_exporters {
+                        match variant {
+                            Variant::Static => static_member = Some(completed),
+                            Variant::Dynamic => dynamic_member = Some(completed),
+                        }
+                    }
+                    let static_member = static_member.ok_or_else(|| {
+                        ControlledRuntimeError::new("static completed exporter member is absent")
+                    })?;
+                    let dynamic_member = dynamic_member.ok_or_else(|| {
+                        ControlledRuntimeError::new("dynamic completed exporter member is absent")
+                    })?;
                     evaluator
                         .record_completed_exporter_pair(&policy, static_member, dynamic_member)
                         .map_err(|error| ControlledRuntimeError::new(error.to_string()))?
@@ -910,7 +906,7 @@ fn run_controlled_runtime_internal(
                     }
                     PairAttemptDecision::AttemptInvalid | PairAttemptDecision::ExperimentFailed => {
                         return runtime_report(
-                            &evaluator,
+                            evaluator,
                             &mut attempt_ledger,
                             &report_context,
                             executed_member_count,
@@ -938,7 +934,7 @@ fn run_controlled_runtime_internal(
         )
         .map_err(|error| ControlledRuntimeError::new(error.to_string()))?;
     runtime_report(
-        &evaluator,
+        evaluator,
         &mut attempt_ledger,
         &report_context,
         executed_member_count,
@@ -1421,7 +1417,7 @@ fn decode_member_output(
 }
 
 fn runtime_report(
-    evaluator: &ControlledMeasurementEvaluator,
+    evaluator: ControlledMeasurementEvaluator,
     attempt_ledger: &mut AttemptLedger,
     context: &RuntimeReportContext<'_>,
     executed_member_count: usize,
@@ -1442,21 +1438,13 @@ fn runtime_report(
             "controlled runtime report requires one terminal attempt ledger entry",
         )
     })?;
-    let attempt_evidence_tree_bytes = evaluator
-        .last_attempt_evidence_bytes()
-        .ok_or_else(|| {
-            ControlledRuntimeError::new(
-                "controlled runtime report lacks exact attempt evidence bytes",
-            )
-        })?
-        .to_vec();
-    let attempt_evidence_tree_blake3 = digest(&attempt_evidence_tree_bytes);
-    attempt_ledger.append_attempt(terminal_attempt, &attempt_evidence_tree_bytes)?;
-    let statistical_report = evaluator.last_statistical_report().cloned();
-    let attempt_history = evaluator.history().to_vec();
-    let raw_pair_history = evaluator.raw_pair_history().to_vec();
-    let exporter_pair_history = evaluator.exporter_pair_history().to_vec();
-    let retained_pair_count = raw_pair_history
+    let attempt_evidence_tree_bytes = evaluator.last_attempt_evidence_bytes().ok_or_else(|| {
+        ControlledRuntimeError::new("controlled runtime report lacks exact attempt evidence bytes")
+    })?;
+    let attempt_evidence_tree_blake3 = digest(attempt_evidence_tree_bytes);
+    attempt_ledger.append_attempt(terminal_attempt, attempt_evidence_tree_bytes)?;
+    let retained_pair_count = evaluator
+        .raw_pair_history()
         .iter()
         .filter(|record| record.decision == PairAttemptDecision::RetainPair)
         .count();
@@ -1464,8 +1452,8 @@ fn runtime_report(
         schema_version: 1,
         experiment_identity_blake3: context.experiment_identity_blake3,
         decision,
-        statistical_report: statistical_report.as_ref(),
-        attempt_history: &attempt_history,
+        statistical_report: evaluator.last_statistical_report(),
+        attempt_history: evaluator.history(),
         attempt_evidence_tree_blake3: &attempt_evidence_tree_blake3,
         paired_build_record_blake3: &context.build_report.pair_record_blake3,
         observable_policy_blake3: context.observable_policy_blake3,
@@ -1478,20 +1466,23 @@ fn runtime_report(
         executed_member_count,
         terminal_output_blake3: &terminal_output_blake3,
         terminal_member_evidence: &terminal_member_evidence,
-        raw_pair_history: &raw_pair_history,
-        exporter_pair_history: &exporter_pair_history,
+        raw_pair_history: evaluator.raw_pair_history(),
+        exporter_pair_history: evaluator.exporter_pair_history(),
     })
     .map_err(|error| {
         ControlledRuntimeError::new(format!("cannot canonicalize runtime evidence: {error}"))
     })?;
     let runtime_evidence_blake3 = digest(&runtime_evidence_bytes);
+    let parts = evaluator
+        .into_report_parts()
+        .map_err(|error| ControlledRuntimeError::new(error.to_string()))?;
     Ok(ControlledRuntimeReportV1 {
         experiment_identity_blake3: context.experiment_identity_blake3.to_owned(),
         experiment_identity_bytes: context.experiment_identity_bytes.to_vec(),
         decision,
-        statistical_report,
-        attempt_history,
-        attempt_evidence_tree_bytes,
+        statistical_report: parts.statistical_report,
+        attempt_history: parts.history,
+        attempt_evidence_tree_bytes: parts.attempt_evidence_bytes,
         attempt_evidence_tree_blake3,
         paired_build_record_blake3: context.build_report.pair_record_blake3.clone(),
         observable_policy_blake3: context.observable_policy_blake3.to_owned(),
@@ -1504,8 +1495,8 @@ fn runtime_report(
         executed_member_count,
         terminal_output_blake3,
         terminal_member_evidence,
-        exporter_pair_history,
-        raw_pair_history,
+        exporter_pair_history: parts.exporter_pair_history,
+        raw_pair_history: parts.raw_pair_history,
         runtime_evidence_bytes,
         runtime_evidence_blake3,
     })
