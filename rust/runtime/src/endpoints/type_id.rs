@@ -256,7 +256,10 @@ mod tests {
         for name in names {
             let id = EndpointTypeId::resolve(name).expect("built-in endpoint type");
             assert_eq!(id.as_str(), name);
-            assert_eq!(serde_json::to_string(&id).expect("serialize id"), format!("\"{name}\""));
+            assert_eq!(
+                serde_json::to_string(&id).expect("serialize id"),
+                format!("\"{name}\"")
+            );
             assert_eq!(
                 serde_json::from_str::<EndpointTypeId>(&format!("\"{name}\""))
                     .expect("deserialize id"),

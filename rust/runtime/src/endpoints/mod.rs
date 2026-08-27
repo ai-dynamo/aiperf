@@ -20,13 +20,13 @@ mod extraction;
 mod implementation;
 mod kserve;
 mod metadata;
-mod type_id;
 mod models;
 mod registry;
 mod riva;
 mod sagemaker;
 mod spec_decode;
 mod tier2;
+mod type_id;
 mod usage;
 mod vllm_generate;
 
@@ -50,7 +50,6 @@ pub use kserve::{
     KServeV2RankingsFactory, KServeV2VlmFactory,
 };
 pub use metadata::{EndpointDescriptor, EndpointType, Modality};
-pub use type_id::{EndpointTypeId, EndpointTypeRegistry};
 pub use models::{
     AudioResponseData, CreditPhase, EndpointError, EndpointResult, ExtractedPayload, ImageDataItem,
     ImageResponseData, Media, ModelEndpoint, ParsedResponse, RequestInfo, RequestRecord,
@@ -77,6 +76,7 @@ pub use tier2::{
     RawEndpointFactory, SolidoRagEndpoint, TemplateEndpoint, TemplateEndpointFactory,
     VideoGenerationEndpoint,
 };
+pub use type_id::{EndpointTypeId, EndpointTypeRegistry};
 pub use usage::UsageView;
 pub use vllm_generate::VllmGenerateFactory;
 

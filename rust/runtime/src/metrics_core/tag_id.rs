@@ -328,7 +328,10 @@ mod tests {
             .expect("register a new metric tag");
 
         assert_eq!(id.as_str(), "plugin.metric");
-        assert_eq!(MetricTagId::resolve_in(&registry, "plugin.metric"), Some(id));
+        assert_eq!(
+            MetricTagId::resolve_in(&registry, "plugin.metric"),
+            Some(id)
+        );
     }
 
     #[test]

@@ -17,8 +17,8 @@ pub mod report_view;
 pub mod sidecar;
 pub mod steady_state;
 pub mod store;
-pub mod tag_id;
 pub mod sweepline;
+pub mod tag_id;
 pub mod units;
 pub mod value;
 pub mod window;
@@ -38,7 +38,6 @@ pub use catalog::{
     AggregationKind, CATALOG, MetricConsoleGroup, MetricFlags, MetricSpec, MetricTag, MetricType,
     PlotMetricDirection, RecordMetricColumn, record_metric_columns, validate_catalog,
 };
-pub use tag_id::{MetricTagId, MetricTagRegistry};
 pub use counter::{CounterDelta, boundary_counter_delta};
 pub use derived::{delta_ms, network_adjusted_ms};
 pub use ingest::{
@@ -67,6 +66,7 @@ pub use store::{
     CategoryInterner, ColumnStore, ListMetricBackend, MetricsStorageMode, NumericColumn,
     RaggedReplay, RaggedSeries, SketchColumns, TagSketch,
 };
+pub use tag_id::{MetricTagId, MetricTagRegistry};
 // Re-export the shared t-digest so the sketch retention path has a single source.
 pub use crate::cellular::sketch::{DEFAULT_COMPRESSION as SKETCH_DEFAULT_COMPRESSION, TDigest};
 pub use units::{MetricValueType, Unit, UnitConversionError};
