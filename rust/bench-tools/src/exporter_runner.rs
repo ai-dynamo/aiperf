@@ -935,16 +935,25 @@ mod tests {
 
     #[test]
     fn durability_barrier_runs_after_the_active_exporter_timer_stops() {
+        const BARRIER_DELAY: Duration = Duration::from_millis(20);
+        thread_local! {
+            static BARRIER_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+        }
+        // A `fn` barrier cannot capture, and the barrier runs on the calling
+        // thread, so the injected count is thread-local to this test.
+        fn counted_barrier(_: &mut HostExporterCapture) -> Result<(), ExporterHarnessError> {
+            BARRIER_CALLS.with(|calls| calls.set(calls.get() + 1));
+            sleep(BARRIER_DELAY);
+            Ok(())
+        }
+
         let policy = parse_exporter_observable_policy(
             b"{\"mode\":\"paired\",\"receiver_transport_fields_removed\":[],\"scenarios\":[{\"allows_empty\":false,\"observable_kind\":\"artifact_tree\",\"provenance_slots\":[],\"scenario_id\":\"exporter_100k\"}],\"schema_version\":1}\n",
             &BTreeSet::new(),
         )
         .expect("test policy validates");
-        let runner = ExporterHarnessRunner::new_with_durability_barrier(policy, |_| {
-            sleep(Duration::from_millis(20));
-            Ok(())
-        })
-        .expect("runner accepts a durability barrier");
+        let runner = ExporterHarnessRunner::new_with_durability_barrier(policy, counted_barrier)
+            .expect("runner accepts a durability barrier");
         let artifact = tempfile::tempfile().expect("artifact descriptor");
         let started = Instant::now();
         let completed = runner
@@ -965,7 +974,14 @@ mod tests {
 
         let wall = started.elapsed();
         let active = Duration::from_nanos(completed.summary().active_duration_nanoseconds);
-        assert!(wall >= Duration::from_millis(300));
-        assert!(active < Duration::from_millis(250));
+        let barrier_calls = BARRIER_CALLS.with(std::cell::Cell::get);
+        assert_eq!(barrier_calls, REPETITIONS);
+        let injected_delay = BARRIER_DELAY * u32::try_from(barrier_calls).expect("call count fits");
+        // Every injected barrier delay is outside the reported active time, so
+        // the wall clock must account for both.
+        assert!(
+            wall >= active + injected_delay,
+            "wall {wall:?} is shorter than active {active:?} plus injected {injected_delay:?}"
+        );
     }
 }
