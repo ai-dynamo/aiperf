@@ -26,7 +26,7 @@ use aiperf_runtime::streaming::{
         PreparedStreamingIssuePolicy, StreamingInputDomainIdentity, StreamingIssueClass,
         StreamingIssueComponentId, StreamingIssueDisposition, StreamingIssueOrderKey,
         StreamingIssueReporter, StreamingIssueScope, StreamingIssueScopeKind,
-        StreamingIssueThresholdRule, StreamingIssueValidationError,
+        StreamingIssueThresholdRule, StreamingIssueValidationError, submission_queue_charge_bytes,
     },
     results::{
         BudgetedResultDescriptor, CellId, ResultProjectionId, ResultSchemaVersion,
@@ -492,7 +492,7 @@ async fn ordered_reporter_is_arrival_invariant_and_replay_counts_once() {
     };
 
     let mut reverse =
-        BudgetOwnedStreamingIssueReporter::new(run(0x11), record_policy(), budget(64, 64 * 1024))
+        BudgetOwnedStreamingIssueReporter::new(run(0x11), record_policy(), budget(65, submission_queue_charge_bytes() + 64 * 1024))
             .unwrap_or_else(|error| panic!("budget-owned reporter: {error}"));
     assert_eq!(
         reverse
@@ -526,7 +526,7 @@ async fn ordered_reporter_is_arrival_invariant_and_replay_counts_once() {
     assert_eq!(reverse.summary().unwrap().total, 2);
 
     let mut forward =
-        BudgetOwnedStreamingIssueReporter::new(run(0x11), record_policy(), budget(64, 64 * 1024))
+        BudgetOwnedStreamingIssueReporter::new(run(0x11), record_policy(), budget(65, submission_queue_charge_bytes() + 64 * 1024))
             .unwrap_or_else(|error| panic!("budget-owned reporter: {error}"));
     for (position, tie) in [(7, 7), (9, 9)] {
         forward
@@ -556,7 +556,9 @@ async fn ordered_reporter_is_arrival_invariant_and_replay_counts_once() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn tiny_reporter_budget_refuses_without_frontier_or_counter_mutation() {
-    let shared_budget = budget(1, 8);
+    // The budget admits the reporter's charged submission queue and nothing
+    // more: every later charge must refuse without mutating retained state.
+    let shared_budget = budget(2, submission_queue_charge_bytes() + 8);
     let mut reporter =
         BudgetOwnedStreamingIssueReporter::new(run(0x11), record_policy(), shared_budget.clone())
             .unwrap_or_else(|error| panic!("budget-owned reporter: {error}"));
@@ -572,13 +574,18 @@ async fn tiny_reporter_budget_refuses_without_frontier_or_counter_mutation() {
     ));
     assert_eq!(reporter.summary().unwrap().total, 0);
     assert_eq!(reporter.counters().iter().count(), 0);
-    assert_eq!(shared_budget.snapshot().used_items, 0);
-    assert_eq!(shared_budget.snapshot().used_bytes, 0);
+    // Only the construction-time queue lease is held; the refused report left
+    // no frontier, counter, or receipt charge behind.
+    assert_eq!(shared_budget.snapshot().used_items, 1);
+    assert_eq!(
+        shared_budget.snapshot().used_bytes,
+        submission_queue_charge_bytes()
+    );
 }
 
 #[tokio::test(flavor = "current_thread")]
 async fn receipt_partition_handoff_moves_payload_and_view_leases_without_copy() {
-    let reporter_budget = budget(64, 64 * 1024);
+    let reporter_budget = budget(65, submission_queue_charge_bytes() + 64 * 1024);
     let descriptor_budget = budget(4, 4096);
     let mut reporter =
         BudgetOwnedStreamingIssueReporter::new(run(0x11), record_policy(), reporter_budget.clone())

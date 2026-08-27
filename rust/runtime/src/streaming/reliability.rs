@@ -2026,6 +2026,17 @@ struct QueuedHandleIssue {
 /// reported as backpressure, not as a budget failure.
 const MAX_QUEUED_SUBMISSIONS: usize = 256;
 
+/// Return the exact byte charge every reporter takes for its submission queue.
+///
+/// The ring buffer is allocated once at [`MAX_QUEUED_SUBMISSIONS`] and never
+/// reallocates, so this is a constant of the build. It is public so budget
+/// sizing outside this module can be written against the real charge rather
+/// than a copied literal.
+#[must_use]
+pub fn submission_queue_charge_bytes() -> usize {
+    MAX_QUEUED_SUBMISSIONS.saturating_mul(size_of::<QueuedHandleIssue>())
+}
+
 struct ReporterSubmissionEndpoint {
     run: StreamRunIdentity,
     budget: StreamingResourceBudget,
