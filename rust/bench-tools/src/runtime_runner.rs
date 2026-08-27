@@ -2583,16 +2583,18 @@ mod tests {
         );
     }
 
-    fn pid_from_marker(marker: &Path) -> libc::pid_t {
-        for _ in 0..400 {
-            if let Ok(text) = fs::read_to_string(marker)
-                && let Ok(pid) = text.trim().parse::<libc::pid_t>()
-            {
-                return pid;
-            }
-            sleep(Duration::from_millis(5));
-        }
-        panic!("child never published its pid");
+    /// Read the descendant pid the leader published before it exited.
+    ///
+    /// The leader writes this file and only then exits, and the controller
+    /// cannot begin cleanup before the leader exits, so the marker is already
+    /// complete once the controller returns. Polling for it would race the
+    /// cleanup this fixture exists to observe.
+    fn published_descendant_pid(marker: &Path) -> libc::pid_t {
+        let text = fs::read_to_string(marker)
+            .expect("the leader published its descendant pid before exiting");
+        text.trim()
+            .parse::<libc::pid_t>()
+            .expect("the published descendant pid is a pid_t")
     }
 
     fn assert_reaped(pid: libc::pid_t) {
@@ -2635,10 +2637,14 @@ mod tests {
         let directory = tempfile::tempdir().expect("descendant fixture directory");
         let marker = directory.path().join("descendant-pid");
         let mut command = Command::new("/bin/sh");
+        // The leader publishes the descendant pid through an atomic rename and
+        // only then exits, so the pid is observable without racing against the
+        // controller cleanup this test exists to observe. `exec` keeps the
+        // published pid holding the inherited output pipe.
         command.args([
             "-c",
             &format!(
-                "sh -c 'echo $$ > \"{0}\"; sleep 30' & exit 0",
+                "sh -c 'exec sleep 30' & printf '%s' \"$!\" > \"{0}.tmp\"; mv \"{0}.tmp\" \"{0}\"; exit 0",
                 marker.display()
             ),
         ]);
@@ -2649,7 +2655,7 @@ mod tests {
 
         assert_eq!(result.terminal_status, ChildTerminalStatus::Exited(0));
         assert!(started.elapsed() < Duration::from_secs(5));
-        assert_reaped(pid_from_marker(&marker));
+        assert_reaped(published_descendant_pid(&marker));
     }
 
     #[test]
