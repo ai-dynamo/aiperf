@@ -816,5 +816,12 @@ async fn participant_state_prepare_releases_on_error() {
         )))
         .await
         .unwrap_or_else(|error| panic!("retain issue: {error}"));
+    reporter
+        .report(IssueSequenceUpdate::NoMoreBefore {
+            input_domain: domain(0x21, 0x20),
+            through: SourcePosition::new(7),
+        })
+        .await
+        .unwrap_or_else(|error| panic!("advance frontier: {error}"));
     assert_eq!(reporter.retained_receipt_count(), 1);
 }
