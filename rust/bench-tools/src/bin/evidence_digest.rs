@@ -12,9 +12,9 @@ use std::process::Command;
 use serde::{Deserialize, Serialize};
 
 use aiperf_bench_tools::exporter_observable::{
-    ArtifactTreeKind, is_lower_blake3, parse_artifact_tree_observable, reject_duplicate_json_keys,
-    validate_artifact_tree_path,
+    ArtifactTreeKind, is_lower_blake3, parse_artifact_tree_observable,
 };
+use aiperf_bench_tools::exporter_policy::parse_exporter_observable_policy;
 
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -2364,379 +2364,34 @@ fn exporter_measurement_binding(
     Ok(binding)
 }
 
-#[derive(Clone, Copy, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-enum ExporterPolicyMode {
-    Paired,
-    StaticCalibration,
-}
-
-#[derive(Clone, Copy, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-enum ExporterObservableKind {
-    ArtifactTree,
-    CapturedStream,
-    ReceiverTranscript,
-}
-
-#[derive(Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-struct ExporterTransportFieldsRemoved {
-    keys: Vec<String>,
-    protocol: String,
-}
-
-#[derive(Deserialize, Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-enum ExporterOutputSelector {
-    ArtifactContent { path: String },
-    CapturedStream,
-    TranscriptBody { sequence: u64 },
-}
-
-#[derive(Deserialize, Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-enum ExporterLocator {
-    ByteRange { length: u64, offset: u64 },
-    JsonPointer { pointer: String },
-    WholeOutput,
-}
-
-#[derive(Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-struct ExporterExpectedValue {
-    encoding: String,
-    value: serde_json::Value,
-}
-
-#[derive(Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-struct ExporterProvenanceSlot {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    dynamic_expected: Option<ExporterExpectedValue>,
-    locator: ExporterLocator,
-    output_selector: ExporterOutputSelector,
-    replacement: ExporterExpectedValue,
-    slot_id: String,
-    static_expected: ExporterExpectedValue,
-}
-
-#[derive(Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-struct ExporterObservableScenario {
-    allows_empty: bool,
-    observable_kind: ExporterObservableKind,
-    provenance_slots: Vec<ExporterProvenanceSlot>,
-    scenario_id: String,
-}
-
-#[derive(Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-struct ExporterObservablePolicyV1 {
-    mode: ExporterPolicyMode,
-    receiver_transport_fields_removed: Vec<ExporterTransportFieldsRemoved>,
-    scenarios: Vec<ExporterObservableScenario>,
-    schema_version: u8,
-}
-
-fn is_policy_identifier(value: &str) -> bool {
-    let bytes = value.as_bytes();
-    (1..=128).contains(&bytes.len())
-        && (bytes[0].is_ascii_lowercase() || bytes[0].is_ascii_digit())
-        && bytes.iter().all(|byte| {
-            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'_' | b'.' | b'-')
-        })
-}
-
-fn validate_policy_json_value(value: &serde_json::Value) -> Result<(), Box<dyn std::error::Error>> {
-    match value {
-        serde_json::Value::String(value) if value.contains('\0') => {
-            Err("exporter policy strings must not contain NUL".into())
-        }
-        serde_json::Value::Array(values) => {
-            for value in values {
-                validate_policy_json_value(value)?;
-            }
-            Ok(())
-        }
-        serde_json::Value::Object(values) => {
-            for (key, value) in values {
-                if key.contains('\0') {
-                    return Err("exporter policy object keys must not contain NUL".into());
-                }
-                validate_policy_json_value(value)?;
-            }
-            Ok(())
-        }
-        _ => Ok(()),
-    }
-}
-
-fn validate_json_pointer(pointer: &str) -> Result<(), Box<dyn std::error::Error>> {
-    if pointer.contains('\0') || (!pointer.is_empty() && !pointer.starts_with('/')) {
-        return Err("exporter policy contains malformed JSON pointer".into());
-    }
-    let mut bytes = pointer.bytes();
-    while let Some(byte) = bytes.next() {
-        if byte == b'~'
-            && !bytes
-                .next()
-                .is_some_and(|escaped| matches!(escaped, b'0' | b'1'))
-        {
-            return Err("exporter policy contains malformed JSON pointer".into());
-        }
-    }
-    Ok(())
-}
-
-fn decoded_json_pointer(pointer: &str) -> Result<Vec<String>, Box<dyn std::error::Error>> {
-    validate_json_pointer(pointer)?;
-    if pointer.is_empty() {
-        return Ok(Vec::new());
-    }
-    pointer[1..]
-        .split('/')
-        .map(|token| {
-            let mut decoded = String::new();
-            let mut characters = token.chars();
-            while let Some(character) = characters.next() {
-                if character == '~' {
-                    decoded.push(match characters.next() {
-                        Some('0') => '~',
-                        Some('1') => '/',
-                        _ => return Err("exporter policy contains malformed JSON pointer".into()),
-                    });
-                } else {
-                    decoded.push(character);
-                }
-            }
-            Ok(decoded)
-        })
-        .collect()
-}
-
-fn exporter_locators_overlap(
-    left: &ExporterLocator,
-    right: &ExporterLocator,
-) -> Result<bool, Box<dyn std::error::Error>> {
-    match (left, right) {
-        (ExporterLocator::WholeOutput, _) | (_, ExporterLocator::WholeOutput) => Ok(true),
-        (
-            ExporterLocator::ByteRange {
-                length: left_length,
-                offset: left_offset,
-            },
-            ExporterLocator::ByteRange {
-                length: right_length,
-                offset: right_offset,
-            },
-        ) => {
-            Ok(*left_offset < right_offset + right_length
-                && *right_offset < left_offset + left_length)
-        }
-        (
-            ExporterLocator::JsonPointer {
-                pointer: left_pointer,
-            },
-            ExporterLocator::JsonPointer {
-                pointer: right_pointer,
-            },
-        ) => {
-            let left = decoded_json_pointer(left_pointer)?;
-            let right = decoded_json_pointer(right_pointer)?;
-            Ok(left.starts_with(&right) || right.starts_with(&left))
-        }
-        _ => Ok(false),
-    }
-}
-
-fn validate_exporter_expected(
-    value: &ExporterExpectedValue,
-    locator: &ExporterLocator,
-) -> Result<(), Box<dyn std::error::Error>> {
-    validate_policy_json_value(&value.value)?;
-    match (value.encoding.as_str(), locator) {
-        ("canonical_json", ExporterLocator::JsonPointer { .. }) => Ok(()),
-        ("hex_bytes", ExporterLocator::ByteRange { .. } | ExporterLocator::WholeOutput) => {
-            let encoded = value
-                .value
-                .as_str()
-                .ok_or("hex_bytes exporter policy value must be a string")?;
-            if encoded.len() % 2 != 0
-                || !encoded
-                    .bytes()
-                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-            {
-                return Err("hex_bytes exporter policy value must be even lower-case hex".into());
-            }
-            Ok(())
-        }
-        _ => Err("exporter policy encoding is incompatible with its locator".into()),
-    }
-}
-
-fn validate_exporter_policy(
-    policy: &ExporterObservablePolicyV1,
-    authenticated_receiver_protocols: &BTreeSet<&str>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    if policy.schema_version != 1 {
-        return Err("exporter observable policy schema_version must be 1".into());
-    }
-    let mut previous_protocol = None;
-    for removal in &policy.receiver_transport_fields_removed {
-        if !is_policy_identifier(&removal.protocol)
-            || previous_protocol.is_some_and(|previous| previous >= removal.protocol.as_str())
-        {
-            return Err("exporter policy protocols must be sorted and unique".into());
-        }
-        if !authenticated_receiver_protocols.contains(removal.protocol.as_str()) {
-            return Err(
-                "exporter policy contains a transport removal absent from the authenticated receiver protocols"
-                    .into(),
-            );
-        }
-        previous_protocol = Some(removal.protocol.as_str());
-        let mut previous_key = None;
-        for key in &removal.keys {
-            if key.is_empty()
-                || key.contains('\0')
-                || key.bytes().any(|byte| byte.is_ascii_uppercase())
-                || previous_key.is_some_and(|previous| previous >= key.as_str())
-            {
-                return Err(
-                    "exporter policy metadata keys must be lower-case, sorted, and unique".into(),
-                );
-            }
-            previous_key = Some(key.as_str());
-        }
-    }
-    if !policy.receiver_transport_fields_removed.is_empty()
-        && !policy
-            .scenarios
-            .iter()
-            .any(|scenario| scenario.observable_kind == ExporterObservableKind::ReceiverTranscript)
-    {
-        return Err(
-            "exporter policy contains a transport removal unused by every receiver scenario".into(),
-        );
-    }
-    let mut previous_scenario = None;
-    for scenario in &policy.scenarios {
-        if !is_policy_identifier(&scenario.scenario_id)
-            || previous_scenario.is_some_and(|previous| previous >= scenario.scenario_id.as_str())
-        {
-            return Err("exporter policy scenarios must be sorted and unique".into());
-        }
-        previous_scenario = Some(scenario.scenario_id.as_str());
-        let mut previous_slot = None;
-        let mut selector_locators = BTreeSet::new();
-        let mut locators_by_selector = BTreeMap::<String, Vec<&ExporterLocator>>::new();
-        for slot in &scenario.provenance_slots {
-            if !is_policy_identifier(&slot.slot_id)
-                || previous_slot.is_some_and(|previous| previous >= slot.slot_id.as_str())
-            {
-                return Err("exporter policy slots must be sorted and unique".into());
-            }
-            previous_slot = Some(slot.slot_id.as_str());
-            match (&scenario.observable_kind, &slot.output_selector) {
-                (
-                    ExporterObservableKind::ArtifactTree,
-                    ExporterOutputSelector::ArtifactContent { path },
-                ) => validate_artifact_tree_path(path)?,
-                (
-                    ExporterObservableKind::CapturedStream,
-                    ExporterOutputSelector::CapturedStream,
-                )
-                | (
-                    ExporterObservableKind::ReceiverTranscript,
-                    ExporterOutputSelector::TranscriptBody { .. },
-                ) => {}
-                _ => {
-                    return Err(
-                        "exporter policy selector is incompatible with observable kind".into(),
-                    );
-                }
-            }
-            match &slot.locator {
-                ExporterLocator::ByteRange { length, offset } => {
-                    if *length == 0 || offset.checked_add(*length).is_none() {
-                        return Err("exporter byte_range must be nonempty and bounded".into());
-                    }
-                }
-                ExporterLocator::JsonPointer { pointer } => validate_json_pointer(pointer)?,
-                ExporterLocator::WholeOutput => {}
-            }
-            validate_exporter_expected(&slot.static_expected, &slot.locator)?;
-            validate_exporter_expected(&slot.replacement, &slot.locator)?;
-            if slot.static_expected.encoding != slot.replacement.encoding {
-                return Err("exporter policy slot encodings disagree".into());
-            }
-            match (policy.mode, slot.dynamic_expected.as_ref()) {
-                (ExporterPolicyMode::Paired, Some(dynamic)) => {
-                    validate_exporter_expected(dynamic, &slot.locator)?;
-                    if dynamic.encoding != slot.replacement.encoding {
-                        return Err("exporter policy slot encodings disagree".into());
-                    }
-                }
-                (ExporterPolicyMode::Paired, None) => {
-                    return Err("paired exporter policy slot lacks dynamic_expected".into());
-                }
-                (ExporterPolicyMode::StaticCalibration, Some(_)) => {
-                    return Err(
-                        "static_calibration exporter policy slot contains dynamic_expected".into(),
-                    );
-                }
-                _ => {}
-            }
-            let selector_locator = serde_json::to_string(&(&slot.output_selector, &slot.locator))?;
-            if !selector_locators.insert(selector_locator) {
-                return Err("exporter policy contains duplicate selector/locator pair".into());
-            }
-            let selector = serde_json::to_string(&slot.output_selector)?;
-            let peer_locators = locators_by_selector.entry(selector).or_default();
-            for peer in peer_locators.iter() {
-                if exporter_locators_overlap(peer, &slot.locator)? {
-                    return Err("exporter policy contains overlapping output slots".into());
-                }
-            }
-            peer_locators.push(&slot.locator);
-        }
-    }
-    Ok(())
-}
-
-fn parse_exporter_observable_policy(
-    bytes: &[u8],
-    authenticated_receiver_protocols: &BTreeSet<&str>,
-) -> Result<ExporterObservablePolicyV1, Box<dyn std::error::Error>> {
-    reject_duplicate_json_keys(bytes)?;
-    let policy: ExporterObservablePolicyV1 = serde_json::from_slice(bytes)?;
-    validate_exporter_policy(&policy, authenticated_receiver_protocols)?;
-    let mut canonical = serde_json_canonicalizer::to_vec(&policy)?;
-    canonical.push(b'\n');
-    if canonical != bytes {
-        return Err("exporter observable policy is not exact RFC 8785 JCS plus newline".into());
-    }
-    Ok(policy)
-}
-
 fn exporter_authored_contract(
     identity_root: &Path,
 ) -> Result<serde_json::Map<String, serde_json::Value>, Box<dyn std::error::Error>> {
     let policy_path = required_receipt(identity_root, "exporter-observable-policy.json")?;
-    let policy =
-        parse_exporter_observable_policy(&snapshot_regular_file(&policy_path)?, &BTreeSet::new())?;
-    if policy.mode != ExporterPolicyMode::StaticCalibration
-        || !policy.receiver_transport_fields_removed.is_empty()
-        || policy.scenarios.len() != 1
-        || policy.scenarios[0].scenario_id != "exporter_100k"
+    let policy = serde_json::to_value(parse_exporter_observable_policy(
+        &snapshot_regular_file(&policy_path)?,
+        &BTreeSet::new(),
+    )?)?;
+    let scenarios = policy["scenarios"].as_array();
+    if policy["mode"] != "static_calibration"
+        || !policy["receiver_transport_fields_removed"]
+            .as_array()
+            .is_some_and(Vec::is_empty)
+        || scenarios.is_none_or(|scenarios| scenarios.len() != 1)
+        || scenarios
+            .and_then(|scenarios| scenarios.first())
+            .is_none_or(|scenario| scenario["scenario_id"] != "exporter_100k")
     {
         return Err("exporter observable policy is not Task-1 static calibration".into());
     }
-    let scenario = &policy.scenarios[0];
-    if scenario.observable_kind != ExporterObservableKind::ArtifactTree
-        || scenario.allows_empty
-        || !scenario.provenance_slots.is_empty()
+    let scenario = scenarios
+        .and_then(|scenarios| scenarios.first())
+        .ok_or("exporter observable policy is not Task-1 static calibration")?;
+    if scenario["observable_kind"] != "artifact_tree"
+        || scenario["allows_empty"] != false
+        || !scenario["provenance_slots"]
+            .as_array()
+            .is_some_and(Vec::is_empty)
     {
         return Err("Task-1 exporter observable policy scenario mismatch".into());
     }
@@ -4586,229 +4241,40 @@ mod tests {
     }
 
     #[test]
+    fn exporter_authored_contract_uses_the_shared_policy_authority() {
+        let directory = tempfile::tempdir().expect("policy fixture directory");
+        let policy_path = directory.path().join("exporter-observable-policy.json");
+        fs::write(&policy_path, TASK1_EXPORTER_POLICY_JCS).expect("policy fixture is written");
+        fs::write(
+            directory
+                .path()
+                .join("exporter-static-calibration-corpus.json"),
+            include_bytes!("../../../benchmarks/exporter-static-calibration-corpus.json"),
+        )
+        .expect("corpus fixture is written");
+
+        exporter_authored_contract(directory.path())
+            .expect("shared policy authority accepts the canonical Task-1 policy");
+
+        fs::write(
+            policy_path,
+            b"{\"mode\":\"static_calibration\",\"mode\":\"static_calibration\",\"receiver_transport_fields_removed\":[],\"scenarios\":[],\"schema_version\":1}\n",
+        )
+        .expect("duplicate-key policy fixture is written");
+        let error = exporter_authored_contract(directory.path())
+            .expect_err("shared policy authority rejects duplicate JSON keys");
+        assert_eq!(
+            error.to_string(),
+            "invalid strict JSON: duplicate JSON object key `mode` at line 1 column 35"
+        );
+    }
+
+    #[test]
     fn checked_in_exporter_policy_is_the_exact_normative_task1_jcs_vector() {
         assert_eq!(
             include_bytes!("../../../benchmarks/exporter-observable-policy.json"),
             TASK1_EXPORTER_POLICY_JCS
         );
-    }
-
-    #[test]
-    fn exporter_policy_rejects_structural_order_and_canonical_mutations() {
-        let mutations = [
-            (
-                "duplicate field",
-                "{\"mode\":\"static_calibration\",\"mode\":\"static_calibration\",\"receiver_transport_fields_removed\":[],\"scenarios\":[],\"schema_version\":1}\n",
-            ),
-            (
-                "unknown field",
-                "{\"extra\":0,\"mode\":\"static_calibration\",\"receiver_transport_fields_removed\":[],\"scenarios\":[],\"schema_version\":1}\n",
-            ),
-            (
-                "missing field",
-                "{\"receiver_transport_fields_removed\":[],\"scenarios\":[],\"schema_version\":1}\n",
-            ),
-            (
-                "noncanonical key order",
-                "{\"schema_version\":1,\"mode\":\"static_calibration\",\"receiver_transport_fields_removed\":[],\"scenarios\":[]}\n",
-            ),
-            (
-                "noncanonical whitespace",
-                "{\"mode\": \"static_calibration\",\"receiver_transport_fields_removed\":[],\"scenarios\":[],\"schema_version\":1}\n",
-            ),
-            (
-                "unordered scenario array",
-                "{\"mode\":\"static_calibration\",\"receiver_transport_fields_removed\":[],\"scenarios\":[{\"allows_empty\":false,\"observable_kind\":\"captured_stream\",\"provenance_slots\":[],\"scenario_id\":\"z\"},{\"allows_empty\":false,\"observable_kind\":\"captured_stream\",\"provenance_slots\":[],\"scenario_id\":\"a\"}],\"schema_version\":1}\n",
-            ),
-            (
-                "unordered metadata-key array",
-                "{\"mode\":\"static_calibration\",\"receiver_transport_fields_removed\":[{\"keys\":[\"z\",\"a\"],\"protocol\":\"otel_http_v1\"}],\"scenarios\":[],\"schema_version\":1}\n",
-            ),
-            (
-                "static slot with dynamic expected value",
-                "{\"mode\":\"static_calibration\",\"receiver_transport_fields_removed\":[],\"scenarios\":[{\"allows_empty\":false,\"observable_kind\":\"artifact_tree\",\"provenance_slots\":[{\"dynamic_expected\":{\"encoding\":\"canonical_json\",\"value\":\"dynamic\"},\"locator\":{\"kind\":\"json_pointer\",\"pointer\":\"/digest\"},\"output_selector\":{\"kind\":\"artifact_content\",\"path\":\"out.json\"},\"replacement\":{\"encoding\":\"canonical_json\",\"value\":\"replacement\"},\"slot_id\":\"lock\",\"static_expected\":{\"encoding\":\"canonical_json\",\"value\":\"static\"}}],\"scenario_id\":\"exporter\"}],\"schema_version\":1}\n",
-            ),
-        ];
-
-        for (name, bytes) in mutations {
-            let authenticated_receiver_protocols = if name == "unordered metadata-key array" {
-                BTreeSet::from(["otel_http_v1"])
-            } else {
-                BTreeSet::new()
-            };
-            let error = match parse_exporter_observable_policy(
-                bytes.as_bytes(),
-                &authenticated_receiver_protocols,
-            ) {
-                Ok(_) => panic!("accepted policy mutation: {name}"),
-                Err(error) => error,
-            };
-            if name == "unordered metadata-key array" {
-                assert_eq!(
-                    error.to_string(),
-                    "exporter policy metadata keys must be lower-case, sorted, and unique"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn exporter_policy_rejects_a_selector_from_the_wrong_observable_class() {
-        let bytes = b"{\"mode\":\"static_calibration\",\"receiver_transport_fields_removed\":[],\"scenarios\":[{\"allows_empty\":false,\"observable_kind\":\"artifact_tree\",\"provenance_slots\":[{\"locator\":{\"kind\":\"json_pointer\",\"pointer\":\"/digest\"},\"output_selector\":{\"kind\":\"captured_stream\"},\"replacement\":{\"encoding\":\"canonical_json\",\"value\":\"replacement\"},\"slot_id\":\"lock\",\"static_expected\":{\"encoding\":\"canonical_json\",\"value\":\"static\"}}],\"scenario_id\":\"exporter\"}],\"schema_version\":1}\n";
-
-        assert!(parse_exporter_observable_policy(bytes, &BTreeSet::new()).is_err());
-    }
-
-    #[test]
-    fn exporter_policy_accepts_normative_rfc8785_numbers_and_utf16_key_order() {
-        let bytes = "{\"mode\":\"static_calibration\",\"receiver_transport_fields_removed\":[],\"scenarios\":[{\"allows_empty\":false,\"observable_kind\":\"artifact_tree\",\"provenance_slots\":[{\"locator\":{\"kind\":\"json_pointer\",\"pointer\":\"/identity\"},\"output_selector\":{\"kind\":\"artifact_content\",\"path\":\"out.json\"},\"replacement\":{\"encoding\":\"canonical_json\",\"value\":{\"𐀀\":0,\"\":1e+30}},\"slot_id\":\"identity\",\"static_expected\":{\"encoding\":\"canonical_json\",\"value\":{\"𐀀\":0,\"\":1e+30}}}],\"scenario_id\":\"exporter\"}],\"schema_version\":1}\n";
-
-        parse_exporter_observable_policy(bytes.as_bytes(), &BTreeSet::new())
-            .expect("the literal RFC 8785 counterexample must validate");
-
-        for noncanonical in [
-            bytes.replace("\"𐀀\":0", "\"𐀀\":-0.0"),
-            bytes.replace("\"𐀀\":0,\"\":1e+30", "\"\":1e+30,\"𐀀\":0"),
-            bytes.replace("\"𐀀\":0", "\"𐀀\":9007199254740993"),
-            bytes.replace("\"𐀀\":0", "\"𐀀\":1e-07"),
-            bytes.replace("\"𐀀\":0", "\"𐀀\":0,\"𐀀\":1"),
-        ] {
-            assert!(
-                parse_exporter_observable_policy(noncanonical.as_bytes(), &BTreeSet::new())
-                    .is_err(),
-                "noncanonical RFC 8785 mutation was accepted"
-            );
-        }
-    }
-
-    #[test]
-    fn exporter_policy_rejects_removal_protocol_absent_from_authenticated_receiver_set() {
-        const USED_ONLY: &[u8] = b"{\"mode\":\"static_calibration\",\"receiver_transport_fields_removed\":[{\"keys\":[\"date\"],\"protocol\":\"otel_http_v1\"}],\"scenarios\":[{\"allows_empty\":false,\"observable_kind\":\"receiver_transcript\",\"provenance_slots\":[],\"scenario_id\":\"receiver\"}],\"schema_version\":1}\n";
-        const USED_PLUS_EXTRA: &[u8] = b"{\"mode\":\"static_calibration\",\"receiver_transport_fields_removed\":[{\"keys\":[\"date\"],\"protocol\":\"otel_http_v1\"},{\"keys\":[\"x-amzn-requestid\"],\"protocol\":\"sagemaker_eventstream\"}],\"scenarios\":[{\"allows_empty\":false,\"observable_kind\":\"receiver_transcript\",\"provenance_slots\":[],\"scenario_id\":\"receiver\"}],\"schema_version\":1}\n";
-        let authenticated_receiver_protocols = BTreeSet::from(["otel_http_v1"]);
-
-        parse_exporter_observable_policy(USED_ONLY, &authenticated_receiver_protocols)
-            .expect("removal for the authenticated receiver protocol must validate");
-        assert!(
-            parse_exporter_observable_policy(USED_PLUS_EXTRA, &authenticated_receiver_protocols)
-                .is_err(),
-            "removal for a protocol absent from the authenticated receiver set was accepted"
-        );
-    }
-
-    #[test]
-    fn exporter_policy_rejects_unused_transport_and_overlapping_output_slots() {
-        let cases = [
-            serde_json::json!({
-                "mode": "static_calibration",
-                "receiver_transport_fields_removed": [{"keys": ["date"], "protocol": "otel_http_v1"}],
-                "scenarios": [{
-                    "allows_empty": false,
-                    "observable_kind": "artifact_tree",
-                    "provenance_slots": [],
-                    "scenario_id": "artifact",
-                }],
-                "schema_version": 1,
-            }),
-            serde_json::json!({
-                "mode": "static_calibration",
-                "receiver_transport_fields_removed": [],
-                "scenarios": [{
-                    "allows_empty": false,
-                    "observable_kind": "captured_stream",
-                    "provenance_slots": [
-                        {
-                            "locator": {"kind": "byte_range", "length": 4, "offset": 0},
-                            "output_selector": {"kind": "captured_stream"},
-                            "replacement": {"encoding": "hex_bytes", "value": "00"},
-                            "slot_id": "first",
-                            "static_expected": {"encoding": "hex_bytes", "value": "00"},
-                        },
-                        {
-                            "locator": {"kind": "byte_range", "length": 2, "offset": 3},
-                            "output_selector": {"kind": "captured_stream"},
-                            "replacement": {"encoding": "hex_bytes", "value": "00"},
-                            "slot_id": "second",
-                            "static_expected": {"encoding": "hex_bytes", "value": "00"},
-                        },
-                    ],
-                    "scenario_id": "stream",
-                }],
-                "schema_version": 1,
-            }),
-            serde_json::json!({
-                "mode": "static_calibration",
-                "receiver_transport_fields_removed": [],
-                "scenarios": [{
-                    "allows_empty": false,
-                    "observable_kind": "artifact_tree",
-                    "provenance_slots": [
-                        {
-                            "locator": {"kind": "json_pointer", "pointer": "/a"},
-                            "output_selector": {"kind": "artifact_content", "path": "out.json"},
-                            "replacement": {"encoding": "canonical_json", "value": 0},
-                            "slot_id": "ancestor",
-                            "static_expected": {"encoding": "canonical_json", "value": 0},
-                        },
-                        {
-                            "locator": {"kind": "json_pointer", "pointer": "/a/b"},
-                            "output_selector": {"kind": "artifact_content", "path": "out.json"},
-                            "replacement": {"encoding": "canonical_json", "value": 0},
-                            "slot_id": "descendant",
-                            "static_expected": {"encoding": "canonical_json", "value": 0},
-                        },
-                    ],
-                    "scenario_id": "json",
-                }],
-                "schema_version": 1,
-            }),
-            serde_json::json!({
-                "mode": "static_calibration",
-                "receiver_transport_fields_removed": [],
-                "scenarios": [{
-                    "allows_empty": false,
-                    "observable_kind": "captured_stream",
-                    "provenance_slots": [
-                        {
-                            "locator": {"kind": "whole_output"},
-                            "output_selector": {"kind": "captured_stream"},
-                            "replacement": {"encoding": "hex_bytes", "value": "00"},
-                            "slot_id": "all",
-                            "static_expected": {"encoding": "hex_bytes", "value": "00"},
-                        },
-                        {
-                            "locator": {"kind": "byte_range", "length": 1, "offset": 0},
-                            "output_selector": {"kind": "captured_stream"},
-                            "replacement": {"encoding": "hex_bytes", "value": "00"},
-                            "slot_id": "part",
-                            "static_expected": {"encoding": "hex_bytes", "value": "00"},
-                        },
-                    ],
-                    "scenario_id": "whole",
-                }],
-                "schema_version": 1,
-            }),
-        ];
-
-        for (index, case) in cases.into_iter().enumerate() {
-            let policy: ExporterObservablePolicyV1 =
-                serde_json::from_value(case).expect("counterexample policy parses");
-            let authenticated_receiver_protocols = if index == 0 {
-                BTreeSet::from(["otel_http_v1"])
-            } else {
-                BTreeSet::new()
-            };
-            let error = match validate_exporter_policy(&policy, &authenticated_receiver_protocols) {
-                Ok(()) => panic!("structurally invalid policy was accepted"),
-                Err(error) => error,
-            };
-            if index == 0 {
-                assert_eq!(
-                    error.to_string(),
-                    "exporter policy contains a transport removal unused by every receiver scenario"
-                );
-            }
-        }
     }
 
     #[test]
