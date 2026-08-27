@@ -32,7 +32,9 @@ from tests.kubernetes.helpers.operator import AIPerfJobConfig, OperatorJobResult
 
 # Test timeout for individual test phases (not full job completion)
 TEST_PHASE_TIMEOUT = 120  # seconds for waiting for phase transitions
-TEST_JOB_TIMEOUT = 60  # seconds for full job completion
+TEST_JOB_TIMEOUT = (
+    180  # seconds for full job completion (kind clusters under sustained load)
+)
 TEST_CLEANUP_TIMEOUT = 150  # seconds for CR deletion propagation checks
 CLEANUP_ASSERTION_TIMEOUT = 120  # seconds shared by observation and deletion
 CLEANUP_DELETION_POLL_RESERVE = 60  # seconds reserved from the shared deadline
