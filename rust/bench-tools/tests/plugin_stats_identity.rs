@@ -466,6 +466,18 @@ fn controlled_evaluation_makes_the_first_statistical_failure_authoritative() {
             .expect("statistical report is retained")
             .passed
     );
+    let attempt = &evaluator.history()[0];
+    let report_bytes = serde_json_canonicalizer::to_vec(
+        evaluator
+            .last_statistical_report()
+            .expect("statistical report is retained"),
+    )
+    .expect("report canonicalizes");
+    assert_eq!(
+        attempt.report_blake3.as_deref(),
+        Some(format!("blake3:{}", blake3::hash(&report_bytes)).as_str())
+    );
+    assert!(attempt.evidence_tree_blake3.starts_with("blake3:"));
     assert!(evaluator.begin_attempt().is_err());
 }
 

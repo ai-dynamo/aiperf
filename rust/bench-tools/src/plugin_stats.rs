@@ -476,7 +476,8 @@ pub enum AttemptDisposition {
 }
 
 /// One infrastructure event named by the frozen inventory classifier.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum InfrastructureEvent {
     /// The benchmark host rebooted during a pair.
     HostReboot,
@@ -497,7 +498,8 @@ impl InfrastructureEvent {
 }
 
 /// Raw terminal outcome observed by the same-process measurement controller.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum MemberTerminalOutcome {
     /// The member completed its frozen workload and emitted measurement rows.
     Completed,
@@ -521,7 +523,7 @@ pub enum MemberTerminalOutcome {
 }
 
 /// One member's raw terminal record in exact execution order.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct RawMemberTerminalRecord {
     /// Static or dynamic artifact that ran.
     pub variant: Variant,
@@ -530,7 +532,7 @@ pub struct RawMemberTerminalRecord {
 }
 
 /// One whole pair attempt observed by the same-process controller.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct RawPairTerminalRecord {
     /// Frozen inventory scenario name.
     pub scenario: String,
@@ -547,7 +549,8 @@ pub struct RawPairTerminalRecord {
 }
 
 /// Controller decision after observing one raw pair attempt.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum PairAttemptDecision {
     /// Both members completed; retain the pair's measured rows.
     RetainPair,
@@ -565,7 +568,8 @@ pub enum PairAttemptDecision {
 }
 
 /// Controller-derived outcome of one complete experiment attempt.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ControlledAttemptDecision {
     /// Infrastructure/noise rules invalidated the attempt.
     Invalid,
@@ -576,7 +580,7 @@ pub enum ControlledAttemptDecision {
 }
 
 /// One retained complete-attempt decision.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct ControlledAttemptRecord {
     /// One-based contiguous attempt ordinal.
     pub ordinal: u8,
@@ -584,10 +588,14 @@ pub struct ControlledAttemptRecord {
     pub decision: ControlledAttemptDecision,
     /// Controller-derived terminal diagnosis.
     pub reason: Option<String>,
+    /// Digest of the canonical statistical report, when one was produced.
+    pub report_blake3: Option<String>,
+    /// Digest of the canonical final evidence tree for this attempt.
+    pub evidence_tree_blake3: String,
 }
 
 /// One retained raw pair attempt and its controller-derived classification.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct ControlledPairAttemptRecord {
     /// Complete experiment attempt that owned this pair attempt.
     pub experiment_attempt: u8,
@@ -710,6 +718,7 @@ impl ControlledMeasurementEvaluator {
         }
         let ordinal = u8::try_from(self.history.len() + 1)
             .map_err(|_| PluginStatsError::new("experiment attempt ordinal overflow"))?;
+        self.last_statistical_report = None;
         self.active = Some(ActiveControlledAttempt {
             ordinal,
             replacements_by_scenario: BTreeMap::new(),
@@ -1027,10 +1036,38 @@ impl ControlledMeasurementEvaluator {
             .active
             .take()
             .ok_or_else(|| PluginStatsError::new("no controlled experiment attempt is active"))?;
+        let report_blake3 = self
+            .last_statistical_report
+            .as_ref()
+            .map(|report| canonical_jcs_blake3(report, "controlled statistical report"))
+            .transpose()?;
+        let raw_pairs = self
+            .raw_pair_history
+            .iter()
+            .filter(|record| record.experiment_attempt == active.ordinal)
+            .collect::<Vec<_>>();
+        let exporter_pairs = self
+            .exporter_pair_history
+            .iter()
+            .filter(|record| record.experiment_attempt == active.ordinal)
+            .collect::<Vec<_>>();
+        let evidence_tree = serde_json::json!({
+            "decision": decision,
+            "experiment_attempt": active.ordinal,
+            "exporter_pairs": exporter_pairs,
+            "raw_pair_history": raw_pairs,
+            "reason": reason,
+            "report_blake3": report_blake3,
+            "schema_version": 1
+        });
+        let evidence_tree_blake3 =
+            canonical_jcs_blake3(&evidence_tree, "controlled attempt evidence tree")?;
         self.history.push(ControlledAttemptRecord {
             ordinal: active.ordinal,
             decision,
             reason,
+            report_blake3,
+            evidence_tree_blake3,
         });
         Ok(())
     }
@@ -2210,6 +2247,12 @@ fn canonical_blake3<T: Serialize>(value: &T, label: &str) -> Result<String, Plug
     let bytes = serde_json::to_vec(value)
         .map_err(|error| PluginStatsError::new(format!("cannot encode {label}: {error}")))?;
     Ok(format!("blake3:{}", blake3::hash(&bytes).to_hex()))
+}
+
+fn canonical_jcs_blake3<T: Serialize>(value: &T, label: &str) -> Result<String, PluginStatsError> {
+    let bytes = serde_json_canonicalizer::to_vec(value)
+        .map_err(|error| PluginStatsError::new(format!("cannot canonicalize {label}: {error}")))?;
+    Ok(format!("blake3:{}", blake3::hash(&bytes)))
 }
 
 #[derive(Deserialize, Serialize)]
