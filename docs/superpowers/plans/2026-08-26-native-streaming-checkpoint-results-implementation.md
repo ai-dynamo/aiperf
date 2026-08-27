@@ -13,7 +13,7 @@ SPDX-License-Identifier: Apache-2.0
 
 **Tech Stack:** Rust 2024, Tokio current-thread runtimes, `async_trait(?Send)`, BLAKE3, strict Serde DTOs, existing `Clock`, `MetricsAccumulator`, `RecordIngest`, `NativeReport`, `PreparedRunOutcome`, `PreparedReportCommit`, and the Task-1 `StreamingBlockingExecutor`/resource budgets.
 
-**Spec:** `artifacts/streaming-design/streaming-dataset-shadow-replay-design.md` at approved commit `505efc06b0`, especially “Checkpoint and delivery semantics” and “Checkpoint-based results”.
+**Spec:** `artifacts/streaming-design/streaming-dataset-shadow-replay-design.md` at base approval `505efc06b0`, amended by `3fea6f2fe0`, especially “Checkpoint and delivery semantics” and “Checkpoint-based results”.
 
 ## Global Constraints
 

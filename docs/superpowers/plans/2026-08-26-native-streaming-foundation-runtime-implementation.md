@@ -13,7 +13,7 @@ SPDX-License-Identifier: Apache-2.0
 
 **Tech Stack:** Rust 2024, Tokio current-thread runtimes and `LocalSet`, `async_trait(?Send)`, BLAKE3, strict Serde DTOs, `chacha20poly1305` and `zeroize` behind `streaming`, optional `aws-config` and `aws-sdk-s3` behind `streaming-s3`, existing `Clock`, `ScheduledRuntime`, `RunCapture`, `TransactionalRegistry`, Protocol v2, and Config v2.
 
-**Spec:** `artifacts/streaming-design/streaming-dataset-shadow-replay-design.md` at approved commit `505efc06b0`; master plan: `docs/superpowers/plans/2026-08-26-native-streaming-datasets-shadow-replay-implementation.md`.
+**Spec:** `artifacts/streaming-design/streaming-dataset-shadow-replay-design.md` at base approval `505efc06b0`, amended by `3fea6f2fe0`; master plan: `docs/superpowers/plans/2026-08-26-native-streaming-datasets-shadow-replay-implementation.md`.
 
 ## Global Constraints
 
@@ -677,7 +677,16 @@ git commit -m "feat(runtime): add bounded streaming blocking owner"
 pub enum StreamingFailureStage { Source, Acquisition, Decode, Ordering, StateBudget, Session, Placement, Dispatch, Checkpoint, Result }
 pub enum SourceFailureCode { Discovery, Snapshot, MutatedObject, SourceUnavailable }
 pub enum AcquisitionFailureCode { Open, Read, IdentityMismatch, ObjectLimitExceeded }
-pub enum DecodeFailureCode { Syntax, Schema, OversizedRecord, InvalidCursor }
+pub enum DecodeFailureCode {
+    Syntax,
+    Schema,
+    OversizedRecord,
+    InvalidCursor,
+    MissingReplayMetadata,
+    InvalidReplayGeometry,
+    SynthesisAuthorityMismatch,
+    SynthesisProfileUnavailable,
+}
 pub enum OrderingFailureCode { LateData, WatermarkViolation, CoordinateOverflow }
 // `StateBudgetFailureCode` is the neutral vocabulary owned by Task 1A so
 // checkpoint Task 5A can preserve it without a dependency cycle.
@@ -895,6 +904,13 @@ fn failure_stages_and_codes_do_not_collapse() {
     assert_eq!((placement.stage(), placement.code()), (StreamingFailureStage::Placement, "route_unavailable"));
 }
 ```
+
+The Dynamo-specific codes above are stable format failures, not free-form
+`Schema` aliases. Missing `request.replay`, impossible hash/input geometry,
+block-size drift, and immutable tokenizer/profile preparation refusal retain
+their exact code through `StableStreamingFailure`. Cellular disagreement uses
+the existing `PlacementFailureCode::DigestMismatch` and must occur before
+prepare or endpoint issue.
 
 - [ ] **Step 2: Run the task suite and verify RED**
 

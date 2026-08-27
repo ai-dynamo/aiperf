@@ -7,7 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 
 This file is the dependency and worktree index for the implementation plan set. The executable TDD steps, exact Rust signatures, representative RED tests, commands, and commit boundaries live in the linked subsystem plans; workers execute those documents, not this index.
 
-**Goal:** Implement the complete pure-Rust streaming-dataset and shadow-replay architecture approved at spec commit `505efc06b0`.
+**Goal:** Implement the complete pure-Rust streaming-dataset and shadow-replay architecture approved at base spec commit `505efc06b0` and amended by content-reconstruction commit `3fea6f2fe0`.
 
 **Spec:** `artifacts/streaming-design/streaming-dataset-shadow-replay-design.md`; immutable approval record: `artifacts/streaming-design/spec-review-record.md`.
 
@@ -28,7 +28,8 @@ This file is the dependency and worktree index for the implementation plan set. 
 3. [Sources and formats](2026-08-26-native-streaming-adapters-implementation.md)
    - local finite/follow and reference JSONL
    - pinned HF disk catalog and Baseten Parquet
-   - strict `streaming_dynamo_trace`
+   - frozen recorded-content synthesis profile and shared cache-free algorithm
+   - strict deferred-content `streaming_dynamo_trace`
    - native S3 reconciliation and lossless/lossy policy
 
 4. [Pipeline, sessions, and workload](2026-08-26-native-streaming-pipeline-sessions-implementation.md)
@@ -66,12 +67,15 @@ result index 6A -> leases 5D
 foundation 1D/1E + checkpoint 5A/5B
     |-> local A1     |-> JSONL A2
     |-> HF A3        |-> Baseten A4
-    |-> Dynamo A5    `-> S3 A6
+    |-> synthesis A5P -> Dynamo A5
+    `-> S3 A6
 foundation 0 -> AWS construction A0 -> S3 A6
 
 checkpoint 5A + foundation clock -> event time 7A
 session P1 -> closure P1B -> action P2 -> pipeline P3
+A5P + A5 + closure P1B -> deferred reconstruction P1C
 local A1 + JSONL A2 + P3 + capture 4B + results 6D -> workload P4
+P1C + A5 -> Dynamo-capable workload P4
 P1/P2 -> graph P5
 P1/P4 + crypto foundation -> sensitive state P6
 P3/P4 + results 6B + event time 7A -> observability P7
@@ -79,7 +83,7 @@ P3/P4 + results 6B + event time 7A -> observability P7
 registry 2 + local 5C -> built-in backends 5F1
 AWS construction A0 + coordinator 5E + 5F1 -> object CAS 5F2
 leases 5D + sensitive P6 + 5F2 -> object retention 5F3
-workload P4 + checkpoint/results 6D -> cellular C1 -> C2 -> C3 -> C4 -> C5 -> C6
+workload P4 + A5P/A5/P1C + checkpoint/results 6D -> cellular C1 -> C2 -> C3 -> C4 -> C5 -> C6
 all implementation plans -> product V1 -> V2 -> V3 -> V4 -> V5 -> V6
 ```
 
@@ -103,11 +107,12 @@ Initial worktree waves after the serialized 0/1A-1B → 5A → 1C → 5B → 1D-
 | 3 | Leases/GC 5D | Local A1 | AWS construction A0 |
 | 4 | Result epochs 6B → compaction 6C1 → delivery 6C2 → report order 6D | Conversation P1 → closure P1B → Action P2 | HF A3 |
 | 5 | Pipeline P3 | Baseten A4 | JSONL A2 |
-| 6 | Workload P4 | Graph P5 | Dynamo A5 |
-| 7 | Sensitive state P6 | Observability P7 | S3 A6 |
-| 8 | Local/none backends 5F1 | Cellular C1 | review/fix |
-| 9 | Object CAS 5F2 | Cellular C2 | review/fix |
-| 10 | Object retention 5F3 | Cellular C3 | review/fix |
+| 6 | Shared synthesis A5P → Dynamo A5 | Graph P5 | review/fix |
+| 7 | Deferred reconstruction P1C → Workload P4 | Sensitive state P6 | S3 A6 |
+| 8 | Observability P7 | Local/none backends 5F1 | review/fix |
+| 9 | Object CAS 5F2 | Cellular C1 | review/fix |
+| 10 | Object retention 5F3 | Cellular C2 | review/fix |
+| 11 | Cellular C3 | review/fix | review/fix |
 
 Cellular C2-C6 are serialized according to the cellular plan because they share controller/cell/protocol hotspots. Product V1, V2, V3, V4A, V4B, V5A, V5B, and V6 follow after Task 5F3 and all other implementation plans, with review work occupying spare slots.
 

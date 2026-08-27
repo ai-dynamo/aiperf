@@ -8,7 +8,7 @@
 
 **Tech Stack:** Rust 2024, Tokio current-thread runtimes and `LocalSet`, injected `Clock`, existing Ed25519 cellular security/replay ledger, Velo handlers, bounded item/byte permits, BLAKE3, MessagePack with strict Serde DTOs, and the native streaming checkpoint/result traits.
 
-**Spec:** `artifacts/streaming-design/streaming-dataset-shadow-replay-design.md` at approved commit `505efc06b0`, especially lines 1040-1074, 1180-1207, 2076-2087, and 2126-2217.
+**Spec:** `artifacts/streaming-design/streaming-dataset-shadow-replay-design.md` at base approval `505efc06b0`, amended by `3fea6f2fe0`, especially the cellular and shared hash-to-content reconstruction sections.
 
 ## Global Constraints
 
@@ -44,7 +44,7 @@
 
 ### Task C1: Strict Authenticated Streaming DTOs
 
-**Dependencies:** Non-cellular Tasks 1D, 5A, 6D, P2, P3, and P4.
+**Dependencies:** Non-cellular Tasks 1D, 5A, 6D, P2, P3, P4, A5P, A5, and P1C.
 
 **Files:**
 - Create: `rust/runtime/src/cellular/streaming_protocol.rs`
@@ -89,11 +89,21 @@ pub struct PreparedActionContent {
     pub digest: [u8; 32],
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BindContentSynthesisProfileV1 {
+    pub version: u16,
+    pub plan_digest: [u8; 32],
+    pub authored_profile_digest: [u8; 32],
+    pub bound_profile_digest: [u8; 32],
+}
+
 #[derive(Debug, Eq, PartialEq, serde::Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct PrepareAction {
     pub version: u16,
     pub plan_digest: [u8; 32],
+    pub synthesis_profile_digest: Option<[u8; 32]>,
     pub route_id: u32,
     pub destination_cell: u32,
     pub action_id: StableActionId,
@@ -275,6 +285,14 @@ fn oversized_frame_and_nested_content_are_rejected_before_body_allocation() {
 
 Use canonical MessagePack bytes and a domain-separated transcript containing protocol version, run nonce, signer class, destination role, purpose, session nonce, sequence, peer bytes, payload length, and BLAKE3 payload digest. Keep replay windows fixed-size per route/purpose. Authenticate the bounded raw payload before the purpose-specific bounded visitor decodes it. Do not log payloads or introduce a generic `Any`/`DeserializeOwned` envelope.
 
+Generation 1 reconstructs Dynamo content on the controller before ordinary
+endpoint materialization. Before a cell accepts any such `PrepareAction`, it
+must have authenticated and frozen the matching run-scoped authored/bound
+synthesis-profile digest. Binding mismatch fails as
+`PlacementFailureCode::DigestMismatch` before content allocation, prepare,
+release, or endpoint issue. The cell does not infer or re-resolve profile state
+from ambient environment.
+
 - [ ] **Step 5: Verify GREEN and commit**
 
 ```bash
@@ -305,6 +323,7 @@ pub(crate) struct PreparedCellularPlacementBinding {
     pub driver: CellularPlacementDriver,
     pub control: CellularPlacementControl,
     pub cell_endpoint: CellularExecutionEndpoint,
+    pub bound_synthesis_profile_digest: Option<[u8; 32]>,
 }
 
 pub(crate) fn prepare_cellular_placement_binding(
@@ -454,6 +473,14 @@ impl CellularExecutionEndpoint {
         -> Result<PlacementReleasedReceipt, CellularStreamingError> { self.issue_if_fenced(command).await }
 }
 ```
+
+Preparation first completes the authenticated synthesis-profile bind/ack for
+every selected cell, then permits action preparation. Resume and migration
+repeat this ordering and refuse a cell with a different bound digest. Add tests
+for mismatch-before-prepare with zero issued requests, restart preservation, and
+migration preservation. The controller-owned canonical request remains budgeted
+by ordinary content leases; no cell-local unbounded reconstruction cache is
+introduced in generation 1.
 
 - [ ] **Step 1: Add the SimClock no-early-issue RED test**
 

@@ -13,7 +13,7 @@ SPDX-License-Identifier: Apache-2.0
 
 **Tech Stack:** Rust 2024, native `aiperf`, `aiperf-mock-server`, dry-run and E2E harnesses, Linux `/proc` resource sampling, Config-v2 YAML/JSON schema.
 
-**Spec:** `artifacts/streaming-design/streaming-dataset-shadow-replay-design.md` at approved commit `505efc06b0`.
+**Spec:** `artifacts/streaming-design/streaming-dataset-shadow-replay-design.md` at base approval `505efc06b0`, amended by `3fea6f2fe0`.
 
 ## Global Constraints
 
@@ -227,6 +227,13 @@ Build the feature-matched binary, then run the Step-3 command and record the int
 
 `StreamingProductFixture` writes partition A, launches the exact `AIPERF_DRY_RUN_BIN` with Config-v2, waits for a committed generation by bounded manifest polling, terminates the process, writes partition B by rename, and resumes with the same checkpoint root. Helpers retain only artifact paths and bounded parsed result pages. Add local finite/follow, JSONL, Baseten/HF-compatible local shards, strict Dynamo, five-minute offset, all delivery restart cuts, cross-chunk conversation/graph, target divergence, partial/final results, and secret/raw-default assertions as table rows.
 
+The strict Dynamo row includes checkpoint-before-profile-bind and checkpoint-
+after-bind cases; finite/streaming parity for token IDs, roles, decoded text,
+and prefix relationships; block-size/profile mismatch refusal; and a cellular
+bind mismatch that proves zero prepare/release/endpoint issues. It uses valid
+`request.replay` metadata and does not exercise finite-only virtual fallback
+hashes.
+
 - [ ] **Step 3: Verify GREEN**
 
 Run: `AIPERF_DRY_RUN_BIN=/mnt/4tb/aiperf-streaming-target/release/aiperf CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-dry-run-tests --test streaming_shadow_replay -- --test-threads=1`
@@ -300,6 +307,16 @@ fn baseten_hf_and_follow_resources_are_bounded() {
     assert!(report.double_rate.schedule_slip_p99 <= Duration::from_millis(250));
     assert!(report.double_rate.cpu_per_action <= report.finite_cpu_per_action * 1.35 + Duration::from_micros(50));
 }
+
+#[test]
+#[ignore = "release-mode Dynamo unique-hash slope gate"]
+fn dynamo_reconstruction_cache_and_transient_content_are_bounded() {
+    let report = support::run_dynamo_unique_hash_soak(support::SoakConfig::from_env()).unwrap();
+    assert!(report.cache_high_water_bytes <= report.authored_cache_bytes);
+    assert!(report.action_content_high_water_bytes <= report.authored_action_content_bytes);
+    assert!(report.rss_slope_bytes_per_input_gib <= 1 * MIB);
+    assert!(report.resume_output_is_byte_identical);
+}
 ```
 
 Run Step 3 before implementing support and record the unresolved-helper RED result.
@@ -307,6 +324,13 @@ Run Step 3 before implementing support and record the unresolved-helper RED resu
 - [ ] **Step 2: Implement deterministic generation and sampling**
 
 Generate an 8-GiB pinned Hugging Face repository of Baseten Parquet shards with bounded writes and no second resident copy. Serve its exact revision/inventory/ranged shard responses through a bounded local HF-compatible fixture, and execute Config-v2 with source `hf_hub` plus format `baseten_trace`—not a local-source shortcut. Accelerate 24 logical hours with `SimClock`; sample after 10% warmup and at every checkpoint. Emit machine-readable RSS/tasks/FDs/stage items+bytes/session/provisional/index/disk/watermark/schedule/admission/endpoint/drop/duplicate/gap/horizon/cellular-window observations. Enforce the frozen slope, p99, and CPU/action thresholds above.
+
+Also generate a high-cardinality strict Dynamo stream whose hashes do not
+repeat. Run once with cache disabled and once with forced small-cache eviction;
+both outputs must match finite pure synthesis and checkpoint resume byte-for-
+byte. Sample deferred-descriptor, transient token/text, action-content, and
+cache capacity independently so an unbounded memoization map or descriptor-to-
+decoded-content amplification fails the slope gate.
 
 - [ ] **Step 3: Verify GREEN**
 

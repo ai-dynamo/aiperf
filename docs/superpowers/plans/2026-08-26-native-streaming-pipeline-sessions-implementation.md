@@ -13,7 +13,7 @@ SPDX-License-Identifier: Apache-2.0
 
 **Tech Stack:** Rust 2024, Tokio current-thread `LocalSet`, AIPerf engine/clock/dispatch/phase/capture seams, XChaCha20-Poly1305, zeroize.
 
-**Spec:** `artifacts/streaming-design/streaming-dataset-shadow-replay-design.md` at approved commit `505efc06b0`.
+**Spec:** `artifacts/streaming-design/streaming-dataset-shadow-replay-design.md` at base approval `505efc06b0`, amended by `3fea6f2fe0`.
 
 ## Global Constraints
 
@@ -166,6 +166,49 @@ Run Step 2, then commit:
 git add rust/runtime/src/streaming/session.rs rust/runtime/src/streaming/session/conversation.rs rust/runtime/src/streaming/session/spill.rs rust/runtime/tests/streaming_session_closure.rs
 git commit -m "feat(runtime): bound streaming session closure"
 ```
+
+### Task P1C: Deferred Recorded-Content Reconstruction
+
+**Depends on:** Tasks P1B, A5P, and A5.
+
+**Files:**
+- Create: `rust/runtime/src/streaming/session/recorded_content.rs`
+- Modify: `rust/runtime/src/streaming/session.rs`
+- Modify: `rust/runtime/src/streaming/action.rs`
+- Test: `rust/runtime/tests/streaming_recorded_content.rs`
+
+**Produces:** a typed session decorator/reconstruction owner that consumes
+deferred Dynamo replay descriptors only after root/parent closure, expands them
+through the shared pure synthesis profile, and emits ordinary canonical action
+content. Its checkpoint state retains exact producer root/tail scope and the
+bound session-program semantic digest; it never checkpoints memoized blocks.
+
+- [ ] **Step 1: Write RED parity, closure, and resume tests**
+
+Cover repeated/shared hashes; zero, tiny, full, and full-plus-partial inputs;
+checkpoint before and after profile binding; root/tail-scope restore; and the
+finite future-descendant/trailing-user-cap case. No action may release while a
+later descendant can still alter finite message-role reconstruction.
+
+- [ ] **Step 2: Verify RED**
+
+Run: `CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime --features streaming --test streaming_recorded_content`
+
+- [ ] **Step 3: Implement bounded deferred reconstruction**
+
+Keep hash descriptors checkpointed under the session owner until the same
+closure evidence needed by the finite future-aware message pass is proven.
+Before allocating tokens or decoded text, reserve a separate action-content
+lease using checked `hash_count * block_size` and the tokenizer receipt's
+conservative decoded-byte bound. Expansion uses the shared cache-free pure seam.
+Generation 1 may run with cache capacity zero; if enabled, the cache is worker-
+or cell-local, byte-bounded, evicting, non-waiting, accounts key and value
+capacity, skips oversize entries, and never participates in checkpoints.
+
+- [ ] **Step 4: Verify GREEN and commit**
+
+Run Step 2 plus finite Dynamo parity tests and commit only the named files with
+`feat(runtime): reconstruct deferred recorded content`.
 
 ### Task P2: Multiplexed Action Host and State-Only Sink
 
@@ -403,6 +446,14 @@ impl StreamingPipeline {
 
 Pull a new unit only when the next stage owns permits. Prefer inline/fused calls on the worker `LocalSet`; bounded leased channels are allowed only at measured concurrency boundaries. `Pending`, `Seal`, and `Cancelled` remain distinct. Shutdown fences admission, wakes pending source/decode/order, drains or cancels accepted actions through phase policy, checkpoints only a valid cut, and joins all owners.
 
+For deferred recorded content, downstream readiness includes a pre-allocation
+action-content reservation sized from checked token geometry and the prepared
+tokenizer's conservative decode bound. The pipeline must acquire that lease
+before token-vector/text allocation and must stop upstream pulls while it is
+pending. A small hash descriptor never authorizes a large uncharged decoded
+request. Optional reconstruction-cache admission is non-waiting and separate
+from action ownership.
+
 Before calling the synchronous `StreamingPlacementPolicy::place`, the fused
 pipeline asks `route_admission` whether that exact action needs a new route.
 When it does, the pipeline polls the separately owned
@@ -437,7 +488,9 @@ git commit -m "feat(runtime): compose bounded streaming pipeline"
 
 ### Task P4: Scheduled-Request Sink and Executable Shadow Workload
 
-**Depends on:** Tasks P3, 4B, and 6D plus adapter Tasks A1-A2.
+**Depends on:** Tasks P3, 4B, and 6D plus adapter Tasks A1-A2. The Dynamo product
+path additionally depends on A5P, A5, and P1C; capability agreement must omit or
+refuse that composition until all three factories are present.
 
 **Files:**
 - Create: `rust/runtime/src/streaming/action/scheduled_request.rs`
@@ -480,6 +533,12 @@ impl PreparedRunnerOperation for ShadowReplayPreparedOperation {
 ```
 
 Materialize requests through the selected endpoint, submit through extracted dispatcher/runtime facilities, and translate observer events to action events without new token-path hooks. Produce and register the `scheduled_request` action-sink factory and the `shadow_replay` workload only in this executable commit. Prepare every selected factory once and initialize participants before polling. Refuse unsupported phase/resource/exporter/accuracy combinations during validation.
+
+Dynamo actions arrive here only after P1C has reconstructed canonical content;
+P4 never interprets Dynamo hashes or owns a second synthesis cache. The frozen
+execution plan binds the authored and, once available, bound synthesis-profile
+digests so checkpoint restore cannot combine request bytes with different
+tokenizer/corpus/sampling semantics.
 
 - [ ] **Step 4: Verify green**
 

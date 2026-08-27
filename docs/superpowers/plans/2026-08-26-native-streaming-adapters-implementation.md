@@ -13,7 +13,7 @@ SPDX-License-Identifier: Apache-2.0
 
 **Tech Stack:** Rust 2024, `async_trait(?Send)`, AIPerf streaming contracts, `hf-hub`, Arrow/Parquet, `aws-config = 1.11.0`, `aws-sdk-s3 = 1.144.0`, BLAKE3, bounded blocking executor.
 
-**Spec:** `artifacts/streaming-design/streaming-dataset-shadow-replay-design.md` at approved commit `505efc06b0`.
+**Spec:** `artifacts/streaming-design/streaming-dataset-shadow-replay-design.md` at base approval `505efc06b0`, amended by `3fea6f2fe0`.
 
 ## Global Constraints
 
@@ -39,6 +39,7 @@ rust/runtime/src/streaming/formats.rs               format built-in registration
 rust/runtime/src/streaming/formats/jsonl.rs         bounded reference JSONL decoder
 rust/runtime/src/streaming/formats/baseten.rs       Baseten Parquet decoder
 rust/runtime/src/streaming/formats/streaming_dynamo.rs strict Dynamo decoder
+rust/runtime/src/graph/recorded/content.rs          shared pure recorded-content synthesis
 ```
 
 ---
@@ -299,17 +300,72 @@ git add rust/runtime/src/streaming/formats.rs rust/runtime/src/streaming/formats
 git commit -m "feat(dataset): stream Baseten parquet traces"
 ```
 
+### Task A5P: Frozen Shared Recorded-Content Synthesis
+
+**Depends on:** Foundation Tasks 1D-1E.
+
+**Files:**
+- Modify: `rust/runtime/src/graph/recorded/content.rs`
+- Modify: `rust/runtime/src/dataset/tokenizer.rs`
+- Modify: `rust/runtime/src/engine/protocol.rs`
+- Modify: `rust/runtime/src/engine/online_execution.rs`
+- Test: `rust/runtime/tests/recorded_content_synthesis_profile.rs`
+
+**Produces:** versioned `ContentSynthesisProfileV1`,
+`BoundContentSynthesisProfileV1`, `SynthesisAuthority::{Unbound, Bound}`,
+explicit `RecordedBlockSamplingAlgorithm`, a tokenizer semantic receipt, and a
+cache-free pure block/tail synthesis seam shared by finite and streaming Dynamo.
+The profile binds tokenizer artifact/revision/vocabulary/decode/chat-template
+semantics, corpus ID and implementation version, content root seed, sampling
+algorithm, empty-hash scope, and tail/seed rule version. Diagnostic tokenizer
+names are never semantic identity.
+
+- [ ] **Step 1: Write the RED profile/purity tests**
+
+Add tests proving an environment change after preparation cannot change output,
+tokenizer semantic drift is refused, cache-disabled repeated synthesis is
+identical, and Python-parity versus BLAKE3-fast is selected only while freezing
+the profile. A remote/server tokenizer without an immutable semantic receipt
+must fail preparation.
+
+- [ ] **Step 2: Verify RED**
+
+Run: `CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime --features streaming --test recorded_content_synthesis_profile`
+
+- [ ] **Step 3: Extract the pure seam**
+
+Separate cache-free sampling from `CorpusContentSynthesizer`'s current mutable
+map. Preserve finite byte behavior and default `coding` corpus. Resolve
+`AIPERF_WEKA_FAST_CONTENT` once into the frozen algorithm; no synthesis call may
+read ambient environment. Preserve authored tokenizer revision through
+acquisition and derive a semantic receipt from immutable resolved inputs. Keep
+memoization outside the pure seam.
+
+- [ ] **Step 4: Verify GREEN and commit**
+
+Run Step 2 plus existing recorded graph parity tests, then commit only the named
+files with `feat(runtime): freeze recorded content synthesis`.
+
 ### Task A5: Strict Streaming Dynamo/NVCF Format
+
+**Depends on:** Task A5P.
 
 **Files:**
 - Create: `rust/runtime/src/streaming/formats/streaming_dynamo.rs`
 - Modify: `rust/runtime/src/streaming/formats.rs`
 - Modify: `rust/runtime/src/graph/recorded/dynamo/schema.rs`
 - Modify: `rust/runtime/src/graph/recorded/dynamo/mod.rs`
+- Modify: `rust/runtime/src/streaming/unit.rs`
 - Test: `rust/runtime/tests/streaming_dynamo_format.rs`
 
 **Interfaces:**
-- Produces: exactly format ID `streaming_dynamo_trace`, exactly schema `dynamo.request.trace.v1`, canonical conversation/graph fragments, response-reference metadata, and exact record cursor.
+- Produces: exactly format ID `streaming_dynamo_trace`, exactly schema
+  `dynamo.request.trace.v1`, typed deferred recorded-request fragments retaining
+  validated hashes/lengths/request and producer-session identities, response-
+  reference metadata, exact record cursor, and checkpointed
+  `SynthesisAuthority::{Unbound, Bound}`. Deferred replay material is a typed
+  unit variant; hashes must not be disguised as authored conversation text or
+  opaque agent payload bytes.
 
 - [ ] **Step 1: Write the RED strictness/cross-object test**
 
@@ -322,6 +378,13 @@ async fn parent_in_later_object_does_not_create_an_early_root() {
     let parent = format.decode_next_object().await.unwrap();
     assert_eq!(parent.newly_ready_action_ids(), ["parent", "child"]);
 }
+
+#[test]
+fn first_executable_request_binds_block_size_and_later_drift_fails() {
+    let mut format = dynamo_fixture([replay_record(16), replay_record(32)]);
+    format.decode_next().unwrap();
+    assert_eq!(format.decode_next().unwrap_err().code(), "synthesis_authority_mismatch");
+}
 ```
 
 - [ ] **Step 2: Verify red**
@@ -330,16 +393,35 @@ Run: `CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-run
 
 - [ ] **Step 3: Implement separately versioned streaming semantics**
 
-Extract endpoint-neutral strict parsing/request reconstruction only; keep finite `dynamo_trace` behavior byte-compatible. Reject unknown fields/version before emission, map tool/edge/close records to canonical mutations, treat responses as reference-only under recorded inputs, never infer roots/closure at object EOF, checkpoint the exact cursor, and run format conformance.
+Extract and share finite Dynamo replay parsing, arbitrary-precision hash handling,
+alignment, and partial-block removal while keeping finite `dynamo_trace`
+byte-compatible. Generation 1 requires valid `request.replay` on every
+executable `request_end`; it never invokes the finite complete-trace virtual
+fallback allocator. Bind the first executable positive block size before
+emitting executable content, checkpoint unbound/bound authority, and reject
+later or restored drift with stable decode codes. Enforce checked bounds on
+block size, hash count, token count, and retained deferred-fragment capacity.
+Map tool/edge/close records to canonical mutations, treat responses as
+reference-only, and never infer root or closure at object EOF.
+
+Run the same cache-free synthesis/profile seam in finite parity fixtures. Cover
+repeated/shared hashes; zero, tiny, full, and full-plus-partial inputs; missing
+replay; nonzero input with empty hashes; resume before and after binding; record
+identity stability across unbound-to-bound authority; and a trailing-descendant
+lookahead case. Streaming either waits for the closure proof needed by the
+finite future-aware message-role pass or fails the unsupported shape explicitly;
+it must not release content whose roles can be retroactively changed.
 
 - [ ] **Step 4: Verify green**
 
-Run Step 2. Expected: PASS including finite golden regression, duplicate idempotency/conflict, block semantics, and resume.
+Run Step 2. Expected: PASS including finite token/message/text/prefix parity,
+duplicate idempotency/conflict, stable error codes, block boundaries, authority
+resume, and future-descendant lookahead.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add rust/runtime/src/streaming/formats.rs rust/runtime/src/streaming/formats/streaming_dynamo.rs rust/runtime/src/graph/recorded/dynamo/schema.rs rust/runtime/src/graph/recorded/dynamo/mod.rs rust/runtime/tests/streaming_dynamo_format.rs
+git add rust/runtime/src/streaming/formats.rs rust/runtime/src/streaming/formats/streaming_dynamo.rs rust/runtime/src/streaming/unit.rs rust/runtime/src/graph/recorded/dynamo/schema.rs rust/runtime/src/graph/recorded/dynamo/mod.rs rust/runtime/tests/streaming_dynamo_format.rs
 git commit -m "feat(dataset): decode strict streaming Dynamo traces"
 ```
 
