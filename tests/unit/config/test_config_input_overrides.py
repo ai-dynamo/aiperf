@@ -53,8 +53,10 @@ benchmark:
     prompts:
       isl:
         mean: 32
+        stddev: 4
       osl:
         mean: 8
+        stddev: 1
     turns:
       mean: 3
       stddev: 2
@@ -182,6 +184,24 @@ def test_isl_flag_does_not_reset_yaml_osl(synthetic_yaml: Path) -> None:
         resolve_config(cli(prompt_input_tokens_mean=256), synthetic_yaml)
     )
     assert resolved.prompts.osl.mean == 8
+
+
+def test_isl_mean_flag_does_not_reset_yaml_isl_stddev(synthetic_yaml: Path) -> None:
+    """Likewise for prompts.isl.stddev -- --isl only sets prompts.isl.mean."""
+    resolved = dataset(
+        resolve_config(cli(prompt_input_tokens_mean=256), synthetic_yaml)
+    )
+    assert resolved.prompts.isl.mean == 256
+    assert resolved.prompts.isl.stddev == 4
+
+
+def test_osl_mean_flag_does_not_reset_yaml_osl_stddev(synthetic_yaml: Path) -> None:
+    """Likewise for prompts.osl.stddev -- --osl only sets prompts.osl.mean."""
+    resolved = dataset(
+        resolve_config(cli(prompt_output_tokens_mean=64), synthetic_yaml)
+    )
+    assert resolved.prompts.osl.mean == 64
+    assert resolved.prompts.osl.stddev == 1
 
 
 # ---------------------------------------------------------------------------
