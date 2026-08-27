@@ -20,11 +20,14 @@ use crate::exporter_runner::{
     CompletedExporterMember, ExporterHarnessRunner, ExporterMemberSource, ExporterWorkload,
 };
 use crate::plugin_stats::{
-    AuthoritativeIdentityInput, ControlledAttemptDecision, ControlledAttemptRecord,
-    ControlledExporterPairRecord, ControlledMeasurementEvaluator, ExporterMember, FrozenCasePlan,
-    InfrastructureEvent, MemberTerminalOutcome, PairAttemptDecision, PairedCase, PairedSample,
-    RawMemberTerminalRecord, RawPairTerminalRecord, SimultaneousGateInput, SimultaneousGateReport,
-    Variant, acquire_authoritative_identity, checked_in_case_plans, checked_in_inventory_digest,
+    ArtifactBoundExporterMemberV1, AuthoritativeIdentityInput, ControlledAttemptDecision,
+    ControlledAttemptRecord, ControlledExporterPairRecord, ControlledMeasurementEvaluator,
+    ExporterMember, ExporterMemberRecord, ExporterMemberSummary, ExporterObservableKind,
+    ExporterSampleContract, FrozenCasePlan, InfrastructureEvent, MemberTerminalOutcome,
+    PairAttemptDecision, PairedCase, PairedSample, RawMemberTerminalRecord, RawPairTerminalRecord,
+    SimultaneousGateInput, SimultaneousGateReport, Variant, acquire_authoritative_identity,
+    checked_in_case_plans, checked_in_inventory_digest, validate_exporter_member_evidence,
+    validate_exporter_member_record,
 };
 
 const OUTPUT_SCHEMA_V1: &[u8] = b"plugin_runtime_member_output/v1;closed-jcs-line;scenario,pair_id,variant,experiment_identity_blake3,completed_budget,active_duration_nanoseconds,metrics";
@@ -208,10 +211,164 @@ struct RuntimeMemberOutputV1 {
     variant: Variant,
 }
 
+/// Controller-owned facts one artifact-bound exporter child must reproduce.
+///
+/// Every field is sealed before the child starts. A child cannot widen its own
+/// admission: the controller compares the child's declared binding against this
+/// expectation before any exporter sample is constructed.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ExporterChildExpectationV1 {
+    /// Digest of the immutable experiment identity.
+    pub experiment_identity_blake3: String,
+    /// Zero-based complete-attempt ordinal owned by the controller.
+    pub attempt_ordinal: u64,
+    /// Frozen inventory scenario.
+    pub scenario_id: String,
+    /// Controller-scheduled pair identifier.
+    pub pair_id: String,
+    /// Static comparator or dynamic candidate.
+    pub member: ExporterMember,
+    /// Digest of the deterministic input corpus.
+    pub corpus_blake3: String,
+    /// Frozen observable class for this scenario.
+    pub observable_kind: ExporterObservableKind,
+    /// Digest of the immutable observable policy.
+    pub observable_policy_blake3: String,
+    /// Digest of the executable artifact the controller launched.
+    pub build_artifact_blake3: String,
+    /// Digest of the authenticated build receipt.
+    pub build_receipt_blake3: String,
+    /// Minimum summed active duration the frozen budget must reach.
+    pub minimum_active_duration_ns: u64,
+}
+
+/// Complete artifact-bound exporter member line written by one child.
+///
+/// This is the only exporter output shape the controlled runner admits. A bare
+/// `exporter_nanoseconds_per_record` metric is a product failure, not a sample.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExporterMemberChildOutputV1 {
+    /// Complete sealed member receipts, evidence, and canonical record.
+    pub artifact_bound: ArtifactBoundExporterMemberV1,
+    /// Digest of the immutable experiment identity.
+    pub experiment_identity_blake3: String,
+    /// Controller-scheduled pair identifier.
+    pub pair_id: String,
+    /// Frozen inventory scenario.
+    pub scenario: String,
+    /// Output schema version, exactly one.
+    pub schema_version: u8,
+    /// Static comparator or dynamic candidate.
+    pub variant: Variant,
+}
+
+/// One exporter child admitted against its controller expectation.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AdmittedExporterChildV1 {
+    /// Complete sealed member evidence retained for the pair record.
+    pub artifact_bound: ArtifactBoundExporterMemberV1,
+    /// Validated repetition receipts and derived per-record duration.
+    pub summary: ExporterMemberSummary,
+    /// Validated canonical post-run member record.
+    pub record: ExporterMemberRecord,
+}
+
+/// Validate one artifact-bound exporter child line before it becomes a sample.
+///
+/// The line must be exactly one canonical JCS line carrying the complete sealed
+/// member: sixteen repetition receipts, the retained raw/comparison/provenance
+/// evidence, the frozen record counts, and a binding that matches every
+/// controller-owned coordinate in `expectation`.
+pub fn validate_exporter_member_child_output_v1(
+    bytes: &[u8],
+    expectation: &ExporterChildExpectationV1,
+) -> Result<AdmittedExporterChildV1, ControlledRuntimeError> {
+    let value: serde_json::Value = serde_json::from_slice(bytes).map_err(|error| {
+        ControlledRuntimeError::new(format!("exporter member output is not JSON: {error}"))
+    })?;
+    let mut canonical = serde_json_canonicalizer::to_vec(&value).map_err(|error| {
+        ControlledRuntimeError::new(format!("cannot canonicalize exporter member output: {error}"))
+    })?;
+    canonical.push(b'\n');
+    if canonical != bytes {
+        return Err(ControlledRuntimeError::new(
+            "exporter member output is not one exact canonical JCS line",
+        ));
+    }
+    let decoded: ExporterMemberChildOutputV1 =
+        serde_json::from_value(value).map_err(|error| {
+            ControlledRuntimeError::new(format!(
+                "exporter member output is not a complete artifact-bound schema-1 line: {error}"
+            ))
+        })?;
+
+    let expected_variant = match expectation.member {
+        ExporterMember::Static => Variant::Static,
+        ExporterMember::Dynamic => Variant::Dynamic,
+    };
+    let binding = &decoded.artifact_bound.binding;
+    if decoded.schema_version != 1
+        || decoded.variant != expected_variant
+        || decoded.scenario != expectation.scenario_id
+        || decoded.pair_id != expectation.pair_id
+        || decoded.experiment_identity_blake3 != expectation.experiment_identity_blake3
+        || binding.experiment_identity_blake3 != expectation.experiment_identity_blake3
+        || binding.attempt_ordinal != expectation.attempt_ordinal
+        || binding.scenario_id != expectation.scenario_id
+        || binding.pair_id != expectation.pair_id
+        || binding.member != expectation.member
+        || binding.corpus_blake3 != expectation.corpus_blake3
+        || binding.observable_kind != expectation.observable_kind
+        || binding.observable_policy_blake3 != expectation.observable_policy_blake3
+        || binding.build_artifact_blake3 != expectation.build_artifact_blake3
+        || binding.build_receipt_blake3 != expectation.build_receipt_blake3
+    {
+        return Err(ControlledRuntimeError::new(
+            "exporter member output does not match its controller expectation",
+        ));
+    }
+
+    let contract = ExporterSampleContract::normative();
+    let summary = validate_exporter_member_evidence(
+        &contract,
+        binding,
+        &decoded.artifact_bound.evidence,
+    )
+    .map_err(|error| ControlledRuntimeError::new(error.to_string()))?;
+    let record = validate_exporter_member_record(
+        &contract,
+        binding,
+        &decoded.artifact_bound.evidence,
+        &decoded.artifact_bound.record_bytes,
+    )
+    .map_err(|error| ControlledRuntimeError::new(error.to_string()))?;
+    if summary.active_duration_nanoseconds < expectation.minimum_active_duration_ns {
+        return Err(ControlledRuntimeError::new(
+            "exporter member active duration is shorter than its frozen budget",
+        ));
+    }
+    if summary.processed_records != contract.processed_records
+        || summary.retained_artifact_records != contract.retained_artifact_records
+        || !summary.exporter_nanoseconds_per_record.is_finite()
+        || summary.exporter_nanoseconds_per_record < 0.0
+    {
+        return Err(ControlledRuntimeError::new(
+            "exporter member counts do not satisfy the frozen sample contract",
+        ));
+    }
+    Ok(AdmittedExporterChildV1 {
+        artifact_bound: decoded.artifact_bound,
+        summary,
+        record,
+    })
+}
+
 struct MemberExecution {
     outcome: MemberTerminalOutcome,
     samples: Vec<PairedSample>,
     terminal_evidence: TerminalMemberEvidenceV1,
+    artifact_bound: Option<ArtifactBoundExporterMemberV1>,
 }
 
 /// Controller-observed process termination.
@@ -693,6 +850,15 @@ fn run_controlled_runtime_internal(
         scenario_count: cases.len(),
     };
 
+    let expectation_context = ExporterExpectationContext {
+        experiment_identity_blake3: &experiment_identity_blake3,
+        attempt_ordinal: u64::from(expected_attempt_ordinal),
+        corpus_blake3: &corpus_blake3,
+        observable_policy_blake3: &observable_policy_blake3,
+        policy: &policy,
+        build_report,
+    };
+
     let mut evaluator = ControlledMeasurementEvaluator::resume(attempt_ledger.history())
         .map_err(|error| ControlledRuntimeError::new(error.to_string()))?;
     let attempt_ordinal = evaluator
@@ -756,6 +922,7 @@ fn run_controlled_runtime_internal(
                         outcome,
                         samples: _,
                         terminal_evidence,
+                        artifact_bound: _,
                     } = execute_member(
                         case,
                         &pair_id,
@@ -764,6 +931,16 @@ fn run_controlled_runtime_internal(
                         build_report,
                         &experiment_identity_blake3,
                         &inherited_environment,
+                        if is_exporter_case {
+                            Some(&exporter_expectation(
+                                case,
+                                &pair_id,
+                                variant,
+                                &expectation_context,
+                            )?)
+                        } else {
+                            None
+                        },
                     )?;
                     executed_member_count += 1;
                     terminal_output_blake3.push(terminal_evidence.stdout.blake3.clone());
@@ -794,6 +971,7 @@ fn run_controlled_runtime_internal(
                 let mut member_records = Vec::with_capacity(2);
                 let mut pair_samples = Vec::new();
                 let mut completed_exporters = Vec::with_capacity(2);
+                let mut admitted_exporters = Vec::with_capacity(2);
                 for variant in scheduled.member_order {
                     if is_exporter_case && exporter_factory.is_some() {
                         executed_member_count += 1;
@@ -838,6 +1016,7 @@ fn run_controlled_runtime_internal(
                             outcome,
                             samples,
                             terminal_evidence,
+                            artifact_bound,
                         } = execute_member(
                             case,
                             &scheduled.pair_id,
@@ -846,7 +1025,20 @@ fn run_controlled_runtime_internal(
                             build_report,
                             &experiment_identity_blake3,
                             &inherited_environment,
+                            if is_exporter_case {
+                                Some(&exporter_expectation(
+                                    case,
+                                    &scheduled.pair_id,
+                                    variant,
+                                    &expectation_context,
+                                )?)
+                            } else {
+                                None
+                            },
                         )?;
+                        if let Some(artifact_bound) = artifact_bound {
+                            admitted_exporters.push((variant, artifact_bound));
+                        }
                         executed_member_count += 1;
                         let terminal_evidence_index = terminal_member_evidence.len();
                         terminal_output_blake3.push(terminal_evidence.stdout.blake3.clone());
@@ -869,6 +1061,31 @@ fn run_controlled_runtime_internal(
                     asserted_disposition: None,
                 };
                 let decision = if is_exporter_case
+                    && exporter_factory.is_none()
+                    && admitted_exporters.len() == 2
+                {
+                    let mut static_member = None;
+                    let mut dynamic_member = None;
+                    for (variant, admitted) in admitted_exporters {
+                        match variant {
+                            Variant::Static => static_member = Some(admitted),
+                            Variant::Dynamic => dynamic_member = Some(admitted),
+                        }
+                    }
+                    let static_member = static_member.ok_or_else(|| {
+                        ControlledRuntimeError::new("static admitted exporter member is absent")
+                    })?;
+                    let dynamic_member = dynamic_member.ok_or_else(|| {
+                        ControlledRuntimeError::new("dynamic admitted exporter member is absent")
+                    })?;
+                    evaluator
+                        .record_artifact_bound_exporter_pair(
+                            &policy,
+                            static_member,
+                            dynamic_member,
+                        )
+                        .map_err(|error| ControlledRuntimeError::new(error.to_string()))?
+                } else if is_exporter_case
                     && exporter_factory.is_some()
                     && completed_exporters.len() == 2
                 {
@@ -1242,6 +1459,54 @@ fn kill_process_group_if_present(pid: libc::pid_t) -> Result<(), ControlledRunti
     kill_process_group(pid)
 }
 
+/// Seal the controller-owned expectation one exporter child must reproduce.
+fn exporter_expectation(
+    case: &FrozenCasePlan,
+    pair_id: &str,
+    variant: Variant,
+    context: &ExporterExpectationContext<'_>,
+) -> Result<ExporterChildExpectationV1, ControlledRuntimeError> {
+    let (member, index) = match variant {
+        Variant::Static => (ExporterMember::Static, 0),
+        Variant::Dynamic => (ExporterMember::Dynamic, 1),
+    };
+    let observable_kind = context
+        .policy
+        .observable_kind(&case.scenario)
+        .ok_or_else(|| {
+            ControlledRuntimeError::new("exporter scenario has no authorized observable class")
+        })?;
+    let minimum_active_duration_ns = case
+        .minimum_duration_seconds
+        .checked_mul(1_000_000_000)
+        .ok_or_else(|| ControlledRuntimeError::new("exporter minimum duration overflow"))?;
+    Ok(ExporterChildExpectationV1 {
+        experiment_identity_blake3: context.experiment_identity_blake3.to_owned(),
+        attempt_ordinal: context.attempt_ordinal,
+        scenario_id: case.scenario.clone(),
+        pair_id: pair_id.to_owned(),
+        member,
+        corpus_blake3: context.corpus_blake3.to_owned(),
+        observable_kind,
+        observable_policy_blake3: context.observable_policy_blake3.to_owned(),
+        build_artifact_blake3: context.build_report.members[index].artifact_blake3.clone(),
+        build_receipt_blake3: context.build_report.members[index]
+            .build_receipt_blake3
+            .clone(),
+        minimum_active_duration_ns,
+    })
+}
+
+/// Sealed controller facts shared by every exporter child expectation.
+struct ExporterExpectationContext<'a> {
+    experiment_identity_blake3: &'a str,
+    attempt_ordinal: u64,
+    corpus_blake3: &'a str,
+    observable_policy_blake3: &'a str,
+    policy: &'a crate::exporter_policy::ExporterObservablePolicyV1,
+    build_report: &'a BuildPairReportV1,
+}
+
 fn execute_member(
     case: &FrozenCasePlan,
     pair_id: &str,
@@ -1250,6 +1515,7 @@ fn execute_member(
     build_report: &BuildPairReportV1,
     experiment_identity_blake3: &str,
     inherited_environment: &BTreeMap<String, String>,
+    exporter_expectation: Option<&ExporterChildExpectationV1>,
 ) -> Result<MemberExecution, ControlledRuntimeError> {
     let artifact_blake3 = match variant {
         Variant::Static => &build_report.members[0].artifact_blake3,
@@ -1321,6 +1587,7 @@ fn execute_member(
             )),
             samples: Vec::new(),
             terminal_evidence,
+            artifact_bound: None,
         });
     }
     if terminal_evidence.terminal_status != ChildTerminalStatus::Exited(0) {
@@ -1331,6 +1598,73 @@ fn execute_member(
             )),
             samples: Vec::new(),
             terminal_evidence,
+            artifact_bound: None,
+        });
+    }
+    let is_exporter_case = case
+        .measured_metrics
+        .iter()
+        .any(|metric| metric == "exporter_nanoseconds_per_record");
+    if is_exporter_case {
+        // A child that reports the bare metric is a product failure: it never
+        // produced the sealed evidence the exporter authority is defined over.
+        if decode_member_output(
+            &terminal_evidence.stdout.bytes,
+            case,
+            pair_id,
+            variant,
+            experiment_identity_blake3,
+        )
+        .is_ok_and(|bare| {
+            bare.metrics
+                .contains_key("exporter_nanoseconds_per_record")
+        }) {
+            return Ok(MemberExecution {
+                outcome: MemberTerminalOutcome::MalformedOutput(
+                    "bare exporter metric lacks complete artifact-bound sealed evidence".to_owned(),
+                ),
+                samples: Vec::new(),
+                terminal_evidence,
+                artifact_bound: None,
+            });
+        }
+        let expectation = exporter_expectation.ok_or_else(|| {
+            ControlledRuntimeError::new(
+                "exporter member has no sealed controller expectation to admit against",
+            )
+        })?;
+        let admitted =
+            match validate_exporter_member_child_output_v1(&terminal_evidence.stdout.bytes, expectation)
+            {
+                Ok(admitted) => admitted,
+                Err(error) => {
+                    return Ok(MemberExecution {
+                        outcome: MemberTerminalOutcome::MalformedOutput(error.to_string()),
+                        samples: Vec::new(),
+                        terminal_evidence,
+                        artifact_bound: None,
+                    });
+                }
+            };
+        let samples = vec![PairedSample {
+            scenario: case.scenario.clone(),
+            pair_id: pair_id.to_owned(),
+            variant,
+            unit: metric_unit("exporter_nanoseconds_per_record").to_owned(),
+            metric: "exporter_nanoseconds_per_record".to_owned(),
+            value: admitted.summary.exporter_nanoseconds_per_record,
+            commit: build_report.source_commit.clone(),
+            artifact_digest: artifact_blake3.clone(),
+            experiment_identity_digest: experiment_identity_blake3.to_owned(),
+        }];
+        return Ok(MemberExecution {
+            outcome: infrastructure_event.map_or(
+                MemberTerminalOutcome::Completed,
+                MemberTerminalOutcome::Infrastructure,
+            ),
+            samples,
+            terminal_evidence,
+            artifact_bound: Some(admitted.artifact_bound),
         });
     }
     let decoded = match decode_member_output(
@@ -1346,25 +1680,10 @@ fn execute_member(
                 outcome: MemberTerminalOutcome::MalformedOutput(error.to_string()),
                 samples: Vec::new(),
                 terminal_evidence,
+                artifact_bound: None,
             });
         }
     };
-    if case
-        .measured_metrics
-        .iter()
-        .any(|metric| metric == "exporter_nanoseconds_per_record")
-        && decoded
-            .metrics
-            .contains_key("exporter_nanoseconds_per_record")
-    {
-        return Ok(MemberExecution {
-            outcome: MemberTerminalOutcome::MalformedOutput(
-                "bare exporter metric lacks complete artifact-bound sealed evidence".to_owned(),
-            ),
-            samples: Vec::new(),
-            terminal_evidence,
-        });
-    }
     let samples = decoded
         .metrics
         .into_iter()
@@ -1387,6 +1706,7 @@ fn execute_member(
         ),
         samples,
         terminal_evidence,
+        artifact_bound: None,
     })
 }
 
