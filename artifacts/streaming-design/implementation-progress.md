@@ -27,6 +27,7 @@ SPDX-License-Identifier: Apache-2.0
 | Task 1C — bounded blocking execution owner | Complete | Task head `f7af2069e8`; merge `b82ff70942`; blocking 11/11, budget 15/15, participants 13/13, authority 2/2, doctests 9/9; two exact-head reviews approved |
 | Checkpoint logical-run authority plan correction | Complete | Plan head `f4bd60e95b`; merge `11f41a3b2a`; two exact-head reviews approved; mandatory Task 5A-R inserted before 5B |
 | Task 5A-R — logical-run checkpoint authority retrofit | Complete | Task head `d020f3c616`; merge `f44863b7df`; checkpoint units 5/5, blocking units 2/2, targeted integrations 52/52, doctests 10/10; two exact-head reviews approved |
+| Task 5B backend budget/atomicity contract correction | Complete | Plan head `329fc592b2`; merge `aaeb93c612`; two exact-head reviews approved; implementation may start |
 
 Baseline note: the full feature-off runtime suite reached execution after the
 repair and reported 1907 passing tests plus one pre-existing version-fixture
@@ -96,6 +97,14 @@ content-addressed and deliberately run-neutral.
   incarnation remains separate. Task 5A-R retrofits this authority before 5B;
   V1 owns explicit fresh/resume resolution and bootstrap-before-issue product
   ordering. See `checkpoint-run-identity-course-correction.md`.
+- Checkpoint backend atomicity and budgets: backend-owned transaction,
+  prepared-index, storage, result-summary, and read budgets have stable typed
+  errors. Result descriptors and payloads retain inseparable move-only leases;
+  staging is cancellation-safe; every backend shares exact predecessor/next-
+  epoch validation before effects; publication has no fallible post-fence path;
+  repeated barriers return the already authoritative generation without
+  restaging or consuming newly borrowed inputs. See
+  `checkpoint-backend-budget-contract-correction.md`.
 
 This file is updated and force-added after every reviewed task merge. Detailed
 ephemeral RED/GREEN output, task briefs, review packages, and rulings live in
