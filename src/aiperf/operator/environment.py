@@ -544,6 +544,18 @@ class _OperatorEnvironment(BaseSettings):
         le=300,
         description="Seconds to wait for endpoint health check",
     )
+    ENDPOINT_CHECK_DNS_RETRIES: int = Field(
+        default=3,
+        ge=1,
+        le=10,
+        description="Number of retry attempts when endpoint DNS resolution fails transiently",
+    )
+    ENDPOINT_CHECK_DNS_RETRY_DELAY: float = Field(
+        default=5.0,
+        ge=0.5,
+        le=60.0,
+        description="Seconds to wait between DNS retry attempts for endpoint health check",
+    )
     PREFLIGHT_TIMEOUT: float = Field(
         default=30.0,
         gt=0,

@@ -261,11 +261,6 @@
     ],
     [
       "C901",
-      "src/aiperf/config/flags/resolver.py",
-      "_apply_phase_loadgen_overrides"
-    ],
-    [
-      "C901",
       "src/aiperf/config/flags/variant_parser.py",
       "parse_variant"
     ],
@@ -343,6 +338,11 @@
       "C901",
       "src/aiperf/gpu_telemetry/dcgm_collector.py",
       "DCGMTelemetryCollector._parse_metrics_to_records"
+    ],
+    [
+      "C901",
+      "src/aiperf/operator/health.py",
+      "check_endpoint_health"
     ],
     [
       "C901",

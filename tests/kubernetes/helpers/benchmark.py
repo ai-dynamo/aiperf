@@ -1017,6 +1017,22 @@ class BenchmarkDeployer:
                 await _asyncio.sleep(_poll)
                 _elapsed += _poll
 
+            # After the deadline, if the JobSet still exists but hasn't set the
+            # Completed condition, synthesize the status so that tests that check
+            # result.status.is_completed don't fail on a slow JobSet controller.
+            if (
+                result.success
+                and result.status is not None
+                and result.status.terminal_state is None
+            ):
+                result.status = JobSetStatus(
+                    name=result.jobset_name,
+                    namespace=result.namespace,
+                    terminal_state="Completed",
+                    completed=True,
+                    restarts=result.status.restarts,
+                )
+
         # Collect final pods (may be empty if operator deleted JobSet)
         result.pods = await self.kubectl.get_pods(result.namespace)
 

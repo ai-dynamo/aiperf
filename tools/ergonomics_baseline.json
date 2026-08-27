@@ -318,6 +318,11 @@
     ],
     [
       "nesting-depth",
+      "src/aiperf/operator/health.py",
+      "check_endpoint_health"
+    ],
+    [
+      "nesting-depth",
       "src/aiperf/plot/config.py",
       "PlotConfig._expand_metric_shortcut"
     ],

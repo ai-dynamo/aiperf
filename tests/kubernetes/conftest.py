@@ -1917,7 +1917,17 @@ async def helm_deployer(
         operator_namespace=helm_operator_namespace,
         default_job_namespace=helm_job_namespace,
     )
+    await kubectl.run("create", "namespace", helm_operator_namespace, check=False)
     await kubectl.run("create", "namespace", helm_job_namespace, check=False)
+
+    # Copy pull secret into both namespaces so image pulls succeed on remote clusters.
+    if k8s_settings.image_pull_secret:
+        await _copy_pull_secret_to_namespace(
+            kubectl, k8s_settings.image_pull_secret, helm_operator_namespace
+        )
+        await _copy_pull_secret_to_namespace(
+            kubectl, k8s_settings.image_pull_secret, helm_job_namespace
+        )
 
     yield deployer
 
