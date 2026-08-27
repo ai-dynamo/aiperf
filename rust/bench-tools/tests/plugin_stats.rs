@@ -6,8 +6,8 @@
 use aiperf_bench_tools::plugin_stats::{
     ExperimentAttempt, ExporterRepetition, ExporterSampleContract, NonInferiorityGate,
     PairedSample, RatioDirection, Variant, balanced_pair_orders, decode_samples_jsonl,
-    encode_samples_jsonl, evaluate_exporter_sample, evaluate_non_authoritative_paired_fixture,
-    validate_experiment_attempts,
+    encode_samples_jsonl, evaluate_non_authoritative_exporter_fixture,
+    evaluate_non_authoritative_paired_fixture, validate_experiment_attempts,
 };
 
 const DIGEST: &str = "blake3:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
@@ -250,13 +250,33 @@ fn exporter_contract_is_exact_and_uses_only_summed_active_duration() {
             active_duration_nanoseconds: 2_000_000_000,
         })
         .collect::<Vec<_>>();
-    let summary = evaluate_exporter_sample(&ExporterSampleContract::normative(), &repetitions)
-        .expect("fixed exporter vector is valid");
+    let summary = evaluate_non_authoritative_exporter_fixture(
+        &ExporterSampleContract::normative(),
+        &repetitions,
+    )
+    .expect("fixed exporter vector is valid");
     assert_eq!(summary.active_duration_nanoseconds, 32_000_000_000);
     assert_eq!(summary.processed_records, 1_600_000);
     assert_eq!(summary.exporter_nanoseconds_per_record, 20_000.0);
 
     let mut changed = ExporterSampleContract::normative();
     changed.sample_repetitions = 15;
-    assert!(evaluate_exporter_sample(&changed, &repetitions).is_err());
+    assert!(evaluate_non_authoritative_exporter_fixture(&changed, &repetitions).is_err());
+
+    let short_paired_repetitions = (0..16)
+        .map(|ordinal| ExporterRepetition {
+            ordinal,
+            emitted_records: 100_000,
+            output_digest: DIGEST.to_owned(),
+            active_duration_nanoseconds: 1,
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        evaluate_non_authoritative_exporter_fixture(
+            &ExporterSampleContract::normative(),
+            &short_paired_repetitions,
+        )
+        .is_ok(),
+        "only authoritative static-calibration evidence has a 30-second minimum"
+    );
 }

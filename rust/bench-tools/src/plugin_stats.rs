@@ -1267,7 +1267,7 @@ impl Default for ExporterSampleContract {
     }
 }
 
-/// Receipt for one active exporter pass.
+/// Non-authoritative fixture row for one active exporter pass.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ExporterRepetition {
@@ -1471,7 +1471,7 @@ pub struct ExporterMemberRecord {
     pub build_receipt_blake3: String,
 }
 
-/// Validated exporter member summary.
+/// Validated non-authoritative exporter fixture summary.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ExporterSampleSummary {
@@ -1879,8 +1879,13 @@ pub fn validate_experiment_attempts(
     Ok(())
 }
 
-/// Validate and summarize the exact 16-pass exporter member construction.
-pub fn evaluate_exporter_sample(
+/// Validate a non-authoritative exact-pass exporter fixture.
+///
+/// This compatibility seam has no lifecycle mode, retained bytes, policy, or
+/// build authority and therefore cannot enforce static-calibration duration or
+/// pass a production parity gate. Use [`validate_exporter_member_evidence`] for
+/// controlled evidence.
+pub fn evaluate_non_authoritative_exporter_fixture(
     contract: &ExporterSampleContract,
     repetitions: &[ExporterRepetition],
 ) -> Result<ExporterSampleSummary, PluginStatsError> {
@@ -1931,11 +1936,6 @@ pub fn evaluate_exporter_sample(
         active_duration_nanoseconds = active_duration_nanoseconds
             .checked_add(repetition.active_duration_nanoseconds)
             .ok_or_else(|| PluginStatsError::new("exporter active duration overflow"))?;
-    }
-    if active_duration_nanoseconds < 30_000_000_000 {
-        return Err(PluginStatsError::new(
-            "summed active exporter duration is less than 30 seconds",
-        ));
     }
     let exporter_nanoseconds_per_record =
         active_duration_nanoseconds as f64 / contract.processed_records as f64;
