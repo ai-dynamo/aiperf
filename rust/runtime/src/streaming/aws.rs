@@ -352,11 +352,8 @@ impl AwsCredentialProviderAuthority {
         };
         let credentials = delegate.provide_credentials().await?;
         let now_ns = self.wall_ns.load(Ordering::Relaxed);
-        let deadline_ns = run_relative_deadline_ns(
-            now_ns,
-            credentials.expiry(),
-            self.sdk_wall_clock.as_deref(),
-        );
+        let deadline_ns =
+            run_relative_deadline_ns(now_ns, credentials.expiry(), self.sdk_wall_clock.as_deref());
         tracing::debug!(
             source_id = %self.source_id,
             kind = self.kind.label(),
@@ -401,7 +398,9 @@ fn run_relative_deadline_ns(
         .ok()
         .and_then(|remaining| i64::try_from(remaining.as_nanos()).ok())
         .unwrap_or(0);
-    let usable_ns = remaining_ns.saturating_sub(CREDENTIAL_REFRESH_SKEW_NS).max(0);
+    let usable_ns = remaining_ns
+        .saturating_sub(CREDENTIAL_REFRESH_SKEW_NS)
+        .max(0);
     now_ns.checked_add(usable_ns)
 }
 
@@ -780,11 +779,8 @@ mod tests {
         let sdk_now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
         let wall = move || sdk_now;
         // 10 minutes of lifetime, minus the 60s refresh skew.
-        let live = run_relative_deadline_ns(
-            5_000,
-            Some(sdk_now + Duration::from_secs(600)),
-            Some(&wall),
-        );
+        let live =
+            run_relative_deadline_ns(5_000, Some(sdk_now + Duration::from_secs(600)), Some(&wall));
         assert_eq!(live, Some(5_000 + 540_000_000_000));
 
         // Already expired: refresh on the very next acquisition.

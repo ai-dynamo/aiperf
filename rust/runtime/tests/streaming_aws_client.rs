@@ -52,7 +52,10 @@ async fn client_factory_honors_endpoint_and_redacts_credentials() {
 
     let clock: Rc<dyn Clock> = Rc::new(SimClock::new());
     let (client, _projection) = factory.build_client(clock);
-    assert_eq!(client.config().endpoint_url(), Some("http://127.0.0.1:9000"));
+    assert_eq!(
+        client.config().endpoint_url(),
+        Some("http://127.0.0.1:9000")
+    );
     assert_eq!(authority.kind(), AwsCredentialSourceKind::AuthoredStatic);
 
     for rendered in [format!("{factory:?}"), format!("{authority:?}")] {
