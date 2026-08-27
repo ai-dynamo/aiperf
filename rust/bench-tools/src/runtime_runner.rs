@@ -1137,6 +1137,13 @@ fn run_controlled_runtime_internal(
     })
     .map_err(|error| ControlledRuntimeError::new(error.to_string()))?;
     let experiment_identity_blake3 = observed.identity_digest().to_owned();
+    // Sealed once, immediately after the experiment identity exists: every member
+    // of this run is executed against exactly these facts.
+    let sealed_run = SealedRunContext {
+        build_report,
+        experiment_identity_blake3: &experiment_identity_blake3,
+        inherited_environment: &inherited_environment,
+    };
     let exporter_identity_preimage_bytes = observed
         .identity_digest_preimage_bytes()
         .map_err(|error| ControlledRuntimeError::new(error.to_string()))?;
@@ -1283,9 +1290,7 @@ fn run_controlled_runtime_internal(
                         &pair_id,
                         variant,
                         artifact_for(variant, &artifact_paths),
-                        build_report,
-                        &experiment_identity_blake3,
-                        &inherited_environment,
+                        &sealed_run,
                         warmup_expectation.as_ref(),
                     )?;
                     executed_member_count += 1;
@@ -1392,9 +1397,7 @@ fn run_controlled_runtime_internal(
                             &scheduled.pair_id,
                             variant,
                             artifact_for(variant, &artifact_paths),
-                            build_report,
-                            &experiment_identity_blake3,
-                            &inherited_environment,
+                            &sealed_run,
                             pair_expectation.as_ref(),
                         )?;
                         if let Some(artifact_bound) = artifact_bound {
@@ -2048,16 +2051,28 @@ struct ExporterExpectationContext<'a> {
     build_report: &'a BuildPairReportV1,
 }
 
+/// Run-scoped facts that are identical for every member of one sealed run.
+///
+/// Grouping them keeps `execute_member` addressed by what actually varies per
+/// member (case, pair, variant, artifact, expectation) instead of restating the
+/// sealed run at each call site.
+struct SealedRunContext<'a> {
+    build_report: &'a BuildPairReportV1,
+    experiment_identity_blake3: &'a str,
+    inherited_environment: &'a BTreeMap<String, String>,
+}
+
 fn execute_member(
     case: &FrozenCasePlan,
     pair_id: &str,
     variant: Variant,
     artifact_path: &Path,
-    build_report: &BuildPairReportV1,
-    experiment_identity_blake3: &str,
-    inherited_environment: &BTreeMap<String, String>,
+    run: &SealedRunContext<'_>,
     exporter_expectation: Option<&ExporterChildExpectationV1>,
 ) -> Result<MemberExecution, ControlledRuntimeError> {
+    let build_report = run.build_report;
+    let experiment_identity_blake3 = run.experiment_identity_blake3;
+    let inherited_environment = run.inherited_environment;
     let artifact_blake3 = match variant {
         Variant::Static => &build_report.members[0].artifact_blake3,
         Variant::Dynamic => &build_report.members[1].artifact_blake3,
