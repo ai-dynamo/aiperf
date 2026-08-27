@@ -5038,10 +5038,24 @@ mod tests {
         ];
 
         for (name, bytes) in mutations {
-            assert!(
-                parse_exporter_observable_policy(bytes.as_bytes(), &BTreeSet::new()).is_err(),
-                "accepted policy mutation: {name}"
-            );
+            let authenticated_receiver_protocols = if name == "unordered metadata-key array" {
+                BTreeSet::from(["otel_http_v1"])
+            } else {
+                BTreeSet::new()
+            };
+            let error = match parse_exporter_observable_policy(
+                bytes.as_bytes(),
+                &authenticated_receiver_protocols,
+            ) {
+                Ok(_) => panic!("accepted policy mutation: {name}"),
+                Err(error) => error,
+            };
+            if name == "unordered metadata-key array" {
+                assert_eq!(
+                    error.to_string(),
+                    "exporter policy metadata keys must be lower-case, sorted, and unique"
+                );
+            }
         }
     }
 
@@ -5183,13 +5197,24 @@ mod tests {
             }),
         ];
 
-        for case in cases {
+        for (index, case) in cases.into_iter().enumerate() {
             let policy: ExporterObservablePolicyV1 =
                 serde_json::from_value(case).expect("counterexample policy parses");
-            assert!(
-                validate_exporter_policy(&policy, &BTreeSet::new()).is_err(),
-                "structurally overlapping policy was accepted"
-            );
+            let authenticated_receiver_protocols = if index == 0 {
+                BTreeSet::from(["otel_http_v1"])
+            } else {
+                BTreeSet::new()
+            };
+            let error = match validate_exporter_policy(&policy, &authenticated_receiver_protocols) {
+                Ok(()) => panic!("structurally invalid policy was accepted"),
+                Err(error) => error,
+            };
+            if index == 0 {
+                assert_eq!(
+                    error.to_string(),
+                    "exporter policy contains a transport removal unused by every receiver scenario"
+                );
+            }
         }
     }
 

@@ -11,7 +11,7 @@ experiment_identity_json: |
     "baseline_cargo_lock_blake3": "blake3:5039afe73d832e56d8653364b91fb2cd10c8a52650684bcd54aa1623badff82c",
     "baseline_revision": "caa3ff6fcf20ffe36a7704abe16274bedadbb9fb",
     "baseline_source_tree_blake3": "blake3:94e5ec4baff53f41425a15550775bc256edbb2c5bbf873ecdf054a5a11ddb8a6",
-    "canonical_inventory_digest": "blake3:146191f530b0bd0d625b4668d7ee0515d47ffecaba0097237b08e8cb0460cea8",
+    "canonical_inventory_digest": "blake3:45dfb0bacfe3a9747f058d190f9e49788ee2bc4856ca56336f9778f7d6c6f95e",
     "cargo": "cargo 1.98.0 (797e8a9bc 2026-08-05)",
     "cargo_build_jobs": "144",
     "cargo_home": "/work-pvc/paper-rig/.cargo-home",
@@ -31,7 +31,7 @@ experiment_identity_json: |
     "cpu_model_number": "173",
     "cpu_stepping": "1",
     "effective_cargo_lock_blake3": "blake3:64a9e677f3338954f25297f1546446f4c5c2ea4fa57b78e45f60e3569c7e3a0c",
-    "effective_source_tree_blake3": "blake3:4ff89377e0594e724acdaf32183dbcc5b1c1cb5e5d962f1bbfcac1c6eeecd5d1",
+    "effective_source_tree_blake3": "blake3:ba87a5e087572314a84af912bbed1ba9e1a2c9e40d425897345240aa7cc4bef3",
     "exporter_attempt_ordinal": "0",
     "exporter_corpus_blake3": "blake3:9294cee553f794c6345da55ba4d1024fcbc497d3d85e59f6021d73a52bf1b62a",
     "exporter_corpus_records": "100000",
@@ -49,7 +49,7 @@ experiment_identity_json: |
     "frequency_governor": "performance",
     "harness_blake3": "blake3:ebe4fa2bfed2f8eb6ad51a3f194ccb3c65d3c3bc88bd2e2ab8270238a0912376",
     "kernel": "Linux 6.12.85+ #1 SMP Wed Jun 17 20:13:06 UTC 2026 x86_64 GNU/Linux",
-    "measurement_source_projection_blake3": "blake3:2fed082cabee522eb67c6d759c3950e99d711e5f952510ca2bcbaec2405a840b",
+    "measurement_source_projection_blake3": "blake3:3a02c08a9eb2c50b9376020cdce1d7c695e1cf3a4123a88085874d49311c50b1",
     "measurement_source_projection_list_blake3": "blake3:15de8724f4eab6f25c50a2180220ab04dd26edd290e67c27fbf9e31924964504",
     "memory_topology": "3 NUMA nodes;node0=0-23,72-95;node1=24-47,96-119;node2=48-71,120-143",
     "microcode": "unavailable:review1e-capture-omitted",
@@ -62,7 +62,7 @@ experiment_identity_json: |
     "target": "x86_64-unknown-linux-gnu",
     "tini": "tini version 0.19.0"
   }
-experiment_identity_digest: blake3:fbdd66dad9fae290568548b26a54bbeb582f68f0d13b03ced1ee40d49cd924f0
+experiment_identity_digest: blake3:e0905167f0ef0694258b00d658f509ce3271e21691b21782bd785f2145393c9e
 source_projection_rule: every build, runtime, metadata, allocation, and digest result uses one materialized tree formed from the complete git archive of host_commit overlaid by the exact allowlist in identity/measurement-source-projection.txt; its overlaid Cargo.lock is authoritative; the base archive/lock are provenance only; rust/e2e-tests/tests/plugin_baseline_inventory.rs is included as the semantic validator; inventory, report, and generated evidence are excluded to prevent self-reference
 feature_sets:
   - {name: default, package: aiperf-cli, features: [default]}
@@ -146,7 +146,7 @@ runtime_scenarios:
       ttft_p90: 35.3523065
       ttft_p99: 35.48698844
     bootstrap_seed: 20260826
-    canonical_inventory_digest: blake3:146191f530b0bd0d625b4668d7ee0515d47ffecaba0097237b08e8cb0460cea8
+    canonical_inventory_digest: blake3:45dfb0bacfe3a9747f058d190f9e49788ee2bc4856ca56336f9778f7d6c6f95e
     command: taskset -c 4-7 aiperf profile --config configs/http-nonstream-c1.yaml --export-level summary
     core_assignment: mock=0-3;client=4-7
     estimator: paired_hyndman_fan_type_7_max_degradation_bootstrap
@@ -188,7 +188,7 @@ runtime_scenarios:
       ttft_p90: 35.2312074
       ttft_p99: 36.17161737
     bootstrap_seed: 20260826
-    canonical_inventory_digest: blake3:146191f530b0bd0d625b4668d7ee0515d47ffecaba0097237b08e8cb0460cea8
+    canonical_inventory_digest: blake3:45dfb0bacfe3a9747f058d190f9e49788ee2bc4856ca56336f9778f7d6c6f95e
     command: taskset -c 4-71 aiperf profile --config configs/http-nonstream-c64.yaml --export-level summary
     core_assignment: mock=0-3;client=4-71
     estimator: paired_hyndman_fan_type_7_max_degradation_bootstrap
@@ -230,7 +230,7 @@ runtime_scenarios:
       ttft_p90: 5.24381
       ttft_p99: 5.46211839
     bootstrap_seed: 20260826
-    canonical_inventory_digest: blake3:146191f530b0bd0d625b4668d7ee0515d47ffecaba0097237b08e8cb0460cea8
+    canonical_inventory_digest: blake3:45dfb0bacfe3a9747f058d190f9e49788ee2bc4856ca56336f9778f7d6c6f95e
     command: taskset -c 4-7 aiperf profile --config configs/http-streaming-c1.yaml --export-level summary
     core_assignment: mock=0-3;client=4-7
     deterministic_response_chunks: 32
@@ -273,7 +273,7 @@ runtime_scenarios:
       ttft_p90: 5.2060911
       ttft_p99: 6.23515149
     bootstrap_seed: 20260826
-    canonical_inventory_digest: blake3:146191f530b0bd0d625b4668d7ee0515d47ffecaba0097237b08e8cb0460cea8
+    canonical_inventory_digest: blake3:45dfb0bacfe3a9747f058d190f9e49788ee2bc4856ca56336f9778f7d6c6f95e
     command: taskset -c 4-71 aiperf profile --config configs/http-streaming-c64.yaml --export-level summary
     core_assignment: mock=0-3;client=4-71
     deterministic_response_chunks: 32
@@ -316,7 +316,7 @@ runtime_scenarios:
       ttft_p90: 35.4232174
       ttft_p99: 35.64102622
     bootstrap_seed: 20260826
-    canonical_inventory_digest: blake3:146191f530b0bd0d625b4668d7ee0515d47ffecaba0097237b08e8cb0460cea8
+    canonical_inventory_digest: blake3:45dfb0bacfe3a9747f058d190f9e49788ee2bc4856ca56336f9778f7d6c6f95e
     command: taskset -c 4-7 aiperf profile --config configs/grpc-unary-c1.yaml --export-level summary
     core_assignment: mock=0-3;client=4-7
     estimator: paired_hyndman_fan_type_7_max_degradation_bootstrap
@@ -358,7 +358,7 @@ runtime_scenarios:
       ttft_p90: 35.3709072
       ttft_p99: 36.78642296
     bootstrap_seed: 20260826
-    canonical_inventory_digest: blake3:146191f530b0bd0d625b4668d7ee0515d47ffecaba0097237b08e8cb0460cea8
+    canonical_inventory_digest: blake3:45dfb0bacfe3a9747f058d190f9e49788ee2bc4856ca56336f9778f7d6c6f95e
     command: taskset -c 4-71 aiperf profile --config configs/grpc-unary-c64.yaml --export-level summary
     core_assignment: mock=0-3;client=4-71
     estimator: paired_hyndman_fan_type_7_max_degradation_bootstrap
@@ -400,7 +400,7 @@ runtime_scenarios:
       ttft_p90: 5.2994335
       ttft_p99: 5.56214209
     bootstrap_seed: 20260826
-    canonical_inventory_digest: blake3:146191f530b0bd0d625b4668d7ee0515d47ffecaba0097237b08e8cb0460cea8
+    canonical_inventory_digest: blake3:45dfb0bacfe3a9747f058d190f9e49788ee2bc4856ca56336f9778f7d6c6f95e
     command: taskset -c 4-7 aiperf profile --config configs/grpc-streaming-c1.yaml --export-level summary
     core_assignment: mock=0-3;client=4-7
     estimator: paired_hyndman_fan_type_7_max_degradation_bootstrap
@@ -442,7 +442,7 @@ runtime_scenarios:
       ttft_p90: 5.43459
       ttft_p99: 7.11385015
     bootstrap_seed: 20260826
-    canonical_inventory_digest: blake3:146191f530b0bd0d625b4668d7ee0515d47ffecaba0097237b08e8cb0460cea8
+    canonical_inventory_digest: blake3:45dfb0bacfe3a9747f058d190f9e49788ee2bc4856ca56336f9778f7d6c6f95e
     command: taskset -c 4-71 aiperf profile --config configs/grpc-streaming-c64.yaml --export-level summary
     core_assignment: mock=0-3;client=4-71
     estimator: paired_hyndman_fan_type_7_max_degradation_bootstrap
@@ -484,7 +484,7 @@ runtime_scenarios:
       ttft_p90: 5.2185774
       ttft_p99: 6.32380646
     bootstrap_seed: 20260826
-    canonical_inventory_digest: blake3:146191f530b0bd0d625b4668d7ee0515d47ffecaba0097237b08e8cb0460cea8
+    canonical_inventory_digest: blake3:45dfb0bacfe3a9747f058d190f9e49788ee2bc4856ca56336f9778f7d6c6f95e
     command: taskset -c 4-71 aiperf profile --config configs/http-streaming-workers4.yaml --export-level summary
     core_assignment: mock=0-3;four client workers=4-71
     deterministic_response_chunks: 32
@@ -527,7 +527,7 @@ runtime_scenarios:
       ttft_p90: 5.2243682
       ttft_p99: 6.5454001
     bootstrap_seed: 20260826
-    canonical_inventory_digest: blake3:146191f530b0bd0d625b4668d7ee0515d47ffecaba0097237b08e8cb0460cea8
+    canonical_inventory_digest: blake3:45dfb0bacfe3a9747f058d190f9e49788ee2bc4856ca56336f9778f7d6c6f95e
     command: taskset -c 4-71 aiperf profile --config configs/otlp-disabled-capture.yaml --export-level summary
     core_assignment: mock=0-3;client=4-71
     deterministic_response_chunks: 32
@@ -570,7 +570,7 @@ runtime_scenarios:
       ttft_p90: 5.206801
       ttft_p99: 6.15516712
     bootstrap_seed: 20260826
-    canonical_inventory_digest: blake3:146191f530b0bd0d625b4668d7ee0515d47ffecaba0097237b08e8cb0460cea8
+    canonical_inventory_digest: blake3:45dfb0bacfe3a9747f058d190f9e49788ee2bc4856ca56336f9778f7d6c6f95e
     command: taskset -c 4-71 aiperf profile --config configs/otlp-enabled-capture.yaml --export-level summary --otel-url http://127.0.0.1:18080/v1/metrics
     core_assignment: mock+OTLP collector=0-3;client=4-71
     deterministic_response_chunks: 32
@@ -614,7 +614,7 @@ runtime_scenarios:
       ttft_p90: 5.0
       ttft_p99: 5.0
     bootstrap_seed: 20260826
-    canonical_inventory_digest: blake3:146191f530b0bd0d625b4668d7ee0515d47ffecaba0097237b08e8cb0460cea8
+    canonical_inventory_digest: blake3:45dfb0bacfe3a9747f058d190f9e49788ee2bc4856ca56336f9778f7d6c6f95e
     command: taskset -c 4-71 cargo test --locked --release -p aiperf-runtime --features engine --lib engine::records::tests::exporter_capture_allocation_and_duration_baseline -- --exact --nocapture --test-threads=1
     core_assignment: exporter probe=4-71;no mock process
     corpus_records: 100000
@@ -715,5 +715,5 @@ invalid_capture_attempts:
 raw_samples:
   admission_status: prepublication_expected_failure
   expected_generation: review1i
-canonical_inventory_digest: blake3:146191f530b0bd0d625b4668d7ee0515d47ffecaba0097237b08e8cb0460cea8
+canonical_inventory_digest: blake3:45dfb0bacfe3a9747f058d190f9e49788ee2bc4856ca56336f9778f7d6c6f95e
 canonical_inventory_digest_rule: BLAKE3 of exact UTF-8 after replacing every canonical_inventory_digest and experiment_identity_digest value with blake3 followed by 64 zeroes; the resulting canonical digest is embedded in the identity before hashing experiment_identity_json
