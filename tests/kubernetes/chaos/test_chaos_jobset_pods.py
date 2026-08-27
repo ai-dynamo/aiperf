@@ -355,7 +355,10 @@ async def test_c6_kill_controller_container_salvages(
         # the operator correctly took the "nothing recoverable" branch --
         # a real behaviour, but not the one under test here.
         await _wait_for_live_metrics(
-            kubectl, name=name, namespace=operator_job_namespace, timeout=120.0
+            kubectl,
+            name=name,
+            namespace=operator_job_namespace,
+            timeout=180.0,  # operator redeploy + warmup lag can exceed 120s on kind
         )
 
         pod = await chaos_injector.get_controller_pod_name(operator_job_namespace, name)
@@ -493,7 +496,7 @@ async def test_c7_kill_worker_pod_mid_benchmark(
             operator_job_namespace,
             name,
             phases=("Completed",),
-            timeout=360.0,
+            timeout=480.0,  # replacement pod startup + benchmark resume can be slow on kind
         )
         assert phase == "Completed"
     finally:

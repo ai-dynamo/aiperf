@@ -144,7 +144,7 @@ async def _force_cleanup_release(
     )
 
 
-@pytest.mark.timeout(_PER_TEST_TIMEOUT)
+@pytest.mark.timeout(900)  # 2 install+run cycles; _PER_TEST_TIMEOUT is insufficient
 async def test_h1_install_job_uninstall_reinstall_is_clean(
     kubectl: KubectlClient,
     helm_client: HelmClient,
@@ -254,7 +254,9 @@ async def test_h1_install_job_uninstall_reinstall_is_clean(
         await _force_cleanup_release(deployer, kubectl)
 
 
-@pytest.mark.timeout(_PER_TEST_TIMEOUT)
+@pytest.mark.timeout(
+    720
+)  # install(3m) + profiling-wait(3m) + upgrade(3m) + observe + completion
 async def test_h2_upgrade_with_inflight_job_preserves_cr(
     kubectl: KubectlClient,
     helm_client: HelmClient,
