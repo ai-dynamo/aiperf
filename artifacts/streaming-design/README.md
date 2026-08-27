@@ -26,6 +26,8 @@ Documents:
   including cross-chunk sessions and checkpointed result publication.
 - `spec-review-record.md` records the immutable reviewed commit and approval
   gates.
+- `implementation-plan-review-record.md` records the exact approved executable
+  plan-set commit and its three independent approval gates.
 
 Implementation and review records remain in this directory while the normative
 design is implemented through the linked durable plan.
