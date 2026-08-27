@@ -50,14 +50,6 @@ Shutdown begins only after profiling has started and every registered domain has
 either completed or been evicted after a confirmed service failure. This lifecycle
 gate prevents an empty startup barrier from being mistaken for completed results.
 
-Result publication is a fail-closed filesystem transaction. Before a controller
-starts benchmark work, and again immediately before export, it durably removes
-any stale ready marker and atomically installs a processing marker. After every
-required artifact is flushed and exported, it atomically installs and fsyncs the
-ready marker before clearing the processing marker. Only then does it publish
-`ResultsExportedMessage`. A crash or restarted export before that commit leaves
-top-level artifacts hidden from readers of the ready marker.
-
 ### Dataset Manager
 
 The Dataset Manager handles all aspects of input data management during benchmarking runs.
