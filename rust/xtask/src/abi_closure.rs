@@ -6,6 +6,7 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::{Mutex, OnceLock};
 
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
@@ -13,6 +14,7 @@ use serde_json::{Map, Value};
 
 const RUSTDOC_TOOLCHAIN: &str = "nightly-2026-08-01";
 const RUSTDOC_FORMAT_VERSION: u64 = 61;
+static RUSTDOC_GENERATION: OnceLock<Mutex<()>> = OnceLock::new();
 
 /// One ABI-facing type and where it is defined.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -182,6 +184,10 @@ struct RustdocIndex {
 
 impl RustdocIndex {
     fn build(workspace: &Path) -> Result<Self> {
+        let generation = RUSTDOC_GENERATION.get_or_init(|| Mutex::new(()));
+        let _guard = generation
+            .lock()
+            .map_err(|_| anyhow::anyhow!("rustdoc generation lock was poisoned"))?;
         let cargo = rustup_which("cargo")?;
         let rustc = rustup_which("rustc")?;
         let rustdoc = rustup_which("rustdoc")?;
@@ -206,6 +212,8 @@ impl RustdocIndex {
                 "unstable-options",
                 "--output-format",
                 "json",
+                "--cap-lints",
+                "allow",
             ])
             .status()
             .with_context(|| format!("running pinned {RUSTDOC_TOOLCHAIN} cargo rustdoc"))?;
