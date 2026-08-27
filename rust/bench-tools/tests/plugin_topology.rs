@@ -1280,8 +1280,25 @@ fn witness_from_live_metadata(
     workspace: &std::path::Path,
     metadata: &Metadata,
     task: u64,
-    package: &str,
+    packages: &[&str],
 ) -> ImplementationWitness {
+    let built = packages
+        .iter()
+        .map(|package| package_witness_from_live_metadata(workspace, metadata, package))
+        .collect();
+    ImplementationWitness {
+        schema_version: 1,
+        task,
+        packages: built,
+    }
+}
+
+/// Builds the single-package half of a live witness.
+fn package_witness_from_live_metadata(
+    workspace: &std::path::Path,
+    metadata: &Metadata,
+    package: &str,
+) -> ImplementedPackageWitness {
     let actual = metadata
         .packages
         .iter()
@@ -1306,15 +1323,11 @@ fn witness_from_live_metadata(
             justification: None,
         })
         .collect();
-    ImplementationWitness {
-        schema_version: 1,
-        task,
-        packages: vec![ImplementedPackageWitness {
-            package: package.to_owned(),
-            source_files,
-            dependencies,
-            features: actual.features.clone(),
-        }],
+    ImplementedPackageWitness {
+        package: package.to_owned(),
+        source_files,
+        dependencies,
+        features: actual.features.clone(),
     }
 }
 
@@ -1332,50 +1345,52 @@ fn implemented_witness_validates_against_the_live_workspace() {
     let workspace = workspace_root();
     let (matrix, metadata) = checked_matrix_and_metadata(&workspace);
 
-    // Every mapped package that the workspace actually contains is validated,
-    // not just the first. Pinning to one entry would freeze the test onto
-    // `aiperf-core`, whose dependency and feature tables are both empty, so
-    // those two comparisons would forever be empty-against-empty.
+    // One witness per task covering every package that task owns: the validator
+    // requires the package set to be exact, and several tasks own more than one
+    // crate. Validating all present tasks rather than only the first also keeps
+    // the dependency and feature comparisons from being permanently
+    // empty-against-empty, which they would be if the test pinned itself to
+    // `aiperf-core`.
     let mut validated = 0usize;
-    let mut with_dependencies: Option<(u64, String)> = None;
+    let mut with_dependencies: Option<(u64, Vec<&str>)> = None;
     for (task, packages) in IMPLEMENTATION_TASK_PACKAGES {
-        for package in *packages {
-            if !metadata
+        let present = packages
+            .iter()
+            .all(|package| metadata.packages.iter().any(|c| c.name == *package));
+        if !present {
+            continue;
+        }
+        let witness = witness_from_live_metadata(&workspace, &metadata, *task, packages);
+        for built in &witness.packages {
+            assert!(
+                !built.source_files.is_empty(),
+                "{} must own at least one Rust source file",
+                built.package
+            );
+        }
+        if with_dependencies.is_none()
+            && witness
                 .packages
                 .iter()
-                .any(|candidate| candidate.name == *package)
-            {
-                continue;
-            }
-            let witness = witness_from_live_metadata(&workspace, &metadata, *task, package);
-            assert!(
-                !witness.packages[0].source_files.is_empty(),
-                "{package} must own at least one Rust source file"
-            );
-            if with_dependencies.is_none() && !witness.packages[0].dependencies.is_empty() {
-                with_dependencies = Some((*task, (*package).to_owned()));
-            }
-            validate_implementation_witness(&workspace, &matrix, &metadata, *task, &witness)
-                .unwrap_or_else(|error| {
-                    panic!("live witness for {package} must validate: {error}")
-                });
-            validated += 1;
+                .any(|built| !built.dependencies.is_empty())
+        {
+            with_dependencies = Some((*task, packages.to_vec()));
         }
+        validate_implementation_witness(&workspace, &matrix, &metadata, *task, &witness)
+            .unwrap_or_else(|error| panic!("live witness for Task {task} must validate: {error}"));
+        validated += 1;
     }
     assert!(
         validated > 0,
-        "at least one mapped package must exist in the live workspace"
+        "at least one mapped task must be fully present in the live workspace"
     );
 
-    // Negative arms run against the first mapped package, which is enough to
-    // prove the census compared something rather than short-circuiting.
+    // Negative arms run against the first mapped task, which is enough to prove
+    // the census compared something rather than short-circuiting.
     let (task, packages) = IMPLEMENTATION_TASK_PACKAGES
         .first()
         .expect("the implementation task map is never empty");
-    let package = packages
-        .first()
-        .expect("every implementation task owns at least one package");
-    let witness = witness_from_live_metadata(&workspace, &metadata, *task, package);
+    let witness = witness_from_live_metadata(&workspace, &metadata, *task, packages);
 
     let mut empty_sources = witness.clone();
     empty_sources.packages[0].source_files.clear();
@@ -1411,17 +1426,18 @@ fn implemented_witness_validates_against_the_live_workspace() {
             .contains("dependency census mismatch"),
     );
 
-    // The dependency census is only meaningful where a package has path
-    // dependencies at all; prove at least one such package validated above.
-    if let Some((task, package)) = with_dependencies {
-        let witness = witness_from_live_metadata(&workspace, &metadata, task, &package);
-        let mut dropped = witness.clone();
-        dropped.packages[0].dependencies.clear();
+    // The dependency census only bites where a package has path dependencies at
+    // all, so drop them from a task that actually has some.
+    if let Some((task, packages)) = with_dependencies {
+        let mut dropped = witness_from_live_metadata(&workspace, &metadata, task, &packages);
+        for built in &mut dropped.packages {
+            built.dependencies.clear();
+        }
         assert!(
             validate_implementation_witness(&workspace, &matrix, &metadata, task, &dropped)
                 .expect_err("a missing dependency row must be refused")
                 .contains("dependency census mismatch"),
-            "{package} has path dependencies, so dropping them must be refused"
+            "Task {task} has path dependencies, so dropping them must be refused"
         );
     }
 }
