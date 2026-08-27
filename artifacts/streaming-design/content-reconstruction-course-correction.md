@@ -82,3 +82,9 @@ the pre-amendment plan.
 - Do not change decoder record identity when synthesis authority binds.
 - Do not construct a complete `GraphInputBundle` in the streaming path.
 - Do not change finite Dynamo fallback behavior.
+
+## Plan disposition
+
+The executable plan amendments were finalized at `3621ec56e5` after two
+read-only reviews approved the same head. See
+`content-reconstruction-plan-review-record.md`.

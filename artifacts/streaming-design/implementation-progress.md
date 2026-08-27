@@ -7,7 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 
 - Integration branch: `ajc/native-rust-runtime-plugins`
 - Normative specification: base `505efc06b0`, content-reconstruction amendment `3fea6f2fe0`
-- Approved executable plan set: base `e16aa2c71f802a9ad17a241464374e4d7b5ba19b`, amendment `956dc62514`
+- Approved executable plan set: base `e16aa2c71f802a9ad17a241464374e4d7b5ba19b`, content amendment final `3621ec56e5`
 - Implementation start: `cd4a600e6c`
 - Status: foundation contract wave started
 
@@ -22,7 +22,7 @@ SPDX-License-Identifier: Apache-2.0
 | Task 0 — feature/dependency freeze | Complete | Task `8e3d5b57b3`; merge `dc81d2987a`; lightweight and S3 inventory tests 1/1 each; two reviews approved |
 | Task 1A — identity and unit vocabulary | Complete | Task `283b6c872c`; merge `f8096d3041`; identity tests 10/10 and visibility doctest 1/1; two exact-head reviews approved |
 | Task 1B — item/byte resource budgets | Complete | Task `f27c352251`; merge `2aa38c3acc`; budget tests 15/15 and identity compatibility 10/10; two exact-head reviews approved |
-| Streaming Dynamo reconstruction amendment | Complete | Design `3fea6f2fe0`; executable plan correction `956dc62514`; durable ruling `content-reconstruction-course-correction.md` |
+| Streaming Dynamo reconstruction amendment | Complete | Design `3fea6f2fe0`; executable plan final `3621ec56e5`; two reviews approved; durable ruling and review record committed |
 | Task 5A — typed checkpoint cuts and authority | Complete | Task head `407116c2a2`; merge `20cf021e93`; checkpoint 13/13, authority 2/2, API doctests 8/8, budget/identity 25/25; two exact-head reviews approved |
 
 Baseline note: the full feature-off runtime suite reached execution after the
