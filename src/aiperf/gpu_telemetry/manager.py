@@ -536,15 +536,16 @@ class GPUTelemetryManager(BaselineCollectorMixin, BaseComponentService):
         JSONL stream exporters.
 
         Best-effort: several callers are shutdown paths, so a dead push
-        transport must not turn a clean teardown into an exception. The
-        sent-flag is only latched on success, leaving a later caller free to
-        retry. ``CancelledError`` is not an ``Exception`` and so still
-        propagates.
+        transport must not turn a clean teardown into an exception. Both the
+        closed-admission flag and the sent-flag are only latched on success,
+        leaving a later caller free to retry. Records/errors that arrive
+        while this call is in flight still see admission open, since the
+        flag flip and the push happen under the same lock they check.
+        ``CancelledError`` is not an ``Exception`` and so still propagates.
         """
         async with self._records_push_lock:
             if self._completion_marker_sent:
                 return
-            self._telemetry_records_closed = True
             try:
                 await self.records_push_client.push(
                     TelemetryRecordsMessage(
@@ -562,6 +563,7 @@ class GPUTelemetryManager(BaselineCollectorMixin, BaseComponentService):
                     f"GPU Telemetry: Failed to send collection-complete marker: {e!r}"
                 )
                 return
+            self._telemetry_records_closed = True
             self._completion_marker_sent = True
 
     async def _on_telemetry_error(self, error: ErrorDetails, collector_id: str) -> None:

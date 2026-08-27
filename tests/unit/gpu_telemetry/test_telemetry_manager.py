@@ -343,6 +343,34 @@ class TestCallbackFunctions:
         ]
 
     @pytest.mark.asyncio
+    async def test_completion_marker_push_failure_leaves_admission_open(
+        self, sample_telemetry_records
+    ) -> None:
+        """A failed completion-marker push must not latch admission closed.
+
+        Otherwise later records/errors would be silently dropped by the
+        ``_telemetry_records_closed`` guard even though the completion
+        marker itself was never delivered.
+        """
+        manager = self._create_test_manager()
+        manager.warning = MagicMock()
+        mock_push_client = AsyncMock()
+        mock_push_client.push.side_effect = Exception("Push failed")
+        manager.records_push_client = mock_push_client
+
+        await manager._send_collection_complete_marker()
+
+        assert manager._telemetry_records_closed is False
+        assert manager._completion_marker_sent is False
+        manager.warning.assert_called_once()
+
+        # A subsequent record must still be accepted, not silently dropped.
+        mock_push_client.push.side_effect = None
+        mock_push_client.push.reset_mock()
+        await manager._on_telemetry_records(sample_telemetry_records, "collector")
+        mock_push_client.push.assert_called_once()
+
+    @pytest.mark.asyncio
     async def test_on_telemetry_error_exception_handling(self):
         """Test _on_telemetry_error handles exceptions during message sending."""
         manager = self._create_test_manager()
