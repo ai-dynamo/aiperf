@@ -12,12 +12,10 @@ changing the rig-provided `CARGO_BUILD_JOBS=144`, `CARGO_INCREMENTAL=1`, or
 `package-topology.json` is the measured Cargo-metadata/tree census consumed by
 the package-separation tasks. `allocation-probe.json` records TLS-scoped
 mimalloc allocation counts and bytes for all five required request paths.
-The local `evidence-manifest.json` and `bundle-locator.json` control files still
-describe the published `review1e` audit artifact, but are excluded from the
-canonical `raw_samples` entry and retained only as superseded audit history.
-The replacement `review1i` manifest, bundle identity, and verified permanent
-GitHub Release URL will enter `raw_samples` only after one uncontended capture
-and independent read-back.
+The gitignored `evidence-manifest.json` authenticates the complete local
+`review1i` evidence tree. The inventory, topology, allocation receipt, and
+manifest are committed into the working tree as one crash-durable local
+generation; no external release or remote read-back is part of Task 1.
 The pre-measurement `review1f` attempt is also rejected: Cargo correctly
 refused its incomplete measurement projection under `--locked`. The corrected
 `review1g` projection passed that lock check, but its engine clean build then
@@ -36,8 +34,8 @@ Cargo.lock. The base archive and base lock are separately labeled provenance;
 the inventory, report, and generated evidence are excluded to avoid a
 self-reference. The checked-in capture harness enforces singleton admission,
 checks that the effective tree and lock remain unchanged through teardown,
-extracts and verifies the completed bundle against its embedded manifest, and
-mechanically generates and validates its staged locator.
+and extracts and verifies the completed local bundle against its embedded
+manifest.
 
 The inventory digest is calculated after replacing every
 `canonical_inventory_digest` and the outer `experiment_identity_digest` value

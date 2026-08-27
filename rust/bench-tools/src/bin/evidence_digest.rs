@@ -29,24 +29,6 @@ struct ManifestFile {
 
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-struct BundleLocator {
-    schema_version: u8,
-    repository: String,
-    recommended_release_tag: String,
-    asset_name: String,
-    publication_status: String,
-    archive_verification_status: String,
-    staged_path: String,
-    bytes: u64,
-    blake3: String,
-    manifest_path: String,
-    manifest_bytes: u64,
-    manifest_blake3: String,
-    stable_url: String,
-}
-
-#[derive(Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
 struct BundleVerification {
     schema_version: u8,
     generation: String,
@@ -86,27 +68,9 @@ fn write_bundle_verification(
     Ok(())
 }
 
-#[derive(Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-struct PublicationVerification {
-    schema_version: u8,
-    generation: String,
-    status: String,
-    stable_url: String,
-    downloaded_bundle_path: PathBuf,
-    downloaded_bundle_bytes: u64,
-    downloaded_bundle_blake3: String,
-    downloaded_manifest_path: PathBuf,
-    downloaded_manifest_bytes: u64,
-    downloaded_manifest_blake3: String,
-    published_locator_path: PathBuf,
-    published_locator_bytes: u64,
-    published_locator_blake3: String,
-}
-
-fn extract_and_verify_downloaded_archive(
+fn extract_and_verify_staged_archive(
     bundle: &mut File,
-    downloaded_manifest: &[u8],
+    staged_manifest: &[u8],
     authenticated_bytes: u64,
     authenticated_digest: blake3::Hash,
     extraction_parent: &Path,
@@ -114,7 +78,7 @@ fn extract_and_verify_downloaded_archive(
 ) -> Result<(Manifest, u64, blake3::Hash), Box<dyn std::error::Error>> {
     let initial_metadata = bundle.metadata()?;
     if initial_metadata.len() != authenticated_bytes {
-        return Err("downloaded archive length changed after authentication".into());
+        return Err("staged archive length changed after authentication".into());
     }
     if let Ok(marker) = std::env::var("AIPERF_EVIDENCE_EXTRACTION_MARKER") {
         fs::write(marker, b"authenticated archive extraction entered\n")?;
@@ -130,20 +94,18 @@ fn extract_and_verify_downloaded_archive(
         for entry in archive.entries()? {
             let entry = entry?;
             if members.len() >= limits.max_members {
-                return Err("downloaded archive exceeds member-count limit".into());
+                return Err("staged archive exceeds member-count limit".into());
             }
             let entry_type = entry.header().entry_type();
             if !entry_type.is_dir() && !entry_type.is_file() {
                 return Err(
-                    "downloaded archive entries must be regular file or directory types".into(),
+                    "staged archive entries must be regular file or directory types".into(),
                 );
             }
             let raw_path = entry.path_bytes();
             let raw_path = std::str::from_utf8(raw_path.as_ref())?;
             if raw_path.contains(['\n', '\r', '\\']) || raw_path.contains("//") {
-                return Err(
-                    format!("downloaded archive contains unsafe member `{raw_path:?}`").into(),
-                );
+                return Err(format!("staged archive contains unsafe member `{raw_path:?}`").into());
             }
             let member = raw_path.strip_suffix('/').unwrap_or(raw_path);
             let path = Path::new(member);
@@ -156,38 +118,36 @@ fn extract_and_verify_downloaded_archive(
                     && member != "evidence"
                     && !member.starts_with("evidence/"))
             {
-                return Err(format!("downloaded archive contains unsafe member `{member}`").into());
+                return Err(format!("staged archive contains unsafe member `{member}`").into());
             }
             if !members.insert(member.to_owned()) {
-                return Err(
-                    format!("downloaded archive contains duplicate member `{member}`").into(),
-                );
+                return Err(format!("staged archive contains duplicate member `{member}`").into());
             }
             let member_bytes = entry.header().size()?;
             if member_bytes > limits.max_member_bytes {
-                return Err("downloaded archive member exceeds expanded-byte limit".into());
+                return Err("staged archive member exceeds expanded-byte limit".into());
             }
             expanded_bytes = expanded_bytes
                 .checked_add(member_bytes)
-                .ok_or("downloaded archive expanded-byte count overflow")?;
+                .ok_or("staged archive expanded-byte count overflow")?;
             if expanded_bytes > limits.max_expanded_bytes {
-                return Err("downloaded archive exceeds aggregate expanded-byte limit".into());
+                return Err("staged archive exceeds aggregate expanded-byte limit".into());
             }
             if member == "evidence" {
                 if !entry_type.is_dir() {
-                    return Err("downloaded archive `evidence` member must be a directory".into());
+                    return Err("staged archive `evidence` member must be a directory".into());
                 }
                 has_evidence_directory = true;
             } else if member == "evidence-manifest.json" {
                 if !entry_type.is_file() {
-                    return Err("downloaded archive manifest must be a regular file".into());
+                    return Err("staged archive manifest must be a regular file".into());
                 }
                 has_manifest = true;
             }
         }
     }
     if !has_evidence_directory || !has_manifest {
-        return Err("downloaded archive lacks its evidence tree or embedded manifest".into());
+        return Err("staged archive lacks its evidence tree or embedded manifest".into());
     }
 
     let extracted = tempfile::Builder::new()
@@ -199,9 +159,7 @@ fn extract_and_verify_downloaded_archive(
         let mut archive = tar::Archive::new(decoder);
         for entry in archive.entries()? {
             if !entry?.unpack_in(extracted.path())? {
-                return Err(
-                    "downloaded archive member escaped the owned extraction directory".into(),
-                );
+                return Err("staged archive member escaped the owned extraction directory".into());
             }
         }
     }
@@ -214,14 +172,12 @@ fn extract_and_verify_downloaded_archive(
             .is_dir()
     {
         return Err(
-            "downloaded archive extracted topology is not regular manifest plus evidence directory"
+            "staged archive extracted topology is not regular manifest plus evidence directory"
                 .into(),
         );
     }
-    if fs::read(&embedded_manifest)? != downloaded_manifest {
-        return Err(
-            "downloaded archive embedded manifest does not match the retrieved manifest".into(),
-        );
+    if fs::read(&embedded_manifest)? != staged_manifest {
+        return Err("staged archive embedded manifest does not match its manifest".into());
     }
     let evidence = extracted.path().join("evidence");
     verify_manifest(&embedded_manifest, &evidence)?;
@@ -233,7 +189,7 @@ fn extract_and_verify_downloaded_archive(
         || final_metadata.len() != initial_metadata.len()
         || final_metadata.modified().ok() != initial_metadata.modified().ok()
     {
-        return Err("downloaded archive changed during descriptor-held verification".into());
+        return Err("staged archive changed during descriptor-held verification".into());
     }
     Ok((manifest, authenticated_bytes, authenticated_digest))
 }
@@ -284,7 +240,7 @@ fn verify_staged_bundle(
     if final_bytes != authenticated_bytes || final_digest != authenticated_digest {
         return Err("staged bundle changed before immutable snapshot admission".into());
     }
-    extract_and_verify_downloaded_archive(
+    extract_and_verify_staged_archive(
         &mut owned_bundle,
         &manifest,
         authenticated_bytes,
@@ -299,51 +255,6 @@ fn verify_staged_bundle(
         &manifest,
         receipt_path,
     )
-}
-
-#[cfg(unix)]
-fn available_bytes(path: &Path) -> Result<u64, Box<dyn std::error::Error>> {
-    use std::ffi::CString;
-    use std::os::unix::ffi::OsStrExt;
-
-    let path = CString::new(path.as_os_str().as_bytes())?;
-    let mut statistics = std::mem::MaybeUninit::<libc::statvfs>::uninit();
-    // SAFETY: `path` is a live NUL-terminated string and `statistics` points to
-    // writable storage for the duration of `statvfs`.
-    if unsafe { libc::statvfs(path.as_ptr(), statistics.as_mut_ptr()) } != 0 {
-        return Err(io::Error::last_os_error().into());
-    }
-    // SAFETY: a zero return from `statvfs` initializes the complete structure.
-    let statistics = unsafe { statistics.assume_init() };
-    Ok(statistics.f_bavail.saturating_mul(statistics.f_frsize))
-}
-
-#[cfg(not(unix))]
-fn available_bytes(_path: &Path) -> Result<u64, Box<dyn std::error::Error>> {
-    Err("capacity validation is unsupported on this platform".into())
-}
-
-fn controlled_extraction_parent(
-    required_bytes: u64,
-) -> Result<PathBuf, Box<dyn std::error::Error>> {
-    let configured = std::env::var_os("AIPERF_PLUGIN_REFRESH_TMPDIR")
-        .or_else(|| std::env::var_os("TMPDIR"))
-        .ok_or("postpublication extraction requires AIPERF_PLUGIN_REFRESH_TMPDIR or TMPDIR")?;
-    let path = PathBuf::from(configured);
-    if !path.is_absolute() || !path.is_dir() {
-        return Err(
-            "postpublication extraction root must be an absolute existing directory".into(),
-        );
-    }
-    let canonical = path.canonicalize()?;
-    let available = available_bytes(&canonical)?;
-    if available < required_bytes {
-        return Err(format!(
-            "postpublication extraction requires {required_bytes} free bytes, observed {available}"
-        )
-        .into());
-    }
-    Ok(canonical)
 }
 
 fn open_regular_nofollow(path: &Path) -> io::Result<File> {
@@ -461,7 +372,7 @@ const CAPTURED_SOURCE_ARCHIVE_LIMITS: ArchiveLimits = ArchiveLimits {
     max_expanded_bytes: 16 * 1024 * 1024 * 1024,
 };
 
-const DOWNLOADED_ARCHIVE_LIMITS: ArchiveLimits = ArchiveLimits {
+const STAGED_ARCHIVE_LIMITS: ArchiveLimits = ArchiveLimits {
     max_members: 10_000,
     max_member_bytes: 8 * 1024 * 1024 * 1024,
     max_expanded_bytes: 16 * 1024 * 1024 * 1024,
@@ -709,6 +620,7 @@ struct PackageTopology {
     cargo_profile: String,
     measurement: TopologyMeasurement,
     workspace_packages: Vec<TopologyPackage>,
+    cargo_projection: Vec<CargoPackageProjection>,
 }
 
 #[derive(Serialize)]
@@ -739,6 +651,31 @@ struct TopologyDependency {
     name: String,
     kind: String,
     is_workspace: bool,
+}
+
+#[derive(Ord, PartialOrd, Eq, PartialEq, Serialize)]
+struct CargoDependencyProjection {
+    package: String,
+    local_name: String,
+    kind: String,
+    source: Option<String>,
+    requirement: String,
+    registry: Option<String>,
+    path: Option<String>,
+    target: Option<String>,
+    is_optional: bool,
+    uses_default_features: bool,
+    features: Vec<String>,
+    is_workspace: bool,
+}
+
+#[derive(Serialize)]
+struct CargoPackageProjection {
+    name: String,
+    version: String,
+    edition: String,
+    dependencies: Vec<CargoDependencyProjection>,
+    features: BTreeMap<String, Vec<String>>,
 }
 
 fn digest_file(path: &Path) -> io::Result<(u64, blake3::Hash)> {
@@ -870,143 +807,6 @@ fn verify_manifest(manifest_path: &Path, root: &Path) -> Result<(), Box<dyn std:
     Ok(())
 }
 
-fn write_locator(
-    repository: &str,
-    release_tag: &str,
-    bundle: &Path,
-    manifest_path: &Path,
-    output: &Path,
-) -> Result<(), Box<dyn std::error::Error>> {
-    if !repository.starts_with("https://github.com/") || repository.ends_with('/') {
-        return Err("locator repository must be a canonical GitHub HTTPS URL".into());
-    }
-    if release_tag.is_empty() || release_tag.contains('/') {
-        return Err("locator release tag must be one non-empty path segment".into());
-    }
-    let asset_name = bundle
-        .file_name()
-        .and_then(|name| name.to_str())
-        .ok_or("bundle asset name must be UTF-8")?;
-    let (bytes, digest) = digest_file(bundle)?;
-    let (manifest_bytes, manifest_digest) = digest_file(manifest_path)?;
-    let locator = BundleLocator {
-        schema_version: 1,
-        repository: repository.to_owned(),
-        recommended_release_tag: release_tag.to_owned(),
-        asset_name: asset_name.to_owned(),
-        publication_status: "ready_for_controller_publication".to_owned(),
-        archive_verification_status: "extracted_manifest_verified".to_owned(),
-        staged_path: bundle.to_string_lossy().into_owned(),
-        bytes,
-        blake3: format!("blake3:{digest}"),
-        manifest_path: manifest_path.to_string_lossy().into_owned(),
-        manifest_bytes,
-        manifest_blake3: format!("blake3:{manifest_digest}"),
-        stable_url: format!("{repository}/releases/download/{release_tag}/{asset_name}"),
-    };
-    let mut output = File::create(output)?;
-    serde_json::to_writer_pretty(&mut output, &locator)?;
-    writeln!(output)?;
-    Ok(())
-}
-
-fn require_absolute_directory(path: &Path, label: &str) -> Result<(), Box<dyn std::error::Error>> {
-    if !path.is_absolute()
-        || !fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_dir())
-    {
-        return Err(format!("{label} must be an absolute existing directory").into());
-    }
-    Ok(())
-}
-
-fn require_new_absolute_output(path: &Path, label: &str) -> Result<(), Box<dyn std::error::Error>> {
-    if !path.is_absolute() {
-        return Err(format!("{label} must be an absolute path").into());
-    }
-    let parent = path
-        .parent()
-        .ok_or_else(|| format!("{label} has no parent directory"))?;
-    require_absolute_directory(parent, &format!("{label} parent"))?;
-    match fs::symlink_metadata(path) {
-        Ok(_) => Err(format!("{label} already exists: {}", path.display()).into()),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(error.into()),
-    }
-}
-
-fn write_json_create_new_atomic<T: Serialize>(
-    path: &Path,
-    label: &str,
-    value: &T,
-) -> Result<(), Box<dyn std::error::Error>> {
-    require_new_absolute_output(path, label)?;
-    let parent = path
-        .parent()
-        .ok_or_else(|| format!("{label} has no parent directory"))?;
-    let output_name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .ok_or_else(|| format!("{label} name must be UTF-8"))?;
-    let mut temporary = tempfile::Builder::new()
-        .prefix(&format!(".{output_name}.tmp."))
-        .tempfile_in(parent)?;
-    serde_json::to_writer_pretty(&mut temporary, value)?;
-    writeln!(temporary)?;
-    temporary.as_file_mut().sync_all()?;
-    temporary
-        .persist_noclobber(path)
-        .map_err(|error| error.error)?;
-    Ok(())
-}
-
-fn write_publication_locator(
-    generation: &str,
-    capture_root: &Path,
-    output: &Path,
-) -> Result<(), Box<dyn std::error::Error>> {
-    validate_generation(generation)?;
-    require_absolute_directory(capture_root, "staged capture root")?;
-    require_new_absolute_output(output, "publication locator output")?;
-    let staged = staged_evidence_facts(capture_root, generation)?;
-    let mut locator: BundleLocator = serde_json::from_slice(&staged.compact_locator)?;
-    locator.publication_status = "published_and_verified".to_owned();
-    locator.archive_verification_status = "downloaded_extracted_manifest_verified".to_owned();
-    locator.manifest_path = "artifacts/native-plugin-baseline/evidence-manifest.json".to_owned();
-    write_json_create_new_atomic(output, "publication locator output", &locator)
-}
-
-fn verify_locator(locator_path: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    let locator: BundleLocator = serde_json::from_reader(File::open(locator_path)?)?;
-    if locator.schema_version != 1
-        || locator.publication_status != "ready_for_controller_publication"
-        || locator.archive_verification_status != "extracted_manifest_verified"
-    {
-        return Err("locator is not a verified staged schema-v1 artifact".into());
-    }
-    let bundle = Path::new(&locator.staged_path);
-    if bundle.file_name().and_then(|name| name.to_str()) != Some(&locator.asset_name) {
-        return Err("locator asset name does not match staged path".into());
-    }
-    let expected_url = format!(
-        "{}/releases/download/{}/{}",
-        locator.repository, locator.recommended_release_tag, locator.asset_name
-    );
-    if locator.stable_url != expected_url {
-        return Err("locator stable URL does not match repository, tag, and asset".into());
-    }
-    let (bytes, digest) = digest_file(bundle)?;
-    if bytes != locator.bytes || format!("blake3:{digest}") != locator.blake3 {
-        return Err("locator bundle length or digest mismatch".into());
-    }
-    let (manifest_bytes, manifest_digest) = digest_file(Path::new(&locator.manifest_path))?;
-    if manifest_bytes != locator.manifest_bytes
-        || format!("blake3:{manifest_digest}") != locator.manifest_blake3
-    {
-        return Err("locator manifest length or digest mismatch".into());
-    }
-    Ok(())
-}
-
 fn write_topology(
     generation: &str,
     host_commit: &str,
@@ -1033,6 +833,9 @@ fn write_topology(
     let all_packages = metadata["packages"]
         .as_array()
         .ok_or("cargo metadata lacks packages")?;
+    let workspace_root = metadata["workspace_root"]
+        .as_str()
+        .ok_or("cargo metadata lacks workspace_root")?;
     let workspace_names: BTreeSet<_> = all_packages
         .iter()
         .filter(|package| {
@@ -1043,6 +846,7 @@ fn write_topology(
         .filter_map(|package| package["name"].as_str().map(str::to_owned))
         .collect();
     let mut workspace_packages = Vec::new();
+    let mut cargo_projection = Vec::new();
     for package in all_packages.iter().filter(|package| {
         package["id"]
             .as_str()
@@ -1052,6 +856,7 @@ fn write_topology(
             .as_array()
             .ok_or("package dependencies are not an array")?;
         let mut direct_dependencies = Vec::new();
+        let mut exact_dependencies = Vec::new();
         let mut dependency_kind_counts = BTreeMap::new();
         for dependency in dependencies {
             let name = dependency["name"]
@@ -1062,6 +867,52 @@ fn write_topology(
             direct_dependencies.push(TopologyDependency {
                 name: name.to_owned(),
                 kind: kind.to_owned(),
+                is_workspace: workspace_names.contains(name),
+            });
+            let local_name = dependency["rename"].as_str().unwrap_or(name);
+            let kind = dependency["kind"].as_str().unwrap_or("normal");
+            let mut requested_features = dependency["features"]
+                .as_array()
+                .ok_or("dependency features are not an array")?
+                .iter()
+                .map(|feature| {
+                    feature
+                        .as_str()
+                        .map(str::to_owned)
+                        .ok_or("dependency feature is not text")
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            requested_features.sort();
+            let path = dependency["path"]
+                .as_str()
+                .map(|path| {
+                    Path::new(path)
+                        .strip_prefix(workspace_root)
+                        .map_err(|_| "dependency path is outside the Cargo workspace root")?
+                        .to_str()
+                        .ok_or("dependency path is not UTF-8")
+                        .map(|path| path.replace(std::path::MAIN_SEPARATOR, "/"))
+                })
+                .transpose()?;
+            exact_dependencies.push(CargoDependencyProjection {
+                package: name.to_owned(),
+                local_name: local_name.to_owned(),
+                kind: kind.to_owned(),
+                source: dependency["source"].as_str().map(str::to_owned),
+                requirement: dependency["req"]
+                    .as_str()
+                    .ok_or("dependency requirement is not text")?
+                    .to_owned(),
+                registry: dependency["registry"].as_str().map(str::to_owned),
+                path,
+                target: dependency["target"].as_str().map(str::to_owned),
+                is_optional: dependency["optional"]
+                    .as_bool()
+                    .ok_or("dependency optional marker is not boolean")?,
+                uses_default_features: dependency["uses_default_features"]
+                    .as_bool()
+                    .ok_or("dependency default-feature marker is not boolean")?,
+                features: requested_features,
                 is_workspace: workspace_names.contains(name),
             });
         }
@@ -1099,8 +950,46 @@ fn write_topology(
             direct_workspace_dependencies,
             features,
         });
+        exact_dependencies.sort();
+        let exact_features = package["features"]
+            .as_object()
+            .ok_or("package features are not an object")?
+            .iter()
+            .map(|(name, values)| {
+                let mut values = values
+                    .as_array()
+                    .ok_or("package feature forwarding vector is not an array")?
+                    .iter()
+                    .map(|value| {
+                        value
+                            .as_str()
+                            .map(str::to_owned)
+                            .ok_or("package feature forwarding value is not text")
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                values.sort();
+                Ok((name.clone(), values))
+            })
+            .collect::<Result<BTreeMap<_, _>, Box<dyn std::error::Error>>>()?;
+        cargo_projection.push(CargoPackageProjection {
+            name: package["name"]
+                .as_str()
+                .ok_or("package name is not text")?
+                .to_owned(),
+            version: package["version"]
+                .as_str()
+                .ok_or("package version is not text")?
+                .to_owned(),
+            edition: package["edition"]
+                .as_str()
+                .ok_or("package edition is not text")?
+                .to_owned(),
+            dependencies: exact_dependencies,
+            features: exact_features,
+        });
     }
     workspace_packages.sort_by(|left, right| left.name.cmp(&right.name));
+    cargo_projection.sort_by(|left, right| left.name.cmp(&right.name));
     let digest = |path: &Path| -> Result<String, io::Error> {
         digest_file(path).map(|(_, digest)| format!("blake3:{digest}"))
     };
@@ -1126,6 +1015,7 @@ fn write_topology(
             raw_cli_tree: "identity/cargo-tree-cli.txt",
         },
         workspace_packages,
+        cargo_projection,
     };
     serde_json::to_writer_pretty(io::stdout().lock(), &topology)?;
     println!();
@@ -1313,7 +1203,6 @@ fn refresh_inventory(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
 enum InventoryRefreshMode {
     PreCapture,
     PostCapture,
-    Postpublication,
 }
 
 impl InventoryRefreshMode {
@@ -1321,7 +1210,6 @@ impl InventoryRefreshMode {
         match value {
             "pre-capture" => Ok(Self::PreCapture),
             "post-capture" => Ok(Self::PostCapture),
-            "postpublication" => Ok(Self::Postpublication),
             _ => Err(format!("unknown inventory refresh mode: {value}").into()),
         }
     }
@@ -1918,7 +1806,6 @@ fn baseline_relative_paths(mode: InventoryRefreshMode) -> Vec<PathBuf> {
         relative_paths.extend([
             PathBuf::from("artifacts/native-plugin-baseline/allocation-probe.json"),
             PathBuf::from("artifacts/native-plugin-baseline/evidence-manifest.json"),
-            PathBuf::from("artifacts/native-plugin-baseline/bundle-locator.json"),
         ]);
     }
     relative_paths
@@ -2037,81 +1924,14 @@ fn upsert_artifact_line(
     Ok(output)
 }
 
-fn expected_release_tag(generation: &str) -> String {
-    format!("native-plugin-baseline-caa3ff6f-{generation}-final")
-}
-
-struct ObservedArtifact<'a> {
-    path: &'a Path,
-    bytes: u64,
-    digest: blake3::Hash,
-}
-
-fn verify_locator_fields(
-    locator: &BundleLocator,
-    generation: &str,
-    bundle: &ObservedArtifact<'_>,
-    manifest: &ObservedArtifact<'_>,
-    publication_status: &str,
-    verification_status: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let release_tag = expected_release_tag(generation);
-    let asset_name = bundle
-        .path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .ok_or("bundle asset name must be UTF-8")?;
-    let expected_url = format!(
-        "{}/releases/download/{release_tag}/{asset_name}",
-        locator.repository
-    );
-    if locator.schema_version != 1
-        || locator.recommended_release_tag != release_tag
-        || locator.asset_name != asset_name
-        || locator.publication_status != publication_status
-        || locator.archive_verification_status != verification_status
-        || locator.bytes != bundle.bytes
-        || locator.blake3 != format!("blake3:{}", bundle.digest)
-        || locator.manifest_bytes != manifest.bytes
-        || locator.manifest_blake3 != format!("blake3:{}", manifest.digest)
-        || locator.stable_url != expected_url
-        || !locator.repository.starts_with("https://github.com/")
-    {
-        return Err(
-            "locator fields do not match the exact generation, bundle, and manifest".into(),
-        );
-    }
-    Ok(())
-}
-
 struct EvidenceFacts {
-    repository: String,
-    release_tag: String,
-    stable_url: String,
     staged_path: String,
     bundle_bytes: u64,
     bundle_blake3: String,
     manifest_bytes: u64,
     manifest_blake3: String,
     manifest_file_count: usize,
-    compact_locator: Vec<u8>,
     compact_manifest: Vec<u8>,
-}
-
-enum PublicationExtractionParent<'a> {
-    Explicit(&'a Path),
-    Controlled,
-}
-
-struct VerifiedPublication {
-    locator: BundleLocator,
-    bundle_bytes: u64,
-    bundle_digest: blake3::Hash,
-    manifest: Manifest,
-    manifest_bytes: Vec<u8>,
-    manifest_digest: blake3::Hash,
-    locator_bytes: Vec<u8>,
-    locator_digest: blake3::Hash,
 }
 
 fn staged_evidence_facts(
@@ -2122,8 +1942,10 @@ fn staged_evidence_facts(
     let manifest_path = required_receipt(capture_root, "evidence-manifest.json")?;
     verify_manifest(&manifest_path, &evidence)?;
     let manifest: Manifest = serde_json::from_reader(File::open(&manifest_path)?)?;
-    let release_tag = expected_release_tag(generation);
-    let bundle_path = required_receipt(capture_root, &format!("aiperf-{release_tag}.tar.gz"))?;
+    let bundle_path = required_receipt(
+        capture_root,
+        &format!("aiperf-native-plugin-baseline-{generation}.tar.gz"),
+    )?;
     let verification: BundleVerification = serde_json::from_reader(File::open(required_receipt(
         capture_root,
         "bundle-verification.json",
@@ -2140,267 +1962,14 @@ fn staged_evidence_facts(
     {
         return Err("staged bundle verification receipt does not match captured bytes".into());
     }
-    let locator_path = required_receipt(capture_root, "bundle-locator.json")?;
-    let mut locator: BundleLocator = serde_json::from_reader(File::open(locator_path)?)?;
-    verify_locator_fields(
-        &locator,
-        generation,
-        &ObservedArtifact {
-            path: &bundle_path,
-            bytes: bundle_bytes,
-            digest: bundle_digest,
-        },
-        &ObservedArtifact {
-            path: &manifest_path,
-            bytes: manifest_bytes,
-            digest: manifest_digest,
-        },
-        "ready_for_controller_publication",
-        "extracted_manifest_verified",
-    )?;
-    locator.manifest_path = "artifacts/native-plugin-baseline/evidence-manifest.json".to_owned();
-    let compact_locator = serde_json::to_vec_pretty(&locator)?;
     Ok(EvidenceFacts {
-        repository: locator.repository,
-        release_tag,
-        stable_url: locator.stable_url,
         staged_path: bundle_path.to_string_lossy().into_owned(),
         bundle_bytes,
         bundle_blake3: format!("blake3:{bundle_digest}"),
         manifest_bytes,
         manifest_blake3: format!("blake3:{manifest_digest}"),
         manifest_file_count: manifest.files.len(),
-        compact_locator,
         compact_manifest: fs::read(manifest_path)?,
-    })
-}
-
-fn open_independent_download(
-    staged_path: &Path,
-    downloaded_path: &Path,
-    label: &str,
-) -> Result<File, Box<dyn std::error::Error>> {
-    if !downloaded_path.is_absolute() {
-        return Err(format!("downloaded {label} path must be absolute").into());
-    }
-    let staged_canonical = staged_path.canonicalize()?;
-    let downloaded_canonical = downloaded_path.canonicalize()?;
-    let staged = open_regular_nofollow(staged_path)?;
-    let downloaded = open_regular_nofollow(downloaded_path)?;
-    if staged_canonical == downloaded_canonical || same_file_identity(&staged, &downloaded)? {
-        return Err(format!("publication verification points at a staged {label} alias").into());
-    }
-    Ok(downloaded)
-}
-
-fn snapshot_open_file(file: &mut File) -> io::Result<Vec<u8>> {
-    file.seek(SeekFrom::Start(0))?;
-    let mut bytes = Vec::new();
-    file.read_to_end(&mut bytes)?;
-    Ok(bytes)
-}
-
-fn verify_publication_downloads(
-    capture_root: &Path,
-    generation: &str,
-    publishable_locator_path: Option<&Path>,
-    downloaded_bundle_path: &Path,
-    downloaded_manifest_path: &Path,
-    downloaded_locator_path: &Path,
-    extraction: PublicationExtractionParent<'_>,
-) -> Result<(EvidenceFacts, VerifiedPublication), Box<dyn std::error::Error>> {
-    validate_generation(generation)?;
-    require_absolute_directory(capture_root, "staged capture root")?;
-    let staged = staged_evidence_facts(capture_root, generation)?;
-    let staged_bundle_path = PathBuf::from(&staged.staged_path);
-    let staged_manifest_path = required_receipt(capture_root, "evidence-manifest.json")?;
-    let staged_locator_path = required_receipt(capture_root, "bundle-locator.json")?;
-    let mut downloaded_bundle =
-        open_independent_download(&staged_bundle_path, downloaded_bundle_path, "bundle")?;
-    let mut downloaded_manifest =
-        open_independent_download(&staged_manifest_path, downloaded_manifest_path, "manifest")?;
-    let mut downloaded_locator =
-        open_independent_download(&staged_locator_path, downloaded_locator_path, "locator")?;
-    let manifest_bytes = snapshot_open_file(&mut downloaded_manifest)?;
-    let manifest_digest = blake3::hash(&manifest_bytes);
-    let locator_bytes = snapshot_open_file(&mut downloaded_locator)?;
-    let locator_digest = blake3::hash(&locator_bytes);
-    if let Some(publishable_locator_path) = publishable_locator_path {
-        if !publishable_locator_path.is_absolute() {
-            return Err("publishable locator path must be absolute".into());
-        }
-        let publishable_canonical = publishable_locator_path.canonicalize()?;
-        let downloaded_canonical = downloaded_locator_path.canonicalize()?;
-        let mut publishable_locator = open_regular_nofollow(publishable_locator_path)?;
-        if publishable_canonical == downloaded_canonical
-            || same_file_identity(&publishable_locator, &downloaded_locator)?
-        {
-            return Err("publication verification points at a downloaded locator alias".into());
-        }
-        if snapshot_open_file(&mut publishable_locator)? != locator_bytes {
-            return Err(
-                "downloaded locator does not match the exact publishable locator bytes".into(),
-            );
-        }
-    }
-    let (bundle_bytes, bundle_digest) = digest_open_file(&mut downloaded_bundle)?;
-    if staged.bundle_bytes != bundle_bytes
-        || staged.bundle_blake3 != format!("blake3:{bundle_digest}")
-        || staged.manifest_bytes != manifest_bytes.len() as u64
-        || staged.manifest_blake3 != format!("blake3:{manifest_digest}")
-    {
-        return Err("published download does not match the exact staged capture bytes".into());
-    }
-    let locator: BundleLocator = serde_json::from_slice(&locator_bytes)?;
-    verify_locator_fields(
-        &locator,
-        generation,
-        &ObservedArtifact {
-            path: downloaded_bundle_path,
-            bytes: bundle_bytes,
-            digest: bundle_digest,
-        },
-        &ObservedArtifact {
-            path: downloaded_manifest_path,
-            bytes: manifest_bytes.len() as u64,
-            digest: manifest_digest,
-        },
-        "published_and_verified",
-        "downloaded_extracted_manifest_verified",
-    )?;
-    if locator.manifest_path != "artifacts/native-plugin-baseline/evidence-manifest.json"
-        || locator.repository != staged.repository
-        || locator.recommended_release_tag != staged.release_tag
-        || locator.stable_url != staged.stable_url
-    {
-        return Err("published locator identity or compact manifest path mismatch".into());
-    }
-    let manifest: Manifest = serde_json::from_slice(&manifest_bytes)?;
-    let extraction_parent = match extraction {
-        PublicationExtractionParent::Explicit(path) => {
-            require_absolute_directory(path, "publication extraction parent")?;
-            path.to_path_buf()
-        }
-        PublicationExtractionParent::Controlled => {
-            let expanded_evidence_bytes = manifest
-                .files
-                .iter()
-                .try_fold(0_u64, |total, file| total.checked_add(file.bytes))
-                .ok_or("published manifest expanded-byte count overflow")?;
-            let required_free_bytes = expanded_evidence_bytes
-                .checked_add(manifest_bytes.len() as u64)
-                .and_then(|value| value.checked_add(1024 * 1024 * 1024))
-                .ok_or("postpublication extraction free-space bound overflow")?;
-            controlled_extraction_parent(required_free_bytes)?
-        }
-    };
-    extract_and_verify_downloaded_archive(
-        &mut downloaded_bundle,
-        &manifest_bytes,
-        bundle_bytes,
-        bundle_digest,
-        &extraction_parent,
-        DOWNLOADED_ARCHIVE_LIMITS,
-    )?;
-    Ok((
-        staged,
-        VerifiedPublication {
-            locator,
-            bundle_bytes,
-            bundle_digest,
-            manifest,
-            manifest_bytes,
-            manifest_digest,
-            locator_bytes,
-            locator_digest,
-        },
-    ))
-}
-
-fn write_publication_verification(
-    generation: &str,
-    capture_root: &Path,
-    publishable_locator_path: &Path,
-    downloaded_bundle_path: &Path,
-    downloaded_manifest_path: &Path,
-    downloaded_locator_path: &Path,
-    extraction_parent: &Path,
-    output: &Path,
-) -> Result<(), Box<dyn std::error::Error>> {
-    require_new_absolute_output(output, "publication verification output")?;
-    let (_, verified) = verify_publication_downloads(
-        capture_root,
-        generation,
-        Some(publishable_locator_path),
-        downloaded_bundle_path,
-        downloaded_manifest_path,
-        downloaded_locator_path,
-        PublicationExtractionParent::Explicit(extraction_parent),
-    )?;
-    let receipt = PublicationVerification {
-        schema_version: 1,
-        generation: generation.to_owned(),
-        status: "independently_downloaded_extracted_manifest_verified".to_owned(),
-        stable_url: verified.locator.stable_url,
-        downloaded_bundle_path: downloaded_bundle_path.to_path_buf(),
-        downloaded_bundle_bytes: verified.bundle_bytes,
-        downloaded_bundle_blake3: format!("blake3:{}", verified.bundle_digest),
-        downloaded_manifest_path: downloaded_manifest_path.to_path_buf(),
-        downloaded_manifest_bytes: verified.manifest_bytes.len() as u64,
-        downloaded_manifest_blake3: format!("blake3:{}", verified.manifest_digest),
-        published_locator_path: downloaded_locator_path.to_path_buf(),
-        published_locator_bytes: verified.locator_bytes.len() as u64,
-        published_locator_blake3: format!("blake3:{}", verified.locator_digest),
-    };
-    write_json_create_new_atomic(output, "publication verification output", &receipt)
-}
-
-fn published_evidence_facts(
-    capture_root: &Path,
-    generation: &str,
-) -> Result<EvidenceFacts, Box<dyn std::error::Error>> {
-    let receipt_path = required_receipt(capture_root, "publication-verification.json")?;
-    let receipt: PublicationVerification =
-        serde_json::from_slice(&snapshot_regular_file(&receipt_path)?)?;
-    if receipt.schema_version != 1
-        || receipt.generation != generation
-        || receipt.status != "independently_downloaded_extracted_manifest_verified"
-    {
-        return Err("publication verification status or generation mismatch".into());
-    }
-    let (_, verified) = verify_publication_downloads(
-        capture_root,
-        generation,
-        None,
-        &receipt.downloaded_bundle_path,
-        &receipt.downloaded_manifest_path,
-        &receipt.published_locator_path,
-        PublicationExtractionParent::Controlled,
-    )?;
-    if receipt.downloaded_bundle_bytes != verified.bundle_bytes
-        || receipt.downloaded_bundle_blake3 != format!("blake3:{}", verified.bundle_digest)
-        || receipt.downloaded_manifest_bytes != verified.manifest_bytes.len() as u64
-        || receipt.downloaded_manifest_blake3 != format!("blake3:{}", verified.manifest_digest)
-        || receipt.published_locator_bytes != verified.locator_bytes.len() as u64
-        || receipt.published_locator_blake3 != format!("blake3:{}", verified.locator_digest)
-    {
-        return Err("publication verification length or digest mismatch".into());
-    }
-    if receipt.stable_url != verified.locator.stable_url {
-        return Err("publication receipt stable URL mismatch".into());
-    }
-    Ok(EvidenceFacts {
-        repository: verified.locator.repository,
-        release_tag: verified.locator.recommended_release_tag,
-        stable_url: verified.locator.stable_url,
-        staged_path: verified.locator.staged_path,
-        bundle_bytes: verified.bundle_bytes,
-        bundle_blake3: format!("blake3:{}", verified.bundle_digest),
-        manifest_bytes: verified.manifest_bytes.len() as u64,
-        manifest_blake3: format!("blake3:{}", verified.manifest_digest),
-        manifest_file_count: verified.manifest.files.len(),
-        compact_locator: verified.locator_bytes,
-        compact_manifest: verified.manifest_bytes,
     })
 }
 
@@ -2418,13 +1987,10 @@ fn render_raw_samples(
             facts.manifest_bytes, facts.manifest_blake3, facts.manifest_file_count
         ));
         output.push_str(&format!(
-            "  bundle: {{staged_path: {}, bytes: {}, blake3: {}, release_tag: {}, repository: {}, stable_url: {}}}\n",
+            "  bundle: {{staged_path: {}, bytes: {}, blake3: {}}}\n",
             serde_json::to_string(&facts.staged_path)?,
             facts.bundle_bytes,
-            facts.bundle_blake3,
-            facts.release_tag,
-            facts.repository,
-            facts.stable_url
+            facts.bundle_blake3
         ));
     }
     Ok(output)
@@ -3923,11 +3489,6 @@ fn refresh_contract(
     topology_output: Option<&Path>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     validate_generation(generation)?;
-    if mode == InventoryRefreshMode::Postpublication
-        && !receipts.join("publication-verification.json").is_file()
-    {
-        return Err("missing independent publication verification".into());
-    }
     let capture_root = (mode != InventoryRefreshMode::PreCapture).then_some(receipts);
     let identity_root = capture_root
         .map(|root| root.join("evidence/identity"))
@@ -4244,15 +3805,10 @@ fn refresh_contract(
             capture_root.ok_or("post-capture root is absent")?,
             generation,
         )?),
-        InventoryRefreshMode::Postpublication => Some(published_evidence_facts(
-            capture_root.ok_or("postpublication root is absent")?,
-            generation,
-        )?),
     };
-    let admission = if mode == InventoryRefreshMode::Postpublication {
-        format!("published_verified_{generation}")
-    } else {
-        "prepublication_expected_failure".to_owned()
+    let admission = match mode {
+        InventoryRefreshMode::PreCapture => "pre_capture".to_owned(),
+        InventoryRefreshMode::PostCapture => format!("locally_authenticated_{generation}"),
     };
     let raw_samples = render_raw_samples(generation, &admission, evidence_facts.as_ref())?;
     contents = replace_section(
@@ -4383,6 +3939,9 @@ fn refresh_contract(
             || !topology_json
                 .get("workspace_packages")
                 .is_some_and(serde_json::Value::is_array)
+            || !topology_json
+                .get("cargo_projection")
+                .is_some_and(serde_json::Value::is_array)
         {
             return Err("captured topology does not bind the captured experiment identity".into());
         }
@@ -4404,18 +3963,7 @@ fn refresh_contract(
             .as_ref()
             .ok_or("captured evidence facts are absent")?;
         let compact_manifest = compact_root.join("evidence-manifest.json");
-        let compact_locator = compact_root.join("bundle-locator.json");
         pending_outputs.push((compact_manifest, facts.compact_manifest.clone()));
-        pending_outputs.push((compact_locator, facts.compact_locator.clone()));
-        let locator_bytes = facts.compact_locator.len();
-        let locator_digest = blake3::hash(&facts.compact_locator);
-        contents = upsert_artifact_line(
-            &contents,
-            "bundle_locator",
-            &format!(
-                "bundle_locator: {{path: artifacts/native-plugin-baseline/bundle-locator.json, bytes: {locator_bytes}, blake3: blake3:{locator_digest}}}"
-            ),
-        )?;
     }
     contents = refreshed_inventory(&contents)?;
     pending_outputs.push((inventory_path.to_path_buf(), contents.into_bytes()));
@@ -4651,7 +4199,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut arguments = std::env::args_os().skip(1);
     let Some(first) = arguments.next() else {
         return Err(
-            "usage: evidence_digest [manifest ROOT | verify MANIFEST ROOT | locator REPOSITORY TAG BUNDLE MANIFEST OUTPUT | publication-locator GENERATION CAPTURE_ROOT OUTPUT | verify-publication GENERATION CAPTURE_ROOT PUBLISHABLE_LOCATOR DOWNLOADED_BUNDLE DOWNLOADED_MANIFEST DOWNLOADED_LOCATOR EXTRACTION_PARENT OUTPUT | verify-locator LOCATOR | topology HOST_COMMIT RUSTC TARGET LOCK METADATA WORKSPACE_TREE CLI_TREE | refresh-inventory INVENTORY | FILE ...]".into(),
+            "usage: evidence_digest [manifest ROOT | verify MANIFEST ROOT | topology HOST_COMMIT RUSTC TARGET LOCK METADATA WORKSPACE_TREE CLI_TREE | refresh-inventory INVENTORY | FILE ...]".into(),
         );
     };
     #[cfg(debug_assertions)]
@@ -4680,7 +4228,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Path::new(&manifest),
             Path::new(&extraction_parent),
             Path::new(&receipt),
-            archive_limits_from_test_environment("DOWNLOADED", DOWNLOADED_ARCHIVE_LIMITS)?,
+            archive_limits_from_test_environment("STAGED", STAGED_ARCHIVE_LIMITS)?,
         );
     }
     #[cfg(debug_assertions)]
@@ -4734,7 +4282,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Path::new(&manifest),
             Path::new(&extraction_parent),
             Path::new(&receipt),
-            DOWNLOADED_ARCHIVE_LIMITS,
+            STAGED_ARCHIVE_LIMITS,
         );
     }
     if first == "extract-captured-source" {
@@ -4775,90 +4323,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             return Err("verify accepts exactly MANIFEST and ROOT".into());
         }
         return verify_manifest(Path::new(&manifest), Path::new(&root));
-    }
-    if first == "locator" {
-        let repository = arguments.next().ok_or("locator requires REPOSITORY")?;
-        let release_tag = arguments.next().ok_or("locator requires TAG")?;
-        let bundle = arguments.next().ok_or("locator requires BUNDLE")?;
-        let manifest_path = arguments.next().ok_or("locator requires MANIFEST")?;
-        let output = arguments.next().ok_or("locator requires OUTPUT")?;
-        if arguments.next().is_some() {
-            return Err("locator accepts exactly REPOSITORY TAG BUNDLE MANIFEST OUTPUT".into());
-        }
-        return write_locator(
-            repository.to_str().ok_or("repository must be UTF-8")?,
-            release_tag.to_str().ok_or("release tag must be UTF-8")?,
-            Path::new(&bundle),
-            Path::new(&manifest_path),
-            Path::new(&output),
-        );
-    }
-    if first == "publication-locator" {
-        let generation = arguments
-            .next()
-            .ok_or("publication-locator requires GENERATION")?;
-        let capture_root = arguments
-            .next()
-            .ok_or("publication-locator requires CAPTURE_ROOT")?;
-        let output = arguments
-            .next()
-            .ok_or("publication-locator requires OUTPUT")?;
-        if arguments.next().is_some() {
-            return Err(
-                "publication-locator accepts exactly GENERATION CAPTURE_ROOT OUTPUT".into(),
-            );
-        }
-        return write_publication_locator(
-            generation.to_str().ok_or("generation must be UTF-8")?,
-            Path::new(&capture_root),
-            Path::new(&output),
-        );
-    }
-    if first == "verify-publication" {
-        let generation = arguments
-            .next()
-            .ok_or("verify-publication requires GENERATION")?;
-        let capture_root = arguments
-            .next()
-            .ok_or("verify-publication requires CAPTURE_ROOT")?;
-        let publishable_locator = arguments
-            .next()
-            .ok_or("verify-publication requires PUBLISHABLE_LOCATOR")?;
-        let downloaded_bundle = arguments
-            .next()
-            .ok_or("verify-publication requires DOWNLOADED_BUNDLE")?;
-        let downloaded_manifest = arguments
-            .next()
-            .ok_or("verify-publication requires DOWNLOADED_MANIFEST")?;
-        let downloaded_locator = arguments
-            .next()
-            .ok_or("verify-publication requires DOWNLOADED_LOCATOR")?;
-        let extraction_parent = arguments
-            .next()
-            .ok_or("verify-publication requires EXTRACTION_PARENT")?;
-        let output = arguments
-            .next()
-            .ok_or("verify-publication requires OUTPUT")?;
-        if arguments.next().is_some() {
-            return Err("verify-publication accepts exactly GENERATION CAPTURE_ROOT PUBLISHABLE_LOCATOR DOWNLOADED_BUNDLE DOWNLOADED_MANIFEST DOWNLOADED_LOCATOR EXTRACTION_PARENT OUTPUT".into());
-        }
-        return write_publication_verification(
-            generation.to_str().ok_or("generation must be UTF-8")?,
-            Path::new(&capture_root),
-            Path::new(&publishable_locator),
-            Path::new(&downloaded_bundle),
-            Path::new(&downloaded_manifest),
-            Path::new(&downloaded_locator),
-            Path::new(&extraction_parent),
-            Path::new(&output),
-        );
-    }
-    if first == "verify-locator" {
-        let locator = arguments.next().ok_or("verify-locator requires LOCATOR")?;
-        if arguments.next().is_some() {
-            return Err("verify-locator accepts exactly LOCATOR".into());
-        }
-        return verify_locator(Path::new(&locator));
     }
     if first == "topology" {
         let generation = arguments.next().ok_or("topology requires GENERATION")?;
@@ -4940,7 +4404,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         let mode = InventoryRefreshMode::parse(mode.to_str().ok_or("mode must be UTF-8")?)?;
         if mode != InventoryRefreshMode::PreCapture && topology.is_none() {
-            return Err("post-capture and postpublication require topology output".into());
+            return Err("post-capture requires topology output".into());
         }
         return refresh_contract(
             mode,
@@ -5073,8 +4537,8 @@ mod archive_tests {
     use tar::{Builder, EntryType, Header};
 
     use super::{
-        DOWNLOADED_ARCHIVE_LIMITS, Manifest, ManifestFile, digest_open_file,
-        extract_and_verify_downloaded_archive, open_regular_nofollow,
+        Manifest, ManifestFile, STAGED_ARCHIVE_LIMITS, digest_open_file,
+        extract_and_verify_staged_archive, open_regular_nofollow,
     };
 
     fn extract(
@@ -5083,13 +4547,13 @@ mod archive_tests {
         extraction_parent: &Path,
     ) -> Result<(Manifest, u64, blake3::Hash), Box<dyn std::error::Error>> {
         let (bytes, digest) = digest_open_file(archive_file)?;
-        extract_and_verify_downloaded_archive(
+        extract_and_verify_staged_archive(
             archive_file,
             manifest_bytes,
             bytes,
             digest,
             extraction_parent,
-            DOWNLOADED_ARCHIVE_LIMITS,
+            STAGED_ARCHIVE_LIMITS,
         )
     }
 
@@ -5131,7 +4595,7 @@ mod archive_tests {
     }
 
     #[test]
-    fn downloaded_archive_rejects_symlink_and_hardlink_members() {
+    fn staged_archive_rejects_symlink_and_hardlink_members() {
         for entry_type in [EntryType::Symlink, EntryType::Link] {
             let directory = tempfile::tempdir().expect("archive test directory is created");
             let archive = directory.path().join("archive.tar.gz");
@@ -5169,7 +4633,7 @@ mod archive_tests {
     }
 
     #[test]
-    fn downloaded_archive_rejects_newline_member_names() {
+    fn staged_archive_rejects_newline_member_names() {
         let directory = tempfile::tempdir().expect("archive test directory is created");
         let archive = directory.path().join("archive.tar.gz");
         let manifest = directory.path().join("evidence-manifest.json");
@@ -5205,7 +4669,7 @@ mod archive_tests {
 
     #[cfg(unix)]
     #[test]
-    fn downloaded_evidence_acquisition_rejects_symlinks() {
+    fn staged_evidence_acquisition_rejects_symlinks() {
         use std::os::unix::fs::symlink;
 
         let directory = tempfile::tempdir().expect("acquisition test directory is created");
@@ -5213,8 +4677,8 @@ mod archive_tests {
         let alias = directory.path().join("download.tar.gz");
         std::fs::write(&target, b"archive bytes").expect("target bytes are written");
         symlink(&target, &alias).expect("download symlink is created");
-        let error = open_regular_nofollow(&alias)
-            .expect_err("symlinked downloaded evidence must be refused");
+        let error =
+            open_regular_nofollow(&alias).expect_err("symlinked staged evidence must be refused");
         assert!(error.to_string().contains("no-follow regular file"));
     }
 }
@@ -5556,29 +5020,6 @@ mod tests {
         );
 
         assert!(verify_manifest(&manifest_path, &root).is_err());
-    }
-
-    #[test]
-    fn locator_is_derived_from_and_verifies_staged_bytes() {
-        let directory = tempfile::tempdir().expect("temporary evidence directory");
-        let bundle = directory.path().join("baseline.tar.gz");
-        let manifest_path = directory.path().join("evidence-manifest.json");
-        let locator_path = directory.path().join("bundle-locator.json");
-        fs::write(&bundle, b"bundle").expect("write bundle fixture");
-        fs::write(&manifest_path, b"manifest").expect("write manifest fixture");
-
-        write_locator(
-            "https://github.com/example/evidence",
-            "baseline-v1",
-            &bundle,
-            &manifest_path,
-            &locator_path,
-        )
-        .expect("derive locator from staged bytes");
-        verify_locator(&locator_path).expect("unaltered locator verifies");
-
-        fs::write(&bundle, b"mutated bundle").expect("mutate bundle fixture");
-        assert!(verify_locator(&locator_path).is_err());
     }
 
     #[test]

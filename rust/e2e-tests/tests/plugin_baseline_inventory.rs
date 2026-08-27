@@ -6,7 +6,7 @@
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     fs,
     path::{Component, Path, PathBuf},
     process::{Command, Stdio},
@@ -75,6 +75,32 @@ const EXPORTER_METRICS: &[&str] = &[
 ];
 fn repository_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
+}
+
+#[test]
+fn baseline_workflow_has_no_remote_publication_contract() {
+    let root = repository_root();
+    for relative in [
+        "rust/bench-tools/src/bin/evidence_digest.rs",
+        "rust/scripts/capture-plugin-baseline.sh",
+        "rust/scripts/refresh-plugin-baseline-inventory.sh",
+        "artifacts/native-plugin-baseline/README.md",
+    ] {
+        let contents = fs::read_to_string(root.join(relative))
+            .unwrap_or_else(|error| panic!("{relative} is readable: {error}"));
+        for prohibited in [
+            ["github.com/ajcasagrande", "/rust-native-plugin-lab"].concat(),
+            ["post", "publication"].concat(),
+            ["publication", "-verification"].concat(),
+            ["stable", "_url"].concat(),
+            ["release", "_tag"].concat(),
+        ] {
+            assert!(
+                !contents.contains(&prohibited),
+                "{relative} retains remote publication contract `{prohibited}`"
+            );
+        }
+    }
 }
 
 fn validation_root() -> PathBuf {
@@ -471,102 +497,6 @@ fn validate_manifest(manifest: &JsonValue) -> Result<usize, String> {
     Ok(manifest.files.len())
 }
 
-fn validate_bundle_locator(locator: &JsonValue, raw: &serde_yaml::Mapping) -> Result<(), String> {
-    let locator = locator
-        .as_object()
-        .ok_or_else(|| "bundle locator must be a JSON object".to_owned())?;
-    if locator.get("schema_version").and_then(JsonValue::as_u64) != Some(1) {
-        return Err("bundle locator schema must be 1".to_owned());
-    }
-    let locator_text = |name: &str| {
-        locator
-            .get(name)
-            .and_then(JsonValue::as_str)
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| format!("bundle locator lacks `{name}`"))
-    };
-    let raw_bundle = mapping(field(raw, "bundle")?, "bundle")?;
-    let raw_manifest = mapping(field(raw, "manifest")?, "manifest")?;
-    for (locator_name, raw_name) in [
-        ("staged_path", "staged_path"),
-        ("blake3", "blake3"),
-        ("recommended_release_tag", "release_tag"),
-        ("repository", "repository"),
-    ] {
-        if locator_text(locator_name)? != text(raw_bundle, raw_name)? {
-            return Err(format!("bundle locator `{locator_name}` mismatch"));
-        }
-    }
-    if locator.get("bytes").and_then(JsonValue::as_u64) != field(raw_bundle, "bytes")?.as_u64() {
-        return Err("bundle locator length mismatch".to_owned());
-    }
-    if locator_text("manifest_path")? != text(raw_manifest, "path")?
-        || locator_text("manifest_blake3")? != text(raw_manifest, "blake3")?
-        || locator.get("manifest_bytes").and_then(JsonValue::as_u64)
-            != field(raw_manifest, "bytes")?.as_u64()
-    {
-        return Err("bundle locator manifest mismatch".to_owned());
-    }
-    let asset_name = locator_text("asset_name")?;
-    if Path::new(locator_text("staged_path")?)
-        .file_name()
-        .and_then(|name| name.to_str())
-        != Some(asset_name)
-    {
-        return Err("bundle locator asset name mismatch".to_owned());
-    }
-    let stable_url = format!(
-        "{}/releases/download/{}/{}",
-        locator_text("repository")?,
-        locator_text("recommended_release_tag")?,
-        asset_name
-    );
-    if locator_text("stable_url")? != stable_url {
-        return Err("bundle locator stable URL mismatch".to_owned());
-    }
-    match locator_text("publication_status")? {
-        "published_and_verified" => {
-            let generation = locator_text("recommended_release_tag")?
-                .strip_prefix("native-plugin-baseline-caa3ff6f-")
-                .and_then(|suffix| suffix.strip_suffix("-final"))
-                .filter(|generation| {
-                    !generation.is_empty()
-                        && generation
-                            .bytes()
-                            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
-                })
-                .ok_or_else(|| "published locator release tag is not canonical".to_owned())?;
-            if matches!(
-                generation,
-                "review1"
-                    | "review1b"
-                    | "review1c"
-                    | "review1d"
-                    | "review1e"
-                    | "review1f"
-                    | "review1g"
-                    | "review1h"
-            ) {
-                return Err(format!(
-                    "published locator generation `{generation}` is explicitly invalidated"
-                ));
-            }
-            if text(raw, "admission_status")? != format!("published_verified_{generation}")
-                || locator_text("archive_verification_status")?
-                    != "downloaded_extracted_manifest_verified"
-            {
-                return Err("published locator lacks retrieval verification".to_owned());
-            }
-        }
-        status => {
-            return Err(format!(
-                "canonical bundle must be published_and_verified, observed `{status}`"
-            ));
-        }
-    }
-    Ok(())
-}
-
 fn validate_inventory(contents: &str, root: &Path) -> Result<(), String> {
     let document: Value = serde_yaml::from_str(contents).map_err(|error| error.to_string())?;
     let inventory = mapping(&document, "inventory")?;
@@ -588,8 +518,7 @@ fn validate_inventory(contents: &str, root: &Path) -> Result<(), String> {
         return Err("host_commit is not the frozen baseline".to_owned());
     }
     let raw_samples = mapping(field(inventory, "raw_samples")?, "raw_samples")?;
-    let is_prepublication =
-        text(raw_samples, "admission_status")? == "prepublication_expected_failure";
+    let is_pre_capture = text(raw_samples, "admission_status")? == "pre_capture";
 
     let identity_json = text(inventory, "experiment_identity_json")?;
     let identity: JsonValue =
@@ -860,7 +789,7 @@ fn validate_inventory(contents: &str, root: &Path) -> Result<(), String> {
         {
             return Err("exporter_100k repetition contract mismatch".to_owned());
         }
-        if name == "exporter_100k" && !is_prepublication {
+        if name == "exporter_100k" && !is_pre_capture {
             let receipts = field(scenario, "repetition_receipts")?
                 .as_sequence()
                 .ok_or_else(|| "exporter repetition receipts must be a sequence".to_owned())?;
@@ -1142,7 +1071,7 @@ fn validate_inventory(contents: &str, root: &Path) -> Result<(), String> {
 
     let artifacts = mapping(field(inventory, "artifacts")?, "artifacts")?;
     for (name, value) in artifacts {
-        if is_prepublication && name.as_str() == Some("allocation_probe") {
+        if is_pre_capture && name.as_str() == Some("allocation_probe") {
             continue;
         }
         let artifact = mapping(value, "artifact")?;
@@ -1189,8 +1118,12 @@ fn validate_inventory(contents: &str, root: &Path) -> Result<(), String> {
     }
 
     let raw = mapping(field(inventory, "raw_samples")?, "raw_samples")?;
-    if text(raw, "admission_status")? == "prepublication_expected_failure" {
-        return Err("canonical raw evidence is not published_and_verified".to_owned());
+    if text(raw, "admission_status")? == "pre_capture" {
+        return Err("canonical raw evidence is not locally authenticated".to_owned());
+    }
+    let expected_generation = text(raw, "expected_generation")?;
+    if text(raw, "admission_status")? != format!("locally_authenticated_{expected_generation}") {
+        return Err("canonical raw evidence lacks local authentication".to_owned());
     }
     for name in ["manifest", "bundle"] {
         let artifact = mapping(field(raw, name)?, name)?;
@@ -1212,15 +1145,6 @@ fn validate_inventory(contents: &str, root: &Path) -> Result<(), String> {
     {
         return Err("manifest file count mismatch".to_owned());
     }
-    let locator_path = root.join(text(
-        mapping(field(artifacts, "bundle_locator")?, "bundle_locator")?,
-        "path",
-    )?);
-    let locator: JsonValue =
-        serde_json::from_slice(&fs::read(locator_path).map_err(|error| error.to_string())?)
-            .map_err(|error| error.to_string())?;
-    validate_bundle_locator(&locator, raw)?;
-
     Ok(())
 }
 
@@ -1238,11 +1162,11 @@ fn baseline_inventory_is_complete_and_self_authenticating() {
         "raw_samples",
     )
     .expect("raw_samples is a mapping");
-    if text(raw, "admission_status") == Ok("prepublication_expected_failure") {
+    if text(raw, "admission_status") == Ok("pre_capture") {
         assert_eq!(
             validate_inventory(&contents, &root)
-                .expect_err("prepublication inventory must not satisfy canonical validation"),
-            "canonical raw evidence is not published_and_verified"
+                .expect_err("pre-capture inventory must not satisfy canonical validation"),
+            "canonical raw evidence is not locally authenticated"
         );
     } else {
         validate_inventory(&contents, &root).unwrap_or_else(|error| panic!("{error}"));
@@ -1251,7 +1175,7 @@ fn baseline_inventory_is_complete_and_self_authenticating() {
 }
 
 #[test]
-fn prepublication_inventory_is_deliberately_inadmissible_from_measurement_projection() {
+fn pre_capture_inventory_is_deliberately_inadmissible_from_measurement_projection() {
     let source = repository_root();
     let directory = tempfile::tempdir().expect("clean measurement package root");
     let clean = directory.path();
@@ -1268,17 +1192,12 @@ fn prepublication_inventory_is_deliberately_inadmissible_from_measurement_projec
         fs::copy(source.join(&relative), destination).expect("tracked package member is copied");
     }
     assert!(
-        [
-            "allocation-probe.json",
-            "evidence-manifest.json",
-            "bundle-locator.json",
-            "raw",
-        ]
-        .iter()
-        .all(|name| !clean
-            .join("artifacts/native-plugin-baseline")
-            .join(name)
-            .exists()),
+        ["allocation-probe.json", "evidence-manifest.json", "raw",]
+            .iter()
+            .all(|name| !clean
+                .join("artifacts/native-plugin-baseline")
+                .join(name)
+                .exists()),
         "clean pre-capture candidate contains stale canonical evidence"
     );
 
@@ -1286,13 +1205,13 @@ fn prepublication_inventory_is_deliberately_inadmissible_from_measurement_projec
         .expect("clean package inventory is readable");
     assert_eq!(
         validate_inventory(&contents, clean)
-            .expect_err("prepublication inventory must remain deliberately inadmissible"),
-        "canonical raw evidence is not published_and_verified"
+            .expect_err("pre-capture inventory must remain deliberately inadmissible"),
+        "canonical raw evidence is not locally authenticated"
     );
 }
 
 #[test]
-fn prepublication_gate_runs_from_the_complete_current_tracked_package() {
+fn pre_capture_gate_runs_from_the_complete_current_tracked_package() {
     let source = repository_root();
     let directory = tempfile::tempdir().expect("clean tracked package root");
     let clean = directory.path().join("source");
@@ -1440,7 +1359,6 @@ fn prepublication_gate_runs_from_the_complete_current_tracked_package() {
     assert!(!clean.join("rust/target").exists());
     for relative in [
         "artifacts/native-plugin-baseline/evidence-manifest.json",
-        "artifacts/native-plugin-baseline/bundle-locator.json",
         "artifacts/native-plugin-baseline/raw",
     ] {
         assert!(
@@ -1458,7 +1376,7 @@ fn prepublication_gate_runs_from_the_complete_current_tracked_package() {
             "aiperf-e2e-tests",
             "--test",
             "plugin_baseline_inventory",
-            "prepublication_inventory_is_deliberately_inadmissible_from_measurement_projection",
+            "pre_capture_inventory_is_deliberately_inadmissible_from_measurement_projection",
             "--",
             "--exact",
             "--test-threads=1",
@@ -1478,7 +1396,7 @@ fn prepublication_gate_runs_from_the_complete_current_tracked_package() {
     );
     assert!(
         String::from_utf8_lossy(&output.stdout).contains(
-            "test prepublication_inventory_is_deliberately_inadmissible_from_measurement_projection ... ok"
+            "test pre_capture_inventory_is_deliberately_inadmissible_from_measurement_projection ... ok"
         ),
         "clean-package Cargo gate did not execute the exact inner behavior test"
     );
@@ -1677,8 +1595,6 @@ fn capture_harness_bounds_every_long_lived_command_site() {
         "run_owned 1800 evidence-bundle",
         "run_owned 1800 bundle-verify-and-receipt",
         "verify-staged-bundle",
-        "run_owned 300 locator",
-        "run_owned 300 locator-verify",
         "failure_ledger=$(dirname \"$output_root\")/capture-failures.txt",
         ">>\"$failure_ledger\"",
         "subprocess.Popen",
@@ -1713,7 +1629,6 @@ fn capture_harness_bounds_every_long_lived_command_site() {
         "require_output nonempty evidence-manifest",
         "require_output nonempty evidence-bundle",
         "require_output nonempty bundle-verification",
-        "require_output nonempty locator",
     ] {
         assert!(
             script.contains(required),
@@ -1819,7 +1734,6 @@ fn baseline_refresh_helper_has_explicit_truthful_modes_and_fixed_point() {
     for required in [
         "pre-capture",
         "post-capture",
-        "postpublication",
         "AIPERF_PLUGIN_CAPTURE_ROOT",
         "AIPERF_PLUGIN_REFRESH_ROOT",
         "CARGO_TARGET_DIR",
@@ -2606,11 +2520,6 @@ fn pre_capture_refuses_stale_canonical_state_before_candidate_or_code_execution(
         scripts.join("plugin-baseline-owned-command.sh"),
     )
     .expect("ownership helper is copied");
-    fs::write(
-        canonical.join("bundle-locator.json"),
-        b"stale canonical locator\n",
-    )
-    .expect("stale locator is written");
     let execution_marker = directory.path().join("unexpected-command-execution");
     let fake_git = commands.join("git");
     fs::write(
@@ -2687,6 +2596,7 @@ fn package_topology_dependency_claims_match_cargo_metadata() {
             "cargo_profile",
             "measurement",
             "workspace_packages",
+            "cargo_projection",
         ]
         .into_iter()
         .collect()
@@ -2711,6 +2621,24 @@ fn package_topology_dependency_claims_match_cargo_metadata() {
         .map(|package| package["name"].as_str().expect("package name is text"))
         .collect::<BTreeSet<_>>();
     assert_eq!(packages.len(), workspace_names.len());
+    let exact_packages = topology["cargo_projection"]
+        .as_array()
+        .expect("topology exact Cargo projection must be an array");
+    assert_eq!(exact_packages.len(), workspace_names.len());
+    assert_eq!(
+        exact_packages
+            .iter()
+            .map(|package| package["name"]
+                .as_str()
+                .expect("exact package name is text"))
+            .collect::<Vec<_>>(),
+        workspace_names.iter().copied().collect::<Vec<_>>(),
+        "exact Cargo packages are not deterministically ordered"
+    );
+    let workspace_root = root
+        .join("rust")
+        .canonicalize()
+        .expect("workspace root canonicalizes");
     for package in metadata["packages"]
         .as_array()
         .expect("metadata packages must be an array")
@@ -2820,84 +2748,135 @@ fn package_topology_dependency_claims_match_cargo_metadata() {
             claimed_features, expected_features,
             "stale features for `{name}`"
         );
-    }
-}
 
-fn published_locator_fixture(generation: &str) -> (Value, JsonValue) {
-    let raw: Value = serde_yaml::from_str(&format!(
-        r#"
-admission_status: published_verified_{generation}
-manifest:
-  path: artifacts/native-plugin-baseline/evidence-manifest.json
-  bytes: 10
-  blake3: blake3:1111111111111111111111111111111111111111111111111111111111111111
-bundle:
-  staged_path: /work/evidence/aiperf-native-plugin-baseline-caa3ff6f-{generation}-final.tar.gz
-  bytes: 20
-  blake3: blake3:2222222222222222222222222222222222222222222222222222222222222222
-  release_tag: native-plugin-baseline-caa3ff6f-{generation}-final
-  repository: https://github.com/ajcasagrande/rust-native-plugin-lab
-"#
-    ))
-    .expect("published raw-sample fixture parses");
-    let locator = serde_json::json!({
-        "schema_version": 1,
-        "repository": "https://github.com/ajcasagrande/rust-native-plugin-lab",
-        "recommended_release_tag": format!("native-plugin-baseline-caa3ff6f-{generation}-final"),
-        "asset_name": format!("aiperf-native-plugin-baseline-caa3ff6f-{generation}-final.tar.gz"),
-        "publication_status": "published_and_verified",
-        "archive_verification_status": "downloaded_extracted_manifest_verified",
-        "staged_path": format!("/work/evidence/aiperf-native-plugin-baseline-caa3ff6f-{generation}-final.tar.gz"),
-        "bytes": 20,
-        "blake3": "blake3:2222222222222222222222222222222222222222222222222222222222222222",
-        "manifest_path": "artifacts/native-plugin-baseline/evidence-manifest.json",
-        "manifest_bytes": 10,
-        "manifest_blake3": "blake3:1111111111111111111111111111111111111111111111111111111111111111",
-        "stable_url": format!("https://github.com/ajcasagrande/rust-native-plugin-lab/releases/download/native-plugin-baseline-caa3ff6f-{generation}-final/aiperf-native-plugin-baseline-caa3ff6f-{generation}-final.tar.gz")
-    });
-    (raw, locator)
-}
+        let exact_claim = exact_packages
+            .iter()
+            .find(|claim| claim["name"] == name)
+            .unwrap_or_else(|| panic!("exact Cargo projection omits `{name}`"));
+        assert_eq!(
+            exact_claim
+                .as_object()
+                .expect("exact package claim is an object")
+                .keys()
+                .map(String::as_str)
+                .collect::<BTreeSet<_>>(),
+            ["name", "version", "edition", "dependencies", "features"]
+                .into_iter()
+                .collect(),
+            "exact package claim has the wrong field census for `{name}`"
+        );
+        assert_eq!(exact_claim["version"], package["version"]);
+        assert_eq!(exact_claim["edition"], package["edition"]);
 
-#[test]
-fn published_locator_requires_review1i_retrieval_admission() {
-    let (raw, locator) = published_locator_fixture("review1i");
+        let mut expected_exact_dependencies = package["dependencies"]
+            .as_array()
+            .expect("dependencies are an array")
+            .iter()
+            .map(|dependency| {
+                let package_name = dependency["name"]
+                    .as_str()
+                    .expect("dependency package name is text");
+                let mut features = dependency["features"]
+                    .as_array()
+                    .expect("dependency features are an array")
+                    .iter()
+                    .map(|feature| {
+                        feature
+                            .as_str()
+                            .expect("dependency feature is text")
+                            .to_owned()
+                    })
+                    .collect::<Vec<_>>();
+                features.sort();
+                let path = dependency["path"].as_str().map(|path| {
+                    Path::new(path)
+                        .strip_prefix(&workspace_root)
+                        .unwrap_or_else(|_| Path::new(path))
+                        .to_string_lossy()
+                        .replace('\\', "/")
+                });
+                serde_json::json!({
+                    "package": package_name,
+                    "local_name": dependency["rename"].as_str().unwrap_or(package_name),
+                    "kind": dependency["kind"].as_str().unwrap_or("normal"),
+                    "source": dependency["source"].clone(),
+                    "requirement": dependency["req"].clone(),
+                    "registry": dependency["registry"].clone(),
+                    "path": path,
+                    "target": dependency["target"].clone(),
+                    "is_optional": dependency["optional"].clone(),
+                    "uses_default_features": dependency["uses_default_features"].clone(),
+                    "features": features,
+                    "is_workspace": workspace_names.contains(package_name),
+                })
+            })
+            .collect::<Vec<_>>();
+        expected_exact_dependencies.sort_by(|left, right| {
+            serde_json::to_string(left)
+                .expect("expected dependency serializes")
+                .cmp(&serde_json::to_string(right).expect("expected dependency serializes"))
+        });
+        for dependency in exact_claim["dependencies"]
+            .as_array()
+            .expect("exact dependencies are an array")
+        {
+            assert_eq!(
+                dependency
+                    .as_object()
+                    .expect("exact dependency is an object")
+                    .keys()
+                    .map(String::as_str)
+                    .collect::<BTreeSet<_>>(),
+                [
+                    "package",
+                    "local_name",
+                    "kind",
+                    "source",
+                    "requirement",
+                    "registry",
+                    "path",
+                    "target",
+                    "is_optional",
+                    "uses_default_features",
+                    "features",
+                    "is_workspace",
+                ]
+                .into_iter()
+                .collect(),
+                "exact dependency has the wrong field census for `{name}`"
+            );
+        }
+        assert_eq!(
+            exact_claim["dependencies"],
+            JsonValue::Array(expected_exact_dependencies),
+            "exact dependency identity drift for `{name}`"
+        );
 
-    validate_bundle_locator(
-        &locator,
-        raw.as_mapping().expect("raw-sample fixture is a mapping"),
-    )
-    .expect("review1i published locator must be admissible after retrieval verification");
-}
-
-#[test]
-fn canonical_locator_rejects_superseded_evidence() {
-    let (mut raw, mut locator) = published_locator_fixture("review1h");
-    raw["admission_status"] = Value::String("superseded_rejected_review1e".to_owned());
-    locator["publication_status"] = JsonValue::String("superseded_rejected".to_owned());
-    locator["archive_verification_status"] =
-        JsonValue::String("superseded_without_admission".to_owned());
-    locator["invalidation_reason"] = JsonValue::String("superseded fixture".to_owned());
-
-    let error = validate_bundle_locator(
-        &locator,
-        raw.as_mapping().expect("raw-sample fixture is a mapping"),
-    )
-    .expect_err("superseded evidence must never satisfy canonical admission");
-    assert!(error.contains("published_and_verified"), "{error}");
-}
-
-#[test]
-fn published_locator_rejects_invalidated_review1e_through_review1h() {
-    for generation in ["review1e", "review1f", "review1g", "review1h"] {
-        let (raw, locator) = published_locator_fixture(generation);
-        let error = validate_bundle_locator(
-            &locator,
-            raw.as_mapping().expect("raw-sample fixture is a mapping"),
-        )
-        .expect_err("an explicitly invalidated generation must remain inadmissible");
-        assert!(
-            error.contains("explicitly invalidated"),
-            "{generation} failed for unexpected reason: {error}"
+        let expected_exact_features = package["features"]
+            .as_object()
+            .expect("features are an object")
+            .iter()
+            .map(|(feature, values)| {
+                let mut values = values
+                    .as_array()
+                    .expect("feature forwarding vector is an array")
+                    .iter()
+                    .map(|value| {
+                        value
+                            .as_str()
+                            .expect("feature forwarding value is text")
+                            .to_owned()
+                    })
+                    .collect::<Vec<_>>();
+                values.sort();
+                (feature.clone(), values)
+            })
+            .collect::<BTreeMap<_, _>>();
+        assert_eq!(
+            exact_claim["features"],
+            serde_json::to_value(expected_exact_features)
+                .expect("expected feature projection serializes"),
+            "exact feature identity drift for `{name}`"
         );
     }
 }

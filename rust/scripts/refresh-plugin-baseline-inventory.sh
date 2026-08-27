@@ -5,7 +5,7 @@
 set -eu
 
 usage() {
-    echo "usage: $0 pre-capture|post-capture|postpublication GENERATION [CAPTURE_ROOT]" >&2
+    echo "usage: $0 pre-capture|post-capture GENERATION [CAPTURE_ROOT]" >&2
     exit 64
 }
 
@@ -45,7 +45,7 @@ case "$generation" in
 esac
 case "$mode" in
     pre-capture) [ -z "$capture_root" ] || usage ;;
-    post-capture|postpublication) [ -n "$capture_root" ] || usage ;;
+    post-capture) [ -n "$capture_root" ] || usage ;;
     *) usage ;;
 esac
 
@@ -81,7 +81,6 @@ if [ "$mode" = pre-capture ]; then
     canonical_root=$repository/artifacts/native-plugin-baseline
     for stale_path in \
         "$canonical_root/evidence-manifest.json" \
-        "$canonical_root/bundle-locator.json" \
         "$canonical_root/raw"
     do
         if [ -e "$stale_path" ] || [ -L "$stale_path" ]; then
@@ -204,7 +203,7 @@ mkdir -p "$(dirname "$candidate_inventory")" "$candidate_compact"
 cp "$inventory" "$candidate_inventory"
 compact_names="README.md package-topology.json"
 if [ "$mode" != pre-capture ]; then
-    compact_names="$compact_names allocation-probe.json evidence-manifest.json bundle-locator.json"
+    compact_names="$compact_names allocation-probe.json evidence-manifest.json"
 fi
 for compact_name in $compact_names; do
     compact_source=$repository/artifacts/native-plugin-baseline/$compact_name
@@ -289,7 +288,7 @@ run_owned 300 refresh-publication-reader "$digest_tool" verify-baseline-publicat
 cmp "$candidate_inventory" "$inventory"
 cmp "$candidate_topology" "$topology"
 if [ "$mode" != pre-capture ]; then
-    for compact_name in allocation-probe.json evidence-manifest.json bundle-locator.json; do
+    for compact_name in allocation-probe.json evidence-manifest.json; do
         cmp "$candidate_compact/$compact_name" \
             "$repository/artifacts/native-plugin-baseline/$compact_name"
     done

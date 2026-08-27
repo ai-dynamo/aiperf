@@ -820,9 +820,7 @@ require_output nonempty measurement-results \
 assert_effective_source_unchanged
 
 manifest=$output_root/../evidence-manifest.json
-release_tag=native-plugin-baseline-caa3ff6f-${capture_name#task1-}
-bundle=$output_root/../aiperf-${release_tag}.tar.gz
-locator=$output_root/../bundle-locator.json
+bundle=$output_root/../aiperf-native-plugin-baseline-${capture_generation}.tar.gz
 run_owned 300 evidence-manifest "$digest_tool" manifest "$output_root" >"$manifest"
 require_output nonempty evidence-manifest "$manifest"
 run_owned 300 evidence-verify "$digest_tool" verify "$manifest" "$output_root"
@@ -839,12 +837,6 @@ verify_completed_bundle "$digest_tool" "$capture_generation" "$bundle" "$manifes
     "$verification_root" "$output_root/../bundle-verification.json"
 digest "$manifest" >"$manifest.digest"
 digest "$bundle" >"$bundle.digest"
-run_owned 300 locator "$digest_tool" locator \
-    https://github.com/ajcasagrande/rust-native-plugin-lab \
-    "$release_tag" "$bundle" "$manifest" "$locator"
-require_output nonempty locator "$locator"
-run_owned 300 locator-verify "$digest_tool" verify-locator "$locator"
 echo "manifest=$manifest"
 echo "bundle=$bundle"
-echo "locator=$locator"
 cat "$bundle.digest"
