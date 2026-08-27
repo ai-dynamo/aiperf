@@ -291,14 +291,13 @@ struct RuntimeReportContext<'a> {
     scenario_count: usize,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-struct AttemptLedgerEntryPreimageV1 {
+#[derive(Serialize)]
+struct AttemptLedgerEntryPreimageV1<'a> {
     schema_version: u8,
-    experiment_identity_blake3: String,
-    previous_entry_blake3: Option<String>,
-    attempt: ControlledAttemptRecord,
-    evidence_tree_bytes: Vec<u8>,
+    experiment_identity_blake3: &'a str,
+    previous_entry_blake3: Option<&'a str>,
+    attempt: &'a ControlledAttemptRecord,
+    evidence_tree_bytes: &'a [u8],
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -408,10 +407,10 @@ impl AttemptLedger {
         let expected_previous = previous.map(|entry| entry.entry_blake3.as_str());
         let preimage = AttemptLedgerEntryPreimageV1 {
             schema_version: entry.schema_version,
-            experiment_identity_blake3: entry.experiment_identity_blake3.clone(),
-            previous_entry_blake3: entry.previous_entry_blake3.clone(),
-            attempt: entry.attempt.clone(),
-            evidence_tree_bytes: entry.evidence_tree_bytes.clone(),
+            experiment_identity_blake3: &entry.experiment_identity_blake3,
+            previous_entry_blake3: entry.previous_entry_blake3.as_deref(),
+            attempt: &entry.attempt,
+            evidence_tree_bytes: &entry.evidence_tree_bytes,
         };
         let expected_entry_blake3 = canonical_digest(&preimage, "attempt ledger preimage")?;
         if entry.schema_version != 1
@@ -461,7 +460,7 @@ impl AttemptLedger {
         &mut self,
         attempt: ControlledAttemptRecord,
         evidence_tree_bytes: &[u8],
-    ) -> Result<AttemptLedgerEntryV1, ControlledRuntimeError> {
+    ) -> Result<(), ControlledRuntimeError> {
         if attempt.ordinal != self.next_attempt_ordinal()? {
             return Err(ControlledRuntimeError::new(
                 "attempt ledger append ordinal is not next",
@@ -472,20 +471,23 @@ impl AttemptLedger {
                 "attempt ledger evidence bytes do not match their digest",
             ));
         }
-        let preimage = AttemptLedgerEntryPreimageV1 {
+        let previous_entry_blake3 = self.entries.last().map(|entry| entry.entry_blake3.clone());
+        let entry_blake3 = canonical_digest(
+            &AttemptLedgerEntryPreimageV1 {
+                schema_version: 1,
+                experiment_identity_blake3: &self.experiment_identity_blake3,
+                previous_entry_blake3: previous_entry_blake3.as_deref(),
+                attempt: &attempt,
+                evidence_tree_bytes,
+            },
+            "attempt ledger preimage",
+        )?;
+        let entry = AttemptLedgerEntryV1 {
             schema_version: 1,
             experiment_identity_blake3: self.experiment_identity_blake3.clone(),
-            previous_entry_blake3: self.entries.last().map(|entry| entry.entry_blake3.clone()),
+            previous_entry_blake3,
             attempt,
             evidence_tree_bytes: evidence_tree_bytes.to_vec(),
-        };
-        let entry_blake3 = canonical_digest(&preimage, "attempt ledger preimage")?;
-        let entry = AttemptLedgerEntryV1 {
-            schema_version: preimage.schema_version,
-            experiment_identity_blake3: preimage.experiment_identity_blake3,
-            previous_entry_blake3: preimage.previous_entry_blake3,
-            attempt: preimage.attempt,
-            evidence_tree_bytes: preimage.evidence_tree_bytes,
             entry_blake3,
         };
         let mut line = serde_json_canonicalizer::to_vec(&entry).map_err(|error| {
@@ -500,8 +502,8 @@ impl AttemptLedger {
         self.file.sync_all().map_err(|error| {
             ControlledRuntimeError::new(format!("cannot sync attempt ledger: {error}"))
         })?;
-        self.entries.push(entry.clone());
-        Ok(entry)
+        self.entries.push(entry);
+        Ok(())
     }
 }
 
@@ -1602,9 +1604,10 @@ mod tests {
                 ledger.next_attempt_ordinal().expect("attempt is allowed"),
                 ordinal
             );
-            let entry = ledger
+            ledger
                 .append_attempt(invalid_attempt(ordinal, &evidence), &evidence)
                 .expect("invalid attempt appends");
+            let entry = ledger.entries.last().expect("appended entry is retained");
             assert_eq!(entry.previous_entry_blake3, previous_entry);
             previous_entry = Some(entry.entry_blake3.clone());
         }
