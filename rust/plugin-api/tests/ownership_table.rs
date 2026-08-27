@@ -160,10 +160,11 @@ fn a_declaration_is_produced_by_the_entry_shape_and_read_through_borrows() {
     assert_eq!(observed, ["otel", "otel_console"]);
     assert_eq!(registrar.package().id.as_str(), "aiperf_export_otlp");
 
-    // A capability descriptor carries the manifest-bound origin, not one the
-    // plugin chose.
-    let described = registrar.describe(id("otel").expect("normalizes"), &PACKAGE);
+    // A capability descriptor carries the manifest-bound origin. `describe`
+    // takes no package argument, so the origin cannot be chosen by the caller.
+    let described = registrar.describe(id("otel").expect("normalizes"));
     assert_eq!(described.package().id.as_str(), "aiperf_export_otlp");
+    assert_eq!(described.package(), registrar.package());
 }
 
 #[test]

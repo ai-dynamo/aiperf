@@ -16,7 +16,7 @@
 //! duplicates. The endpoint, transport, and exporter category methods land on
 //! top of this seam without changing the entry shape.
 
-use std::fmt;
+use std::{fmt, marker::PhantomData};
 
 use crate::{
     descriptor::{PluginCategoryDescriptor, PluginPackageDescriptor},
@@ -85,23 +85,32 @@ pub trait AIPerfExtension: Send + Sync {
 /// The registrar supplies package identity from the manifest rather than from
 /// the plugin, observes every actual registration, and never exposes the
 /// aggregate registry. A plugin therefore cannot claim an origin other than the
-/// package whose manifest selected its library.
+/// package whose manifest selected its library: every descriptor the registrar
+/// mints reads the package bound at [`PluginRegistrar::new`], and no method
+/// accepts a caller-supplied origin.
+///
+/// The `'a` parameter reserves the borrow of host-private staged registry state
+/// the generation-2 category methods take. It is not the package lifetime: the
+/// package is `&'static` so a minted [`PluginCategoryDescriptor`] can outlive
+/// the registrar without carrying a plugin-chosen origin.
 pub struct PluginRegistrar<'a> {
-    package: &'a PluginPackageDescriptor,
+    package: &'static PluginPackageDescriptor,
     observed: Vec<RegistryId>,
+    host_state: PhantomData<&'a ()>,
 }
 
-impl<'a> PluginRegistrar<'a> {
+impl PluginRegistrar<'_> {
     /// Bind a registrar to the package identity the manifest resolved.
-    pub fn new(package: &'a PluginPackageDescriptor) -> Self {
+    pub fn new(package: &'static PluginPackageDescriptor) -> Self {
         Self {
             package,
             observed: Vec::new(),
+            host_state: PhantomData,
         }
     }
 
     /// The manifest-bound package identity.
-    pub fn package(&self) -> &'a PluginPackageDescriptor {
+    pub fn package(&self) -> &'static PluginPackageDescriptor {
         self.package
     }
 
@@ -127,16 +136,15 @@ impl<'a> PluginRegistrar<'a> {
         Ok(())
     }
 
-    /// Bind an observed identifier to a `'static` package descriptor.
+    /// Bind an observed identifier to the registrar's own package descriptor.
     ///
     /// The host uses this when it promotes staged registrations into the
-    /// aggregate registry, where every entry must carry its origin.
-    pub fn describe(
-        &self,
-        id: RegistryId,
-        package: &'static PluginPackageDescriptor,
-    ) -> PluginCategoryDescriptor {
-        PluginCategoryDescriptor::new(id, package)
+    /// aggregate registry, where every entry must carry its origin. The origin
+    /// is read from the manifest-bound package, never from the caller, so a
+    /// plugin holding a registrar cannot mint a descriptor asserting another
+    /// package's identity.
+    pub fn describe(&self, id: RegistryId) -> PluginCategoryDescriptor {
+        PluginCategoryDescriptor::new(id, self.package)
     }
 }
 

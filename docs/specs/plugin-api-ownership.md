@@ -61,10 +61,10 @@ a hot-path allocation argument.
 | `PluginDeclarationV1::package` | `aiperf-plugin-api` | `()` | `&'static PluginPackageDescriptor` | plugin | plugin | yes | startup |
 | `PluginDeclarationV1::extension` | `aiperf-plugin-api` | `()` | `&'static dyn AIPerfExtension` | plugin | plugin | yes | startup |
 | `AIPerfExtension::register` | `aiperf-plugin-api` | `&self, &mut PluginRegistrar<'_>` | `Result<(), ExtensionError>` | plugin | host | yes | startup |
-| `PluginRegistrar::package` | `aiperf-plugin-api` | `&self` | `&PluginPackageDescriptor` | none | none | yes | startup |
+| `PluginRegistrar::package` | `aiperf-plugin-api` | `&self` | `&'static PluginPackageDescriptor` | none | none | yes | startup |
 | `PluginRegistrar::observed` | `aiperf-plugin-api` | `&self` | `&[RegistryId]` | none | none | yes | startup |
 | `PluginRegistrar::record_registration` | `aiperf-plugin-api` | `&mut self, RegistryId` | `Result<(), ExtensionError>` | plugin | host | yes | startup |
-| `PluginRegistrar::describe` | `aiperf-plugin-api` | `&self, RegistryId, &'static PluginPackageDescriptor` | `PluginCategoryDescriptor` | plugin | host | yes | startup |
+| `PluginRegistrar::describe` | `aiperf-plugin-api` | `&self, RegistryId` | `PluginCategoryDescriptor` | plugin | host | yes | startup |
 | `RegistryId::new` | `aiperf-plugin-api` | `&str, u8` | `Result<RegistryId, RegistryIdError>` | host | host | yes | startup |
 | `RegistryId::as_str` | `aiperf-plugin-api` | `&self` | `&str` | none | none | yes | startup |
 | `PluginPackageDescriptor::from_authored` | `aiperf-plugin-api` | `&str, &'static str, &'static str` | `Result<PluginPackageDescriptor, RegistryIdError>` | plugin | plugin | yes | startup |
@@ -103,6 +103,9 @@ unrelated library exporting the same name is never a second entry point.
 `PluginRegistrar` is a manifest-bound facade: it supplies package identity from
 the manifest rather than from the plugin, observes every registration, rejects a
 duplicate identifier from one package, and never exposes the aggregate registry.
+`describe` reads the package bound at `PluginRegistrar::new` and takes no origin
+argument, so the type — not prose — carries the rule that a plugin cannot claim
+a package identity other than the one the manifest bound to its library.
 
 ### The documentation guard
 

@@ -129,7 +129,7 @@ pub const GENERATION_1_SURFACE: &[OwnershipRow] = &[
         item: "PluginRegistrar::package",
         owning_crate: "aiperf-plugin-api",
         argument_types: "&self",
-        return_type: "&PluginPackageDescriptor",
+        return_type: "&'static PluginPackageDescriptor",
         allocation_owner: StorageOwner::None,
         drop_owner: StorageOwner::None,
         panic_abort: true,
@@ -158,7 +158,7 @@ pub const GENERATION_1_SURFACE: &[OwnershipRow] = &[
     OwnershipRow {
         item: "PluginRegistrar::describe",
         owning_crate: "aiperf-plugin-api",
-        argument_types: "&self, RegistryId, &'static PluginPackageDescriptor",
+        argument_types: "&self, RegistryId",
         return_type: "PluginCategoryDescriptor",
         allocation_owner: StorageOwner::Plugin,
         drop_owner: StorageOwner::Host,
