@@ -181,7 +181,7 @@ impl DryRunParams {
                 &mut seeded_rng(self.seed, ordinal ^ 0x22),
                 self.itl_jitter_cv,
             );
-        (ms_to_ns(ttft_ms), ms_to_ns(itl_ns))
+        (ms_to_ns(ttft_ms), ms_to_ns(itl_ms))
     }
 }
 
