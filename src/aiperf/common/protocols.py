@@ -260,6 +260,12 @@ class SubClientProtocol(CommunicationClientProtocol, Protocol):
 class CommunicationProtocol(AIPerfLifecycleProtocol, Protocol):
     """Protocol for the base communication layer.
     see :class:`aiperf.common.comms.base_comms.BaseCommunication` for more details.
+
+    Breaking change note for out-of-tree implementers: ``create_streaming_router_client``,
+    ``create_streaming_dealer_client``, and ``create_pull_client`` take ``bind``,
+    ``identity``, ``socket_ops``, and related options as keyword-only arguments
+    (following the ``*,`` separator). Callers that previously passed these
+    positionally must switch to keyword arguments.
     """
 
     def get_address(self, address_type: CommAddressType) -> str: ...

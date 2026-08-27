@@ -247,9 +247,17 @@ class _ServiceRegistry(AIPerfLoggerMixin):
     ) -> None:
         """Mark a service dead, optionally recording a fatal failure.
 
-        Recoverable Kubernetes pod deaths use ``fatal=False`` so a replacement
-        can register under the same deterministic service ID. The pod-failure
-        threshold promotes accumulated recoverable deaths to fatal failures.
+        Recoverable Kubernetes pod deaths are meant to use ``fatal=False`` so a
+        replacement can register under the same deterministic service ID, with
+        an accumulated-death threshold later promoting them to fatal via
+        ``escalate_dead_services``. That call site does not exist yet:
+        ``KubernetesServiceManager`` (``controller/kubernetes_service_manager.py``)
+        is still a stub that raises ``NotImplementedError`` on every method, so
+        every current caller of ``fail_service`` (e.g. the heartbeat watchdog in
+        ``BaseServiceManager._judge_stale_service``) uses the default
+        ``fatal=True`` terminal path. ``fatal=False`` and ``escalate_dead_services``
+        are groundwork for the Kubernetes manager and are only exercised by unit
+        tests today.
         """
         info = self.services.get(service_id)
         if info:
@@ -282,12 +290,24 @@ class _ServiceRegistry(AIPerfLoggerMixin):
         self._wake_all_waiters()
 
     def escalate_dead_services(self) -> None:
-        """Promote every recoverable death to a fatal failure."""
+        """Promote every recoverable death to a fatal failure.
+
+        Not yet invoked in production: it exists to be driven by a Kubernetes
+        pod-failure threshold (e.g. polled from ``KubernetesServiceManager``
+        once implemented) that decides a recoverable death has gone on too
+        long without a replacement registering. See ``fail_service`` for the
+        current wiring status.
+        """
         for service_id, service_type in list(self._dead_services.items()):
             self.fail_service(service_id, service_type, fatal=True)
 
     def get_dead_services(self) -> dict[str, ServiceTypeT]:
-        """Return services currently marked as recoverably dead."""
+        """Return services currently marked as recoverably dead.
+
+        Not yet read by any production code path; see ``fail_service`` for the
+        current wiring status. Intended for the future Kubernetes threshold
+        check that drives ``escalate_dead_services``.
+        """
         return dict(self._dead_services)
 
     def _clear_recorded_death(self, service_id: str) -> None:
