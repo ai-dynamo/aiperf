@@ -114,6 +114,13 @@ repos:
         always_run: true
         pass_filenames: false
         args: []
+      - id: check-python-parity
+        name: check-python-parity
+        entry: python tools/check_python_parity.py
+        language: system
+        always_run: true
+        pass_filenames: false
+        args: []
       - id: check-crate-layout
         name: check-crate-layout
         entry: python tools/check_crate_layout.py
