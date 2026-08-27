@@ -496,7 +496,10 @@ fn transport_factory_declares_exactly_one_execution_shape() {
     let prepared = request
         .validate(AuthoredConfigV1::empty(TransportFactory::id(&request)))
         .unwrap_or_else(|error| panic!("request transport must validate: {error}"));
-    assert_eq!(request.execution_shape(), TransportExecutionShapeV1::Request);
+    assert_eq!(
+        request.execution_shape(),
+        TransportExecutionShapeV1::Request
+    );
     assert_eq!(prepared.shape(), TransportExecutionShapeV1::Request);
     let execution = prepared
         .execution()
@@ -605,21 +608,15 @@ fn request_executor_drives_a_boundary_request_to_terminal() {
 fn block_on<F: Future>(future: F) -> F::Output {
     use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 
-    const VTABLE: RawWakerVTable = RawWakerVTable::new(
-        |data| RawWaker::new(data, &VTABLE),
-        |_| {},
-        |_| {},
-        |_| {},
-    );
+    const VTABLE: RawWakerVTable =
+        RawWakerVTable::new(|data| RawWaker::new(data, &VTABLE), |_| {}, |_| {}, |_| {});
     // SAFETY: every vtable entry is a no-op over a null data pointer, so the
     // waker is never dereferenced and cloning it produces the same inert value.
     let waker = unsafe { Waker::from_raw(RawWaker::new(std::ptr::null(), &VTABLE)) };
     let mut context = Context::from_waker(&waker);
     let mut future = Box::pin(future);
-    loop {
-        match future.as_mut().poll(&mut context) {
-            Poll::Ready(value) => return value,
-            Poll::Pending => panic!("the boundary executor future must not yield"),
-        }
+    match future.as_mut().poll(&mut context) {
+        Poll::Ready(value) => value,
+        Poll::Pending => panic!("the boundary executor future must not yield"),
     }
 }
