@@ -7,3 +7,4 @@ pub mod build_pair;
 pub mod exporter_observable;
 pub mod exporter_policy;
 pub mod plugin_stats;
+pub mod runtime_runner;

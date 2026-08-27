@@ -168,6 +168,8 @@ pub struct FrozenCasePlan {
     pub invalidation_classifier: String,
     /// Digest of the complete authored YAML scenario mapping.
     pub complete_case_digest: String,
+    /// Exact checked-in command template tokenized without a shell.
+    pub command: Vec<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -227,6 +229,8 @@ struct ExperimentIdentity {
     pub mock_server_artifact_digest: String,
     /// Authenticated complete normative inventory digest.
     pub inventory_digest: String,
+    /// Digest of the sealed runtime authority contract that acquired all rows.
+    pub authority_contract_digest: String,
     /// CPU model identity.
     pub cpu_model: String,
     /// CPU stepping identity.
@@ -388,6 +392,10 @@ impl NonAuthoritativeExperimentFixture {
                 "mock-server artifact",
             )?,
             inventory_digest: inventory.digest.clone(),
+            authority_contract_digest: canonical_blake3(
+                receipt,
+                "non-authoritative observation contract",
+            )?,
             cpu_model: receipt.machine.cpu_model.clone(),
             cpu_stepping: receipt.machine.cpu_stepping.clone(),
             microcode: receipt.machine.microcode.clone(),
@@ -426,6 +434,97 @@ impl NonAuthoritativeExperimentFixture {
     pub fn pair_schedule(&self) -> &[PairSchedule] {
         &self.identity.pair_schedule
     }
+
+    pub(crate) fn canonical_identity_bytes(&self) -> Result<Vec<u8>, PluginStatsError> {
+        serde_json_canonicalizer::to_vec(&self.identity).map_err(|error| {
+            PluginStatsError::new(format!("cannot canonicalize experiment identity: {error}"))
+        })
+    }
+}
+
+pub(crate) struct AuthoritativeIdentityInput {
+    pub source_commit: String,
+    pub source_tree_digest: String,
+    pub cargo_lock_digest: String,
+    pub rustc: String,
+    pub sysroot_digest: String,
+    pub profile: String,
+    pub static_artifact_digest: String,
+    pub dynamic_artifact_digest: String,
+    pub harness_artifact_digest: String,
+    pub authority_contract_digest: String,
+    pub environment: BTreeMap<String, Option<String>>,
+}
+
+pub(crate) fn acquire_authoritative_identity(
+    input: AuthoritativeIdentityInput,
+) -> Result<NonAuthoritativeExperimentFixture, PluginStatsError> {
+    let inventory = checked_in_inventory_authority()?;
+    let document: Task1InventoryDocument = serde_yaml::from_str(CHECKED_IN_PLUGIN_PARITY_YAML)
+        .map_err(|error| {
+            PluginStatsError::new(format!(
+                "checked-in plugin parity inventory is invalid: {error}"
+            ))
+        })?;
+    let task1_identity: serde_json::Value =
+        serde_json::from_str(&document.experiment_identity_json).map_err(|error| {
+            PluginStatsError::new(format!("Task-1 experiment identity is invalid: {error}"))
+        })?;
+    let scalar = |name: &str| -> Result<String, PluginStatsError> {
+        task1_identity
+            .get(name)
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned)
+            .ok_or_else(|| {
+                PluginStatsError::new(format!(
+                    "Task-1 experiment identity omits controlled field {name}"
+                ))
+            })
+    };
+    let seed = inventory
+        .cases
+        .first()
+        .map(|case| case.bootstrap_seed)
+        .ok_or_else(|| PluginStatsError::new("checked-in inventory has no cases"))?;
+    let mock_server_artifact_digest = document
+        .runtime_scenarios
+        .first()
+        .map(|scenario| scenario.mock_server_blake3.clone())
+        .ok_or_else(|| PluginStatsError::new("checked-in inventory has no runtime scenarios"))?;
+    let identity = ExperimentIdentity {
+        schema_version: 1,
+        source_commit: input.source_commit,
+        source_tree_digest: input.source_tree_digest,
+        cargo_lock_digest: input.cargo_lock_digest,
+        rustc: input.rustc,
+        sysroot_digest: input.sysroot_digest,
+        target: document.target,
+        profile: input.profile,
+        static_artifact_digest: input.static_artifact_digest,
+        dynamic_artifact_digest: input.dynamic_artifact_digest,
+        harness_artifact_digest: input.harness_artifact_digest,
+        mock_server_artifact_digest,
+        inventory_digest: inventory.digest.clone(),
+        authority_contract_digest: input.authority_contract_digest,
+        cpu_model: scalar("cpu_model")?,
+        cpu_stepping: scalar("cpu_stepping")?,
+        microcode: scalar("microcode")?,
+        core_topology: scalar("affinity_isolation")?,
+        memory_topology: scalar("memory_topology")?,
+        firmware: scalar("firmware")?,
+        kernel: scalar("kernel")?,
+        allocator_provider: scalar("allocator_provider")?,
+        frequency_governor: scalar("frequency_governor")?,
+        affinity_isolation: scalar("affinity_isolation")?,
+        mock_server_placement: "checked-in per-scenario placement contract".to_owned(),
+        environment: input.environment,
+        bootstrap_seed: seed,
+        pair_schedule: pair_schedule(seed),
+        identity_digest: String::new(),
+    }
+    .seal()?;
+    validate_experiment_identity(&identity, &inventory)?;
+    Ok(NonAuthoritativeExperimentFixture { identity })
 }
 
 /// One non-authoritative simultaneous-gate fixture document.
@@ -1077,6 +1176,88 @@ impl ControlledMeasurementEvaluator {
         self.last_statistical_report = Some(report);
         self.finish_active(decision, reason)?;
         Ok(decision)
+    }
+
+    pub(crate) fn finish_authoritative_measurements(
+        &mut self,
+        input: &SimultaneousGateInput,
+        observed: NonAuthoritativeExperimentFixture,
+    ) -> Result<ControlledAttemptDecision, PluginStatsError> {
+        let active_ordinal = self
+            .active
+            .as_ref()
+            .map(|active| active.ordinal)
+            .ok_or_else(|| PluginStatsError::new("no controlled experiment attempt is active"))?;
+        if input
+            .cases
+            .iter()
+            .any(|case| !case.invalidation_attempts.is_empty())
+        {
+            return Err(PluginStatsError::new(
+                "authoritative measurements cannot contain caller-authored invalidations",
+            ));
+        }
+        let retained = self
+            .raw_pair_history
+            .iter()
+            .filter(|record| {
+                record.experiment_attempt == active_ordinal
+                    && record.decision == PairAttemptDecision::RetainPair
+            })
+            .collect::<Vec<_>>();
+        let expected_count = self
+            .inventory
+            .cases
+            .len()
+            .checked_mul(self.pair_schedule.len())
+            .ok_or_else(|| PluginStatsError::new("controlled matrix size overflow"))?;
+        let retained_keys = retained
+            .iter()
+            .map(|record| (record.raw.scenario.as_str(), record.raw.pair_id.as_str()))
+            .collect::<std::collections::BTreeSet<_>>();
+        if retained.len() != expected_count || retained_keys.len() != expected_count {
+            return Err(PluginStatsError::new(
+                "controlled runtime did not retain the complete exact scenario/pair matrix",
+            ));
+        }
+        for case in &self.inventory.cases {
+            for scheduled in &self.pair_schedule {
+                if !retained_keys.contains(&(case.scenario.as_str(), scheduled.pair_id.as_str())) {
+                    return Err(PluginStatsError::new(
+                        "controlled runtime omitted a checked-in scenario/pair",
+                    ));
+                }
+            }
+        }
+
+        let report = evaluate_non_authoritative_simultaneous_fixture(
+            input,
+            &observed,
+            &SimultaneousGatePolicy::normative(),
+        )?;
+        let (decision, reason) = if report.is_invalid {
+            (
+                ControlledAttemptDecision::Invalid,
+                report.invalidation_reason.clone(),
+            )
+        } else if report.passed {
+            (ControlledAttemptDecision::ValidPass, None)
+        } else {
+            (
+                ControlledAttemptDecision::ValidFailure,
+                Some("one or more controlled performance gates failed".to_owned()),
+            )
+        };
+        self.last_statistical_report = Some(report);
+        self.finish_active(decision, reason)?;
+        Ok(decision)
+    }
+
+    pub(crate) fn finish_authoritative_product_failure(
+        &mut self,
+        reason: String,
+    ) -> Result<(), PluginStatsError> {
+        self.finish_active(ControlledAttemptDecision::ValidFailure, Some(reason))
     }
 
     fn finish_active(
@@ -2382,6 +2563,7 @@ struct Task1Scenario {
     artifact_digest: String,
     bootstrap_seed: u64,
     canonical_inventory_digest: String,
+    command: String,
     core_assignment: String,
     estimator: String,
     harness_blake3: String,
@@ -2515,6 +2697,7 @@ fn checked_in_inventory_authority() -> Result<FrozenInventoryAuthority, PluginSt
             bootstrap_seed: scenario.bootstrap_seed,
             invalidation_classifier: scenario.invalidation_classifier.clone(),
             complete_case_digest: canonical_blake3(&scenario, "Task-1 scenario")?,
+            command: parse_checked_in_command(&scenario.command)?,
         });
     }
     cases.sort_by(|left, right| left.scenario.cmp(&right.scenario));
@@ -2587,6 +2770,32 @@ fn replace_digest_field(
     Ok(output)
 }
 
+fn parse_checked_in_command(command: &str) -> Result<Vec<String>, PluginStatsError> {
+    let tokens = command
+        .split_ascii_whitespace()
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    if tokens.len() < 5
+        || tokens[0] != "taskset"
+        || tokens[1] != "-c"
+        || tokens[2].is_empty()
+        || !matches!(tokens[3].as_str(), "aiperf" | "cargo")
+        || tokens.iter().any(|token| {
+            token.is_empty()
+                || token.contains('\0')
+                || token
+                    .chars()
+                    .any(|character| matches!(character, ';' | '|' | '&' | '`'))
+                || token.contains("$(")
+        })
+    {
+        return Err(PluginStatsError::new(
+            "checked-in runtime command is not a direct taskset command template",
+        ));
+    }
+    Ok(tokens)
+}
+
 fn read_observed_file(path: &Path, label: &str) -> Result<Vec<u8>, PluginStatsError> {
     let bytes = fs::read(path).map_err(|error| {
         PluginStatsError::new(format!(
@@ -2655,6 +2864,7 @@ fn validate_experiment_identity_shape(
         &identity.harness_artifact_digest,
         &identity.mock_server_artifact_digest,
         &identity.inventory_digest,
+        &identity.authority_contract_digest,
     ] {
         if !is_blake3_digest(digest) {
             return Err(PluginStatsError::new(

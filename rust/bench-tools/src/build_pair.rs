@@ -156,6 +156,8 @@ pub struct BuildPairMemberReportV1 {
 /// Authoritative evidence emitted for the complete paired build transaction.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct BuildPairReportV1 {
+    #[serde(skip)]
+    pub(crate) authority: BuildPairAuthorityV1,
     /// Schema identifier.
     pub schema_version: String,
     /// Scenario identifier.
@@ -199,6 +201,9 @@ pub struct BuildPairReportV1 {
     /// Digest of the canonical pair record bytes.
     pub pair_record_blake3: String,
 }
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct BuildPairAuthorityV1;
 
 #[derive(Serialize)]
 struct CanonicalBuildReceiptV1<'a> {
@@ -339,6 +344,7 @@ pub fn run_paired_build_v1(plan: &BuildPairPlanV1) -> Result<BuildPairReportV1, 
     let pair_record_blake3 = digest(&pair_record_bytes);
 
     Ok(BuildPairReportV1 {
+        authority: BuildPairAuthorityV1,
         schema_version: "plugin_build_pair/v1".to_owned(),
         scenario: plan.scenario.clone(),
         pair_id: plan.pair_id.clone(),
@@ -360,6 +366,115 @@ pub fn run_paired_build_v1(plan: &BuildPairPlanV1) -> Result<BuildPairReportV1, 
         members: [static_report, dynamic_report],
         pair_record_bytes,
         pair_record_blake3,
+    })
+}
+
+pub(crate) fn validate_authoritative_build_report_v1(
+    report: &BuildPairReportV1,
+) -> Result<[PathBuf; 2], BuildPairError> {
+    let _authority = &report.authority;
+    if report.schema_version != "plugin_build_pair/v1"
+        || report.cargo_incremental != "1"
+        || report.members[0].variant != Variant::Static
+        || report.members[1].variant != Variant::Dynamic
+    {
+        return Err(BuildPairError::new(
+            "paired build report has a non-authoritative shape",
+        ));
+    }
+    let mut artifact_paths = Vec::with_capacity(report.members.len());
+    for member in &report.members {
+        let target_root = PathBuf::from(&member.target_root);
+        canonical_directory(&target_root, "reported target_root")?;
+        let artifact_relative_path = PathBuf::from(&member.artifact_relative_path);
+        validate_relative_path(&artifact_relative_path, "reported artifact_relative_path")?;
+        let artifact_path = target_root.join(&artifact_relative_path);
+        let artifact = fs::read(&artifact_path).map_err(|error| {
+            BuildPairError::new(format!(
+                "cannot read reported build artifact {}: {error}",
+                artifact_path.display()
+            ))
+        })?;
+        if digest(&artifact) != member.artifact_blake3 {
+            return Err(BuildPairError::new(
+                "reported build artifact digest mismatch",
+            ));
+        }
+        let expected_receipt = canonical_bytes(&CanonicalBuildReceiptV1 {
+            schema_version: "plugin_build_receipt/v1",
+            scenario: &report.scenario,
+            pair_id: &report.pair_id,
+            variant: member.variant,
+            source_commit: &report.source_commit,
+            experiment_identity_blake3: &report.experiment_identity_blake3,
+            source_identity_blake3: &member.source_identity_blake3,
+            cargo_lock_blake3: &member.cargo_lock_blake3,
+            cargo_executable_blake3: &report.cargo_executable_blake3,
+            rustc_executable_blake3: &report.rustc_executable_blake3,
+            rustc_verbose_version: &report.rustc_verbose_version,
+            rustc_verbose_version_blake3: &report.rustc_verbose_version_blake3,
+            sysroot_root: &report.sysroot_root,
+            sysroot_identity_blake3: &report.sysroot_identity_blake3,
+            inherited_environment_blake3: &report.inherited_environment_blake3,
+            command: &report.command,
+            profile: &report.profile,
+            features: &report.features,
+            lto: report.lto,
+            cargo_incremental: "1",
+            target_root: &member.target_root,
+            artifact_relative_path: &member.artifact_relative_path,
+            artifact_blake3: &member.artifact_blake3,
+            active_duration_ns: member.active_duration_ns,
+        })?;
+        if expected_receipt != member.build_receipt_bytes
+            || digest(&member.build_receipt_bytes) != member.build_receipt_blake3
+        {
+            return Err(BuildPairError::new(
+                "reported member build receipt mismatch",
+            ));
+        }
+        artifact_paths.push(artifact_path);
+    }
+    let expected_pair_record = canonical_bytes(&CanonicalPairRecordV1 {
+        schema_version: "plugin_build_pair_record/v1",
+        scenario: &report.scenario,
+        pair_id: &report.pair_id,
+        source_commit: &report.source_commit,
+        experiment_identity_blake3: &report.experiment_identity_blake3,
+        cargo_executable_blake3: &report.cargo_executable_blake3,
+        rustc_executable_blake3: &report.rustc_executable_blake3,
+        rustc_verbose_version_blake3: &report.rustc_verbose_version_blake3,
+        sysroot_identity_blake3: &report.sysroot_identity_blake3,
+        inherited_environment_blake3: &report.inherited_environment_blake3,
+        command: &report.command,
+        profile: &report.profile,
+        features: &report.features,
+        lto: report.lto,
+        cargo_incremental: "1",
+        member_source_identity_blake3: [
+            &report.members[0].source_identity_blake3,
+            &report.members[1].source_identity_blake3,
+        ],
+        member_cargo_lock_blake3: [
+            &report.members[0].cargo_lock_blake3,
+            &report.members[1].cargo_lock_blake3,
+        ],
+        member_target_roots: [
+            &report.members[0].target_root,
+            &report.members[1].target_root,
+        ],
+        member_build_receipt_blake3: [
+            &report.members[0].build_receipt_blake3,
+            &report.members[1].build_receipt_blake3,
+        ],
+    })?;
+    if expected_pair_record != report.pair_record_bytes
+        || digest(&report.pair_record_bytes) != report.pair_record_blake3
+    {
+        return Err(BuildPairError::new("reported paired build record mismatch"));
+    }
+    artifact_paths.try_into().map_err(|_| {
+        BuildPairError::new("paired build report does not contain exactly two artifacts")
     })
 }
 
