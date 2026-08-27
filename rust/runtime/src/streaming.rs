@@ -3,6 +3,7 @@
 
 //! Native streaming dataset contracts and execution support.
 
+pub mod blocking;
 pub mod budget;
 pub mod checkpoint;
 pub mod identity;
