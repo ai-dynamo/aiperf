@@ -144,7 +144,10 @@ impl CheckedActionTerminalMembership {
     }
 }
 
-impl reliability_view_seal::CheckedActionTerminalMembershipView for CheckedActionTerminalMembership {}
+impl reliability_view_seal::CheckedActionTerminalMembershipView
+    for CheckedActionTerminalMembership
+{
+}
 
 impl CheckedActionTerminalMembershipView for CheckedActionTerminalMembership {
     fn run(&self) -> &StreamRunIdentity {
@@ -226,7 +229,11 @@ impl FrozenActionInventoryView for FrozenActionInventory {
         self.membership_root
     }
 
-    fn contains_terminal(&self, sequence: GlobalSequence, membership_digest: ContentDigest) -> bool {
+    fn contains_terminal(
+        &self,
+        sequence: GlobalSequence,
+        membership_digest: ContentDigest,
+    ) -> bool {
         self.terminals.get(&sequence) == Some(&membership_digest)
     }
 }
