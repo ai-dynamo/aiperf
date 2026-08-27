@@ -130,6 +130,25 @@ fn runtime_artifact_killing_the_mock_once(label: &str, mock_pid: &Path, marker: 
         .into_bytes()
 }
 
+fn runtime_artifact_rebooting_while_gated(
+    label: &str,
+    boot_identity: &Path,
+    gate: &Path,
+) -> Vec<u8> {
+    let script = String::from_utf8(runtime_artifact(label)).expect("fixture script is UTF-8");
+    script
+        .replacen(
+            "set -eu\n",
+            &format!(
+                "set -eu\nif [ -e '{gate}' ]; then case \"$AIPERF_PARITY_PAIR_ID\" in pair-*) printf '%s' \"reboot-$(date +%s%N)-$$\" > '{boot}';; esac; fi\n",
+                gate = gate.display(),
+                boot = boot_identity.display()
+            ),
+            1,
+        )
+        .into_bytes()
+}
+
 #[derive(Clone, Copy)]
 enum FakeExporterMode {
     AcquisitionFailure,
@@ -880,4 +899,98 @@ fn continuous_reboots_exhaust_the_five_pair_replacement_cap_and_resume_diagnoses
     assert_eq!(resumed.scenario, interrupted.raw.scenario);
     assert_eq!(resumed.pair_id, interrupted.raw.pair_id);
     assert_ne!(resumed.observed.boot_identity, "boot-after-restart");
+}
+
+#[test]
+fn three_invocations_reconstruct_every_prior_member_from_retained_evidence() {
+    let mut fixture = Fixture::new();
+    let boot_identity = fixture._directory.path().join("boot-identity");
+    std::fs::write(&boot_identity, "boot-original").expect("boot identity fixture is written");
+    let gate = fixture._directory.path().join("invalidate");
+    std::fs::write(&gate, b"on").expect("invalidation gate is written");
+    fixture.static_artifact =
+        runtime_artifact_rebooting_while_gated("static authority fixture", &boot_identity, &gate);
+    fixture.dynamic_artifact =
+        runtime_artifact_rebooting_while_gated("dynamic authority fixture", &boot_identity, &gate);
+    write_executable(
+        &fixture.static_source.join("artifact-source"),
+        &fixture.static_artifact,
+    );
+    write_executable(
+        &fixture.dynamic_source.join("artifact-source"),
+        &fixture.dynamic_artifact,
+    );
+    let build_report = fixture.build_report();
+    let liveness = HostLivenessSourceV1::new(boot_identity.clone(), None);
+
+    for attempt in 0..2 {
+        let requested = fixture
+            ._directory
+            .path()
+            .join(format!("retained-{attempt}.jsonl"));
+        let report = run_controlled_runtime_with_liveness_v1(&build_report, &requested, &liveness)
+            .expect("each invalid attempt is recorded");
+        assert_eq!(report.decision, ControlledAttemptDecision::Invalid);
+    }
+    std::fs::remove_file(&gate).expect("invalidation gate is cleared");
+    let terminal = run_controlled_runtime_with_liveness_v1(
+        &build_report,
+        &fixture._directory.path().join("retained-terminal.jsonl"),
+        &liveness,
+    )
+    .expect("the third invocation reaches a terminal decision");
+
+    assert_ne!(terminal.decision, ControlledAttemptDecision::Invalid);
+    assert_eq!(terminal.retained_attempt_evidence.len(), 3);
+    assert_eq!(
+        terminal
+            .retained_attempt_evidence
+            .last()
+            .map(|entry| entry.entry_blake3.as_str()),
+        Some(terminal.ledger_entry_blake3.as_str())
+    );
+    let mut previous: Option<String> = None;
+    for (index, entry) in terminal.retained_attempt_evidence.iter().enumerate() {
+        assert_eq!(usize::from(entry.attempt_ordinal), index + 1);
+        assert_eq!(entry.previous_entry_blake3, previous);
+        previous = Some(entry.entry_blake3.clone());
+    }
+
+    // Every earlier member is reconstructable from the retained evidence alone.
+    for entry in terminal.retained_attempt_evidence.iter().take(2) {
+        let tree: serde_json::Value = serde_json::from_slice(&entry.evidence_tree_bytes)
+            .expect("retained evidence tree is JSON");
+        let pairs = tree["raw_pair_history"]
+            .as_array()
+            .expect("retained evidence keeps the ordered raw pair history");
+        assert!(!pairs.is_empty());
+        for pair in pairs {
+            for member in pair["raw"]["members"]
+                .as_array()
+                .expect("every retained pair keeps both members")
+            {
+                assert!(member["outcome"].is_string() || member["outcome"].is_object());
+                assert!(
+                    !member["samples"]
+                        .as_array()
+                        .expect("every retained member keeps its samples")
+                        .is_empty()
+                );
+            }
+        }
+        let members = tree["terminal_member_evidence"]
+            .as_array()
+            .expect("retained evidence keeps the ordered terminal member evidence");
+        assert!(!members.is_empty());
+        for member in members {
+            assert!(member["terminal_status"].is_string() || member["terminal_status"].is_object());
+            assert!(
+                !member["stdout"]["bytes"]
+                    .as_array()
+                    .expect("every retained member keeps its stdout bytes")
+                    .is_empty()
+            );
+            assert!(member["stderr"]["blake3"].is_string());
+        }
+    }
 }
