@@ -62,6 +62,7 @@ def _build_dual(comm: DualBindCommunicationConfig) -> ZMQDualBindConfig:
         controller_host=controller_host,
         records_push_pull_tcp_port=comm.records_port,
         credit_router_tcp_port=comm.credit_router_port,
+        credit_return_push_pull_tcp_port=comm.credit_return_push_pull_port,
         control_tcp_port=comm.control_port,
         event_bus_proxy_config=ZMQDualBindProxyConfig(
             name="event_bus_proxy",
