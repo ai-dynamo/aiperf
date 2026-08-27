@@ -28,11 +28,13 @@
 pub const SHARED_ALLOCATOR_PRECONDITION: &str = "\
 Every boundary row with alloc_owner = plugin and drop_owner = host requires \
 that the host binary and every plugin cdylib link the same allocator. The \
-aiperf binary installs mimalloc through aiperf-allocator-provider; a plugin \
-must declare the same provider as its #[global_allocator] before the host \
-loads it. A cdylib that allocates from a different allocator produces heap \
-corruption when the host drops the transferred value, because the free is \
-issued to an allocator that never owned the block.";
+aiperf binary installs mimalloc::MiMalloc as its global allocator directly, \
+against the third-party mimalloc crate; routing both the host and every plugin \
+cdylib through aiperf-allocator-provider is the future mechanism that makes \
+this rule checkable, and that crate is a placeholder in this generation. A \
+cdylib that allocates from a different allocator produces heap corruption when \
+the host drops the transferred value, because the free is issued to an \
+allocator that never owned the block.";
 
 /// Who allocates or drops the storage a boundary item names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

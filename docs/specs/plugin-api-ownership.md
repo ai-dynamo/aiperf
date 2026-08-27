@@ -52,14 +52,18 @@ than collapsing onto one identifier. Authored spelling is display-only.
 **One global allocator is linked by every loaded artifact.** This is the
 shared-allocator precondition, stated in
 `aiperf_plugin_api::ownership::SHARED_ALLOCATOR_PRECONDITION`. The host binary
-and every plugin `cdylib` must link the same allocator: the `aiperf` binary
-installs mimalloc through `aiperf-allocator-provider`, and a plugin must declare
-that same provider as its `#[global_allocator]` before the host loads it. This
-rule is what makes the rows below with an alloc owner of `plugin` and a drop
-owner of `host` sound; without it the host issues the free to an allocator that
-never owned the block, which is heap corruption. The rule is stated here and in
-the crate; the loader that enforces it lands with the allocator provider, whose
-crate is a placeholder in this generation.
+and every plugin `cdylib` must link the same allocator. Today the `aiperf`
+binary installs `mimalloc::MiMalloc` as its global allocator directly, against
+the third-party `mimalloc` crate (`rust/cli/Cargo.toml`, `rust/cli/src/main.rs`);
+`rust/allocator-provider/` holds only the source API version constant and is a
+placeholder in this generation. Routing both the host and every plugin `cdylib`
+through `aiperf-allocator-provider`, so a plugin declares that one provider as
+its `#[global_allocator]`, is the future mechanism that will make this rule
+checkable. The rule is what makes the rows below with an alloc owner of `plugin`
+and a drop owner of `host` sound; without it the host issues the free to an
+allocator that never owned the block, which is heap corruption. The rule is
+stated here and in the crate; the loader that enforces it lands with the
+allocator provider.
 
 ### Shared allocator precondition
 
