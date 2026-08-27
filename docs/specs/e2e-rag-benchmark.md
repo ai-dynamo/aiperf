@@ -30,6 +30,38 @@ serving stack — exactly the surface a submitter optimizes through model
 placement, co-residency, cross-stage scheduling, precision selection, and prefix
 caching.
 
+### What this design optimizes for
+
+AIPerf is a benchmarking tool. The bar this record holds itself to is **the
+correctness of the pipeline and of the numbers it reports** — every other
+consideration is subordinate to it, and where they conflict, measurement
+correctness wins.
+
+That ordering has a concrete consequence for how the artifact machinery below
+should be read. `corpus_digest`, the index header, and the manifest digests are
+**comparability devices, not integrity devices**. They exist because a
+tasks-per-second number is meaningless unless the two runs being compared
+answered from the same corpus, chunked the same way, embedded by the same model.
+They are checks against silent drift — a stale index, a re-chunked corpus, a
+swapped embedding model — not against a motivated attacker. They should be
+implemented to that standard: cheap, always-on, and refusing loudly on mismatch,
+without a threat model, key management, or signature scheme attached.
+
+This design introduces **no new trust boundary**. It reuses existing transports,
+the existing artifact channel, and the existing cellular authentication as they
+are. Where a run crosses hosts, the pinned-TLS artifact path and controller
+registration already in place carry it; nothing here extends, weakens, or needs
+to reason about them.
+
+Effort belongs instead in the places a benchmark can be quietly, plausibly wrong:
+that request bodies are what the design says they are (the failure O1/O2 caught,
+where empty requests benchmarked nothing and reported a clean number), that a
+task's latency has a defined origin and terminal, that concurrency accounting
+distinguishes in-flight *tasks* from in-flight *requests*, and that no exporter
+silently drops the metric the run exists to produce. Those obligations are stated
+in `### Measurement correctness` and carry the earliest positions in the delivery
+order.
+
 ## Built
 
 This section is scoped to what the code does today, verified against source. It
@@ -692,6 +724,65 @@ Offline scenario is the existing concurrency workload sized to the full task set
 Server scenario is out of scope for this record, exactly as for the first MLPerf
 instantiation.
 
+### Measurement correctness
+
+A RAG task is many requests deep, so several quantities that coincide in a
+single-request workload come apart here. Each is a way to report a confident
+wrong number, and each is a required assertion rather than a nicety.
+
+**Task latency has a defined origin and terminal, and includes client work.**
+`rag_task_latency` runs from the task's admission to the answer node's terminal
+observation, and it **includes** parse, chunk, retrieval, and driver time. This
+is deliberately *not* the sum or max of its request latencies. Request latency
+correctly excludes client-side work — the origin is `on_admit`
+(`rust/runtime/src/transport/http/sink/endpoint_dispatch.rs:289`), which fires
+after materialization — but a task-level number that inherited that exclusion
+would report a duration no operator of the system ever experiences. The two
+scopes must both exist and must be documented as measuring different things:
+per-request latency attributes the serving stack, task latency attributes the
+pipeline.
+
+**In-flight tasks and in-flight requests are different curves.** One task holds
+several concurrent requests during a fan-out hop and zero between stages. Every
+existing consumer of the concurrency sweep-line curve counts requests, so
+`--steady-state` derives its window from request concurrency crossing a fraction
+of the *request* target. Under `rag_qna` that curve's shape is driven by hop
+fan-out, not by task admission, and a window derived from it does not mean what
+it means for a flat workload. Either the task-level curve is added and
+`--steady-state` reads it for RAG runs, or `--steady-state` is refused for
+`rag_qna` and the report says so. Silently reusing the request curve is the one
+option this record rules out.
+
+**The scored number is never an estimate.** Sketch mode's percentiles and
+standard deviation are streaming estimates (`--sketch-metrics`), and it drops the
+role dimension outright. `rag_tasks_per_second` and `rag_documents_per_second`
+are rate aggregates and remain exact under sketch mode, but the compliance check
+is a mean over one role and the accuracy pass needs per-record answers. A
+sketch-mode run must therefore refuse `aiperf rag compliance` rather than compute
+it from estimates.
+
+**A dropped metric is a wrong number, not a missing one.** The `summary_series`
+`NoAggregate` behavior (`rust/runtime/src/export/mod.rs:80`-`:96`) removes a metric
+from five exporters when a run has more than one model or endpoint. A reader sees
+a report with no request-latency row and concludes the run did not measure it. RAG
+makes multi-profile the common case, so this is fixed before the role dimension
+lands, not alongside it.
+
+**Batch accounting is asserted, not assumed.** One batched request is one record
+with `input_sequence_length` the batch sum
+(`rust/dry-run-tests/tests/random_pool_batches.rs:11`-`:66`). Every ingestion rate
+therefore has a units question attached — passages per second reads off records
+directly, documents per second does not — and the e2e test asserts the record
+count against a known passage count and batch size, so a change to batching
+semantics fails loudly rather than rescaling the headline number.
+
+**Every new metric is verified against raw per-record output.** Per this repo's
+verification requirements, summary-only checks do not satisfy the bar: each new
+RAG metric gets an e2e test against a deterministic `aiperf-mock-server`
+configuration that inspects the per-record artifact and asserts the aggregate is
+the correct function of those records. This is what would have caught O1/O2's
+empty request bodies at the point they were introduced.
+
 ### Accuracy and compliance
 
 Both are post-run passes over recorded artifacts, native, and off the timed path.
@@ -731,6 +822,11 @@ should add one score-by-index knob to `compute_mock_score` rather than fork it.
 
 ### Refusals
 
+Every refusal below exists to prevent a **wrong measurement**, not to resist
+misuse. Each names a configuration that would otherwise run to completion and
+report a plausible number that does not mean what the report says it means, so
+each fails before dispatch rather than degrading.
+
 Typed refusals before any dispatch: a QnA run whose index `corpus_digest` disagrees
 with its pinned plan or query set; a `retrieval` node in a non-RAG workload; a
 `rag_qna` graph naming an unregistered endpoint profile; an authored hop, fan-out, or
@@ -739,7 +835,8 @@ with its pinned plan or query set; a `retrieval` node in a non-RAG workload; a
 profile's returned vector width; a sufficiency verdict decoder that is absent or
 ambiguous; a graph node bound to an endpoint kind whose request cannot be
 constructed from graph materialization (P1's startup gate); and a multi-endpoint
-`rag_qna` run over gRPC, which the transport forbids.
+`rag_qna` run over gRPC, which the transport forbids; and `aiperf rag compliance`
+against a sketch-mode run, whose statistics are estimates.
 
 ## Future requirements
 
