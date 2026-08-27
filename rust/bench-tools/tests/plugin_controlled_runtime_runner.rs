@@ -672,8 +672,11 @@ fn one_experiment_identity_owns_one_ledger_across_requested_output_paths() {
             .count(),
         1
     );
+    // No requested output path is ever written; the ledger is identity-owned.
     assert!(!first_request.exists());
-    assert!(!second_request.exists());
+    for shape in ["second-ledger.jsonl", "attempts", "run.d"] {
+        assert!(!fixture._directory.path().join(shape).exists());
+    }
 }
 
 #[test]
