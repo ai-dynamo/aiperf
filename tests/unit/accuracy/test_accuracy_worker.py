@@ -45,7 +45,7 @@ def test_stdio_reserves_stdout_for_correlated_protocol_messages() -> None:
 def test_stdio_redirects_python_and_file_descriptor_noise_to_stderr() -> None:
     script = """
 import os
-from aiperf.accuracy import worker
+from aiperf.rust_shims import accuracy_worker as worker
 
 original_hello = worker.AccuracyWorker.hello
 
