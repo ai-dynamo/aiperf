@@ -108,6 +108,11 @@ pub struct OwnershipRow {
 /// Rows whose allocation owner is [`StorageOwner::Plugin`] and whose drop owner
 /// is [`StorageOwner::Host`] are sound only under
 /// [`SHARED_ALLOCATOR_PRECONDITION`].
+///
+/// Two rows — `PluginRegistrar::new` and `PluginCategoryDescriptor::new` — are
+/// `pub(crate)` host-only seams rather than plugin-callable items. They are
+/// listed because they are what binds a registration's origin, and the origin
+/// argument is only checkable if the item that establishes it is on the record.
 pub const GENERATION_1_SURFACE: &[OwnershipRow] = &[
     OwnershipRow {
         item: "aiperf_plugin_entry_v1",
@@ -145,6 +150,16 @@ pub const GENERATION_1_SURFACE: &[OwnershipRow] = &[
         argument_types: "&self, &mut PluginRegistrar<'_>",
         return_type: "Result<(), ExtensionError>",
         allocation_owner: StorageOwner::Plugin,
+        drop_owner: StorageOwner::Host,
+        panic_abort: true,
+        phase: CallPhase::Startup,
+    },
+    OwnershipRow {
+        item: "PluginRegistrar::new",
+        owning_crate: "aiperf-plugin-api",
+        argument_types: "&'static PluginPackageDescriptor",
+        return_type: "PluginRegistrar<'_>",
+        allocation_owner: StorageOwner::Host,
         drop_owner: StorageOwner::Host,
         panic_abort: true,
         phase: CallPhase::Startup,

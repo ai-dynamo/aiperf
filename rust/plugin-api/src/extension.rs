@@ -85,9 +85,10 @@ pub trait AIPerfExtension: Send + Sync {
 /// The registrar supplies package identity from the manifest rather than from
 /// the plugin, observes every actual registration, and never exposes the
 /// aggregate registry. A plugin therefore cannot claim an origin other than the
-/// package whose manifest selected its library: every descriptor the registrar
-/// mints reads the package bound at [`PluginRegistrar::new`], and no method
-/// accepts a caller-supplied origin.
+/// package whose manifest selected its library: `PluginRegistrar::new` is
+/// `pub(crate)`, so only the host can bind a registrar to a package, every
+/// descriptor the registrar mints reads that bound package, and no
+/// plugin-reachable method accepts a caller-supplied origin.
 ///
 /// The `'a` parameter reserves the borrow of host-private staged registry state
 /// the generation-2 category methods take. It is not the package lifetime: the
@@ -105,7 +106,13 @@ pub struct PluginRegistrar<'a> {
 
 impl PluginRegistrar<'_> {
     /// Bind a registrar to the package identity the manifest resolved.
-    pub fn new(package: &'static PluginPackageDescriptor) -> Self {
+    ///
+    /// `pub(crate)` on purpose: binding the origin is a host act. A plugin
+    /// receives a registrar as the argument to [`AIPerfExtension::register`]
+    /// and has no way to mint one over a package it did not come from. The
+    /// out-of-crate seam the loader calls to bind a registrar lands with the
+    /// loader itself; nothing outside this crate constructs one yet.
+    pub(crate) fn new(package: &'static PluginPackageDescriptor) -> Self {
         Self {
             package,
             observed: Vec::new(),
@@ -145,9 +152,10 @@ impl PluginRegistrar<'_> {
     ///
     /// The host uses this when it promotes staged registrations into the
     /// aggregate registry, where every entry must carry its origin. The origin
-    /// is read from the manifest-bound package, never from the caller, so a
-    /// plugin holding a registrar cannot mint a descriptor asserting another
-    /// package's identity.
+    /// is read from the manifest-bound package, never from the caller, and
+    /// [`PluginCategoryDescriptor`] has no plugin-reachable constructor or
+    /// public fields, so a plugin holding a registrar cannot obtain a
+    /// descriptor asserting another package's identity.
     pub fn describe(&self, id: RegistryId) -> PluginCategoryDescriptor {
         PluginCategoryDescriptor::new(id, self.package)
     }
@@ -159,5 +167,124 @@ impl fmt::Debug for PluginRegistrar<'_> {
             .field("package", self.package)
             .field("observed", &self.observed)
             .finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    // These live in `src` rather than `tests/` because they exercise the
+    // host side of the seam: `PluginRegistrar::new` is `pub(crate)`, which is
+    // the property that makes a plugin-minted foreign origin unconstructible.
+    use std::sync::LazyLock;
+
+    use super::*;
+    use crate::{error::RegistryIdError, id::REGISTRY_ID_NORMALIZATION_VERSION};
+
+    /// Normalize under the only supported version.
+    fn id(input: &str) -> Result<RegistryId, RegistryIdError> {
+        RegistryId::new(input, REGISTRY_ID_NORMALIZATION_VERSION)
+    }
+
+    /// A package descriptor built once and borrowed for `'static`, exactly as
+    /// the SDK macro will emit it.
+    static PACKAGE: LazyLock<PluginPackageDescriptor> = LazyLock::new(|| {
+        PluginPackageDescriptor::from_authored(
+            "AIPerf-Export-OTLP",
+            "0.12.0",
+            "OpenTelemetry exporter",
+        )
+        .unwrap_or_else(|error| panic!("test package id must normalize: {error}"))
+    });
+
+    /// Registers two capabilities so a duplicate can be exercised separately.
+    struct TestExtension;
+
+    impl AIPerfExtension for TestExtension {
+        fn register(&self, registrar: &mut PluginRegistrar<'_>) -> Result<(), ExtensionError> {
+            registrar.record_registration(id("otel")?)?;
+            registrar.record_registration(id("OTEL-Console")?)?;
+            Ok(())
+        }
+    }
+
+    static EXTENSION: TestExtension = TestExtension;
+
+    /// The exact shape the SDK macro exports under `aiperf_plugin_entry_v1`.
+    unsafe fn entry() -> PluginDeclarationV1 {
+        PluginDeclarationV1 {
+            package: &PACKAGE,
+            extension: &EXTENSION,
+        }
+    }
+
+    #[test]
+    fn a_declaration_is_produced_by_the_entry_shape_and_read_through_borrows() {
+        let entry_point: PluginEntryV1 = entry;
+        // SAFETY: `entry` is this test's own Rust-ABI function with the exact
+        // `PluginEntryV1` signature, standing in for a validated library symbol.
+        let declaration = unsafe { entry_point() };
+
+        assert_eq!(declaration.package.id.as_str(), "aiperf_export_otlp");
+        assert_eq!(declaration.package.version, "0.12.0");
+        assert_eq!(declaration.package.description, "OpenTelemetry exporter");
+        assert_eq!(PLUGIN_ENTRY_SYMBOL_V1, "aiperf_plugin_entry_v1");
+
+        let mut registrar = PluginRegistrar::new(declaration.package);
+        declaration
+            .extension
+            .register(&mut registrar)
+            .expect("registration must succeed");
+
+        let observed: Vec<&str> = registrar
+            .observed()
+            .iter()
+            .map(RegistryId::as_str)
+            .collect();
+        assert_eq!(observed, ["otel", "otel_console"]);
+        assert_eq!(registrar.package().id.as_str(), "aiperf_export_otlp");
+
+        // A capability descriptor carries the manifest-bound origin. `describe`
+        // takes no package argument, so the origin cannot be chosen by the
+        // caller. Pointer identity, not field equality, is the property: a
+        // distinct-but-equal package would still be a foreign origin.
+        let described = registrar.describe(id("otel").expect("normalizes"));
+        assert_eq!(described.package().id.as_str(), "aiperf_export_otlp");
+        assert!(std::ptr::eq(described.package(), registrar.package()));
+    }
+
+    #[test]
+    fn re_registering_one_identifier_is_a_typed_error_naming_it() {
+        let mut registrar = PluginRegistrar::new(&PACKAGE);
+        registrar
+            .record_registration(id("otel").expect("normalizes"))
+            .expect("first registration succeeds");
+
+        // The authored spelling differs but normalizes to the same identifier.
+        let error = registrar
+            .record_registration(id("OTEL").expect("normalizes"))
+            .expect_err("duplicate registration must be rejected");
+
+        assert_eq!(error.registry_id().map(RegistryId::as_str), Some("otel"));
+        assert!(
+            error.to_string().contains("otel"),
+            "error must name the identifier: {error}"
+        );
+        assert_eq!(registrar.observed().len(), 1);
+    }
+
+    #[test]
+    fn the_extension_trait_is_object_safe_and_registers_through_a_box() {
+        let boxed: Box<dyn AIPerfExtension> = Box::new(TestExtension);
+        let mut registrar = PluginRegistrar::new(&PACKAGE);
+        boxed
+            .register(&mut registrar)
+            .expect("boxed trait object registers");
+        assert_eq!(registrar.observed().len(), 2);
+
+        // `AIPerfExtension: Send + Sync` is what lets the host move a
+        // declaration onto another thread; a `Box<dyn AIPerfExtension>` must
+        // satisfy it too.
+        fn assert_send_sync<T: Send + Sync + 'static>() {}
+        assert_send_sync::<Box<dyn AIPerfExtension>>();
     }
 }

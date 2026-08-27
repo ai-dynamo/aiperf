@@ -165,21 +165,28 @@ impl PluginPackageDescriptor {
 ///
 /// The category descriptor exists so a registration observed by the host always
 /// carries its origin: a plugin cannot claim a package identity other than the
-/// one the manifest bound to its library.
+/// one the manifest bound to its library. Both fields are private and the
+/// constructor is `pub(crate)`, so the only way to obtain one is
+/// [`PluginRegistrar::describe`](crate::PluginRegistrar::describe), which reads
+/// the origin from the manifest-bound registrar.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PluginCategoryDescriptor {
     /// The normalized capability identifier within its category.
-    pub id: RegistryId,
+    id: RegistryId,
     /// The package that registered this capability.
-    pub package: &'static PluginPackageDescriptor,
+    package: &'static PluginPackageDescriptor,
 }
 
 impl PluginCategoryDescriptor {
     /// Bind a normalized capability identifier to its owning package.
     ///
+    /// `pub(crate)` on purpose: naming an origin is a host act, so the only
+    /// plugin-reachable path to a descriptor is through a manifest-bound
+    /// registrar.
+    ///
     /// Not `const` for the same reason as
     /// [`PluginPackageDescriptor::new`]: the identifier is heap-backed.
-    pub fn new(id: RegistryId, package: &'static PluginPackageDescriptor) -> Self {
+    pub(crate) fn new(id: RegistryId, package: &'static PluginPackageDescriptor) -> Self {
         Self { id, package }
     }
 

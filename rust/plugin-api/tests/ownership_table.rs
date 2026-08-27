@@ -3,19 +3,16 @@
 
 //! Behavior tests for the generation-1 plugin source API.
 //!
-//! These cover the four properties the boundary is defined by: identifier
-//! normalization is exactly version 1, a declaration can be built and read
-//! entirely from borrowed `'static` plugin storage, the extension trait is
-//! object-safe and thread-shareable, and every boundary item is documented in
-//! the ownership spec.
-
-use std::sync::LazyLock;
+//! These cover the externally observable properties: identifier normalization
+//! is exactly version 1, the source API version string round-trips, and every
+//! boundary item is documented in the ownership spec. The registrar and entry
+//! tests live in `src/extension.rs` because `PluginRegistrar::new` is
+//! `pub(crate)` — the host binds the origin, a plugin never can.
 
 use aiperf_plugin_api::{
-    AIPerfExtension, ExtensionError, GENERATION_1_SURFACE, PLUGIN_ENTRY_SYMBOL_V1,
-    PLUGIN_SOURCE_API_VERSION, PluginDeclarationV1, PluginEntryV1, PluginPackageDescriptor,
-    PluginRegistrar, PluginSourceApiVersion, REGISTRY_ID_NORMALIZATION_VERSION, RegistryId,
-    RegistryIdError, SourceApiVersionError, ownership::render_surface_table,
+    ExtensionError, GENERATION_1_SURFACE, PLUGIN_SOURCE_API_VERSION, PluginSourceApiVersion,
+    REGISTRY_ID_NORMALIZATION_VERSION, RegistryId, RegistryIdError, SourceApiVersionError,
+    ownership::render_surface_table,
 };
 
 /// Normalize under the only supported version.
@@ -106,105 +103,13 @@ fn normalization_version_1_rejects_each_violated_rule_distinctly() {
     );
 }
 
-/// A package descriptor built once and borrowed for `'static`, exactly as the
-/// SDK macro will emit it.
-static PACKAGE: LazyLock<PluginPackageDescriptor> = LazyLock::new(|| {
-    PluginPackageDescriptor::from_authored("AIPerf-Export-OTLP", "0.12.0", "OpenTelemetry exporter")
-        .unwrap_or_else(|error| panic!("test package id must normalize: {error}"))
-});
-
-/// Registers two capabilities so a duplicate can be exercised separately.
-struct TestExtension;
-
-impl AIPerfExtension for TestExtension {
-    fn register(&self, registrar: &mut PluginRegistrar<'_>) -> Result<(), ExtensionError> {
-        registrar.record_registration(id("otel")?)?;
-        registrar.record_registration(id("OTEL-Console")?)?;
-        Ok(())
-    }
-}
-
-static EXTENSION: TestExtension = TestExtension;
-
-/// The exact shape the SDK macro exports under `aiperf_plugin_entry_v1`.
-unsafe fn entry() -> PluginDeclarationV1 {
-    PluginDeclarationV1 {
-        package: &PACKAGE,
-        extension: &EXTENSION,
-    }
-}
-
 #[test]
-fn a_declaration_is_produced_by_the_entry_shape_and_read_through_borrows() {
-    let entry_point: PluginEntryV1 = entry;
-    // SAFETY: `entry` is this test's own Rust-ABI function with the exact
-    // `PluginEntryV1` signature, standing in for a validated library symbol.
-    let declaration = unsafe { entry_point() };
-
-    assert_eq!(declaration.package.id.as_str(), "aiperf_export_otlp");
-    assert_eq!(declaration.package.version, "0.12.0");
-    assert_eq!(declaration.package.description, "OpenTelemetry exporter");
-    assert_eq!(PLUGIN_ENTRY_SYMBOL_V1, "aiperf_plugin_entry_v1");
-
-    let mut registrar = PluginRegistrar::new(declaration.package);
-    declaration
-        .extension
-        .register(&mut registrar)
-        .expect("registration must succeed");
-
-    let observed: Vec<&str> = registrar
-        .observed()
-        .iter()
-        .map(RegistryId::as_str)
-        .collect();
-    assert_eq!(observed, ["otel", "otel_console"]);
-    assert_eq!(registrar.package().id.as_str(), "aiperf_export_otlp");
-
-    // A capability descriptor carries the manifest-bound origin. `describe`
-    // takes no package argument, so the origin cannot be chosen by the caller.
-    let described = registrar.describe(id("otel").expect("normalizes"));
-    assert_eq!(described.package().id.as_str(), "aiperf_export_otlp");
-    assert_eq!(described.package(), registrar.package());
-}
-
-#[test]
-fn re_registering_one_identifier_is_a_typed_error_naming_it() {
-    let mut registrar = PluginRegistrar::new(&PACKAGE);
-    registrar
-        .record_registration(id("otel").expect("normalizes"))
-        .expect("first registration succeeds");
-
-    // The authored spelling differs but normalizes to the same identifier.
-    let error = registrar
-        .record_registration(id("OTEL").expect("normalizes"))
-        .expect_err("duplicate registration must be rejected");
-
-    assert_eq!(error.registry_id().map(RegistryId::as_str), Some("otel"));
-    assert!(
-        error.to_string().contains("otel"),
-        "error must name the identifier: {error}"
-    );
-    assert_eq!(registrar.observed().len(), 1);
-}
-
-#[test]
-fn the_extension_trait_is_object_safe_and_the_error_crosses_threads() {
+fn every_typed_boundary_error_crosses_threads() {
     fn assert_send_sync<T: Send + Sync + 'static>() {}
     assert_send_sync::<ExtensionError>();
     assert_send_sync::<RegistryIdError>();
     assert_send_sync::<SourceApiVersionError>();
     assert_send_sync::<RegistryId>();
-
-    let boxed: Box<dyn AIPerfExtension> = Box::new(TestExtension);
-    let mut registrar = PluginRegistrar::new(&PACKAGE);
-    boxed
-        .register(&mut registrar)
-        .expect("boxed trait object registers");
-    assert_eq!(registrar.observed().len(), 2);
-
-    // `AIPerfExtension: Send + Sync` is what lets the host move a declaration
-    // onto another thread; a `Box<dyn AIPerfExtension>` must satisfy it too.
-    assert_send_sync::<Box<dyn AIPerfExtension>>();
 }
 
 #[test]

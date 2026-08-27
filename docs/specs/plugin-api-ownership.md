@@ -90,6 +90,7 @@ a hot-path allocation argument.
 | `PluginDeclarationV1::package` | `aiperf-plugin-api` | `()` | `&'static PluginPackageDescriptor` | plugin | plugin | yes | startup |
 | `PluginDeclarationV1::extension` | `aiperf-plugin-api` | `()` | `&'static dyn AIPerfExtension` | plugin | plugin | yes | startup |
 | `AIPerfExtension::register` | `aiperf-plugin-api` | `&self, &mut PluginRegistrar<'_>` | `Result<(), ExtensionError>` | plugin | host | yes | startup |
+| `PluginRegistrar::new` | `aiperf-plugin-api` | `&'static PluginPackageDescriptor` | `PluginRegistrar<'_>` | host | host | yes | startup |
 | `PluginRegistrar::package` | `aiperf-plugin-api` | `&self` | `&'static PluginPackageDescriptor` | none | none | yes | startup |
 | `PluginRegistrar::observed` | `aiperf-plugin-api` | `&self` | `&[RegistryId]` | none | none | yes | startup |
 | `PluginRegistrar::record_registration` | `aiperf-plugin-api` | `&mut self, RegistryId` | `Result<(), ExtensionError>` | plugin | host | yes | startup |
@@ -135,9 +136,13 @@ unrelated library exporting the same name is never a second entry point.
 `PluginRegistrar` is a manifest-bound facade: it supplies package identity from
 the manifest rather than from the plugin, observes every registration, rejects a
 duplicate identifier from one package, and never exposes the aggregate registry.
-`describe` reads the package bound at `PluginRegistrar::new` and takes no origin
-argument, so the type — not prose — carries the rule that a plugin cannot claim
-a package identity other than the one the manifest bound to its library.
+Origin is carried by visibility, not by prose. `PluginRegistrar::new` and
+`PluginCategoryDescriptor::new` are `pub(crate)`, `PluginCategoryDescriptor` has
+no public fields, and `describe` takes no origin argument, so the only value of
+that type a plugin can reach is one a manifest-bound registrar minted over its
+own package. The two `pub(crate)` constructors are listed in the table above
+because they establish that origin; the out-of-crate seam the loader uses to
+bind a registrar lands with the loader.
 
 ### The documentation guard
 
@@ -187,7 +192,9 @@ new boundary item visible here.
 - `rust/plugin-api/src/ownership.rs` — `GENERATION_1_SURFACE`, the
   machine-readable copy of the table above.
 - `rust/plugin-api/src/bin/check-plugin-api-ownership.rs` — the guard binary.
-- `rust/plugin-api/tests/ownership_table.rs` — normalization, declaration,
-  object-safety, and guard behavior tests.
+- `rust/plugin-api/tests/ownership_table.rs` — normalization, version, typed
+  error, and guard behavior tests. The registrar and entry-shape tests live in
+  `rust/plugin-api/src/extension.rs` because `PluginRegistrar::new` is
+  `pub(crate)`.
 - `docs/specs/2026-08-26-native-rust-runtime-plugins-design.md` — the whole
   plugin-system design this boundary belongs to.
