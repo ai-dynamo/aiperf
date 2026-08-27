@@ -982,8 +982,9 @@ misleading names, and orchestration leakage; commit as
   transport execution-shape values, readiness/WebSocket capabilities, optional
   `GrpcEndpointBindingFactory`, exporter capture requirements,
   `FactoryValidationReceiptV1`, category descriptors, category errors/outcomes,
-  and every other concrete value that appears in those exported method
-  signatures or trait-object vtables. In particular,
+  and other category-specific boundary vocabulary. This ownership explicitly
+  excludes the transport-neutral product/service values assigned to core below,
+  even when an API-owned trait method references them. In particular,
   `aiperf-plugin-api::transport` owns `ExecutionSinkBuilder`, `WorkerSink`, and
   the boundary request/terminal contexts. `aiperf-core` solely owns the
   transport-neutral product and service values used by those contracts,
@@ -3565,7 +3566,7 @@ follows and are not additional package identities:
   candidate source. Task 28 copies only configuration, decoration, upload, and
   their tests; Task 39a later removes static `otel` registration/authority.
 - Task 29 endpoints:
-  `runtime/src/endpoints/{anthropic.rs,chat.rs,chat_chunk.rs,extraction.rs,implementation.rs,kserve.rs,riva.rs,sagemaker.rs,spec_decode.rs,tier2.rs,tier2/flexible.rs,usage.rs,vllm_generate.rs}` after Task 6 has moved the common portions of `implementation.rs` into the SDK. The candidate `mod.rs` is a reviewed facade and is not equality-hashed. `config.rs`, `metadata.rs`, `models.rs`, and the factory/prepared portions of `registry.rs` are SDK-owned definitions or runtime compatibility/registry adapters and must never be copied into a candidate. Endpoint comparator tests are
+  `runtime/src/endpoints/{anthropic.rs,chat.rs,chat_chunk.rs,extraction.rs,implementation.rs,kserve.rs,riva.rs,sagemaker.rs,spec_decode.rs,tier2.rs,tier2/flexible.rs,usage.rs,vllm_generate.rs}` after Task 6 has moved the shared private helper portions of `implementation.rs` into the endpoint SDK. The candidate `mod.rs` is a reviewed facade and is not equality-hashed. `config.rs` and `models.rs` become core-owned definitions or runtime compatibility adapters; category descriptors, factory traits, and prepared handles from `metadata.rs`/`registry.rs` become plugin-API-owned definitions; remaining registry state is a runtime host adapter. None is copied into a candidate. Endpoint comparator tests are
   `runtime/tests/{endpoints_anthropic_messages.rs,endpoints_endpoints.rs,endpoints_kserve.rs,endpoints_registry.rs,endpoints_riva.rs,endpoints_tier2.rs,endpoints_vllm_generate.rs,tier2_endpoints_online.rs}`.
 - Task 31 HTTP transport: every file under `runtime/src/transport/http/`.
   Comparator tests are every file under `runtime/tests/transport_http/`.
@@ -3591,10 +3592,12 @@ follows and are not additional package identities:
 
 No candidate copies shared host contracts from `dispatch`, `clock`,
 `transport::{core,measure,reduce,retry}`, body planning, metrics, scheduling, or
-the engine factory traits. Task 4/6 move those once into core/category SDKs and
-leave runtime adapters/re-exports; the Task-6 leaf-ownership test proves every
-later equality-copied implementation builds without `aiperf-runtime`,
-`RunContext`, or private engine DTOs.
+the engine/category factory traits. Tasks 4/6 move category factory and
+transport boundary traits once into plugin API, transport-neutral value/service
+contracts once into core, and shared private helper algorithms once into the
+relevant category SDK; runtime keeps only compatibility adapters/re-exports.
+The Task-6 leaf-ownership test proves every later equality-copied implementation
+builds without `aiperf-runtime`, `RunContext`, or private engine DTOs.
 No exporter candidate copies the legacy registry/config/ordering adapters or
 shared report/stat/CSV/name/display/artifact behavior either. Task 4 owns the
 finalized report and artifact contracts; Task 6 owns the single export-SDK

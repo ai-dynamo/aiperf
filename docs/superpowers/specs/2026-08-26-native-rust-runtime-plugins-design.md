@@ -536,8 +536,11 @@ The host may call plugin vtable methods/drop glue only while its library is
 resident, but it never instantiates or interprets the erased concrete layout.
 Changing such private code therefore rebuilds only that plugin. If a private
 type becomes concrete at the boundary or host code begins to instantiate/
-interpret it, the SDK moves its exact artifact closure into the common universe
-and all plugins rebuild.
+interpret it, its single type definition moves into `aiperf-plugin-api` or
+`aiperf-core`; the private category or plugin artifact does not move. The common
+universe adds only the exact compiled representation/validity/drop dependency
+closure required by that new API/core type, and all plugins rebuild against the
+new universe.
 
 The SDK embeds both records and IDs in a non-executable, platform-specific
 artifact section and repeats their IDs in the manifest. The loader parses and

@@ -186,7 +186,9 @@ facilities:
 - scheduling, admission, cancellation, drain, and orchestration;
 - worker and cellular construction;
 - CLI parsing and command routing; and
-- process-global state and lifecycle ownership.
+- benchmark/process-control state and lifecycle ownership, excluding the
+  resident plugin-library set and plugin composition lifecycle owned by
+  `aiperf-plugin-host`.
 
 Plugins may use narrow native trait handles supplied by the API/core contracts,
 but they must never depend directly on `aiperf-runtime` or receive the complete
