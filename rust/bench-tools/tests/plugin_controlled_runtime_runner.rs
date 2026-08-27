@@ -272,7 +272,7 @@ impl Fixture {
 }
 
 #[test]
-fn exact_artifact_member_stdout_is_evaluated_for_exporter_parity() {
+fn bare_exact_artifact_exporter_metric_is_a_product_failure() {
     let fixture = Fixture::new();
     let build_report = fixture.build_report();
 
@@ -320,15 +320,13 @@ fn exact_artifact_member_stdout_is_evaluated_for_exporter_parity() {
             .len(),
         840
     );
-    let statistical_report = report
-        .statistical_report
-        .as_ref()
-        .expect("exact acquired artifact output reaches statistical evaluation");
+    assert!(report.statistical_report.is_none());
     assert!(
-        statistical_report
-            .metric_reports
-            .iter()
-            .any(|metric| metric.metric == "exporter_nanoseconds_per_record")
+        report.attempt_history[0]
+            .reason
+            .as_deref()
+            .expect("product failure retains its reason")
+            .contains("bare exporter metric")
     );
 }
 
