@@ -850,6 +850,7 @@ async fn scripted_format_satisfies_the_shared_conformance_harness() {
         &factory,
         Box::new(CountingReporter::new(run_identity())),
         FormatConformanceCases {
+            run: run_identity(),
             authored: raw(serde_json::json!({ "fragments": 1 })),
             rejected_authored: raw(serde_json::json!({ "fragments": 1, "extra": true })),
             source_descriptor: &SOURCE_DESCRIPTOR,
@@ -861,6 +862,7 @@ async fn scripted_format_satisfies_the_shared_conformance_harness() {
                 max_bytes: 4096,
             },
             fragment_budget,
+            acquisition_budget: harness_acquisition_budget(),
             expected_fragment_count: 1,
             frontier: SourceFrontier {
                 through: SourcePosition::new(1),
