@@ -1,0 +1,12 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+schema_version = 1
+allowed_dependencies = [
+    "aiperf-core",
+    "blake3",
+    "serde",
+    "serde_json",
+    "thiserror",
+]
+allowed_std_modules = ["alloc", "core", "std"]

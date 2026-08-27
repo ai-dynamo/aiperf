@@ -9,6 +9,11 @@ license.workspace = true
 publish = false
 description = "Full-stack e2e tests: aiperf-mock-server + the native `aiperf` binary."
 
+[features]
+grpc = ["aiperf-runtime/grpc", "aiperf-cli/grpc"]
+websocket = ["aiperf-runtime/websocket", "aiperf-cli/websocket"]
+dynosim = ["aiperf-runtime/dynosim", "aiperf-cli/dynosim"]
+
 [dev-dependencies]
 aiperf-runtime = { path = "../runtime" }
 aiperf-mock-server = { path = "../mock-server" }

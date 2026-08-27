@@ -1,0 +1,1012 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# Generated mechanically from the immutable Task-1 base tree; do not edit individual rows.
+base_commit = "057d116850cd059bcfa8e259c1e929e913e6ef07"
+
+[[source]]
+source_path = "runtime/src/export/accuracy_csv.rs"
+candidate_path = "plugins/export-basic/src/export/accuracy_csv.rs"
+owner_task = 24
+classification = "implementation_leaf"
+state = "present"
+blake3 = "d718e86cfb40c1255bddd929ea2c3132501a4a3b8bf92190dda353635016a630"
+
+[[source]]
+source_path = "runtime/src/export/accuracy_csv/tests.rs"
+candidate_path = "plugins/export-basic/src/export/accuracy_csv/tests.rs"
+owner_task = 24
+classification = "implementation_leaf"
+state = "present"
+blake3 = "2ac029bd4bf0537c2d7ed4060e713e8e900e67423c2f00306e3047559cd7eb84"
+
+[[source]]
+source_path = "runtime/src/export/analysis_html.rs"
+candidate_path = "plugins/export-basic/src/export/analysis_html.rs"
+owner_task = 24
+classification = "implementation_leaf"
+state = "present"
+blake3 = "397c85e63f50e29dda5de5de946517878b85aabd9edfc078d840dcbc188b2637"
+
+[[source]]
+source_path = "runtime/src/export/analysis_txt.rs"
+candidate_path = "plugins/export-basic/src/export/analysis_txt.rs"
+owner_task = 24
+classification = "implementation_leaf"
+state = "present"
+blake3 = "0e36aafcacc71b3636bdb723bb7519a7e5ed09f8258b971aeaac7f07ce22f44c"
+
+[[source]]
+source_path = "runtime/src/export/console_txt.rs"
+candidate_path = "plugins/export-basic/src/export/console_txt.rs"
+owner_task = 24
+classification = "implementation_leaf"
+state = "present"
+blake3 = "b709c34f3e41117cf78b80224b5da999167b59fc65ce0ecf5f1ce3b8b869bd97"
+
+[[source]]
+source_path = "runtime/src/export/console_txt/cell_widths.rs"
+candidate_path = "plugins/export-basic/src/export/console_txt/cell_widths.rs"
+owner_task = 24
+classification = "implementation_leaf"
+state = "present"
+blake3 = "03f4891b4cb3f193c592c44a1a5373785cc5bafdb8511513ae6bd7752e64f413"
+
+[[source]]
+source_path = "runtime/src/export/console_txt/tests.rs"
+candidate_path = "plugins/export-basic/src/export/console_txt/tests.rs"
+owner_task = 24
+classification = "implementation_leaf"
+state = "present"
+blake3 = "796ee62fd17b989a3deaa27ee276f2a099fa91be7cd9248e041a1178837bda06"
+
+[[source]]
+source_path = "runtime/src/export/dataset_analysis.rs"
+candidate_path = "plugins/export-basic/src/export/dataset_analysis.rs"
+owner_task = 24
+classification = "implementation_leaf"
+state = "present"
+blake3 = "d16eb2070717430ac4bee4ef7f72b58d79391c47922a967ece340d4708eb9bf4"
+
+[[source]]
+source_path = "runtime/src/export/genai_perf.rs"
+candidate_path = "plugins/export-basic/src/export/genai_perf.rs"
+owner_task = 24
+classification = "implementation_leaf"
+state = "present"
+blake3 = "8a4cfdc1ed5edd46e3f9deba50e3ab2e950a64238826f9809fe663f44c5cb404"
+
+[[source]]
+source_path = "runtime/src/export/genai_perf/tests.rs"
+candidate_path = "plugins/export-basic/src/export/genai_perf/tests.rs"
+owner_task = 24
+classification = "implementation_leaf"
+state = "present"
+blake3 = "15379020eefeadb3d70d37bbb2e18c73a345f8bef8cd718046e3850e4f8657ee"
+
+[[source]]
+source_path = "runtime/src/export/server_metrics/mod.rs"
+candidate_path = "plugins/export-basic/src/export/server_metrics/mod.rs"
+owner_task = 24
+classification = "implementation_leaf"
+state = "present"
+blake3 = "0fd6b36a9edf2fee977816a4a8a4389013d82615a1a086191795f420a9ec383c"
+
+[[source]]
+source_path = "runtime/src/export/server_metrics/tests.rs"
+candidate_path = "plugins/export-basic/src/export/server_metrics/tests.rs"
+owner_task = 24
+classification = "implementation_leaf"
+state = "present"
+blake3 = "aa0a1bf7e85204b9c28372f911006edb66798c3a126bcecbdc852db139badad4"
+
+[[source]]
+source_path = "runtime/src/export/timeslice.rs"
+candidate_path = "plugins/export-basic/src/export/timeslice.rs"
+owner_task = 24
+classification = "implementation_leaf"
+state = "present"
+blake3 = "845caa12826bf3fe2dd220696f68ccfa0ce4a6e22350bd5b7e615b8256c9519c"
+
+[[source]]
+source_path = "runtime/src/export/timeslice/tests.rs"
+candidate_path = "plugins/export-basic/src/export/timeslice/tests.rs"
+owner_task = 24
+classification = "implementation_leaf"
+state = "present"
+blake3 = "d4219f37c8b6ca87d0503864d840fa6bc1781c890748a6bd9381235d8e16e69e"
+
+[[source]]
+source_path = "runtime/src/export/console_txt/golden/api_dynamo_session_control.txt"
+candidate_path = "plugins/export-basic/src/export/console_txt/golden/api_dynamo_session_control.txt"
+owner_task = 24
+classification = "asset"
+state = "present"
+blake3 = "7a823ee3c0d7246b3391bba40fc5379e0cbe86e9dfbb5cee2ae24197b804f6d0"
+
+[[source]]
+source_path = "runtime/src/export/console_txt/golden/api_max_completion_tokens.txt"
+candidate_path = "plugins/export-basic/src/export/console_txt/golden/api_max_completion_tokens.txt"
+owner_task = 24
+classification = "asset"
+state = "present"
+blake3 = "886ee269b1884b1e2512b9100f6daebb473f73b4f1413574864a5f276c77be9b"
+
+[[source]]
+source_path = "runtime/src/export/console_txt/golden/error_summary_table.regression.txt"
+candidate_path = "plugins/export-basic/src/export/console_txt/golden/error_summary_table.regression.txt"
+owner_task = 24
+classification = "asset"
+state = "present"
+blake3 = "7463b7b1abd3d96d0023511cd9af6266403651f863b993e18ef48424806180d0"
+
+[[source]]
+source_path = "runtime/src/export/console_txt/golden/full_render.regression.txt"
+candidate_path = "plugins/export-basic/src/export/console_txt/golden/full_render.regression.txt"
+owner_task = 24
+classification = "asset"
+state = "present"
+blake3 = "25a8230c29a3883bd007f0e40a1dcdfdd4bdc6b8fb09b3628fcdbfc0fe40b21d"
+
+[[source]]
+source_path = "runtime/src/export/console_txt/golden/osl_mismatch.txt"
+candidate_path = "plugins/export-basic/src/export/console_txt/golden/osl_mismatch.txt"
+owner_task = 24
+classification = "asset"
+state = "present"
+blake3 = "4df2000bd289bf9b8bd522cafcbbf45a351d83d850d4e76d7ba0470bfcfbb852"
+
+[[source]]
+source_path = "runtime/src/export/console_txt/golden/unicode_cjk_metric.regression.txt"
+candidate_path = "plugins/export-basic/src/export/console_txt/golden/unicode_cjk_metric.regression.txt"
+owner_task = 24
+classification = "asset"
+state = "present"
+blake3 = "88b01e9d001a391e2d5692b7bf9895bebbef9198a52a6ed5c24a8c208c52a944"
+
+[[source]]
+source_path = "runtime/src/export/console_txt/golden/unicode_emoji_wrap.regression.txt"
+candidate_path = "plugins/export-basic/src/export/console_txt/golden/unicode_emoji_wrap.regression.txt"
+owner_task = 24
+classification = "asset"
+state = "present"
+blake3 = "d296012743396b8c85c2d5da29d9cd3b4fda938b967057d5a4f97bb41e0763a9"
+
+[[source]]
+source_path = "runtime/src/export/console_txt/golden/usage_discrepancy.txt"
+candidate_path = "plugins/export-basic/src/export/console_txt/golden/usage_discrepancy.txt"
+owner_task = 24
+classification = "asset"
+state = "present"
+blake3 = "c9d12ac56deed536dcf8f81db02c29a6678b95a2c831b29ad7572487bb21ea2e"
+
+[[source]]
+source_path = "runtime/src/export/parquet.rs"
+candidate_path = "plugins/export-parquet/src/export/parquet.rs"
+owner_task = 25
+classification = "implementation_leaf"
+state = "present"
+blake3 = "734b243793c71c11339637fbf97f25e1593f3afd8c6ba88e3ca94f412ad46103"
+
+[[source]]
+source_path = "runtime/src/export/parquet/tests.rs"
+candidate_path = "plugins/export-parquet/src/export/parquet/tests.rs"
+owner_task = 25
+classification = "implementation_leaf"
+state = "present"
+blake3 = "3a707efa951cd3d5ccb98e861905a19701a03693cffe65d8b4d6b26a0e76cf0b"
+
+[[source]]
+source_path = "runtime/src/export/parquet/units.rs"
+candidate_path = "plugins/export-parquet/src/export/parquet/units.rs"
+owner_task = 25
+classification = "implementation_leaf"
+state = "present"
+blake3 = "2b4cfc09a49a0b0e8f3768144f0855446ac61bba592eb228cbdbad9020dc7887"
+
+[[source]]
+source_path = "runtime/src/export/parquet_util.rs"
+candidate_path = "plugins/export-parquet/src/export/parquet_util.rs"
+owner_task = 25
+classification = "implementation_leaf"
+state = "present"
+blake3 = "9a46c2f41aca81cdecb44e522f3b7c7b45679cc47320011ed91dc1b08a2dbee8"
+
+[[source]]
+source_path = "runtime/src/export/per_record_parquet.rs"
+candidate_path = "plugins/export-parquet/src/export/per_record_parquet.rs"
+owner_task = 25
+classification = "implementation_leaf"
+state = "present"
+blake3 = "ead7745e5d4df6fe43c0661b093e98d75b8186545236b177e4b8c4fb754e94ed"
+
+[[source]]
+source_path = "runtime/src/export/mlflow.rs"
+candidate_path = "plugins/export-mlflow/src/export/mlflow.rs"
+owner_task = 26
+classification = "implementation_leaf"
+state = "present"
+blake3 = "e7bdb63b41c6a187b15913955b7a52df7fbfb7d64720411844373c7ce4b2e797"
+
+[[source]]
+source_path = "runtime/src/export/mlflow/tests.rs"
+candidate_path = "plugins/export-mlflow/src/export/mlflow/tests.rs"
+owner_task = 26
+classification = "implementation_leaf"
+state = "present"
+blake3 = "c6a6d46cf8cca14fbd8e828a0453fe5fcabd66912d2fc4588659308b457e27df"
+
+[[source]]
+source_path = "runtime/src/export/wandb/mod.rs"
+candidate_path = "plugins/export-wandb/src/export/wandb/mod.rs"
+owner_task = 27
+classification = "implementation_leaf"
+state = "present"
+blake3 = "45f3e69e5e0004565f6c91866f85be33c11c4084e487f269c1dd8271b9a83374"
+
+[[source]]
+source_path = "runtime/src/export/wandb/datastore.rs"
+candidate_path = "plugins/export-wandb/src/export/wandb/datastore.rs"
+owner_task = 27
+classification = "implementation_leaf"
+state = "present"
+blake3 = "6706594661218773ffa892d42844aebdc03a4026d74ac6763955ff008cd286ce"
+
+[[source]]
+source_path = "runtime/src/export/wandb/proto.rs"
+candidate_path = "plugins/export-wandb/src/export/wandb/proto.rs"
+owner_task = 27
+classification = "implementation_leaf"
+state = "present"
+blake3 = "bde6f8866d1c575b91afb004c9bc258cfc2547bc634b23d3c1a50d95cf8fd9a7"
+
+[[source]]
+source_path = "runtime/src/export/wandb/tests.rs"
+candidate_path = "plugins/export-wandb/src/export/wandb/tests.rs"
+owner_task = 27
+classification = "implementation_leaf"
+state = "present"
+blake3 = "5536bbb6a217b104da8d8377d5fc7f2367254853dba556223892067d0fe34e4b"
+
+[[source]]
+source_path = "runtime/src/export/otel.rs"
+candidate_path = "plugins/export-otel/src/export/otel.rs"
+owner_task = 28
+classification = "implementation_leaf"
+state = "present"
+blake3 = "31a696996908da70084cc6949b4ea9197163ae32bdf6378013ae62545f86fd85"
+
+[[source]]
+source_path = "runtime/src/export/otel/tests.rs"
+candidate_path = "plugins/export-otel/src/export/otel/tests.rs"
+owner_task = 28
+classification = "implementation_leaf"
+state = "present"
+blake3 = "7bb432bcc47ef304a32b89feeaf1c5f4ca1f34e69fe5d2637816e95326456cc4"
+
+[[source]]
+source_path = "runtime/src/endpoints/anthropic.rs"
+candidate_path = "plugins/endpoints/src/endpoints/anthropic.rs"
+owner_task = 29
+classification = "implementation_leaf"
+state = "present"
+blake3 = "d48cc94878f4159c7877b7c1d1711931a30376a85764d39f0d2d66e1c284d872"
+
+[[source]]
+source_path = "runtime/src/endpoints/chat.rs"
+candidate_path = "plugins/endpoints/src/endpoints/chat.rs"
+owner_task = 29
+classification = "implementation_leaf"
+state = "present"
+blake3 = "5dcc0dc45dea236c5376c691841281765d6222f4ca39474387559ee220f04cf9"
+
+[[source]]
+source_path = "runtime/src/endpoints/chat_chunk.rs"
+candidate_path = "plugins/endpoints/src/endpoints/chat_chunk.rs"
+owner_task = 29
+classification = "implementation_leaf"
+state = "present"
+blake3 = "0b82708851896156dc11b3b577a86ceb493e33015e9f7250e35951ef0171a0be"
+
+[[source]]
+source_path = "runtime/src/endpoints/extraction.rs"
+candidate_path = "plugins/endpoints/src/endpoints/extraction.rs"
+owner_task = 29
+classification = "implementation_leaf"
+state = "present"
+blake3 = "178bcc6520b6d1eed41a5846cff543d9dffe14650900ee63e226a526c1a69128"
+
+[[source]]
+source_path = "runtime/src/endpoints/implementation.rs"
+candidate_path = "plugins/endpoints/src/endpoints/implementation.rs"
+owner_task = 29
+classification = "implementation_leaf"
+state = "present"
+blake3 = "76fbaa1f78874e18b885b4ba8c57792880da6827fb02167419c13c7a9e30ca95"
+
+[[source]]
+source_path = "runtime/src/endpoints/kserve.rs"
+candidate_path = "plugins/endpoints/src/endpoints/kserve.rs"
+owner_task = 29
+classification = "implementation_leaf"
+state = "present"
+blake3 = "db0e860143b0d30101316b853584e451d95dfe59635431441b760c580926e777"
+
+[[source]]
+source_path = "runtime/src/endpoints/riva.rs"
+candidate_path = "plugins/endpoints/src/endpoints/riva.rs"
+owner_task = 29
+classification = "implementation_leaf"
+state = "present"
+blake3 = "eddc5a058a1b0017ed0e3682be4b4915bcdb0489268f2b5997fada477bb83023"
+
+[[source]]
+source_path = "runtime/src/endpoints/sagemaker.rs"
+candidate_path = "plugins/endpoints/src/endpoints/sagemaker.rs"
+owner_task = 29
+classification = "implementation_leaf"
+state = "present"
+blake3 = "fcec1c6a4ee702caf77c9bfad0c89a54fc57cbfa8ea0e57e8fe3a4ccc2c449f5"
+
+[[source]]
+source_path = "runtime/src/endpoints/spec_decode.rs"
+candidate_path = "plugins/endpoints/src/endpoints/spec_decode.rs"
+owner_task = 29
+classification = "implementation_leaf"
+state = "present"
+blake3 = "621266931fd8d74ec7dd820147364224ba0db93fa459b68c39708bb4886e7229"
+
+[[source]]
+source_path = "runtime/src/endpoints/tier2.rs"
+candidate_path = "plugins/endpoints/src/endpoints/tier2.rs"
+owner_task = 29
+classification = "implementation_leaf"
+state = "present"
+blake3 = "172d7c7a5164e362c0b5ba78c6ac909113c4c2a832ff72062e65b8866b46f007"
+
+[[source]]
+source_path = "runtime/src/endpoints/tier2/flexible.rs"
+candidate_path = "plugins/endpoints/src/endpoints/tier2/flexible.rs"
+owner_task = 29
+classification = "implementation_leaf"
+state = "present"
+blake3 = "53bc380e5e33ff6350efb07e96121a3d8a5f781c441f3f7962f34dc970d782ab"
+
+[[source]]
+source_path = "runtime/src/endpoints/usage.rs"
+candidate_path = "plugins/endpoints/src/endpoints/usage.rs"
+owner_task = 29
+classification = "implementation_leaf"
+state = "present"
+blake3 = "38a0b4fce98e3430b363f7fd9417a48c584b45025ef297dd9b1735b034d12013"
+
+[[source]]
+source_path = "runtime/src/endpoints/vllm_generate.rs"
+candidate_path = "plugins/endpoints/src/endpoints/vllm_generate.rs"
+owner_task = 29
+classification = "implementation_leaf"
+state = "present"
+blake3 = "bb897c43282cd35fe0d7f70967f9330431058c59957867469c5d28909b526f78"
+
+[[source]]
+source_path = "runtime/src/endpoints/mod.rs"
+candidate_path = "plugins/endpoints/src/endpoints/mod.rs"
+owner_task = 29
+classification = "facade"
+state = "present"
+blake3 = "cfb411c505fac45fbd5cdf27838a60b1c985669c03a7e1c79124503672c9a7c7"
+
+[[source]]
+source_path = "runtime/tests/endpoints_anthropic_messages.rs"
+candidate_path = "plugins/endpoints/tests/baseline/endpoints_anthropic_messages.rs"
+owner_task = 29
+classification = "implementation_leaf"
+state = "present"
+blake3 = "3dc8237ba5289305ccbf3468231a51c9965c923c0a5dc00d4223cc0bca03a24f"
+
+[[source]]
+source_path = "runtime/tests/endpoints_endpoints.rs"
+candidate_path = "plugins/endpoints/tests/baseline/endpoints_endpoints.rs"
+owner_task = 29
+classification = "implementation_leaf"
+state = "present"
+blake3 = "9c7217cd57f22a2eaa37980204fa4ccf7043c4c48ba61c5c965ab87e31b497e9"
+
+[[source]]
+source_path = "runtime/tests/endpoints_kserve.rs"
+candidate_path = "plugins/endpoints/tests/baseline/endpoints_kserve.rs"
+owner_task = 29
+classification = "implementation_leaf"
+state = "present"
+blake3 = "48e93861fb25f670c3f4e8a263e75256a3315d9928bbea9aa2e1f6959c066e44"
+
+[[source]]
+source_path = "runtime/tests/endpoints_registry.rs"
+candidate_path = "plugins/endpoints/tests/baseline/endpoints_registry.rs"
+owner_task = 29
+classification = "implementation_leaf"
+state = "present"
+blake3 = "71a7b72d7ea04338c244fbf52d10c172c59aa1473b7317c41991056b545084f3"
+
+[[source]]
+source_path = "runtime/tests/endpoints_riva.rs"
+candidate_path = "plugins/endpoints/tests/baseline/endpoints_riva.rs"
+owner_task = 29
+classification = "implementation_leaf"
+state = "present"
+blake3 = "2aee9545e945fa18d2f8bd12080a3ba2f9b0495db716de6cc741d2eb746e0d28"
+
+[[source]]
+source_path = "runtime/tests/endpoints_tier2.rs"
+candidate_path = "plugins/endpoints/tests/baseline/endpoints_tier2.rs"
+owner_task = 29
+classification = "implementation_leaf"
+state = "present"
+blake3 = "8420c438a5b2b3db250216f614b631546c38abd8235c766064b4aac5f3c124b0"
+
+[[source]]
+source_path = "runtime/tests/endpoints_vllm_generate.rs"
+candidate_path = "plugins/endpoints/tests/baseline/endpoints_vllm_generate.rs"
+owner_task = 29
+classification = "implementation_leaf"
+state = "present"
+blake3 = "a4b06dc5cf44a85ccb2b45f1581e6559757aa68e01a84aaf26b08cfe5633d28f"
+
+[[source]]
+source_path = "runtime/tests/tier2_endpoints_online.rs"
+candidate_path = "plugins/endpoints/tests/baseline/tier2_endpoints_online.rs"
+owner_task = 29
+classification = "implementation_leaf"
+state = "present"
+blake3 = "faea206bee4bc96811e87cdcd637573b7f835f0ff1e3f4eba675dbce26ea4032"
+
+[[source]]
+source_path = "runtime/src/transport/http/client/cancellation.rs"
+candidate_path = "plugins/transport-http/src/transport/http/client/cancellation.rs"
+owner_task = 31
+classification = "implementation_leaf"
+state = "present"
+blake3 = "b5dbe4063a4fbed4a8361082da4e5a26773bb47c1056d9a6aceaac707bdf8c1b"
+
+[[source]]
+source_path = "runtime/src/transport/http/client/connection.rs"
+candidate_path = "plugins/transport-http/src/transport/http/client/connection.rs"
+owner_task = 31
+classification = "implementation_leaf"
+state = "present"
+blake3 = "b5b36a2f3daab98b6b8acb9b5e8261785c93b99de1ac69b35288dfff4512a658"
+
+[[source]]
+source_path = "runtime/src/transport/http/client/http_client.rs"
+candidate_path = "plugins/transport-http/src/transport/http/client/http_client.rs"
+owner_task = 31
+classification = "implementation_leaf"
+state = "present"
+blake3 = "ee4df3dd0c49c9332255bd47bdb27e97edd9b9b027f4f9101ade28a0b07ccd90"
+
+[[source]]
+source_path = "runtime/src/transport/http/client/mod.rs"
+candidate_path = "plugins/transport-http/src/transport/http/client/mod.rs"
+owner_task = 31
+classification = "implementation_leaf"
+state = "present"
+blake3 = "8c9477ae359e621bf73c1eedbebd0efd0900d0057e77349b40885ce5351af192"
+
+[[source]]
+source_path = "runtime/src/transport/http/client/pool.rs"
+candidate_path = "plugins/transport-http/src/transport/http/client/pool.rs"
+owner_task = 31
+classification = "implementation_leaf"
+state = "present"
+blake3 = "4d2bca0fea9de1038ac9380f827245db77b2ccab37aa93e5caab782a41a42405"
+
+[[source]]
+source_path = "runtime/src/transport/http/client/proxy.rs"
+candidate_path = "plugins/transport-http/src/transport/http/client/proxy.rs"
+owner_task = 31
+classification = "implementation_leaf"
+state = "present"
+blake3 = "963d2ea540cd53cc5f253ad05d252207fd3d27c9b88091dc42612173b43890c7"
+
+[[source]]
+source_path = "runtime/src/transport/http/client/resolver.rs"
+candidate_path = "plugins/transport-http/src/transport/http/client/resolver.rs"
+owner_task = 31
+classification = "implementation_leaf"
+state = "present"
+blake3 = "8f6a3a4d5710d026455955372fa127dba651106e958dbab510c5cb80b5a6e0ba"
+
+[[source]]
+source_path = "runtime/src/transport/http/config/defaults.rs"
+candidate_path = "plugins/transport-http/src/transport/http/config/defaults.rs"
+owner_task = 31
+classification = "implementation_leaf"
+state = "present"
+blake3 = "0efbc120fa96e313c9c22d09111c0cdaf5ed3b877b1f1fe141d52b55e8f14dc1"
+
+[[source]]
+source_path = "runtime/src/transport/http/config/mod.rs"
+candidate_path = "plugins/transport-http/src/transport/http/config/mod.rs"
+owner_task = 31
+classification = "implementation_leaf"
+state = "present"
+blake3 = "73736c9bd3259ea3865b52573a2320c1de9f5176591ffecaac5e915647d60ceb"
+
+[[source]]
+source_path = "runtime/src/transport/http/mod.rs"
+candidate_path = "plugins/transport-http/src/transport/http/mod.rs"
+owner_task = 31
+classification = "implementation_leaf"
+state = "present"
+blake3 = "4bcdcf9889c5db4a069f058156c73ade57e1ca2150e525ec8e00b1eb872b34f7"
+
+[[source]]
+source_path = "runtime/src/transport/http/models/mod.rs"
+candidate_path = "plugins/transport-http/src/transport/http/models/mod.rs"
+owner_task = 31
+classification = "implementation_leaf"
+state = "present"
+blake3 = "c1923cd2cff07441e4c2e33d6a31a1055b68fbf7cd92b9f974b70d3068779210"
+
+[[source]]
+source_path = "runtime/src/transport/http/models/request.rs"
+candidate_path = "plugins/transport-http/src/transport/http/models/request.rs"
+owner_task = 31
+classification = "implementation_leaf"
+state = "present"
+blake3 = "b56ab5c59dad00eb06a12282a1c7e8c943220d75a5a15d7c4c9ba104bcbd2e05"
+
+[[source]]
+source_path = "runtime/src/transport/http/sink.rs"
+candidate_path = "plugins/transport-http/src/transport/http/sink.rs"
+owner_task = 31
+classification = "implementation_leaf"
+state = "present"
+blake3 = "5f93e414c3f64b67551cf3b1577d675d01319726bc84e8d66085a7bb0acea60f"
+
+[[source]]
+source_path = "runtime/src/transport/http/sink/endpoint_dispatch.rs"
+candidate_path = "plugins/transport-http/src/transport/http/sink/endpoint_dispatch.rs"
+owner_task = 31
+classification = "implementation_leaf"
+state = "present"
+blake3 = "2f7ef20ffe3d0332a579ddb008675c47328fd771d49c9f71f5ecbc29f18f2576"
+
+[[source]]
+source_path = "runtime/src/transport/http/sse/mod.rs"
+candidate_path = "plugins/transport-http/src/transport/http/sse/mod.rs"
+owner_task = 31
+classification = "implementation_leaf"
+state = "present"
+blake3 = "2236edc3b347d33f6895d736d9c266c1ddd9c0fac00844708c62902f19c4fa43"
+
+[[source]]
+source_path = "runtime/src/transport/http/sse/reader.rs"
+candidate_path = "plugins/transport-http/src/transport/http/sse/reader.rs"
+owner_task = 31
+classification = "implementation_leaf"
+state = "present"
+blake3 = "464ddc5633e7bde53d3dad1ae754086b6153813e8ae6f5c2fab0efea47aeca21"
+
+[[source]]
+source_path = "runtime/src/transport/http/transport/body.rs"
+candidate_path = "plugins/transport-http/src/transport/http/transport/body.rs"
+owner_task = 31
+classification = "implementation_leaf"
+state = "present"
+blake3 = "64678beb4ea45338b722cf463f125ec468e63ebd428386ddf2a7cb4a1b2d0ae9"
+
+[[source]]
+source_path = "runtime/src/transport/http/transport/endpoint_binding.rs"
+candidate_path = "plugins/transport-http/src/transport/http/transport/endpoint_binding.rs"
+owner_task = 31
+classification = "implementation_leaf"
+state = "present"
+blake3 = "2db8b7caa6caf331f18754b2e99e37f0c3917e871455682e80f455d90bc40848"
+
+[[source]]
+source_path = "runtime/src/transport/http/transport/headers.rs"
+candidate_path = "plugins/transport-http/src/transport/http/transport/headers.rs"
+owner_task = 31
+classification = "implementation_leaf"
+state = "present"
+blake3 = "9c8e53cfb8e2e8559bd9d92216d2070cefbde8844748ade1c02554ea48480220"
+
+[[source]]
+source_path = "runtime/src/transport/http/transport/http_transport.rs"
+candidate_path = "plugins/transport-http/src/transport/http/transport/http_transport.rs"
+owner_task = 31
+classification = "implementation_leaf"
+state = "present"
+blake3 = "be3b62733708db4e444fb66e050dfe3fb26b485d02d4b59a432c3a58aaf58e34"
+
+[[source]]
+source_path = "runtime/src/transport/http/transport/inline_media.rs"
+candidate_path = "plugins/transport-http/src/transport/http/transport/inline_media.rs"
+owner_task = 31
+classification = "implementation_leaf"
+state = "present"
+blake3 = "24ed72edf32e330abaca6079f26755cf5c7d527c8ea79e7fdc8001663097a4ca"
+
+[[source]]
+source_path = "runtime/src/transport/http/transport/mod.rs"
+candidate_path = "plugins/transport-http/src/transport/http/transport/mod.rs"
+owner_task = 31
+classification = "implementation_leaf"
+state = "present"
+blake3 = "f2d557fad184d2044262e1b3c7f6cdab1e2d1a21b1303f38fb1d4e698b1d4f6b"
+
+[[source]]
+source_path = "runtime/src/transport/http/transport/polling.rs"
+candidate_path = "plugins/transport-http/src/transport/http/transport/polling.rs"
+owner_task = 31
+classification = "implementation_leaf"
+state = "present"
+blake3 = "c6dbf8dff93eb246871b38a15baffae36f59656518f098901398a08f8fba8e82"
+
+[[source]]
+source_path = "runtime/src/transport/http/transport/url.rs"
+candidate_path = "plugins/transport-http/src/transport/http/transport/url.rs"
+owner_task = 31
+classification = "implementation_leaf"
+state = "present"
+blake3 = "e7ff81d16c4cc3df60a3ce4ca0db4f7291ee839aadc3f7e6050643999f94ce61"
+
+[[source]]
+source_path = "runtime/tests/transport_http/cancel.rs"
+candidate_path = "plugins/transport-http/tests/baseline/transport_http/cancel.rs"
+owner_task = 31
+classification = "implementation_leaf"
+state = "present"
+blake3 = "bb5759f9b68399c38c8d2aab82e94c36d95194a6f5badd38b65d74b11b8c4fc9"
+
+[[source]]
+source_path = "runtime/tests/transport_http/common.rs"
+candidate_path = "plugins/transport-http/tests/baseline/transport_http/common.rs"
+owner_task = 31
+classification = "implementation_leaf"
+state = "present"
+blake3 = "5135989c4aa12f46435cb1c393f00b3bf73350fb45810a58c2cf790b5c02db06"
+
+[[source]]
+source_path = "runtime/tests/transport_http/connect.rs"
+candidate_path = "plugins/transport-http/tests/baseline/transport_http/connect.rs"
+owner_task = 31
+classification = "implementation_leaf"
+state = "present"
+blake3 = "1aa5cb140f3d03255d01e6886eb77b293353c02eef531bb43f4d3ce7b3181550"
+
+[[source]]
+source_path = "runtime/tests/transport_http/facade.rs"
+candidate_path = "plugins/transport-http/tests/baseline/transport_http/facade.rs"
+owner_task = 31
+classification = "implementation_leaf"
+state = "present"
+blake3 = "51654bfc2f7330bcb8dab2637ad32d171cfc3040f74d4f3a635ea0951fbd8ea9"
+
+[[source]]
+source_path = "runtime/tests/transport_http/h2c.rs"
+candidate_path = "plugins/transport-http/tests/baseline/transport_http/h2c.rs"
+owner_task = 31
+classification = "implementation_leaf"
+state = "present"
+blake3 = "bc63ec7a4b38eac0e0b11022e2fe20cb17c35e325373aaaecf6a77c39f873931"
+
+[[source]]
+source_path = "runtime/tests/transport_http/mock_smoke.rs"
+candidate_path = "plugins/transport-http/tests/baseline/transport_http/mock_smoke.rs"
+owner_task = 31
+classification = "implementation_leaf"
+state = "present"
+blake3 = "6d8ff3741081407a5b8880a18f751b6d3ab17f4f33eedc87df0464a6f357772b"
+
+[[source]]
+source_path = "runtime/tests/transport_http/no_direct_time.rs"
+candidate_path = "plugins/transport-http/tests/baseline/transport_http/no_direct_time.rs"
+owner_task = 31
+classification = "implementation_leaf"
+state = "present"
+blake3 = "a9708bc4ab350aca6e89c27a87cd6c9273d93d539f545470217a1c64feb727a7"
+
+[[source]]
+source_path = "runtime/tests/transport_http/pool.rs"
+candidate_path = "plugins/transport-http/tests/baseline/transport_http/pool.rs"
+owner_task = 31
+classification = "implementation_leaf"
+state = "present"
+blake3 = "0fae8567e56c7a8e682fc5e01d29772b936273bfa1e63d54ba0d6dd83d184b9c"
+
+[[source]]
+source_path = "runtime/tests/transport_http/request.rs"
+candidate_path = "plugins/transport-http/tests/baseline/transport_http/request.rs"
+owner_task = 31
+classification = "implementation_leaf"
+state = "present"
+blake3 = "4dce10a13d3a22ae68f638a148291ee800eb515f7768c9cf7edb0541c5d92798"
+
+[[source]]
+source_path = "runtime/tests/transport_http/response_body_limits.rs"
+candidate_path = "plugins/transport-http/tests/baseline/transport_http/response_body_limits.rs"
+owner_task = 31
+classification = "implementation_leaf"
+state = "present"
+blake3 = "8090c1ebbebde33a807db54779b83e7cff1e515fad2980f59e1801cf22e360b7"
+
+[[source]]
+source_path = "runtime/tests/transport_http/reuse.rs"
+candidate_path = "plugins/transport-http/tests/baseline/transport_http/reuse.rs"
+owner_task = 31
+classification = "implementation_leaf"
+state = "present"
+blake3 = "9bb0974367548d9303c11759524cd0983400a1d7e8b977b9068a601418b6ddda"
+
+[[source]]
+source_path = "runtime/tests/transport_http/tls.rs"
+candidate_path = "plugins/transport-http/tests/baseline/transport_http/tls.rs"
+owner_task = 31
+classification = "implementation_leaf"
+state = "present"
+blake3 = "9c1aba490fbe1ae807fb8c395a96ec79f6f5789acd303157ba88e5afaee2e159"
+
+[[source]]
+source_path = "runtime/src/transport/grpc/kserve_binding.rs"
+candidate_path = "plugins/endpoints/src/transport/grpc/kserve_binding.rs"
+owner_task = 30
+classification = "implementation_leaf"
+state = "planned"
+producer_task = 6
+
+[[source]]
+source_path = "runtime/src/transport/grpc/proto.rs"
+candidate_path = "plugins/endpoints/src/transport/grpc/proto.rs"
+owner_task = 30
+classification = "implementation_leaf"
+state = "present"
+blake3 = "b62c949ba1ce3506af11e75dff85815a11a54c18077c9e1837e8c36ccea07479"
+
+[[source]]
+source_path = "runtime/src/transport/grpc/riva_binding.rs"
+candidate_path = "plugins/endpoints/src/transport/grpc/riva_binding.rs"
+owner_task = 30
+classification = "implementation_leaf"
+state = "present"
+blake3 = "7a5db0263c8a9d6e8210f741f966d53a9a518ee30d4573089a96804ddfc164ff"
+
+[[source]]
+source_path = "runtime/src/transport/grpc/riva_codec.rs"
+candidate_path = "plugins/endpoints/src/transport/grpc/riva_codec.rs"
+owner_task = 30
+classification = "implementation_leaf"
+state = "present"
+blake3 = "49811f1bc6196562aaa9f84cae890ec61e6b96256282c7b36fa87f3d24326551"
+
+[[source]]
+source_path = "runtime/src/transport/grpc/riva_proto.rs"
+candidate_path = "plugins/endpoints/src/transport/grpc/riva_proto.rs"
+owner_task = 30
+classification = "implementation_leaf"
+state = "present"
+blake3 = "bc4ac9a2c128c4149fbc56549aeab04ccc7e43f1938fff8eb74b6f2a8ea6cc34"
+
+[[source]]
+source_path = "runtime/src/transport/grpc/codec.rs"
+candidate_path = "plugins/transport-grpc/src/transport/grpc/codec.rs"
+owner_task = 32
+classification = "implementation_leaf"
+state = "present"
+blake3 = "fb962aa5b95eb933d2e75357bfab7c5b3cfb3c379479388e1b4c45b478af04ee"
+
+[[source]]
+source_path = "runtime/src/transport/grpc/models.rs"
+candidate_path = "plugins/transport-grpc/src/transport/grpc/models.rs"
+owner_task = 32
+classification = "implementation_leaf"
+state = "present"
+blake3 = "7d480222e8cccfdc2f0c36e2df25bd2cec1866539b1f9a98c77b83967776419f"
+
+[[source]]
+source_path = "runtime/src/transport/grpc/raw_codec.rs"
+candidate_path = "plugins/transport-grpc/src/transport/grpc/raw_codec.rs"
+owner_task = 32
+classification = "implementation_leaf"
+state = "present"
+blake3 = "98c66b86b92d075f2b55d39031f63a3f3b3ccc9aeb9e896feeb12da9bac26cf3"
+
+[[source]]
+source_path = "runtime/src/transport/grpc/sink.rs"
+candidate_path = "plugins/transport-grpc/src/transport/grpc/sink.rs"
+owner_task = 32
+classification = "implementation_leaf"
+state = "present"
+blake3 = "07f7e44d20984877d57f8760d9541355839ae467314f142cea427a8cc420a923"
+
+[[source]]
+source_path = "runtime/src/transport/grpc/transport.rs"
+candidate_path = "plugins/transport-grpc/src/transport/grpc/transport.rs"
+owner_task = 32
+classification = "implementation_leaf"
+state = "present"
+blake3 = "210268d83db2bcc4048aef7c737a7f36fef9bbcd138073fa995bd21fb31e8732"
+
+[[source]]
+source_path = "runtime/tests/proto/grpc_predict_v2.proto"
+candidate_path = "plugins/transport-grpc/tests/baseline/proto/grpc_predict_v2.proto"
+owner_task = 32
+classification = "asset"
+state = "present"
+blake3 = "fb4c02408c2305a06c342bd5f4011c1e86e7325aba693175cf181efa62fb8c5b"
+
+[[source]]
+source_path = "runtime/src/transport/grpc/mod.rs"
+candidate_path = "plugins/transport-grpc/src/transport/grpc/mod.rs"
+owner_task = 32
+classification = "facade"
+state = "present"
+blake3 = "8626e89d766163d531e3f86e89ed49011b594e74cfac0b2ec5ae96fe66561ab4"
+
+[[source]]
+source_path = "runtime/tests/transport_grpc_codec.rs"
+candidate_path = "plugins/transport-grpc/tests/baseline/transport_grpc_codec.rs"
+owner_task = 32
+classification = "implementation_leaf"
+state = "present"
+blake3 = "92f8afc8947e60381efb264ca75b080d74b2e5d8996dee87255665c803d10598"
+
+[[source]]
+source_path = "runtime/tests/transport_grpc_riva.rs"
+candidate_path = "plugins/transport-grpc/tests/baseline/transport_grpc_riva.rs"
+owner_task = 32
+classification = "implementation_leaf"
+state = "present"
+blake3 = "34b634486ea65fda8cfcfd8b9625c15403f3a3b3453541a4d4146f818551e4fc"
+
+[[source]]
+source_path = "runtime/tests/transport_grpc_riva_transport.rs"
+candidate_path = "plugins/transport-grpc/tests/baseline/transport_grpc_riva_transport.rs"
+owner_task = 32
+classification = "implementation_leaf"
+state = "present"
+blake3 = "ecbc89efa9e7d77d0d5c549a9787e4f721d351a06b2c92356765f21de5f9d5a5"
+
+[[source]]
+source_path = "runtime/tests/transport_grpc_transport.rs"
+candidate_path = "plugins/transport-grpc/tests/baseline/transport_grpc_transport.rs"
+owner_task = 32
+classification = "implementation_leaf"
+state = "present"
+blake3 = "555094e76183d7461e45816ca95a67d8e9e3416f29476e767bdbeab961b1518a"
+
+[[source]]
+source_path = "runtime/src/transport/ws.rs"
+candidate_path = "plugins/transport-websocket/src/transport/ws.rs"
+owner_task = 33
+classification = "implementation_leaf"
+state = "present"
+blake3 = "7c206df6cb00e249739b35d91c4c24dd6043390c936f094e43155ac3967a8bc6"
+
+[[source]]
+source_path = "runtime/src/transport/ws/connector.rs"
+candidate_path = "plugins/transport-websocket/src/transport/ws/connector.rs"
+owner_task = 33
+classification = "implementation_leaf"
+state = "present"
+blake3 = "34d608406404958f78b7b13d12837a5cb4de071304a0e15c03cef190ab52480f"
+
+[[source]]
+source_path = "runtime/src/transport/ws/dialect.rs"
+candidate_path = "plugins/transport-websocket/src/transport/ws/dialect.rs"
+owner_task = 33
+classification = "implementation_leaf"
+state = "present"
+blake3 = "138409a30e93632558a5c896699d290f85fb03b682e08956cc86262726e24f64"
+
+[[source]]
+source_path = "runtime/src/transport/ws/driver.rs"
+candidate_path = "plugins/transport-websocket/src/transport/ws/driver.rs"
+owner_task = 33
+classification = "implementation_leaf"
+state = "present"
+blake3 = "dba2b55904c6c2dce0e251a968f612b43bebc3a4c827080a376b8f0beb86ca46"
+
+[[source]]
+source_path = "runtime/src/transport/ws/sink.rs"
+candidate_path = "plugins/transport-websocket/src/transport/ws/sink.rs"
+owner_task = 33
+classification = "implementation_leaf"
+state = "planned"
+producer_task = 6
+
+[[source]]
+source_path = "runtime/tests/websocket_transport_config.rs"
+candidate_path = "plugins/transport-websocket/tests/baseline/websocket_transport_config.rs"
+owner_task = 33
+classification = "implementation_leaf"
+state = "present"
+blake3 = "828fd59ef6b994f6f2c030846bcc340c1f00d7a7b665c52c6c24b3b48cf39e2c"
+
+[[source]]
+source_path = "runtime/src/transport/dry_run.rs"
+candidate_path = "plugins/transport-dry-run/src/transport/dry_run.rs"
+owner_task = 33
+classification = "implementation_leaf"
+state = "planned"
+producer_task = 6
+
+[[source]]
+source_path = "dry-run-tests/tests/common/mod.rs"
+candidate_path = "plugins/transport-dry-run/tests/baseline/common/mod.rs"
+owner_task = 33
+classification = "implementation_leaf"
+state = "present"
+blake3 = "bb6e273e1525a66c725ab823a93b91f8901579236c864f1a310f77beea786a77"
+
+[[source]]
+source_path = "dry-run-tests/tests/component_packages.rs"
+candidate_path = "plugins/transport-dry-run/tests/baseline/component_packages.rs"
+owner_task = 33
+classification = "implementation_leaf"
+state = "present"
+blake3 = "5338d13856d65741f622607d348073f58eae0cffb648dc3facbbb9aa671000e4"
+
+[[source]]
+source_path = "dry-run-tests/tests/dry_run.rs"
+candidate_path = "plugins/transport-dry-run/tests/baseline/dry_run.rs"
+owner_task = 33
+classification = "implementation_leaf"
+state = "present"
+blake3 = "9e7a35da7bfc45e4fa2f99d5baa9fdadabd77989dff3fb108fa086299364cdda"
+
+[[source]]
+source_path = "dry-run-tests/tests/random_pool_batches.rs"
+candidate_path = "plugins/transport-dry-run/tests/baseline/random_pool_batches.rs"
+owner_task = 33
+classification = "implementation_leaf"
+state = "present"
+blake3 = "e8e0c5ad2085f151d376aad5a589182e5e5e962c8e5a4fb4198145f2f0b254e4"
+
+[[source]]
+source_path = "dry-run-tests/tests/timing.rs"
+candidate_path = "plugins/transport-dry-run/tests/baseline/timing.rs"
+owner_task = 33
+classification = "implementation_leaf"
+state = "present"
+blake3 = "c97240ae3c66aa33e3e96f25e2661239c41db6932897c5073384b2086cdca0ec"
+
+[[source]]
+source_path = "dry-run-tests/tests/timing_extended.rs"
+candidate_path = "plugins/transport-dry-run/tests/baseline/timing_extended.rs"
+owner_task = 33
+classification = "implementation_leaf"
+state = "present"
+blake3 = "8d030aae8071af96ca0167f04f767f6b92a0f354f1cddc53a14622de45c18463"
+
+[[source]]
+source_path = "dry-run-tests/tests/tracelab.rs"
+candidate_path = "plugins/transport-dry-run/tests/baseline/tracelab.rs"
+owner_task = 33
+classification = "implementation_leaf"
+state = "present"
+blake3 = "f270e15ad52e2ee2d1a92e52e3fc36e02dd1c2915b1a412a058fa0e93db00a1d"
+
+[[source]]
+source_path = "dry-run-tests/tests/virtual_workers.rs"
+candidate_path = "plugins/transport-dry-run/tests/baseline/virtual_workers.rs"
+owner_task = 33
+classification = "implementation_leaf"
+state = "present"
+blake3 = "82249b7bf8668224be02d596c30a29c4b178695967a9caca0f4f25ace74ec954"
+
+[[source]]
+source_path = "runtime/src/dynosim/direct.rs"
+candidate_path = "plugins/transport-dynosim/src/dynosim/direct.rs"
+owner_task = 34
+classification = "implementation_leaf"
+state = "planned"
+producer_task = 6
+
+[[source]]
+source_path = "runtime/src/endpoints/dynosim.rs"
+candidate_path = "plugins/transport-dynosim/src/endpoints/dynosim.rs"
+owner_task = 34
+classification = "implementation_leaf"
+state = "present"
+blake3 = "a5e18eb7f4852d4ff816dfe1394ac2d239acd7bff7ad7c547d17ed011c005e0a"
