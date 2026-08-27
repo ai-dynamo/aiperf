@@ -11,10 +11,11 @@ reported truthfully as participant `StateBudget`, immutable-object
 
 ## Stable backend-budget ruling
 
-Task 5B owns three additions to `CheckpointError` and therefore adds
+Task 5B owns three additions to `CheckpointError` plus the private prevalidated
+candidate and infallible committed transition, and therefore adds
 `rust/runtime/src/streaming/checkpoint.rs` to its file set. It does not change
-Task 5A-R's run identity, hashing, proof, receipt, barrier, or participant
-ordering.
+Task 5A-R's run identity, canonical hash, publication proof, receipt, barrier, or
+participant ordering.
 
 `CheckpointBackendBudgetKind` identifies the exact backend-owned category:
 `Transaction`, `PreparedIndex`, `Storage`, `ResultSummary`, or `Read`.
@@ -115,7 +116,11 @@ and authority unchanged.
 Task 5B consumes a candidate through complete run/plan/shape/self-hash
 prevalidation before touching authoritative state. The resulting private
 `PrevalidatedCheckpointGenerationCandidate` has one infallible conversion to a
-committed generation. Under exclusive `MemoryState` access, the backend compares
+committed generation. Its private wrapper, candidate prevalidation method, and
+infallible conversion are implemented in `checkpoint.rs`, the module that owns
+and may construct the private `CommittedCheckpointGeneration` tuple field;
+backend modules only invoke those crate-private methods. Under exclusive
+`MemoryState` access, the backend compares
 the expected head before mutation, performs that conversion, inserts prebuilt
 objects, and replaces the head without any later await or fallible call. The old
 post-CAS fallible promotion path is forbidden for backend commit. A test-only
@@ -223,7 +228,8 @@ streaming --doc`.
 ## Ownership disposition
 
 - Task 5B owns these enums, `CheckpointError` variants, `Display` branches,
-  backend mappings, and integration regressions.
+  the `checkpoint.rs`-private prevalidated wrapper/candidate method/infallible
+  committed transition, backend mappings, and integration regressions.
 - Task 5A-R remains exclusively responsible for logical-run authority. Its five
   implementation files and approved behavior are unchanged by this correction.
 - Task 5C and later backends consume the same stable vocabulary; they do not

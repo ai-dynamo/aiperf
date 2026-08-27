@@ -704,9 +704,12 @@ Task 5B owns the backend/read vocabulary and exact-successor epoch overflow
 below; it does not reopen Task 5A-R's run-authority behavior.
 
 **Files:**
-- Modify: `rust/runtime/src/streaming/checkpoint.rs`; Task 5B adds only the
-  stable backend/read budget errors, exact-successor epoch overflow, and
-  `Display` branches below.
+- Modify: `rust/runtime/src/streaming/checkpoint.rs`; Task 5B adds the stable
+  backend/read budget errors, exact-successor epoch overflow, `Display`
+  branches, private `PrevalidatedCheckpointGenerationCandidate`, candidate
+  prevalidation method, and infallible candidate-to-committed transition below.
+  The transition lives here because only this module can construct the private
+  `CommittedCheckpointGeneration` tuple wrapper.
 - Create: `rust/runtime/src/streaming/checkpoint_backend.rs`
 - Create: `rust/runtime/src/streaming/checkpoints.rs`
 - Create: `rust/runtime/src/streaming/checkpoints/memory.rs`
@@ -1033,19 +1036,34 @@ impl CheckpointGenerationCandidate {
         participant_plan: &CheckpointParticipantPlan,
         execution_plan_digest: &ContentDigest,
         result_plan_digest: &ContentDigest,
-    ) -> Result<PrevalidatedCheckpointGenerationCandidate, CheckpointError>;
+    ) -> Result<PrevalidatedCheckpointGenerationCandidate, CheckpointError> {
+        self.verify_against(
+            expected_run,
+            participant_plan,
+            execution_plan_digest,
+            result_plan_digest,
+        )?;
+        Ok(PrevalidatedCheckpointGenerationCandidate { candidate: self })
+    }
 }
 
 impl PrevalidatedCheckpointGenerationCandidate {
-    pub(crate) fn generation(&self) -> &CheckpointGeneration;
+    pub(crate) fn generation(&self) -> &CheckpointGeneration {
+        &self.candidate.generation
+    }
     pub(crate) fn into_committed_after_publication_fence(
         self,
-    ) -> CommittedCheckpointGeneration;
+    ) -> CommittedCheckpointGeneration {
+        CommittedCheckpointGeneration(self.candidate)
+    }
 }
 ```
 
-The snippets above show private fields intentionally. Implement these exact
-checked ownership APIs in `results.rs`:
+The prevalidated wrapper, both impl blocks above, and the infallible tuple
+construction are implemented in `checkpoint.rs`; `checkpoint_backend.rs` may
+invoke their crate-private methods but must not reproduce promotion or access
+the committed tuple field. The result snippets below show private fields
+intentionally. Implement these exact checked ownership APIs in `results.rs`:
 
 ```rust
 impl ResultProjectionId {
@@ -1161,9 +1179,9 @@ consuming methods move that wrapper intact. Only the crate-private
 wrapper, and `stage_results` may call it only after acquiring the exact aggregate
 prepared-index reservation described below.
 
-`PrevalidatedCheckpointGenerationCandidate` has private fields and is produced
-only by consuming a candidate through `prevalidate_for_publication`, which runs
-the complete self-hash, logical-run, participant-plan, descriptor-shape, and
+`checkpoint.rs` owns `PrevalidatedCheckpointGenerationCandidate` and produces
+it only by consuming a candidate through `prevalidate_for_publication`, which
+runs the complete self-hash, logical-run, participant-plan, descriptor-shape, and
 execution/result-plan verification before any publication-state borrow. Its
 `into_committed_after_publication_fence` transition returns
 `CommittedCheckpointGeneration` directly, not `Result`; it performs no hashing,
@@ -1601,7 +1619,7 @@ async fn fault_after_prevalidation_occurs_before_publication_and_changes_nothing
         .read_segment(baseline.only_result_descriptor())
         .await
         .unwrap();
-    let head_before = reader.generation().clone();
+    let head_before = reader.generation().generation_ref().clone();
     let objects_before = backend.immutable_object_inventory(&run);
     let usage_before = backend.live_budget_usage();
     assert!(usage_before.storage.used_items > 0);
@@ -1631,7 +1649,7 @@ async fn fault_after_prevalidation_occurs_before_publication_and_changes_nothing
             .open_latest(&run, &support::expectations(run))
             .await
             .unwrap()
-            .map(|reader| reader.generation().clone()),
+            .map(|reader| reader.generation().generation_ref().clone()),
         Some(head_before),
     );
     assert_eq!(backend.immutable_object_inventory(&run), objects_before);
@@ -1659,12 +1677,24 @@ async fn empty_generations_and_heads_are_isolated_by_logical_run() {
     let second = support::commit_empty(&backend, second_run, None, 1).await.unwrap();
     assert_ne!(first.generation().digest(), second.generation().digest());
     assert_eq!(
-        backend.open_latest(&first_run, &support::expectations(first_run)).await.unwrap().unwrap().generation(),
-        &first.generation(),
+        backend
+            .open_latest(&first_run, &support::expectations(first_run))
+            .await
+            .unwrap()
+            .unwrap()
+            .generation()
+            .generation_ref(),
+        first.generation_ref(),
     );
     assert_eq!(
-        backend.open_latest(&second_run, &support::expectations(second_run)).await.unwrap().unwrap().generation(),
-        &second.generation(),
+        backend
+            .open_latest(&second_run, &support::expectations(second_run))
+            .await
+            .unwrap()
+            .unwrap()
+            .generation()
+            .generation_ref(),
+        second.generation_ref(),
     );
 }
 
@@ -1784,7 +1814,7 @@ async fn existing_immutable_objects_do_not_grant_cross_generation_or_run_read_au
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(reader.generation(), current.generation());
+    assert_eq!(reader.generation().generation_ref(), current.generation_ref());
     let reads_before = backend.budget_snapshots().reads;
 
     assert_eq!(
@@ -2234,7 +2264,7 @@ async fn every_pre_current_fault_preserves_previous_generation() {
         assert!(backend.injected_fault_was_reached(fault));
         let reopened = support::local_backend(directory.path(), None);
         let latest = reopened.open_latest(&run, &support::expectations(run)).await.unwrap().unwrap();
-        assert_eq!(latest.generation().generation(), first.generation());
+        assert_eq!(latest.generation().generation_ref(), first.generation_ref());
     }
 }
 
@@ -2454,7 +2484,10 @@ async fn post_commit_failure_does_not_roll_back_authoritative_head() {
     ).await.unwrap_err();
     assert!(matches!(error, CheckpointError::PostCommitNotification { .. }));
     let latest = fixture.backend.open_latest(&fixture.run, &fixture.expectations).await.unwrap().unwrap();
-    assert_eq!(latest.generation().generation(), coordinator_support::generation(1));
+    assert_eq!(
+        latest.generation().generation_ref(),
+        &coordinator_support::generation(1),
+    );
     fixture.restore_and_replay_notifications().await.unwrap();
     assert_eq!(fixture.participant("session").commit_notifications(), 1);
 }
@@ -2483,8 +2516,9 @@ async fn one_coordinator_commits_consecutive_barriers_against_its_advanced_head(
             .await
             .unwrap()
             .unwrap()
-            .generation(),
-        second.generation(),
+            .generation()
+            .generation_ref(),
+        second.generation_ref(),
     );
 }
 
