@@ -757,6 +757,12 @@ ID, and integrate.
 - Create: `rust/bench-tools/tests/plugin_stats.rs`
 - Create: `rust/bench-tools/tests/plugin_topology.rs`
 - Create: `rust/scripts/run-plugin-parity.sh`
+- Modify: `rust/scripts/run-plugin-task-gates.sh` — Task 1 owns this dispatcher;
+  Task 3 is explicitly sanctioned to append the Task 4–40 topology-revalidation
+  block and nothing else
+- Modify: `rust/e2e-tests/tests/plugin_task_gate_inventory.rs` — Task 1 owns
+  this contract test; Task 3 is explicitly sanctioned to pin the appended block
+  and its failure-propagation idiom
 
 **Interfaces:**
 - Produces canonical JSONL samples with `{scenario, pair_id, variant, metric,
