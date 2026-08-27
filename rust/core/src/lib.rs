@@ -12,6 +12,7 @@
 //! than a structural one.
 //!
 //! - [`artifact`] — the capability-limited artifact access every SDK consumes.
+//! - [`capture`] — the schema-tagged capture projections an exporter requires.
 //! - [`clock`] — the sleepable time source all measurement routes through.
 //! - [`dispatch`] — the transport-neutral request/observer/sink seam.
 //! - [`endpoint`] — segment handles, the narrow segment reader, authored
@@ -27,6 +28,7 @@
 // as its own change against `measure/`.
 
 pub mod artifact;
+pub mod capture;
 pub mod clock;
 pub mod dispatch;
 pub mod endpoint;
