@@ -107,11 +107,9 @@ fn replay_parameters_are_canonical_and_omit_absent_fields() {
     let payload = canonical_replay_parameters(&bare, &config());
     assert_eq!(
         String::from_utf8(payload).as_deref(),
-        Ok(
-            "{\"input_tokens\":812,\"max_tokens\":128,\
+        Ok("{\"input_tokens\":812,\"max_tokens\":128,\
              \"recorded_start_unix_ms\":1750000000123,\
-             \"schema\":\"aiperf.baseten.replay-turn.v1\"}"
-        )
+             \"schema\":\"aiperf.baseten.replay-turn.v1\"}")
     );
 }
 
@@ -264,12 +262,11 @@ fn fixture_bytes(rows: &[FixtureRow], rows_per_group: usize, narrow_input_tokens
     .unwrap_or_else(|error| panic!("fixture batch: {error}"));
 
     let properties = parquet::file::properties::WriterProperties::builder()
-        .set_max_row_group_size(rows_per_group)
+        .set_max_row_group_row_count(Some(rows_per_group))
         .build();
     let mut buffer = Vec::new();
-    let mut writer =
-        parquet::arrow::ArrowWriter::try_new(&mut buffer, schema, Some(properties))
-            .unwrap_or_else(|error| panic!("fixture writer: {error}"));
+    let mut writer = parquet::arrow::ArrowWriter::try_new(&mut buffer, schema, Some(properties))
+        .unwrap_or_else(|error| panic!("fixture writer: {error}"));
     writer
         .write(&batch)
         .unwrap_or_else(|error| panic!("fixture write: {error}"));
@@ -562,7 +559,11 @@ async fn blocked_output_parks_until_the_batch_is_released() {
     // progress until the issued batch releases its charge.
     let mut harness = harness(base_config(), 3);
     let bytes = fixture_bytes(
-        &[FixtureRow::new(1_750_000_000_000, "only prompt", Some("s-1"))],
+        &[FixtureRow::new(
+            1_750_000_000_000,
+            "only prompt",
+            Some("s-1"),
+        )],
         128,
         false,
     );

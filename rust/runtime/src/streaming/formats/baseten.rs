@@ -503,7 +503,9 @@ struct RowOutcome {
     result: Result<BasetenRowProjection, DecodeFailureCode>,
 }
 
-fn downcast<'a, T: 'static>(array: &'a dyn arrow::array::Array) -> Result<&'a T, DecodeFailureCode> {
+fn downcast<'a, T: 'static>(
+    array: &'a dyn arrow::array::Array,
+) -> Result<&'a T, DecodeFailureCode> {
     array
         .as_any()
         .downcast_ref::<T>()
@@ -637,8 +639,8 @@ fn project_row(
     session_column: Option<&str>,
     max_prompt_bytes: usize,
 ) -> Result<BasetenRowProjection, DecodeFailureCode> {
-    let timestamp_start_unix_ms = unsigned_value(required_column(batch, COL_TIME)?, row)?
-        .ok_or(DecodeFailureCode::Schema)?;
+    let timestamp_start_unix_ms =
+        unsigned_value(required_column(batch, COL_TIME)?, row)?.ok_or(DecodeFailureCode::Schema)?;
     let prompt =
         string_value(required_column(batch, COL_PROMPT)?, row)?.ok_or(DecodeFailureCode::Schema)?;
     if prompt.len() > max_prompt_bytes {
@@ -714,7 +716,9 @@ fn canonical_replay_parameters(
     let output_length = resolved_output_length(row.output_tokens, config.max_output_tokens);
     let mut json = String::with_capacity(128 + row.total_hashes.len() * 12);
     json.push('{');
-    if !config.omit_kv_hints && let Some(block_size) = row.block_size {
+    if !config.omit_kv_hints
+        && let Some(block_size) = row.block_size
+    {
         let _ = write!(json, "\"block_size\":{block_size},");
     }
     if !config.omit_kv_hints && !row.total_hashes.is_empty() {
@@ -802,7 +806,7 @@ impl BasetenFormat {
             .read_exact(snapshot, footer_offset, PARQUET_FOOTER_BYTES)
             .await?;
         let tail: [u8; PARQUET_FOOTER_BYTES] =
-            tail.as_ref().try_into().map_err(|_| schema_error())?;
+            tail.as_slice().try_into().map_err(|_| schema_error())?;
         let footer = parquet::file::metadata::FooterTail::try_new(&tail)
             .map_err(|_| StreamFormatError::decode(DecodeFailureCode::Syntax))?;
         let metadata_length = footer.metadata_length();
@@ -870,10 +874,7 @@ impl BasetenFormat {
             update_digest_field(&mut hasher, field.data_type().to_string().as_bytes());
             update_digest_field(&mut hasher, &[u8::from(field.is_nullable())]);
         }
-        update_digest_field(
-            &mut hasher,
-            session_column.unwrap_or_default().as_bytes(),
-        );
+        update_digest_field(&mut hasher, session_column.unwrap_or_default().as_bytes());
         update_digest_field(&mut hasher, &self.config.canonical_config_bytes);
         let schema_digest = ContentDigest::from_bytes(*hasher.finalize().as_bytes());
 
@@ -892,9 +893,8 @@ impl BasetenFormat {
                 start = start.min(chunk_start);
                 end = end.max(chunk_start.saturating_add(chunk_length));
             }
-            let length = usize::try_from(end.saturating_sub(start)).map_err(|_| {
-                StreamFormatError::decode(DecodeFailureCode::OversizedRecord)
-            })?;
+            let length = usize::try_from(end.saturating_sub(start))
+                .map_err(|_| StreamFormatError::decode(DecodeFailureCode::OversizedRecord))?;
             let num_rows = u64::try_from(group.num_rows()).map_err(|_| schema_error())?;
             row_groups.push(RowGroupPlan {
                 index,
@@ -953,7 +953,10 @@ impl BasetenFormat {
     /// (`failure_matches_scope`), so a format-owned schema drift has no valid
     /// partition-scoped receipt. The host classifier sees the typed error from
     /// `begin_partition`, before any fragment of the drifted partition exists.
-    fn freeze_or_verify_schema_digest(&self, digest: ContentDigest) -> Result<(), StreamFormatError> {
+    fn freeze_or_verify_schema_digest(
+        &self,
+        digest: ContentDigest,
+    ) -> Result<(), StreamFormatError> {
         let frozen = *self.frozen_schema_digest.borrow();
         match frozen {
             None => {
@@ -1414,7 +1417,8 @@ impl BasetenPartitionDecoder {
             lease: turn_lease,
         };
 
-        let parameters_lease = self.fragment_lease(payload.len()).await?;        let parameters = StreamingSessionFragment {
+        let parameters_lease = self.fragment_lease(payload.len()).await?;
+        let parameters = StreamingSessionFragment {
             record_id: parameters_id,
             session_key,
             source_position: self.position,
@@ -1439,7 +1443,10 @@ impl BasetenPartitionDecoder {
         Ok((turn, parameters))
     }
 
-    async fn fragment_lease(&self, bytes: usize) -> Result<SessionFragmentLease, StreamFormatError> {
+    async fn fragment_lease(
+        &self,
+        bytes: usize,
+    ) -> Result<SessionFragmentLease, StreamFormatError> {
         let lease = self
             .fragment_budget
             .acquire(1, bytes)
@@ -1605,4 +1612,3 @@ fn decode_row_group(
 
 #[cfg(test)]
 mod tests;
-

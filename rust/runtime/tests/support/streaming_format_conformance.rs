@@ -30,8 +30,7 @@ use aiperf_runtime::streaming::{
     },
     identity::{ContentDigest, ImmutableObjectIdentity, StableRecordId},
     source::{
-        AcquiredPartition, AcquisitionBudget, SourceFrontier, SourceSeal,
-        StreamingSourceDescriptor,
+        AcquiredPartition, AcquisitionBudget, SourceFrontier, SourceSeal, StreamingSourceDescriptor,
     },
 };
 use async_trait::async_trait;
