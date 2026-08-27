@@ -341,7 +341,7 @@ HEAD.
 | Wave | Tasks | Shared-interface ruling |
 |---|---|---|
 | A | 1 | Baseline evidence only; production implementation does not start until it passes |
-| B | 2 → 3 | Serial: Task 2 owns dependency-neutral provisional workspace/member shells and initial lock; Task 3 consumes Task 1 evidence and is the single owner of the measured, reviewed package-topology matrix and sanctioned follow-up manifest amendment |
+| B | 2 → 3 | Serial: Task 2 owns dependency-neutral provisional workspace/member shells and initial lock; Task 3 consumes Task 1 evidence and is the single owner of the reviewed provisional package-topology projection and sanctioned follow-up manifest amendment |
 | C1 | 4 | Core value extraction is the single owner of moved boundary types |
 | C2 | 5 | Starts after Task 4; freezes public API/ownership table without a concurrent interface editor |
 | C3 | 6 | Starts after Task 5; freezes category contracts before downstream fan-out |
@@ -575,11 +575,12 @@ it locally, and mark Task 1 `PASS` in the tracker.
   has the sole allocator-topology amendment to CLI dependencies and the lock;
   Task 37 is the sole later distribution-membership/lock amendment. Other later
   tasks may alter only their precreated package manifests.
-- Task 2 consumes Task 1’s measured `package-topology.json` as the immutable
+- Task 2 consumes Task 1’s captured `package-topology.json` as the immutable
   pre-foundation topology and proves with Cargo metadata that its exact shell
   addition set is the only delta; it does not regenerate or claim those new
   shells existed in the Task-1 artifact, and it does not prematurely assign
-  implementation dependencies. Task 3 owns the measured, reviewed topology matrix and one
+  implementation dependencies. Task 3 owns the reviewed provisional topology
+  projection and one
   explicitly scoped workspace/member-manifest and lock amendment. Task 7 then
   owns only the CLI allocator dependency/lock delta; Task 37 alone may later
   amend final distribution membership/lock.
@@ -622,7 +623,7 @@ state = "planned"
 composition_state = "planned"
 ```
 
-  Task 3 appends its measured dependency/feature rows without changing these
+  Task 3 appends its projected dependency/feature rows without changing these
   two records. Task 15, and no earlier task, creates the types and changes both
   rows to `state = "present"` while leaving `composition_state = "planned"`;
   its tests then replace symbol-existence checks with source/rustdoc and
@@ -747,7 +748,7 @@ ID, and integrate.
 - Modify: `rust/Cargo.toml`
 - Modify: `rust/Cargo.lock`
 - Modify: `rust/plugin-api/feature-ownership.toml`
-- Modify: only the precreated plugin/package `Cargo.toml` files whose measured
+- Modify: only the precreated plugin/package `Cargo.toml` files whose projected
   dependency islands differ from the Task-2 dependency-neutral shells
 - Create: `rust/bench-tools/src/lib.rs`
 - Create: `rust/bench-tools/src/bin/plugin_build_bench.rs`
@@ -775,6 +776,44 @@ ID, and integrate.
   Task 3 runs before the projected packages contain their implementations.
   Each implementation task revalidates the edges it makes real, and Task 40
   proves the final graph against the implemented source/package ownership.
+
+  The executable revalidation is part of every numeric Task 4–40 gate. It runs
+  `plugin_topology` with `AIPERF_PLUGIN_TOPOLOGY_TASK=<task>`, so current Cargo
+  dependency/feature equality is checked after every change. The tasks that
+  finish a package boundary additionally create the following strict witness;
+  each package is assigned exactly once and parallel tasks write disjoint files:
+
+  | Witness task | Exact packages |
+  |---:|---|
+  | 4 | `aiperf-core` |
+  | 5 | `aiperf-plugin-api` |
+  | 6 | `aiperf-endpoint-sdk`, `aiperf-export-sdk`, `aiperf-plugin-test-support`, `aiperf-transport-sdk` |
+  | 7 | `aiperf-allocator-provider`, `aiperf-allocator-shim` |
+  | 9 | `aiperf-plugin-sdk`, `aiperf-plugin-sdk-macros` |
+  | 16 | `aiperf-plugin-host` |
+  | 24 | `aiperf-plugin-export-basic` |
+  | 25 | `aiperf-plugin-export-parquet` |
+  | 26 | `aiperf-plugin-export-mlflow` |
+  | 27 | `aiperf-plugin-export-wandb` |
+  | 28 | `aiperf-plugin-export-otel` |
+  | 30 | `aiperf-plugin-endpoints` |
+  | 31 | `aiperf-plugin-transport-http` |
+  | 32 | `aiperf-plugin-transport-grpc` |
+  | 33 | `aiperf-plugin-transport-dry-run`, `aiperf-plugin-transport-websocket` |
+  | 34 | `aiperf-plugin-transport-dynosim` |
+  | 35 | `aiperf-plugin-packaging-tests` |
+  | 36 | `aiperf-plugin-conformance` |
+  | 37 | `aiperf-plugin-static-comparator` |
+  | 38 | `aiperf-plugin-perf` |
+
+  A witness is `rust/plugin-api/implemented-topology/task-<N>.toml` with strict
+  schema version `1`, the exact task number, and the exact package set above.
+  Each package row records its complete sorted workspace-relative Rust source
+  file census, exact local Cargo dependency edges, and exact Cargo feature map.
+  The gate derives those facts from the live workspace and rejects omissions,
+  duplicates, stale paths, dependency drift, feature drift, or wrong task/package
+  ownership. Task 40 reloads and revalidates every witness against the final
+  tree; projection prose is never accepted in their place.
 
 - [ ] **Step 1: Write failing statistical tests**
 
