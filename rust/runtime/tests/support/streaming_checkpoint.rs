@@ -8,10 +8,10 @@ use aiperf_runtime::streaming::{
         CheckpointCut, CheckpointEpoch, CheckpointError, CheckpointParticipantId,
         CommittedParticipantReceipt, CommittedParticipantState, DecodeHorizon, DiscoveryHorizon,
         EventTimeWatermark, OrderedActionHorizon, ParticipantInitialization,
-        ParticipantStateDescriptor, PreparedParticipantState, StreamingCheckpointParticipant,
-        TerminalActionHorizon,
+        ParticipantStateDescriptor, PreparedParticipantState, StreamRunIdentity,
+        StreamingCheckpointParticipant, TerminalActionHorizon,
     },
-    identity::{ContentDigest, GlobalSequence, SessionCausalFrontier},
+    identity::{ContentDigest, GlobalSequence, LogicalReplayRunId, SessionCausalFrontier},
     unit::{EventTimeUtc, SourcePosition},
 };
 use async_trait::async_trait;
@@ -38,12 +38,21 @@ pub fn cut_at(value: u64) -> CheckpointCut {
     }
 }
 
-pub fn barrier_at(value: u64) -> CheckpointBarrier {
+pub fn run_id(value: u8) -> StreamRunIdentity {
+    StreamRunIdentity::new(LogicalReplayRunId::from_bytes([value; 32]))
+}
+
+pub fn barrier_for_run(run: u8, value: u64) -> CheckpointBarrier {
     CheckpointBarrier {
+        run: run_id(run),
         epoch: CheckpointEpoch::new(value),
         cut: cut_at(value),
         plan_digest: ContentDigest::from_bytes([0x55; 32]),
     }
+}
+
+pub fn barrier_at(value: u64) -> CheckpointBarrier {
+    barrier_for_run(1, value)
 }
 
 async fn checkpoint_payload(bytes: Bytes) -> BudgetedCheckpointBytes {
@@ -60,6 +69,7 @@ async fn checkpoint_payload(bytes: Bytes) -> BudgetedCheckpointBytes {
 }
 
 pub struct CountingParticipant {
+    run: StreamRunIdentity,
     participant_id: CheckpointParticipantId,
     items: u64,
     initialization: ParticipantInitialization,
@@ -71,7 +81,12 @@ pub struct CountingParticipant {
 
 impl CountingParticipant {
     pub fn new(participant_id: &str, items: u64) -> Self {
+        Self::for_run(run_id(1), participant_id, items)
+    }
+
+    pub fn for_run(run: StreamRunIdentity, participant_id: &str, items: u64) -> Self {
         Self {
+            run,
             participant_id: CheckpointParticipantId::new(participant_id),
             items,
             initialization: ParticipantInitialization::default(),
@@ -97,8 +112,12 @@ impl StreamingCheckpointParticipant for CountingParticipant {
         &mut self,
         barrier: &CheckpointBarrier,
     ) -> Result<PreparedParticipantState, CheckpointError> {
+        if barrier.run != self.run {
+            return Err(CheckpointError::ObjectVerification);
+        }
         let bytes = Bytes::from(self.items.to_le_bytes().to_vec());
         let prepared = PreparedParticipantState::new(
+            self.run,
             self.participant_id.clone(),
             "test.counting",
             1,
@@ -114,6 +133,9 @@ impl StreamingCheckpointParticipant for CountingParticipant {
         &mut self,
         state: Option<CommittedParticipantState>,
     ) -> Result<(), CheckpointError> {
+        if state.as_ref().is_some_and(|state| state.run() != &self.run) {
+            return Err(CheckpointError::ObjectVerification);
+        }
         self.initialization.initialize_once()?;
         if let Some(state) = state {
             let bytes: [u8; 8] = state
@@ -129,6 +151,9 @@ impl StreamingCheckpointParticipant for CountingParticipant {
         &mut self,
         receipt: &CommittedParticipantReceipt,
     ) -> Result<(), CheckpointError> {
+        if receipt.run() != &self.run {
+            return Err(CheckpointError::ObjectVerification);
+        }
         if receipt.participant_id() != &self.participant_id {
             return Err(CheckpointError::ParticipantSetMismatch);
         }
