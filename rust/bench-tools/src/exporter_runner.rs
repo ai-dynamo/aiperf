@@ -867,3 +867,64 @@ fn policy_error(error: impl fmt::Display) -> ExporterHarnessError {
 fn stats_error(error: impl fmt::Display) -> ExporterHarnessError {
     ExporterHarnessError::product(format!("exporter evidence validation failed: {error}"))
 }
+
+#[cfg(test)]
+mod tests {
+    use std::thread::sleep;
+    use std::time::{Duration, Instant};
+
+    use super::*;
+    use crate::exporter_policy::parse_exporter_observable_policy;
+
+    struct CompleteArtifactExporter;
+
+    impl ExporterWorkload for CompleteArtifactExporter {
+        fn export(
+            &mut self,
+            _repetition_ordinal: u64,
+            records: &mut ExporterRecordStream<'_>,
+            capture: &mut HostExporterCapture,
+        ) -> Result<(), ExporterHarnessError> {
+            for record in records {
+                std::hint::black_box(record.ordinal());
+            }
+            capture.write_artifact("result.json", b"{}")
+        }
+    }
+
+    #[test]
+    fn durability_barrier_runs_after_the_active_exporter_timer_stops() {
+        let policy = parse_exporter_observable_policy(
+            br#"{"mode":"paired","receiver_transport_fields_removed":[],"scenarios":[{"allows_empty":false,"observable_kind":"artifact_tree","provenance_slots":[],"scenario_id":"exporter_100k"}],"schema_version":1}"#,
+            &BTreeSet::new(),
+        )
+        .expect("test policy validates");
+        let runner = ExporterHarnessRunner::new_with_durability_barrier(policy, |_| {
+            sleep(Duration::from_millis(20));
+            Ok(())
+        })
+        .expect("runner accepts a durability barrier");
+        let artifact = tempfile::tempfile().expect("artifact descriptor");
+        let started = Instant::now();
+        let completed = runner
+            .run_member(
+                ExporterMemberSource {
+                    experiment_identity_bytes: b"timer-scope-identity",
+                    attempt_ordinal: 0,
+                    scenario_id: "exporter_100k",
+                    pair_id: "pair-00",
+                    member: ExporterMember::Static,
+                    build_artifact: &artifact,
+                    build_receipt_bytes: b"build receipt",
+                    receiver_protocol: None,
+                },
+                &mut CompleteArtifactExporter,
+            )
+            .expect("controlled exporter member completes");
+
+        let wall = started.elapsed();
+        let active = Duration::from_nanos(completed.summary().active_duration_nanoseconds);
+        assert!(wall >= Duration::from_millis(300));
+        assert!(active < Duration::from_millis(250));
+    }
+}
