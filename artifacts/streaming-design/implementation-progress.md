@@ -9,7 +9,7 @@ SPDX-License-Identifier: Apache-2.0
 - Normative specification: base `505efc06b0`, content-reconstruction amendment `3fea6f2fe0`
 - Approved executable plan set: base `e16aa2c71f802a9ad17a241464374e4d7b5ba19b`, content amendment final `3621ec56e5`, checkpoint run-authority amendment `f4bd60e95b`
 - Implementation start: `cd4a600e6c`
-- Status: Task 1D contracts integrated; Task 1D-R reliability authority next
+- Status: Task 1D-R policy and budget slices integrated; ledger and versioned checkpoint slices in progress
 
 ## Durable milestones
 
@@ -32,6 +32,8 @@ SPDX-License-Identifier: Apache-2.0
 | Task 5B — atomic checkpoint backend and results contract | Complete | Task head `0be64a1386`; merge `f761d6cd82`; backend 27/27, compatibility 27/27, memory units, doctests, clippy, and scoped rustfmt passed in the root final batch; spec and Rust-quality review approved |
 | Task 1D-R implementation-readiness correction | Complete | Final head `c3146fb476`; merge `5c06fd34d7`; spec and architecture review approved; closes versioned-head, pre-CAS receipt-root, move-only handoff, bounded legacy fixture, and stale-writer plan gaps |
 | Task 1D — object-safe streaming contracts | Complete | Task head `84ad2da32e` rebased as `90a88e04fe` plus final EOF fix; merge `1264653069`; root batch passed contracts 22/22, streaming units 16/16, doctests 16/16, clippy, and scoped rustfmt; spec and Rust-quality review approved |
+| Task 1D-R budget primitives | Complete | Task head `e2e4d77703`; merge `979f7d4ff0`; root batch passed 74 integration tests, 16 streaming units, 16 doctests, clippy, and scoped rustfmt; spec and Rust-quality review approved |
+| Task 1D-R reliability policy | Complete | Task heads `66d4274946` and `472848142d`; merge `2757ca7e3e`; root batch passed contracts 22/22, policy 9/9, reliability units 8/8, streaming doctests 22/22, clippy, scoped rustfmt, and diff checks; spec and Rust-quality review approved |
 
 Baseline note: the full feature-off runtime suite reached execution after the
 repair and reported 1907 passing tests plus one pre-existing version-fixture
@@ -81,6 +83,16 @@ v3 domain and binds the raw logical-run bytes; participant descriptors remain
 content-addressed and deliberately run-neutral.
 
 ## Implementation rulings
+
+- Parallel worktrees may edit concurrently, but Cargo invocations against the
+  shared `/mnt/4tb/aiperf-streaming-target` are serialized and run only after
+  the tested worktree is rebased onto the current integration head. Cargo's
+  relative dep-info allowed a same-package, same-feature artifact from another
+  worktree to be treated as fresh; the unchanged policy branch reproduced the
+  false missing-symbol failure until only `aiperf-runtime` build artifacts were
+  cleared and rebuilt. Cost if wrong: less compiler parallelism, while source
+  implementation remains fully parallel; the alternative can produce invalid
+  green or red evidence.
 
 - Task 0 AWS compatibility: use exact `aws-config 1.8.14` and
   `aws-sdk-s3 1.123.0` with the approved feature lists. The planned 1.11.0 /
