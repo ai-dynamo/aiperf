@@ -674,6 +674,145 @@ pub struct ExporterRepetition {
     pub active_duration_nanoseconds: u64,
 }
 
+/// Lifecycle in which an exporter member was measured.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExporterEvidenceMode {
+    /// Original-static calibration used to freeze the repetition budget.
+    StaticCalibration,
+    /// Static or dynamic member of a parity pair.
+    Paired,
+}
+
+/// Artifact member represented by exporter evidence.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExporterMember {
+    /// Test-only monolithic comparator.
+    Static,
+    /// Native-plugin distribution.
+    Dynamic,
+}
+
+/// Observable boundary owned by one exporter scenario.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExporterObservableKind {
+    /// Canonical manifest of exporter-owned files and empty directories.
+    ArtifactTree,
+    /// Exact bytes written to the harness-owned output descriptor.
+    CapturedStream,
+    /// Canonical transcript recorded by the harness-owned receiver.
+    ReceiverTranscript,
+}
+
+/// Immutable pre-run facts one exporter member must match.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExporterMemberBinding {
+    /// Calibration or paired-measurement lifecycle.
+    pub mode: ExporterEvidenceMode,
+    /// Digest of the immutable experiment identity.
+    pub experiment_identity_blake3: String,
+    /// Zero-based complete-attempt ordinal.
+    pub attempt_ordinal: u64,
+    /// Frozen inventory scenario.
+    pub scenario_id: String,
+    /// Pair identifier shared by both members.
+    pub pair_id: String,
+    /// Static or dynamic member.
+    pub member: ExporterMember,
+    /// Digest of the deterministic 100,000-record input corpus.
+    pub corpus_blake3: String,
+    /// Frozen observable class.
+    pub observable_kind: ExporterObservableKind,
+    /// Digest of the pre-run observable policy.
+    pub observable_policy_blake3: String,
+    /// Digest of the executable artifact.
+    pub build_artifact_blake3: String,
+    /// Digest of the authenticated build receipt.
+    pub build_receipt_blake3: String,
+}
+
+/// Exact schema-1 receipt for one controlled exporter repetition.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExporterRepetitionReceipt {
+    /// Receipt schema version, exactly one.
+    pub schema_version: u8,
+    /// Digest of the immutable experiment identity.
+    pub experiment_identity_blake3: String,
+    /// Zero-based complete-attempt ordinal.
+    pub attempt_ordinal: u64,
+    /// Frozen inventory scenario.
+    pub scenario_id: String,
+    /// Pair identifier shared by both members.
+    pub pair_id: String,
+    /// Static or dynamic member.
+    pub member: ExporterMember,
+    /// Dense ordinal in `0..16`.
+    pub repetition_ordinal: u64,
+    /// Digest of the deterministic input corpus.
+    pub corpus_blake3: String,
+    /// Input records processed by this repetition, exactly 100,000.
+    pub processed_records: u64,
+    /// Frozen observable class.
+    pub observable_kind: ExporterObservableKind,
+    /// Digest of the exact retained raw observable.
+    pub raw_observable_blake3: String,
+    /// Digest after only policy-authorized provenance replacement.
+    pub comparison_observable_blake3: String,
+    /// Digest of the exact provenance receipt bytes.
+    pub provenance_receipt_blake3: String,
+    /// Active exporter write-and-flush duration.
+    pub active_duration_ns: u64,
+    /// Digest of the executable artifact.
+    pub build_artifact_blake3: String,
+    /// Digest of the authenticated build receipt.
+    pub build_receipt_blake3: String,
+}
+
+/// Complete retained bytes for one repetition selected as evidence.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RetainedExporterEvidence {
+    /// Receipt ordinal whose evidence is retained.
+    pub repetition_ordinal: usize,
+    /// Exact class-specific raw observable bytes.
+    pub raw_observable_bytes: Vec<u8>,
+    /// Exact class-specific comparison observable bytes.
+    pub comparison_observable_bytes: Vec<u8>,
+    /// Exact canonical provenance receipt bytes.
+    pub provenance_receipt_bytes: Vec<u8>,
+}
+
+/// Canonical receipt vector and the retained bytes that authenticate one row.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ExporterMemberEvidence {
+    /// Canonical compact receipt array with one trailing newline.
+    pub repetition_receipt_bytes: Vec<u8>,
+    /// Complete retained evidence for one repetition.
+    pub retained: RetainedExporterEvidence,
+}
+
+/// Validated exporter-member evidence ready for statistical reduction.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct ExporterMemberSummary {
+    /// Sum of the sixteen active repetition durations.
+    pub active_duration_nanoseconds: u64,
+    /// Exact processed-record divisor.
+    pub processed_records: u64,
+    /// Records represented by the retained repetition.
+    pub retained_artifact_records: u64,
+    /// Active nanoseconds divided by processed records.
+    pub exporter_nanoseconds_per_record: f64,
+    /// Common comparison-observable digest across all repetitions.
+    pub comparison_observable_blake3: String,
+    /// Digest of the exact canonical repetition vector.
+    pub repetition_receipts_blake3: String,
+    /// Validated per-repetition receipts.
+    pub repetitions: Vec<ExporterRepetitionReceipt>,
+}
+
 /// Validated exporter member summary.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -1149,6 +1288,172 @@ pub fn evaluate_exporter_sample(
         exporter_nanoseconds_per_record,
         output_digest: first_digest.to_owned(),
         repetitions: repetitions.to_vec(),
+    })
+}
+
+/// Validate one complete exporter member against its immutable pre-run binding.
+///
+/// This function validates evidence already captured by the controlled runner;
+/// it does not grant caller-supplied files or JSON authority to pass a gate.
+pub fn validate_exporter_member_evidence(
+    contract: &ExporterSampleContract,
+    binding: &ExporterMemberBinding,
+    evidence: &ExporterMemberEvidence,
+) -> Result<ExporterMemberSummary, PluginStatsError> {
+    if contract != &ExporterSampleContract::normative() {
+        return Err(PluginStatsError::new(
+            "exporter sample parameters are an immutable performance contract",
+        ));
+    }
+    for digest in [
+        binding.experiment_identity_blake3.as_str(),
+        binding.corpus_blake3.as_str(),
+        binding.observable_policy_blake3.as_str(),
+        binding.build_artifact_blake3.as_str(),
+        binding.build_receipt_blake3.as_str(),
+    ] {
+        if !is_blake3_digest(digest) {
+            return Err(PluginStatsError::new(
+                "exporter member binding contains a malformed BLAKE3 digest",
+            ));
+        }
+    }
+    if binding.mode == ExporterEvidenceMode::StaticCalibration
+        && (binding.member != ExporterMember::Static
+            || binding.attempt_ordinal != 0
+            || binding.pair_id != "task1-static-calibration")
+    {
+        return Err(PluginStatsError::new(
+            "static exporter calibration binding is invalid",
+        ));
+    }
+
+    let value: serde_json::Value = serde_json::from_slice(&evidence.repetition_receipt_bytes)
+        .map_err(|error| {
+            PluginStatsError::new(format!("invalid exporter repetition receipt JSON: {error}"))
+        })?;
+    let mut canonical = serde_json_canonicalizer::to_vec(&value).map_err(|error| {
+        PluginStatsError::new(format!(
+            "cannot canonicalize exporter repetition receipts: {error}"
+        ))
+    })?;
+    canonical.push(b'\n');
+    if canonical != evidence.repetition_receipt_bytes {
+        return Err(PluginStatsError::new(
+            "exporter repetition receipts are not canonical JSON with one trailing newline",
+        ));
+    }
+    let repetitions: Vec<ExporterRepetitionReceipt> =
+        serde_json::from_value(value).map_err(|error| {
+            PluginStatsError::new(format!(
+                "invalid exporter repetition receipt schema: {error}"
+            ))
+        })?;
+    if repetitions.len() != contract.sample_repetitions {
+        return Err(PluginStatsError::new(
+            "exporter member must contain 16 repetitions",
+        ));
+    }
+
+    let mut active_duration_nanoseconds = 0_u64;
+    let mut comparison_observable_blake3 = None;
+    for (ordinal, repetition) in repetitions.iter().enumerate() {
+        if repetition.schema_version != 1
+            || repetition.repetition_ordinal != ordinal as u64
+            || repetition.experiment_identity_blake3 != binding.experiment_identity_blake3
+            || repetition.attempt_ordinal != binding.attempt_ordinal
+            || repetition.scenario_id != binding.scenario_id
+            || repetition.pair_id != binding.pair_id
+            || repetition.member != binding.member
+            || repetition.corpus_blake3 != binding.corpus_blake3
+            || repetition.processed_records != contract.corpus_records
+            || repetition.observable_kind != binding.observable_kind
+            || repetition.build_artifact_blake3 != binding.build_artifact_blake3
+            || repetition.build_receipt_blake3 != binding.build_receipt_blake3
+        {
+            return Err(PluginStatsError::new(
+                "exporter repetition does not match its immutable member binding",
+            ));
+        }
+        if repetition.active_duration_ns == 0 {
+            return Err(PluginStatsError::new(
+                "exporter active repetition duration must be positive",
+            ));
+        }
+        for digest in [
+            repetition.raw_observable_blake3.as_str(),
+            repetition.comparison_observable_blake3.as_str(),
+            repetition.provenance_receipt_blake3.as_str(),
+        ] {
+            if !is_blake3_digest(digest) {
+                return Err(PluginStatsError::new(
+                    "exporter repetition contains a malformed evidence digest",
+                ));
+            }
+        }
+        if comparison_observable_blake3
+            .as_deref()
+            .is_some_and(|expected| expected != repetition.comparison_observable_blake3)
+        {
+            return Err(PluginStatsError::new(
+                "exporter repetition comparison observables differ",
+            ));
+        }
+        comparison_observable_blake3 = Some(repetition.comparison_observable_blake3.clone());
+        active_duration_nanoseconds = active_duration_nanoseconds
+            .checked_add(repetition.active_duration_ns)
+            .ok_or_else(|| PluginStatsError::new("exporter active duration overflow"))?;
+    }
+    if binding.mode == ExporterEvidenceMode::StaticCalibration
+        && active_duration_nanoseconds < 30_000_000_000
+    {
+        return Err(PluginStatsError::new(
+            "static exporter calibration is shorter than 30 seconds",
+        ));
+    }
+
+    let retained = repetitions
+        .get(evidence.retained.repetition_ordinal)
+        .ok_or_else(|| PluginStatsError::new("retained exporter repetition is out of range"))?;
+    let raw_digest = format!(
+        "blake3:{}",
+        blake3::hash(&evidence.retained.raw_observable_bytes)
+    );
+    if raw_digest != retained.raw_observable_blake3 {
+        return Err(PluginStatsError::new(
+            "retained raw observable digest does not match its repetition receipt",
+        ));
+    }
+    let comparison_digest = format!(
+        "blake3:{}",
+        blake3::hash(&evidence.retained.comparison_observable_bytes)
+    );
+    if comparison_digest != retained.comparison_observable_blake3 {
+        return Err(PluginStatsError::new(
+            "retained comparison observable digest does not match its repetition receipt",
+        ));
+    }
+    let provenance_digest = format!(
+        "blake3:{}",
+        blake3::hash(&evidence.retained.provenance_receipt_bytes)
+    );
+    if provenance_digest != retained.provenance_receipt_blake3 {
+        return Err(PluginStatsError::new(
+            "retained provenance receipt digest does not match its repetition receipt",
+        ));
+    }
+
+    let comparison_observable_blake3 = comparison_observable_blake3
+        .ok_or_else(|| PluginStatsError::new("exporter repetitions are empty"))?;
+    Ok(ExporterMemberSummary {
+        active_duration_nanoseconds,
+        processed_records: contract.processed_records,
+        retained_artifact_records: contract.retained_artifact_records,
+        exporter_nanoseconds_per_record: active_duration_nanoseconds as f64
+            / contract.processed_records as f64,
+        comparison_observable_blake3,
+        repetition_receipts_blake3: format!("blake3:{}", blake3::hash(&canonical)),
+        repetitions,
     })
 }
 
