@@ -128,6 +128,12 @@ pub(crate) struct ValidatedCommitMetadata {
     metadata: CheckpointCommitMetadata,
 }
 
+impl ValidatedCommitMetadata {
+    pub(crate) const fn epoch(&self) -> CheckpointEpoch {
+        self.epoch
+    }
+}
+
 pub(crate) fn validate_commit_metadata(
     expected: &Option<CheckpointGeneration>,
     metadata: CheckpointCommitMetadata,
@@ -157,7 +163,6 @@ pub(crate) fn validate_commit_metadata(
 
 pub(crate) struct FrozenGenerationTransactionInputs {
     run: StreamRunIdentity,
-    expected: Option<CheckpointGeneration>,
     expectations: CheckpointGenerationExpectations,
     participant_descriptors: Vec<ParticipantStateDescriptor>,
     result_index_root: ContentDigest,
@@ -166,14 +171,12 @@ pub(crate) struct FrozenGenerationTransactionInputs {
 impl FrozenGenerationTransactionInputs {
     pub(crate) fn new(
         run: StreamRunIdentity,
-        expected: Option<CheckpointGeneration>,
         expectations: CheckpointGenerationExpectations,
         participant_descriptors: Vec<ParticipantStateDescriptor>,
         result_index_root: ContentDigest,
     ) -> Self {
         Self {
             run,
-            expected,
             expectations,
             participant_descriptors,
             result_index_root,
@@ -183,12 +186,11 @@ impl FrozenGenerationTransactionInputs {
 
 pub(crate) fn build_prevalidated_candidate(
     transaction: FrozenGenerationTransactionInputs,
-    metadata: CheckpointCommitMetadata,
+    validated: ValidatedCommitMetadata,
 ) -> Result<PrevalidatedCheckpointGenerationCandidate, CheckpointError> {
     if transaction.run != transaction.expectations.run {
         return Err(CheckpointError::ObjectVerification);
     }
-    let validated = validate_commit_metadata(&transaction.expected, metadata)?;
     let ValidatedCommitMetadata {
         previous_digest,
         epoch,

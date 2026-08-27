@@ -203,6 +203,14 @@ pub fn same_epoch_wrong_digest(
 }
 
 pub async fn prepared_participant(run: StreamRunIdentity, epoch: u64) -> PreparedParticipantState {
+    prepared_participant_with_bytes(run, epoch, Bytes::from_static(b"participant-state")).await
+}
+
+pub async fn prepared_participant_with_bytes(
+    run: StreamRunIdentity,
+    epoch: u64,
+    bytes: Bytes,
+) -> PreparedParticipantState {
     PreparedParticipantState::new(
         run,
         CheckpointParticipantId::new("participant"),
@@ -210,7 +218,7 @@ pub async fn prepared_participant(run: StreamRunIdentity, epoch: u64) -> Prepare
         1,
         cut_at(epoch),
         1,
-        checkpoint_payload(Bytes::from_static(b"participant-state")).await,
+        checkpoint_payload(bytes).await,
     )
     .expect("valid prepared participant")
 }
@@ -232,7 +240,21 @@ pub async fn result_partition_with_projection_for(
     epoch: u64,
     projection: &str,
 ) -> (StreamingResourceBudget, ResultPartition) {
-    let payload_bytes = Bytes::from_static(b"result-payload");
+    result_partition_with_projection_and_bytes_for(
+        run,
+        epoch,
+        projection,
+        Bytes::from_static(b"result-payload"),
+    )
+    .await
+}
+
+pub async fn result_partition_with_projection_and_bytes_for(
+    run: StreamRunIdentity,
+    epoch: u64,
+    projection: &str,
+    payload_bytes: Bytes,
+) -> (StreamingResourceBudget, ResultPartition) {
     let payload_budget = StreamingResourceBudget::new(BudgetLimits {
         max_items: 1,
         max_bytes: payload_bytes.len(),

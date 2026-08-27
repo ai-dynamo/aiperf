@@ -8,7 +8,7 @@ use std::{
     num::{NonZeroU64, NonZeroUsize},
 };
 
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer as _, ser::SerializeSeq};
 
 use super::{
     budget::BudgetLease,
@@ -487,14 +487,37 @@ pub(crate) fn result_totals(
 pub(crate) fn canonical_result_index_root(
     descriptors: &[ResultSegmentDescriptor],
 ) -> Result<ContentDigest, CheckpointError> {
-    let encoded = serde_json::to_vec(descriptors).map_err(|error| CheckpointError::Storage {
-        message: format!("could not encode result index: {error}"),
-    })?;
+    canonical_result_index_object(descriptors.iter()).map(|(root, _)| root)
+}
+
+pub(crate) fn canonical_result_index_object<'a>(
+    descriptors: impl ExactSizeIterator<Item = &'a ResultSegmentDescriptor>,
+) -> Result<(ContentDigest, Vec<u8>), CheckpointError> {
+    let mut encoded = Vec::new();
+    let mut serializer = serde_json::Serializer::new(&mut encoded);
+    let mut sequence = serializer
+        .serialize_seq(Some(descriptors.len()))
+        .map_err(result_index_encoding_error)?;
+    for descriptor in descriptors {
+        sequence
+            .serialize_element(descriptor)
+            .map_err(result_index_encoding_error)?;
+    }
+    sequence.end().map_err(result_index_encoding_error)?;
     let mut hasher = blake3::Hasher::new();
     hasher.update(b"aiperf.streaming.result-index.v1");
     hasher.update(&(encoded.len() as u64).to_le_bytes());
     hasher.update(&encoded);
-    Ok(ContentDigest::from_bytes(*hasher.finalize().as_bytes()))
+    Ok((
+        ContentDigest::from_bytes(*hasher.finalize().as_bytes()),
+        encoded,
+    ))
+}
+
+fn result_index_encoding_error(error: serde_json::Error) -> CheckpointError {
+    CheckpointError::Storage {
+        message: format!("could not encode result index: {error}"),
+    }
 }
 
 fn verify_payload(

@@ -380,22 +380,49 @@ async fn oversized_next_descriptor_refuses_before_backend_read_budget() {
         .await
         .unwrap()
         .unwrap();
+    let probe = reader
+        .scan_result_index(
+            None,
+            ResultIndexReadBudget {
+                max_items: NonZeroUsize::new(1).unwrap(),
+                max_bytes: NonZeroU64::new(u64::MAX).unwrap(),
+            },
+        )
+        .await
+        .unwrap();
+    let required = probe.charged_bytes();
+    drop(probe);
     let before = backend.live_budget_usage().reads;
     let error = reader
         .scan_result_index(
             None,
             ResultIndexReadBudget {
                 max_items: NonZeroUsize::new(1).unwrap(),
-                max_bytes: NonZeroU64::new(1).unwrap(),
+                max_bytes: NonZeroU64::new(required - 1).unwrap(),
             },
         )
         .await
         .unwrap_err();
-    assert!(matches!(
+    assert_eq!(
         error,
-        CheckpointError::ResultIndexReadBudgetTooSmall { max_bytes: 1, .. }
-    ));
+        CheckpointError::ResultIndexReadBudgetTooSmall {
+            required_bytes: required,
+            max_bytes: required - 1,
+        }
+    );
     assert_eq!(backend.live_budget_usage().reads, before);
+    let page = reader
+        .scan_result_index(
+            None,
+            ResultIndexReadBudget {
+                max_items: NonZeroUsize::new(1).unwrap(),
+                max_bytes: NonZeroU64::new(required).unwrap(),
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(page.descriptors().len(), 1);
+    assert!(page.next().is_none());
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -463,11 +490,26 @@ async fn storage_capacity_refusal_is_typed_and_publishes_nothing() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn sufficient_page_limit_does_not_hide_backend_read_capacity_refusal() {
+    async fn commit_with_large_descriptor(
+        backend: &MemoryCheckpointBackend,
+        run: aiperf_runtime::streaming::checkpoint::StreamRunIdentity,
+        projection: &str,
+    ) -> aiperf_runtime::streaming::checkpoint::CommittedCheckpointGeneration {
+        let mut transaction = support::transaction_with_all_participants(backend, run).await;
+        let mut partitions = vec![
+            support::result_partition_with_projection_for(run, 1, projection)
+                .await
+                .1,
+        ];
+        transaction.stage_results(&mut partitions).await.unwrap();
+        transaction.commit(support::metadata_at(1)).await.unwrap()
+    }
+
     let probe = MemoryCheckpointBackend::new(support::backend_limits()).unwrap();
     let run = support::run_id(1);
-    support::commit_with_segment(&probe, run, None, 1)
-        .await
-        .unwrap();
+    let projection = "x".repeat(4_096);
+    let committed = commit_with_large_descriptor(&probe, run, &projection).await;
+    let generation_required = serde_json::to_vec(&committed).unwrap().len();
     let reader = probe
         .open_latest(&run, &support::expectations(run))
         .await
@@ -484,15 +526,14 @@ async fn sufficient_page_limit_does_not_hide_backend_read_capacity_refusal() {
         .await
         .unwrap();
     let required = usize::try_from(probe_page.charged_bytes()).unwrap();
+    assert!(generation_required < required);
     drop(probe_page);
     drop(reader);
 
     let backend =
         MemoryCheckpointBackend::new(support::backend_limits_with_read_bytes(required - 1))
             .unwrap();
-    support::commit_with_segment(&backend, run, None, 1)
-        .await
-        .unwrap();
+    commit_with_large_descriptor(&backend, run, &projection).await;
     let reader = backend
         .open_latest(&run, &support::expectations(run))
         .await
@@ -576,6 +617,24 @@ async fn fault_after_prevalidation_occurs_before_publication_and_changes_nothing
         .await
         .unwrap();
     let head = baseline.generation();
+    let reader = backend
+        .open_latest(&run, &support::expectations(run))
+        .await
+        .unwrap()
+        .unwrap();
+    let page = reader
+        .scan_result_index(
+            None,
+            ResultIndexReadBudget {
+                max_items: NonZeroUsize::new(1).unwrap(),
+                max_bytes: NonZeroU64::new(u64::MAX).unwrap(),
+            },
+        )
+        .await
+        .unwrap();
+    let descriptor = page.descriptors()[0].clone();
+    let segment = reader.read_segment(&descriptor).await.unwrap();
+    drop(page);
     let inventory = backend.immutable_object_inventory(&run);
     let usage = backend.live_budget_usage();
     let transaction = fully_staged_after(&backend, run, head.clone(), 2).await;
@@ -589,7 +648,7 @@ async fn fault_after_prevalidation_occurs_before_publication_and_changes_nothing
     ));
     assert!(backend.test_fault_was_reached(TestMemoryFault::AfterPrevalidationBeforePublication));
     assert_eq!(backend.immutable_object_inventory(&run), inventory);
-    assert_eq!(backend.live_budget_usage().storage, usage.storage);
+    assert_eq!(backend.live_budget_usage(), usage);
     assert_eq!(
         backend
             .open_latest(&run, &support::expectations(run))
@@ -600,6 +659,9 @@ async fn fault_after_prevalidation_occurs_before_publication_and_changes_nothing
             .generation_ref(),
         &head,
     );
+    assert_eq!(segment.payload_bytes(), b"result-payload");
+    let reread = reader.read_segment(&descriptor).await.unwrap();
+    assert_eq!(reread.payload_bytes(), b"result-payload");
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -725,4 +787,171 @@ async fn memory_backend_conforms_to_shared_pre_io_lineage_validation() {
         support::memory_publication_backend_fixture(),
     )
     .await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn identical_participant_and_result_payloads_retain_distinct_typed_objects() {
+    use bytes::Bytes;
+
+    let backend = MemoryCheckpointBackend::new(support::backend_limits()).unwrap();
+    let run = support::run_id(1);
+    let payload = Bytes::from_static(b"cross-kind-identical-payload");
+    let mut transaction = backend
+        .begin_generation(run, None, support::expectations(run))
+        .await
+        .unwrap();
+    transaction
+        .stage_participant(support::prepared_participant_with_bytes(run, 1, payload.clone()).await)
+        .await
+        .unwrap();
+    let (_, partition) = support::result_partition_with_projection_and_bytes_for(
+        run,
+        1,
+        "projection",
+        payload.clone(),
+    )
+    .await;
+    let mut partitions = vec![partition];
+    let prepared = transaction.stage_results(&mut partitions).await.unwrap();
+    let result_descriptor = prepared.descriptors()[0].clone();
+    let committed = transaction.commit(support::metadata_at(1)).await.unwrap();
+
+    let generation_bytes = serde_json::to_vec(&committed).unwrap().len();
+    let index_bytes = serde_json::to_vec(std::slice::from_ref(&result_descriptor))
+        .unwrap()
+        .len();
+    let expected_storage_bytes = generation_bytes + index_bytes + 2 * payload.len();
+    let inventory = backend.immutable_object_inventory(&run);
+    let storage = backend.live_budget_usage().storage;
+    assert_eq!(inventory.total_count(), 4);
+    assert_eq!(storage.used_items, 4);
+    assert_eq!(storage.used_bytes, expected_storage_bytes);
+
+    let reader = backend
+        .open_latest(&run, &support::expectations(run))
+        .await
+        .unwrap()
+        .unwrap();
+    let participant = reader
+        .read_participant(&committed.participant_descriptors()[0])
+        .await
+        .unwrap();
+    let segment = reader.read_segment(&result_descriptor).await.unwrap();
+    assert_eq!(participant.payload_bytes(), payload.as_ref());
+    assert_eq!(segment.payload_bytes(), payload.as_ref());
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn generation_reader_owns_exact_logical_byte_charge() {
+    let probe = MemoryCheckpointBackend::new(support::backend_limits()).unwrap();
+    let run = support::run_id(1);
+    let committed = support::commit_with_segment(&probe, run, None, 1)
+        .await
+        .unwrap();
+    let required = serde_json::to_vec(&committed).unwrap().len();
+
+    let refused =
+        MemoryCheckpointBackend::new(support::backend_limits_with_read_bytes(required - 1))
+            .unwrap();
+    support::commit_with_segment(&refused, run, None, 1)
+        .await
+        .unwrap();
+    assert!(matches!(
+        refused.open_latest(&run, &support::expectations(run)).await,
+        Err(CheckpointError::BackendBudget {
+            budget: CheckpointBackendBudgetKind::Read,
+            code: CheckpointBackendBudgetFailureCode::ByteCapacity,
+        })
+    ));
+    assert_eq!(refused.live_budget_usage().reads.used_items, 0);
+
+    let exact =
+        MemoryCheckpointBackend::new(support::backend_limits_with_read_bytes(required)).unwrap();
+    support::commit_with_segment(&exact, run, None, 1)
+        .await
+        .unwrap();
+    let reader = exact
+        .open_latest(&run, &support::expectations(run))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(reader.generation(), &committed);
+    assert_eq!(exact.live_budget_usage().reads.used_items, 1);
+    assert_eq!(exact.live_budget_usage().reads.used_bytes, required);
+    drop(reader);
+    assert_eq!(exact.live_budget_usage().reads.used_bytes, 0);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn repeated_result_payload_is_stored_and_charged_once_per_typed_key() {
+    use bytes::Bytes;
+
+    let backend = MemoryCheckpointBackend::new(support::backend_limits()).unwrap();
+    let run = support::run_id(1);
+    let payload = Bytes::from_static(b"shared-result-payload");
+    let mut transaction = support::transaction_with_all_participants(&backend, run).await;
+    let (_, first) =
+        support::result_partition_with_projection_and_bytes_for(run, 1, "first", payload.clone())
+            .await;
+    let (_, second) =
+        support::result_partition_with_projection_and_bytes_for(run, 1, "second", payload.clone())
+            .await;
+    let mut partitions = vec![first, second];
+    let prepared = transaction.stage_results(&mut partitions).await.unwrap();
+    let descriptors = prepared.descriptors().to_vec();
+    let committed = transaction.commit(support::metadata_at(1)).await.unwrap();
+
+    let expected_bytes = serde_json::to_vec(&committed).unwrap().len()
+        + serde_json::to_vec(&descriptors).unwrap().len()
+        + b"participant-state".len()
+        + payload.len();
+    let storage = backend.live_budget_usage().storage;
+    assert_eq!(backend.immutable_object_inventory(&run).total_count(), 4);
+    assert_eq!(storage.used_items, 4);
+    assert_eq!(storage.used_bytes, expected_bytes);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn result_index_pages_advance_strictly_without_repeating_descriptors() {
+    let backend = MemoryCheckpointBackend::new(support::backend_limits()).unwrap();
+    let run = support::run_id(1);
+    let mut transaction = support::transaction_with_all_participants(&backend, run).await;
+    let mut partitions = Vec::new();
+    for projection in ["first", "second", "third"] {
+        partitions.push(
+            support::result_partition_with_projection_for(run, 1, projection)
+                .await
+                .1,
+        );
+    }
+    transaction.stage_results(&mut partitions).await.unwrap();
+    transaction.commit(support::metadata_at(1)).await.unwrap();
+    let reader = backend
+        .open_latest(&run, &support::expectations(run))
+        .await
+        .unwrap()
+        .unwrap();
+    let budget = ResultIndexReadBudget {
+        max_items: NonZeroUsize::new(1).unwrap(),
+        max_bytes: NonZeroU64::new(u64::MAX).unwrap(),
+    };
+    let mut cursor = None;
+    let mut projections = Vec::new();
+    loop {
+        let page = reader
+            .scan_result_index(cursor.clone(), budget)
+            .await
+            .unwrap();
+        assert_eq!(page.descriptors().len(), 1);
+        projections.push(page.descriptors()[0].projection.as_str().to_owned());
+        let next = page.next().cloned();
+        if let (Some(previous), Some(next)) = (&cursor, &next) {
+            assert!(next.item_offset > previous.item_offset);
+        }
+        cursor = next;
+        if cursor.is_none() {
+            break;
+        }
+    }
+    assert_eq!(projections, ["first", "second", "third"]);
 }
