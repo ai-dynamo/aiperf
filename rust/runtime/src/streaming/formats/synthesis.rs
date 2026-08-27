@@ -947,6 +947,10 @@ mod tests {
         fn vocab_size(&self) -> Option<u32> {
             Some(256)
         }
+
+        fn name(&self) -> &str {
+            "byte-identity"
+        }
     }
 
     /// Tokenizer whose decode always fails, proving the profile-error path.
@@ -968,6 +972,10 @@ mod tests {
 
         fn eos_token_id(&self) -> Option<u32> {
             None
+        }
+
+        fn name(&self) -> &str {
+            "failing"
         }
     }
 
@@ -1021,8 +1029,8 @@ mod tests {
         resume: &[],
         has_event_time: false,
         has_stable_record_ids: true,
-        retention: StreamingSourceRetention::None,
-        placement: StreamingSourcePlacement::AnyCell,
+        retention: StreamingSourceRetention::BoundedMemory,
+        placement: StreamingSourcePlacement::ImmutablePartitionAssignment,
         supports_virtual_clock: true,
     };
 
@@ -1246,10 +1254,9 @@ mod tests {
                 .expect("resume state"),
         };
 
-        let error = format
-            .begin_partition(acquired, Some(checkpoint))
-            .await
-            .expect_err("plan drift is terminal");
+        let Err(error) = format.begin_partition(acquired, Some(checkpoint)).await else {
+            panic!("plan drift must be terminal")
+        };
         assert_eq!(
             error,
             StreamFormatError::decode(DecodeFailureCode::SynthesisAuthorityMismatch)
@@ -1282,11 +1289,11 @@ mod tests {
             state: DecoderResumeState::new(Bytes::from(bytes.to_vec()), lease)
                 .expect("resume state"),
         };
+        let Err(error) = format.begin_partition(acquired, Some(checkpoint)).await else {
+            panic!("a foreign partition identity must be refused")
+        };
         assert_eq!(
-            format
-                .begin_partition(acquired, Some(checkpoint))
-                .await
-                .expect_err("foreign partition"),
+            error,
             StreamFormatError::decode(DecodeFailureCode::InvalidCursor)
         );
 
@@ -1397,22 +1404,19 @@ mod tests {
         let mut oversized = manifest_bytes(0, 4, 99);
         oversized.resize(MAX_MANIFEST_BYTES * 2, b' ');
         let acquired = partition(&budgets.acquisition, 1, oversized).await;
+        let Err(error) = format.begin_partition(acquired, None).await else {
+            panic!("an oversized manifest must be refused")
+        };
         assert_eq!(
-            format
-                .begin_partition(acquired, None)
-                .await
-                .expect_err("oversized manifest"),
+            error,
             StreamFormatError::decode(DecodeFailureCode::OversizedRecord)
         );
 
         let acquired = partition(&budgets.acquisition, 1, manifest_bytes(0, 0, 99)).await;
-        assert_eq!(
-            format
-                .begin_partition(acquired, None)
-                .await
-                .expect_err("empty shard"),
-            StreamFormatError::decode(DecodeFailureCode::Schema)
-        );
+        let Err(error) = format.begin_partition(acquired, None).await else {
+            panic!("an empty shard must be refused")
+        };
+        assert_eq!(error, StreamFormatError::decode(DecodeFailureCode::Schema));
     }
 
     #[test]
@@ -1462,14 +1466,17 @@ mod tests {
             .begin_partition(acquired, None)
             .await
             .expect("decoder");
+        let Err(error) = decoder
+            .next_batch(DecodeBatchBudget {
+                max_fragments: 1,
+                max_bytes: 1 << 20,
+            })
+            .await
+        else {
+            panic!("a tokenizer that cannot decode must fail the profile")
+        };
         assert_eq!(
-            decoder
-                .next_batch(DecodeBatchBudget {
-                    max_fragments: 1,
-                    max_bytes: 1 << 20,
-                })
-                .await
-                .expect_err("decode is unavailable"),
+            error,
             StreamFormatError::decode(DecodeFailureCode::SynthesisProfileUnavailable)
         );
     }
