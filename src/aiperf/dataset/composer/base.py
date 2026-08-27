@@ -14,18 +14,14 @@ from aiperf.common.enums import (
 )
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import Conversation, Turn
-from aiperf.common.models.sequence_distribution import (
-    SequenceLengthDistribution,
-    SequenceLengthPair,
-)
+from aiperf.common.models.sequence_distribution import SequenceLengthSampler
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.config.dataset import SyntheticDataset
 from aiperf.dataset.generator.audio import AudioGenerator
-from aiperf.dataset.generator.coding_content import CodingContentGenerator
 from aiperf.dataset.generator.corpus import resolve_prompt_generator
 from aiperf.dataset.generator.image import ImageGenerator
-from aiperf.dataset.generator.prompt import PromptGenerator
 from aiperf.dataset.generator.video import VideoGenerator
+from aiperf.dataset.protocols import CorpusGeneratorProtocol
 
 if TYPE_CHECKING:
     from aiperf.config.dataset import VideoConfig
@@ -57,11 +53,17 @@ def _estimate_chat_template_overheads(
         wire_tokens =  per_request_fixed
                      + Σ_{m in messages} (per_msg_wrap + content_tokens(m))
 
-    where ``per_request_fixed`` ≈ BOS + generation-prompt suffix and
+    where ``per_request_fixed`` ≈ generation-prompt suffix and
     ``per_msg_wrap`` ≈ role header + end-of-turn marker (averaged over
-    user/assistant). Measuring the two separately lets callers apply the
-    fixed cost only to the first user turn and the per-message wrap to
-    every turn.
+    user/assistant). Measuring the two separately lets callers apply the fixed
+    cost only to the first user turn and the per-message wrap to every turn.
+
+    BOS is deliberately excluded from ``per_request_fixed`` because every ISL
+    path already subtracts special tokens on its own, and double-counting would
+    shorten prompts: VLLM style folds them into the window bounds
+    (``VLLMRatioConfig.compute_input_bounds``), SGLANG style shifts each drawn
+    length (``SGLangRangeRatioDistribution.adjust_sampled_isl``), and the
+    non-range-ratio path subtracts in ``_get_turn_sequence_lengths``.
 
     Returns ``(0, 0)`` when the tokenizer is ``None``/has no underlying HF
     tokenizer, has no ``apply_chat_template`` (e.g. tiktoken), the model has
@@ -75,29 +77,34 @@ def _estimate_chat_template_overheads(
     if apply is None:
         return 0, 0
 
+    bos_tokens = tokenizer.num_prompt_special_tokens()
     fixed_costs: list[float] = []
     wrap_costs: list[float] = []
     for sample in _CHAT_TEMPLATE_PROBE_SAMPLES:
         try:
-            single = apply(
+            single_text = apply(
                 [{"role": "user", "content": sample}],
-                tokenize=True,
+                tokenize=False,
                 add_generation_prompt=True,
             )
-            triple = apply(
+            triple_text = apply(
                 [
                     {"role": "user", "content": sample},
                     {"role": "assistant", "content": sample},
                     {"role": "user", "content": sample},
                 ],
-                tokenize=True,
+                tokenize=False,
                 add_generation_prompt=True,
             )
         except Exception:
             return 0, 0
+        if not isinstance(single_text, str) or not isinstance(triple_text, str):
+            return 0, 0
+        single_len = len(tokenizer.encode(single_text))
+        triple_len = len(tokenizer.encode(triple_text))
         bare_len = len(tokenizer.encode(sample))
-        avg_wrap = (len(triple) - len(single) - 2 * bare_len) / 2
-        per_request_fixed = len(single) - bare_len - avg_wrap
+        avg_wrap = (triple_len - single_len - 2 * bare_len) / 2
+        per_request_fixed = single_len - bare_len - avg_wrap - bos_tokens
         if avg_wrap < 0 or per_request_fixed < 0:
             return 0, 0
         wrap_costs.append(avg_wrap)
@@ -151,7 +158,7 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
         compensated_prefix_prompts = self._init_isl_compensation(tokenizer)
 
         # Create generators (prompt generator requires a tokenizer)
-        self.prompt_generator: PromptGenerator | CodingContentGenerator | None = (
+        self.prompt_generator: CorpusGeneratorProtocol | None = (
             resolve_prompt_generator(
                 corpus=self.run.cfg.get_prompt_corpus(),
                 default_corpus=None,
@@ -171,13 +178,12 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
 
         self.turn_count = 0
 
-        # ``PromptConfig.sequence_distribution`` is a
-        # ``list[SequenceDistributionEntry]`` of typed ``SamplingDistribution``
-        # objects. Convert each entry directly to a ``SequenceLengthPair``
-        # (extracting mean + stddev from the underlying distribution) and
-        # build the runtime distribution without re-serializing through
-        # ``DistributionParser.parse``, which only accepts strings.
-        self._seq_distribution = self._build_sequence_distribution()
+        self._num_special_tokens = (
+            tokenizer.num_prompt_special_tokens() if tokenizer is not None else 0
+        )
+        self._seq_distribution: SequenceLengthSampler | None = (
+            self._build_sequence_distribution(self._num_special_tokens)
+        )
 
         # Cache for turn-level sequence lengths to ensure ISL/OSL pairing consistency
         self._turn_sequence_cache: dict[int, tuple[int, int]] = {}
@@ -268,15 +274,23 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
             return prefix_prompts.model_copy(
                 update={"shared_system_length": compensated_shared_sys_len}
             )
+
+        # Prefix prompts are additive: total wire ISL is body + prefix, matching
+        # vLLM's --random-prefix-len and SGLang's prefix_len. The prefix is NOT
+        # subtracted from the ISL budget, so --prompt-input-tokens-mean describes
+        # the body and the prefix rides on top.
         return prefix_prompts
 
     @property
     def first_turn_isl_adjustment(self) -> int:
         """Total tokens to subtract from the FIRST user turn's synthetic ISL.
 
-        Composed of the per-request chat-template fixed cost (BOS + gen-prompt
+        Composed of the per-request chat-template fixed cost (gen-prompt
         suffix), the per-message chat-template wrap (role header + EOT), and the
         cache-bust marker when it lands on the first user turn.
+
+        Prefix prompts are deliberately absent: they are additive, so the body
+        keeps the full configured ISL and the prefix is prepended on top.
         """
         return (
             self._chat_template_per_request_fixed_tokens
@@ -305,33 +319,77 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
         """
         ...
 
-    def _build_sequence_distribution(self) -> SequenceLengthDistribution | None:
-        """Build a runtime sequence-length distribution from config entries.
+    def _build_sequence_distribution(
+        self, num_special_tokens: int = 0
+    ) -> SequenceLengthSampler | None:
+        """Build a runtime sequence-length sampler from config.
 
-        ``PromptConfig.sequence_distribution`` is a list of
-        ``SequenceDistributionEntry`` carrying typed ``SamplingDistribution``
-        ISL/OSL fields (Fixed/Normal/LogNormal/...). Pull the mean and the
-        normal-distribution stddev (0 for non-normal types) off each entry to
-        construct ``SequenceLengthPair`` directly. ``DistributionParser.parse``
-        only accepts strings and would reject this list shape.
+        Delegates to ``PromptConfig.get_sequence_distribution()`` which handles
+        both ``sequence_distribution`` (probabilistic ISL/OSL pairs) and
+        ``random_range_ratio`` (uniform window sampling).
+
+        Chat-template overhead is deliberately NOT passed down. It is already
+        subtracted per-request by ``first_turn_isl_adjustment`` /
+        ``subsequent_turn_isl_adjustment``; feeding it to the window as well
+        charged it twice (AIP-873 review) and shrank wire ISL below the
+        configured value under ``--apply-chat-template``.
         """
         if self._synthetic_prompts is None:
             return None
-        entries = self._synthetic_prompts.sequence_distribution
-        if not entries:
-            return None
+        self._reject_degenerate_range_ratio(num_special_tokens)
+        return self._synthetic_prompts.get_sequence_distribution(
+            num_special_tokens=num_special_tokens,
+        )
 
-        pairs = [
-            SequenceLengthPair(
-                input_seq_len=int(entry.isl.expected_value),
-                output_seq_len=int(entry.osl.expected_value),
-                probability=float(entry.probability),
-                input_seq_len_stddev=float(getattr(entry.isl, "stddev", 0.0) or 0.0),
-                output_seq_len_stddev=float(getattr(entry.osl, "stddev", 0.0) or 0.0),
-            )
-            for entry in entries
-        ]
-        return SequenceLengthDistribution(pairs)
+    def _reject_degenerate_range_ratio(self, num_special_tokens: int) -> None:
+        """Fail when the ratio window cannot yield a usable prompt.
+
+        Mirrors vLLM's ``RandomDataset.sample`` guard::
+
+            min_total_input = prefix_len + floor(max(0, isl - num_special) * (1 - r))
+            if min_total_input < 1: raise ValueError(...)
+
+        Without it, ``--isl 2 --random-range-ratio 0.9`` yields bounds ``(0, 4)``
+        and ``calculate_num_tokens`` silently clamps draws of 0 up to 1, so the
+        run completes and reports numbers for one-token prompts the user never
+        asked for. vLLM refuses the config instead.
+
+        Lives here rather than in ``PromptConfig`` because the predicate needs
+        ``num_special_tokens`` (tokenizer-dependent, unknown at config-parse
+        time) and the prefix length (a sibling config the prompt validator
+        cannot reach).
+
+        Only VLLM-style windows can bottom out: the SGLANG window is
+        ``[max(1, int(mean*r)), mean]``, whose lower bound is >= 1 by
+        construction.
+        """
+        prompts = self._synthetic_prompts
+        if prompts is None or prompts.random_range_ratio is None:
+            return
+        if prompts.random_corpus_style != RandomCorpusStyle.VLLM:
+            return
+
+        distribution = prompts.get_sequence_distribution(
+            num_special_tokens=num_special_tokens
+        )
+        low = getattr(distribution, "input_bounds", (1, 1))[0]
+        prefix_len = (
+            getattr(self._synthetic_prefix_prompts, "length", None) or 0
+            if self._synthetic_prefix_prompts is not None
+            else 0
+        )
+        if prefix_len + low >= 1:
+            return
+
+        isl_mean = int(prompts.isl.expected_value) if prompts.isl is not None else 0
+        raise ValueError(
+            f"--random-range-ratio {prompts.random_range_ratio} with --isl "
+            f"{isl_mean} produces a minimum input of {prefix_len + low} tokens "
+            f"(tokenizer adds {num_special_tokens} special token(s), prefix "
+            f"contributes {prefix_len}). Increase --isl, add "
+            "--prompt-prefix-length, or lower --random-range-ratio so the "
+            "minimum is at least 1 token."
+        )
 
     def _osl_distribution(self) -> SamplingDistribution | None:
         """Resolve the OSL distribution to use as a fallback for max_tokens.
@@ -389,6 +447,17 @@ class BaseDatasetComposer(AIPerfLoggerMixin, ABC):
                 and self._synthetic_prompts.isl is not None
                 else 0
             )
+            # Subtract the tokens the server prepends (BOS et al.), mirroring
+            # what VLLMRatioConfig.compute_input_bounds does for the
+            # range-ratio path. Without it this path was the only one not
+            # accounting for them, so --isl 128 on a BOS tokenizer put 129 on
+            # the wire. _estimate_chat_template_overheads deliberately excludes
+            # BOS from per_request_fixed on the assumption the mean was already
+            # adjusted -- an assumption only the range-ratio path was meeting.
+            # max(0, ...) matches vLLM's real_input_len; the downstream
+            # sample_positive_normal_integer floors the draw at 1.
+            if isl_mean > 0:
+                isl_mean = max(0, isl_mean - self._num_special_tokens)
             osl_mean = (
                 int(self._synthetic_prompts.osl.expected_value)
                 if self._synthetic_prompts is not None
