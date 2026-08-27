@@ -62,6 +62,209 @@ silently drops the metric the run exists to produce. Those obligations are state
 in `### Measurement correctness` and carry the earliest positions in the delivery
 order.
 
+## Invariants
+
+These are the normative core of this record. Everything in `## Design` exists to
+establish them and everything in `## Built` is assessed against them. Each is
+stated as a property that either holds or does not — not as a goal — and carries
+the point that enforces it, its truth value in the tree today, and the wrong
+number it prevents.
+
+Status values: **HOLDS** (true today, must not regress), **VIOLATED** (false
+today, with the anchor proving it), **NEW** (nothing enforces it yet).
+
+### Corpus and index identity
+
+**I1. A QnA run answers from the index the run's own configuration names, or it
+does not run.** The index artifact's `corpus_digest` equals the digest recorded
+in the pinned plan and in the query set, checked before dispatch.
+*Enforces:* run bootstrap, artifact load. *Status:* NEW.
+*Without it:* a stale index silently answers a newer query set and the accuracy
+number describes a corpus nobody built.
+
+**I2. `corpus_digest` is a pure function of exactly three inputs:** the sorted
+document identities each binding its bytes, the frozen chunker parameters, and the
+embedding profile's model identity. Nothing else enters it — not wall-clock, not
+run id, not file order, not host.
+*Enforces:* the digest constructor. *Status:* NEW.
+*Without it:* two byte-identical corpora produce different digests, I1 fires
+spuriously, and the check gets disabled.
+
+**I3. The index header's vector dimension equals the width of the vectors the
+embed profile actually returns.** Checked on first embed response, not assumed
+from configuration.
+*Enforces:* ingestion sealer. *Status:* NEW.
+*Without it:* a mismatched model produces an index that searches successfully and
+retrieves garbage.
+
+**I4. Chunking is byte-stable across runs and hosts.** The same document under the
+same parameters yields the same passages, with the same boundaries, in the same
+order.
+*Enforces:* the character-bounded chunker (`rust/runtime/src/dataset/corpus.rs`),
+whose existing reproducibility contract is the reason it is reused rather than
+replaced. *Status:* HOLDS for the existing chunker; NEW for the RAG parameters.
+
+### Request construction
+
+**I5. Every request AIPerf dispatches is well-formed for its endpoint kind and
+carries the content the graph says it carries.** No dispatched body is empty
+because a field the endpoint reads was never populated.
+*Enforces:* a startup refusal beside `graph_execution.rs:393`-`:400` for kinds whose
+request cannot be constructed from graph materialization; then P1's structured
+path removing the need for the refusal for embed and rerank.
+*Status:* **VIOLATED.** `graph_execution.rs:2204`-`:2221` builds the Turn with
+`..Turn::default()`, so `Turn.texts` is always empty; `embeddings` therefore emits
+`{"input": []}` (`implementation.rs:1090`-`:1094`) and rankings hard-error
+(`tier2.rs:367`). The only kind gate on this path is `!requires_raw_token_ids`
+(`:395`), which both pass.
+*Without it:* the run completes, reports clean latency and throughput, and
+benchmarked nothing. This is the defect the contest caught, and it is the reason
+this list exists.
+
+**I6. A node's endpoint profile determines its URL, its dialect, and its
+tokenizer.** All three, or the profile is not a routing decision.
+*Enforces:* per-node profile resolution at dispatch; lowering; the token-counter
+binding.
+*Status:* **VIOLATED in two of three.** URL holds
+(`graph_execution.rs:1030`-`:1043`, `:500`-`:509`). Dialect does not — lowering
+passes the *default* profile's `endpoint_id` to every node
+(`online_execution.rs:1320`-`:1332` → `graph_input.rs:944`). Tokenizer does not —
+the benchmark path clones one shared counter into every profile
+(`graph_execution.rs:353`-`:379`), while only the eval path binds per profile
+(`:383`-`:429`).
+*Without it:* role-level ISL is not a measurement of the role.
+
+### Reply handling
+
+**I7. Every reply payload for which the graph declares a channel reaches that
+channel.** No reply is silently reduced to empty, and no parsed value is discarded
+after decoding.
+*Enforces:* reduction; the channel write.
+*Status:* **VIOLATED.** `reduce.rs:206`-`:211` no-ops for `Embeddings` and
+`Rankings`; `models.rs:246`-`:277` returns `""`; the channel receives
+`encoded_messages(vec![])` or `Value::Null` (`executor.rs:478`-`:510`). The vector
+*is* correctly parsed (`implementation.rs:2137`-`:2200`) and then dropped.
+*Without it:* `embed_subquery[i]` cannot write the query vector `Retrieval` reads,
+and the pipeline's data dependencies are fiction.
+
+**I8. A channel that was never written is never observed as a write.** The
+`{"$unset": true}` sentinel does not enter a downstream stage's `initial_state`.
+*Enforces:* the driver's channel carry-over.
+*Status:* **VIOLATED** in the existing driver — `reducers.rs:47`-`:58` produces the
+sentinel and `live_driver.rs:479`, `:983`-`:988` propagate it unfiltered into
+`channel_store.rs:114`-`:125`, where it is seeded as a real write at seq 0.
+*Without it:* a node reads a literal `{"$unset": true}` as its input and the
+request is well-formed nonsense.
+
+### Control flow
+
+**I9. Hop count is bounded, and the bound is enforced by something other than the
+driver that requests the hops.** A driver cannot exceed its own declared bound.
+*Enforces:* placement, independently — `graph_execution.rs:1820`-`:1822` hard-errors
+if a staged driver omits `stage_bound()`, `:1861`-`:1867` refuses `Execute` past it.
+*Status:* **HOLDS.** Must not regress when the staged program family lands, and
+must survive the move to live branching as a loop-iteration cap on the edge.
+
+**I10. Every executed stage plan is a projection of the authored source graph.**
+Never synthesized, never a superset, and re-validated against the same rules the
+source passed.
+*Enforces:* the driver's projection step; then placement's independent
+re-validation (`graph_execution.rs:1868`).
+*Status:* **HOLDS** for the existing driver (`live_driver.rs:895`-`:1010`).
+*Without it:* the benchmark measures a graph the author never wrote.
+
+**I11. Verdict decoding is total and declared.** The authored decoder yields a
+verdict or a typed error attributed to its node. There is no fallback, no
+substring sniff, and no silent default.
+*Enforces:* the verdict decoder. *Status:* NEW — no JSON-pointer or predicate
+decoder exists in the tree; the only precedent is exact string equality on
+`.content` (`live_driver.rs:1278`-`:1295`), which is total in the same sense and is
+the model to follow.
+*Without it:* an unparsed verdict reads as "insufficient", every task runs to the
+hop bound, and tasks-per-second measures the timeout path.
+
+### Measurement
+
+**I12. Request latency excludes client-side work; task latency includes it.**
+Both scopes exist, they measure different things, and the report says which is
+which.
+*Enforces:* `on_admit` as the request origin
+(`transport/http/sink/endpoint_dispatch.rs:289`), which already fires after
+materialization; a separate task-level origin and terminal.
+*Status:* request half **HOLDS** for free. Task half is NEW.
+*Without it:* a task-level number that inherited the request exclusion reports a
+duration no operator of the system experiences.
+
+**I13. In-flight tasks and in-flight requests are separate curves, and any window
+derived from concurrency names which one it used.** `--steady-state` reads the
+task curve for `rag_qna` or refuses.
+*Enforces:* the sweep-line consumer. *Status:* NEW — every existing consumer counts
+requests.
+*Without it:* the steady-state window is shaped by hop fan-out rather than task
+admission and excludes the wrong interval.
+
+**I14. Every reported aggregate is the correct function of the records beneath
+it, and no metric is dropped for a configuration this design makes normal.**
+*Enforces:* the exporter plane.
+*Status:* **VIOLATED.** `summary_series` returns `NoAggregate` for multiple
+non-unique series (`export/mod.rs:80`-`:96`), removing TTFT, ITL, latency, ISL, and
+OSL from genai_perf JSON/CSV, console, timeslice, MLflow, and W&B whenever a run
+has more than one model or endpoint. RAG makes that the common case.
+*Without it:* a reader sees no request-latency row and concludes the run did not
+measure it. A dropped metric is a wrong number, not a missing one.
+
+**I15. One batched request is one record, with `input_sequence_length` the batch
+sum.** Every ingestion rate states its unit against this.
+*Enforces:* the existing batch path.
+*Status:* **HOLDS** (`random_pool_batches.rs:11`-`:66`). Asserted rather than
+assumed, because `rag_documents_per_second` is not derivable from it — a document
+spans several batches and a batch spans several documents.
+
+**I16. No per-role aggregate is reported before per-record role attribution
+exists.** A role-labelled number is backed by records that carry the role.
+*Enforces:* `RecordIngest` and the per-record row.
+*Status:* **VIOLATED as a precondition** — `RecordMetadata`
+(`engine/records.rs:113`-`:143`) carries no model, endpoint, profile, or node
+identity, so there is currently nothing to attribute to.
+*Without it:* the answer-role OSL compliance check is computed from records that
+cannot be attributed to the answer role.
+
+**I17. A scored number is exact, never an estimate.** Sketch mode's percentiles
+and standard deviation are streaming estimates; a sketch-mode run refuses
+`aiperf rag compliance` rather than computing its mean from them.
+*Enforces:* the compliance command's precondition. *Status:* NEW.
+
+**I18. Every new metric is verified against raw per-record output.** An e2e test
+against a deterministic `aiperf-mock-server` configuration reads the per-record
+artifact and asserts the aggregate is the correct function of those records.
+Summary-only assertions do not satisfy this.
+*Enforces:* the repo's standing verification requirement.
+*Status:* NEW for every metric in this design.
+*Without it:* I5 and I7 fail undetected, which is exactly what happened.
+
+### Replay
+
+**I19. A pinned run issues byte-identical request bodies across runs, with fixed
+hop count and fixed retrieved sets.** Every node's request inputs come from the
+recorded plan, not from the previous stage's live output.
+*Enforces:* the pinned plan loader. *Status:* NEW.
+
+**I20. Pinning does not fix generated output length.** Reproducibility of
+tasks-per-second rests on fixed work, not fixed outputs.
+*Status:* stated as a limitation, not a property to establish. Residual
+output-length variance is exactly what I17's compliance check bounds — which is
+why the two must not be collapsed into one claim.
+
+### What is deliberately not an invariant
+
+This design introduces **no new trust boundary**, so there is no
+confidentiality, authenticity, or tamper-resistance invariant here. The digests
+in I1–I3 are comparability devices: they catch a stale index, a re-chunked
+corpus, or a swapped embedding model, and they are budgeted as cheap always-on
+drift checks with no threat model, key management, or signature scheme attached.
+Cross-host runs reuse the existing pinned-TLS artifact channel and controller
+registration unchanged.
+
 ## Built
 
 This section is scoped to what the code does today, verified against source. It
@@ -310,6 +513,7 @@ sequencing the RAG workloads ahead of them produces code that cannot be exercise
 through the product surface.
 
 **P1 — structured request and reply for embed and rerank on the graph path.**
+Establishes I5 and I7.
 The narrowest correct fix is a structured channel path: extend `ChannelType` and
 `ChanVal` to carry a typed non-text payload, populate `Turn.texts` from a new
 `PromptItem`/`MaterializedGraphRequest` field so named texts (`query`,
@@ -325,18 +529,19 @@ bound to an incompatible endpoint kind fails at startup instead of silently
 benchmarking empty requests. This is a bug fix independent of RAG.
 
 **P2 — a staged `GraphTraceProgram` family in the benchmark phase runtime.**
+Must preserve I9 and I10, which hold today only on the eval path.
 `prepare_graph_phase` must accept driver-bearing programs alongside `all_static`
 and `all_recorded_replay`, with defined t\*, warmup-handoff, and cache-pressure
 behavior for staged traces, and without the eval path's `completed_traces == 1`
 assertion. Nothing multi-hop can be benchmarked before this exists.
 
-**P3 — an `endpointProfiles:` authoring surface.** A Config-v2 YAML section
+**P3 — an `endpointProfiles:` authoring surface.** Makes I6 reachable at all. A Config-v2 YAML section
 projecting into `BenchmarkConfig.endpoint_profiles`, replacing the hardcoded empty
 map at `resolve.rs:1682`, with one e2e test standing up two mock servers on
 different ports and asserting the per-node request split. Without it the whole
 design is reachable only through the internal stdio envelope.
 
-**P4 — per-profile input token counters.** Bind counters independently on the
+**P4 — per-profile input token counters.** Establishes I6's tokenizer clause. Bind counters independently on the
 benchmark path as the eval path already does
 (`graph_execution.rs:383`-`:429`), so role-level ISL is trustworthy across models
 with different tokenizers.
@@ -726,62 +931,34 @@ instantiation.
 
 ### Measurement correctness
 
-A RAG task is many requests deep, so several quantities that coincide in a
-single-request workload come apart here. Each is a way to report a confident
-wrong number, and each is a required assertion rather than a nicety.
+The normative statements are I12-I18. This section records only what those
+invariants do not say: why a RAG task makes them non-trivial, and where the
+seams are.
 
-**Task latency has a defined origin and terminal, and includes client work.**
-`rag_task_latency` runs from the task's admission to the answer node's terminal
-observation, and it **includes** parse, chunk, retrieval, and driver time. This
-is deliberately *not* the sum or max of its request latencies. Request latency
-correctly excludes client-side work — the origin is `on_admit`
-(`rust/runtime/src/transport/http/sink/endpoint_dispatch.rs:289`), which fires
-after materialization — but a task-level number that inherited that exclusion
-would report a duration no operator of the system ever experiences. The two
-scopes must both exist and must be documented as measuring different things:
-per-request latency attributes the serving stack, task latency attributes the
-pipeline.
+A RAG task is many requests deep, so quantities that coincide in a flat workload
+come apart. One task spans a dozen model calls across four endpoints, holds
+several concurrent requests during a fan-out hop and none between stages, and
+mixes client-side work (parse, chunk, retrieval, driver) with wire time. Each of
+I12-I18 marks a place where the obvious reuse of an existing single-request
+mechanism produces a number that is plausible, reportable, and wrong.
 
-**In-flight tasks and in-flight requests are different curves.** One task holds
-several concurrent requests during a fan-out hop and zero between stages. Every
-existing consumer of the concurrency sweep-line curve counts requests, so
-`--steady-state` derives its window from request concurrency crossing a fraction
-of the *request* target. Under `rag_qna` that curve's shape is driven by hop
-fan-out, not by task admission, and a window derived from it does not mean what
-it means for a flat workload. Either the task-level curve is added and
-`--steady-state` reads it for RAG runs, or `--steady-state` is refused for
-`rag_qna` and the report says so. Silently reusing the request curve is the one
-option this record rules out.
+Three of them are pre-existing defects rather than new work, and each is a bug in
+the tree today independent of whether this design proceeds:
 
-**The scored number is never an estimate.** Sketch mode's percentiles and
-standard deviation are streaming estimates (`--sketch-metrics`), and it drops the
-role dimension outright. `rag_tasks_per_second` and `rag_documents_per_second`
-are rate aggregates and remain exact under sketch mode, but the compliance check
-is a mean over one role and the accuracy pass needs per-record answers. A
-sketch-mode run must therefore refuse `aiperf rag compliance` rather than compute
-it from estimates.
+- I14 is live now. Any run with more than one model or endpoint loses TTFT, ITL,
+  latency, ISL, and OSL from five exporters.
+- I16 is a missing precondition: the per-record row carries no profile, model, or
+  node identity, so no per-role number can be substantiated.
+- I13 affects every existing graph workload, since the concurrency sweep-line
+  counts requests and a fan-out graph's request curve is not its task curve.
 
-**A dropped metric is a wrong number, not a missing one.** The `summary_series`
-`NoAggregate` behavior (`rust/runtime/src/export/mod.rs:80`-`:96`) removes a metric
-from five exporters when a run has more than one model or endpoint. A reader sees
-a report with no request-latency row and concludes the run did not measure it. RAG
-makes multi-profile the common case, so this is fixed before the role dimension
-lands, not alongside it.
+They therefore lead the delivery order, ahead of any RAG capability.
 
-**Batch accounting is asserted, not assumed.** One batched request is one record
-with `input_sequence_length` the batch sum
-(`rust/dry-run-tests/tests/random_pool_batches.rs:11`-`:66`). Every ingestion rate
-therefore has a units question attached — passages per second reads off records
-directly, documents per second does not — and the e2e test asserts the record
-count against a known passage count and batch size, so a change to batching
-semantics fails loudly rather than rescaling the headline number.
-
-**Every new metric is verified against raw per-record output.** Per this repo's
-verification requirements, summary-only checks do not satisfy the bar: each new
-RAG metric gets an e2e test against a deterministic `aiperf-mock-server`
-configuration that inspects the per-record artifact and asserts the aggregate is
-the correct function of those records. This is what would have caught O1/O2's
-empty request bodies at the point they were introduced.
+The remaining two are new seams rather than fixes. I12's task-level origin and
+terminal do not exist yet, and adding them must not disturb the request-level
+origin, which is already correct for free. I18 is the discipline that would have
+caught I5 and I7 at introduction: assert the aggregate against the raw records,
+never against another aggregate.
 
 ### Accuracy and compliance
 
@@ -825,18 +1002,23 @@ should add one score-by-index knob to `compute_mock_score` rather than fork it.
 Every refusal below exists to prevent a **wrong measurement**, not to resist
 misuse. Each names a configuration that would otherwise run to completion and
 report a plausible number that does not mean what the report says it means, so
-each fails before dispatch rather than degrading.
+each fails before dispatch rather than degrading, and each names the invariant it
+protects.
 
-Typed refusals before any dispatch: a QnA run whose index `corpus_digest` disagrees
-with its pinned plan or query set; a `retrieval` node in a non-RAG workload; a
-`rag_qna` graph naming an unregistered endpoint profile; an authored hop, fan-out, or
-`k` bound that is zero or unbounded; a pinned plan whose hop count exceeds
-`stage_bound()`; an index artifact whose header dimension disagrees with the embed
-profile's returned vector width; a sufficiency verdict decoder that is absent or
-ambiguous; a graph node bound to an endpoint kind whose request cannot be
-constructed from graph materialization (P1's startup gate); and a multi-endpoint
-`rag_qna` run over gRPC, which the transport forbids; and `aiperf rag compliance`
-against a sketch-mode run, whose statistics are estimates.
+| Refused before dispatch | Protects |
+|---|---|
+| A QnA run whose index `corpus_digest` disagrees with its pinned plan or query set | I1 |
+| An index artifact whose header dimension disagrees with the embed profile's returned vector width | I3 |
+| A graph node bound to an endpoint kind whose request cannot be constructed from graph materialization | I5 |
+| A `rag_qna` graph naming an unregistered endpoint profile | I6 |
+| An authored hop, fan-out, or `k` bound that is zero or unbounded | I9 |
+| A pinned plan whose hop count exceeds `stage_bound()` | I9, I19 |
+| A sufficiency verdict decoder that is absent or ambiguous | I11 |
+| `--steady-state` on a `rag_qna` run, unless the task-level curve is available | I13 |
+| `aiperf rag compliance` before per-record role attribution exists | I16 |
+| `aiperf rag compliance` against a sketch-mode run | I17 |
+| A `retrieval` node in a non-RAG workload | node-kind soundness |
+| A multi-endpoint `rag_qna` run over gRPC | transport limit (`grpc_execution.rs:130`) |
 
 ## Future requirements
 
