@@ -36,7 +36,7 @@ def _initialize(tmp_path: Path) -> InitializeEvent:
                 "streaming": True,
                 "artifact_dir": str(tmp_path),
                 "otel": {
-                    "metrics_url": "http://127.0.0.1:4318",
+                    "metrics_url": "http://127.0.0.1:4318/v1/metrics",
                     "custom_resource_attributes": {"team": "inference"},
                     "gen_ai_provider": "nvidia",
                 },
