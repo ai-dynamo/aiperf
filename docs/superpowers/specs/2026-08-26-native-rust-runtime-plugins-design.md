@@ -1849,8 +1849,11 @@ The initial acceptance protocol is normative:
   the 30 pairs rather than individual requests with at least 100,000
   deterministic resamples;
 - derive one-sided 95% simultaneous non-inferiority lower bounds with a paired
-  max-degradation bootstrap across every normative metric and case for that
-  component; separate per-metric intervals do not establish the aggregate gate;
+  max-degradation bootstrap across every normative non-allocation performance
+  metric and case for that component; separate per-metric intervals do not
+  establish the aggregate gate. Allocation count/byte metrics are the exact
+  gate below and MUST NOT enter this bootstrap distribution or receive its
+  critical-degradation penalty;
 - define throughput ratio as `dynamic / static` and require the lower endpoint
   of its 95% interval to be at least `0.99`;
 - define each latency and CPU ratio as `static / dynamic` and require the lower
@@ -1870,7 +1873,12 @@ The initial acceptance protocol is normative:
   at least 30 seconds;
 - require no increase in allocation count or allocated bytes per successful
   request in deterministic endpoint, transport-dispatch, response-reduction,
-  and exporter-capture microbenchmarks;
+  and exporter-capture microbenchmarks. For every retained pair and each
+  allocation metric, form `static / dynamic` with zero/zero defined as neutral
+  `1.0`; the pair passes only when the ratio is at least `1.0`. Any pair with a
+  positive dynamic allocation against zero static allocation, or any other
+  dynamic increase, fails the complete exact allocation gate. This result is
+  reported separately from simultaneous confidence bounds;
 - require no new lock acquisition, allocation, serialization, copy, task spawn,
   channel operation, or dynamic-dispatch layer in a code-path inspection of the
   migrated request/token path. The inspection emits named compiler IR/call-

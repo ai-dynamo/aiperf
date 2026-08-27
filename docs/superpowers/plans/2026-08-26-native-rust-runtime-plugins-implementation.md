@@ -675,7 +675,7 @@ ID, and integrate.
 - [ ] **Step 1: Write failing statistical tests**
 
 Test one-sided paired differences, simultaneous bound evaluation over the full
-metric/case matrix, finite-value
+non-allocation metric/case matrix, the separate exact allocation gate, finite-value
 rejection, coefficient-of-variation retry limits, and deterministic bootstrap
 seeding using a fixed sample vector. The production change that makes each test
 pass is the corresponding `plugin_stats` function.
@@ -701,6 +701,15 @@ pub struct NonInferiorityGate {
     pub max_relative_regression: f64,
     pub confidence: f64,
 }
+pub enum MetricGateResult {
+    SimultaneousNonInferiority {
+        lower_confidence_bound: f64,
+        threshold: f64,
+    },
+    ExactNoAllocationIncrease {
+        minimum_paired_ratio: f64,
+    },
+}
 pub fn evaluate_paired_gate(
     samples: &[PairedSample],
     gate: &NonInferiorityGate,
@@ -718,7 +727,18 @@ pub fn evaluate_simultaneous_gate(
 `dynamic/static`; `cpu_nanoseconds_per_successful_request` and
 `exporter_nanoseconds_per_record` use `static/dynamic`. TTFT and ITL
 p50/p90/p99 are secondary `static/dynamic` measurements and are rejected as
-primary names. The simultaneous report retains all three required CV vectors
+primary names. Only these throughput, CPU, exporter-duration, and permitted
+secondary latency metrics enter the simultaneous max-degradation bootstrap.
+Allocation count and allocated bytes are excluded from that distribution and
+from its critical-degradation penalty. Each allocation metric is instead an
+exact gate over every retained pair using `static/dynamic`: zero/zero is `1.0`,
+positive dynamic allocation against zero static allocation fails, and any
+ratio below `1.0` fails. Reports use `MetricGateResult` so the two gate kinds
+cannot be conflated, and the full report passes only when both gate kinds pass.
+A regression test combines varying non-allocation ratios with allocation ratios
+fixed at exactly `1.0` and proves the simultaneous penalty is never applied to
+the allocation result.
+The simultaneous report retains all three required CV vectors
 (30 static summaries, 30 dynamic summaries, and 30 positive paired ratios), the
 maximum-degradation bootstrap distribution, and invalidation attempts. Tests
 pin AB/BA pairing, same-member-order replacement of only invalid pairs, retained
