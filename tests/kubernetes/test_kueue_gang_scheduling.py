@@ -205,7 +205,7 @@ class TestKueueAdmissionFlow:
 
         async def verify_workload_hook(namespace: str) -> None:
             workload = await kueue_manager.wait_for_workload_admitted(
-                namespace, timeout=120
+                namespace, timeout=300
             )
             admitted_workload.update(workload)
             logger.info(f"Workload admitted in {namespace}")

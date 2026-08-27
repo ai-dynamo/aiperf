@@ -208,6 +208,17 @@ class TestMetricsFromLogs:
         logs = await get_pod_logs(
             deployed_small_benchmark_module, container="control-plane"
         )
+        # On remote clusters the operator deletes pods after completion; fall back
+        # to raw_logs captured at collection time before pod teardown.
+        if (
+            not logs
+            or logs.startswith("<kubectl logs")
+            or ("Request Throughput" not in logs and "request" not in logs.lower())
+        ):
+            metrics = deployed_small_benchmark_module.metrics
+            if metrics and metrics.raw_logs:
+                logs = metrics.raw_logs
+
         assert logs
 
         # Check for key metrics table markers

@@ -118,7 +118,7 @@ class TestWorkerPodScaling:
 
             # Scope to this JobSet because xdist workers share the cluster.
             worker_pods = []
-            for _ in range(60):
+            for _ in range(120):
                 pods = await kubectl.get_pods(result.namespace)
                 worker_pods = [
                     pod

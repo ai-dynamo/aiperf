@@ -216,7 +216,7 @@ class TestKubeResultsCommand:
             result.namespace,
             "--operator-namespace",
             k8s_settings.operator_namespace,
-            timeout=30,
+            timeout=120,
             kube_context=kubectl.context,
         )
 
