@@ -61,7 +61,7 @@ fn two_pair_zero_fixture(metric: &str, first_static: f64, first_dynamic: f64) ->
 #[test]
 fn explicitly_non_authoritative_fixture_is_seeded_and_one_sided() {
     let ratios = (0..30)
-        .map(|pair| 0.994 + (pair % 3) as f64 * 0.0005)
+        .map(|pair| 0.984 + (pair % 3) as f64 * 0.0005)
         .collect::<Vec<_>>();
     let samples = paired_samples("successful_requests_per_second", &ratios);
     let gate = NonInferiorityGate::standard("successful_requests_per_second");
