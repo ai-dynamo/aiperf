@@ -46,7 +46,7 @@ The full set of Effective metrics emitted today:
 
 | Metric | Unit | What it represents |
 |---|---|---|
-| `effective_concurrency` | requests | Time-weighted in-flight request count over the run window |
+| `effective_concurrency` | requests | Time-weighted in-flight request count over the run window (includes failed requests) |
 | `effective_decode_concurrency` | requests | Same, restricted to the decode phase `[generation_start, end]` |
 | `effective_prefill_concurrency` | requests | Same, restricted to the prefill phase `[start, generation_start]` |
 | `effective_decode_throughput` | tokens/sec | Σ per-request decode rates, time-weighted over the run |
@@ -119,6 +119,14 @@ This metric is only emitted when at least one record carries a `credit_issued_ns
 
 This is AIPerf's answer to the coordinated-omission problem made famous by Gil Tene: a naïve benchmark that omits queue wait under-reports user-perceived latency precisely when the system is most stressed.
 
+### Failed requests
+
+`effective_latency` is drawn from **successful records only**, the same population every other latency metric uses. `RequestRecord.valid` is `not has_error and …`, so a failed request is already absent from `request_latency`, TTFT, ITL and the rest; excluding it here keeps a failure's time-to-error from being averaged into the success distribution at full weight.
+
+The failure-aware view is `adj_effective_latency`, rendered as **Effective Latency (CO-aware) (error-adjusted)**. It applies the same treatment the [`PERCENTILE_INCLUDES_FAILED_REQUESTS`](../metrics-reference.md#metric-flags-reference) flag gives the registry latency metrics: the success-only distribution plus one `+inf` sample per errored record. `avg`, `sum` and the upper percentiles become `inf` once any request fails — that is the intended reading, not a defect — and `std` is reported as `null` because variance is undefined over a distribution containing `inf`. The metric is omitted on a clean run (nothing to inflate) and on a total-failure run (no distribution to inflate).
+
+> **The sweep-line Effective metrics behave differently.** `effective_concurrency` and the throughput/`tokens_in_flight` curves are built from `[start_ns, end_ns)` intervals and **do** include failed requests. This is deliberate: a request that hung for two minutes before returning a 504 genuinely occupied a slot for those two minutes, and dropping it would under-report the load the server was actually carrying. So on a run with slow failures, expect `effective_concurrency` to exceed the concurrency implied by the successful requests alone. The token-weighted curves are unaffected in practice, since an errored record has no `input_sequence_length` / `output_sequence_length` to weight by, and the decode-phase curves exclude it too because it never reached first-token.
+
 ## Choosing a metric
 
 | You want to answer… | Cite |
@@ -128,6 +136,8 @@ This is AIPerf's answer to the coordinated-omission problem made famous by Gil T
 | "What is this server's prefill capability under bursty arrival?" | `active_prefill_throughput` — Effective will dilute it by decode-only time |
 | "How saturated was my load generator? Did the credit queue back up?" | Compare `effective_latency` against `request_latency` |
 | "What latency does a user actually perceive under this load?" | `effective_latency` (when emitted) |
+| "What did users perceive on a run where some requests failed?" | `adj_effective_latency` — failures enter as `+inf` |
+| "How many requests was the server actually holding, failures included?" | `effective_concurrency` |
 | "What is the KV-cache pressure during this run?" | `tokens_in_flight` |
 
 ## Reading the console output
