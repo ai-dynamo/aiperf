@@ -16,7 +16,7 @@ use crate::metrics_core::catalog::{
     AggregationKind, CATALOG, MetricConsoleGroup, MetricFlags, MetricSpec, MetricTag, MetricType,
     spec_for, validate_catalog,
 };
-use crate::metrics_core::definition::{Definition, Native, metric_definition};
+use crate::metrics_core::definition::{Native, metric_definition};
 use crate::metrics_core::ingest::{InferenceDimensions, RecordIngest};
 use crate::metrics_core::itl::decode_tokens_after_first_chunk;
 use crate::metrics_core::kernel::{DistributionStats, linear_distribution, nearest_distribution};
