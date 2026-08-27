@@ -1879,6 +1879,64 @@ fn capture_harness_authors_machine_refresh_receipts() {
 }
 
 #[test]
+fn capture_harness_rejects_non_evidence_output_root_before_side_effects() {
+    let directory = tempfile::tempdir().expect("temporary capture validation directory is created");
+    let output_root = directory.path().join("raw");
+    let target_root = directory.path().join("target");
+    let lock = directory.path().join("missing-control/capture.lock");
+    let output = Command::new("sh")
+        .arg(repository_root().join("rust/scripts/capture-plugin-baseline.sh"))
+        .arg(directory.path().join("missing-baseline-source"))
+        .arg(&output_root)
+        .arg(&target_root)
+        .env("AIPERF_PLUGIN_BASELINE_LOCK", &lock)
+        .output()
+        .expect("capture output-root validation starts");
+
+    assert_eq!(output.status.code(), Some(65));
+    let stderr = String::from_utf8(output.stderr).expect("capture stderr is UTF-8");
+    assert!(
+        stderr.contains("OUTPUT_ROOT basename must be `evidence`"),
+        "unexpected capture error: {stderr}"
+    );
+    assert!(!output_root.exists(), "rejected output root is not created");
+    assert!(!target_root.exists(), "rejected target root is not created");
+    assert!(!lock.exists(), "rejected capture does not acquire its lock");
+    assert_eq!(
+        fs::read_dir(directory.path())
+            .expect("capture validation directory is readable")
+            .count(),
+        0,
+        "rejected capture leaves no residue"
+    );
+}
+
+#[test]
+fn capture_harness_accepts_evidence_output_root_without_starting_capture() {
+    let directory = tempfile::tempdir().expect("temporary capture validation directory is created");
+    let output_root = directory.path().join("evidence");
+    let output = Command::new("sh")
+        .arg(repository_root().join("rust/scripts/capture-plugin-baseline.sh"))
+        .arg("--output-root-validation-self-test")
+        .arg(&output_root)
+        .output()
+        .expect("capture output-root validation self-test starts");
+
+    assert!(
+        output.status.success(),
+        "evidence output-root validation failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read_dir(directory.path())
+            .expect("capture validation directory is readable")
+            .count(),
+        0,
+        "validation-only self-test must not start capture"
+    );
+}
+
+#[test]
 fn capture_harness_preserves_owned_command_stdin_and_output_contract() {
     let directory = tempfile::tempdir().expect("temporary stdin self-test directory is created");
     let lock = directory.path().join("capture.lock");

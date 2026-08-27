@@ -9,6 +9,32 @@ usage() {
     exit 64
 }
 
+require_evidence_output_root() {
+    validated_output_root=$1
+    while [ "${validated_output_root%/}" != "$validated_output_root" ]; do
+        validated_output_root=${validated_output_root%/}
+    done
+    [ "${validated_output_root##*/}" = evidence ] || {
+        echo "OUTPUT_ROOT basename must be \`evidence\`: $1" >&2
+        return 65
+    }
+}
+
+case "${1:-}" in
+    --output-root-validation-self-test)
+        [ "$#" -eq 2 ] || usage
+        require_evidence_output_root "$2"
+        exit 0
+        ;;
+    --ownership-self-test|--post-seal-failure-self-test|--stdin-self-test|\
+        --stdin-timeout-self-test|--stdin-signal-self-test|--bundle-verification-self-test)
+        ;;
+    *)
+        [ "$#" -eq 3 ] || usage
+        require_evidence_output_root "$2"
+        ;;
+esac
+
 harness_root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 . "$harness_root/rust/scripts/plugin-baseline-owned-command.sh"
 baseline_revision=caa3ff6fcf20ffe36a7704abe16274bedadbb9fb
