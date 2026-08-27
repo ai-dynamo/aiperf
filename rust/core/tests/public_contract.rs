@@ -28,8 +28,8 @@ use aiperf_core::endpoint::{
     Handle, Overrides, PreparedWsMessage, PreparedWsMessageRole, PreparedWsOpcode,
     PreparedWsOperation, SegmentReader,
 };
-use aiperf_core::measure::{ErrorDetails, ErrorKind, Response, SseMessage, TextResponse};
 use aiperf_core::histogram::{GenAiHistogramMetric, TokenDirection, seconds_scale};
+use aiperf_core::measure::{ErrorDetails, ErrorKind, Response, SseMessage, TextResponse};
 use aiperf_core::report::write_finalized_report_json;
 use aiperf_core::services::{
     ArtifactService, CancellationService, ClockService, DirectTransportServices, GraphService,
@@ -325,8 +325,7 @@ fn a_finalized_report_projection_commits_exactly_once() {
 fn the_capture_projections_are_boundary_owned() {
     // An exporter plugin composes the projections it requires without naming a
     // runtime type, and the vocabulary it buckets with is the same one core owns.
-    let mut histogram =
-        ExplicitHistogramV1::new(GenAiHistogramMetric::OperationDuration.bounds());
+    let mut histogram = ExplicitHistogramV1::new(GenAiHistogramMetric::OperationDuration.bounds());
     histogram.observe(0.01);
     assert!(histogram.validate().is_ok());
     // The first-upper-bound rule admits the boundary value into its own bucket.

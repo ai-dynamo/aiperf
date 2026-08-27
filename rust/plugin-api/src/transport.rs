@@ -25,10 +25,10 @@
 //! `Rc<dyn RequestExecutor>` shape the baseline produces. The host wraps the
 //! result in nothing.
 
-use std::rc::Rc;
 use core::fmt::{self, Display, Formatter};
 use core::future::Future;
 use core::pin::Pin;
+use std::rc::Rc;
 
 use aiperf_core::clock::Clock;
 
@@ -55,9 +55,7 @@ impl TransportExecutionShapeV1 {
     }
 
     /// Select the single declared shape, refusing zero or two declarations.
-    pub fn exactly_one(
-        declared: &[TransportExecutionShapeV1],
-    ) -> Result<Self, ValidationError> {
+    pub fn exactly_one(declared: &[TransportExecutionShapeV1]) -> Result<Self, ValidationError> {
         match declared {
             [shape] => Ok(*shape),
             _ => Err(ValidationError::AmbiguousExecutionShape),
