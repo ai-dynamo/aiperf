@@ -198,8 +198,10 @@ class TestWorkerCleanup:
 
         # Give TTL controller and JobSet deletion time to clean up.
         # On resource-constrained Kind clusters, workers may still be in
-        # a restart loop. Wait up to 90s for cleanup.
-        for _ in range(18):
+        # a restart loop or containerd may be slow to kill pods. Wait up
+        # to 180s for cleanup.
+        worker_pods = []
+        for _ in range(36):
             await asyncio.sleep(5)
             pods = await kubectl.get_pods(job.namespace)
             worker_pods = [
@@ -214,6 +216,28 @@ class TestWorkerCleanup:
                 print(f"  {p.name}: {p.phase}")
 
         print(f"\nWorker pods remaining: {len(worker_pods)}")
+
+        # If pods are stuck Terminating (containerd timeout on kind), force-delete
+        # them so the cluster isn't left in a broken state, then re-check.
+        if worker_pods:
+            for p in worker_pods:
+                await kubectl.run(
+                    "delete",
+                    "pod",
+                    p.name,
+                    "-n",
+                    job.namespace,
+                    "--grace-period=0",
+                    "--force",
+                    "--ignore-not-found",
+                    check=False,
+                )
+            # Give the apiserver a moment to process the force-delete.
+            await asyncio.sleep(5)
+            pods = await kubectl.get_pods(job.namespace)
+            worker_pods = [
+                p for p in pods if job.job_name in p.name and "worker" in p.name
+            ]
 
         # Worker pods should be gone after TTL=0 + JobSet deletion
         assert len(worker_pods) == 0, (
