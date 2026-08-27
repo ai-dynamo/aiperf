@@ -2,7 +2,7 @@
   "types": 177,
   "files": 56,
   "type_lines": 2915,
-  "file_lines": 46467,
+  "file_lines": 36332,
   "entries": [
     {
       "name": "AIPerfExtension",
@@ -48,9 +48,9 @@
     },
     {
       "name": "BodyPlan",
-      "file": "runtime/src/body_plan.rs",
-      "start": 303,
-      "end": 316
+      "file": "runtime/src/body_plan/model.rs",
+      "start": 85,
+      "end": 98
     },
     {
       "name": "BucketHistogram",
@@ -90,9 +90,9 @@
     },
     {
       "name": "CreditIdentity",
-      "file": "runtime/src/multiturn.rs",
-      "start": 2120,
-      "end": 2129
+      "file": "runtime/src/multiturn/model.rs",
+      "start": 229,
+      "end": 238
     },
     {
       "name": "CreditMaterializer",
@@ -264,21 +264,21 @@
     },
     {
       "name": "FieldName",
-      "file": "runtime/src/body_plan.rs",
-      "start": 43,
-      "end": 43
+      "file": "runtime/src/body_plan/model.rs",
+      "start": 16,
+      "end": 16
     },
     {
       "name": "FieldProgram",
-      "file": "runtime/src/body_plan.rs",
-      "start": 165,
-      "end": 168
+      "file": "runtime/src/body_plan/model.rs",
+      "start": 68,
+      "end": 71
     },
     {
       "name": "FieldValue",
-      "file": "runtime/src/body_plan.rs",
-      "start": 121,
-      "end": 144
+      "file": "runtime/src/body_plan/model.rs",
+      "start": 36,
+      "end": 59
     },
     {
       "name": "GenaiPerfEnvelope",
@@ -324,9 +324,9 @@
     },
     {
       "name": "LiteralValue",
-      "file": "runtime/src/body_plan.rs",
-      "start": 65,
-      "end": 68
+      "file": "runtime/src/body_plan/model.rs",
+      "start": 24,
+      "end": 27
     },
     {
       "name": "MeasuredContext",
@@ -390,9 +390,9 @@
     },
     {
       "name": "MetricsConfig",
-      "file": "runtime/src/metrics_core/accumulator.rs",
-      "start": 152,
-      "end": 178
+      "file": "runtime/src/metrics_core/accumulator_model.rs",
+      "start": 30,
+      "end": 56
     },
     {
       "name": "MetricsStorageMode",
@@ -420,9 +420,9 @@
     },
     {
       "name": "ModelResponseMetadata",
-      "file": "runtime/src/scheduled.rs",
-      "start": 101,
-      "end": 120
+      "file": "runtime/src/scheduled/observe.rs",
+      "start": 37,
+      "end": 56
     },
     {
       "name": "ObservedEndpointMetrics",
@@ -528,9 +528,9 @@
     },
     {
       "name": "PreparedEndpointReference",
-      "file": "runtime/src/multiturn.rs",
-      "start": 541,
-      "end": 546
+      "file": "runtime/src/multiturn/model.rs",
+      "start": 137,
+      "end": 142
     },
     {
       "name": "PreparedEndpointTable",
@@ -564,27 +564,27 @@
     },
     {
       "name": "PreparedWsMessage",
-      "file": "runtime/src/body_plan.rs",
-      "start": 750,
-      "end": 754
+      "file": "runtime/src/body_plan/model.rs",
+      "start": 153,
+      "end": 157
     },
     {
       "name": "PreparedWsMessageRole",
-      "file": "runtime/src/body_plan.rs",
-      "start": 739,
-      "end": 746
+      "file": "runtime/src/body_plan/model.rs",
+      "start": 142,
+      "end": 149
     },
     {
       "name": "PreparedWsOpcode",
-      "file": "runtime/src/body_plan.rs",
-      "start": 730,
-      "end": 735
+      "file": "runtime/src/body_plan/model.rs",
+      "start": 133,
+      "end": 138
     },
     {
       "name": "PreparedWsOperation",
-      "file": "runtime/src/body_plan.rs",
-      "start": 789,
-      "end": 794
+      "file": "runtime/src/body_plan/model.rs",
+      "start": 161,
+      "end": 166
     },
     {
       "name": "RawEndpointConfig",
@@ -732,9 +732,9 @@
     },
     {
       "name": "RequestBody",
-      "file": "runtime/src/body_plan.rs",
-      "start": 626,
-      "end": 643
+      "file": "runtime/src/body_plan/model.rs",
+      "start": 112,
+      "end": 129
     },
     {
       "name": "RequestContentType",
@@ -822,15 +822,15 @@
     },
     {
       "name": "RuntimeSessionBackend",
-      "file": "runtime/src/multiturn.rs",
-      "start": 318,
-      "end": 363
+      "file": "runtime/src/multiturn/model.rs",
+      "start": 53,
+      "end": 98
     },
     {
       "name": "SampledSession",
-      "file": "runtime/src/multiturn.rs",
-      "start": 367,
-      "end": 373
+      "file": "runtime/src/multiturn/model.rs",
+      "start": 102,
+      "end": 108
     },
     {
       "name": "Segment",
@@ -876,9 +876,9 @@
     },
     {
       "name": "SloThreshold",
-      "file": "runtime/src/metrics_core/accumulator.rs",
-      "start": 97,
-      "end": 110
+      "file": "runtime/src/metrics_core/accumulator_model.rs",
+      "start": 13,
+      "end": 26
     },
     {
       "name": "SseField",
@@ -906,15 +906,15 @@
     },
     {
       "name": "StoredRawTokenIds",
-      "file": "runtime/src/multiturn.rs",
-      "start": 498,
-      "end": 501
+      "file": "runtime/src/multiturn/model.rs",
+      "start": 126,
+      "end": 129
     },
     {
       "name": "StoredTraceHashIds",
-      "file": "runtime/src/multiturn.rs",
-      "start": 453,
-      "end": 456
+      "file": "runtime/src/multiturn/model.rs",
+      "start": 116,
+      "end": 119
     },
     {
       "name": "TaskId",
@@ -972,45 +972,45 @@
     },
     {
       "name": "TurnDataPolicy",
-      "file": "runtime/src/multiturn.rs",
-      "start": 708,
-      "end": 710
+      "file": "runtime/src/multiturn/model.rs",
+      "start": 155,
+      "end": 157
     },
     {
       "name": "TurnDispatchOutcome",
-      "file": "runtime/src/scheduled.rs",
-      "start": 124,
-      "end": 141
+      "file": "runtime/src/scheduled/observe.rs",
+      "start": 60,
+      "end": 77
     },
     {
       "name": "TurnEndpoint",
-      "file": "runtime/src/multiturn.rs",
-      "start": 690,
-      "end": 693
+      "file": "runtime/src/multiturn/model.rs",
+      "start": 148,
+      "end": 151
     },
     {
       "name": "TurnMetadata",
-      "file": "runtime/src/multiturn.rs",
-      "start": 245,
-      "end": 259
+      "file": "runtime/src/multiturn/model.rs",
+      "start": 24,
+      "end": 38
     },
     {
       "name": "TurnResponse",
-      "file": "runtime/src/multiturn.rs",
-      "start": 307,
-      "end": 316
+      "file": "runtime/src/multiturn/model.rs",
+      "start": 42,
+      "end": 51
     },
     {
       "name": "TurnResponseObserver",
-      "file": "runtime/src/scheduled.rs",
-      "start": 77,
-      "end": 83
+      "file": "runtime/src/scheduled/observe.rs",
+      "start": 21,
+      "end": 27
     },
     {
       "name": "TurnToSend",
-      "file": "runtime/src/multiturn.rs",
-      "start": 756,
-      "end": 815
+      "file": "runtime/src/multiturn/model.rs",
+      "start": 161,
+      "end": 220
     },
     {
       "name": "Unit",
@@ -1068,3 +1068,4 @@
     }
   ]
 }
+
