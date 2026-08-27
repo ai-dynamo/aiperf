@@ -685,8 +685,11 @@ def pytest_collection_modifyitems(
     config: pytest.Config, items: list[pytest.Item]
 ) -> None:
     """Add k8s marker to all tests in this directory."""
-    settings = config.stash.get(_SETTINGS_KEY, None)
-    allow_disruptive = settings.allow_disruptive if settings else False
+    try:
+        settings = _get_settings(config)
+        allow_disruptive = settings.allow_disruptive
+    except KeyError:
+        allow_disruptive = False
 
     skip_disruptive = pytest.mark.skip(
         reason="k8s_disruptive: makes cluster-wide mutations (CRD deletion, etc). "
@@ -705,10 +708,9 @@ def pytest_collection_modifyitems(
             if "@kubernetes-chaos" not in item.nodeid:
                 item._nodeid = f"{item.nodeid}@kubernetes-chaos"
 
-        own_markers = {m.name for m in item.iter_markers()}
-        if "k8s_disruptive" in own_markers and not allow_disruptive:
+        if item.get_closest_marker("k8s_disruptive") and not allow_disruptive:
             item.add_marker(skip_disruptive)
-        if "k8s_needs_toxiproxy" in own_markers:
+        if item.get_closest_marker("k8s_needs_toxiproxy"):
             item.add_marker(skip_needs_toxiproxy)
 
 
