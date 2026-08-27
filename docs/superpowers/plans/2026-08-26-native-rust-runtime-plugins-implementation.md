@@ -773,6 +773,15 @@ scope; run focused tests plus Clippy; commit as
 
 ### Task 4: Extract boundary-owned core values and host service traits
 
+> **Prerequisite:** run
+> [`2026-08-27-plugin-abi-boundary-gap-closure.md`](2026-08-27-plugin-abi-boundary-gap-closure.md)
+> first. Its six tasks evict ~75 types from the measured ABI closure
+> (193 → ~118) by cutting leak edges this plan does not address:
+> `WorkerMaterializer`, `NativeReport`, closed `EndpointType`/`MetricTag`, the
+> `ExecutionSinkBuilder::Sink` associated type, and implementation co-resident
+> with boundary types. Every type it evicts is a type this task then never has
+> to move; running it afterward moves the same code twice.
+
 **Files:**
 - Modify: `rust/core/src/lib.rs`
 - Create: `rust/core/src/clock.rs`
