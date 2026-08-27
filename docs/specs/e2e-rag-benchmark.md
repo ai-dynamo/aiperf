@@ -249,11 +249,24 @@ hop count and fixed retrieved sets.** Every node's request inputs come from the
 recorded plan, not from the previous stage's live output.
 *Enforces:* the pinned plan loader. *Status:* NEW.
 
-**I20. Pinning does not fix generated output length.** Reproducibility of
-tasks-per-second rests on fixed work, not fixed outputs.
-*Status:* stated as a limitation, not a property to establish. Residual
-output-length variance is exactly what I17's compliance check bounds — which is
-why the two must not be collapsed into one claim.
+**I20. Pinning fixes work, not generation, and the unfixed part is reported
+rather than assumed away.** A pinned run holds hop count, retrieved sets, and
+request bytes constant; it does not constrain any role's generated output length.
+Because service time is dominated by generation, `rag_tasks_per_second` is
+reproducible only to the extent that the endpoint's per-role output-length
+distributions are stable — a property this design does not establish and cannot.
+The enforceable half is therefore reporting: a pinned run emits mean and p90 OSL
+**per role** beside every scored rate, so run-to-run rate drift is attributable to
+the role that generated it instead of being invisible.
+*Enforces:* the pinned run's report. *Status:* NEW; depends on I16.
+*Without it:* a rate difference between two pinned runs of the same plan is
+unexplainable, and the reader attributes it to the system under test.
+
+An earlier draft of this record said the compliance check bounds that residual
+variance. It does not, and the two must not be collapsed: I17's check is a single
+aggregate over the **answer** role only. Every rewriter, grader, and sufficiency
+output is equally unbounded and equally moves service time, and none of them is
+covered. Per-role bands are named as future work, not claimed here.
 
 ### What is deliberately not an invariant
 
@@ -799,11 +812,15 @@ Two execution modes:
   (`--rag-record-plan <path>`) and is bound to a `corpus_digest`.
 
   Pinning fixes hop count, retrieved sets, and request bytes; it does **not** fix
-  generated output length, which remains stochastic. Reproducibility of
-  tasks-per-second therefore rests on fixed work, not fixed outputs, and residual
-  output-length variance is exactly what the compliance check below bounds. Where
-  the endpoint supports it, the recorded `max_tokens`/`ignore_eos` are replayed to
-  narrow that variance further.
+  generated output length for any role, which remains stochastic. Reproducibility
+  of tasks-per-second therefore rests on fixed work, not fixed outputs. The
+  compliance check below does **not** close that gap — it covers one aggregate over
+  the answer role, while the rewriter, grader, and sufficiency outputs are equally
+  unbounded and equally move service time. What closes the reporting side is I20:
+  a pinned run emits per-role mean and p90 OSL beside every scored rate, so
+  run-to-run rate drift is attributable rather than mysterious. Where the endpoint
+  supports it, the recorded `max_tokens`/`ignore_eos` are replayed to narrow the
+  generation variance itself, which is a mitigation, not a fix.
 
 ### Live branching: the driver seam is a stepping stone
 
@@ -985,8 +1002,10 @@ Both are post-run passes over recorded artifacts, native, and off the timed path
 - **Output-length compliance** (`aiperf rag compliance`) re-reads a pinned run's
   records and asserts the answer-role mean OSL falls inside an authored band around
   an authored reference (the MLPerf analogue is 273.81 tokens ±10%). The check is a
-  single aggregate over one role and the report states that scope explicitly rather
-  than implying whole-pipeline coverage. It depends on step 1 of the role work,
+  single aggregate over one role. The report states that scope explicitly and names
+  what it does not cover: the rewriter, grader, and sufficiency roles generate
+  unbounded output that moves `rag_tasks_per_second` and is bounded by nothing here.
+  Those roles are covered only by I20's per-role reporting. It depends on step 1 of the role work,
   since attributing OSL to the answer role requires the per-record profile id.
 
 Mock-server fixtures reuse the existing accuracy-fixture mechanism
