@@ -1229,6 +1229,7 @@ struct IssueLedgerStateWire<'a> {
     barrier_epoch: CheckpointEpoch,
     handled_cut: &'a HandledIssueCut,
     action_frontier: Option<GlobalSequence>,
+    action_gap_closure: Option<PersistedActionGapClosure>,
     input_frontiers: Vec<IssueLedgerFrontierWire<'a>>,
     counters: Vec<IssueLedgerCounterWire<'a>>,
     summary: &'a StreamingIssueSummary,
@@ -1261,6 +1262,12 @@ struct RestoredIssueLedgerState {
     #[allow(dead_code)]
     barrier_epoch: CheckpointEpoch,
     action_frontier: Option<GlobalSequence>,
+    /// Sole retained gap-closure proof justifying an `action_frontier` that
+    /// crosses sequences no retained terminal covers. Absent when the frontier
+    /// is self-evidencing; a payload that omits it while carrying a frontier is
+    /// refused as `UnprovenActionGapClosure`.
+    #[serde(default)]
+    action_gap_closure: Option<PersistedActionGapClosure>,
     input_frontiers: Vec<RestoredIssueLedgerFrontier>,
     counters: Vec<RestoredIssueLedgerCounter>,
     summary: StreamingIssueSummary,
@@ -2143,9 +2150,8 @@ struct RetainedActionGapClosure {
 
 /// Strict persisted form of the sole retained action gap-closure proof.
 ///
-/// Staged seam: minted and revalidated here, but the checkpoint restore path
-/// does not call it yet, so the lib build sees no crate-internal constructor.
-#[allow(dead_code)]
+/// Carried by the ledger participant state wire, so a restored
+/// `action_frontier` keeps the evidence that justified it.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct PersistedActionGapClosure {
@@ -2495,9 +2501,6 @@ impl BudgetOwnedStreamingIssueReporter {
 
     /// Project the sole retained action gap-closure proof for checkpoint wire
     /// encoding. The reporter keeps its lease; only the strict fields leave.
-    ///
-    /// Staged seam: no production caller wires this yet.
-    #[allow(dead_code)]
     pub(crate) fn persisted_action_gap_closure(&self) -> Option<PersistedActionGapClosure> {
         self.action_gap_closure
             .as_ref()
@@ -2516,9 +2519,6 @@ impl BudgetOwnedStreamingIssueReporter {
     /// nothing. The checkpoint restore path must call this after installing
     /// `action_terminals` and `action_frontier` and before marking the
     /// participant initialized.
-    ///
-    /// Staged seam: that restore path does not call it yet.
-    #[allow(dead_code)]
     pub(crate) fn install_restored_action_gap_closure(
         &mut self,
         persisted: Option<PersistedActionGapClosure>,
@@ -3441,6 +3441,7 @@ impl BudgetOwnedStreamingIssueReporter {
             barrier_epoch: barrier.epoch,
             handled_cut: &handled_cut,
             action_frontier: self.action_frontier,
+            action_gap_closure: self.persisted_action_gap_closure(),
             input_frontiers: self
                 .input_frontiers
                 .iter()
@@ -3610,6 +3611,11 @@ impl BudgetOwnedStreamingIssueReporter {
         self.counters = retained_counters;
         self.summary = restored.summary;
         self.action_frontier = restored.action_frontier;
+        // The frontier is installed first so the proof is revalidated against
+        // the state it justifies. A refusal here leaves the closure uninstalled
+        // and charges nothing.
+        self.install_restored_action_gap_closure(restored.action_gap_closure)
+            .map_err(|error| checkpoint_error_from_reliability(participant.clone(), error))?;
         self.retired_receipt_root = Some(*restored.handled_cut.receipt_root());
         Ok(())
     }
