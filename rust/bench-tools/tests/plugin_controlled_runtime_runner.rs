@@ -64,7 +64,7 @@ fn runtime_artifact_with_persistent_affinity_loss(label: &str) -> Vec<u8> {
     script
         .replacen(
             "set -eu\n",
-            "set -eu\nif [ \"$AIPERF_PARITY_SCENARIO\" = http_non_streaming_c1 ]; then sleep 0.05; /usr/bin/taskset -pc 8 $$ >/dev/null; sleep 0.1; fi\n",
+            "set -eu\ncase \"$AIPERF_PARITY_PAIR_ID\" in pair-00) if [ \"$AIPERF_PARITY_SCENARIO\" = http_non_streaming_c1 ]; then sleep 0.05; /usr/bin/taskset -pc 8 $$ >/dev/null; sleep 0.1; fi;; esac\n",
             1,
         )
         .into_bytes()
@@ -456,11 +456,14 @@ fn valid_terminal_attempt_refuses_a_second_runner_invocation() {
             .contains("first valid experiment attempt is authoritative")
     );
     assert_eq!(
-        std::fs::read(&ledger)
-            .expect("attempt ledger is retained")
-            .split(|byte| *byte == b'\n')
-            .filter(|line| !line.is_empty())
-            .count(),
+        std::fs::read(controlled_attempt_ledger_path(
+            fixture._directory.path(),
+            &first.experiment_identity_blake3
+        ))
+        .expect("attempt ledger is retained")
+        .split(|byte| *byte == b'\n')
+        .filter(|line| !line.is_empty())
+        .count(),
         1
     );
 }
