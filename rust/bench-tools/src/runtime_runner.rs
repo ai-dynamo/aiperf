@@ -648,10 +648,6 @@ impl AttemptLedger {
     }
 
     /// Complete ordered ledger history, including every retained evidence tree.
-    fn entries(&self) -> &[AttemptLedgerEntryV1] {
-        &self.entries
-    }
-
     /// Take the complete ordered history; the ledger is finished with it.
     fn take_entries(&mut self) -> Vec<AttemptLedgerEntryV1> {
         std::mem::take(&mut self.entries)
@@ -2537,7 +2533,7 @@ mod tests {
                 ordinal
             );
             ledger
-                .append_attempt(invalid_attempt(ordinal, &evidence), &evidence)
+                .append_attempt(invalid_attempt(ordinal, &evidence), evidence.clone())
                 .expect("invalid attempt appends");
             let entry = ledger.entries.last().expect("appended entry is retained");
             assert_eq!(entry.previous_entry_blake3, previous_entry);
