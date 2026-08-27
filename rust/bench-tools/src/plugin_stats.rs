@@ -599,6 +599,25 @@ pub struct ControlledPairAttemptRecord {
     pub decision: PairAttemptDecision,
 }
 
+/// One retained exporter pair whose receipts were validated by the controller.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct ControlledExporterPairRecord {
+    /// One-based complete experiment attempt.
+    pub experiment_attempt: u8,
+    /// Frozen inventory scenario.
+    pub scenario: String,
+    /// Seeded pair identifier.
+    pub pair_id: String,
+    /// Validated static member record.
+    pub static_record: ExporterMemberRecord,
+    /// Validated static member evidence summary.
+    pub static_member: ExporterMemberSummary,
+    /// Validated dynamic member record.
+    pub dynamic_record: ExporterMemberRecord,
+    /// Validated dynamic member evidence summary.
+    pub dynamic_member: ExporterMemberSummary,
+}
+
 #[derive(Debug)]
 struct ActiveControlledAttempt {
     ordinal: u8,
@@ -619,6 +638,7 @@ pub struct ControlledMeasurementEvaluator {
     active: Option<ActiveControlledAttempt>,
     history: Vec<ControlledAttemptRecord>,
     raw_pair_history: Vec<ControlledPairAttemptRecord>,
+    exporter_pair_history: Vec<ControlledExporterPairRecord>,
     last_statistical_report: Option<SimultaneousGateReport>,
 }
 
@@ -637,6 +657,7 @@ impl ControlledMeasurementEvaluator {
             active: None,
             history: Vec::new(),
             raw_pair_history: Vec::new(),
+            exporter_pair_history: Vec::new(),
             last_statistical_report: None,
         })
     }
@@ -654,6 +675,11 @@ impl ControlledMeasurementEvaluator {
     /// Append-only raw pair history, including rejected caller assertions.
     pub fn raw_pair_history(&self) -> &[ControlledPairAttemptRecord] {
         &self.raw_pair_history
+    }
+
+    /// Append-only validated exporter evidence retained by this controller.
+    pub fn exporter_pair_history(&self) -> &[ControlledExporterPairRecord] {
+        &self.exporter_pair_history
     }
 
     /// Most recent report derived from complete controlled measurements.
@@ -825,6 +851,104 @@ impl ControlledMeasurementEvaluator {
             derived_reason: "completed".to_owned(),
             decision,
         });
+        Ok(decision)
+    }
+
+    /// Validate and classify one complete exporter pair inside the controller.
+    ///
+    /// Malformed receipts, retained bytes, member records, or cross-member
+    /// comparison output are measured-product failures. They terminate the
+    /// first valid attempt and can never be relabeled as infrastructure noise.
+    pub fn record_exporter_pair_evidence(
+        &mut self,
+        static_binding: &ExporterMemberBinding,
+        static_evidence: &ExporterMemberEvidence,
+        static_record_bytes: &[u8],
+        dynamic_binding: &ExporterMemberBinding,
+        dynamic_evidence: &ExporterMemberEvidence,
+        dynamic_record_bytes: &[u8],
+    ) -> Result<PairAttemptDecision, PluginStatsError> {
+        let active_ordinal = self
+            .active
+            .as_ref()
+            .map(|active| active.ordinal)
+            .ok_or_else(|| PluginStatsError::new("no controlled experiment attempt is active"))?;
+        let evidence_result = (|| {
+            let expected_attempt = u64::from(active_ordinal)
+                .checked_sub(1)
+                .ok_or_else(|| PluginStatsError::new("experiment attempt ordinal underflow"))?;
+            if static_binding.attempt_ordinal != expected_attempt
+                || dynamic_binding.attempt_ordinal != expected_attempt
+            {
+                return Err(PluginStatsError::new(
+                    "exporter evidence attempt does not match the active controller attempt",
+                ));
+            }
+            let pair = validate_exporter_pair_evidence(
+                &ExporterSampleContract::normative(),
+                static_binding,
+                static_evidence,
+                dynamic_binding,
+                dynamic_evidence,
+            )?;
+            let static_record = validate_exporter_member_record(
+                &ExporterSampleContract::normative(),
+                static_binding,
+                static_evidence,
+                static_record_bytes,
+            )?;
+            let dynamic_record = validate_exporter_member_record(
+                &ExporterSampleContract::normative(),
+                dynamic_binding,
+                dynamic_evidence,
+                dynamic_record_bytes,
+            )?;
+            Ok((pair, static_record, dynamic_record))
+        })();
+        let (pair, static_record, dynamic_record) = match evidence_result {
+            Ok(validated) => validated,
+            Err(error) => {
+                self.finish_active(
+                    ControlledAttemptDecision::ValidFailure,
+                    Some(format!("controlled exporter evidence is invalid: {error}")),
+                )?;
+                return Ok(PairAttemptDecision::ExperimentFailed);
+            }
+        };
+
+        let member_order = self
+            .pair_schedule
+            .iter()
+            .find(|pair| pair.pair_id == static_binding.pair_id)
+            .map(|pair| pair.member_order)
+            .ok_or_else(|| PluginStatsError::new("exporter pair is absent from the schedule"))?;
+        let members = member_order
+            .into_iter()
+            .map(|variant| RawMemberTerminalRecord {
+                variant,
+                outcome: MemberTerminalOutcome::Completed,
+            })
+            .collect();
+        let decision = self.record_pair(RawPairTerminalRecord {
+            scenario: static_binding.scenario_id.clone(),
+            pair_id: static_binding.pair_id.clone(),
+            member_order,
+            members,
+            asserted_reason: None,
+            asserted_disposition: None,
+        })?;
+        if decision == PairAttemptDecision::RetainPair {
+            self.exporter_pair_history
+                .push(ControlledExporterPairRecord {
+                    experiment_attempt: active_ordinal,
+                    scenario: static_binding.scenario_id.clone(),
+                    pair_id: static_binding.pair_id.clone(),
+                    static_record,
+                    static_member: pair.static_member,
+                    dynamic_record,
+                    dynamic_member: pair.dynamic_member,
+                });
+        }
         Ok(decision)
     }
 

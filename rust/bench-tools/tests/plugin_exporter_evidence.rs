@@ -4,8 +4,9 @@
 //! Pins exporter-member evidence to the controlled observable bytes.
 
 use aiperf_bench_tools::plugin_stats::{
-    ExporterEvidenceMode, ExporterMember, ExporterMemberBinding, ExporterMemberEvidence,
-    ExporterObservableKind, ExporterSampleContract, RetainedExporterEvidence,
+    ControlledAttemptDecision, ControlledMeasurementEvaluator, ExporterEvidenceMode,
+    ExporterMember, ExporterMemberBinding, ExporterMemberEvidence, ExporterObservableKind,
+    ExporterSampleContract, PairAttemptDecision, RetainedExporterEvidence,
     validate_exporter_member_evidence, validate_exporter_member_record,
     validate_exporter_pair_evidence,
 };
@@ -60,6 +61,55 @@ fn binding(member: ExporterMember) -> ExporterMemberBinding {
         build_artifact_blake3: DIGEST.to_owned(),
         build_receipt_blake3: DIGEST.to_owned(),
     }
+}
+
+fn member_evidence(member: ExporterMember) -> ExporterMemberEvidence {
+    ExporterMemberEvidence {
+        repetition_receipt_bytes: paired_member_receipts(member, RAW_OBSERVABLE_DIGEST),
+        retained: RetainedExporterEvidence {
+            repetition_ordinal: 0,
+            raw_observable_bytes: RAW_OBSERVABLE.to_vec(),
+            comparison_observable_bytes: RAW_OBSERVABLE.to_vec(),
+            provenance_receipt_bytes: EMPTY_PROVENANCE.to_vec(),
+        },
+    }
+}
+
+fn member_record_bytes(
+    member: ExporterMember,
+    evidence: &ExporterMemberEvidence,
+    duration_adjustment: u64,
+) -> Vec<u8> {
+    let summary = validate_exporter_member_evidence(
+        &ExporterSampleContract::normative(),
+        &binding(member),
+        evidence,
+    )
+    .expect("member evidence validates");
+    let retained = &summary.repetitions[evidence.retained.repetition_ordinal];
+    let record = serde_json::json!({
+        "active_duration_ns": summary.active_duration_nanoseconds + duration_adjustment,
+        "attempt_ordinal": 0,
+        "build_artifact_blake3": DIGEST,
+        "build_receipt_blake3": DIGEST,
+        "comparison_observable_blake3": RAW_OBSERVABLE_DIGEST,
+        "experiment_identity_blake3": DIGEST,
+        "member": member,
+        "observable_policy_blake3": DIGEST,
+        "pair_id": "pair-00",
+        "processed_records": 1_600_000,
+        "repetition_receipts_blake3": summary.repetition_receipts_blake3,
+        "retained_artifact_records": 100_000,
+        "retained_comparison_observable_blake3": retained.comparison_observable_blake3,
+        "retained_provenance_receipt_blake3": retained.provenance_receipt_blake3,
+        "retained_raw_observable_blake3": retained.raw_observable_blake3,
+        "retained_repetition_ordinal": 0,
+        "scenario_id": "exporter_100k",
+        "schema_version": 1
+    });
+    let mut bytes = serde_json::to_vec(&record).expect("literal record serializes");
+    bytes.push(b'\n');
+    bytes
 }
 
 #[test]
@@ -206,4 +256,65 @@ fn member_record_cannot_claim_a_duration_other_than_the_receipt_sum() {
         &valid_bytes,
     )
     .expect("the exact receipt sum is valid");
+}
+
+#[test]
+fn controlled_evaluator_classifies_invalid_exporter_evidence_as_a_product_failure() {
+    let static_evidence = member_evidence(ExporterMember::Static);
+    let dynamic_evidence = member_evidence(ExporterMember::Dynamic);
+    let static_record = member_record_bytes(ExporterMember::Static, &static_evidence, 0);
+    let forged_dynamic_record = member_record_bytes(ExporterMember::Dynamic, &dynamic_evidence, 1);
+    let mut evaluator = ControlledMeasurementEvaluator::new().expect("authority validates");
+    evaluator.begin_attempt().expect("first attempt starts");
+
+    let decision = evaluator
+        .record_exporter_pair_evidence(
+            &binding(ExporterMember::Static),
+            &static_evidence,
+            &static_record,
+            &binding(ExporterMember::Dynamic),
+            &dynamic_evidence,
+            &forged_dynamic_record,
+        )
+        .expect("controlled validation returns a terminal product decision");
+    assert_eq!(decision, PairAttemptDecision::ExperimentFailed);
+    assert_eq!(
+        evaluator.history()[0].decision,
+        ControlledAttemptDecision::ValidFailure
+    );
+}
+
+#[test]
+fn controlled_evaluator_retains_validated_exporter_member_records() {
+    let static_evidence = member_evidence(ExporterMember::Static);
+    let dynamic_evidence = member_evidence(ExporterMember::Dynamic);
+    let static_record = member_record_bytes(ExporterMember::Static, &static_evidence, 0);
+    let dynamic_record = member_record_bytes(ExporterMember::Dynamic, &dynamic_evidence, 0);
+    let mut evaluator = ControlledMeasurementEvaluator::new().expect("authority validates");
+    evaluator.begin_attempt().expect("first attempt starts");
+
+    let decision = evaluator
+        .record_exporter_pair_evidence(
+            &binding(ExporterMember::Static),
+            &static_evidence,
+            &static_record,
+            &binding(ExporterMember::Dynamic),
+            &dynamic_evidence,
+            &dynamic_record,
+        )
+        .expect("controlled exporter pair validates");
+    assert_eq!(decision, PairAttemptDecision::RetainPair);
+    let retained = evaluator.exporter_pair_history();
+    assert_eq!(retained.len(), 1);
+    assert_eq!(retained[0].experiment_attempt, 1);
+    assert_eq!(retained[0].scenario, "exporter_100k");
+    assert_eq!(retained[0].pair_id, "pair-00");
+    assert_eq!(
+        retained[0].static_record.repetition_receipts_blake3,
+        retained[0].static_member.repetition_receipts_blake3
+    );
+    assert_eq!(
+        retained[0].dynamic_record.repetition_receipts_blake3,
+        retained[0].dynamic_member.repetition_receipts_blake3
+    );
 }
