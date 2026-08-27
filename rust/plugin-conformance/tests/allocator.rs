@@ -185,7 +185,8 @@ fn nm_dynamic_symbols(path: &Path) -> Vec<String> {
         .filter_map(|line| {
             // nm output format: "<addr> <type> <name>" or "         U <name>"
             let parts: Vec<&str> = line.split_whitespace().collect();
-            parts.last().map(|s| s.to_string())
+            // Strip GNU version suffix (e.g. "mi_malloc@@AIPERF_ALLOC_V1" → "mi_malloc").
+            parts.last().map(|s| s.split('@').next().unwrap_or(s).to_string())
         })
         .collect()
 }
@@ -204,7 +205,8 @@ fn nm_dynamic_imports(path: &Path) -> Vec<String> {
         .lines()
         .filter_map(|line| {
             let parts: Vec<&str> = line.split_whitespace().collect();
-            parts.last().map(|s| s.to_string())
+            // Strip GNU version suffix (e.g. "mi_malloc@AIPERF_ALLOC_V1" → "mi_malloc").
+            parts.last().map(|s| s.split('@').next().unwrap_or(s).to_string())
         })
         .collect()
 }
