@@ -84,7 +84,7 @@ struct PackageOwnership {
     dependencies: Vec<OwnedDependency>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(deny_unknown_fields)]
 struct OwnedDependency {
     package: String,
@@ -120,6 +120,8 @@ struct MetadataPackage {
     id: String,
     name: String,
     dependencies: Vec<MetadataDependency>,
+    features: BTreeMap<String, Vec<String>>,
+    manifest_path: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -127,6 +129,23 @@ struct MetadataDependency {
     name: String,
     kind: Option<String>,
     path: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ImplementationWitness {
+    schema_version: u64,
+    task: u64,
+    packages: Vec<ImplementedPackageWitness>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ImplementedPackageWitness {
+    package: String,
+    source_files: Vec<String>,
+    dependencies: Vec<OwnedDependency>,
+    features: BTreeMap<String, Vec<String>>,
 }
 
 fn workspace_root() -> PathBuf {
@@ -629,4 +648,73 @@ fn every_plugin_dependency_and_baseline_feature_has_one_reviewed_projection() {
             "unmeasured dependency edge for {package_name}"
         );
     }
+}
+
+#[test]
+fn implementation_task_map_assigns_every_projected_package_once() {
+    let (matrix, _) = fixture_from_checked_files();
+    let mut assigned = BTreeSet::new();
+    for (_, packages) in IMPLEMENTATION_TASK_PACKAGES {
+        for package in *packages {
+            assert!(assigned.insert(*package), "duplicate implementation owner");
+        }
+    }
+    assert_eq!(
+        assigned,
+        matrix
+            .package_ownership
+            .iter()
+            .map(|row| row.package.as_str())
+            .collect()
+    );
+}
+
+#[test]
+fn implemented_witness_matches_real_package_sources_dependencies_and_features() {
+    let root = workspace_root();
+    let (matrix, metadata) = checked_matrix_and_metadata(&root);
+    let witness = ImplementationWitness {
+        schema_version: 1,
+        task: 4,
+        packages: vec![ImplementedPackageWitness {
+            package: "aiperf-core".to_owned(),
+            source_files: vec!["core/src/lib.rs".to_owned()],
+            dependencies: vec![],
+            features: BTreeMap::new(),
+        }],
+    };
+    validate_implementation_witness(&root, &matrix, &metadata, 4, &witness)
+        .expect("exact core witness");
+
+    let mut missing_source = witness.clone();
+    missing_source.packages[0].source_files.clear();
+    assert!(
+        validate_implementation_witness(&root, &matrix, &metadata, 4, &missing_source)
+            .unwrap_err()
+            .contains("source-file census")
+    );
+
+    let mut wrong_dependency = witness;
+    wrong_dependency.packages[0].dependencies.push(OwnedDependency {
+        package: "aiperf-plugin-api".to_owned(),
+        kind: "normal".to_owned(),
+        justification: "not present in Cargo metadata".to_owned(),
+    });
+    assert!(
+        validate_implementation_witness(&root, &matrix, &metadata, 4, &wrong_dependency)
+            .unwrap_err()
+            .contains("dependency census")
+    );
+}
+
+#[test]
+fn configured_task_requires_its_implemented_topology_witness() {
+    let Some(task) = std::env::var("AIPERF_PLUGIN_TOPOLOGY_TASK")
+        .ok()
+        .and_then(|task| task.parse::<u64>().ok())
+    else {
+        return;
+    };
+    validate_configured_implementation_task(&workspace_root(), task)
+        .expect("configured implementation topology witness");
 }
