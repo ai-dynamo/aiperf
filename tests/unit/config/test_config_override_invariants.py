@@ -110,6 +110,8 @@ FIELD_PROBE_VALUES: dict[str, list[Any]] = {
     "goodput": ["ttft:200", "ttft:300"],
     "server_metrics_formats": [["json"], ["csv"]],
     "sweep_variants": [["concurrency=2"], ["concurrency=4"]],
+    # --search-recipe names a registered plugin, not an arbitrary string.
+    "search_recipe": ["prefill-ttft-curve", "concurrency-ramp"],
 }
 
 
@@ -419,20 +421,27 @@ def test_routed_field_never_silently_no_ops(
     # dataset and silently no-ops on a synthetic one is a silent drop for
     # every user of a synthetic config, and accumulating `changed` across
     # both fixtures hid exactly that.
+    observed_baseline = False
     for config_yaml in (rich_yaml, trace_yaml):
         try:
             baseline = resolve_config(cli(**companions), config_yaml).model_dump(
                 mode="json"
             )
-        except Exception:
+        except (ValueError, TypeError, ConfigurationError):
+            # TypeError: _build_adaptive_search's "--search-* flags require
+            # --search-space" -- a real, intentional loud signal for the
+            # ROUTED_UNDER_CONFIG-wide field set this test covers, not just
+            # the dataset-scoped ValueError/ConfigurationError pair other
+            # loops in this file use.
             continue
+        observed_baseline = True
         changed = silent_noop = False
         for value in candidates:
             try:
                 resolved = resolve_config(
                     cli(**{field: value}, **companions), config_yaml
                 ).model_dump(mode="json")
-            except Exception:
+            except (ValueError, TypeError, ConfigurationError):
                 continue  # loud: acceptable
             if resolved != baseline:
                 changed = True
@@ -445,6 +454,12 @@ def test_routed_field_never_silently_no_ops(
             f"and changes nothing -- it is silently ignored. Route it, or move "
             f"it to UNROUTED_UNDER_CONFIG so the user gets an error naming it."
         )
+    assert observed_baseline, (
+        f"neither rich_yaml nor trace_yaml produced a baseline for "
+        f"--{field.replace('_', '-')} (both raised on companions alone), so "
+        f"this case checked nothing. Fix the companion/fixture combination, "
+        f"or move the field to UNDRIVABLE_FIELDS with a reason."
+    )
 
 
 # One routable flag per dataset type, used as an anchor so the flag under
