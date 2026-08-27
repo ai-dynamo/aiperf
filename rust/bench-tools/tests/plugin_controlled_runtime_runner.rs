@@ -1137,8 +1137,8 @@ const EXPECTED_EXPORTER_PAIRS: usize = 30;
 /// attempt. Carrying the remaining eight metrics through the artifact-bound
 /// schema is a separate change; this constant pins the boundary so that change
 /// cannot land silently.
-const EXPECTED_CONFORMING_REASON: &str =
-    "case exporter_100k metric set differs from the authenticated normative inventory";
+const EXPECTED_CONFORMING_REASON: &str = "controller-owned measurement evidence is incomplete: \
+     case exporter_100k metric set differs from the authenticated normative inventory";
 
 fn install_artifacts(fixture: &Fixture) {
     write_executable(
