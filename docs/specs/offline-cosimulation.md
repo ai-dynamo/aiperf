@@ -23,9 +23,10 @@ passive, steppable, externally clocked engine core. The engine takes `now` as a
 plain scalar and a `&mut dyn RequestObserver`; it never sees a clock object.
 `SteppableEngine` (and `SteppableAgg`/`SteppableDisagg` hosts) expose
 `step_to(now_ms, observer)` plus `next_event_ms`, so AIPerf owns the run loop and
-the clock. Dependency is strictly `aiperf → mocker`: the mocker consumed from the
-sibling checkout under the `dynosim` feature never depends on AIPerf or its
-`Clock`. The scheduler math is untouched; only the driver loops are inverted.
+the clock. Dependency is strictly `aiperf → mocker`: the mocker, consumed under the
+`dynosim` feature from the pinned `ai-dynamo/dynamo` git dependency declared in
+`rust/runtime/Cargo.toml` (no sibling checkout required), never depends on
+AIPerf or its `Clock`. The scheduler math is untouched; only the driver loops are inverted.
 
 `SimClock` supplies integer-nanosecond virtual time (`dynosim_offline`);
 `RealClock` supplies wall time (`dynosim_online`). One driver, three modes

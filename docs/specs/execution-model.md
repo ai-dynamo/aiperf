@@ -32,7 +32,7 @@ reactor-local clock derived from a shared `real_clock_anchor`, runs the unchange
 (`sharded` | `global` | `global-hop` | `global-push`, `global` default for `workers > 1`)
 governs whether that `1/W` partition's concurrency and rate admission stays
 purely thread-local (`sharded`) or draws from a shared per-cell
-`GlobalAdmission` gate (`global`) or a single coordinator-owned dispatcher
+`GlobalAdmission` gate (`global`, the only mode that builds one) or a single coordinator-owned dispatcher
 (`global-hop`), or that dispatcher's issuance order carried by identity-only
 credits the worker materializes out of band (`global-push`); see
 [global-exact-dispatch.md](global-exact-dispatch.md). The

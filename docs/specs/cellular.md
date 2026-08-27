@@ -120,9 +120,11 @@ knobs. The guards otherwise:
 
 - Fail closed on non-request-bounded phase types (only `concurrency`, `poisson`,
   `gamma`, `constant`; `fixed_schedule`/`user_centric` would N×-replay the trace),
-  on `duration`/`sessions`/`adaptive_scale` bounds, on non-HTTP transports
-  (gRPC/offline cell wiring is not wired), and on non-synthetic/multi-turn
-  datasets and caps below `cell_count`.
+  on `duration`/`adaptive_scale` bounds, and on budgets or caps below
+  `cell_count`. A `sessions` budget is not blanket-refused: it is allowed on the
+  exact-fold merge path and rejected only on the retain path, where a multi-turn
+  conversation's per-turn dispatch ordinal diverges from the sampler's
+  per-conversation draw index.
 - Allow-with-warning (aggregate-equivalent, not byte-identical, warned via
   `warn_cellular_approximations`): a seedless run auto-derives one shared seed from
   the run identity; multiple endpoint URLs are round-robined cell-locally;
