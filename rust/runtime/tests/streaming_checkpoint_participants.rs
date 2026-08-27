@@ -7,11 +7,11 @@ mod support;
 use aiperf_runtime::streaming::{
     budget::{BudgetLimits, StreamingResourceBudget},
     checkpoint::{
-        BudgetedCheckpointBytes, CheckpointCut, CheckpointEpoch, CheckpointParticipantId,
-        CheckpointParticipantOwners, CheckpointParticipantPlan, CheckpointParticipantPlanError,
-        CheckpointTerminalReason, CommittedCheckpointGeneration, CommittedParticipantReceipt,
-        CommittedParticipantState, ParticipantInitialization, ParticipantStateDescriptor,
-        PreparedParticipantState, RequiredCheckpointOwner, StreamingCheckpointParticipant,
+        BudgetedCheckpointBytes, CheckpointCut, CheckpointEpoch, CheckpointGenerationCandidate,
+        CheckpointParticipantId, CheckpointParticipantOwners, CheckpointParticipantPlan,
+        CheckpointParticipantPlanError, CheckpointTerminalReason, CommittedParticipantState,
+        ParticipantInitialization, ParticipantStateDescriptor, PreparedParticipantState,
+        RequiredCheckpointOwner, StreamingCheckpointParticipant,
     },
     identity::ContentDigest,
 };
@@ -246,29 +246,35 @@ async fn descriptor_for(
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn committed_generation_is_canonical_and_digest_verified() {
+async fn generation_candidate_is_canonical_and_digest_verified() {
     let cut = support::cut_at(9);
     let a = descriptor_for("a", cut.clone(), b"a-state").await;
     let b = descriptor_for("b", cut.clone(), b"b-state").await;
     let plan = CheckpointParticipantPlan::new([id("b"), id("a")]).expect("valid plan");
+    let execution_plan = ContentDigest::from_bytes([0x51; 32]);
+    let result_plan = ContentDigest::from_bytes([0x52; 32]);
     let result_root = ContentDigest::from_bytes([0x61; 32]);
 
-    let staged_ba = CommittedCheckpointGeneration::new(
+    let staged_ba = CheckpointGenerationCandidate::new(
         CheckpointEpoch::new(4),
         Some(ContentDigest::from_bytes([0x41; 32])),
         cut.clone(),
         &plan,
+        execution_plan,
+        result_plan,
         vec![b.clone(), a.clone()],
         result_root,
         false,
         None,
     )
     .expect("canonical generation");
-    let staged_ab = CommittedCheckpointGeneration::new(
+    let staged_ab = CheckpointGenerationCandidate::new(
         CheckpointEpoch::new(4),
         Some(ContentDigest::from_bytes([0x41; 32])),
         cut,
         &plan,
+        execution_plan,
+        result_plan,
         vec![a, b],
         result_root,
         false,
@@ -277,27 +283,99 @@ async fn committed_generation_is_canonical_and_digest_verified() {
     .expect("same canonical generation");
 
     assert_eq!(staged_ba, staged_ab);
-    assert_eq!(
-        staged_ba
-            .participant_descriptors()
-            .iter()
-            .map(|descriptor| descriptor.participant_id.as_str())
-            .collect::<Vec<_>>(),
-        ["a", "b"]
-    );
-    staged_ba.verify().expect("generation digest verifies");
+    staged_ba
+        .verify_against(&plan, &execution_plan, &result_plan)
+        .expect("generation digest and plan bindings verify");
 
     let mut encoded = serde_json::to_value(&staged_ba).expect("serialize generation");
-    let restored: CommittedCheckpointGeneration =
+    let restored: CheckpointGenerationCandidate =
         serde_json::from_value(encoded.clone()).expect("restore verified generation");
     assert_eq!(restored, staged_ba);
     encoded["generation"]["digest"] =
         serde_json::to_value(ContentDigest::from_bytes([0xff; 32])).expect("serialize digest");
-    assert!(serde_json::from_value::<CommittedCheckpointGeneration>(encoded).is_err());
+    assert!(serde_json::from_value::<CheckpointGenerationCandidate>(encoded).is_err());
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn committed_generation_rejects_invalid_participants_and_terminal_state() {
+async fn semantic_plan_digests_change_generation_identity_and_verify_exactly() {
+    let barrier = support::barrier_at(8);
+    let cut = barrier.cut;
+    let descriptor = descriptor_for("session", cut.clone(), b"state").await;
+    let plan = CheckpointParticipantPlan::new([id("session")]).expect("valid plan");
+    let execution_plan = barrier.plan_digest;
+    let result_plan = ContentDigest::from_bytes([0x72; 32]);
+    let construct = |execution_plan, result_plan| {
+        CheckpointGenerationCandidate::new(
+            CheckpointEpoch::new(2),
+            None,
+            cut.clone(),
+            &plan,
+            execution_plan,
+            result_plan,
+            vec![descriptor.clone()],
+            ContentDigest::from_bytes([0x73; 32]),
+            false,
+            None,
+        )
+        .expect("valid candidate")
+    };
+    let baseline = construct(execution_plan, result_plan);
+    let changed_execution = construct(ContentDigest::from_bytes([0x81; 32]), result_plan);
+    let changed_result = construct(execution_plan, ContentDigest::from_bytes([0x82; 32]));
+
+    assert_ne!(baseline.generation(), changed_execution.generation());
+    assert_ne!(baseline.generation(), changed_result.generation());
+    assert_eq!(baseline.execution_plan_digest(), &execution_plan);
+    assert_eq!(baseline.result_plan_digest(), &result_plan);
+    assert!(
+        baseline
+            .verify_against(&plan, &ContentDigest::from_bytes([0x81; 32]), &result_plan,)
+            .is_err()
+    );
+    assert!(
+        baseline
+            .verify_against(
+                &plan,
+                &execution_plan,
+                &ContentDigest::from_bytes([0x82; 32]),
+            )
+            .is_err()
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn self_valid_candidate_from_another_participant_plan_is_refused() {
+    let cut = support::cut_at(5);
+    let other_descriptor = descriptor_for("other", cut.clone(), b"other").await;
+    let other_plan = CheckpointParticipantPlan::new([id("other")]).expect("other plan");
+    let expected_plan = CheckpointParticipantPlan::new([id("session")]).expect("expected plan");
+    let execution_plan = ContentDigest::from_bytes([0x31; 32]);
+    let result_plan = ContentDigest::from_bytes([0x32; 32]);
+    let candidate = CheckpointGenerationCandidate::new(
+        CheckpointEpoch::new(1),
+        None,
+        cut,
+        &other_plan,
+        execution_plan,
+        result_plan,
+        vec![other_descriptor],
+        ContentDigest::from_bytes([0x33; 32]),
+        false,
+        None,
+    )
+    .expect("self-valid candidate from another plan");
+
+    candidate
+        .verify_against(&other_plan, &execution_plan, &result_plan)
+        .expect("candidate is self-valid for its authored plan");
+    assert!(matches!(
+        candidate.verify_against(&expected_plan, &execution_plan, &result_plan),
+        Err(aiperf_runtime::streaming::checkpoint::CheckpointError::ParticipantSetMismatch)
+    ));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn generation_candidate_rejects_invalid_participants_and_terminal_state() {
     let cut = support::cut_at(3);
     let a = descriptor_for("a", cut.clone(), b"a").await;
     let b = descriptor_for("b", cut.clone(), b"b").await;
@@ -305,11 +383,13 @@ async fn committed_generation_rejects_invalid_participants_and_terminal_state() 
     let root = ContentDigest::from_bytes([0x21; 32]);
 
     assert!(matches!(
-        CommittedCheckpointGeneration::new(
+        CheckpointGenerationCandidate::new(
             CheckpointEpoch::new(1),
             None,
             cut.clone(),
             &plan,
+            ContentDigest::from_bytes([0x11; 32]),
+            ContentDigest::from_bytes([0x12; 32]),
             vec![a.clone(), a.clone()],
             root,
             false,
@@ -322,11 +402,13 @@ async fn committed_generation_rejects_invalid_participants_and_terminal_state() 
         ..a.clone()
     };
     assert!(matches!(
-        CommittedCheckpointGeneration::new(
+        CheckpointGenerationCandidate::new(
             CheckpointEpoch::new(1),
             None,
             cut.clone(),
             &plan,
+            ContentDigest::from_bytes([0x11; 32]),
+            ContentDigest::from_bytes([0x12; 32]),
             vec![wrong_cut, b.clone()],
             root,
             false,
@@ -335,11 +417,13 @@ async fn committed_generation_rejects_invalid_participants_and_terminal_state() 
         Err(aiperf_runtime::streaming::checkpoint::CheckpointError::ParticipantSetMismatch)
     ));
     assert!(matches!(
-        CommittedCheckpointGeneration::new(
+        CheckpointGenerationCandidate::new(
             CheckpointEpoch::new(1),
             None,
             cut.clone(),
             &plan,
+            ContentDigest::from_bytes([0x11; 32]),
+            ContentDigest::from_bytes([0x12; 32]),
             vec![a.clone()],
             root,
             false,
@@ -348,11 +432,13 @@ async fn committed_generation_rejects_invalid_participants_and_terminal_state() 
         Err(aiperf_runtime::streaming::checkpoint::CheckpointError::ParticipantSetMismatch)
     ));
     assert!(
-        CommittedCheckpointGeneration::new(
+        CheckpointGenerationCandidate::new(
             CheckpointEpoch::new(1),
             None,
             cut.clone(),
             &plan,
+            ContentDigest::from_bytes([0x11; 32]),
+            ContentDigest::from_bytes([0x12; 32]),
             vec![a.clone(), b.clone()],
             root,
             true,
@@ -361,11 +447,13 @@ async fn committed_generation_rejects_invalid_participants_and_terminal_state() 
         .is_err()
     );
     assert!(
-        CommittedCheckpointGeneration::new(
+        CheckpointGenerationCandidate::new(
             CheckpointEpoch::new(1),
             None,
             cut.clone(),
             &plan,
+            ContentDigest::from_bytes([0x11; 32]),
+            ContentDigest::from_bytes([0x12; 32]),
             vec![a.clone(), b.clone()],
             root,
             false,
@@ -373,11 +461,13 @@ async fn committed_generation_rejects_invalid_participants_and_terminal_state() 
         )
         .is_err()
     );
-    let terminal = CommittedCheckpointGeneration::new(
+    let terminal = CheckpointGenerationCandidate::new(
         CheckpointEpoch::new(1),
         None,
         cut,
         &plan,
+        ContentDigest::from_bytes([0x11; 32]),
+        ContentDigest::from_bytes([0x12; 32]),
         vec![a, b],
         root,
         true,
@@ -392,25 +482,7 @@ async fn committed_generation_rejects_invalid_participants_and_terminal_state() 
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn committed_receipt_requires_the_exact_generation_descriptor() {
-    let cut = support::cut_at(6);
-    let descriptor = descriptor_for("session", cut, b"state").await;
-    let generation = support::generation_for(descriptor.clone(), 7, None);
-    let receipt = CommittedParticipantReceipt::new(&generation, &descriptor)
-        .expect("generation contains exact descriptor");
-    assert_eq!(receipt.generation(), generation.generation_ref());
-    assert_eq!(receipt.participant_id(), &descriptor.participant_id);
-    assert_eq!(receipt.represented_cut(), &descriptor.represented_cut);
-
-    let mismatched = ParticipantStateDescriptor {
-        schema_version: descriptor.schema_version + 1,
-        ..descriptor
-    };
-    assert!(CommittedParticipantReceipt::new(&generation, &mismatched).is_err());
-}
-
-#[tokio::test(flavor = "current_thread")]
-async fn participant_view_is_non_destructive_until_commit_receipt() {
+async fn participant_view_is_non_destructive_before_backend_commit() {
     let mut participant = support::CountingParticipant::new("session", 4);
     participant
         .initialize(None)
@@ -421,29 +493,5 @@ async fn participant_view_is_non_destructive_until_commit_receipt() {
         .await
         .expect("checkpoint view");
     assert_eq!(participant.released_items(), 0);
-    let receipt = support::receipt_for(&prepared);
-    participant
-        .checkpoint_committed(&receipt)
-        .await
-        .expect("commit notification");
-    assert_eq!(participant.released_items(), 4);
-    participant
-        .checkpoint_committed(&receipt)
-        .await
-        .expect("idempotent commit notification");
-    assert_eq!(participant.released_items(), 4);
-    assert_eq!(participant.commit_notifications(), 1);
-
-    let next_generation = support::generation_for(
-        prepared.descriptor().clone(),
-        2,
-        Some(receipt.generation().digest().to_owned()),
-    );
-    let next_receipt = CommittedParticipantReceipt::new(&next_generation, prepared.descriptor())
-        .expect("same descriptor committed in a new generation");
-    participant
-        .checkpoint_committed(&next_receipt)
-        .await
-        .expect("new generation is not mistaken for a duplicate callback");
-    assert_eq!(participant.commit_notifications(), 2);
+    assert_eq!(prepared.descriptor().participant_id, id("session"));
 }

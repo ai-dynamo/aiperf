@@ -6,10 +6,10 @@ use aiperf_runtime::streaming::{
     checkpoint::{
         AcquisitionHorizon, AdmissionHorizon, BudgetedCheckpointBytes, CheckpointBarrier,
         CheckpointCut, CheckpointEpoch, CheckpointError, CheckpointParticipantId,
-        CheckpointParticipantPlan, CommittedCheckpointGeneration, CommittedParticipantReceipt,
-        CommittedParticipantState, DecodeHorizon, DiscoveryHorizon, EventTimeWatermark,
-        OrderedActionHorizon, ParticipantInitialization, ParticipantStateDescriptor,
-        PreparedParticipantState, StreamingCheckpointParticipant, TerminalActionHorizon,
+        CommittedParticipantReceipt, CommittedParticipantState, DecodeHorizon, DiscoveryHorizon,
+        EventTimeWatermark, OrderedActionHorizon, ParticipantInitialization,
+        ParticipantStateDescriptor, PreparedParticipantState, StreamingCheckpointParticipant,
+        TerminalActionHorizon,
     },
     identity::{ContentDigest, GlobalSequence, SessionCausalFrontier},
     unit::{EventTimeUtc, SourcePosition},
@@ -44,32 +44,6 @@ pub fn barrier_at(value: u64) -> CheckpointBarrier {
         cut: cut_at(value),
         plan_digest: ContentDigest::from_bytes([0x55; 32]),
     }
-}
-
-pub fn generation_for(
-    descriptor: ParticipantStateDescriptor,
-    epoch: u64,
-    previous: Option<ContentDigest>,
-) -> CommittedCheckpointGeneration {
-    let plan = CheckpointParticipantPlan::new([descriptor.participant_id.clone()])
-        .expect("one test participant");
-    CommittedCheckpointGeneration::new(
-        CheckpointEpoch::new(epoch),
-        previous,
-        descriptor.represented_cut.clone(),
-        &plan,
-        vec![descriptor],
-        ContentDigest::from_bytes([0x66; 32]),
-        false,
-        None,
-    )
-    .expect("valid test generation")
-}
-
-pub fn receipt_for(prepared: &PreparedParticipantState) -> CommittedParticipantReceipt {
-    let generation = generation_for(prepared.descriptor().clone(), 1, None);
-    CommittedParticipantReceipt::new(&generation, prepared.descriptor())
-        .expect("descriptor belongs to generation")
 }
 
 async fn checkpoint_payload(bytes: Bytes) -> BudgetedCheckpointBytes {
@@ -110,10 +84,6 @@ impl CountingParticipant {
 
     pub fn released_items(&self) -> u64 {
         self.released_items
-    }
-
-    pub fn commit_notifications(&self) -> u64 {
-        self.commit_notifications
     }
 }
 

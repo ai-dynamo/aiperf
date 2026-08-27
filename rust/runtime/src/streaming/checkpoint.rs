@@ -395,27 +395,44 @@ fn digest_bytes(bytes: &[u8]) -> ContentDigest {
     ContentDigest::from_bytes(*blake3::hash(bytes).as_bytes())
 }
 
-/// Complete metadata for one atomically committed checkpoint generation.
+/// Canonical self-verifying generation content without publication authority.
+///
+/// Decoding or constructing a candidate does not prove that a backend committed
+/// it. Participant descriptors and result state remain private until the
+/// candidate is promoted with backend publication authority.
+///
+/// ```compile_fail
+/// # use aiperf_runtime::streaming::checkpoint::CheckpointGenerationCandidate;
+/// # fn cannot_expose_state(candidate: CheckpointGenerationCandidate) {
+/// let _descriptors = candidate.participant_descriptors;
+/// let _result_root = candidate.result_index_root;
+/// # }
+/// ```
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct CommittedCheckpointGeneration {
+pub struct CheckpointGenerationCandidate {
     generation: CheckpointGeneration,
     previous: Option<ContentDigest>,
     cut: CheckpointCut,
+    participant_plan_digest: ContentDigest,
+    execution_plan_digest: ContentDigest,
+    result_plan_digest: ContentDigest,
     participant_descriptors: Vec<ParticipantStateDescriptor>,
     result_index_root: ContentDigest,
     is_final: bool,
     terminal_reason: Option<CheckpointTerminalReason>,
 }
 
-impl CommittedCheckpointGeneration {
-    /// Canonicalize and validate a complete committed generation.
+impl CheckpointGenerationCandidate {
+    /// Canonicalize generation content without claiming backend commitment.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         epoch: CheckpointEpoch,
         previous: Option<ContentDigest>,
         cut: CheckpointCut,
         participant_plan: &CheckpointParticipantPlan,
+        execution_plan_digest: ContentDigest,
+        result_plan_digest: ContentDigest,
         mut participant_descriptors: Vec<ParticipantStateDescriptor>,
         result_index_root: ContentDigest,
         is_final: bool,
@@ -436,19 +453,26 @@ impl CommittedCheckpointGeneration {
         {
             return Err(CheckpointError::ParticipantSetMismatch);
         }
-        let digest = committed_generation_digest(
+        let participant_plan_digest = participant_plan.digest();
+        let digest = committed_generation_digest(CheckpointGenerationDigestFields {
             epoch,
-            previous.as_ref(),
-            &cut,
-            &participant_descriptors,
-            &result_index_root,
+            previous: previous.as_ref(),
+            cut: &cut,
+            participant_plan_digest: &participant_plan_digest,
+            execution_plan_digest: &execution_plan_digest,
+            result_plan_digest: &result_plan_digest,
+            descriptors: &participant_descriptors,
+            result_index_root: &result_index_root,
             is_final,
             terminal_reason,
-        )?;
+        })?;
         Ok(Self {
             generation: CheckpointGeneration::new(epoch, digest),
             previous,
             cut,
+            participant_plan_digest,
+            execution_plan_digest,
+            result_plan_digest,
             participant_descriptors,
             result_index_root,
             is_final,
@@ -456,117 +480,267 @@ impl CommittedCheckpointGeneration {
         })
     }
 
-    /// Clone the small content-addressed generation identity.
+    /// Clone the candidate's content-addressed generation identity.
     #[must_use]
     pub fn generation(&self) -> CheckpointGeneration {
         self.generation.clone()
     }
 
-    /// Borrow the content-addressed generation identity.
+    /// Borrow the frozen participant-plan digest.
     #[must_use]
-    pub const fn generation_ref(&self) -> &CheckpointGeneration {
-        &self.generation
+    pub const fn participant_plan_digest(&self) -> &ContentDigest {
+        &self.participant_plan_digest
     }
 
-    /// Borrow the preceding committed generation digest, when present.
+    /// Borrow the frozen execution-plan semantic digest.
     #[must_use]
-    pub const fn previous(&self) -> Option<&ContentDigest> {
-        self.previous.as_ref()
+    pub const fn execution_plan_digest(&self) -> &ContentDigest {
+        &self.execution_plan_digest
     }
 
-    /// Borrow the complete represented cut.
+    /// Borrow the frozen result-plan semantic digest.
     #[must_use]
-    pub const fn cut(&self) -> &CheckpointCut {
-        &self.cut
+    pub const fn result_plan_digest(&self) -> &ContentDigest {
+        &self.result_plan_digest
     }
 
-    /// Borrow the canonical descriptor inventory.
-    #[must_use]
-    pub fn participant_descriptors(&self) -> &[ParticipantStateDescriptor] {
-        &self.participant_descriptors
-    }
-
-    /// Borrow the immutable result-index root.
-    #[must_use]
-    pub const fn result_index_root(&self) -> &ContentDigest {
-        &self.result_index_root
-    }
-
-    /// Return whether this generation terminates the run.
+    /// Return whether this candidate describes a terminal generation.
     #[must_use]
     pub const fn is_final(&self) -> bool {
         self.is_final
     }
 
-    /// Return the terminal reason, present exactly for final generations.
+    /// Return the candidate's terminal reason, when final.
     #[must_use]
     pub const fn terminal_reason(&self) -> Option<CheckpointTerminalReason> {
         self.terminal_reason
     }
 
-    /// Verify canonical order, participant set, terminal state, and digest.
-    pub fn verify(&self) -> Result<(), CheckpointError> {
+    /// Verify self-hash and exact frozen plan expectations without promotion.
+    pub fn verify_against(
+        &self,
+        participant_plan: &CheckpointParticipantPlan,
+        execution_plan_digest: &ContentDigest,
+        result_plan_digest: &ContentDigest,
+    ) -> Result<(), CheckpointError> {
+        self.verify_self()?;
+        if self.participant_plan_digest != participant_plan.digest()
+            || self
+                .participant_descriptors
+                .iter()
+                .map(|descriptor| &descriptor.participant_id)
+                .ne(participant_plan.ids().iter())
+        {
+            return Err(CheckpointError::ParticipantSetMismatch);
+        }
+        if &self.execution_plan_digest != execution_plan_digest
+            || &self.result_plan_digest != result_plan_digest
+        {
+            return Err(CheckpointError::ObjectVerification);
+        }
+        Ok(())
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn promote(
+        self,
+        participant_plan: &CheckpointParticipantPlan,
+        execution_plan_digest: &ContentDigest,
+        result_plan_digest: &ContentDigest,
+        proof: CheckpointGenerationPublicationProof,
+    ) -> Result<CommittedCheckpointGeneration, CheckpointError> {
+        self.verify_against(participant_plan, execution_plan_digest, result_plan_digest)?;
+        if proof.generation != self.generation {
+            return Err(CheckpointError::GenerationConflict {
+                expected: Some(self.generation.clone()),
+                actual: Some(proof.generation),
+            });
+        }
+        Ok(CommittedCheckpointGeneration(self))
+    }
+
+    fn verify_self(&self) -> Result<(), CheckpointError> {
         validate_committed_generation_shape(
             &self.cut,
             &self.participant_descriptors,
             self.is_final,
             self.terminal_reason,
         )?;
-        let expected = committed_generation_digest(
-            self.generation.epoch(),
-            self.previous.as_ref(),
-            &self.cut,
-            &self.participant_descriptors,
-            &self.result_index_root,
-            self.is_final,
-            self.terminal_reason,
-        )?;
+        let participant_plan = CheckpointParticipantPlan::new(
+            self.participant_descriptors
+                .iter()
+                .map(|descriptor| descriptor.participant_id.clone()),
+        )
+        .map_err(|_| CheckpointError::ParticipantSetMismatch)?;
+        if participant_plan.digest() != self.participant_plan_digest {
+            return Err(CheckpointError::ParticipantSetMismatch);
+        }
+        let expected = committed_generation_digest(CheckpointGenerationDigestFields {
+            epoch: self.generation.epoch(),
+            previous: self.previous.as_ref(),
+            cut: &self.cut,
+            participant_plan_digest: &self.participant_plan_digest,
+            execution_plan_digest: &self.execution_plan_digest,
+            result_plan_digest: &self.result_plan_digest,
+            descriptors: &self.participant_descriptors,
+            result_index_root: &self.result_index_root,
+            is_final: self.is_final,
+            terminal_reason: self.terminal_reason,
+        })?;
         if self.generation.digest() != &expected {
             return Err(CheckpointError::ObjectVerification);
         }
         Ok(())
     }
-
-    fn descriptor(
-        &self,
-        participant_id: &CheckpointParticipantId,
-    ) -> Option<&ParticipantStateDescriptor> {
-        self.participant_descriptors
-            .binary_search_by(|descriptor| descriptor.participant_id.cmp(participant_id))
-            .ok()
-            .map(|index| &self.participant_descriptors[index])
-    }
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct SerializedCommittedCheckpointGeneration {
+struct SerializedCheckpointGenerationCandidate {
     generation: CheckpointGeneration,
     previous: Option<ContentDigest>,
     cut: CheckpointCut,
+    participant_plan_digest: ContentDigest,
+    execution_plan_digest: ContentDigest,
+    result_plan_digest: ContentDigest,
     participant_descriptors: Vec<ParticipantStateDescriptor>,
     result_index_root: ContentDigest,
     is_final: bool,
     terminal_reason: Option<CheckpointTerminalReason>,
 }
 
-impl<'de> Deserialize<'de> for CommittedCheckpointGeneration {
+impl<'de> Deserialize<'de> for CheckpointGenerationCandidate {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
     {
-        let serialized = SerializedCommittedCheckpointGeneration::deserialize(deserializer)?;
-        let generation = Self {
+        let serialized = SerializedCheckpointGenerationCandidate::deserialize(deserializer)?;
+        let candidate = Self {
             generation: serialized.generation,
             previous: serialized.previous,
             cut: serialized.cut,
+            participant_plan_digest: serialized.participant_plan_digest,
+            execution_plan_digest: serialized.execution_plan_digest,
+            result_plan_digest: serialized.result_plan_digest,
             participant_descriptors: serialized.participant_descriptors,
             result_index_root: serialized.result_index_root,
             is_final: serialized.is_final,
             terminal_reason: serialized.terminal_reason,
         };
-        generation.verify().map_err(serde::de::Error::custom)?;
-        Ok(generation)
+        candidate.verify_self().map_err(serde::de::Error::custom)?;
+        Ok(candidate)
+    }
+}
+
+/// Opaque authoritative generation proven published or read under a backend lease.
+///
+/// This wrapper has no public constructor and cannot be deserialized. Task 5B's
+/// backend creates the crate-private publication proof only after successful CAS
+/// or a leased read of the current root.
+///
+/// ```compile_fail
+/// # use aiperf_runtime::streaming::checkpoint::CommittedCheckpointGeneration;
+/// let _ = CommittedCheckpointGeneration::new();
+/// ```
+///
+/// ```compile_fail
+/// # use aiperf_runtime::streaming::checkpoint::CommittedCheckpointGeneration;
+/// let _: CommittedCheckpointGeneration = serde_json::from_str("{}").unwrap();
+/// ```
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(transparent)]
+pub struct CommittedCheckpointGeneration(CheckpointGenerationCandidate);
+
+impl CommittedCheckpointGeneration {
+    /// Clone the authoritative content-addressed generation identity.
+    #[must_use]
+    pub fn generation(&self) -> CheckpointGeneration {
+        self.0.generation.clone()
+    }
+
+    /// Borrow the authoritative content-addressed generation identity.
+    #[must_use]
+    pub const fn generation_ref(&self) -> &CheckpointGeneration {
+        &self.0.generation
+    }
+
+    /// Borrow the preceding committed generation digest, when present.
+    #[must_use]
+    pub const fn previous(&self) -> Option<&ContentDigest> {
+        self.0.previous.as_ref()
+    }
+
+    /// Borrow the complete represented cut.
+    #[must_use]
+    pub const fn cut(&self) -> &CheckpointCut {
+        &self.0.cut
+    }
+
+    /// Borrow the frozen participant-plan digest.
+    #[must_use]
+    pub const fn participant_plan_digest(&self) -> &ContentDigest {
+        &self.0.participant_plan_digest
+    }
+
+    /// Borrow the frozen execution-plan semantic digest.
+    #[must_use]
+    pub const fn execution_plan_digest(&self) -> &ContentDigest {
+        &self.0.execution_plan_digest
+    }
+
+    /// Borrow the frozen result-plan semantic digest.
+    #[must_use]
+    pub const fn result_plan_digest(&self) -> &ContentDigest {
+        &self.0.result_plan_digest
+    }
+
+    /// Borrow the canonical descriptor inventory.
+    #[must_use]
+    pub fn participant_descriptors(&self) -> &[ParticipantStateDescriptor] {
+        &self.0.participant_descriptors
+    }
+
+    /// Borrow the immutable result-index root.
+    #[must_use]
+    pub const fn result_index_root(&self) -> &ContentDigest {
+        &self.0.result_index_root
+    }
+
+    /// Return whether this generation terminates the run.
+    #[must_use]
+    pub const fn is_final(&self) -> bool {
+        self.0.is_final
+    }
+
+    /// Return the terminal reason, present exactly for final generations.
+    #[must_use]
+    pub const fn terminal_reason(&self) -> Option<CheckpointTerminalReason> {
+        self.0.terminal_reason
+    }
+
+    fn descriptor(
+        &self,
+        participant_id: &CheckpointParticipantId,
+    ) -> Option<&ParticipantStateDescriptor> {
+        self.0
+            .participant_descriptors
+            .binary_search_by(|descriptor| descriptor.participant_id.cmp(participant_id))
+            .ok()
+            .map(|index| &self.0.participant_descriptors[index])
+    }
+}
+
+/// Opaque evidence that a backend published or leased this exact generation.
+#[allow(dead_code)]
+pub(crate) struct CheckpointGenerationPublicationProof {
+    generation: CheckpointGeneration,
+}
+
+#[allow(dead_code)]
+impl CheckpointGenerationPublicationProof {
+    /// Bind backend authority to the exact published or leased generation.
+    pub(crate) fn for_generation(generation: CheckpointGeneration) -> Self {
+        Self { generation }
     }
 }
 
@@ -594,18 +768,25 @@ fn validate_committed_generation_shape(
     Ok(())
 }
 
-fn committed_generation_digest(
+struct CheckpointGenerationDigestFields<'a> {
     epoch: CheckpointEpoch,
-    previous: Option<&ContentDigest>,
-    cut: &CheckpointCut,
-    descriptors: &[ParticipantStateDescriptor],
-    result_index_root: &ContentDigest,
+    previous: Option<&'a ContentDigest>,
+    cut: &'a CheckpointCut,
+    participant_plan_digest: &'a ContentDigest,
+    execution_plan_digest: &'a ContentDigest,
+    result_plan_digest: &'a ContentDigest,
+    descriptors: &'a [ParticipantStateDescriptor],
+    result_index_root: &'a ContentDigest,
     is_final: bool,
     terminal_reason: Option<CheckpointTerminalReason>,
+}
+
+fn committed_generation_digest(
+    fields: CheckpointGenerationDigestFields<'_>,
 ) -> Result<ContentDigest, CheckpointError> {
-    let cut = serde_json::to_vec(cut).map_err(generation_encoding_error)?;
-    let descriptors = serde_json::to_vec(descriptors).map_err(generation_encoding_error)?;
-    let terminal_state = match terminal_reason {
+    let cut = serde_json::to_vec(fields.cut).map_err(generation_encoding_error)?;
+    let descriptors = serde_json::to_vec(fields.descriptors).map_err(generation_encoding_error)?;
+    let terminal_state = match fields.terminal_reason {
         None => [0, 0],
         Some(CheckpointTerminalReason::Completed) => [1, 1],
         Some(CheckpointTerminalReason::Aborted) => [1, 2],
@@ -614,10 +795,10 @@ fn committed_generation_digest(
     let mut hasher = blake3::Hasher::new();
     update_generation_digest_field(
         &mut hasher,
-        b"aiperf.streaming.committed-checkpoint-generation.v1",
+        b"aiperf.streaming.committed-checkpoint-generation.v2",
     );
-    update_generation_digest_field(&mut hasher, &epoch.get().to_le_bytes());
-    match previous {
+    update_generation_digest_field(&mut hasher, &fields.epoch.get().to_le_bytes());
+    match fields.previous {
         None => update_generation_digest_field(&mut hasher, &[0]),
         Some(previous) => {
             update_generation_digest_field(&mut hasher, &[1]);
@@ -625,9 +806,12 @@ fn committed_generation_digest(
         }
     }
     update_generation_digest_field(&mut hasher, &cut);
+    update_generation_digest_field(&mut hasher, fields.participant_plan_digest.as_bytes());
+    update_generation_digest_field(&mut hasher, fields.execution_plan_digest.as_bytes());
+    update_generation_digest_field(&mut hasher, fields.result_plan_digest.as_bytes());
     update_generation_digest_field(&mut hasher, &descriptors);
-    update_generation_digest_field(&mut hasher, result_index_root.as_bytes());
-    update_generation_digest_field(&mut hasher, &[u8::from(is_final)]);
+    update_generation_digest_field(&mut hasher, fields.result_index_root.as_bytes());
+    update_generation_digest_field(&mut hasher, &[u8::from(fields.is_final)]);
     update_generation_digest_field(&mut hasher, &terminal_state);
     Ok(ContentDigest::from_bytes(*hasher.finalize().as_bytes()))
 }
@@ -650,7 +834,7 @@ pub struct CheckpointBarrier {
     pub epoch: CheckpointEpoch,
     /// Complete typed cut participants must represent.
     pub cut: CheckpointCut,
-    /// Digest of the frozen participant and execution plan.
+    /// Semantic digest of the frozen execution plan.
     pub plan_digest: ContentDigest,
 }
 
@@ -664,6 +848,19 @@ pub struct CheckpointBarrier {
 /// # fn cannot_forge(receipt: CommittedParticipantReceipt) {
 /// let _generation = receipt.generation;
 /// let _participant = receipt.participant_id;
+/// # }
+/// ```
+///
+/// ```compile_fail
+/// # use aiperf_runtime::streaming::checkpoint::{
+/// #     CheckpointGenerationCandidate, CommittedParticipantReceipt,
+/// #     ParticipantStateDescriptor,
+/// # };
+/// # fn cannot_mint_from_candidate(
+/// #     candidate: &CheckpointGenerationCandidate,
+/// #     descriptor: &ParticipantStateDescriptor,
+/// # ) {
+/// let _ = CommittedParticipantReceipt::new(candidate, descriptor);
 /// # }
 /// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -680,7 +877,6 @@ impl CommittedParticipantReceipt {
         generation: &CommittedCheckpointGeneration,
         descriptor: &ParticipantStateDescriptor,
     ) -> Result<Self, CheckpointError> {
-        generation.verify()?;
         if generation.descriptor(&descriptor.participant_id) != Some(descriptor) {
             return Err(CheckpointError::ObjectVerification);
         }
@@ -1032,3 +1228,170 @@ impl fmt::Display for CheckpointError {
 }
 
 impl std::error::Error for CheckpointError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cut_at(value: u64) -> CheckpointCut {
+        CheckpointCut {
+            discovered: DiscoveryHorizon::new(SourcePosition::new(value)),
+            acquired: AcquisitionHorizon::new(SourcePosition::new(value)),
+            decoded: DecodeHorizon::new(SourcePosition::new(value)),
+            ordered: OrderedActionHorizon::new(GlobalSequence::new(value)),
+            admitted: AdmissionHorizon::new(GlobalSequence::new(value)),
+            terminal: TerminalActionHorizon::new(GlobalSequence::new(value)),
+            event_watermark: EventTimeWatermark::Unknown,
+            causal_frontier: SessionCausalFrontier {
+                through_sequence: GlobalSequence::new(value),
+                event_time: None,
+                digest: ContentDigest::from_bytes([value as u8; 32]),
+            },
+        }
+    }
+
+    fn descriptor(participant_id: &str, cut: CheckpointCut) -> ParticipantStateDescriptor {
+        ParticipantStateDescriptor {
+            participant_id: CheckpointParticipantId::new(participant_id),
+            schema_id: "test.v1".into(),
+            schema_version: 1,
+            represented_cut: cut,
+            content_digest: ContentDigest::from_bytes([0x44; 32]),
+            item_count: 1,
+            byte_length: 4,
+        }
+    }
+
+    fn candidate(
+        participant_id: &str,
+        epoch: u64,
+        previous: Option<ContentDigest>,
+        execution_plan_digest: ContentDigest,
+        result_plan_digest: ContentDigest,
+    ) -> (
+        CheckpointParticipantPlan,
+        ParticipantStateDescriptor,
+        CheckpointGenerationCandidate,
+    ) {
+        let cut = cut_at(epoch);
+        let descriptor = descriptor(participant_id, cut.clone());
+        let plan = CheckpointParticipantPlan::new([descriptor.participant_id.clone()])
+            .expect("valid unit-test plan");
+        let candidate = CheckpointGenerationCandidate::new(
+            CheckpointEpoch::new(epoch),
+            previous,
+            cut,
+            &plan,
+            execution_plan_digest,
+            result_plan_digest,
+            vec![descriptor.clone()],
+            ContentDigest::from_bytes([0x55; 32]),
+            false,
+            None,
+        )
+        .expect("valid unit-test candidate");
+        (plan, descriptor, candidate)
+    }
+
+    #[test]
+    fn candidate_from_another_plan_cannot_be_promoted() {
+        let execution_plan_digest = ContentDigest::from_bytes([0x11; 32]);
+        let result_plan_digest = ContentDigest::from_bytes([0x12; 32]);
+        let (_, _, candidate) =
+            candidate("other", 1, None, execution_plan_digest, result_plan_digest);
+        let expected_plan =
+            CheckpointParticipantPlan::new([CheckpointParticipantId::new("expected")])
+                .expect("valid expected plan");
+        let proof = CheckpointGenerationPublicationProof::for_generation(candidate.generation());
+
+        assert!(matches!(
+            candidate.promote(
+                &expected_plan,
+                &execution_plan_digest,
+                &result_plan_digest,
+                proof,
+            ),
+            Err(CheckpointError::ParticipantSetMismatch)
+        ));
+    }
+
+    #[test]
+    fn exact_backend_proof_promotes_and_enables_receipts() {
+        let execution_plan_digest = ContentDigest::from_bytes([0x21; 32]);
+        let result_plan_digest = ContentDigest::from_bytes([0x22; 32]);
+        let (plan, descriptor, candidate) = candidate(
+            "session",
+            1,
+            None,
+            execution_plan_digest,
+            result_plan_digest,
+        );
+        let serialized_candidate = serde_json::to_value(&candidate).expect("serialize candidate");
+        let wrong_proof =
+            CheckpointGenerationPublicationProof::for_generation(CheckpointGeneration::new(
+                CheckpointEpoch::new(1),
+                ContentDigest::from_bytes([0xff; 32]),
+            ));
+        assert!(matches!(
+            candidate.clone().promote(
+                &plan,
+                &execution_plan_digest,
+                &result_plan_digest,
+                wrong_proof,
+            ),
+            Err(CheckpointError::GenerationConflict { .. })
+        ));
+
+        let proof = CheckpointGenerationPublicationProof::for_generation(candidate.generation());
+        let committed = candidate
+            .promote(&plan, &execution_plan_digest, &result_plan_digest, proof)
+            .expect("matching backend proof promotes the candidate");
+        assert_eq!(
+            serde_json::to_value(&committed).expect("serialize committed record"),
+            serialized_candidate
+        );
+        assert_eq!(committed.participant_plan_digest(), &plan.digest());
+        assert_eq!(committed.execution_plan_digest(), &execution_plan_digest);
+        assert_eq!(committed.result_plan_digest(), &result_plan_digest);
+        assert_eq!(committed.participant_descriptors(), &[descriptor.clone()]);
+        assert_eq!(
+            committed.result_index_root(),
+            &ContentDigest::from_bytes([0x55; 32])
+        );
+
+        let receipt = CommittedParticipantReceipt::new(&committed, &descriptor)
+            .expect("authority permits an exact receipt");
+        let mismatched = ParticipantStateDescriptor {
+            schema_version: 2,
+            ..descriptor.clone()
+        };
+        assert!(CommittedParticipantReceipt::new(&committed, &mismatched).is_err());
+
+        let next_candidate = CheckpointGenerationCandidate::new(
+            CheckpointEpoch::new(2),
+            Some(*committed.generation_ref().digest()),
+            committed.cut().clone(),
+            &plan,
+            execution_plan_digest,
+            result_plan_digest,
+            vec![descriptor.clone()],
+            *committed.result_index_root(),
+            false,
+            None,
+        )
+        .expect("same descriptor may be committed in a later generation");
+        let next_proof =
+            CheckpointGenerationPublicationProof::for_generation(next_candidate.generation());
+        let next_committed = next_candidate
+            .promote(
+                &plan,
+                &execution_plan_digest,
+                &result_plan_digest,
+                next_proof,
+            )
+            .expect("next generation is authoritative");
+        let next_receipt = CommittedParticipantReceipt::new(&next_committed, &descriptor)
+            .expect("next authoritative receipt");
+        assert_ne!(receipt, next_receipt);
+    }
+}
