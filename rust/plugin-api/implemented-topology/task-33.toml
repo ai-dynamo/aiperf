@@ -1,0 +1,6 @@
+schema_version = 1
+task = 33
+packages = [
+  { package = "aiperf-plugin-transport-websocket", source_files = ["plugins/transport-websocket/src/lib.rs"], dependencies = [{ package = "aiperf-core", kind = "normal", justification = "WebSocket transport consumes core dispatch values" }, { package = "aiperf-endpoint-sdk", kind = "normal", justification = "WebSocket transport consumes endpoint operations" }, { package = "aiperf-plugin-api", kind = "normal", justification = "package registers a transport factory" }, { package = "aiperf-transport-sdk", kind = "normal", justification = "WebSocket implementation uses shared transport contracts" }], features = {} },
+  { package = "aiperf-plugin-transport-dry-run", source_files = ["plugins/transport-dry-run/src/lib.rs"], dependencies = [{ package = "aiperf-core", kind = "normal", justification = "dry-run transport consumes core dispatch values" }, { package = "aiperf-plugin-api", kind = "normal", justification = "package registers a transport factory" }, { package = "aiperf-transport-sdk", kind = "normal", justification = "dry-run implementation uses shared transport contracts" }], features = {} }
+]

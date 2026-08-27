@@ -1,0 +1,5 @@
+schema_version = 1
+task = 24
+packages = [
+  { package = "aiperf-plugin-export-basic", source_files = ["plugins/export-basic/src/lib.rs"], dependencies = [{ package = "aiperf-core", kind = "normal", justification = "basic exporter leaves consume finalized core reports" }, { package = "aiperf-export-sdk", kind = "normal", justification = "basic exporter leaves use shared exporter helpers" }, { package = "aiperf-plugin-api", kind = "normal", justification = "package registers an exporter factory" }], features = {} }
+]

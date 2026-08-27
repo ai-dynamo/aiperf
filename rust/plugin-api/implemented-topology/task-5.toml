@@ -1,0 +1,5 @@
+schema_version = 1
+task = 5
+packages = [
+  { package = "aiperf-plugin-api", source_files = ["plugin-api/src/lib.rs", "plugin-api/tests/dependency_policy.rs"], dependencies = [{ package = "aiperf-core", kind = "normal", justification = "API boundary values are owned by aiperf-core" }], features = {} }
+]

@@ -20,4 +20,7 @@
 //! - Socket-pool management and endpoint wiring
 
 // Stub re-export: definitions live in engine::ws_execution until Task 33 extraction.
+// Nothing in the current codebase imports from this module yet; the re-export exists
+// only to pin the module path in the candidate inventory.
+#[allow(unused_imports)]
 pub(crate) use crate::engine::ws_execution::{WebSocketSinkBuilder, WebSocketTransportSink};

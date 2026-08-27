@@ -1,0 +1,5 @@
+schema_version = 1
+task = 16
+packages = [
+  { package = "aiperf-plugin-host", source_files = ["plugin-host/src/lib.rs"], dependencies = [{ package = "aiperf-core", kind = "normal", justification = "host composition owns core boundary services" }, { package = "aiperf-plugin-api", kind = "normal", justification = "host constructs and freezes API registries" }, { package = "aiperf-plugin-sdk", kind = "normal", justification = "host validates SDK build and artifact records" }], features = {} }
+]

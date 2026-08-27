@@ -1,0 +1,5 @@
+schema_version = 1
+task = 36
+packages = [
+  { package = "aiperf-plugin-conformance", source_files = ["plugin-conformance/src/lib.rs"], dependencies = [{ package = "aiperf-core", kind = "normal", justification = "conformance fixtures exercise core boundary values" }, { package = "aiperf-endpoint-sdk", kind = "normal", justification = "conformance builds endpoint fixtures" }, { package = "aiperf-export-sdk", kind = "normal", justification = "conformance builds exporter fixtures" }, { package = "aiperf-plugin-api", kind = "normal", justification = "conformance checks plugin declarations" }, { package = "aiperf-plugin-host", kind = "normal", justification = "conformance drives the real host lifecycle" }, { package = "aiperf-plugin-sdk", kind = "normal", justification = "conformance consumes SDK artifact tools" }, { package = "aiperf-transport-sdk", kind = "normal", justification = "conformance builds transport fixtures" }], features = {} }
+]

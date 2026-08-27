@@ -1,0 +1,5 @@
+schema_version = 1
+task = 38
+packages = [
+  { package = "aiperf-plugin-perf", source_files = ["plugin-perf/src/lib.rs"], dependencies = [{ package = "aiperf-bench-tools", kind = "normal", justification = "performance execution and acceptance share one statistics implementation" }], features = {} }
+]

@@ -1,0 +1,5 @@
+schema_version = 1
+task = 31
+packages = [
+  { package = "aiperf-plugin-transport-http", source_files = ["plugins/transport-http/src/lib.rs"], dependencies = [{ package = "aiperf-core", kind = "normal", justification = "HTTP transport consumes core dispatch values" }, { package = "aiperf-endpoint-sdk", kind = "normal", justification = "HTTP transport consumes prepared endpoint values" }, { package = "aiperf-plugin-api", kind = "normal", justification = "package registers a transport factory" }, { package = "aiperf-transport-sdk", kind = "normal", justification = "HTTP implementation uses shared transport contracts" }], features = {} }
+]

@@ -1,0 +1,5 @@
+schema_version = 1
+task = 35
+packages = [
+  { package = "aiperf-plugin-packaging-tests", source_files = ["plugin-packaging-tests/src/lib.rs"], dependencies = [{ package = "aiperf-plugin-host", kind = "normal", justification = "packaging tests exercise host discovery and acquisition" }, { package = "aiperf-plugin-sdk", kind = "normal", justification = "packaging tests create controlled SDK artifacts" }], features = {} }
+]

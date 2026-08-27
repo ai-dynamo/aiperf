@@ -1,0 +1,5 @@
+schema_version = 1
+task = 34
+packages = [
+  { package = "aiperf-plugin-transport-dynosim", source_files = ["plugins/transport-dynosim/src/lib.rs"], dependencies = [{ package = "aiperf-core", kind = "normal", justification = "Dynosim consumes core graph and measurement values" }, { package = "aiperf-endpoint-sdk", kind = "normal", justification = "Dynosim consumes endpoint-owned models" }, { package = "aiperf-plugin-api", kind = "normal", justification = "package registers a transport factory" }, { package = "aiperf-transport-sdk", kind = "normal", justification = "Dynosim uses direct transport contracts" }], features = {} }
+]

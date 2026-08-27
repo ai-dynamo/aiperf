@@ -1,0 +1,5 @@
+schema_version = 1
+task = 37
+packages = [
+  { package = "aiperf-plugin-static-comparator", source_files = ["plugin-static-comparator/src/lib.rs"], dependencies = [], features = {} }
+]

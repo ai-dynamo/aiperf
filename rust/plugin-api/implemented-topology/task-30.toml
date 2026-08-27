@@ -1,0 +1,5 @@
+schema_version = 1
+task = 30
+packages = [
+  { package = "aiperf-plugin-endpoints", source_files = ["plugins/endpoints/src/lib.rs"], dependencies = [{ package = "aiperf-core", kind = "normal", justification = "endpoint implementations consume core request/response values" }, { package = "aiperf-endpoint-sdk", kind = "normal", justification = "endpoint implementations use the endpoint boundary" }, { package = "aiperf-plugin-api", kind = "normal", justification = "package registers endpoint factories" }], features = {} }
+]

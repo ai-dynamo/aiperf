@@ -1,0 +1,6 @@
+schema_version = 1
+task = 9
+packages = [
+  { package = "aiperf-plugin-sdk", source_files = ["plugin-sdk/src/lib.rs"], dependencies = [{ package = "aiperf-core", kind = "normal", justification = "author tools inspect core-owned boundary artifacts" }, { package = "aiperf-plugin-api", kind = "normal", justification = "author tools generate and inspect plugin declarations" }, { package = "aiperf-plugin-sdk-macros", kind = "normal", justification = "SDK re-exports the controlled native entry macro" }], features = {} },
+  { package = "aiperf-plugin-sdk-macros", source_files = ["plugin-sdk-macros/src/lib.rs"], dependencies = [], features = {} }
+]

@@ -1,0 +1,5 @@
+schema_version = 1
+task = 28
+packages = [
+  { package = "aiperf-plugin-export-otel", source_files = ["plugins/export-otel/src/lib.rs"], dependencies = [{ package = "aiperf-core", kind = "normal", justification = "OTel leaves consume finalized core reports" }, { package = "aiperf-export-sdk", kind = "normal", justification = "OTel leaves use shared exporter helpers" }, { package = "aiperf-plugin-api", kind = "normal", justification = "package registers an exporter factory" }], features = {} }
+]

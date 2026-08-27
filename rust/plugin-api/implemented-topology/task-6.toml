@@ -1,0 +1,22 @@
+schema_version = 1
+task = 6
+packages = [
+  { package = "aiperf-endpoint-sdk", source_files = ["endpoint-sdk/src/lib.rs"], dependencies = [{ package = "aiperf-core", kind = "normal", justification = "endpoint models and prepared values use core-owned types" }, { package = "aiperf-plugin-api", kind = "normal", justification = "endpoint factories implement the plugin API contract" }], features = {} },
+  { package = "aiperf-export-sdk", source_files = [
+    "export-sdk/src/artifact_helpers.rs",
+    "export-sdk/src/capture_helpers.rs",
+    "export-sdk/src/helpers.rs",
+    "export-sdk/src/lib.rs",
+    "export-sdk/src/prepared_helpers.rs",
+  ], dependencies = [{ package = "aiperf-core", kind = "normal", justification = "exporters consume finalized core report and artifact values" }, { package = "aiperf-plugin-api", kind = "normal", justification = "exporter factories implement the plugin API contract" }, { package = "aiperf-plugin-test-support", kind = "dev", justification = "independent exporter leaf fixtures are test-only" }], features = {} },
+  { package = "aiperf-plugin-test-support", source_files = ["plugin-test-support/src/lib.rs"], dependencies = [{ package = "aiperf-core", kind = "normal", justification = "fixtures use only core-owned public values" }], features = {} },
+  { package = "aiperf-transport-sdk", source_files = [
+    "transport-sdk/src/direct.rs",
+    "transport-sdk/src/execution.rs",
+    "transport-sdk/src/lib.rs",
+    "transport-sdk/src/measure.rs",
+    "transport-sdk/src/reduce.rs",
+    "transport-sdk/src/retry.rs",
+    "transport-sdk/src/service_helpers.rs",
+  ], dependencies = [{ package = "aiperf-core", kind = "normal", justification = "transport sinks use core dispatch and measurement contracts" }, { package = "aiperf-endpoint-sdk", kind = "normal", justification = "transport preparation consumes endpoint-owned request values" }, { package = "aiperf-plugin-api", kind = "normal", justification = "transport factories implement the plugin API contract" }], features = {} }
+]

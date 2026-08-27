@@ -1,0 +1,6 @@
+schema_version = 1
+task = 7
+packages = [
+  { package = "aiperf-allocator-provider", source_files = ["allocator-provider/build.rs", "allocator-provider/src/lib.rs"], dependencies = [], features = {} },
+  { package = "aiperf-allocator-shim", source_files = ["allocator-shim/src/lib.rs"], dependencies = [], features = {} }
+]
