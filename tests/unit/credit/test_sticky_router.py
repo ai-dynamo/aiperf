@@ -154,36 +154,48 @@ class TestStickyCreditRouterLoadTracking:
 
         assert router._workers["worker-1"].in_flight_credits == 0
 
-        router._track_credit_sent("worker-1", 1)
+        credit = make_credit(id=1, corr_id="s1", num_turns=1)
+        router._track_credit_sent("worker-1", credit)
         assert router._workers["worker-1"].in_flight_credits == 1
         assert router._workers["worker-1"].total_sent_credits == 1
+        assert ("profiling", None, 1) in router._workers["worker-1"].active_credit_ids
 
-        router._track_credit_sent("worker-1", 2)
+        credit2 = make_credit(id=2, corr_id="s2", num_turns=1)
+        router._track_credit_sent("worker-1", credit2)
         assert router._workers["worker-1"].in_flight_credits == 2
         assert router._workers["worker-1"].total_sent_credits == 2
+        assert ("profiling", None, 2) in router._workers["worker-1"].active_credit_ids
 
     async def test_track_credit_returned(self, benchmark_run) -> None:
         router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
         router._register_worker("worker-1")
 
         router._workers["worker-1"].in_flight_credits = 5
-        router._workers["worker-1"].active_credit_ids.add(1)
-        router._workers["worker-1"].active_credit_ids.add(2)
+        router._workers["worker-1"].active_credit_ids.add(("profiling", None, 1))
+        router._workers["worker-1"].active_credit_ids.add(("profiling", None, 2))
         router._workers_by_load[0].discard("worker-1")
         router._workers_by_load[5].add("worker-1")
         router._min_load = 5
 
+        credit = make_credit(id=1, corr_id="s1", num_turns=1)
         router._track_credit_returned(
-            "worker-1", 1, cancelled=False, error_reported=False
+            "worker-1", credit, cancelled=False, error_reported=False
         )
         assert router._workers["worker-1"].in_flight_credits == 4
         assert router._workers["worker-1"].total_completed_credits == 1
+        assert ("profiling", None, 1) not in router._workers[
+            "worker-1"
+        ].active_credit_ids
 
+        credit2 = make_credit(id=2, corr_id="s2", num_turns=1)
         router._track_credit_returned(
-            "worker-1", 2, cancelled=False, error_reported=False
+            "worker-1", credit2, cancelled=False, error_reported=False
         )
         assert router._workers["worker-1"].in_flight_credits == 3
         assert router._workers["worker-1"].total_completed_credits == 2
+        assert ("profiling", None, 2) not in router._workers[
+            "worker-1"
+        ].active_credit_ids
 
     async def test_register_worker(self, benchmark_run) -> None:
         router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
@@ -514,9 +526,13 @@ class TestStickyCreditRouterCancellation:
         router._register_worker("worker-1")
         router._register_worker("worker-2")
 
-        # worker-1 has 3 in-flight credits
+        # worker-1 has 3 in-flight credits (composite keys: (phase, phase_index, credit_id))
         router._workers["worker-1"].in_flight_credits = 3
-        router._workers["worker-1"].active_credit_ids = {1, 2, 3}
+        router._workers["worker-1"].active_credit_ids = {
+            ("warmup", None, 1),
+            ("warmup", None, 2),
+            ("warmup", None, 3),
+        }
         # worker-2 has 0 in-flight credits
         router._workers["worker-2"].in_flight_credits = 0
 
@@ -613,11 +629,13 @@ class TestStickyCreditRouterMinLoadTracking:
 
         assert router._min_load == 0
 
-        router._track_credit_sent("worker-1", 1)
+        credit1 = make_credit(id=1, corr_id="s1", num_turns=1)
+        router._track_credit_sent("worker-1", credit1)
         # worker-2 still at 0, so min_load stays 0
         assert router._min_load == 0
 
-        router._track_credit_sent("worker-2", 2)
+        credit2 = make_credit(id=2, corr_id="s2", num_turns=1)
+        router._track_credit_sent("worker-2", credit2)
         # Both workers now at 1, min_load should be 1
         assert router._min_load == 1
 
@@ -629,16 +647,19 @@ class TestStickyCreditRouterMinLoadTracking:
         router._register_worker("worker-2")
 
         # Send credits to both workers
-        router._track_credit_sent("worker-1", 1)
-        router._track_credit_sent("worker-2", 2)
-        router._track_credit_sent("worker-1", 3)
+        credit1 = make_credit(id=1, corr_id="s1", num_turns=1)
+        credit2 = make_credit(id=2, corr_id="s2", num_turns=1)
+        credit3 = make_credit(id=3, corr_id="s3", num_turns=1)
+        router._track_credit_sent("worker-1", credit1)
+        router._track_credit_sent("worker-2", credit2)
+        router._track_credit_sent("worker-1", credit3)
 
         # worker-1: 2 in-flight, worker-2: 1 in-flight
         assert router._min_load == 1
 
         # Return from worker-2, now at 0
         router._track_credit_returned(
-            "worker-2", 2, cancelled=False, error_reported=False
+            "worker-2", credit2, cancelled=False, error_reported=False
         )
         assert router._min_load == 0
 
@@ -674,10 +695,11 @@ class TestStickyCreditRouterErrorTracking:
         router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
 
         router._register_worker("worker-1")
-        router._track_credit_sent("worker-1", 1)
+        credit = make_credit(id=1, corr_id="test", num_turns=1)
+        router._track_credit_sent("worker-1", credit)
 
         router._track_credit_returned(
-            "worker-1", 1, cancelled=False, error_reported=True
+            "worker-1", credit, cancelled=False, error_reported=True
         )
 
         assert router._workers["worker-1"].total_errors_reported == 1
@@ -688,10 +710,11 @@ class TestStickyCreditRouterErrorTracking:
         router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
 
         router._register_worker("worker-1")
-        router._track_credit_sent("worker-1", 1)
+        credit = make_credit(id=1, corr_id="test", num_turns=1)
+        router._track_credit_sent("worker-1", credit)
 
         router._track_credit_returned(
-            "worker-1", 1, cancelled=True, error_reported=True
+            "worker-1", credit, cancelled=True, error_reported=True
         )
 
         assert router._workers["worker-1"].total_cancelled_credits == 1
@@ -962,7 +985,8 @@ class TestStickyCreditRouterNoRequestShortCircuit:
         router._router_client.send_to.assert_called_once()
         assert router._router_client.send_to.call_args[0][0] == "worker-1"
         assert router._workers["worker-1"].in_flight_credits == 1
-        assert credit.id in router._workers["worker-1"].active_credit_ids
+        # Check composite key: (phase, phase_index, credit_id)
+        assert ("profiling", None, 1) in router._workers["worker-1"].active_credit_ids
 
 
 class TestStickyCreditRouterWorkerReadiness:
