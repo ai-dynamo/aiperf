@@ -151,6 +151,8 @@ pub struct ControlledRuntimeReportV1 {
     pub exporter_pair_history: Vec<ControlledExporterPairRecord>,
     /// Complete raw pair and replacement history in controller order.
     pub raw_pair_history: Vec<crate::plugin_stats::ControlledPairAttemptRecord>,
+    /// Pair-start context retained from an invocation a different boot instance ran.
+    pub resumed_pair_context: Option<PairStartContextV1>,
     /// Canonical evidence binding identity, ledger, report, and raw outputs.
     pub runtime_evidence_bytes: Vec<u8>,
     /// Digest of the canonical runtime evidence bytes.
@@ -178,6 +180,7 @@ struct RuntimeEvidenceV1<'a> {
     terminal_member_evidence: &'a [TerminalMemberEvidenceV1],
     raw_pair_history: &'a [crate::plugin_stats::ControlledPairAttemptRecord],
     exporter_pair_history: &'a [ControlledExporterPairRecord],
+    resumed_pair_context: Option<&'a PairStartContextV1>,
 }
 
 #[derive(Serialize)]
@@ -446,6 +449,7 @@ struct RuntimeReportContext<'a> {
     workload_contract_blake3: &'a str,
     corpus_blake3: &'a str,
     scenario_count: usize,
+    resumed_pair_context: Option<&'a PairStartContextV1>,
 }
 
 #[derive(Serialize)]
@@ -683,6 +687,7 @@ pub fn run_controlled_runtime_with_ledger_v1(
         None,
         CALIBRATION_POLICY_BYTES,
         attempt_ledger_path,
+        &HostLivenessSourceV1::host_default(),
     )
 }
 
@@ -700,6 +705,253 @@ pub fn run_controlled_runtime_with_exporters_v1(
     Err(ControlledRuntimeError::new(
         "unrelated in-process exporter workload cannot acquire the already-open artifact authority",
     ))
+}
+
+/// Execute both members under an explicit controller-owned liveness source.
+///
+/// The controller, not the measured children, observes host and mock-server
+/// liveness. Only these observations can raise `host_reboot` or
+/// `mock_death_unrelated_to_member` for a pair.
+pub fn run_controlled_runtime_with_liveness_v1(
+    build_report: &BuildPairReportV1,
+    attempt_ledger_path: &Path,
+    liveness: &HostLivenessSourceV1,
+) -> Result<ControlledRuntimeReportV1, ControlledRuntimeError> {
+    run_controlled_runtime_internal(
+        build_report,
+        None,
+        CALIBRATION_POLICY_BYTES,
+        attempt_ledger_path,
+        liveness,
+    )
+}
+
+/// Host file naming the current boot instance.
+const HOST_BOOT_IDENTITY_PATH: &str = "/proc/sys/kernel/random/boot_id";
+
+/// Controller-owned sources for host and mock-server liveness observations.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HostLivenessSourceV1 {
+    boot_identity_path: PathBuf,
+    mock_server_pid_path: Option<PathBuf>,
+}
+
+impl HostLivenessSourceV1 {
+    /// Observe the real host and, optionally, a mock server's pid file.
+    pub fn new(boot_identity_path: PathBuf, mock_server_pid_path: Option<PathBuf>) -> Self {
+        Self {
+            boot_identity_path,
+            mock_server_pid_path,
+        }
+    }
+
+    /// Observe the real host with no mock server under observation.
+    pub fn host_default() -> Self {
+        Self {
+            boot_identity_path: PathBuf::from(HOST_BOOT_IDENTITY_PATH),
+            mock_server_pid_path: None,
+        }
+    }
+
+    /// Capture one complete liveness observation.
+    fn observe(&self) -> Result<HostLivenessObservationV1, ControlledRuntimeError> {
+        let boot_identity = fs::read_to_string(&self.boot_identity_path)
+            .map_err(|error| {
+                ControlledRuntimeError::new(format!(
+                    "cannot observe host boot identity {}: {error}",
+                    self.boot_identity_path.display()
+                ))
+            })?
+            .trim()
+            .to_owned();
+        if boot_identity.is_empty() {
+            return Err(ControlledRuntimeError::new(
+                "observed host boot identity is empty",
+            ));
+        }
+        let mock_server = match &self.mock_server_pid_path {
+            Some(path) => match fs::read_to_string(path) {
+                Ok(text) => {
+                    let pid = text.trim().parse::<i64>().map_err(|error| {
+                        ControlledRuntimeError::new(format!(
+                            "observed mock server pid is not an integer: {error}"
+                        ))
+                    })?;
+                    observe_process_identity(pid)?
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+                Err(error) => {
+                    return Err(ControlledRuntimeError::new(format!(
+                        "cannot observe mock server pid file: {error}"
+                    )));
+                }
+            },
+            None => None,
+        };
+        Ok(HostLivenessObservationV1 {
+            boot_identity,
+            mock_server,
+        })
+    }
+}
+
+impl Default for HostLivenessSourceV1 {
+    fn default() -> Self {
+        Self::host_default()
+    }
+}
+
+/// One controller-owned liveness observation.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct HostLivenessObservationV1 {
+    /// Identity of the running boot instance.
+    pub boot_identity: String,
+    /// Mock-server identity, absent when no live mock server is observed.
+    pub mock_server: Option<ObservedProcessIdentityV1>,
+}
+
+/// Identity of one observed process, stable across pid reuse.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ObservedProcessIdentityV1 {
+    /// Observed process identifier.
+    pub pid: i64,
+    /// Kernel start time, which distinguishes a reused pid from the original.
+    pub start_ticks: u64,
+}
+
+/// Observe one process identity, or absence when it is gone or unreaped.
+fn observe_process_identity(
+    pid: i64,
+) -> Result<Option<ObservedProcessIdentityV1>, ControlledRuntimeError> {
+    let stat = match fs::read_to_string(format!("/proc/{pid}/stat")) {
+        Ok(stat) => stat,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(ControlledRuntimeError::new(format!(
+                "cannot observe process {pid}: {error}"
+            )));
+        }
+    };
+    // The executable name is the only parenthesized field and may itself
+    // contain spaces, so every positional field is read after the last ')'.
+    let tail = stat.rsplit_once(')').map(|(_, tail)| tail).ok_or_else(|| {
+        ControlledRuntimeError::new("observed process stat record is malformed")
+    })?;
+    let mut fields = tail.split_whitespace();
+    let state = fields
+        .next()
+        .ok_or_else(|| ControlledRuntimeError::new("observed process stat has no state field"))?;
+    if state == "Z" {
+        // A dead-but-unreaped process still has a /proc entry; for liveness
+        // observation it is gone.
+        return Ok(None);
+    }
+    // starttime is the 22nd stat field, which is index 19 after the name.
+    let start_ticks = fields
+        .nth(18)
+        .ok_or_else(|| {
+            ControlledRuntimeError::new("observed process stat has no start-time field")
+        })?
+        .parse::<u64>()
+        .map_err(|error| {
+            ControlledRuntimeError::new(format!(
+                "observed process start time is not an integer: {error}"
+            ))
+        })?;
+    Ok(Some(ObservedProcessIdentityV1 { pid, start_ticks }))
+}
+
+/// Classify one pair from the controller's own start and end observations.
+fn pair_infrastructure_event(
+    start: &HostLivenessObservationV1,
+    end: &HostLivenessObservationV1,
+) -> Option<InfrastructureEvent> {
+    if start.boot_identity != end.boot_identity {
+        return Some(InfrastructureEvent::HostReboot);
+    }
+    match (&start.mock_server, &end.mock_server) {
+        // Only a mock server that was alive when the pair started can die
+        // during it; one appearing mid-pair is not a member disturbance.
+        (Some(observed), end) if Some(observed) != end.as_ref() => {
+            Some(InfrastructureEvent::MockServerDeathUnrelatedToMember)
+        }
+        _ => None,
+    }
+}
+
+/// Controller-owned context persisted at every pair start.
+///
+/// A host reboot destroys the running controller, so the only way to diagnose
+/// one after the fact is to have written the pair's start context first.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PairStartContextV1 {
+    /// Schema version of this persisted record.
+    pub schema_version: u8,
+    /// Sealed experiment identity that owns the interrupted pair.
+    pub experiment_identity_blake3: String,
+    /// Attempt the interrupted pair belonged to.
+    pub attempt_ordinal: u64,
+    /// Frozen inventory scenario of the interrupted pair.
+    pub scenario: String,
+    /// Seeded pair identifier of the interrupted pair.
+    pub pair_id: String,
+    /// Seeded member order of the interrupted pair.
+    pub member_order: [Variant; 2],
+    /// Liveness observed when the interrupted pair started.
+    pub observed: HostLivenessObservationV1,
+}
+
+/// Resolve the one pair-start context owned by a sealed experiment identity.
+fn pair_start_context_path(state_root: &Path, experiment_identity_blake3: &str) -> PathBuf {
+    let identity = experiment_identity_blake3
+        .strip_prefix("blake3:")
+        .unwrap_or(experiment_identity_blake3);
+    state_root
+        .join(CONTROLLER_STATE_DIRECTORY)
+        .join(format!("{identity}.pair-start.json"))
+}
+
+/// Persist one pair-start context, replacing the previous one atomically.
+fn persist_pair_start_context(
+    path: &Path,
+    context: &PairStartContextV1,
+) -> Result<(), ControlledRuntimeError> {
+    let bytes = serde_json_canonicalizer::to_vec(context).map_err(|error| {
+        ControlledRuntimeError::new(format!("cannot canonicalize pair-start context: {error}"))
+    })?;
+    let staged = path.with_extension("staged");
+    fs::write(&staged, &bytes).map_err(|error| {
+        ControlledRuntimeError::new(format!("cannot stage pair-start context: {error}"))
+    })?;
+    fs::rename(&staged, path).map_err(|error| {
+        ControlledRuntimeError::new(format!("cannot publish pair-start context: {error}"))
+    })
+}
+
+/// Read a retained pair-start context that a different boot instance wrote.
+fn resumed_pair_context(
+    path: &Path,
+    observed: &HostLivenessObservationV1,
+) -> Result<Option<PairStartContextV1>, ControlledRuntimeError> {
+    let bytes = match fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(ControlledRuntimeError::new(format!(
+                "cannot read retained pair-start context: {error}"
+            )));
+        }
+    };
+    let context: PairStartContextV1 = serde_json::from_slice(&bytes).map_err(|error| {
+        ControlledRuntimeError::new(format!("retained pair-start context is malformed: {error}"))
+    })?;
+    if context.observed.boot_identity == observed.boot_identity {
+        return Ok(None);
+    }
+    Ok(Some(context))
 }
 
 /// Directory holding every controller-owned attempt ledger under one root.
@@ -733,6 +985,7 @@ fn run_controlled_runtime_internal(
     mut exporter_factory: Option<&mut dyn ControlledExporterWorkloadFactory>,
     policy_bytes: &[u8],
     attempt_ledger_path: &Path,
+    liveness: &HostLivenessSourceV1,
 ) -> Result<ControlledRuntimeReportV1, ControlledRuntimeError> {
     let artifact_paths = validate_authoritative_build_report_v1(build_report).map_err(|error| {
         ControlledRuntimeError::new(format!("invalid paired build authority: {error}"))
@@ -858,6 +1111,9 @@ fn run_controlled_runtime_internal(
             ))
         })?;
     }
+    let pair_context_path = pair_start_context_path(state_root, &experiment_identity_blake3);
+    let resumed_pair_context =
+        resumed_pair_context(&pair_context_path, &liveness.observe()?)?;
     let mut attempt_ledger = AttemptLedger::acquire(&ledger_path, &experiment_identity_blake3)?;
     let expected_attempt_ordinal = attempt_ledger.next_attempt_ordinal()?;
     let exporter_artifacts = if exporter_factory.is_some() {
@@ -895,6 +1151,7 @@ fn run_controlled_runtime_internal(
         workload_contract_blake3: &workload_contract_blake3,
         corpus_blake3: &corpus_blake3,
         scenario_count: cases.len(),
+        resumed_pair_context: resumed_pair_context.as_ref(),
     };
 
     let expectation_context = ExporterExpectationContext {
@@ -1016,6 +1273,19 @@ fn run_controlled_runtime_internal(
         let mut samples = Vec::new();
         for scheduled in &schedule {
             loop {
+                let pair_start_liveness = liveness.observe()?;
+                persist_pair_start_context(
+                    &pair_context_path,
+                    &PairStartContextV1 {
+                        schema_version: 1,
+                        experiment_identity_blake3: experiment_identity_blake3.clone(),
+                        attempt_ordinal: u64::from(attempt_ordinal),
+                        scenario: case.scenario.clone(),
+                        pair_id: scheduled.pair_id.clone(),
+                        member_order: scheduled.member_order,
+                        observed: pair_start_liveness.clone(),
+                    },
+                )?;
                 let mut member_records = Vec::with_capacity(2);
                 let mut pair_samples = Vec::new();
                 let mut completed_exporters = Vec::with_capacity(2);
@@ -1100,6 +1370,17 @@ fn run_controlled_runtime_internal(
                         });
                         pair_samples.extend(samples);
                     }
+                }
+                // Both members completing means any disturbance the controller
+                // observed around them is unrelated to the members themselves.
+                if let Some(event) =
+                    pair_infrastructure_event(&pair_start_liveness, &liveness.observe()?)
+                    && member_records
+                        .iter()
+                        .all(|record| record.outcome == MemberTerminalOutcome::Completed)
+                    && let Some(first) = member_records.first_mut()
+                {
+                    first.outcome = MemberTerminalOutcome::Infrastructure(event);
                 }
                 let raw_pair = RawPairTerminalRecord {
                     scenario: case.scenario.clone(),
@@ -2027,6 +2308,7 @@ fn runtime_report(
         terminal_member_evidence: &terminal_member_evidence,
         raw_pair_history: evaluator.raw_pair_history(),
         exporter_pair_history: evaluator.exporter_pair_history(),
+        resumed_pair_context: context.resumed_pair_context,
     })
     .map_err(|error| {
         ControlledRuntimeError::new(format!("cannot canonicalize runtime evidence: {error}"))
@@ -2056,6 +2338,7 @@ fn runtime_report(
         terminal_member_evidence,
         exporter_pair_history: parts.exporter_pair_history,
         raw_pair_history: parts.raw_pair_history,
+        resumed_pair_context: context.resumed_pair_context.cloned(),
         runtime_evidence_bytes,
         runtime_evidence_blake3,
     })
