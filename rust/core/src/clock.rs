@@ -324,7 +324,7 @@ mod tests {
                 Ok(1_000_000_000 + (monotonic_ns - 50))
             );
         }
-        assert!(anchor.utc_ns_at(100) > anchor.utc_ns_at(99));
+        assert!(anchor.utc_ns_at(100).ok() > anchor.utc_ns_at(99).ok());
         assert_eq!(
             anchor.utc_ns_at(i64::MAX),
             Err(ClockAnchorError::AnchorArithmeticOverflow)
