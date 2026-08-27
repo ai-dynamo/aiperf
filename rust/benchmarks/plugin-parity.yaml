@@ -11,7 +11,7 @@ experiment_identity_json: |
     "baseline_cargo_lock_blake3": "blake3:5039afe73d832e56d8653364b91fb2cd10c8a52650684bcd54aa1623badff82c",
     "baseline_revision": "caa3ff6fcf20ffe36a7704abe16274bedadbb9fb",
     "baseline_source_tree_blake3": "blake3:94e5ec4baff53f41425a15550775bc256edbb2c5bbf873ecdf054a5a11ddb8a6",
-    "canonical_inventory_digest": "blake3:bc9339559566a149eac8ab294cf5d9f591e1ddfa7b25ad43aa7de09aaa31d57f",
+    "canonical_inventory_digest": "blake3:8147bb3971d1997fc3dbdeea2e78a457ebaf9ef5b7b6af4ce60603f2f12d9501",
     "cargo": "cargo 1.98.0 (797e8a9bc 2026-08-05)",
     "cargo_build_jobs": "144",
     "cargo_home": "/work-pvc/paper-rig/.cargo-home",
@@ -31,7 +31,7 @@ experiment_identity_json: |
     "cpu_model_number": "173",
     "cpu_stepping": "1",
     "effective_cargo_lock_blake3": "blake3:64a9e677f3338954f25297f1546446f4c5c2ea4fa57b78e45f60e3569c7e3a0c",
-    "effective_source_tree_blake3": "blake3:4cc5f559ab6d8b9a9b3e6261c3d6dd6dd457a810b8537ea66d69d7485f001e2c",
+    "effective_source_tree_blake3": "blake3:4b592f720c79b5943c9097dab0fcb5815f579ddcf4bf55e98a1190d3ca9845ce",
     "exporter_attempt_ordinal": "0",
     "exporter_corpus_blake3": "blake3:9294cee553f794c6345da55ba4d1024fcbc497d3d85e59f6021d73a52bf1b62a",
     "exporter_corpus_records": "100000",
@@ -47,9 +47,9 @@ experiment_identity_json: |
     "feature_sets": "default;engine;grpc;parquet;dynosim;full",
     "firmware": "Google Google 07/08/2026",
     "frequency_governor": "performance",
-    "harness_blake3": "blake3:d611691a7d9922274c5a958fd7f0ff6f0fd5fcbf015900ffb2f77e3c28cf7df3",
+    "harness_blake3": "blake3:bd8722920106ab7425e64be8c443ceda87d0862d76e1d88b075650056167a46a",
     "kernel": "Linux 6.12.85+ #1 SMP Wed Jun 17 20:13:06 UTC 2026 x86_64 GNU/Linux",
-    "measurement_source_projection_blake3": "blake3:cdb167b007a87527a5a4c970be8065d9d8eda461f45dc1db402a6d7f7d9e5fae",
+    "measurement_source_projection_blake3": "blake3:09c291bd7e015ae96922d7055ec1c13c54b2e7d53bedf8fded866031260087ea",
     "measurement_source_projection_list_blake3": "blake3:15de8724f4eab6f25c50a2180220ab04dd26edd290e67c27fbf9e31924964504",
     "memory_topology": "3 NUMA nodes;node0=0-23,72-95;node1=24-47,96-119;node2=48-71,120-143",
     "microcode": "unavailable:review1e-capture-omitted",
@@ -62,7 +62,7 @@ experiment_identity_json: |
     "target": "x86_64-unknown-linux-gnu",
     "tini": "tini version 0.19.0"
   }
-experiment_identity_digest: blake3:de9c46846172ac6c83d81fd759f02a789706b981a29016ca7397b55c75f8cc48
+experiment_identity_digest: blake3:5d4560d39943ccf40ea80894db9ed4cef42e9f886057605558a2d0fcd27f4188
 source_projection_rule: every build, runtime, metadata, allocation, and digest result uses one materialized tree formed from the complete git archive of host_commit overlaid by the exact allowlist in identity/measurement-source-projection.txt; its overlaid Cargo.lock is authoritative; the base archive/lock are provenance only; rust/e2e-tests/tests/plugin_baseline_inventory.rs is included as the semantic validator; inventory, report, and generated evidence are excluded to prevent self-reference
 feature_sets:
   - {name: default, package: aiperf-cli, features: [default]}
@@ -146,12 +146,12 @@ runtime_scenarios:
       ttft_p90: 35.3523065
       ttft_p99: 35.48698844
     bootstrap_seed: 20260826
-    canonical_inventory_digest: blake3:bc9339559566a149eac8ab294cf5d9f591e1ddfa7b25ad43aa7de09aaa31d57f
+    canonical_inventory_digest: blake3:8147bb3971d1997fc3dbdeea2e78a457ebaf9ef5b7b6af4ce60603f2f12d9501
     command: taskset -c 4-7 aiperf profile --config configs/http-nonstream-c1.yaml --export-level summary
     core_assignment: mock=0-3;client=4-7
     estimator: paired_hyndman_fan_type_7_max_degradation_bootstrap
     firmware: Google Google 07/08/2026
-    harness_blake3: blake3:d611691a7d9922274c5a958fd7f0ff6f0fd5fcbf015900ffb2f77e3c28cf7df3
+    harness_blake3: blake3:bd8722920106ab7425e64be8c443ceda87d0862d76e1d88b075650056167a46a
     invalidation_classifier: host_reboot|affinity_loss|mock_death_unrelated_to_member;max_replacement_pairs=5
     measured_metrics:
     - successful_requests_per_second
@@ -188,12 +188,12 @@ runtime_scenarios:
       ttft_p90: 35.2312074
       ttft_p99: 36.17161737
     bootstrap_seed: 20260826
-    canonical_inventory_digest: blake3:bc9339559566a149eac8ab294cf5d9f591e1ddfa7b25ad43aa7de09aaa31d57f
+    canonical_inventory_digest: blake3:8147bb3971d1997fc3dbdeea2e78a457ebaf9ef5b7b6af4ce60603f2f12d9501
     command: taskset -c 4-71 aiperf profile --config configs/http-nonstream-c64.yaml --export-level summary
     core_assignment: mock=0-3;client=4-71
     estimator: paired_hyndman_fan_type_7_max_degradation_bootstrap
     firmware: Google Google 07/08/2026
-    harness_blake3: blake3:d611691a7d9922274c5a958fd7f0ff6f0fd5fcbf015900ffb2f77e3c28cf7df3
+    harness_blake3: blake3:bd8722920106ab7425e64be8c443ceda87d0862d76e1d88b075650056167a46a
     invalidation_classifier: host_reboot|affinity_loss|mock_death_unrelated_to_member;max_replacement_pairs=5
     measured_metrics:
     - successful_requests_per_second
@@ -230,13 +230,13 @@ runtime_scenarios:
       ttft_p90: 5.24381
       ttft_p99: 5.46211839
     bootstrap_seed: 20260826
-    canonical_inventory_digest: blake3:bc9339559566a149eac8ab294cf5d9f591e1ddfa7b25ad43aa7de09aaa31d57f
+    canonical_inventory_digest: blake3:8147bb3971d1997fc3dbdeea2e78a457ebaf9ef5b7b6af4ce60603f2f12d9501
     command: taskset -c 4-7 aiperf profile --config configs/http-streaming-c1.yaml --export-level summary
     core_assignment: mock=0-3;client=4-7
     deterministic_response_chunks: 32
     estimator: paired_hyndman_fan_type_7_max_degradation_bootstrap
     firmware: Google Google 07/08/2026
-    harness_blake3: blake3:d611691a7d9922274c5a958fd7f0ff6f0fd5fcbf015900ffb2f77e3c28cf7df3
+    harness_blake3: blake3:bd8722920106ab7425e64be8c443ceda87d0862d76e1d88b075650056167a46a
     invalidation_classifier: host_reboot|affinity_loss|mock_death_unrelated_to_member;max_replacement_pairs=5
     measured_metrics:
     - successful_requests_per_second
@@ -273,13 +273,13 @@ runtime_scenarios:
       ttft_p90: 5.2060911
       ttft_p99: 6.23515149
     bootstrap_seed: 20260826
-    canonical_inventory_digest: blake3:bc9339559566a149eac8ab294cf5d9f591e1ddfa7b25ad43aa7de09aaa31d57f
+    canonical_inventory_digest: blake3:8147bb3971d1997fc3dbdeea2e78a457ebaf9ef5b7b6af4ce60603f2f12d9501
     command: taskset -c 4-71 aiperf profile --config configs/http-streaming-c64.yaml --export-level summary
     core_assignment: mock=0-3;client=4-71
     deterministic_response_chunks: 32
     estimator: paired_hyndman_fan_type_7_max_degradation_bootstrap
     firmware: Google Google 07/08/2026
-    harness_blake3: blake3:d611691a7d9922274c5a958fd7f0ff6f0fd5fcbf015900ffb2f77e3c28cf7df3
+    harness_blake3: blake3:bd8722920106ab7425e64be8c443ceda87d0862d76e1d88b075650056167a46a
     invalidation_classifier: host_reboot|affinity_loss|mock_death_unrelated_to_member;max_replacement_pairs=5
     measured_metrics:
     - successful_requests_per_second
@@ -316,12 +316,12 @@ runtime_scenarios:
       ttft_p90: 35.4232174
       ttft_p99: 35.64102622
     bootstrap_seed: 20260826
-    canonical_inventory_digest: blake3:bc9339559566a149eac8ab294cf5d9f591e1ddfa7b25ad43aa7de09aaa31d57f
+    canonical_inventory_digest: blake3:8147bb3971d1997fc3dbdeea2e78a457ebaf9ef5b7b6af4ce60603f2f12d9501
     command: taskset -c 4-7 aiperf profile --config configs/grpc-unary-c1.yaml --export-level summary
     core_assignment: mock=0-3;client=4-7
     estimator: paired_hyndman_fan_type_7_max_degradation_bootstrap
     firmware: Google Google 07/08/2026
-    harness_blake3: blake3:d611691a7d9922274c5a958fd7f0ff6f0fd5fcbf015900ffb2f77e3c28cf7df3
+    harness_blake3: blake3:bd8722920106ab7425e64be8c443ceda87d0862d76e1d88b075650056167a46a
     invalidation_classifier: host_reboot|affinity_loss|mock_death_unrelated_to_member;max_replacement_pairs=5
     measured_metrics:
     - successful_requests_per_second
@@ -358,12 +358,12 @@ runtime_scenarios:
       ttft_p90: 35.3709072
       ttft_p99: 36.78642296
     bootstrap_seed: 20260826
-    canonical_inventory_digest: blake3:bc9339559566a149eac8ab294cf5d9f591e1ddfa7b25ad43aa7de09aaa31d57f
+    canonical_inventory_digest: blake3:8147bb3971d1997fc3dbdeea2e78a457ebaf9ef5b7b6af4ce60603f2f12d9501
     command: taskset -c 4-71 aiperf profile --config configs/grpc-unary-c64.yaml --export-level summary
     core_assignment: mock=0-3;client=4-71
     estimator: paired_hyndman_fan_type_7_max_degradation_bootstrap
     firmware: Google Google 07/08/2026
-    harness_blake3: blake3:d611691a7d9922274c5a958fd7f0ff6f0fd5fcbf015900ffb2f77e3c28cf7df3
+    harness_blake3: blake3:bd8722920106ab7425e64be8c443ceda87d0862d76e1d88b075650056167a46a
     invalidation_classifier: host_reboot|affinity_loss|mock_death_unrelated_to_member;max_replacement_pairs=5
     measured_metrics:
     - successful_requests_per_second
@@ -400,12 +400,12 @@ runtime_scenarios:
       ttft_p90: 5.2994335
       ttft_p99: 5.56214209
     bootstrap_seed: 20260826
-    canonical_inventory_digest: blake3:bc9339559566a149eac8ab294cf5d9f591e1ddfa7b25ad43aa7de09aaa31d57f
+    canonical_inventory_digest: blake3:8147bb3971d1997fc3dbdeea2e78a457ebaf9ef5b7b6af4ce60603f2f12d9501
     command: taskset -c 4-7 aiperf profile --config configs/grpc-streaming-c1.yaml --export-level summary
     core_assignment: mock=0-3;client=4-7
     estimator: paired_hyndman_fan_type_7_max_degradation_bootstrap
     firmware: Google Google 07/08/2026
-    harness_blake3: blake3:d611691a7d9922274c5a958fd7f0ff6f0fd5fcbf015900ffb2f77e3c28cf7df3
+    harness_blake3: blake3:bd8722920106ab7425e64be8c443ceda87d0862d76e1d88b075650056167a46a
     invalidation_classifier: host_reboot|affinity_loss|mock_death_unrelated_to_member;max_replacement_pairs=5
     measured_metrics:
     - successful_requests_per_second
@@ -442,12 +442,12 @@ runtime_scenarios:
       ttft_p90: 5.43459
       ttft_p99: 7.11385015
     bootstrap_seed: 20260826
-    canonical_inventory_digest: blake3:bc9339559566a149eac8ab294cf5d9f591e1ddfa7b25ad43aa7de09aaa31d57f
+    canonical_inventory_digest: blake3:8147bb3971d1997fc3dbdeea2e78a457ebaf9ef5b7b6af4ce60603f2f12d9501
     command: taskset -c 4-71 aiperf profile --config configs/grpc-streaming-c64.yaml --export-level summary
     core_assignment: mock=0-3;client=4-71
     estimator: paired_hyndman_fan_type_7_max_degradation_bootstrap
     firmware: Google Google 07/08/2026
-    harness_blake3: blake3:d611691a7d9922274c5a958fd7f0ff6f0fd5fcbf015900ffb2f77e3c28cf7df3
+    harness_blake3: blake3:bd8722920106ab7425e64be8c443ceda87d0862d76e1d88b075650056167a46a
     invalidation_classifier: host_reboot|affinity_loss|mock_death_unrelated_to_member;max_replacement_pairs=5
     measured_metrics:
     - successful_requests_per_second
@@ -484,13 +484,13 @@ runtime_scenarios:
       ttft_p90: 5.2185774
       ttft_p99: 6.32380646
     bootstrap_seed: 20260826
-    canonical_inventory_digest: blake3:bc9339559566a149eac8ab294cf5d9f591e1ddfa7b25ad43aa7de09aaa31d57f
+    canonical_inventory_digest: blake3:8147bb3971d1997fc3dbdeea2e78a457ebaf9ef5b7b6af4ce60603f2f12d9501
     command: taskset -c 4-71 aiperf profile --config configs/http-streaming-workers4.yaml --export-level summary
     core_assignment: mock=0-3;four client workers=4-71
     deterministic_response_chunks: 32
     estimator: paired_hyndman_fan_type_7_max_degradation_bootstrap
     firmware: Google Google 07/08/2026
-    harness_blake3: blake3:d611691a7d9922274c5a958fd7f0ff6f0fd5fcbf015900ffb2f77e3c28cf7df3
+    harness_blake3: blake3:bd8722920106ab7425e64be8c443ceda87d0862d76e1d88b075650056167a46a
     invalidation_classifier: host_reboot|affinity_loss|mock_death_unrelated_to_member;max_replacement_pairs=5
     measured_metrics:
     - successful_requests_per_second
@@ -527,13 +527,13 @@ runtime_scenarios:
       ttft_p90: 5.2243682
       ttft_p99: 6.5454001
     bootstrap_seed: 20260826
-    canonical_inventory_digest: blake3:bc9339559566a149eac8ab294cf5d9f591e1ddfa7b25ad43aa7de09aaa31d57f
+    canonical_inventory_digest: blake3:8147bb3971d1997fc3dbdeea2e78a457ebaf9ef5b7b6af4ce60603f2f12d9501
     command: taskset -c 4-71 aiperf profile --config configs/otlp-disabled-capture.yaml --export-level summary
     core_assignment: mock=0-3;client=4-71
     deterministic_response_chunks: 32
     estimator: paired_hyndman_fan_type_7_max_degradation_bootstrap
     firmware: Google Google 07/08/2026
-    harness_blake3: blake3:d611691a7d9922274c5a958fd7f0ff6f0fd5fcbf015900ffb2f77e3c28cf7df3
+    harness_blake3: blake3:bd8722920106ab7425e64be8c443ceda87d0862d76e1d88b075650056167a46a
     invalidation_classifier: host_reboot|affinity_loss|mock_death_unrelated_to_member;max_replacement_pairs=5
     measured_metrics:
     - successful_requests_per_second
@@ -570,13 +570,13 @@ runtime_scenarios:
       ttft_p90: 5.206801
       ttft_p99: 6.15516712
     bootstrap_seed: 20260826
-    canonical_inventory_digest: blake3:bc9339559566a149eac8ab294cf5d9f591e1ddfa7b25ad43aa7de09aaa31d57f
+    canonical_inventory_digest: blake3:8147bb3971d1997fc3dbdeea2e78a457ebaf9ef5b7b6af4ce60603f2f12d9501
     command: taskset -c 4-71 aiperf profile --config configs/otlp-enabled-capture.yaml --export-level summary --otel-url http://127.0.0.1:18080/v1/metrics
     core_assignment: mock+OTLP collector=0-3;client=4-71
     deterministic_response_chunks: 32
     estimator: paired_hyndman_fan_type_7_max_degradation_bootstrap
     firmware: Google Google 07/08/2026
-    harness_blake3: blake3:d611691a7d9922274c5a958fd7f0ff6f0fd5fcbf015900ffb2f77e3c28cf7df3
+    harness_blake3: blake3:bd8722920106ab7425e64be8c443ceda87d0862d76e1d88b075650056167a46a
     invalidation_classifier: host_reboot|affinity_loss|mock_death_unrelated_to_member;max_replacement_pairs=5
     measured_metrics:
     - successful_requests_per_second
@@ -614,13 +614,13 @@ runtime_scenarios:
       ttft_p90: 5.0
       ttft_p99: 5.0
     bootstrap_seed: 20260826
-    canonical_inventory_digest: blake3:bc9339559566a149eac8ab294cf5d9f591e1ddfa7b25ad43aa7de09aaa31d57f
+    canonical_inventory_digest: blake3:8147bb3971d1997fc3dbdeea2e78a457ebaf9ef5b7b6af4ce60603f2f12d9501
     command: taskset -c 4-71 cargo test --locked --release -p aiperf-runtime --features engine --lib engine::records::tests::exporter_capture_allocation_and_duration_baseline -- --exact --nocapture --test-threads=1
     core_assignment: exporter probe=4-71;no mock process
     corpus_records: 100000
     estimator: paired_hyndman_fan_type_7_max_degradation_bootstrap
     firmware: Google Google 07/08/2026
-    harness_blake3: blake3:d611691a7d9922274c5a958fd7f0ff6f0fd5fcbf015900ffb2f77e3c28cf7df3
+    harness_blake3: blake3:bd8722920106ab7425e64be8c443ceda87d0862d76e1d88b075650056167a46a
     invalidation_classifier: host_reboot|affinity_loss|mock_death_unrelated_to_member;max_replacement_pairs=5
     measured_metrics:
     - exporter_nanoseconds_per_record
@@ -686,7 +686,7 @@ artifacts:
   readme: {path: artifacts/native-plugin-baseline/README.md, bytes: 2734, blake3: blake3:8ed75b33e394abd8a61f5a228c0cfa4881411136aba107d6c328ba46dfebd571}
   allocation_probe: {path: artifacts/native-plugin-baseline/allocation-probe.json, bytes: 1457, blake3: blake3:1fc92db98d746048577a6d17294a6ef0744b022917419f50ebb047df11b78a08}
   package_topology: {path: artifacts/native-plugin-baseline/package-topology.json, bytes: 127258, blake3: blake3:3d22fd2a8a9cf41d9b6af8f1e72c6e5b4be4c650d7d6d4a4afb5211c979cc3d1}
-  capture_harness: {path: rust/scripts/capture-plugin-baseline.sh, bytes: 37851, blake3: blake3:d611691a7d9922274c5a958fd7f0ff6f0fd5fcbf015900ffb2f77e3c28cf7df3}
+  capture_harness: {path: rust/scripts/capture-plugin-baseline.sh, bytes: 40465, blake3: blake3:bd8722920106ab7425e64be8c443ceda87d0862d76e1d88b075650056167a46a}
 invalid_capture_attempts:
   - generation: review1
     status: invalid
@@ -715,5 +715,5 @@ invalid_capture_attempts:
 raw_samples:
   admission_status: pre_capture
   expected_generation: review1i
-canonical_inventory_digest: blake3:bc9339559566a149eac8ab294cf5d9f591e1ddfa7b25ad43aa7de09aaa31d57f
+canonical_inventory_digest: blake3:8147bb3971d1997fc3dbdeea2e78a457ebaf9ef5b7b6af4ce60603f2f12d9501
 canonical_inventory_digest_rule: BLAKE3 of exact UTF-8 after replacing every canonical_inventory_digest and experiment_identity_digest value with blake3 followed by 64 zeroes; the resulting canonical digest is embedded in the identity before hashing experiment_identity_json

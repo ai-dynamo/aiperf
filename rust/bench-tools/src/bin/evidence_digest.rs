@@ -807,17 +807,30 @@ fn verify_manifest(manifest_path: &Path, root: &Path) -> Result<(), Box<dyn std:
     Ok(())
 }
 
-fn write_topology(
-    generation: &str,
-    host_commit: &str,
-    rustc: &str,
-    target: &str,
-    cargo_profile: &str,
-    cargo_lock: &Path,
-    metadata_path: &Path,
-    workspace_tree: &Path,
-    cli_tree: &Path,
-) -> Result<(), Box<dyn std::error::Error>> {
+struct TopologyInput<'a> {
+    generation: &'a str,
+    host_commit: &'a str,
+    rustc: &'a str,
+    target: &'a str,
+    cargo_profile: &'a str,
+    cargo_lock: &'a Path,
+    metadata_path: &'a Path,
+    workspace_tree: &'a Path,
+    cli_tree: &'a Path,
+}
+
+fn write_topology(input: TopologyInput<'_>) -> Result<(), Box<dyn std::error::Error>> {
+    let TopologyInput {
+        generation,
+        host_commit,
+        rustc,
+        target,
+        cargo_profile,
+        cargo_lock,
+        metadata_path,
+        workspace_tree,
+        cli_tree,
+    } = input;
     let metadata: serde_json::Value = serde_json::from_reader(File::open(metadata_path)?)?;
     let members: BTreeSet<_> = metadata["workspace_members"]
         .as_array()
@@ -4199,7 +4212,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut arguments = std::env::args_os().skip(1);
     let Some(first) = arguments.next() else {
         return Err(
-            "usage: evidence_digest [manifest ROOT | verify MANIFEST ROOT | topology HOST_COMMIT RUSTC TARGET LOCK METADATA WORKSPACE_TREE CLI_TREE | refresh-inventory INVENTORY | FILE ...]".into(),
+            "usage: evidence_digest [manifest ROOT | verify MANIFEST ROOT | topology GENERATION HOST_COMMIT RUSTC TARGET CARGO_PROFILE LOCK METADATA WORKSPACE_TREE CLI_TREE | refresh-inventory INVENTORY | FILE ...]".into(),
         );
     };
     #[cfg(debug_assertions)]
@@ -4337,19 +4350,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if arguments.next().is_some() {
             return Err("topology accepts exactly nine arguments".into());
         }
-        return write_topology(
-            generation.to_str().ok_or("generation must be UTF-8")?,
-            host_commit.to_str().ok_or("host commit must be UTF-8")?,
-            rustc.to_str().ok_or("rustc must be UTF-8")?,
-            target.to_str().ok_or("target must be UTF-8")?,
-            cargo_profile
+        return write_topology(TopologyInput {
+            generation: generation.to_str().ok_or("generation must be UTF-8")?,
+            host_commit: host_commit.to_str().ok_or("host commit must be UTF-8")?,
+            rustc: rustc.to_str().ok_or("rustc must be UTF-8")?,
+            target: target.to_str().ok_or("target must be UTF-8")?,
+            cargo_profile: cargo_profile
                 .to_str()
                 .ok_or("cargo profile must be UTF-8")?,
-            Path::new(&cargo_lock),
-            Path::new(&metadata),
-            Path::new(&workspace_tree),
-            Path::new(&cli_tree),
-        );
+            cargo_lock: Path::new(&cargo_lock),
+            metadata_path: Path::new(&metadata),
+            workspace_tree: Path::new(&workspace_tree),
+            cli_tree: Path::new(&cli_tree),
+        });
     }
     if first == "normalize-cargo-receipt" {
         let kind = arguments

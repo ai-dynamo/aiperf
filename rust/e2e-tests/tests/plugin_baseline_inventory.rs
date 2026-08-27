@@ -1850,6 +1850,313 @@ fn capture_harness_accepts_evidence_output_root_without_starting_capture() {
     );
 }
 
+#[cfg(unix)]
+fn run_capture_boundary_case(
+    directory: &tempfile::TempDir,
+    target_root: &Path,
+    capture_tmpdir: Option<&Path>,
+) -> std::process::Output {
+    let commands = directory.path().join("capture-commands");
+    let controlled = directory.path().join("cargo-target");
+    let lock_parent = directory.path().join("capture-control");
+    fs::create_dir_all(&commands).expect("capture command fixture root is created");
+    fs::create_dir_all(&controlled).expect("controlled Cargo target is created");
+    fs::create_dir_all(&lock_parent).expect("capture lock parent is created");
+    let fake_git = commands.join("git");
+    fs::write(
+        &fake_git,
+        format!("#!/bin/sh\nprintf '%s\\n' '{BASE_REVISION}'\n"),
+    )
+    .expect("fake capture git is written");
+    fs::set_permissions(&fake_git, fs::Permissions::from_mode(0o755))
+        .expect("fake capture git is executable");
+    let path = format!(
+        "{}:{}",
+        commands.display(),
+        std::env::var("PATH").expect("PATH exists")
+    );
+    let output_root = directory.path().join("capture-output/evidence");
+    let mut command = Command::new("sh");
+    command
+        .arg(repository_root().join("rust/scripts/capture-plugin-baseline.sh"))
+        .arg(directory.path().join("baseline-source"))
+        .arg(&output_root)
+        .arg(target_root)
+        .env("PATH", path)
+        .env("CARGO_TARGET_DIR", &controlled)
+        .env("AIPERF_CAPTURE_SANITIZED", "1")
+        .env(
+            "AIPERF_PLUGIN_BASELINE_LOCK",
+            lock_parent.join("capture.lock"),
+        )
+        .env("AIPERF_CAPTURE_REQUIRED_FREE_BYTES", "1");
+    if let Some(capture_tmpdir) = capture_tmpdir {
+        command.env("AIPERF_PLUGIN_CAPTURE_TMPDIR", capture_tmpdir);
+    } else {
+        command.env_remove("AIPERF_PLUGIN_CAPTURE_TMPDIR");
+    }
+    command
+        .output()
+        .expect("capture boundary validation starts")
+}
+
+#[cfg(unix)]
+fn assert_capture_boundary_rejection_has_no_side_effects(
+    directory: &tempfile::TempDir,
+    output: &std::process::Output,
+    forbidden_paths: &[&Path],
+) {
+    assert_eq!(output.status.code(), Some(65));
+    for path in forbidden_paths {
+        assert!(
+            !path.exists() && !path.is_symlink(),
+            "rejected capture created {}",
+            path.display()
+        );
+    }
+    assert!(
+        !directory.path().join("capture-output").exists(),
+        "rejected capture created its output hierarchy"
+    );
+    assert!(
+        !directory
+            .path()
+            .join("capture-control/capture.lock")
+            .exists(),
+        "rejected capture acquired its singleton lock"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn capture_rejects_dotdot_target_before_filesystem_mutation() {
+    let directory = tempfile::tempdir().expect("capture dotdot fixture root");
+    let target = directory.path().join("cargo-target/../escaped-target");
+    let escaped = directory.path().join("escaped-target");
+
+    let output = run_capture_boundary_case(&directory, &target, None);
+
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("canonical fresh CARGO_TARGET_DIR child"),
+        "unexpected target refusal: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_capture_boundary_rejection_has_no_side_effects(&directory, &output, &[&escaped]);
+}
+
+#[cfg(unix)]
+#[test]
+fn capture_rejects_symlinked_target_ancestor_before_filesystem_mutation() {
+    let directory = tempfile::tempdir().expect("capture symlink fixture root");
+    let controlled = directory.path().join("cargo-target");
+    let outside = directory.path().join("outside-target");
+    fs::create_dir_all(&controlled).expect("controlled Cargo target is created");
+    fs::create_dir_all(&outside).expect("outside target root is created");
+    std::os::unix::fs::symlink(&outside, controlled.join("alias"))
+        .expect("target ancestor symlink is created");
+    let target = controlled.join("alias/fresh-target");
+    let escaped = outside.join("fresh-target");
+
+    let output = run_capture_boundary_case(&directory, &target, None);
+
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("symlinked ancestor"),
+        "unexpected symlink refusal: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_capture_boundary_rejection_has_no_side_effects(&directory, &output, &[&escaped]);
+}
+
+#[cfg(unix)]
+#[test]
+fn capture_rejects_caller_selected_tmpdir_before_filesystem_mutation() {
+    let directory = tempfile::tempdir().expect("capture TMPDIR fixture root");
+    let target = directory.path().join("cargo-target/fresh-target");
+    let outside_tmpdir = directory.path().join("outside/tmp");
+
+    let output = run_capture_boundary_case(&directory, &target, Some(&outside_tmpdir));
+
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("does not accept a caller-selected TMPDIR"),
+        "unexpected TMPDIR refusal: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_capture_boundary_rejection_has_no_side_effects(
+        &directory,
+        &output,
+        &[&target, &outside_tmpdir],
+    );
+}
+
+#[cfg(unix)]
+fn run_refresh_boundary_case(
+    directory: &tempfile::TempDir,
+    refresh_parent: &Path,
+    refresh_tmpdir: Option<&Path>,
+    is_refresh_parent_read_only: bool,
+) -> std::process::Output {
+    let repository = directory.path().join("refresh-repository");
+    let scripts = repository.join("rust/scripts");
+    let commands = directory.path().join("refresh-commands");
+    let cargo_target = directory.path().join("refresh-cargo-target");
+    fs::create_dir_all(&scripts).expect("refresh script fixture root is created");
+    fs::create_dir_all(&commands).expect("refresh command fixture root is created");
+    fs::create_dir_all(cargo_target.join("native-plugin-baseline"))
+        .expect("refresh lock parent is created");
+    fs::copy(
+        repository_root().join("rust/scripts/refresh-plugin-baseline-inventory.sh"),
+        scripts.join("refresh-plugin-baseline-inventory.sh"),
+    )
+    .expect("refresh script is copied");
+    fs::copy(
+        repository_root().join("rust/scripts/plugin-baseline-owned-command.sh"),
+        scripts.join("plugin-baseline-owned-command.sh"),
+    )
+    .expect("ownership helper is copied");
+    let fake_git = commands.join("git");
+    fs::write(
+        &fake_git,
+        format!(
+            "#!/bin/sh\nif [ \"${{1:-}}\" = rev-parse ]; then printf '%s\\n' '{}'; exit 0; fi\nexit 90\n",
+            repository.display()
+        ),
+    )
+    .expect("fake refresh git is written");
+    fs::set_permissions(&fake_git, fs::Permissions::from_mode(0o755))
+        .expect("fake refresh git is executable");
+    let path = format!(
+        "{}:{}",
+        commands.display(),
+        std::env::var("PATH").expect("PATH exists")
+    );
+    if is_refresh_parent_read_only {
+        fs::set_permissions(refresh_parent, fs::Permissions::from_mode(0o555))
+            .expect("refresh parent is made read-only");
+    }
+    let mut command = Command::new("sh");
+    command
+        .arg(scripts.join("refresh-plugin-baseline-inventory.sh"))
+        .args(["pre-capture", "review1i"])
+        .current_dir(&repository)
+        .env("PATH", path)
+        .env("CARGO_TARGET_DIR", &cargo_target)
+        .env("AIPERF_PLUGIN_REFRESH_ROOT", refresh_parent)
+        .env("AIPERF_PLUGIN_REFRESH_REQUIRED_FREE_BYTES", "1");
+    if let Some(refresh_tmpdir) = refresh_tmpdir {
+        command.env("AIPERF_PLUGIN_REFRESH_TMPDIR", refresh_tmpdir);
+    } else {
+        command.env_remove("AIPERF_PLUGIN_REFRESH_TMPDIR");
+    }
+    let output = command
+        .output()
+        .expect("refresh boundary validation starts");
+    if is_refresh_parent_read_only {
+        fs::set_permissions(refresh_parent, fs::Permissions::from_mode(0o755))
+            .expect("refresh parent permissions are restored");
+    }
+    output
+}
+
+#[cfg(unix)]
+fn assert_refresh_boundary_rejection_has_no_side_effects(
+    directory: &tempfile::TempDir,
+    output: &std::process::Output,
+    refresh_parent: &Path,
+    forbidden_paths: &[&Path],
+) {
+    assert_eq!(output.status.code(), Some(65));
+    for path in forbidden_paths {
+        assert!(
+            !path.exists() && fs::symlink_metadata(path).is_err(),
+            "rejected refresh created {}",
+            path.display()
+        );
+    }
+    assert_eq!(
+        fs::read_dir(refresh_parent)
+            .expect("refresh parent is readable")
+            .count(),
+        0,
+        "rejected refresh left state in its requested parent"
+    );
+    assert!(
+        !directory
+            .path()
+            .join("refresh-cargo-target/native-plugin-baseline/.transition-lock")
+            .exists(),
+        "rejected refresh acquired its singleton lock"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn refresh_rejects_dotdot_root_before_filesystem_mutation() {
+    let directory = tempfile::tempdir().expect("refresh dotdot fixture root");
+    let controlled = directory.path().join("controlled-refresh");
+    let escaped = directory.path().join("escaped-refresh");
+    fs::create_dir_all(&controlled).expect("controlled refresh root is created");
+    fs::create_dir_all(&escaped).expect("escaped refresh root is created");
+    let aliased = controlled.join("../escaped-refresh");
+
+    let output = run_refresh_boundary_case(&directory, &aliased, None, false);
+
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("canonical existing directory without aliases"),
+        "unexpected refresh-root refusal: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_refresh_boundary_rejection_has_no_side_effects(&directory, &output, &escaped, &[]);
+}
+
+#[cfg(unix)]
+#[test]
+fn refresh_rejects_symlinked_root_before_filesystem_mutation() {
+    let directory = tempfile::tempdir().expect("refresh symlink fixture root");
+    let controlled = directory.path().join("controlled-refresh");
+    let outside = directory.path().join("outside-refresh");
+    fs::create_dir_all(&controlled).expect("controlled refresh root is created");
+    fs::create_dir_all(&outside).expect("outside refresh root is created");
+    let alias = controlled.join("alias");
+    std::os::unix::fs::symlink(&outside, &alias).expect("refresh root symlink is created");
+
+    let output = run_refresh_boundary_case(&directory, &alias, None, false);
+
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("canonical existing directory without aliases"),
+        "unexpected refresh symlink refusal: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_refresh_boundary_rejection_has_no_side_effects(&directory, &output, &outside, &[]);
+}
+
+#[cfg(unix)]
+#[test]
+fn refresh_rejects_caller_selected_tmpdir_before_filesystem_mutation() {
+    let directory = tempfile::tempdir().expect("refresh TMPDIR fixture root");
+    let refresh_parent = directory.path().join("controlled-refresh");
+    let outside_tmpdir = directory.path().join("outside/tmp");
+    fs::create_dir_all(&refresh_parent).expect("controlled refresh root is created");
+
+    let output =
+        run_refresh_boundary_case(&directory, &refresh_parent, Some(&outside_tmpdir), true);
+
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("does not accept a caller-selected TMPDIR"),
+        "unexpected refresh TMPDIR refusal: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_refresh_boundary_rejection_has_no_side_effects(
+        &directory,
+        &output,
+        &refresh_parent,
+        &[&outside_tmpdir],
+    );
+}
+
 #[test]
 fn capture_harness_preserves_owned_command_stdin_and_output_contract() {
     let directory = tempfile::tempdir().expect("temporary stdin self-test directory is created");

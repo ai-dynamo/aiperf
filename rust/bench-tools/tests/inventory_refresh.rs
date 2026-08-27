@@ -176,6 +176,22 @@ fn run_topology(metadata: &Path, output: &Path) -> std::process::Output {
 }
 
 #[test]
+fn usage_documents_the_complete_topology_argument_contract() {
+    let output = Command::new(env!("CARGO_BIN_EXE_evidence_digest"))
+        .output()
+        .expect("evidence digest usage starts");
+
+    assert!(!output.status.success(), "missing arguments were accepted");
+    let stderr = String::from_utf8(output.stderr).expect("usage output is UTF-8");
+    assert!(
+        stderr.contains(
+            "topology GENERATION HOST_COMMIT RUSTC TARGET CARGO_PROFILE LOCK METADATA WORKSPACE_TREE CLI_TREE"
+        ),
+        "usage omits topology identity arguments: {stderr}"
+    );
+}
+
+#[test]
 fn topology_preserves_and_orders_the_complete_cargo_projection() {
     let directory = tempfile::tempdir().expect("topology projection fixture root");
     let metadata = directory.path().join("cargo-metadata.json");

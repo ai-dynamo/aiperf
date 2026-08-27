@@ -20,6 +20,81 @@ require_evidence_output_root() {
     }
 }
 
+require_canonical_existing_directory() {
+    directory=$1
+    label=$2
+    while [ "${directory%/}" != "$directory" ]; do
+        directory=${directory%/}
+    done
+    case "$directory" in
+        /*) ;;
+        *) echo "$label must be a canonical existing directory without aliases: $1" >&2; return 65 ;;
+    esac
+    [ -d "$directory" ] || {
+        echo "$label must be a canonical existing directory without aliases: $1" >&2
+        return 66
+    }
+    canonical_directory=$(CDPATH= cd -- "$directory" && pwd -P) || return 66
+    [ "$directory" = "$canonical_directory" ] || {
+        echo "$label must be a canonical existing directory without aliases: $1" >&2
+        return 65
+    }
+    printf '%s\n' "$canonical_directory"
+}
+
+require_canonical_fresh_child() {
+    controlled_root=$1
+    requested_child=$2
+    case "$requested_child" in
+        */|*//*)
+            echo "TARGET_ROOT must be a canonical fresh CARGO_TARGET_DIR child: $requested_child" >&2
+            return 65
+            ;;
+    esac
+    case "$requested_child" in
+        "$controlled_root"/*) remaining=${requested_child#"$controlled_root"/} ;;
+        *)
+            echo "TARGET_ROOT must be a canonical fresh CARGO_TARGET_DIR child: $requested_child" >&2
+            return 65
+            ;;
+    esac
+    [ -n "$remaining" ] || {
+        echo "TARGET_ROOT must be a canonical fresh CARGO_TARGET_DIR child: $requested_child" >&2
+        return 65
+    }
+    current_path=$controlled_root
+    while [ -n "$remaining" ]; do
+        case "$remaining" in
+            */*) component=${remaining%%/*}; remaining=${remaining#*/} ;;
+            *) component=$remaining; remaining= ;;
+        esac
+        case "$component" in
+            ''|.|..)
+                echo "TARGET_ROOT must be a canonical fresh CARGO_TARGET_DIR child: $requested_child" >&2
+                return 65
+                ;;
+        esac
+        current_path=$current_path/$component
+        [ ! -L "$current_path" ] || {
+            echo "TARGET_ROOT has a symlinked ancestor: $current_path" >&2
+            return 65
+        }
+        if [ -e "$current_path" ] && [ ! -d "$current_path" ]; then
+            echo "TARGET_ROOT ancestor is not a directory: $current_path" >&2
+            return 65
+        fi
+        if [ -n "$remaining" ] && [ ! -d "$current_path" ]; then
+            echo "TARGET_ROOT parent must already exist: $current_path" >&2
+            return 65
+        fi
+    done
+    [ ! -e "$requested_child" ] && [ ! -L "$requested_child" ] || {
+        echo "target root already exists: $requested_child" >&2
+        return 65
+    }
+    printf '%s\n' "$requested_child"
+}
+
 case "${1:-}" in
     --output-root-validation-self-test)
         [ "$#" -eq 2 ] || usage
@@ -98,14 +173,23 @@ else
     failure_ledger=$(dirname "$output_root")/capture-failures.txt
 fi
 
+if [ "$selftest_mode" -eq 0 ]; then
+    if [ "${AIPERF_PLUGIN_CAPTURE_TMPDIR+x}" = x ]; then
+        echo "capture does not accept a caller-selected TMPDIR" >&2
+        exit 65
+    fi
+    cargo_target_root=$(require_canonical_existing_directory \
+        "${CARGO_TARGET_DIR:?}" CARGO_TARGET_DIR)
+    target_root=$(require_canonical_fresh_child "$cargo_target_root" "$target_root")
+fi
+
 if [ "$selftest_mode" -eq 0 ] && [ "${AIPERF_CAPTURE_SANITIZED:-}" != 1 ]; then
-    controlled_tmpdir=${AIPERF_PLUGIN_CAPTURE_TMPDIR:-$target_root/tmp}
     set -- env -i \
         "AIPERF_CAPTURE_SANITIZED=1" \
         "CARGO_BUILD_JOBS=$CARGO_BUILD_JOBS" \
         "CARGO_HOME=$CARGO_HOME" \
         "CARGO_INCREMENTAL=$CARGO_INCREMENTAL" \
-        "CARGO_TARGET_DIR=$CARGO_TARGET_DIR" \
+        "CARGO_TARGET_DIR=$cargo_target_root" \
         "HOME=$HOME" \
         "LANG=C" \
         "LC_ALL=C" \
@@ -113,19 +197,30 @@ if [ "$selftest_mode" -eq 0 ] && [ "${AIPERF_CAPTURE_SANITIZED:-}" != 1 ]; then
         "PATH=$PATH" \
         "RUSTUP_HOME=$RUSTUP_HOME" \
         "RUST_VERSION=$RUST_VERSION" \
-        "AIPERF_PLUGIN_BASELINE_LOCK=$capture_lock" \
-        "AIPERF_PLUGIN_CAPTURE_TMPDIR=$controlled_tmpdir" \
-        "TMPDIR=$controlled_tmpdir"
+        "AIPERF_PLUGIN_BASELINE_LOCK=$capture_lock"
     [ "${RUSTC_WRAPPER+x}" != x ] || set -- "$@" "RUSTC_WRAPPER=$RUSTC_WRAPPER"
     [ "${RUSTFLAGS+x}" != x ] || set -- "$@" "RUSTFLAGS=$RUSTFLAGS"
     [ "${CARGO_ENCODED_RUSTFLAGS+x}" != x ] || \
         set -- "$@" "CARGO_ENCODED_RUSTFLAGS=$CARGO_ENCODED_RUSTFLAGS"
-    [ "${SCCACHE_DIR+x}" != x ] || set -- "$@" "SCCACHE_DIR=$SCCACHE_DIR"
-    [ "${SCCACHE_ENDPOINT+x}" != x ] || set -- "$@" "SCCACHE_ENDPOINT=$SCCACHE_ENDPOINT"
-    [ "${SCCACHE_CACHE_SIZE+x}" != x ] || \
-        set -- "$@" "SCCACHE_CACHE_SIZE=$SCCACHE_CACHE_SIZE"
+    [ "${CC+x}" != x ] || set -- "$@" "CC=$CC"
+    [ "${CXX+x}" != x ] || set -- "$@" "CXX=$CXX"
+    for admitted_name in $(env | sed -n 's/^\(SCCACHE_[A-Za-z0-9_]*\)=.*/\1/p'); do
+        eval "admitted_value=\${$admitted_name}"
+        set -- "$@" "$admitted_name=$admitted_value"
+    done
     exec "$@" sh "$harness_root/rust/scripts/capture-plugin-baseline.sh" \
         "$baseline_source" "$output_root" "$target_root"
+fi
+
+if [ "$selftest_mode" -eq 0 ]; then
+    [ "$(git -C "$baseline_source" rev-parse HEAD)" = "$baseline_revision" ] || {
+        echo "baseline source is not $baseline_revision" >&2
+        exit 65
+    }
+    [ ! -e "$output_root" ] && [ ! -L "$output_root" ] || {
+        echo "output root already exists: $output_root" >&2
+        exit 65
+    }
 fi
 
 export AIPERF_PLUGIN_BASELINE_LOCK="$capture_lock"
@@ -266,36 +361,17 @@ signal-input
 EOF
 fi
 
-[ "$(git -C "$baseline_source" rev-parse HEAD)" = "$baseline_revision" ] || {
-    echo "baseline source is not $baseline_revision" >&2
-    exit 65
-}
-[ ! -e "$output_root" ] || {
-    echo "output root already exists: $output_root" >&2
-    exit 65
-}
-[ ! -e "$target_root" ] || {
-    echo "target root already exists: $target_root" >&2
-    exit 65
-}
-case "$target_root" in
-    "${CARGO_TARGET_DIR%/}"/*) ;;
-    *) echo "TARGET_ROOT must be a fresh CARGO_TARGET_DIR subdirectory" >&2; exit 65 ;;
-esac
-
+mkdir "$target_root"
 mkdir -p "$output_root/builds/artifacts" "$output_root/identity" \
-    "$output_root/runtime" "$output_root/configs" "$output_root/probes" "$target_root" \
-    "$AIPERF_PLUGIN_CAPTURE_TMPDIR"
-case "$AIPERF_PLUGIN_CAPTURE_TMPDIR" in
-    "$target_root"/*) ;;
-    *) echo "capture TMPDIR must be owned by TARGET_ROOT" >&2; exit 65 ;;
-esac
+    "$output_root/runtime" "$output_root/configs" "$output_root/probes"
+capture_tmpdir=$(mktemp -d "$target_root/task1-capture-tmp.XXXXXX")
+chmod 0700 "$capture_tmpdir"
 required_free_bytes=${AIPERF_CAPTURE_REQUIRED_FREE_BYTES:-75161927680}
 available_free_bytes=$(require_free_bytes "$target_root" "$required_free_bytes")
-TMPDIR=$AIPERF_PLUGIN_CAPTURE_TMPDIR
+TMPDIR=$capture_tmpdir
 export TMPDIR
 printf 'required_free_bytes=%s\navailable_free_bytes=%s\ntmpdir=%s\n' \
-    "$required_free_bytes" "$available_free_bytes" "$AIPERF_PLUGIN_CAPTURE_TMPDIR" \
+    "$required_free_bytes" "$available_free_bytes" "$capture_tmpdir" \
     >"$output_root/identity/storage-capacity.txt"
 
 projection_list=$target_root/measurement-source-projection.txt

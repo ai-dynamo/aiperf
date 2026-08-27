@@ -9,6 +9,28 @@ usage() {
     exit 64
 }
 
+require_canonical_existing_directory() {
+    directory=$1
+    label=$2
+    while [ "${directory%/}" != "$directory" ]; do
+        directory=${directory%/}
+    done
+    case "$directory" in
+        /*) ;;
+        *) echo "$label must be a canonical existing directory without aliases: $1" >&2; return 65 ;;
+    esac
+    [ -d "$directory" ] || {
+        echo "$label must be a canonical existing directory without aliases: $1" >&2
+        return 66
+    }
+    canonical_directory=$(CDPATH= cd -- "$directory" && pwd -P) || return 66
+    [ "$directory" = "$canonical_directory" ] || {
+        echo "$label must be a canonical existing directory without aliases: $1" >&2
+        return 65
+    }
+    printf '%s\n' "$canonical_directory"
+}
+
 trusted_extract_captured_source() {
     run_owned 600 refresh-extract-captured-source "$1" \
         extract-captured-source "$2" "$3" "$4"
@@ -49,24 +71,21 @@ case "$mode" in
     *) usage ;;
 esac
 
-repository=$(git rev-parse --show-toplevel)
-inventory=$repository/rust/benchmarks/plugin-parity.yaml
-topology=$repository/artifacts/native-plugin-baseline/package-topology.json
-baseline=caa3ff6fcf20ffe36a7704abe16274bedadbb9fb
+if [ "${AIPERF_PLUGIN_REFRESH_TMPDIR+x}" = x ]; then
+    echo "refresh does not accept a caller-selected TMPDIR" >&2
+    exit 65
+fi
 refresh_parent=${AIPERF_PLUGIN_REFRESH_ROOT:-${CARGO_TARGET_DIR:?}/native-plugin-baseline}
-case "$refresh_parent" in
-    /*) ;;
-    *) echo "refresh parent must be an absolute existing directory: $refresh_parent" >&2; exit 65 ;;
-esac
-[ -d "$refresh_parent" ] || {
-    echo "refresh parent must be an absolute existing directory: $refresh_parent" >&2
-    exit 66
-}
-refresh_parent=$(CDPATH= cd -- "$refresh_parent" && pwd -P)
+refresh_parent=$(require_canonical_existing_directory "$refresh_parent" "refresh parent")
 [ "$refresh_parent" != / ] || {
     echo "refresh parent must not be the filesystem root" >&2
     exit 65
 }
+
+repository=$(git rev-parse --show-toplevel)
+inventory=$repository/rust/benchmarks/plugin-parity.yaml
+topology=$repository/artifacts/native-plugin-baseline/package-topology.json
+baseline=caa3ff6fcf20ffe36a7704abe16274bedadbb9fb
 ownership_helper=$repository/rust/scripts/plugin-baseline-owned-command.sh
 . "$ownership_helper"
 failure_ledger=$refresh_parent/task1-$generation-refresh-failures.txt
@@ -123,12 +142,8 @@ trap 'exit 143' TERM
 
 refresh_required_free_bytes=${AIPERF_PLUGIN_REFRESH_REQUIRED_FREE_BYTES:-21474836480}
 refresh_available_free_bytes=$(require_free_bytes "$refresh_parent" "$refresh_required_free_bytes")
-refresh_tmpdir=${AIPERF_PLUGIN_REFRESH_TMPDIR:-$refresh_root/tmp}
-case "$refresh_tmpdir" in
-    "$refresh_parent"/*) ;;
-    *) echo "refresh TMPDIR must be owned by refresh parent: $refresh_tmpdir" >&2; exit 65 ;;
-esac
-mkdir -p "$refresh_tmpdir"
+refresh_tmpdir=$(mktemp -d "$refresh_root/tmp.XXXXXX")
+chmod 0700 "$refresh_tmpdir"
 TMPDIR=$refresh_tmpdir
 export TMPDIR
 
