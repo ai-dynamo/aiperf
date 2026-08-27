@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::build_pair::{BuildPairReportV1, validate_authoritative_build_report_v1};
 use crate::exporter_policy::parse_exporter_observable_policy;
+use crate::exporter_runner::ExporterHarnessRunner;
 use crate::plugin_stats::{
     AuthoritativeIdentityInput, ControlledAttemptDecision, ControlledAttemptRecord,
     ControlledMeasurementEvaluator, FrozenCasePlan, MemberTerminalOutcome, PairAttemptDecision,
@@ -23,8 +24,6 @@ use crate::plugin_stats::{
 
 const OUTPUT_SCHEMA_V1: &[u8] = b"plugin_runtime_member_output/v1;closed-jcs-line;scenario,pair_id,variant,experiment_identity_blake3,completed_budget,active_duration_nanoseconds,metrics";
 const POLICY_BYTES: &[u8] = include_bytes!("../../benchmarks/exporter-observable-policy.json");
-const CORPUS_BYTES: &[u8] =
-    include_bytes!("../../benchmarks/exporter-static-calibration-corpus.json");
 const TASKSET: &str = "/usr/bin/taskset";
 
 /// Failure while sealing, executing, or evaluating a controlled runtime matrix.
@@ -156,7 +155,10 @@ pub fn run_controlled_runtime_v1(
         .map_err(|error| ControlledRuntimeError::new(error.to_string()))?;
     let output_schema_blake3 = digest(OUTPUT_SCHEMA_V1);
     let workload_contract_blake3 = canonical_digest(&cases, "workload contract")?;
-    let corpus_blake3 = digest(CORPUS_BYTES);
+    let corpus_blake3 = ExporterHarnessRunner::new(policy)
+        .map_err(|error| ControlledRuntimeError::new(error.to_string()))?
+        .corpus_blake3()
+        .to_owned();
     let taskset_blake3 = validate_taskset()?;
     let inherited_environment = capture_environment()?;
     let admitted_environment = inherited_environment

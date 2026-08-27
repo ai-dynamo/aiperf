@@ -8,6 +8,8 @@ use std::path::{Path, PathBuf};
 use aiperf_bench_tools::build_pair::{
     BuildLtoV1, BuildPairMemberV1, BuildPairPlanV1, BuildPairReportV1, run_paired_build_v1,
 };
+use aiperf_bench_tools::exporter_policy::parse_exporter_observable_policy;
+use aiperf_bench_tools::exporter_runner::ExporterHarnessRunner;
 use aiperf_bench_tools::plugin_stats::{ControlledAttemptDecision, Variant};
 use aiperf_bench_tools::runtime_runner::run_controlled_runtime_v1;
 
@@ -173,21 +175,21 @@ impl Fixture {
 }
 
 #[test]
-fn one_runner_executes_and_constructs_the_complete_checked_in_matrix() {
+fn raw_member_stdout_cannot_authorize_an_exporter_parity_pass() {
     let fixture = Fixture::new();
     let build_report = fixture.build_report();
 
     let report = run_controlled_runtime_v1(&build_report)
         .expect("controlled runtime matrix executes and evaluates");
 
-    assert_eq!(report.decision, ControlledAttemptDecision::ValidPass);
+    assert_eq!(report.decision, ControlledAttemptDecision::ValidFailure);
     assert_eq!(report.scenario_count, 12);
     assert_eq!(report.retained_pair_count, 360);
     assert_eq!(report.executed_member_count, 840);
     assert_eq!(report.attempt_history.len(), 1);
     assert_eq!(
         report.attempt_history[0].decision,
-        ControlledAttemptDecision::ValidPass
+        ControlledAttemptDecision::ValidFailure
     );
     assert_eq!(
         report.paired_build_record_blake3,
@@ -197,7 +199,14 @@ fn one_runner_executes_and_constructs_the_complete_checked_in_matrix() {
     assert!(report.observable_policy_blake3.starts_with("blake3:"));
     assert!(report.output_schema_blake3.starts_with("blake3:"));
     assert!(report.workload_contract_blake3.starts_with("blake3:"));
-    assert!(report.corpus_blake3.starts_with("blake3:"));
+    let policy = parse_exporter_observable_policy(
+        include_bytes!("../../benchmarks/exporter-observable-policy.json"),
+        &std::collections::BTreeSet::new(),
+    )
+    .expect("checked-in exporter policy validates");
+    let exporter_runner =
+        ExporterHarnessRunner::new(policy).expect("exporter harness owns its exact corpus");
+    assert_eq!(report.corpus_blake3, exporter_runner.corpus_blake3());
     assert_eq!(
         digest(&report.runtime_evidence_bytes),
         report.runtime_evidence_blake3
@@ -211,12 +220,11 @@ fn one_runner_executes_and_constructs_the_complete_checked_in_matrix() {
             .len(),
         840
     );
-    let statistical_report = report
-        .statistical_report
-        .as_ref()
-        .expect("valid pass retains the complete statistical report");
-    assert!(statistical_report.passed);
-    assert_eq!(statistical_report.metric_reports.len(), 108);
+    assert!(report.statistical_report.is_none());
+    assert_eq!(
+        report.attempt_history[0].reason.as_deref(),
+        Some("controlled exporter history is incomplete for the exact scheduled matrix")
+    );
 }
 
 #[test]

@@ -18,6 +18,7 @@ use crate::exporter_policy::{
     ExporterObservablePolicyV1, ProvenanceBindingV1, SelectedBackingPayloadV1,
     apply_exporter_observable_policy_v1,
 };
+use crate::exporter_runner::CompletedExporterMember;
 
 const NORMATIVE_BOOTSTRAP_RESAMPLES: usize = 100_000;
 const NORMATIVE_RETAINED_PAIRS: usize = 30;
@@ -744,6 +745,13 @@ struct ActiveControlledAttempt {
     replacements_by_scenario: BTreeMap<String, usize>,
 }
 
+struct AuthoritativeExporterRowIdentity<'a> {
+    experiment_identity_blake3: &'a str,
+    source_commit: &'a str,
+    static_artifact_blake3: &'a str,
+    dynamic_artifact_blake3: &'a str,
+}
+
 /// Same-process authority for pair replacement and complete-attempt lifecycle.
 ///
 /// The evaluator reads classifiers and limits only from the compiled inventory.
@@ -975,12 +983,32 @@ impl ControlledMeasurementEvaluator {
         Ok(decision)
     }
 
+    /// Validate and classify one harness-sealed exporter pair inside the controller.
+    pub fn record_completed_exporter_pair(
+        &mut self,
+        policy: &ExporterObservablePolicyV1,
+        static_member: &CompletedExporterMember,
+        dynamic_member: &CompletedExporterMember,
+    ) -> Result<PairAttemptDecision, PluginStatsError> {
+        self.record_exporter_pair_evidence(
+            policy,
+            static_member.binding(),
+            static_member.evidence(),
+            static_member.backing_payloads(),
+            static_member.record_bytes(),
+            dynamic_member.binding(),
+            dynamic_member.evidence(),
+            dynamic_member.backing_payloads(),
+            dynamic_member.record_bytes(),
+        )
+    }
+
     /// Validate and classify one complete exporter pair inside the controller.
     ///
     /// Malformed receipts, retained bytes, member records, or cross-member
     /// comparison output are measured-product failures. They terminate the
     /// first valid attempt and can never be relabeled as infrastructure noise.
-    pub fn record_exporter_pair_evidence(
+    fn record_exporter_pair_evidence(
         &mut self,
         policy: &ExporterObservablePolicyV1,
         static_binding: &ExporterMemberBinding,
@@ -1230,8 +1258,26 @@ impl ControlledMeasurementEvaluator {
             }
         }
 
-        let report = evaluate_non_authoritative_simultaneous_fixture(
+        let input = match self.derive_authoritative_exporter_rows(
+            active_ordinal,
             input,
+            AuthoritativeExporterRowIdentity {
+                experiment_identity_blake3: &observed.identity.identity_digest,
+                source_commit: &observed.identity.source_commit,
+                static_artifact_blake3: &observed.identity.static_artifact_digest,
+                dynamic_artifact_blake3: &observed.identity.dynamic_artifact_digest,
+            },
+        ) {
+            Ok(input) => input,
+            Err(error) => {
+                let decision = ControlledAttemptDecision::ValidFailure;
+                self.finish_active(decision, Some(error.to_string()))?;
+                return Ok(decision);
+            }
+        };
+
+        let report = evaluate_non_authoritative_simultaneous_fixture(
+            &input,
             &observed,
             &SimultaneousGatePolicy::normative(),
         )?;
@@ -1251,6 +1297,110 @@ impl ControlledMeasurementEvaluator {
         self.last_statistical_report = Some(report);
         self.finish_active(decision, reason)?;
         Ok(decision)
+    }
+
+    fn derive_authoritative_exporter_rows(
+        &self,
+        active_ordinal: u8,
+        input: &SimultaneousGateInput,
+        identity: AuthoritativeExporterRowIdentity<'_>,
+    ) -> Result<SimultaneousGateInput, PluginStatsError> {
+        let exporter_cases = self
+            .inventory
+            .cases
+            .iter()
+            .filter(|case| {
+                case.measured_metrics
+                    .iter()
+                    .any(|metric| metric == "exporter_nanoseconds_per_record")
+            })
+            .collect::<Vec<_>>();
+        let expected_count = exporter_cases
+            .len()
+            .checked_mul(self.pair_schedule.len())
+            .ok_or_else(|| PluginStatsError::new("controlled exporter matrix size overflow"))?;
+        let retained = self
+            .exporter_pair_history
+            .iter()
+            .filter(|record| record.experiment_attempt == active_ordinal)
+            .collect::<Vec<_>>();
+        let retained_keys = retained
+            .iter()
+            .map(|record| (record.scenario.as_str(), record.pair_id.as_str()))
+            .collect::<std::collections::BTreeSet<_>>();
+        if retained.len() != expected_count || retained_keys.len() != expected_count {
+            return Err(PluginStatsError::new(
+                "controlled exporter history is incomplete for the exact scheduled matrix",
+            ));
+        }
+        for case in &exporter_cases {
+            for scheduled in &self.pair_schedule {
+                if !retained_keys.contains(&(case.scenario.as_str(), scheduled.pair_id.as_str())) {
+                    return Err(PluginStatsError::new(
+                        "controlled exporter history is incomplete for the exact scheduled matrix",
+                    ));
+                }
+            }
+        }
+
+        let expected_attempt = u64::from(active_ordinal)
+            .checked_sub(1)
+            .ok_or_else(|| PluginStatsError::new("experiment attempt ordinal underflow"))?;
+        let mut authoritative = input.clone();
+        for case in &mut authoritative.cases {
+            if !exporter_cases
+                .iter()
+                .any(|planned| planned.scenario == case.scenario)
+            {
+                continue;
+            }
+            case.samples
+                .retain(|sample| sample.metric != "exporter_nanoseconds_per_record");
+            for pair in retained
+                .iter()
+                .copied()
+                .filter(|pair| pair.scenario == case.scenario)
+            {
+                if pair.static_record.experiment_identity_blake3
+                    != identity.experiment_identity_blake3
+                    || pair.dynamic_record.experiment_identity_blake3
+                        != identity.experiment_identity_blake3
+                    || pair.static_record.attempt_ordinal != expected_attempt
+                    || pair.dynamic_record.attempt_ordinal != expected_attempt
+                    || pair.static_record.build_artifact_blake3 != identity.static_artifact_blake3
+                    || pair.dynamic_record.build_artifact_blake3 != identity.dynamic_artifact_blake3
+                {
+                    return Err(PluginStatsError::new(
+                        "controlled exporter history does not match the sealed experiment identity",
+                    ));
+                }
+                case.samples.extend([
+                    PairedSample {
+                        scenario: pair.scenario.clone(),
+                        pair_id: pair.pair_id.clone(),
+                        variant: Variant::Static,
+                        metric: "exporter_nanoseconds_per_record".to_owned(),
+                        value: pair.static_member.exporter_nanoseconds_per_record,
+                        unit: "nanoseconds".to_owned(),
+                        commit: identity.source_commit.to_owned(),
+                        artifact_digest: identity.static_artifact_blake3.to_owned(),
+                        experiment_identity_digest: identity.experiment_identity_blake3.to_owned(),
+                    },
+                    PairedSample {
+                        scenario: pair.scenario.clone(),
+                        pair_id: pair.pair_id.clone(),
+                        variant: Variant::Dynamic,
+                        metric: "exporter_nanoseconds_per_record".to_owned(),
+                        value: pair.dynamic_member.exporter_nanoseconds_per_record,
+                        unit: "nanoseconds".to_owned(),
+                        commit: identity.source_commit.to_owned(),
+                        artifact_digest: identity.dynamic_artifact_blake3.to_owned(),
+                        experiment_identity_digest: identity.experiment_identity_blake3.to_owned(),
+                    },
+                ]);
+            }
+        }
+        Ok(authoritative)
     }
 
     pub(crate) fn finish_authoritative_product_failure(
@@ -3306,4 +3456,151 @@ fn type_7_quantile(values: &[f64], probability: f64) -> Result<f64, PluginStatsE
     let upper = index.ceil() as usize;
     let fraction = index - lower as f64;
     Ok(sorted[lower] + fraction * (sorted[upper] - sorted[lower]))
+}
+
+#[cfg(test)]
+mod authoritative_exporter_tests {
+    use super::*;
+
+    const EXPERIMENT: &str =
+        "blake3:1111111111111111111111111111111111111111111111111111111111111111";
+    const STATIC_ARTIFACT: &str =
+        "blake3:2222222222222222222222222222222222222222222222222222222222222222";
+    const DYNAMIC_ARTIFACT: &str =
+        "blake3:3333333333333333333333333333333333333333333333333333333333333333";
+    const OTHER_DIGEST: &str =
+        "blake3:4444444444444444444444444444444444444444444444444444444444444444";
+    const COMMIT: &str = "0123456789abcdef0123456789abcdef01234567";
+
+    fn member_record(
+        pair_id: &str,
+        member: ExporterMember,
+        artifact: &str,
+        value: f64,
+    ) -> (ExporterMemberRecord, ExporterMemberSummary) {
+        let active_duration_ns = (value * 1_600_000.0) as u64;
+        (
+            ExporterMemberRecord {
+                schema_version: 1,
+                experiment_identity_blake3: EXPERIMENT.to_owned(),
+                attempt_ordinal: 0,
+                scenario_id: "exporter_100k".to_owned(),
+                pair_id: pair_id.to_owned(),
+                member,
+                active_duration_ns,
+                processed_records: 1_600_000,
+                retained_artifact_records: 100_000,
+                comparison_observable_blake3: OTHER_DIGEST.to_owned(),
+                repetition_receipts_blake3: OTHER_DIGEST.to_owned(),
+                retained_repetition_ordinal: 0,
+                retained_raw_observable_blake3: OTHER_DIGEST.to_owned(),
+                retained_comparison_observable_blake3: OTHER_DIGEST.to_owned(),
+                retained_provenance_receipt_blake3: OTHER_DIGEST.to_owned(),
+                observable_policy_blake3: OTHER_DIGEST.to_owned(),
+                build_artifact_blake3: artifact.to_owned(),
+                build_receipt_blake3: OTHER_DIGEST.to_owned(),
+            },
+            ExporterMemberSummary {
+                active_duration_nanoseconds: active_duration_ns,
+                processed_records: 1_600_000,
+                retained_artifact_records: 100_000,
+                exporter_nanoseconds_per_record: value,
+                comparison_observable_blake3: OTHER_DIGEST.to_owned(),
+                repetition_receipts_blake3: OTHER_DIGEST.to_owned(),
+                repetitions: Vec::new(),
+            },
+        )
+    }
+
+    fn retained_pair(pair_id: &str) -> ControlledExporterPairRecord {
+        let (static_record, static_member) =
+            member_record(pair_id, ExporterMember::Static, STATIC_ARTIFACT, 10.0);
+        let (dynamic_record, dynamic_member) =
+            member_record(pair_id, ExporterMember::Dynamic, DYNAMIC_ARTIFACT, 5.0);
+        let evidence = ExporterMemberEvidence {
+            repetition_receipt_bytes: Vec::new(),
+            retained: RetainedExporterEvidence {
+                repetition_ordinal: 0,
+                raw_observable_bytes: Vec::new(),
+                comparison_observable_bytes: Vec::new(),
+                provenance_receipt_bytes: Vec::new(),
+            },
+        };
+        ControlledExporterPairRecord {
+            experiment_attempt: 1,
+            scenario: "exporter_100k".to_owned(),
+            pair_id: pair_id.to_owned(),
+            static_record,
+            static_member,
+            static_evidence: evidence.clone(),
+            static_backing_payloads: Vec::new(),
+            dynamic_record,
+            dynamic_member,
+            dynamic_evidence: evidence,
+            dynamic_backing_payloads: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn authoritative_exporter_rows_replace_caller_values_with_validated_summaries() {
+        let mut evaluator = ControlledMeasurementEvaluator::new().expect("authority validates");
+        evaluator.exporter_pair_history = evaluator
+            .pair_schedule
+            .iter()
+            .map(|scheduled| retained_pair(&scheduled.pair_id))
+            .collect();
+        let raw_samples = evaluator
+            .pair_schedule
+            .iter()
+            .flat_map(|scheduled| {
+                [Variant::Static, Variant::Dynamic].map(|variant| PairedSample {
+                    scenario: "exporter_100k".to_owned(),
+                    pair_id: scheduled.pair_id.clone(),
+                    variant,
+                    metric: "exporter_nanoseconds_per_record".to_owned(),
+                    value: 999.0,
+                    unit: "nanoseconds".to_owned(),
+                    commit: COMMIT.to_owned(),
+                    artifact_digest: OTHER_DIGEST.to_owned(),
+                    experiment_identity_digest: OTHER_DIGEST.to_owned(),
+                })
+            })
+            .collect();
+        let input = SimultaneousGateInput {
+            cases: vec![PairedCase {
+                scenario: "exporter_100k".to_owned(),
+                primary_metric: "exporter_nanoseconds_per_record".to_owned(),
+                samples: raw_samples,
+                invalidation_attempts: Vec::new(),
+            }],
+        };
+
+        let derived = evaluator
+            .derive_authoritative_exporter_rows(
+                1,
+                &input,
+                AuthoritativeExporterRowIdentity {
+                    experiment_identity_blake3: EXPERIMENT,
+                    source_commit: COMMIT,
+                    static_artifact_blake3: STATIC_ARTIFACT,
+                    dynamic_artifact_blake3: DYNAMIC_ARTIFACT,
+                },
+            )
+            .expect("complete sealed exporter history derives rows");
+
+        assert_eq!(derived.cases[0].samples.len(), 60);
+        assert!(derived.cases[0].samples.iter().all(|sample| {
+            sample.value
+                == match sample.variant {
+                    Variant::Static => 10.0,
+                    Variant::Dynamic => 5.0,
+                }
+        }));
+        assert!(
+            derived.cases[0]
+                .samples
+                .iter()
+                .all(|sample| sample.experiment_identity_digest == EXPERIMENT)
+        );
+    }
 }

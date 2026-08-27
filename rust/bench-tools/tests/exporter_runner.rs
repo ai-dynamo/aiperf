@@ -13,7 +13,8 @@ use aiperf_bench_tools::exporter_runner::{
     ExporterWorkload, HostExporterCapture,
 };
 use aiperf_bench_tools::plugin_stats::{
-    ExporterMember, ExporterRepetitionReceipt, validate_exporter_member_record,
+    ControlledAttemptDecision, ControlledMeasurementEvaluator, ExporterMember,
+    ExporterRepetitionReceipt, PairAttemptDecision, validate_exporter_member_record,
     validate_exporter_pair_evidence,
 };
 
@@ -425,6 +426,123 @@ fn runner_acquires_artifact_tree_and_exact_selected_backing_bytes() {
     assert_eq!(
         pair.static_member.comparison_observable_blake3,
         pair.dynamic_member.comparison_observable_blake3
+    );
+}
+
+#[test]
+fn evaluator_accepts_only_harness_completed_exporter_members() {
+    let static_artifact = build_artifact();
+    let dynamic_artifact = build_artifact();
+    let policy = artifact_policy();
+    let runner = ExporterHarnessRunner::new(policy.clone()).expect("runner owns the corpus");
+    let mut static_exporter = ArtifactExporter {
+        lock_digest: "static-lock",
+    };
+    let static_completed = runner
+        .run_member(
+            source("pair-00", ExporterMember::Static, &static_artifact),
+            &mut static_exporter,
+        )
+        .expect("static member is harness-sealed");
+    let mut dynamic_exporter = ArtifactExporter {
+        lock_digest: "dynamic-lock",
+    };
+    let dynamic_completed = runner
+        .run_member(
+            source("pair-00", ExporterMember::Dynamic, &dynamic_artifact),
+            &mut dynamic_exporter,
+        )
+        .expect("dynamic member is harness-sealed");
+    let mut evaluator = ControlledMeasurementEvaluator::new().expect("authority validates");
+    evaluator.begin_attempt().expect("first attempt starts");
+
+    let decision = evaluator
+        .record_completed_exporter_pair(&policy, &static_completed, &dynamic_completed)
+        .expect("sealed pair validates");
+
+    assert_eq!(decision, PairAttemptDecision::RetainPair);
+    assert_eq!(evaluator.exporter_pair_history().len(), 1);
+}
+
+#[test]
+fn evaluator_classifies_a_sealed_pair_under_the_wrong_policy_as_product_failure() {
+    let static_artifact = build_artifact();
+    let dynamic_artifact = build_artifact();
+    let runner =
+        ExporterHarnessRunner::new(artifact_policy()).expect("runner owns the artifact policy");
+    let mut static_exporter = ArtifactExporter {
+        lock_digest: "static-lock",
+    };
+    let static_completed = runner
+        .run_member(
+            source("pair-00", ExporterMember::Static, &static_artifact),
+            &mut static_exporter,
+        )
+        .expect("static member is harness-sealed");
+    let mut dynamic_exporter = ArtifactExporter {
+        lock_digest: "dynamic-lock",
+    };
+    let dynamic_completed = runner
+        .run_member(
+            source("pair-00", ExporterMember::Dynamic, &dynamic_artifact),
+            &mut dynamic_exporter,
+        )
+        .expect("dynamic member is harness-sealed");
+    let mut evaluator = ControlledMeasurementEvaluator::new().expect("authority validates");
+    evaluator.begin_attempt().expect("first attempt starts");
+
+    assert_eq!(
+        evaluator
+            .record_completed_exporter_pair(
+                &stream_policy("paired"),
+                &static_completed,
+                &dynamic_completed,
+            )
+            .expect("policy mismatch is classified"),
+        PairAttemptDecision::ExperimentFailed
+    );
+    assert_eq!(
+        evaluator.history()[0].decision,
+        ControlledAttemptDecision::ValidFailure
+    );
+}
+
+#[test]
+fn evaluator_classifies_a_sealed_unknown_pair_as_product_failure() {
+    let static_artifact = build_artifact();
+    let dynamic_artifact = build_artifact();
+    let policy = artifact_policy();
+    let runner = ExporterHarnessRunner::new(policy.clone()).expect("runner owns the corpus");
+    let mut static_exporter = ArtifactExporter {
+        lock_digest: "static-lock",
+    };
+    let static_completed = runner
+        .run_member(
+            source("unknown-pair", ExporterMember::Static, &static_artifact),
+            &mut static_exporter,
+        )
+        .expect("static member is harness-sealed");
+    let mut dynamic_exporter = ArtifactExporter {
+        lock_digest: "dynamic-lock",
+    };
+    let dynamic_completed = runner
+        .run_member(
+            source("unknown-pair", ExporterMember::Dynamic, &dynamic_artifact),
+            &mut dynamic_exporter,
+        )
+        .expect("dynamic member is harness-sealed");
+    let mut evaluator = ControlledMeasurementEvaluator::new().expect("authority validates");
+    evaluator.begin_attempt().expect("first attempt starts");
+
+    assert_eq!(
+        evaluator
+            .record_completed_exporter_pair(&policy, &static_completed, &dynamic_completed)
+            .expect("unknown pair is classified"),
+        PairAttemptDecision::ExperimentFailed
+    );
+    assert_eq!(
+        evaluator.history()[0].decision,
+        ControlledAttemptDecision::ValidFailure
     );
 }
 
