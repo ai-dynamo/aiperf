@@ -13,7 +13,9 @@ use aiperf_bench_tools::exporter_runner::{
     ExporterHarnessError, ExporterHarnessRunner, ExporterRecordStream, ExporterWorkload,
     HostExporterCapture,
 };
-use aiperf_bench_tools::plugin_stats::{ControlledAttemptDecision, ExporterMember, Variant};
+use aiperf_bench_tools::plugin_stats::{
+    ControlledAttemptDecision, ExporterMember, PairAttemptDecision, Variant,
+};
 use aiperf_bench_tools::runtime_runner::{
     ControlledExporterWorkloadFactory, ExporterWorkloadAcquisitionError, ExporterWorkloadRequest,
     run_controlled_runtime_with_exporters_v1, run_controlled_runtime_with_ledger_v1,
@@ -51,6 +53,21 @@ fn runtime_artifact_rejecting_exporter(label: &str) -> Vec<u8> {
         .replacen(
             "set -eu\n",
             "set -eu\nif [ \"$AIPERF_PARITY_SCENARIO\" = exporter_100k ]; then exit 71; fi\n",
+            1,
+        )
+        .into_bytes()
+}
+
+fn runtime_artifact_with_one_affinity_loss(label: &str, marker: &Path) -> Vec<u8> {
+    let script = String::from_utf8(runtime_artifact(label)).expect("fixture script is UTF-8");
+    script
+        .replacen(
+            "set -eu\n",
+            &format!(
+                "set -eu\nif [ \"$AIPERF_PARITY_PAIR_ID\" = pair-00 ] && [ ! -e '{}' ]; then touch '{}'; /usr/bin/taskset -pc 8 $$ >/dev/null; sleep 0.1; fi\n",
+                marker.display(),
+                marker.display()
+            ),
             1,
         )
         .into_bytes()
@@ -429,4 +446,51 @@ fn valid_terminal_attempt_refuses_a_second_runner_invocation() {
             .count(),
         1
     );
+}
+
+#[test]
+fn controller_affinity_monitor_replaces_the_whole_pair_in_seeded_order() {
+    let mut fixture = Fixture::new();
+    let marker = fixture._directory.path().join("affinity-loss-once");
+    fixture.static_artifact =
+        runtime_artifact_with_one_affinity_loss("static authority fixture", &marker);
+    fixture.dynamic_artifact =
+        runtime_artifact_with_one_affinity_loss("dynamic authority fixture", &marker);
+    write_executable(
+        &fixture.static_source.join("artifact-source"),
+        &fixture.static_artifact,
+    );
+    write_executable(
+        &fixture.dynamic_source.join("artifact-source"),
+        &fixture.dynamic_artifact,
+    );
+    let build_report = fixture.build_report();
+
+    let report = run_controlled_runtime_with_ledger_v1(
+        &build_report,
+        &fixture._directory.path().join("replacement-attempts.jsonl"),
+    )
+    .expect("controller completes after one infrastructure replacement");
+
+    let pair_attempts = report
+        .raw_pair_history
+        .iter()
+        .filter(|record| {
+            record.raw.scenario == "http_non_streaming_c1" && record.raw.pair_id == "pair-00"
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(pair_attempts.len(), 2);
+    assert!(matches!(
+        pair_attempts[0].decision,
+        PairAttemptDecision::ReplaceWholePair {
+            replacement_ordinal: 1,
+            ..
+        }
+    ));
+    assert_eq!(pair_attempts[0].derived_reason, "affinity_loss");
+    assert_eq!(
+        pair_attempts[0].raw.member_order,
+        pair_attempts[1].raw.member_order
+    );
+    assert_eq!(pair_attempts[1].decision, PairAttemptDecision::RetainPair);
 }
