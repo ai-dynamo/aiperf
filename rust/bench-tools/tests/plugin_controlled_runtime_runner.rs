@@ -17,8 +17,8 @@ use aiperf_bench_tools::plugin_stats::{
     ControlledAttemptDecision, ExporterMember, PairAttemptDecision, Variant,
 };
 use aiperf_bench_tools::runtime_runner::{
-    ControlledExporterWorkloadFactory, ExporterWorkloadAcquisitionError, ExporterWorkloadRequest,
-    ControlledRuntimeReportV1, HostLivenessSourceV1, controlled_attempt_ledger_path,
+    ControlledExporterWorkloadFactory, ControlledRuntimeReportV1, ExporterWorkloadAcquisitionError,
+    ExporterWorkloadRequest, HostLivenessSourceV1, controlled_attempt_ledger_path,
     run_controlled_runtime_with_exporters_v1, run_controlled_runtime_with_ledger_v1,
     run_controlled_runtime_with_liveness_v1,
 };
@@ -672,7 +672,8 @@ fn one_experiment_identity_owns_one_ledger_across_requested_output_paths() {
 #[test]
 fn three_invalid_attempts_block_the_identity_across_requested_output_paths() {
     let mut fixture = Fixture::new();
-    fixture.static_artifact = runtime_artifact_with_persistent_affinity_loss("static authority fixture");
+    fixture.static_artifact =
+        runtime_artifact_with_persistent_affinity_loss("static authority fixture");
     fixture.dynamic_artifact =
         runtime_artifact_with_persistent_affinity_loss("dynamic authority fixture");
     write_executable(
@@ -813,10 +814,7 @@ fn controller_observed_mock_death_replaces_the_whole_pair_in_seeded_order() {
         })
         .collect::<Vec<_>>();
     assert_eq!(attempts.len(), 2);
-    assert_eq!(
-        attempts[0].derived_reason,
-        "mock_death_unrelated_to_member"
-    );
+    assert_eq!(attempts[0].derived_reason, "mock_death_unrelated_to_member");
     assert!(matches!(
         attempts[0].decision,
         PairAttemptDecision::ReplaceWholePair {

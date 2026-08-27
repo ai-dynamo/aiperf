@@ -298,7 +298,9 @@ pub fn validate_exporter_member_child_output_v1(
         ControlledRuntimeError::new(format!("exporter member output is not JSON: {error}"))
     })?;
     let mut canonical = serde_json_canonicalizer::to_vec(&value).map_err(|error| {
-        ControlledRuntimeError::new(format!("cannot canonicalize exporter member output: {error}"))
+        ControlledRuntimeError::new(format!(
+            "cannot canonicalize exporter member output: {error}"
+        ))
     })?;
     canonical.push(b'\n');
     if canonical != bytes {
@@ -306,12 +308,11 @@ pub fn validate_exporter_member_child_output_v1(
             "exporter member output is not one exact canonical JCS line",
         ));
     }
-    let decoded: ExporterMemberChildOutputV1 =
-        serde_json::from_value(value).map_err(|error| {
-            ControlledRuntimeError::new(format!(
-                "exporter member output is not a complete artifact-bound schema-1 line: {error}"
-            ))
-        })?;
+    let decoded: ExporterMemberChildOutputV1 = serde_json::from_value(value).map_err(|error| {
+        ControlledRuntimeError::new(format!(
+            "exporter member output is not a complete artifact-bound schema-1 line: {error}"
+        ))
+    })?;
 
     let expected_variant = match expectation.member {
         ExporterMember::Static => Variant::Static,
@@ -340,12 +341,9 @@ pub fn validate_exporter_member_child_output_v1(
     }
 
     let contract = ExporterSampleContract::normative();
-    let summary = validate_exporter_member_evidence(
-        &contract,
-        binding,
-        &decoded.artifact_bound.evidence,
-    )
-    .map_err(|error| ControlledRuntimeError::new(error.to_string()))?;
+    let summary =
+        validate_exporter_member_evidence(&contract, binding, &decoded.artifact_bound.evidence)
+            .map_err(|error| ControlledRuntimeError::new(error.to_string()))?;
     let record = validate_exporter_member_record(
         &contract,
         binding,
@@ -876,9 +874,10 @@ fn observe_process_identity(
     };
     // The executable name is the only parenthesized field and may itself
     // contain spaces, so every positional field is read after the last ')'.
-    let tail = stat.rsplit_once(')').map(|(_, tail)| tail).ok_or_else(|| {
-        ControlledRuntimeError::new("observed process stat record is malformed")
-    })?;
+    let tail = stat
+        .rsplit_once(')')
+        .map(|(_, tail)| tail)
+        .ok_or_else(|| ControlledRuntimeError::new("observed process stat record is malformed"))?;
     let mut fields = tail.split_whitespace();
     let state = fields
         .next()
@@ -1002,7 +1001,10 @@ const CONTROLLER_STATE_DIRECTORY: &str = ".aiperf-parity-state";
 /// The caller names only a state root. Two different requested filenames under
 /// the same root therefore resolve to the same ledger, so one sealed identity
 /// can never restart at attempt 1 through a new output path.
-pub fn controlled_attempt_ledger_path(state_root: &Path, experiment_identity_blake3: &str) -> PathBuf {
+pub fn controlled_attempt_ledger_path(
+    state_root: &Path,
+    experiment_identity_blake3: &str,
+) -> PathBuf {
     let identity = experiment_identity_blake3
         .strip_prefix("blake3:")
         .unwrap_or(experiment_identity_blake3);
@@ -1152,8 +1154,7 @@ fn run_controlled_runtime_internal(
         })?;
     }
     let pair_context_path = pair_start_context_path(state_root, &experiment_identity_blake3);
-    let resumed_pair_context =
-        resumed_pair_context(&pair_context_path, &liveness.observe()?)?;
+    let resumed_pair_context = resumed_pair_context(&pair_context_path, &liveness.observe()?)?;
     let mut attempt_ledger = AttemptLedger::acquire(&ledger_path, &experiment_identity_blake3)?;
     let expected_attempt_ordinal = attempt_ledger.next_attempt_ordinal()?;
     let exporter_artifacts = if exporter_factory.is_some() {
@@ -1453,11 +1454,7 @@ fn run_controlled_runtime_internal(
                         ControlledRuntimeError::new("dynamic admitted exporter member is absent")
                     })?;
                     evaluator
-                        .record_artifact_bound_exporter_pair(
-                            &policy,
-                            static_member,
-                            dynamic_member,
-                        )
+                        .record_artifact_bound_exporter_pair(&policy, static_member, dynamic_member)
                         .map_err(|error| ControlledRuntimeError::new(error.to_string()))?
                 } else if is_exporter_case
                     && exporter_factory.is_some()
@@ -1628,16 +1625,14 @@ fn execute_monitored_child(
         .map_err(|_| ControlledRuntimeError::new("runtime member PID does not fit pid_t"))?;
     owned.pid = Some(pid);
     record_owned_child_pid(pid);
-    let stdout = owned
-        .child
-        .stdout
-        .take()
-        .ok_or_else(|| ControlledRuntimeError::new("runtime member stdout pipe was not created"))?;
-    let stderr = owned
-        .child
-        .stderr
-        .take()
-        .ok_or_else(|| ControlledRuntimeError::new("runtime member stderr pipe was not created"))?;
+    let stdout =
+        owned.child.stdout.take().ok_or_else(|| {
+            ControlledRuntimeError::new("runtime member stdout pipe was not created")
+        })?;
+    let stderr =
+        owned.child.stderr.take().ok_or_else(|| {
+            ControlledRuntimeError::new("runtime member stderr pipe was not created")
+        })?;
     owned.stdout_reader = Some(drain_bounded_output(stdout, output_limit));
     owned.stderr_reader = Some(drain_bounded_output(stderr, output_limit));
     let started = Instant::now();
@@ -2161,10 +2156,8 @@ fn execute_member(
             variant,
             experiment_identity_blake3,
         )
-        .is_ok_and(|bare| {
-            bare.metrics
-                .contains_key("exporter_nanoseconds_per_record")
-        }) {
+        .is_ok_and(|bare| bare.metrics.contains_key("exporter_nanoseconds_per_record"))
+        {
             return Ok(MemberExecution {
                 outcome: MemberTerminalOutcome::MalformedOutput(
                     "bare exporter metric lacks complete artifact-bound sealed evidence".to_owned(),
@@ -2179,19 +2172,20 @@ fn execute_member(
                 "exporter member has no sealed controller expectation to admit against",
             )
         })?;
-        let admitted =
-            match validate_exporter_member_child_output_v1(&terminal_evidence.stdout.bytes, expectation)
-            {
-                Ok(admitted) => admitted,
-                Err(error) => {
-                    return Ok(MemberExecution {
-                        outcome: MemberTerminalOutcome::MalformedOutput(error.to_string()),
-                        samples: Vec::new(),
-                        terminal_evidence,
-                        artifact_bound: None,
-                    });
-                }
-            };
+        let admitted = match validate_exporter_member_child_output_v1(
+            &terminal_evidence.stdout.bytes,
+            expectation,
+        ) {
+            Ok(admitted) => admitted,
+            Err(error) => {
+                return Ok(MemberExecution {
+                    outcome: MemberTerminalOutcome::MalformedOutput(error.to_string()),
+                    samples: Vec::new(),
+                    terminal_evidence,
+                    artifact_bound: None,
+                });
+            }
+        };
         let samples = vec![PairedSample {
             scenario: case.scenario.clone(),
             pair_id: pair_id.to_owned(),
@@ -2323,11 +2317,13 @@ fn runtime_report(
         )
     })?;
     let attempt_evidence_tree_bytes =
-        evaluator.take_last_attempt_evidence_bytes().ok_or_else(|| {
-            ControlledRuntimeError::new(
-                "controlled runtime report lacks exact attempt evidence bytes",
-            )
-        })?;
+        evaluator
+            .take_last_attempt_evidence_bytes()
+            .ok_or_else(|| {
+                ControlledRuntimeError::new(
+                    "controlled runtime report lacks exact attempt evidence bytes",
+                )
+            })?;
     let attempt_evidence_tree_blake3 = digest(&attempt_evidence_tree_bytes);
     let appended = attempt_ledger.append_attempt(terminal_attempt, attempt_evidence_tree_bytes)?;
     // The ledger is finished with its entries here, so the retained history
@@ -2347,9 +2343,7 @@ fn runtime_report(
     let attempt_evidence_tree_bytes = retained_attempt_evidence
         .last()
         .map(|entry| entry.evidence_tree_bytes.clone())
-        .ok_or_else(|| {
-            ControlledRuntimeError::new("attempt ledger retained no terminal entry")
-        })?;
+        .ok_or_else(|| ControlledRuntimeError::new("attempt ledger retained no terminal entry"))?;
     let retained_pair_count = evaluator
         .raw_pair_history()
         .iter()
