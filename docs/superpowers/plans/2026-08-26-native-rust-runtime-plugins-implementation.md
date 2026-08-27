@@ -547,7 +547,11 @@ it locally, and mark Task 1 `PASS` in the tracker.
   `aiperf-allocator-provider`, and
   `aiperf-allocator-shim`.
 - Create: provisional `Cargo.toml`, `src/lib.rs`, and `plugins.yaml.in` in each
-  package shell above so later `Modify` paths exist from their claimed base.
+  of the 11 `rust/plugins/*` distributable plugin shells above so later
+  `Modify` paths exist from their claimed base. The 15 foundational, host,
+  conformance, test, performance, comparator, and allocator crate shells do
+  not receive `plugins.yaml.in`; neither does the standalone
+  `rust/tests/plugin-third-party` workspace.
 - Create: `rust/plugin-api/api-allowlist.toml`
 - Create: `rust/plugin-api/feature-ownership.toml`
 - Create: `rust/plugin-conformance/candidate-source-inventory.toml`
@@ -569,9 +573,11 @@ it locally, and mark Task 1 `PASS` in the tracker.
   has the sole allocator-topology amendment to CLI dependencies and the lock;
   Task 37 is the sole later distribution-membership/lock amendment. Other later
   tasks may alter only their precreated package manifests.
-- Task 2 consumes Task 1’s measured `package-topology.json` only to prove every
-  required shell exists without prematurely assigning implementation
-  dependencies. Task 3 owns the measured, reviewed topology matrix and one
+- Task 2 consumes Task 1’s measured `package-topology.json` as the immutable
+  pre-foundation topology and proves with Cargo metadata that its exact shell
+  addition set is the only delta; it does not regenerate or claim those new
+  shells existed in the Task-1 artifact, and it does not prematurely assign
+  implementation dependencies. Task 3 owns the measured, reviewed topology matrix and one
   explicitly scoped workspace/member-manifest and lock amendment. Task 7 then
   owns only the CLI allocator dependency/lock delta; Task 37 alone may later
   amend final distribution membership/lock.
@@ -584,6 +590,44 @@ it locally, and mark Task 1 `PASS` in the tracker.
   `serde_json`, `thiserror`, and standard library entries explicitly present in
   `api-allowlist.toml`; it may not depend on Tokio, Hyper, Tonic, Clap, exporter
   backends, or `aiperf-runtime`.
+- Task 2 creates `rust/plugin-api/feature-ownership.toml` with exactly this
+  schema and these two seed rows (TOML array ordering and every value are
+  normative):
+
+```toml
+schema_version = 1
+
+[[symbol_ownership]]
+symbol = "FrozenAIPerfRegistry"
+owner_crate = "aiperf-plugin-api"
+source_path = "plugin-api/src/frozen.rs"
+producer_task = 15
+construction_crate = "aiperf-plugin-host"
+consumer_crates = ["aiperf-runtime"]
+composition_crate = "aiperf-cli"
+state = "planned"
+composition_state = "planned"
+
+[[symbol_ownership]]
+symbol = "FrozenPluginUniverse"
+owner_crate = "aiperf-plugin-api"
+source_path = "plugin-api/src/frozen.rs"
+producer_task = 15
+construction_crate = "aiperf-plugin-host"
+consumer_crates = ["aiperf-runtime"]
+composition_crate = "aiperf-cli"
+state = "planned"
+composition_state = "planned"
+```
+
+  Task 3 appends its measured dependency/feature rows without changing these
+  two records. Task 15, and no earlier task, creates the types and changes both
+  rows to `state = "present"` while leaving `composition_state = "planned"`;
+  its tests then replace symbol-existence checks with source/rustdoc and
+  host/runtime Cargo-metadata assertions while retaining every owner,
+  construction, consumer, and composition value above. Task 17 first composes
+  CLI plus runtime/host and changes only `composition_state` to `"present"`
+  after its effect-order and Cargo-metadata tests observe that dependency.
 
 - [ ] **Step 1: Write the failing dependency-policy test**
 
@@ -603,7 +647,12 @@ The test separately inspects normal/build versus test dependencies, rejects both
 `aiperf-plugin-host -> aiperf-runtime` and `aiperf-runtime ->
 aiperf-plugin-host`, permits host only on API/core/SDK, and requires runtime to
 consume the plugin-API-owned `FrozenPluginUniverse`/`FrozenAIPerfRegistry` view
-(API depends on core). CLI is the sole
+(API depends on core). At Task 2 this is an ownership assertion over exact
+symbolic rows in `feature-ownership.toml`; Task 2 MUST NOT declare placeholder
+Rust types or any public API beyond `PLUGIN_SOURCE_API_VERSION`. Task 15 creates
+the actual API-owned view types and replaces the symbolic-only assertion with
+source/rustdoc/Cargo-metadata assertions against those definitions. Until Task
+15, the test does not falsely require nonexistent Rust uses. CLI is the sole
 composition layer that depends on both host and runtime.
 The test also requires `aiperf-plugin-test-support` as a non-published,
 distribution-excluded workspace member whose normal dependencies are limited to
@@ -616,17 +665,54 @@ not amend workspace membership or shared manifests.
 The test also parses `candidate-source-inventory.toml`, requires every exact
 source, test, golden, and proto path in the plan’s Candidate Source Inventory
 appendix, rejects duplicate/unknown owners, and requires a candidate destination
-plus `implementation_leaf` or explicitly reviewed `facade` classification for
-every present entry. Exact post-Task-6 split paths may be absent only as
+plus `implementation_leaf`, `asset`, or explicitly reviewed `facade`
+classification for every present entry. Every present row has its source
+BLAKE3; `implementation_leaf` and `asset` rows later require byte-identical
+candidate bytes, while `facade` rows do not. Exact post-Task-6 split paths may be absent only as
 `planned` rows with `producer_task = 6`; every other missing source fails.
+The appendix plus its normative expansion rule is the complete seed: expand
+each brace member literally; expand each “every file under” clause with
+`git ls-tree -r` against the exact integrated Task-1 commit recorded in the
+tracker, selecting only `100644`/`100755` blobs below that exact prefix in
+lexical byte order, and refuse if the Task-2 worktree path does not match the
+selected blob bytes before hashing; include explicit facade rows for
+`runtime/src/endpoints/mod.rs` and `runtime/src/transport/grpc/mod.rs`; and add
+nothing else. The generated TOML contains literal rows only, never braces,
+wildcards, or recursive clauses, and MUST contain exactly 126 rows. Each row is
+`[[source]]` with `source_path`, `candidate_path`, `owner_task`,
+`classification`, and `state`; a `present` row additionally has a lowercase
+64-hex `blake3`, while a `planned` row instead has `producer_task = 6` and no
+digest. Task 2 uses `planned` only for the four expansion paths absent from the
+Task-1 topology and named as post-Task-6 sources by the appendix:
+`runtime/src/transport/grpc/kserve_binding.rs`,
+`runtime/src/transport/ws/sink.rs`, `runtime/src/transport/dry_run.rs`, and
+`runtime/src/dynosim/direct.rs`. The exact classification/state totals are 111
+present plus 4 planned `implementation_leaf` rows, 9 present `asset` rows, and
+2 present `facade` rows: 122 present and 4 planned, 126 total. The asset rows
+are the eight console goldens plus
+`runtime/tests/proto/grpc_predict_v2.proto`; the facade rows are exactly
+`runtime/src/endpoints/mod.rs` →
+`plugins/endpoints/src/endpoints/mod.rs` and
+`runtime/src/transport/grpc/mod.rs` →
+`plugins/transport-grpc/src/transport/grpc/mod.rs`. Any
+other count, absent path, implicit facade, or field shape fails.
 Task 6 must replace every planned row with a present BLAKE3-bound
 `implementation_leaf` before downstream candidate staging.
 
-- [ ] **Step 2: Verify RED**
+- [ ] **Step 2: Verify harness RED, then behavioral RED**
 
 Run: `cargo test --manifest-path plugin-api/Cargo.toml`
 
-Expected: FAIL because the crate manifest does not exist.
+Expected harness RED: FAIL because the crate manifest does not exist. Then add
+only the minimal `plugin-api` manifest, its parent-workspace member entry, and
+the documented constant-bearing `src/lib.rs` needed to compile the already
+written policy test; do not add another shell, template, ownership file, or
+inventory row. Rerun the same command. Expected behavioral RED: three separate
+tests named `workspace_and_template_policy`, `symbolic_ownership_policy`, and
+`candidate_inventory_policy` execute and fail respectively for absent shells
+and exact template placement, absent exact symbolic rows, and absent exact
+126-row inventory. Retain both command outputs. A compile failure or a single
+early-return test is not acceptable behavioral RED.
 
 - [ ] **Step 3: Add minimal documented crate shells**
 
@@ -1710,6 +1796,7 @@ platform flag, and error path; commit as
 - Modify: `rust/runtime/src/extensions/transactional.rs`
 - Modify: `rust/runtime/src/extensions/registry_id.rs`
 - Modify: `rust/plugin-api/src/extension.rs`
+- Modify: `rust/plugin-api/feature-ownership.toml`
 - Create: `rust/plugin-api/src/frozen.rs`
 - Modify: `rust/plugin-api/src/lib.rs`
 - Create: `rust/plugin-host/src/register.rs`
@@ -1726,7 +1813,15 @@ platform flag, and error path; commit as
   interface. `aiperf-plugin-host` depends only on API/core/SDK, retains concrete
   process-global handles, and returns the plugin-API-owned
   `FrozenPluginUniverse`; runtime depends downward on API/core and consumes that
-  view while CLI composes host plus runtime.
+  view. Task 17 later makes CLI the sole composition layer over host plus
+  runtime; Task 15 leaves that composition declarative and unclaimed.
+- Atomically transitions both Task-2 `[[symbol_ownership]]` rows from
+  `state = "planned"` to `state = "present"` without changing any other row
+  value. The registration test resolves each row's `source_path`, verifies the
+  exported rustdoc owner and actual host/runtime dependency direction, leaves
+  `composition_state = "planned"`, and
+  fails if either type exists while its row remains planned or is marked
+  present before it exists.
 - Freeze carries the still-unsealed `ActivatingLibrarySet`; it cannot claim a
   reusable `LoadedLibrarySet` until Task 16 derives the canonical lock over the
   actual frozen registrations.
@@ -1743,6 +1838,8 @@ Mutate every repeated descriptor field (package name/version/source API version,
 host universe ID, artifact build ID) and prove comparison necessarily follows
 native entry invocation, retains every returned handle, poisons the process on
 mismatch, and precedes transaction commit, freeze, lock sealing, and effects.
+The same test parses `feature-ownership.toml` and initially fails because both
+frozen symbols remain `planned` and their source/rustdoc definitions are absent.
 
 - [ ] **Step 2: Verify RED**
 
@@ -1761,10 +1858,12 @@ Task 16 is the only success-sealing transition.
 
 - [ ] **Step 4: Verify GREEN**
 
-Run the same tests plus `cargo test -p aiperf-runtime --features engine`.
+Run the same tests plus `cargo test -p aiperf-runtime --features engine` and
+`cargo test -p aiperf-plugin-api --test dependency_policy`.
 Expected: rollback and compile-fail behavior pass; every existing static test
 uses an explicitly inventory-declared temporary static path rather than a hidden
-production built-in path.
+production built-in path. Both symbol-ownership rows are `present` and match
+their source/rustdoc/Cargo-metadata evidence exactly.
 
 - [ ] **Step 5: Graham review, bundle, and integrate**
 
@@ -1851,6 +1950,7 @@ bundle/import.
 **Files:**
 - Modify: `rust/cli/Cargo.toml`
 - Modify: `rust/runtime/Cargo.toml`
+- Modify: `rust/plugin-api/feature-ownership.toml`
 - Modify: `rust/runtime/src/engine/application.rs`
 - Modify: `rust/runtime/src/engine/coordinator.rs`
 - Modify: `rust/runtime/src/engine/execution_factories.rs`
@@ -1889,6 +1989,10 @@ bundle/import.
   `manifest_only`, or `full_composition`; a new or renamed command without a
   census row fails the test. Unrelated commands are `no_discovery` unless they
   explicitly request the capability catalog.
+- Changes both frozen-symbol rows from `composition_state = "planned"` to
+  `composition_state = "present"` only after Cargo metadata and the effect
+  ledger prove `aiperf-cli` is the sole composition crate depending on both
+  host and runtime. No earlier task may claim that observed CLI edge.
 
 - [ ] **Step 1: Write failing subprocess effect-order and command tests**
 
@@ -1911,6 +2015,9 @@ remain no-discovery unless it requests the capability catalog. Test
 conflicts, and missing/extra/tampered objects. Before adopting panic semantics,
 the approval artifact/test must identify the public CLI/protocol contract and
 approve abort or select an outer supervisor.
+Parse both frozen-symbol ownership rows and fail while their
+`composition_state` remains planned or when it is present without the measured
+CLI host/runtime edges.
 
 - [ ] **Step 2: Verify RED**
 
@@ -1935,7 +2042,8 @@ Run all five focused test targets, existing CLI help/completion/config/profile/
 eval tests, and `cargo test -p aiperf-runtime --features engine` on paper-rig.
 Expected: ledgers prove exact ordering/lock consumption and no unapproved static
 removal; the approval artifact’s exact decision is asserted; only Task 39 makes
-a dynamic package authoritative.
+a dynamic package authoritative. Both frozen-symbol rows have
+`composition_state = "present"` backed by the observed CLI composition edges.
 
 - [ ] **Step 5: Graham review, bundle, and integrate**
 

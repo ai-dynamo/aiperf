@@ -593,6 +593,19 @@ do not depend on the complete orchestration runtime. This avoids dependency
 cycles, duplicate process-global ownership, and needless host-universe
 expansion.
 
+The foundation workspace commit records the eventual frozen-universe and
+frozen-registry ownership as `[[symbol_ownership]]` machine-checked policy rows
+only. It
+does not predeclare placeholder Rust types: the transactional freeze task owns
+their first definitions, layouts, and semantics. The symbolic policy names
+that producer task and remains machine-checked until source/rustdoc checks
+replace its symbol `planned` state. CLI composition has an independent planned
+state that changes only when the CLI composition task proves the actual
+host/runtime dependency and effect ordering. Likewise, only distributable
+plugin packages carry a `plugins.yaml.in` template; API, SDK, host,
+conformance, test, performance, comparator, allocator, and standalone
+third-party-workspace crates are not plugin artifacts and do not carry one.
+
 `aiperf-plugin-api` MUST NOT depend on a transport framework, exporter backend,
 CLI parser, Tokio runtime, or the orchestration crate. CI enforces a checked
 dependency allowlist; comparative language such as "smallest crate" is not a
