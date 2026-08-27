@@ -8640,4 +8640,196 @@ mod tests {
         assert_eq!(budget.snapshot().used_items, 0);
         assert_eq!(budget.snapshot().used_bytes, 0);
     }
+
+    /// Build one action-scoped reporter sized for a terminal plus a closure.
+    fn gap_closure_reporter() -> (
+        StreamRunIdentity,
+        StreamingResourceBudget,
+        BudgetOwnedStreamingIssueReporter,
+    ) {
+        let action_budget = StreamingResourceBudget::new(super::super::budget::BudgetLimits {
+            max_items: 65,
+            max_bytes: QUEUE_CHARGE_BYTES + 64 * 1024,
+        })
+        .unwrap_or_else(|error| panic!("valid action budget: {error}"));
+        let run = StreamRunIdentity::new(LogicalReplayRunId::from_bytes([0x81; 32]));
+        let policy = PreparedStreamingIssuePolicy::new([action_rule(
+            "action_default",
+            0,
+            StreamingIssueDisposition::Backpressure,
+        )])
+        .unwrap_or_else(|error| panic!("valid action policy: {error}"));
+        let reporter =
+            BudgetOwnedStreamingIssueReporter::new(run, policy, action_budget.clone())
+                .unwrap_or_else(|error| panic!("budget-owned reporter: {error}"));
+        (run, action_budget, reporter)
+    }
+
+    /// Retain one succeeded terminal so a gap closure has covered membership.
+    fn retain_succeeded_terminal(
+        reporter: &mut BudgetOwnedStreamingIssueReporter,
+        run: StreamRunIdentity,
+        sequence: u64,
+        membership_digest: [u8; 32],
+    ) {
+        let membership = CheckedActionTerminalMembership::for_test(
+            run,
+            StableActionId::from_bytes([u8::try_from(sequence).unwrap_or(0) + 1; 32]),
+            GlobalSequence::new(sequence),
+            ActionTerminalMembershipOutcomeView::Succeeded,
+            ContentDigest::from_bytes(membership_digest),
+        );
+        let fact = reporter
+            .prepare_action_terminal(&membership)
+            .unwrap_or_else(|error| panic!("prepare terminal {sequence}: {error}"));
+        futures::executor::block_on(
+            reporter.report(IssueSequenceUpdate::CheckedActionTerminal(fact)),
+        )
+        .unwrap_or_else(|error| panic!("retain terminal {sequence}: {error}"));
+    }
+
+    /// Mint and retain one gap closure covering a single retained terminal.
+    fn seeded_gap_closure() -> (StreamRunIdentity, PersistedActionGapClosure) {
+        let (run, _budget, mut reporter) = gap_closure_reporter();
+        retain_succeeded_terminal(&mut reporter, run, 2, [0xb2; 32]);
+        let mut terminals = BTreeMap::new();
+        terminals.insert(GlobalSequence::new(2), ContentDigest::from_bytes([0xb2; 32]));
+        let inventory = FrozenActionInventory::for_test(
+            run,
+            GlobalSequence::new(2),
+            ContentDigest::from_bytes([0xa3; 32]),
+            terminals,
+        );
+        let closure = reporter
+            .prepare_no_more_actions_before(&inventory, GlobalSequence::new(2))
+            .unwrap_or_else(|error| panic!("prepare closure: {error}"));
+        futures::executor::block_on(
+            reporter.report(IssueSequenceUpdate::CheckedNoMoreActionsBefore(closure)),
+        )
+        .unwrap_or_else(|error| panic!("retain closure: {error}"));
+        let persisted = reporter
+            .persisted_action_gap_closure()
+            .unwrap_or_else(|| panic!("closure is retained after acceptance"));
+        (run, persisted)
+    }
+
+    /// Encode one ledger-state wire carrying the supplied closure projection.
+    fn ledger_state_wire_json(
+        run: StreamRunIdentity,
+        policy_digest: ContentDigest,
+        action_frontier: Option<GlobalSequence>,
+        action_gap_closure: Option<PersistedActionGapClosure>,
+    ) -> serde_json::Value {
+        let handled_cut = HandledIssueCut::empty();
+        let summary = StreamingIssueSummary::empty();
+        let wire = IssueLedgerStateWire {
+            wire_version: ISSUE_LEDGER_STATE_WIRE_VERSION,
+            run,
+            policy_digest,
+            barrier_epoch: CheckpointEpoch::new(3),
+            handled_cut: &handled_cut,
+            action_frontier,
+            action_gap_closure,
+            input_frontiers: Vec::new(),
+            counters: Vec::new(),
+            summary: &summary,
+        };
+        serde_json::to_value(&wire).unwrap_or_else(|error| panic!("encode ledger wire: {error}"))
+    }
+
+    #[test]
+    fn action_gap_closure_round_trips_through_the_ledger_state_wire() {
+        let (run, persisted) = seeded_gap_closure();
+        let encoded = ledger_state_wire_json(
+            run,
+            ContentDigest::from_bytes([0xc1; 32]),
+            Some(GlobalSequence::new(2)),
+            Some(persisted),
+        );
+        assert!(
+            encoded.get("action_gap_closure").is_some(),
+            "the wire must carry the closure field"
+        );
+
+        let decoded: RestoredIssueLedgerState = serde_json::from_value(encoded)
+            .unwrap_or_else(|error| panic!("decode ledger wire: {error}"));
+        assert_eq!(decoded.action_gap_closure, Some(persisted));
+
+        // The decoded proof revalidates against an independently rebuilt ledger
+        // holding the same terminal membership and frontier.
+        let (_run, restored_budget, mut restored) = gap_closure_reporter();
+        retain_succeeded_terminal(&mut restored, run, 2, [0xb2; 32]);
+        restored.action_frontier = decoded.action_frontier;
+        let charged_before = restored_budget.snapshot().used_bytes;
+        restored
+            .install_restored_action_gap_closure(decoded.action_gap_closure)
+            .unwrap_or_else(|error| panic!("restore closure: {error}"));
+        assert_eq!(restored.persisted_action_gap_closure(), Some(persisted));
+        assert_eq!(
+            restored_budget.snapshot().used_bytes - charged_before,
+            ACTION_GAP_CLOSURE_CHARGE_BYTES
+        );
+    }
+
+    #[test]
+    fn absent_wire_gap_closure_refuses_an_unproven_restored_frontier() {
+        let (run, persisted) = seeded_gap_closure();
+        let mut encoded = ledger_state_wire_json(
+            run,
+            ContentDigest::from_bytes([0xc1; 32]),
+            Some(GlobalSequence::new(2)),
+            Some(persisted),
+        );
+        // A payload written before the proof was carried omits the field
+        // entirely; strict decoding still accepts it as an absent proof.
+        encoded
+            .as_object_mut()
+            .unwrap_or_else(|| panic!("wire encodes as a JSON object"))
+            .remove("action_gap_closure");
+
+        let decoded: RestoredIssueLedgerState = serde_json::from_value(encoded)
+            .unwrap_or_else(|error| panic!("decode ledger wire: {error}"));
+        assert_eq!(decoded.action_gap_closure, None);
+
+        // The restored frontier crosses sequence 0 and 1, which no retained
+        // terminal covers, so without a proof it cannot be accepted.
+        let (_run, restored_budget, mut restored) = gap_closure_reporter();
+        retain_succeeded_terminal(&mut restored, run, 2, [0xb2; 32]);
+        restored.action_frontier = decoded.action_frontier;
+        let charged_before = restored_budget.snapshot().used_bytes;
+        assert_eq!(
+            restored.install_restored_action_gap_closure(decoded.action_gap_closure),
+            Err(StreamingReliabilityError::UnprovenActionGapClosure)
+        );
+        assert!(restored.action_gap_closure.is_none());
+        assert_eq!(restored_budget.snapshot().used_bytes, charged_before);
+    }
+
+    #[test]
+    fn forged_wire_gap_closure_coverage_is_refused_on_restore() {
+        let (run, persisted) = seeded_gap_closure();
+        let (_run, restored_budget, mut restored) = gap_closure_reporter();
+        retain_succeeded_terminal(&mut restored, run, 2, [0xb2; 32]);
+        restored.action_frontier = Some(GlobalSequence::new(2));
+        let charged_before = restored_budget.snapshot().used_bytes;
+
+        // A swapped inventory root no longer reproduces the coverage digest.
+        assert_eq!(
+            restored.install_restored_action_gap_closure(Some(PersistedActionGapClosure {
+                membership_root: ContentDigest::from_bytes([0xff; 32]),
+                ..persisted
+            })),
+            Err(StreamingReliabilityError::ForgedActionGapClosure)
+        );
+        // A swapped coverage digest is refused for the same reason.
+        assert_eq!(
+            restored.install_restored_action_gap_closure(Some(PersistedActionGapClosure {
+                coverage_digest: ContentDigest::from_bytes([0xff; 32]),
+                ..persisted
+            })),
+            Err(StreamingReliabilityError::ForgedActionGapClosure)
+        );
+        assert!(restored.action_gap_closure.is_none());
+        assert_eq!(restored_budget.snapshot().used_bytes, charged_before);
+    }
 }
