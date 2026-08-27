@@ -587,6 +587,19 @@ aiperf-export-sdk
 `-- category-specific helpers with isolated dependency surfaces
 ```
 
+The factory traits and every value that appears in their method signatures are
+not category-SDK helpers. `aiperf-plugin-api` owns the endpoint, transport, and
+exporter factory traits, descriptors, opaque prepared handles, execution-shape
+vocabulary, validation receipts, and category capability vocabulary;
+`aiperf-core` owns the transport-neutral product values those traits consume or
+produce. Category SDKs may implement pure helpers and implementation leaves in
+terms of those API/core contracts, but no category-SDK-defined concrete type may
+appear in an exported boundary method, trait-object vtable, allocation/drop
+contract, or host-owned stored value. Promoting such a type to the boundary
+requires moving its single definition into API/core and regenerating the common
+host ABI universe; leaving it in a category SDK while treating that SDK as a
+selectively rebuilt private dependency is forbidden.
+
 The host runtime depends downward on the API and core crates. Plugin crates
 depend on the API plus only the core or category SDK crates they need. Plugins
 do not depend on the complete orchestration runtime. This avoids dependency

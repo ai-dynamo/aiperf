@@ -54,7 +54,11 @@ A plugin can also have private distribution-controlled native dependencies in
 its declared executable artifact closure. Those dependencies are separate
 runtime libraries only when the plugin's implementation dependency requires
 that native topology. They are not AIPerf API/core/SDK libraries, and they are
-owned and authenticated as part of that plugin package.
+acquired into an owned immutable snapshot, hashed, closure-checked, and bound in
+the installation lock as part of that plugin package. Generation 1 does not
+authenticate a third-party author's identity or signature: local installation
+authority is the trust root. Only first-party distribution inventory has the
+additional authenticated-distribution guarantee.
 
 ## Crate responsibilities
 
@@ -123,7 +127,9 @@ inspection time.
 This crate contains endpoint-category helpers with an isolated dependency
 surface. Examples include endpoint configuration validation, request-body
 construction helpers, response interpretation, and endpoint companion-binding
-support that does not belong in the universal API crate.
+support that does not belong in the universal API crate. It does not define
+factory traits or concrete boundary values; those live in
+`aiperf-plugin-api`/`aiperf-core`.
 
 Only endpoint plugins that use these helpers link them. A helper's concrete
 plugin-private types must not cross into the host unless they are deliberately
@@ -135,15 +141,40 @@ This crate contains transport-category helpers and narrow direct-execution
 services. Only transport plugins that use those helpers link them. HTTP, gRPC,
 WebSocket, dry-run, and Dynosim implementation dependencies remain in their
 measured plugin dependency islands rather than entering universal core by
-default.
+default. Host/plugin service traits and execution-shape values live in
+`aiperf-plugin-api`/`aiperf-core`; this SDK implements helpers against them.
 
 ### `aiperf-export-sdk`
 
-This crate contains exporter-category helpers, including host-owned generic
-capture/fold interfaces and artifact-policy services. Only exporter plugins
-that use the helpers link them. Backend clients and implementation libraries
-for Parquet, OTLP, MLflow, and W&B remain private to their respective plugin
-packages.
+This crate contains exporter-category helpers, including generic capture/fold
+algorithms and artifact-policy helpers. The capture and artifact service
+interfaces themselves live in `aiperf-plugin-api`/`aiperf-core`. Only exporter
+plugins that use the helpers link them. Backend clients and implementation
+libraries for Parquet, OTLP, MLflow, and W&B remain private to their respective
+plugin packages.
+
+All three category SDK artifacts are plugin-private in generation 1. No
+category-SDK-defined concrete type may appear in a boundary signature,
+trait-object vtable, allocation/drop contract, or host-owned stored value. If a
+future design promotes one, its single definition must move into API/core and
+the resulting API/core artifact change becomes universe-wide; mixing boundary
+types and selectively rebuilt private helpers in one category SDK artifact is
+not conforming.
+
+### `aiperf-plugin-host`
+
+This is the dedicated host-side plugin lifecycle crate. Tasks 10 through 16
+place strict manifest decoding and normalization, no-follow package acquisition,
+static native inspection, discovery authority and priority resolution, loader
+and residency ownership, transactional registration/freeze, and canonical lock
+generation/diffing here. It depends only on the plugin API/core/SDK layer and
+must not depend on `aiperf-runtime`.
+
+The runtime consumes its already validated, frozen registry view and retains
+execution orchestration. The CLI constructs and wires the plugin host and
+runtime during bootstrap. A change confined to `aiperf-plugin-host` therefore
+rebuilds the host executable but does not rebuild plugin libraries unless the
+same change also modifies an API/core universe input or emitted build contract.
 
 ### `aiperf-runtime` and `aiperf-cli`
 
@@ -225,7 +256,7 @@ host universe or unrelated plugins.
 | One plugin's private Rust source | No | Yes | No | No | No |
 | One plugin's private Rust dependency | No | Yes | No | No | No |
 | One plugin's private native dependency closure | No | Yes | No | No | No |
-| Category-SDK helper used only by selected plugins | No | Yes | Yes, if they consume it | No | No |
+| Plugin-private category-SDK helper artifact | No | Yes, if it consumes it | Yes, if they consume it | No | No |
 | Host orchestration implementation only | Yes | No | No | No | No |
 | `aiperf-plugin-api` compiled artifact | Yes | Yes | Yes | Yes | No |
 | ABI-facing `aiperf-core` compiled artifact | Yes | Yes | Yes | Yes | No |
@@ -234,12 +265,14 @@ host universe or unrelated plugins.
 | Allocator contract or provider artifact | Yes | Yes | Yes | Yes | Yes |
 | Rust compiler, sysroot, target, panic, or ABI flags | Yes | Yes | Yes | Yes | No, unless its artifact changes |
 | Build-tool diagnostics or UX only | No | No | No | No | No |
-| Manifest priority/discovery configuration only | No | No | No | No | No |
+| Existing-entry priority, discovery-root order, or install-generation only | No | No | No | No | No |
 
 “Same-category consumers” means only plugins that actually link the changed
-category helper. If a category SDK artifact is deliberately included in the
-common ABI-facing closure, its change follows the universe-wide API/core row
-instead.
+plugin-private category helper. The generation-1 category SDK artifacts contain
+no boundary types and are not in the common ABI-facing closure. A future
+promotion cannot merely add such an artifact to that closure while retaining
+the selective-build claim: the boundary type must move into API/core, and that
+API/core change follows the universe-wide row.
 
 ## Concrete change examples
 
@@ -258,7 +291,8 @@ behavior, panic behavior, or native handles crosses the host/plugin boundary.
 
 If the helper is plugin-private implementation code in `aiperf-export-sdk`,
 rebuild the Parquet and W&B plugins. Do not rebuild OTLP, MLflow, transports,
-endpoints, or the host.
+endpoints, or the host. This is valid only because no export-SDK-defined type
+crosses the native boundary.
 
 ### Change an endpoint factory method signature
 
@@ -289,11 +323,20 @@ host universe remain identical.
 Rebuild the host and every plugin. These changes alter code or policy at the
 native boundary and therefore create a new host ABI universe.
 
-### Change priority or `plugins.yaml` selection
+### Change priority or discovery installation state
 
-Do not recompile code. Regenerate and authenticate the relevant manifest or
-installation lock, then start a new AIPerf process. Plugin selection is frozen
-at startup; there is no live registry mutation or hot reload.
+Changing only an existing entry's signed priority, a discovery-root ordering
+input, or the selected immutable installation generation does not recompile
+code. Reacquire the package, regenerate the canonical installation lock, and
+start a new AIPerf process. Plugin selection is frozen at startup; there is no
+live registry mutation or hot reload.
+
+That rule does not cover adding, deleting, or changing a manifest capability
+entry. A package's declared entry set must exactly equal the registrations
+observed from its loaded library. Therefore an endpoint/transport/exporter entry
+change normally requires changing and rebuilding that plugin code, followed by
+manifest and lock regeneration. A manifest-only entry-set change is rejected;
+it is not a no-recompile override mechanism.
 
 ## Telemetry packaging boundary
 

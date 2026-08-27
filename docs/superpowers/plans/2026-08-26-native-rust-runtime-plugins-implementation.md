@@ -888,13 +888,14 @@ misleading names, and orchestration leakage; commit as
 
 **Files:**
 - Modify: `rust/endpoint-sdk/src/lib.rs`
-- Create: `rust/endpoint-sdk/src/config.rs`
-- Create: `rust/endpoint-sdk/src/descriptor.rs`
-- Create: `rust/endpoint-sdk/src/error.rs`
-- Create: `rust/endpoint-sdk/src/models.rs`
-- Create: `rust/endpoint-sdk/src/prepared.rs`
-- Create: `rust/endpoint-sdk/src/factory.rs`
+- Create: `rust/endpoint-sdk/src/config_helpers.rs`
+- Create: `rust/endpoint-sdk/src/request_helpers.rs`
+- Create: `rust/endpoint-sdk/src/response_helpers.rs`
 - Create: `rust/endpoint-sdk/src/grpc.rs`
+- Create: `rust/plugin-api/src/category.rs`
+- Create: `rust/plugin-api/src/factory.rs`
+- Create: `rust/plugin-api/src/prepared.rs`
+- Modify: `rust/core/src/endpoint.rs`
 - Modify: `rust/runtime/Cargo.toml`
 - Modify: `rust/runtime/src/endpoints/mod.rs`
 - Modify: `rust/runtime/src/endpoints/config.rs`
@@ -905,13 +906,12 @@ misleading names, and orchestration leakage; commit as
 - Modify: `rust/runtime/src/transport/grpc/binding.rs`
 - Create: `rust/runtime/src/transport/grpc/kserve_binding.rs`
 - Modify: `rust/transport-sdk/src/lib.rs`
-- Create: `rust/transport-sdk/src/factory.rs`
 - Create: `rust/transport-sdk/src/direct.rs`
 - Create: `rust/transport-sdk/src/execution.rs`
 - Create: `rust/transport-sdk/src/measure.rs`
 - Create: `rust/transport-sdk/src/reduce.rs`
 - Create: `rust/transport-sdk/src/retry.rs`
-- Create: `rust/transport-sdk/src/services.rs`
+- Create: `rust/transport-sdk/src/service_helpers.rs`
 - Create: `rust/transport-sdk/leaf-ownership.toml`
 - Create: `rust/transport-sdk/tests/independent_leaves.rs`
 - Modify: `rust/runtime/src/transport/core/mod.rs`
@@ -937,11 +937,10 @@ misleading names, and orchestration leakage; commit as
 - Modify: `rust/runtime/src/engine/offline_execution.rs`
 - Modify: `rust/plugin-conformance/candidate-source-inventory.toml`
 - Modify: `rust/export-sdk/src/lib.rs`
-- Create: `rust/export-sdk/src/factory.rs`
-- Create: `rust/export-sdk/src/capture.rs`
-- Create: `rust/export-sdk/src/artifact.rs`
+- Create: `rust/export-sdk/src/capture_helpers.rs`
+- Create: `rust/export-sdk/src/artifact_helpers.rs`
 - Create: `rust/export-sdk/src/helpers.rs`
-- Create: `rust/export-sdk/src/prepared.rs`
+- Create: `rust/export-sdk/src/prepared_helpers.rs`
 - Create: `rust/export-sdk/leaf-ownership.toml`
 - Create: `rust/export-sdk/tests/independent_leaves.rs`
 - Modify: `rust/plugin-test-support/src/lib.rs`
@@ -973,30 +972,43 @@ misleading names, and orchestration leakage; commit as
 - Create: `rust/core/tests/histogram_contract.rs`
 
 **Interfaces:**
-- `aiperf-endpoint-sdk` solely owns and produces the common endpoint boundary:
+- `aiperf-plugin-api` solely owns the generation-1 endpoint, transport, and
+  exporter boundary traits and vocabulary: `EndpointFactory`,
+  `TransportFactory`, `ExporterFactory`, the native `Endpoint` compatibility
+  trait, `PreparedEndpoint`, opaque validated/prepared handles, exactly-one
+  transport execution-shape values, readiness/WebSocket capabilities, optional
+  `GrpcEndpointBindingFactory`, exporter capture requirements,
+  `FactoryValidationReceiptV1`, category descriptors, category errors/outcomes,
+  and every other concrete value that appears in those exported method
+  signatures or trait-object vtables. `aiperf-core` solely owns the
+  transport-neutral product values used by those contracts, including
   `RawEndpointConfig`, `EffectiveEndpointConfig`, reset/profiler/content-type
-  policy values, `EndpointDescriptor`, legacy source-spelling `EndpointType`,
-  endpoint error/result and request/response/turn/media DTOs, the native
-  `Endpoint` compatibility trait, `EndpointFactory`, `PreparedEndpoint`,
-  `PreparedRequest`, readiness and WebSocket capability values, and optional
-  `GrpcEndpointBindingFactory`. The runtime endpoint modules become temporary
-  compatibility re-export/adapter homes; runtime-only
+  policy values, request/response/turn/media DTOs, `PreparedRequest`, finalized
+  report/capture projections, and histogram vocabulary. The runtime endpoint
+  modules become temporary compatibility re-export/adapter homes; runtime-only
   `EndpointRegistryBuilder`, frozen lookup/table state, legacy descriptor
   mapping, and concrete dialects remain in runtime until their owning tasks.
-- The same task replaces every runtime definition of those SDK-owned types with
-  imports/re-exports, so there is exactly one Rust type identity. It does not
-  copy or independently redefine config/model/descriptor/trait vocabulary in a
-  candidate package.
-- Also produces `TransportFactory`, exactly-one-shape
-  `RequestTransportExecution|DirectTransportExecution`, `ExporterFactory`,
-  opaque validated values, and `FactoryValidationReceiptV1`.
-- `aiperf-transport-sdk` solely owns `ExecutionSinkBuilder`, `WorkerSink`,
-  transport request/terminal contexts, reduction/measurement/retry contracts,
-  and the capability-limited clock/graph/metrics/artifact/cancellation services
-  used by request and direct transports. Runtime retains scheduling, admission,
-  phase orchestration, capture, and adapters, but no plugin implementation leaf
-  names `RunContext`, `aiperf-runtime`, or a private engine/metrics/scheduled/
-  multiturn type.
+- The same task replaces every runtime definition of those API/core-owned types
+  with API/core imports/re-exports, so there is exactly one Rust type identity.
+  It does not copy or independently redefine config/model/descriptor/trait
+  vocabulary in a category SDK or candidate package.
+- `aiperf-endpoint-sdk`, `aiperf-transport-sdk`, and `aiperf-export-sdk` own
+  only pure reusable helpers and plugin implementation leaves with isolated
+  dependency surfaces. A category-SDK-defined concrete type MUST NOT occur in
+  an exported plugin-API/core boundary signature, trait-object vtable,
+  allocation/drop contract, or host-owned stored value. The category SDKs may
+  supply helper implementations for endpoint formatting/binding,
+  reduction/measurement/retry, exporter formatting, and capability-limited
+  service adapters, but those helpers consume and produce API/core-owned
+  boundary values. Their compiled artifacts remain plugin-private inputs and
+  are selectively rebuilt only for actual consumers.
+- `ExecutionSinkBuilder`, `WorkerSink`, transport request/terminal contexts,
+  and capability-limited clock/graph/metrics/artifact/cancellation service
+  traits that cross the host/plugin boundary live in API/core. The transport
+  SDK owns their reusable implementation helpers, not their boundary type
+  identities. Runtime retains scheduling, admission, phase orchestration,
+  capture, and adapters, but no plugin implementation leaf names `RunContext`,
+  `aiperf-runtime`, or a private engine/metrics/scheduled/multiturn type.
 - This task performs the behavior-preserving production source split required
   for later equality copies. HTTP and gRPC sink leaves are rewritten against
   SDK/core contexts while host adapters map existing scheduling state. WebSocket
@@ -1011,13 +1023,14 @@ misleading names, and orchestration leakage; commit as
   to `implementation_leaf`, records their post-split BLAKE3 digests, and proves
   every former mixed/private source is either a named host adapter or absent
   from candidate ownership. Tasks 24–34 never edit this inventory.
-- The generic gRPC binding factory/DTO contract moves to endpoint SDK.
+- The generic gRPC binding factory/DTO boundary contract moves to API/core;
+  reusable binding helpers move to endpoint SDK.
   `runtime/transport/grpc/binding.rs` retains only host registry/builder state;
   concrete KServe implementation moves to
   `runtime/transport/grpc/kserve_binding.rs`, which Task 30 may equality-copy.
-- `aiperf-export-sdk` solely owns the post-report execution boundary
-  (`PreparedExporterV1`), exporter error/outcome values, and the shared pure
-  compatibility helpers `SummarySeries`, `CanonicalStats`, `summary_series`,
+- `aiperf-plugin-api` solely owns the post-report execution boundary
+  (`PreparedExporterV1`) and exporter error/outcome values. `aiperf-export-sdk`
+  owns the shared pure compatibility helpers `SummarySeries`, `CanonicalStats`, `summary_series`,
   `flatten_stats`, `finite_passthrough`, `finite_guarded`, `crlf_csv_writer`,
   `normalize_endpoint_display`, and `default_run_name`. Their report/stat input
   types are the exact `aiperf-core` finalized-report types moved by Task 4;
@@ -1044,12 +1057,13 @@ misleading names, and orchestration leakage; commit as
   `plugin-test-support::export` owns the common deterministic report fixture and
   capability-scoped temporary artifact harness used by exporter leaf tests; it
   is test-only and is not a plugin boundary dependency.
-- `ExporterCaptureRequirementsV1` is a sorted set over exactly
+- API-owned `ExporterCaptureRequirementsV1` is a sorted set over exactly
   `FinalReport`, `ExactRecordsV1`, and
   `FoldedProjectionV1(GenAiClientHistogramsV1)`.
-- Solely defines and exports `FactoryValidationReceiptV1`, including selected
-  **category**, canonical factory ID, descriptor digest, authored-config digest,
-  semantic-config digest, sorted host resources, and canonical capture
+- `aiperf-plugin-api` solely defines and exports
+  `FactoryValidationReceiptV1`, including selected **category**, canonical
+  factory ID, descriptor digest, authored-config digest, semantic-config digest,
+  sorted host resources, and canonical capture
   requirements. It also defines the complete public `ExactRecordV1`,
   `ExactRecordsV1`, `GenAiClientHistogramsV1`, `ExplicitHistogramV1`, projection
   schema/version, metric/dimension/bounds, ordering, and error DTO vocabulary;
@@ -1072,8 +1086,10 @@ field independently. Golden-test every core-owned metric-source alias, unit
 conversion, explicit bounds array, inclusion rule, and attribute-normalization
 constant, including first-upper-bound selection at `value <= bound`.
 Compile a separate-workspace endpoint plugin that imports every common endpoint
-type only from `aiperf-endpoint-sdk`; source guards reject duplicate definitions
-in runtime and any `aiperf-runtime` dependency from API/core/category SDKs.
+boundary type only from `aiperf-plugin-api` or `aiperf-core` and imports only
+pure helpers from `aiperf-endpoint-sdk`; source guards reject duplicate
+definitions in runtime/category SDKs and any `aiperf-runtime` dependency from
+API/core/category SDKs.
 Compile the actual post-split HTTP, gRPC, WebSocket, dry-run, Dynosim-direct,
 KServe-binding, and Riva-binding implementation leaves in a standalone fixture
 using only core/category SDK dependencies. `leaf-ownership.toml` classifies
@@ -1098,20 +1114,23 @@ Expected: FAIL because factory and receipt types are absent.
 
 Use sealed host-owned enums only for execution shape and capture vocabulary,
 not factory IDs. Opaque validated configuration remains owned by the exact
-factory and is returned with a receipt containing selected category, canonical factory ID,
-descriptor digest, authored-config digest, semantic-config digest, sorted host
-resources, and canonical capture requirements.
+factory and is returned with a receipt containing selected category, canonical
+factory ID, descriptor digest, authored-config digest, semantic-config digest,
+sorted host resources, and canonical capture requirements.
 `aiperf-core::histogram` owns the exact metric-source aliases, unit conversions,
 explicit bounds arrays, inclusion rules, attribute-normalization constants, and
 the first-upper-bound rule `value <= bound`; no exporter owns a private copy.
-Move the common endpoint definitions listed in Interfaces into
-`aiperf-endpoint-sdk`, preserve their existing source/serde behavior exactly,
-and leave runtime compatibility re-exports so downstream product migration can
-be staged without a second type family.
-Move shared transport contracts and reusable reduction/measurement/retry logic
-once into core/transport SDK, split the concrete leaves and host adapters at the
-exact paths listed above, and preserve runtime compatibility re-exports. The
-runtime continues to execute the same static factories until Task 39.
+Move the common boundary definitions listed in Interfaces into
+`aiperf-plugin-api` or `aiperf-core` according to their stated ownership,
+preserve existing source/serde behavior exactly, and leave runtime
+compatibility re-exports so downstream product migration can be staged without
+a second type family. Category SDK files MUST NOT define the boundary factory
+traits.
+Move shared transport boundary contracts once into API/core and reusable
+reduction/measurement/retry logic into transport SDK, split the concrete leaves
+and host adapters at the exact paths listed above, and preserve runtime
+compatibility re-exports. The runtime continues to execute the same static
+factories until Task 39.
 Likewise, move the shared exporter helpers once into export SDK, rewrite each
 listed exporter leaf around its implementation-owned config plus finalized
 core report/capture and `ArtifactAccess`, and leave legacy static registry,
