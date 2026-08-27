@@ -37,7 +37,7 @@ SPDX-License-Identifier: Apache-2.0
 | Benchmark security-scope correction | Complete | Normative overlay `benchmark-security-scope-course-correction.md` approved; generation one retains BLAKE3 identity/integrity and existing provider/cellular boundaries, while encrypted resumable closed-loop state and direct base-streaming crypto dependencies are deferred |
 | Base-streaming direct crypto removal | Awaiting final gate | Clean branch `ajc/streaming-security-scope` at `39555dad68`; focused RED/GREEN and feature inventories passed; targeted Clippy status and rustfmt must be completed before review/merge |
 | Task 1D-R reliability ledger | Complete | Branch `ajc/streaming-task-1dr-ledger` at `6afd10587b`; two fix waves addressed all ten findings (B1-B5 code-quality + SC1-SC4 spec-compliance); dual APPROVE verdicts; merge `6afd10587b` into integration; 87 lib + 15 reliability + 22 contracts + 29 checkpoint_backend tests green |
-| Task 1D-R versioned checkpoint authority | Pending rebase | Branch `ajc/streaming-task-1dr-checkpoint` at `50101c69a2`; pending rebase onto updated integration head post-ledger-merge |
+| Task 1D-R versioned checkpoint authority | Complete | Branch `ajc/streaming-task-1dr-checkpoint` at `9d2006242c`; rebased onto post-ledger integration; dual APPROVE; 91 lib + 39 checkpoint_backend + 22 contracts + 15 participants green; merged |
 
 Baseline note: the full feature-off runtime suite reached execution after the
 repair and reported 1907 passing tests plus one pre-existing version-fixture
