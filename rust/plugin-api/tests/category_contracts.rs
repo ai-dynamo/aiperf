@@ -478,9 +478,12 @@ fn endpoint_factory_validates_authored_configuration() {
 
     let authored = AuthoredConfigV1::new(EndpointFactory::id(&factory), br#"{"model":"x"}"#);
     assert!(!authored.is_empty_object());
-    let refusal = factory
-        .validate(authored)
-        .expect_err("unknown fields must be refused");
+    // `PreparedEndpoint` is deliberately not `Debug` — it holds a plugin-owned
+    // trait object the host may not inspect — so the refusal is matched rather
+    // than unwrapped.
+    let Err(refusal) = factory.validate(authored) else {
+        panic!("unknown fields must be refused");
+    };
     assert_eq!(refusal.category(), Some(PluginCategory::Endpoint));
 }
 
