@@ -52,7 +52,7 @@ impl Fixture {
     fn new() -> Self {
         let directory = tempfile::tempdir().expect("temporary fixture directory");
         let cargo = directory.path().join("cargo");
-        let script = b"#!/bin/sh\nset -eu\nprintf '%s\\n' \"$@\" > \"$CARGO_TARGET_DIR/argv\"\nprintf 'incremental=%s\\nlto=%s\\n' \"$CARGO_INCREMENTAL\" \"$CARGO_PROFILE_RELEASE_LTO\" > \"$CARGO_TARGET_DIR/environment\"\ncp artifact-source \"$CARGO_TARGET_DIR/artifact.bin\"\n";
+        let script = b"#!/bin/sh\nset -eu\nprintf '%s\\n' \"$@\" > \"$CARGO_TARGET_DIR/argv\"\nprintf 'incremental=%s\\nlto=%s\\n' \"$CARGO_INCREMENTAL\" \"$CARGO_PROFILE_RELEASE_LTO\" > \"$CARGO_TARGET_DIR/environment\"\ncp implementation.rs \"$CARGO_TARGET_DIR/implementation-seen\"\ncase \"$CARGO_TARGET_DIR\" in\n  *static-target) cp static-artifact-source \"$CARGO_TARGET_DIR/artifact.bin\" ;;\n  *dynamic-target) cp dynamic-artifact-source \"$CARGO_TARGET_DIR/artifact.bin\" ;;\n  *) exit 65 ;;\nesac\n";
         write_executable(&cargo, script);
         let sysroot = directory.path().join("sysroot");
         std::fs::create_dir_all(&sysroot).expect("sysroot exists");
@@ -87,10 +87,16 @@ impl Fixture {
             .expect("static lock is written");
         std::fs::write(dynamic_source.join("Cargo.lock"), dynamic_lock_bytes)
             .expect("dynamic lock is written");
-        std::fs::write(static_source.join("artifact-source"), b"static artifact")
-            .expect("static artifact input is written");
-        std::fs::write(dynamic_source.join("artifact-source"), b"dynamic artifact")
-            .expect("dynamic artifact input is written");
+        for source in [&static_source, &dynamic_source] {
+            std::fs::write(source.join("static-artifact-source"), b"static artifact")
+                .expect("static artifact input is written");
+            std::fs::write(source.join("dynamic-artifact-source"), b"dynamic artifact")
+                .expect("dynamic artifact input is written");
+            std::fs::write(source.join("implementation.rs"), b"shared implementation\n")
+                .expect("implementation input is written");
+            std::fs::create_dir_all(source.join("retained-empty-directory"))
+                .expect("empty source directory is retained");
+        }
 
         let static_target = directory.path().join("static-target");
         let dynamic_target = directory.path().join("dynamic-target");
@@ -420,6 +426,73 @@ fn both_members_require_one_source_and_lock_authority_before_execution() {
 }
 
 #[test]
+fn complete_source_tree_must_match_before_either_build_runs() {
+    let fixture = Fixture::new();
+    std::fs::write(
+        fixture.dynamic_source.join("implementation.rs"),
+        b"different build-reachable implementation\n",
+    )
+    .expect("dynamic implementation is changed outside the receipt and lock");
+
+    let error = run_paired_build_v1(&fixture.plan())
+        .expect_err("different complete source trees must fail closed");
+    assert!(
+        error.to_string().contains("complete source tree"),
+        "unexpected refusal: {error}"
+    );
+    assert!(!fixture.static_target.exists());
+    assert!(!fixture.dynamic_target.exists());
+}
+
+#[test]
+fn source_entry_mode_and_empty_directories_are_part_of_tree_identity() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let fixture = Fixture::new();
+    let implementation = fixture.dynamic_source.join("implementation.rs");
+    let mut permissions = std::fs::metadata(&implementation)
+        .expect("implementation metadata is available")
+        .permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&implementation, permissions)
+        .expect("dynamic implementation mode changes");
+    let error = run_paired_build_v1(&fixture.plan())
+        .expect_err("different canonical entry modes must fail closed");
+    assert!(error.to_string().contains("complete source tree"));
+    assert!(!fixture.static_target.exists());
+    assert!(!fixture.dynamic_target.exists());
+
+    let fixture = Fixture::new();
+    std::fs::create_dir(fixture.dynamic_source.join("additional-empty-directory"))
+        .expect("dynamic-only empty directory is created");
+    let error = run_paired_build_v1(&fixture.plan())
+        .expect_err("different empty directory census must fail closed");
+    assert!(error.to_string().contains("complete source tree"));
+    assert!(!fixture.static_target.exists());
+    assert!(!fixture.dynamic_target.exists());
+}
+
+#[test]
+fn source_links_are_refused_before_either_build_runs() {
+    use std::os::unix::fs::symlink;
+
+    let fixture = Fixture::new();
+    symlink(
+        fixture.dynamic_source.join("implementation.rs"),
+        fixture.dynamic_source.join("implementation-link.rs"),
+    )
+    .expect("source symlink is created");
+
+    let error = run_paired_build_v1(&fixture.plan()).expect_err("source links must fail closed");
+    assert!(
+        error.to_string().contains("source tree") || error.to_string().contains("link"),
+        "unexpected refusal: {error}"
+    );
+    assert!(!fixture.static_target.exists());
+    assert!(!fixture.dynamic_target.exists());
+}
+
+#[test]
 fn compiler_and_sysroot_identity_mismatches_are_rejected_before_execution() {
     let fixture = Fixture::new();
     let mut wrong_version = fixture.plan();
@@ -443,7 +516,7 @@ fn compiler_identity_is_revalidated_between_pair_members() {
     let fixture = Fixture::new();
     let mut plan = fixture.plan();
     let mutating_cargo = format!(
-        "#!/bin/sh\nset -eu\nprintf '%s\\n' \"$@\" > \"$CARGO_TARGET_DIR/argv\"\nprintf 'incremental=%s\\nlto=%s\\n' \"$CARGO_INCREMENTAL\" \"$CARGO_PROFILE_RELEASE_LTO\" > \"$CARGO_TARGET_DIR/environment\"\ncp artifact-source \"$CARGO_TARGET_DIR/artifact.bin\"\nprintf '# mutation\\n' >> '{}'\n",
+        "#!/bin/sh\nset -eu\nprintf '%s\\n' \"$@\" > \"$CARGO_TARGET_DIR/argv\"\nprintf 'incremental=%s\\nlto=%s\\n' \"$CARGO_INCREMENTAL\" \"$CARGO_PROFILE_RELEASE_LTO\" > \"$CARGO_TARGET_DIR/environment\"\ncase \"$CARGO_TARGET_DIR\" in\n  *static-target) cp static-artifact-source \"$CARGO_TARGET_DIR/artifact.bin\" ;;\n  *dynamic-target) cp dynamic-artifact-source \"$CARGO_TARGET_DIR/artifact.bin\" ;;\n  *) exit 65 ;;\nesac\nprintf '# mutation\\n' >> '{}'\n",
         fixture.rustc.display()
     );
     write_executable(&fixture.cargo, mutating_cargo.as_bytes());

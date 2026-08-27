@@ -140,7 +140,7 @@ impl Fixture {
     fn new() -> Self {
         let directory = tempfile::tempdir().expect("temporary fixture directory");
         let cargo = directory.path().join("cargo");
-        let cargo_bytes = b"#!/bin/sh\nset -eu\ncp artifact-source \"$CARGO_TARGET_DIR/artifact.bin\"\nchmod 755 \"$CARGO_TARGET_DIR/artifact.bin\"\n".to_vec();
+        let cargo_bytes = b"#!/bin/sh\nset -eu\ncase \"$CARGO_TARGET_DIR\" in\n  *static-target) cp static-artifact-source \"$CARGO_TARGET_DIR/artifact.bin\" ;;\n  *dynamic-target) cp dynamic-artifact-source \"$CARGO_TARGET_DIR/artifact.bin\" ;;\n  *) exit 65 ;;\nesac\nchmod 755 \"$CARGO_TARGET_DIR/artifact.bin\"\n".to_vec();
         write_executable(&cargo, &cargo_bytes);
 
         let sysroot = directory.path().join("sysroot");
@@ -162,24 +162,23 @@ impl Fixture {
         std::fs::create_dir_all(&dynamic_source).expect("dynamic source exists");
         let static_artifact = runtime_artifact("static authority fixture");
         let dynamic_artifact = runtime_artifact("dynamic authority fixture");
-        for (source, identity, lock, artifact) in [
+        for (source, identity, lock) in [
             (
                 &static_source,
                 b"shared complete source identity\n".as_slice(),
                 b"shared lock\n".as_slice(),
-                static_artifact.as_slice(),
             ),
             (
                 &dynamic_source,
                 b"shared complete source identity\n".as_slice(),
                 b"shared lock\n".as_slice(),
-                dynamic_artifact.as_slice(),
             ),
         ] {
             std::fs::write(source.join("source.identity"), identity)
                 .expect("source identity is written");
             std::fs::write(source.join("Cargo.lock"), lock).expect("lock is written");
-            write_executable(&source.join("artifact-source"), artifact);
+            write_executable(&source.join("static-artifact-source"), &static_artifact);
+            write_executable(&source.join("dynamic-artifact-source"), &dynamic_artifact);
         }
 
         let static_target = directory.path().join("static-target");
