@@ -872,8 +872,12 @@ fn continuous_reboots_exhaust_the_five_pair_replacement_cap_and_resume_diagnoses
         .resumed_pair_context
         .as_ref()
         .expect("the restart diagnoses the interrupted pair");
+    let interrupted = first
+        .raw_pair_history
+        .last()
+        .expect("the first attempt retained its interrupted pair");
     assert_eq!(resumed.attempt_ordinal, 1);
-    assert_eq!(resumed.scenario, "http_non_streaming_c1");
-    assert_eq!(resumed.pair_id, "pair-00");
+    assert_eq!(resumed.scenario, interrupted.raw.scenario);
+    assert_eq!(resumed.pair_id, interrupted.raw.pair_id);
     assert_ne!(resumed.observed.boot_identity, "boot-after-restart");
 }
