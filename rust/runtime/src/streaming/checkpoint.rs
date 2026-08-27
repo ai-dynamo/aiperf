@@ -2114,29 +2114,21 @@ mod tests {
         }
     }
 
-    /// Unpinned v4 generation-digest golden.
+    /// Pinned v4 generation-digest golden.
     ///
-    /// This value is a deliberate placeholder, not a derived digest. The v4
-    /// digest changes for two reasons that land together: the hash domain moved
-    /// from `aiperf.streaming.committed-checkpoint-generation.v3` to `.v4`, and
-    /// `CheckpointCut` gained `handled_issues`, which the digest absorbs through
-    /// the single opaque `serde_json::to_vec(cut)` field. Neither is derivable on
-    /// paper, so the golden is cut exactly once, after both are in the tree.
-    ///
-    /// Re-pin procedure:
-    /// 1. `cargo test -p aiperf-runtime --features streaming --lib
-    ///    checkpoint::tests::v4_run_bound_generation_digest_is_stable --
-    ///    --exact --nocapture`
-    /// 2. Transcribe the LEFT side of the `assert_eq!` failure verbatim into this
-    ///    array and rename the constant to `V4_RUN_BOUND_GENERATION_DIGEST`.
-    /// 3. Re-run the same command; it must be green, and the full
-    ///    `--lib checkpoint` filter must be 14/14.
-    ///
-    /// Sanity gate: the transcribed value MUST differ from the retired v3 pin
-    /// `519bf192518f43e9d4accd6bd8ed38e885a1dce06d8d35579bf5f99b794d10f1`. If it
-    /// does not, neither the domain rename nor the handled cut reached the digest
-    /// and the integration is wrong.
-    const PLACEHOLDER_REPIN_AFTER_BUILD: [u8; 32] = [0x00; 32];
+    /// The v4 digest changed for two reasons that landed together: the hash
+    /// domain moved from `aiperf.streaming.committed-checkpoint-generation.v3`
+    /// to `.v4`, and `CheckpointCut` gained `handled_issues`, which the digest
+    /// absorbs through the single opaque `serde_json::to_vec(cut)` field.
+    /// Neither is derivable on paper, so this golden was cut once both were in
+    /// the tree. It differs from the retired v3 pin
+    /// `519bf192518f43e9d4accd6bd8ed38e885a1dce06d8d35579bf5f99b794d10f1`,
+    /// which proves both the domain rename and the handled cut reach the digest.
+    const V4_RUN_BOUND_GENERATION_DIGEST: [u8; 32] = [
+        0xd3, 0xda, 0x51, 0xce, 0x16, 0x99, 0x25, 0x05, 0x80, 0x8e, 0x7a, 0x52, 0x7f, 0xcf, 0xe4,
+        0x90, 0x98, 0x74, 0xb5, 0x7b, 0x5b, 0x35, 0xe0, 0x7e, 0xa4, 0x3c, 0x61, 0xf1, 0x5a, 0x0c,
+        0x13, 0xb3,
+    ];
 
     #[test]
     fn v4_run_bound_generation_digest_is_stable() {
@@ -2151,7 +2143,7 @@ mod tests {
 
         assert_eq!(
             candidate.generation().digest(),
-            &ContentDigest::from_bytes(PLACEHOLDER_REPIN_AFTER_BUILD)
+            &ContentDigest::from_bytes(V4_RUN_BOUND_GENERATION_DIGEST)
         );
     }
 
