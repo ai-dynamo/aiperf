@@ -994,3 +994,83 @@ async fn result_index_pages_advance_strictly_without_repeating_descriptors() {
     }
     assert_eq!(projections, ["first", "second", "third"]);
 }
+
+#[tokio::test(flavor = "current_thread")]
+async fn stage_results_with_issue_receipts_commits_receipt_partition() {
+    let backend = MemoryCheckpointBackend::new(support::backend_limits()).unwrap();
+    let run = support::run_id(1);
+    let (_reporter_budget, receipts, payload_bytes) =
+        support::issue_receipt_partition(run, 1).await;
+    let receipt_root = *receipts.receipt_root();
+
+    let mut transaction = support::transaction_with_all_participants(&backend, run).await;
+    let mut ordinary = vec![support::result_partition(run, 1).await];
+    let mut issue_receipts = Some(receipts);
+    let prepared = transaction
+        .stage_results(&mut ordinary, &mut issue_receipts)
+        .await
+        .unwrap();
+
+    // Staging takes the handoff and binds it to the prepared index root.
+    assert!(issue_receipts.is_none());
+    assert!(ordinary.is_empty());
+    let binding = prepared.issue_receipt_binding().unwrap();
+    assert_eq!(binding.receipt_root(), &receipt_root);
+    assert_eq!(binding.result_index_root(), prepared.index_root());
+    assert_eq!(prepared.descriptors().len(), 2);
+
+    let receipt_descriptor = prepared
+        .descriptors()
+        .iter()
+        .find(|descriptor| descriptor.projection.as_str() == "streaming_issue_receipts")
+        .expect("staged receipt descriptor")
+        .clone();
+    assert_eq!(
+        receipt_descriptor.membership_root, receipt_root,
+        "the staged descriptor carries the reporter's membership root"
+    );
+    drop(prepared);
+    transaction.commit(support::metadata_at(1)).await.unwrap();
+
+    // The committed generation round-trips the exact retained receipt bytes.
+    let reader = backend
+        .open_latest(&run, &support::expectations(run))
+        .await
+        .unwrap()
+        .unwrap();
+    let segment = reader.read_segment(&receipt_descriptor).await.unwrap();
+    assert_eq!(segment.payload_bytes(), payload_bytes.as_slice());
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn stage_results_rejects_mismatched_result_index_root() {
+    use aiperf_runtime::streaming::identity::ContentDigest;
+    use aiperf_runtime::streaming::results::PreparedResultEpoch;
+
+    let backend = MemoryCheckpointBackend::new(support::backend_limits()).unwrap();
+    let run = support::run_id(1);
+    let (_reporter_budget, receipts, _payload) = support::issue_receipt_partition(run, 1).await;
+
+    let mut transaction = support::transaction_with_all_participants(&backend, run).await;
+    let mut issue_receipts = Some(receipts);
+    let prepared = transaction
+        .stage_results(&mut Vec::new(), &mut issue_receipts)
+        .await
+        .unwrap();
+    let index_root = *prepared.index_root();
+    let (_root, descriptors, item_count, byte_length, binding) = prepared.into_parts();
+    let binding = binding.expect("staged receipt binding");
+    assert_eq!(binding.result_index_root(), &index_root);
+
+    // Reassembling the epoch under a root the binding does not name is the
+    // refusal `PreparedResultEpoch::new` exists to make.
+    let error = PreparedResultEpoch::new(
+        ContentDigest::from_bytes([0xde; 32]),
+        descriptors,
+        item_count,
+        byte_length,
+        Some(binding),
+    )
+    .unwrap_err();
+    assert_eq!(error, CheckpointError::ObjectVerification);
+}

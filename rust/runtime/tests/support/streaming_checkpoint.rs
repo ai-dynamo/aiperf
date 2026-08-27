@@ -19,8 +19,17 @@ use aiperf_runtime::streaming::{
         ImmutableObjectInventory, MemoryCheckpointBackend, MemoryCheckpointLimits,
         MemoryLiveBudgetUsage,
     },
-    identity::{ContentDigest, GlobalSequence, LogicalReplayRunId, SessionCausalFrontier},
-    reliability::HandledIssueCut,
+    identity::{
+        ContentDigest, GlobalSequence, ImmutableObjectIdentity, LogicalReplayRunId,
+        SessionCausalFrontier, StableRecordId,
+    },
+    reliability::{
+        BudgetOwnedStreamingIssueReporter, HandledIssueCut, IssueSequenceUpdate,
+        OrdinaryStreamingIssue, PreparedIssueReceiptResultPartition, PreparedStreamingIssuePolicy,
+        StreamingInputDomainIdentity, StreamingIssueClass, StreamingIssueComponentId,
+        StreamingIssueDisposition, StreamingIssueReporter, StreamingIssueScopeKind,
+        StreamingIssueThresholdRule, submission_queue_charge_bytes,
+    },
     results::{
         BudgetedResultDescriptor, CellId, ResultPartition, ResultProjectionId, ResultSchemaVersion,
         ResultSegmentDescriptor, WorkerId,
@@ -29,6 +38,10 @@ use aiperf_runtime::streaming::{
 };
 use async_trait::async_trait;
 use bytes::Bytes;
+
+use aiperf_runtime::streaming::failure::{
+    DecodeFailureCode, OrdinaryStreamingFailure, StreamFormatError,
+};
 
 pub fn cut_at(value: u64) -> CheckpointCut {
     CheckpointCut {
@@ -655,4 +668,111 @@ impl StreamingCheckpointParticipant for CountingParticipant {
         self.committed_receipt = Some(receipt.clone());
         Ok(())
     }
+}
+
+/// Build one real detailed-receipt result partition from a reporter that has
+/// classified exactly one record issue.
+///
+/// The returned payload bytes are the exact canonical encoding the reporter
+/// retained, so a caller can assert the committed generation round-trips them.
+pub async fn issue_receipt_partition(
+    run: StreamRunIdentity,
+    epoch: u64,
+) -> (
+    StreamingResourceBudget,
+    PreparedIssueReceiptResultPartition,
+    Vec<u8>,
+) {
+    let reporter_budget = StreamingResourceBudget::new(BudgetLimits {
+        max_items: 65,
+        max_bytes: submission_queue_charge_bytes() + 64 * 1024,
+    })
+    .expect("valid reporter budget");
+    let policy = PreparedStreamingIssuePolicy::new([
+        StreamingIssueThresholdRule::new(
+            StreamingIssueComponentId::new("record_default").expect("valid rule ID"),
+            StreamingIssueScopeKind::Record,
+            StreamingIssueClass::Permanent,
+            None,
+            0,
+            StreamingIssueDisposition::Quarantine,
+            None,
+        )
+        .expect("valid record rule"),
+    ])
+    .expect("valid record policy");
+    let mut reporter =
+        BudgetOwnedStreamingIssueReporter::new(run, policy, reporter_budget.clone())
+            .expect("budget-owned reporter");
+
+    let input_domain = StreamingInputDomainIdentity::new(
+        ContentDigest::from_bytes([0x21; 32]),
+        ImmutableObjectIdentity::from_bytes([0x20; 32]),
+    );
+    let issue = OrdinaryStreamingIssue::record(
+        run,
+        input_domain.clone(),
+        StableRecordId::from_bytes([0x22; 32]),
+        StreamingIssueClass::Permanent,
+        ContentDigest::from_bytes([0x33; 32]),
+        SourcePosition::new(7),
+        0,
+        ContentDigest::from_bytes([0x44; 32]),
+        OrdinaryStreamingFailure::Format(StreamFormatError::decode(DecodeFailureCode::Syntax)),
+    )
+    .expect("valid record issue");
+    reporter
+        .report(IssueSequenceUpdate::Issue(issue))
+        .await
+        .expect("retain record issue");
+    reporter
+        .report(IssueSequenceUpdate::NoMoreBefore {
+            input_domain,
+            through: SourcePosition::new(7),
+        })
+        .await
+        .expect("classify record issue");
+
+    let view = reporter
+        .receipt_partition_view(&CheckpointBarrier {
+            run,
+            epoch: CheckpointEpoch::new(epoch),
+            cut: cut_at(epoch),
+            plan_digest: ContentDigest::from_bytes([0x55; 32]),
+        })
+        .await
+        .expect("prepare issue receipt partition");
+    let payload_bytes = view.payload_bytes().to_vec();
+    let descriptor = ResultSegmentDescriptor {
+        run,
+        epoch: CheckpointEpoch::new(epoch),
+        cell_id: CellId::new(0),
+        worker_id: WorkerId::new(0),
+        projection: ResultProjectionId::new("streaming_issue_receipts")
+            .expect("valid issue projection"),
+        schema: ResultSchemaVersion::new(2),
+        first_sequence: GlobalSequence::new(0),
+        last_sequence: GlobalSequence::new(0),
+        item_count: 1,
+        byte_length: u64::try_from(payload_bytes.len()).expect("small payload"),
+        membership_root: *view.receipt_root(),
+        payload_digest: ContentDigest::from_bytes(*blake3::hash(&payload_bytes).as_bytes()),
+    };
+    let descriptor_bytes = std::mem::size_of::<ResultSegmentDescriptor>()
+        + descriptor.projection.retained_allocation_bytes();
+    let descriptor_budget = StreamingResourceBudget::new(BudgetLimits {
+        max_items: 1,
+        max_bytes: descriptor_bytes,
+    })
+    .expect("valid descriptor budget");
+    let descriptor_lease = descriptor_budget
+        .acquire(1, descriptor_bytes)
+        .await
+        .expect("issue descriptor lease");
+    let descriptor = BudgetedResultDescriptor::new(descriptor, descriptor_lease)
+        .expect("exact issue descriptor charge");
+    let handoff = view
+        .into_result_partition(descriptor)
+        .expect("move issue receipt partition");
+    (reporter_budget, handoff, payload_bytes)
 }
