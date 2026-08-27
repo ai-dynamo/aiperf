@@ -702,6 +702,32 @@ pub fn run_controlled_runtime_with_exporters_v1(
     ))
 }
 
+/// Directory holding every controller-owned attempt ledger under one root.
+const CONTROLLER_STATE_DIRECTORY: &str = ".aiperf-parity-state";
+
+/// Resolve the one ledger location owned by a sealed experiment identity.
+///
+/// The caller names only a state root. Two different requested filenames under
+/// the same root therefore resolve to the same ledger, so one sealed identity
+/// can never restart at attempt 1 through a new output path.
+pub fn controlled_attempt_ledger_path(state_root: &Path, experiment_identity_blake3: &str) -> PathBuf {
+    let identity = experiment_identity_blake3
+        .strip_prefix("blake3:")
+        .unwrap_or(experiment_identity_blake3);
+    state_root
+        .join(CONTROLLER_STATE_DIRECTORY)
+        .join(format!("{identity}.jsonl"))
+}
+
+/// Reduce a caller-requested path to the controller state root that owns it.
+fn controller_state_root(requested: &Path) -> &Path {
+    if requested.extension().is_some() {
+        requested.parent().unwrap_or(requested)
+    } else {
+        requested
+    }
+}
+
 fn run_controlled_runtime_internal(
     build_report: &BuildPairReportV1,
     mut exporter_factory: Option<&mut dyn ControlledExporterWorkloadFactory>,
@@ -822,8 +848,17 @@ fn run_controlled_runtime_internal(
     let experiment_identity_bytes = observed
         .canonical_identity_bytes()
         .map_err(|error| ControlledRuntimeError::new(error.to_string()))?;
-    let mut attempt_ledger =
-        AttemptLedger::acquire(attempt_ledger_path, &experiment_identity_blake3)?;
+    let state_root = controller_state_root(attempt_ledger_path);
+    let ledger_path = controlled_attempt_ledger_path(state_root, &experiment_identity_blake3);
+    if let Some(parent) = ledger_path.parent() {
+        fs::create_dir_all(parent).map_err(|error| {
+            ControlledRuntimeError::new(format!(
+                "cannot create controller state root {}: {error}",
+                parent.display()
+            ))
+        })?;
+    }
+    let mut attempt_ledger = AttemptLedger::acquire(&ledger_path, &experiment_identity_blake3)?;
     let expected_attempt_ordinal = attempt_ledger.next_attempt_ordinal()?;
     let exporter_artifacts = if exporter_factory.is_some() {
         Some([
