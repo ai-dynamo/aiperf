@@ -233,7 +233,7 @@ Expected: FAIL because `cellular::streaming_protocol` and `PrepareAction` do not
 In `cellular_registration.rs`, construct the existing controller/worker test authorities and assert: correct controller frame opens; wrong destination, purpose, peer, signature, session nonce, replayed sequence, and mutated payload each return `AdmissionRejection`; payload decode is not attempted on authentication failure.
 
 ```rust
-#[test]
+#[tokio::test(flavor = "current_thread")]
 async fn streaming_frame_binds_destination_purpose_and_payload_before_decode() {
     let fixture = StreamingAuthorityFixture::new(CellularRole::Cell(2));
     let frame = fixture.controller.seal_streaming_to_cell(
