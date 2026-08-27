@@ -27,7 +27,7 @@ class TestRandomGeneratorCanary:
     REFERENCE_FILE = Path(__file__).parent / "assets" / "canary_reference_inputs.json"
 
     async def test_random_generator_canary(
-        self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer
+        self, cli: AIPerfCLI, tests.aiperf_mock_server: AIPerfMockServer
     ):
         """Verify random generator produces exact output matching reference.
 
@@ -42,7 +42,7 @@ class TestRandomGeneratorCanary:
             aiperf profile \
                 --model-names "openai/gpt-oss-20b,openai/gpt-oss-120b" \
                 --model-selection-strategy random \
-                --url {aiperf_mock_server.url} \
+                --url {tests.aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --request-count 20 \
                 --concurrency 2 \

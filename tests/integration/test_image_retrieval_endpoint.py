@@ -14,7 +14,7 @@ class TestImageRetrievalEndpoint:
     """Integration tests for NIM Image Retrieval endpoint."""
 
     async def test_basic_image_retrieval(
-        self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer
+        self, cli: AIPerfCLI, tests.aiperf_mock_server: AIPerfMockServer
     ):
         """Image retrieval with synthetic images completes expected requests."""
         # NOTE: mock server endpoint path for image retrieval is different from the default
@@ -22,7 +22,7 @@ class TestImageRetrievalEndpoint:
             f"""
             aiperf profile \
                 --model nvidia/page-elements-v2 \
-                --url {aiperf_mock_server.url} \
+                --url {tests.aiperf_mock_server.url} \
                 --endpoint-type image_retrieval \
                 --endpoint /v1/image/infer \
                 --image-width-mean 64 \

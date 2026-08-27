@@ -24,12 +24,12 @@ class TestDashboardUI:
     ):
         """Dashboard UI with duration-based benchmark termination produces correct output."""
         # Use faster mock server settings for reliability
-        async with mock_server_factory(ttft=10, itl=5) as aiperf_mock_server:
+        async with mock_server_factory(ttft=10, itl=5) as tests.aiperf_mock_server:
             result = await cli.run(
                 f"""
                 aiperf profile \
                     --model {defaults.model} \
-                    --url {aiperf_mock_server.url} \
+                    --url {tests.aiperf_mock_server.url} \
                     --tokenizer builtin \
                     --endpoint-type chat \
                     --ui dashboard \

@@ -23,7 +23,7 @@ class TestHuggingFaceGenerateEndpoint:
     async def test_huggingface_generate(
         self,
         cli: AIPerfCLI,
-        aiperf_mock_server: AIPerfMockServer,
+        tests.aiperf_mock_server: AIPerfMockServer,
         streaming: bool,
         expect_streaming_metrics: bool,
     ):
@@ -34,7 +34,7 @@ class TestHuggingFaceGenerateEndpoint:
             f"""
             aiperf profile \
                 --model TinyLlama/TinyLlama-1.1B-Chat-v1.0 \
-                --url {aiperf_mock_server.url} \
+                --url {tests.aiperf_mock_server.url} \
                 --endpoint-type huggingface_generate \
                 {stream_flag} \
                 --request-count {defaults.request_count}

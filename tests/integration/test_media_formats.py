@@ -15,14 +15,14 @@ class TestMediaFormats:
 
     @pytest.mark.parametrize("image_format", ["jpeg", "png"])
     async def test_image_formats(
-        self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer, image_format: str
+        self, cli: AIPerfCLI, tests.aiperf_mock_server: AIPerfMockServer, image_format: str
     ):
         """Test different image format support."""
         result = await cli.run(
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {aiperf_mock_server.url} \
+                --url {tests.aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --request-count 2 \
                 --concurrency 2 \
@@ -38,14 +38,14 @@ class TestMediaFormats:
 
     @pytest.mark.parametrize("audio_format", ["mp3", "wav"])
     async def test_audio_formats(
-        self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer, audio_format: str
+        self, cli: AIPerfCLI, tests.aiperf_mock_server: AIPerfMockServer, audio_format: str
     ):
         """Test different audio format support."""
         result = await cli.run(
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {aiperf_mock_server.url} \
+                --url {tests.aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --request-count 2 \
                 --concurrency 2 \

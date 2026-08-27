@@ -30,14 +30,14 @@ class TestCtrlCCancellation:
     """Tests for Ctrl+C (SIGINT) benchmark cancellation functionality."""
 
     async def test_ctrl_c_graceful_cancel_writes_results(
-        self, signal_cli: AIPerfSignalCLI, aiperf_mock_server: AIPerfMockServer
+        self, signal_cli: AIPerfSignalCLI, tests.aiperf_mock_server: AIPerfMockServer
     ):
         """Ctrl+C triggers graceful cancellation, writes all output files, and sets was_cancelled=True."""
         result = await signal_cli.run_with_sigint(
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {aiperf_mock_server.url} \
+                --url {tests.aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --streaming \
                 --benchmark-duration 20 \

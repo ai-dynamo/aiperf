@@ -62,8 +62,8 @@ async def test_reset_precedes_inference_on_shared_recorder() -> None:
     """Reset via maybe_reset_kv_cache_before_run must precede inference on the mock."""
     from urllib.parse import urlsplit
 
-    from aiperf_mock_server.app import asgi_app
-    from aiperf_mock_server.control_state import control_state
+    from tests.aiperf_mock_server.app import asgi_app
+    from tests.aiperf_mock_server.control_state import control_state
     from httpx import ASGITransport, AsyncClient
 
     from aiperf.common.control_plane_http import ControlPlaneHttpError

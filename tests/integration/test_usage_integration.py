@@ -33,14 +33,14 @@ class TestUsageIntegration:
         ],
     )
     async def test_usage_metrics_in_exports(
-        self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer, endpoint_type, model
+        self, cli: AIPerfCLI, tests.aiperf_mock_server: AIPerfMockServer, endpoint_type, model
     ):
         """Test that usage field metrics appear in all export formats."""
         result = await cli.run(
             f"""
             aiperf profile \
                 --model {model} \
-                --url {aiperf_mock_server.url} \
+                --url {tests.aiperf_mock_server.url} \
                 --endpoint-type {endpoint_type} \
                 --request-count {defaults.request_count} \
                 --concurrency {defaults.concurrency} \
@@ -75,14 +75,14 @@ class TestUsageIntegration:
             assert len(records_with_usage) > 0
 
     async def test_streaming_usage_passthrough(
-        self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer
+        self, cli: AIPerfCLI, tests.aiperf_mock_server: AIPerfMockServer
     ):
         """Test that streaming responses preserve cumulative usage values."""
         result = await cli.run(
             f"""
             aiperf profile \
                 --model Qwen/Qwen2.5-32B-Instruct \
-                --url {aiperf_mock_server.url} \
+                --url {tests.aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --streaming \
                 --extra-inputs '{{"stream_options": {{"include_usage": true}}}}' \

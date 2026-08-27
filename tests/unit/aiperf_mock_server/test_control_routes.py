@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import pytest
-from aiperf_mock_server.app import app
-from aiperf_mock_server.control_state import control_state
+from tests.aiperf_mock_server.app import app
+from tests.aiperf_mock_server.control_state import control_state
 from httpx import ASGITransport, AsyncClient
 
 

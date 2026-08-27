@@ -17,7 +17,7 @@ class TestImageGenerationEndpoint:
     """Tests for /v1/images/generations endpoint."""
 
     async def test_image_generation_produces_no_streaming_metrics(
-        self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer
+        self, cli: AIPerfCLI, tests.aiperf_mock_server: AIPerfMockServer
     ):
         """Image generation completes requests without token-based streaming metrics.
 
@@ -30,7 +30,7 @@ class TestImageGenerationEndpoint:
             aiperf profile \
                 --model black-forest-labs/FLUX.1-dev \
                 --tokenizer builtin \
-                --url {aiperf_mock_server.url} \
+                --url {tests.aiperf_mock_server.url} \
                 --endpoint-type image_generation \
                 --synthetic-input-tokens-mean 150 \
                 --synthetic-input-tokens-stddev 30 \

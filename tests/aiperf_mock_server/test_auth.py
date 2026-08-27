@@ -5,8 +5,8 @@ import logging
 import os
 
 import pytest
-from aiperf_mock_server import __main__ as mock_main
-from aiperf_mock_server import app as mock_app
+from tests.aiperf_mock_server import __main__ as mock_main
+from tests.aiperf_mock_server import app as mock_app
 from tests.aiperf_mock_server.app import InferenceAuthMiddleware
 from tests.aiperf_mock_server.config import MockServerConfig, set_server_config
 from fastapi import FastAPI

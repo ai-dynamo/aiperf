@@ -3,7 +3,7 @@
 """Comprehensive API compliance tests for the AIPerf Mock Server."""
 
 import pytest
-from aiperf_mock_server.app import asgi_app
+from tests.aiperf_mock_server.app import asgi_app
 from httpx import ASGITransport, AsyncClient
 
 

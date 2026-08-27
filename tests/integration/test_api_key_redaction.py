@@ -66,14 +66,14 @@ class TestApiKeyRedactionRawExportHTTP:
     with TRACE-level logging enabled."""
 
     async def test_api_key_redacted_in_raw_records_http(
-        self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer, temp_output_dir
+        self, cli: AIPerfCLI, tests.aiperf_mock_server: AIPerfMockServer, temp_output_dir
     ):
         """Raw records from real HTTP transport must not contain the API key."""
         result = await cli.run(
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {aiperf_mock_server.url} \
+                --url {tests.aiperf_mock_server.url} \
                 {_COMMON_FLAGS} \
                 --api-key {API_KEY} \
                 --export-level raw
@@ -94,14 +94,14 @@ class TestApiKeyRedactionRawExportHTTP:
         _assert_api_key_not_in_logs(temp_output_dir)
 
     async def test_raw_file_and_logs_do_not_contain_api_key_http(
-        self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer, temp_output_dir
+        self, cli: AIPerfCLI, tests.aiperf_mock_server: AIPerfMockServer, temp_output_dir
     ):
         """Scan the entire raw JSONL file and all logs for the API key."""
         await cli.run(
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {aiperf_mock_server.url} \
+                --url {tests.aiperf_mock_server.url} \
                 {_COMMON_FLAGS} \
                 --api-key {API_KEY} \
                 --export-level raw
@@ -132,14 +132,14 @@ class TestApiKeyRedactionHttpTrace:
     """
 
     async def test_api_key_redacted_in_http_trace(
-        self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer, temp_output_dir
+        self, cli: AIPerfCLI, tests.aiperf_mock_server: AIPerfMockServer, temp_output_dir
     ):
         """JSONL records with --export-http-trace must not leak API keys in trace_data."""
         result = await cli.run(
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {aiperf_mock_server.url} \
+                --url {tests.aiperf_mock_server.url} \
                 {_COMMON_FLAGS} \
                 --api-key {API_KEY} \
                 --export-http-trace
@@ -167,14 +167,14 @@ class TestApiKeyRedactionHttpTrace:
         _assert_api_key_not_in_logs(temp_output_dir)
 
     async def test_jsonl_file_and_logs_do_not_contain_api_key_with_trace(
-        self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer, temp_output_dir
+        self, cli: AIPerfCLI, tests.aiperf_mock_server: AIPerfMockServer, temp_output_dir
     ):
         """Scan the entire JSONL file and all logs for the API key."""
         await cli.run(
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {aiperf_mock_server.url} \
+                --url {tests.aiperf_mock_server.url} \
                 {_COMMON_FLAGS} \
                 --api-key {API_KEY} \
                 --export-http-trace
@@ -201,14 +201,14 @@ class TestApiKeyRedactionRawAndTraceCombo:
     at TRACE log level."""
 
     async def test_combined_raw_and_trace_redaction(
-        self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer, temp_output_dir
+        self, cli: AIPerfCLI, tests.aiperf_mock_server: AIPerfMockServer, temp_output_dir
     ):
         """Both raw records and trace data must be redacted simultaneously."""
         result = await cli.run(
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {aiperf_mock_server.url} \
+                --url {tests.aiperf_mock_server.url} \
                 {_COMMON_FLAGS} \
                 --api-key {API_KEY} \
                 --export-level raw \
@@ -246,14 +246,14 @@ class TestApiKeyRedactionAllArtifacts:
     even at TRACE log level which logs formatted payloads and headers."""
 
     async def test_no_artifact_contains_api_key(
-        self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer, temp_output_dir
+        self, cli: AIPerfCLI, tests.aiperf_mock_server: AIPerfMockServer, temp_output_dir
     ):
         """Scan every text file in the artifact directory for the API key."""
         await cli.run(
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {aiperf_mock_server.url} \
+                --url {tests.aiperf_mock_server.url} \
                 {_COMMON_FLAGS} \
                 --api-key {API_KEY} \
                 --export-level raw \
@@ -275,14 +275,14 @@ class TestApiKeyStillFunctionalHTTP:
     (key reaches the server, redaction doesn't break functionality)."""
 
     async def test_benchmark_succeeds_with_api_key_http(
-        self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer, temp_output_dir
+        self, cli: AIPerfCLI, tests.aiperf_mock_server: AIPerfMockServer, temp_output_dir
     ):
         """The mock server accepts requests with the API key and benchmark succeeds."""
         result = await cli.run(
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {aiperf_mock_server.url} \
+                --url {tests.aiperf_mock_server.url} \
                 {_COMMON_FLAGS} \
                 --api-key {API_KEY}
             """
@@ -295,14 +295,14 @@ class TestApiKeyStillFunctionalHTTP:
         _assert_api_key_not_in_logs(temp_output_dir)
 
     async def test_non_sensitive_headers_preserved_http(
-        self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer, temp_output_dir
+        self, cli: AIPerfCLI, tests.aiperf_mock_server: AIPerfMockServer, temp_output_dir
     ):
         """Non-sensitive custom headers must appear unredacted in raw records."""
         result = await cli.run(
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {aiperf_mock_server.url} \
+                --url {tests.aiperf_mock_server.url} \
                 {_COMMON_FLAGS} \
                 --header "X-Custom-Tracking:trace-abc-123" \
                 --export-level raw

@@ -34,13 +34,13 @@ def _payload_text(rec: RawRecordInfo) -> str:
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_per_round_spine_fires_distinct_payloads_request_free(
-    cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer
+    cli: AIPerfCLI, tests.aiperf_mock_server: AIPerfMockServer
 ):
     result = await cli.run(
         f"""
         aiperf profile \
             --model test-model \
-            --url {aiperf_mock_server.url} \
+            --url {tests.aiperf_mock_server.url} \
             --endpoint-type chat \
             --input-file {FIXTURE} \
             --custom-dataset-type dag_jsonl \

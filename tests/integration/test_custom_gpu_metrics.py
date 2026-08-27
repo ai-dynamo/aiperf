@@ -88,7 +88,7 @@ DCGM_FI_DEV_SM_CLOCK, gauge, SM clock frequency (in MHz)
     async def test_custom_metrics_csv_loading_basic(
         self,
         cli: AIPerfCLI,
-        aiperf_mock_server: AIPerfMockServer,
+        tests.aiperf_mock_server: AIPerfMockServer,
         custom_gpu_metrics_csv: Path,
     ):
         """Test loading custom metrics from CSV and verifying they appear in output."""
@@ -96,10 +96,10 @@ DCGM_FI_DEV_SM_CLOCK, gauge, SM clock frequency (in MHz)
             f"""
             aiperf profile \
                 --model nvidia/llama-3.1-nemotron-70b-instruct \
-                --url {aiperf_mock_server.url} \
+                --url {tests.aiperf_mock_server.url} \
                 --tokenizer builtin \
                 --endpoint-type chat \
-                --gpu-telemetry {custom_gpu_metrics_csv} {" ".join(aiperf_mock_server.dcgm_urls)} \
+                --gpu-telemetry {custom_gpu_metrics_csv} {" ".join(tests.aiperf_mock_server.dcgm_urls)} \
                 --benchmark-duration 2 \
                 --concurrency 2 \
                 --workers-max 2
@@ -176,7 +176,7 @@ DCGM_FI_DEV_SM_CLOCK, gauge, SM clock frequency (in MHz)
     async def test_custom_metrics_deduplication(
         self,
         cli: AIPerfCLI,
-        aiperf_mock_server: AIPerfMockServer,
+        tests.aiperf_mock_server: AIPerfMockServer,
         custom_gpu_metrics_csv_with_defaults: Path,
     ):
         """Test that metrics already in defaults are not duplicated."""
@@ -184,10 +184,10 @@ DCGM_FI_DEV_SM_CLOCK, gauge, SM clock frequency (in MHz)
             f"""
             aiperf profile \
                 --model nvidia/llama-3.1-nemotron-70b-instruct \
-                --url {aiperf_mock_server.url} \
+                --url {tests.aiperf_mock_server.url} \
                 --tokenizer builtin \
                 --endpoint-type chat \
-                --gpu-telemetry {custom_gpu_metrics_csv_with_defaults} {" ".join(aiperf_mock_server.dcgm_urls)} \
+                --gpu-telemetry {custom_gpu_metrics_csv_with_defaults} {" ".join(tests.aiperf_mock_server.dcgm_urls)} \
                 --benchmark-duration 2 \
                 --concurrency 2 \
                 --workers-max 2
@@ -222,7 +222,7 @@ DCGM_FI_DEV_SM_CLOCK, gauge, SM clock frequency (in MHz)
     async def test_invalid_csv_fallback_to_defaults(
         self,
         cli: AIPerfCLI,
-        aiperf_mock_server: AIPerfMockServer,
+        tests.aiperf_mock_server: AIPerfMockServer,
         custom_gpu_metrics_csv_invalid: Path,
     ):
         """Test that invalid CSV entries are skipped gracefully."""
@@ -230,10 +230,10 @@ DCGM_FI_DEV_SM_CLOCK, gauge, SM clock frequency (in MHz)
             f"""
             aiperf profile \
                 --model nvidia/llama-3.1-nemotron-70b-instruct \
-                --url {aiperf_mock_server.url} \
+                --url {tests.aiperf_mock_server.url} \
                 --tokenizer builtin \
                 --endpoint-type chat \
-                --gpu-telemetry {custom_gpu_metrics_csv_invalid} {" ".join(aiperf_mock_server.dcgm_urls)} \
+                --gpu-telemetry {custom_gpu_metrics_csv_invalid} {" ".join(tests.aiperf_mock_server.dcgm_urls)} \
                 --benchmark-duration 2 \
                 --concurrency 2 \
                 --workers-max 2
@@ -253,7 +253,7 @@ DCGM_FI_DEV_SM_CLOCK, gauge, SM clock frequency (in MHz)
                 assert len(gpu_data.metrics) >= expected_min_metrics
 
     async def test_nonexistent_csv_file_error(
-        self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer, tmp_path: Path
+        self, cli: AIPerfCLI, tests.aiperf_mock_server: AIPerfMockServer, tmp_path: Path
     ):
         """Test that nonexistent CSV file produces appropriate error."""
         nonexistent_csv = tmp_path / "nonexistent_custom_gpu_metrics.csv"
@@ -262,10 +262,10 @@ DCGM_FI_DEV_SM_CLOCK, gauge, SM clock frequency (in MHz)
             f"""
             aiperf profile \
                 --model nvidia/llama-3.1-nemotron-70b-instruct \
-                --url {aiperf_mock_server.url} \
+                --url {tests.aiperf_mock_server.url} \
                 --tokenizer builtin \
                 --endpoint-type chat \
-                --gpu-telemetry {nonexistent_csv} {" ".join(aiperf_mock_server.dcgm_urls)} \
+                --gpu-telemetry {nonexistent_csv} {" ".join(tests.aiperf_mock_server.dcgm_urls)} \
                 --request-count 10 \
                 --concurrency 2
             """,

@@ -50,7 +50,7 @@ class TestPromptConsistency:
     CONSISTENCY_SEED = 12345
 
     async def test_prompt_consistency_with_multimodal_additions(
-        self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer
+        self, cli: AIPerfCLI, tests.aiperf_mock_server: AIPerfMockServer
     ):
         """Verify prompt texts are identical when adding audio/images.
 
@@ -62,7 +62,7 @@ class TestPromptConsistency:
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {aiperf_mock_server.url} \
+                --url {tests.aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --request-count 10 \
                 --concurrency 2 \
@@ -80,7 +80,7 @@ class TestPromptConsistency:
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {aiperf_mock_server.url} \
+                --url {tests.aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --request-count 10 \
                 --concurrency 2 \

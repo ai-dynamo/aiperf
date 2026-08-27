@@ -23,7 +23,7 @@ class TestRankingsEndpoint:
     async def test_rankings_with_custom_dataset(
         self,
         cli: AIPerfCLI,
-        aiperf_mock_server: AIPerfMockServer,
+        tests.aiperf_mock_server: AIPerfMockServer,
         tmp_path: Path,
         endpoint_type: str,
     ):
@@ -34,7 +34,7 @@ class TestRankingsEndpoint:
             f"""
             aiperf profile \
                 --model test-reranker \
-                --url {aiperf_mock_server.url} \
+                --url {tests.aiperf_mock_server.url} \
                 --tokenizer builtin \
                 --endpoint-type {endpoint_type} \
                 --input-file {dataset_path} \
@@ -49,14 +49,14 @@ class TestRankingsEndpoint:
         assert result.request_count == defaults.request_count
 
     async def test_rankings_with_synthetic_data(
-        self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer
+        self, cli: AIPerfCLI, tests.aiperf_mock_server: AIPerfMockServer
     ):
         """Test ranking endpoint with synthetic data generation parameters."""
         result = await cli.run(
             f"""
             aiperf profile \
                 --model test-reranker \
-                --url {aiperf_mock_server.url} \
+                --url {tests.aiperf_mock_server.url} \
                 --tokenizer builtin \
                 --endpoint-type nim_rankings \
                 --request-count {defaults.request_count} \

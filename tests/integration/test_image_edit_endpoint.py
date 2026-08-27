@@ -17,7 +17,7 @@ class TestImageEditEndpoint:
     """Tests for /v1/images/edits endpoint."""
 
     async def test_image_edit_produces_no_streaming_metrics(
-        self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer
+        self, cli: AIPerfCLI, tests.aiperf_mock_server: AIPerfMockServer
     ) -> None:
         """Image edit completes requests without token-based streaming metrics.
 
@@ -30,7 +30,7 @@ class TestImageEditEndpoint:
             aiperf profile \
                 --model black-forest-labs/FLUX.2-klein-4B \
                 --tokenizer builtin \
-                --url {aiperf_mock_server.url} \
+                --url {tests.aiperf_mock_server.url} \
                 --endpoint-type image_edit \
                 --image-batch-size 1 \
                 --image-width-mean 64 \
@@ -53,7 +53,7 @@ class TestImageEditEndpoint:
         assert result.json.request_throughput is not None
 
     async def test_image_edit_extra_inputs_pass_through(
-        self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer
+        self, cli: AIPerfCLI, tests.aiperf_mock_server: AIPerfMockServer
     ) -> None:
         """Diffusion-specific extras (size, num_inference_steps, guidance_scale)
         flow through to the multipart form fields without affecting the metric pipeline.
@@ -63,7 +63,7 @@ class TestImageEditEndpoint:
             aiperf profile \
                 --model black-forest-labs/FLUX.2-klein-4B \
                 --tokenizer builtin \
-                --url {aiperf_mock_server.url} \
+                --url {tests.aiperf_mock_server.url} \
                 --endpoint-type image_edit \
                 --image-batch-size 1 \
                 --image-width-mean 64 \

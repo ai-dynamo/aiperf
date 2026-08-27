@@ -539,14 +539,14 @@ async def test_spawn_join_gates_main_turn_until_worker_chain_completes(
 
 
 async def test_background_worker_chain_runs_after_root_and_drains_cleanly(
-    tmp_path: Path, aiperf_mock_server: AIPerfMockServer
+    tmp_path: Path, tests.aiperf_mock_server: AIPerfMockServer
 ) -> None:
     """Spec 5.3 (background): a chain outliving the last main turn becomes a fire-and-forget child that still sends, drains cleanly at shutdown, and never suspends the parent."""
     corpus = _write_background_trace(tmp_path / "traces")
     result = await _run_weka_profile(
         input_dir=corpus,
         artifact_dir=tmp_path / "artifacts",
-        url=aiperf_mock_server.url,
+        url=tests.aiperf_mock_server.url,
         duration=5.0,
         concurrency=1,
         timeout=200.0,
@@ -586,14 +586,14 @@ async def test_background_worker_chain_runs_after_root_and_drains_cleanly(
 
 
 async def test_split_disabled_env_restores_legacy_single_stream(
-    tmp_path: Path, aiperf_mock_server: AIPerfMockServer
+    tmp_path: Path, tests.aiperf_mock_server: AIPerfMockServer
 ) -> None:
     """Spec 6: ``AIPERF_DATASET_WEKA_SPLIT_FLATTENED_AGENTS=false`` fully disables detection so every trace replays as one serialized root conversation with all rows."""
     corpus = _write_fanout_corpus(tmp_path / "traces")
     result = await _run_weka_profile(
         input_dir=corpus,
         artifact_dir=tmp_path / "artifacts",
-        url=aiperf_mock_server.url,
+        url=tests.aiperf_mock_server.url,
         duration=5.0,
         concurrency=3,
         extra_env={SPLIT_ENV_VAR: "false"},
@@ -645,7 +645,7 @@ _POISON_RATE_ARGS = ["--request-rate", "4", "--arrival-pattern", "constant"]
 
 
 async def test_poisoned_corpus_completes_without_deadlock(
-    tmp_path: Path, aiperf_mock_server: AIPerfMockServer
+    tmp_path: Path, tests.aiperf_mock_server: AIPerfMockServer
 ) -> None:
     """Whatever detection decides about nonce-poisoned hashes, the run completes cleanly and every recorded request is still replayed."""
     corpus = _write_poisoned_corpus(tmp_path / "traces")
@@ -655,7 +655,7 @@ async def test_poisoned_corpus_completes_without_deadlock(
     result = await _run_weka_profile(
         input_dir=corpus,
         artifact_dir=tmp_path / "artifacts",
-        url=aiperf_mock_server.url,
+        url=tests.aiperf_mock_server.url,
         duration=8.0,
         concurrency=4,
         extra_args=_POISON_RATE_ARGS,
@@ -698,14 +698,14 @@ async def test_poisoned_corpus_completes_without_deadlock(
 
 
 async def test_disjoint_corpus_splits_into_fa_sessions(
-    tmp_path: Path, aiperf_mock_server: AIPerfMockServer
+    tmp_path: Path, tests.aiperf_mock_server: AIPerfMockServer
 ) -> None:
     """With the nonce-poison guard removed, a mutually-disjoint single-block-hash corpus splits into per-agent ::fa: sessions and logs no nonce-poison WARNING."""
     corpus = _write_poisoned_corpus(tmp_path / "traces")
     result = await _run_weka_profile(
         input_dir=corpus,
         artifact_dir=tmp_path / "artifacts",
-        url=aiperf_mock_server.url,
+        url=tests.aiperf_mock_server.url,
         duration=4.0,
         concurrency=4,
         extra_args=_POISON_RATE_ARGS,
@@ -728,7 +728,7 @@ async def test_disjoint_corpus_splits_into_fa_sessions(
 
 
 async def test_two_identical_runs_produce_identical_split_structure(
-    tmp_path: Path, aiperf_mock_server: AIPerfMockServer
+    tmp_path: Path, tests.aiperf_mock_server: AIPerfMockServer
 ) -> None:
     """Detection is deterministic: two identical runs produce the same per-trace detection results and per-play session structure."""
     corpus = _write_fanout_corpus(tmp_path / "traces")
@@ -737,7 +737,7 @@ async def test_two_identical_runs_produce_identical_split_structure(
         result = await _run_weka_profile(
             input_dir=corpus,
             artifact_dir=tmp_path / f"artifacts_{run_idx}",
-            url=aiperf_mock_server.url,
+            url=tests.aiperf_mock_server.url,
             duration=5.0,
             concurrency=3,
             random_seed=7,

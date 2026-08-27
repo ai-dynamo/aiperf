@@ -19,7 +19,7 @@ class TestMultiRunConfidence:
     async def test_multi_run_basic(
         self,
         cli: AIPerfCLI,
-        aiperf_mock_server: AIPerfMockServer,
+        tests.aiperf_mock_server: AIPerfMockServer,
         temp_output_dir: Path,
     ):
         """Test basic multi-run execution with 3 runs."""
@@ -27,7 +27,7 @@ class TestMultiRunConfidence:
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {aiperf_mock_server.url} \
+                --url {tests.aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --num-profile-runs 3 \
                 --request-count 10 \
@@ -115,7 +115,7 @@ class TestMultiRunConfidence:
     async def test_backward_compatibility_single_run(
         self,
         cli: AIPerfCLI,
-        aiperf_mock_server: AIPerfMockServer,
+        tests.aiperf_mock_server: AIPerfMockServer,
         temp_output_dir: Path,
     ):
         """Test that num_profile_runs=1 maintains backward compatibility."""
@@ -123,7 +123,7 @@ class TestMultiRunConfidence:
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {aiperf_mock_server.url} \
+                --url {tests.aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --num-profile-runs 1 \
                 --request-count 10 \
@@ -154,7 +154,7 @@ class TestMultiRunConfidence:
     async def test_multi_run_with_cooldown(
         self,
         cli: AIPerfCLI,
-        aiperf_mock_server: AIPerfMockServer,
+        tests.aiperf_mock_server: AIPerfMockServer,
         temp_output_dir: Path,
     ):
         """Test multi-run with cooldown between runs."""
@@ -162,7 +162,7 @@ class TestMultiRunConfidence:
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {aiperf_mock_server.url} \
+                --url {tests.aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --num-profile-runs 2 \
                 --profile-run-cooldown-seconds 0.5 \
@@ -187,7 +187,7 @@ class TestMultiRunConfidence:
     async def test_multi_run_custom_confidence_level(
         self,
         cli: AIPerfCLI,
-        aiperf_mock_server: AIPerfMockServer,
+        tests.aiperf_mock_server: AIPerfMockServer,
         temp_output_dir: Path,
     ):
         """Test multi-run with custom confidence level."""
@@ -195,7 +195,7 @@ class TestMultiRunConfidence:
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {aiperf_mock_server.url} \
+                --url {tests.aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --num-profile-runs 3 \
                 --confidence-level 0.99 \
@@ -219,7 +219,7 @@ class TestMultiRunConfidence:
     async def test_multi_run_concurrency_mode(
         self,
         cli: AIPerfCLI,
-        aiperf_mock_server: AIPerfMockServer,
+        tests.aiperf_mock_server: AIPerfMockServer,
         temp_output_dir: Path,
     ):
         """Test multi-run works with concurrency mode."""
@@ -227,7 +227,7 @@ class TestMultiRunConfidence:
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {aiperf_mock_server.url} \
+                --url {tests.aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --num-profile-runs 2 \
                 --concurrency 4 \
@@ -247,7 +247,7 @@ class TestMultiRunConfidence:
     async def test_multi_run_request_rate_mode(
         self,
         cli: AIPerfCLI,
-        aiperf_mock_server: AIPerfMockServer,
+        tests.aiperf_mock_server: AIPerfMockServer,
         temp_output_dir: Path,
     ):
         """Test multi-run works with request-rate mode."""
@@ -255,7 +255,7 @@ class TestMultiRunConfidence:
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {aiperf_mock_server.url} \
+                --url {tests.aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --num-profile-runs 2 \
                 --request-rate 5.0 \
@@ -275,7 +275,7 @@ class TestMultiRunConfidence:
     async def test_multi_run_with_warmup(
         self,
         cli: AIPerfCLI,
-        aiperf_mock_server: AIPerfMockServer,
+        tests.aiperf_mock_server: AIPerfMockServer,
         temp_output_dir: Path,
     ):
         """Test multi-run with warmup phase (warmup should run once)."""
@@ -283,7 +283,7 @@ class TestMultiRunConfidence:
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {aiperf_mock_server.url} \
+                --url {tests.aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --num-profile-runs 2 \
                 --warmup-request-count 5 \
@@ -308,7 +308,7 @@ class TestMultiRunConfidence:
     async def test_aggregate_csv_format(
         self,
         cli: AIPerfCLI,
-        aiperf_mock_server: AIPerfMockServer,
+        tests.aiperf_mock_server: AIPerfMockServer,
         temp_output_dir: Path,
     ):
         """Test aggregate CSV format is correct."""
@@ -316,7 +316,7 @@ class TestMultiRunConfidence:
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {aiperf_mock_server.url} \
+                --url {tests.aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --num-profile-runs 2 \
                 --request-count 10 \
@@ -363,7 +363,7 @@ class TestMultiRunConfidence:
     async def test_multi_run_with_partial_failures(
         self,
         cli: AIPerfCLI,
-        aiperf_mock_server: AIPerfMockServer,
+        tests.aiperf_mock_server: AIPerfMockServer,
         temp_output_dir: Path,
     ):
         """Test multi-run continues when some runs fail.
@@ -380,7 +380,7 @@ class TestMultiRunConfidence:
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {aiperf_mock_server.url} \
+                --url {tests.aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --num-profile-runs 5 \
                 --request-count 100 \
@@ -508,7 +508,7 @@ class TestMultiRunConfidence:
     async def test_multi_run_single_failure_still_aggregates(
         self,
         cli: AIPerfCLI,
-        aiperf_mock_server: AIPerfMockServer,
+        tests.aiperf_mock_server: AIPerfMockServer,
         temp_output_dir: Path,
     ):
         """Test that a single failure doesn't prevent aggregation.
@@ -522,7 +522,7 @@ class TestMultiRunConfidence:
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {aiperf_mock_server.url} \
+                --url {tests.aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --num-profile-runs 3 \
                 --request-count 20 \
@@ -556,7 +556,7 @@ class TestMultiRunConfidence:
     async def test_multi_run_preserves_failed_run_artifacts(
         self,
         cli: AIPerfCLI,
-        aiperf_mock_server: AIPerfMockServer,
+        tests.aiperf_mock_server: AIPerfMockServer,
         temp_output_dir: Path,
     ):
         """Test that artifacts are preserved even for failed runs.
@@ -569,7 +569,7 @@ class TestMultiRunConfidence:
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {aiperf_mock_server.url} \
+                --url {tests.aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --num-profile-runs 3 \
                 --request-count 100 \
@@ -597,7 +597,7 @@ class TestMultiRunConfidence:
     async def test_multi_run_invalid_num_profile_runs(
         self,
         cli: AIPerfCLI,
-        aiperf_mock_server: AIPerfMockServer,
+        tests.aiperf_mock_server: AIPerfMockServer,
         temp_output_dir: Path,
     ):
         """Test validation of num_profile_runs parameter.
@@ -609,7 +609,7 @@ class TestMultiRunConfidence:
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {aiperf_mock_server.url} \
+                --url {tests.aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --num-profile-runs 0 \
                 --request-count 10 \
@@ -630,7 +630,7 @@ class TestMultiRunConfidence:
     async def test_multi_run_exceeds_max_limit(
         self,
         cli: AIPerfCLI,
-        aiperf_mock_server: AIPerfMockServer,
+        tests.aiperf_mock_server: AIPerfMockServer,
         temp_output_dir: Path,
     ):
         """Test that num_profile_runs > 10 is rejected.
@@ -641,7 +641,7 @@ class TestMultiRunConfidence:
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {aiperf_mock_server.url} \
+                --url {tests.aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --num-profile-runs 11 \
                 --request-count 10 \
@@ -669,7 +669,7 @@ class TestMultiRunConfidence:
     async def test_multi_run_invalid_confidence_level(
         self,
         cli: AIPerfCLI,
-        aiperf_mock_server: AIPerfMockServer,
+        tests.aiperf_mock_server: AIPerfMockServer,
         temp_output_dir: Path,
     ):
         """Test validation of confidence_level parameter.
@@ -681,7 +681,7 @@ class TestMultiRunConfidence:
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {aiperf_mock_server.url} \
+                --url {tests.aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --num-profile-runs 3 \
                 --confidence-level 1.5 \
@@ -701,7 +701,7 @@ class TestMultiRunConfidence:
     async def test_multi_run_negative_cooldown(
         self,
         cli: AIPerfCLI,
-        aiperf_mock_server: AIPerfMockServer,
+        tests.aiperf_mock_server: AIPerfMockServer,
         temp_output_dir: Path,
     ):
         """Test that negative cooldown is rejected."""
@@ -709,7 +709,7 @@ class TestMultiRunConfidence:
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {aiperf_mock_server.url} \
+                --url {tests.aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --num-profile-runs 2 \
                 --profile-run-cooldown-seconds -1.0 \

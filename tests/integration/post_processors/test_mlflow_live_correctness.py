@@ -82,7 +82,7 @@ class TestMLflowLiveStreamingCorrectness:
     async def test_live_metrics_are_ordered_and_benchmark_id_tagged(
         self,
         cli: AIPerfCLI,
-        aiperf_mock_server: AIPerfMockServer,
+        tests.aiperf_mock_server: AIPerfMockServer,
         tmp_path: Path,
     ) -> None:
         """Run aiperf with MLflow live-streaming, then inspect the store.
@@ -105,7 +105,7 @@ class TestMLflowLiveStreamingCorrectness:
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {aiperf_mock_server.url} \
+                --url {tests.aiperf_mock_server.url} \
                 --concurrency 2 \
                 --request-count 20 \
                 --streaming \

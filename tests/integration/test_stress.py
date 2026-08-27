@@ -17,15 +17,15 @@ class TestStressScenarios:
     """Tests for high concurrency and stress scenarios."""
 
     async def test_high_concurrency_multimodal(
-        self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer
+        self, cli: AIPerfCLI, tests.aiperf_mock_server: AIPerfMockServer
     ):
         """High concurrency (1000) with streaming and multimodal inputs."""
         result = await cli.run(
             f"""
             aiperf profile \
                 --model mistralai/Mixtral-8x7B-Instruct-v0.1 \
-                --url {aiperf_mock_server.url} \
-                --gpu-telemetry {" ".join(aiperf_mock_server.dcgm_urls)} \
+                --url {tests.aiperf_mock_server.url} \
+                --gpu-telemetry {" ".join(tests.aiperf_mock_server.dcgm_urls)} \
                 --endpoint-type chat \
                 --streaming \
                 --warmup-request-count 100 \
@@ -57,7 +57,7 @@ class TestStressScenarios:
     async def test_high_worker_count_streaming(
         self,
         cli: AIPerfCLI,
-        aiperf_mock_server: AIPerfMockServer,
+        tests.aiperf_mock_server: AIPerfMockServer,
         monkeypatch: pytest.MonkeyPatch,
     ):
         """High worker count (100 workers) with streaming.
@@ -76,8 +76,8 @@ class TestStressScenarios:
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {aiperf_mock_server.url} \
-                --gpu-telemetry {" ".join(aiperf_mock_server.dcgm_urls)} \
+                --url {tests.aiperf_mock_server.url} \
+                --gpu-telemetry {" ".join(tests.aiperf_mock_server.dcgm_urls)} \
                 --endpoint-type chat \
                 --concurrency 2000 \
                 --request-count 4000 \

@@ -41,6 +41,7 @@ Exits 0 when the invariant holds, 1 otherwise.
 from __future__ import annotations
 
 import argparse
+import re
 import subprocess
 import sys
 
@@ -58,16 +59,40 @@ ALLOWED_MODIFIED: dict[str, str] = {
 
 # Directory prefixes from origin/main this branch is permitted to modify. Prefer
 # ALLOWED_MODIFIED; use this only when one mechanical change spans a whole tree.
-ALLOWED_MODIFIED_PREFIXES: dict[str, str] = {
-    "tests/aiperf_mock_server/": (
-        "imports rewritten from the top-level 'aiperf_mock_server' to "
-        "'tests.aiperf_mock_server'. On origin/main this package is pip-installed "
-        "(tests/aiperf_mock_server/pyproject.toml), but its [project.scripts] "
-        "declares an aiperf-mock-server console script that would collide on the "
-        "venv PATH with the native Rust binary of the same name. Importing it as "
-        "a subpackage of tests/ avoids installing it at all."
-    ),
-}
+ALLOWED_MODIFIED_PREFIXES: dict[str, str] = {}
+
+# On origin/main the in-tree Python mock server is pip-installed
+# (tests/aiperf_mock_server/pyproject.toml) and imported as the top-level
+# `aiperf_mock_server`. This branch cannot install it: its [project.scripts]
+# declares an `aiperf-mock-server` console script that would collide on the venv
+# PATH with the native Rust binary of the same name. The test tree therefore
+# imports it as a subpackage of tests/ instead.
+#
+# Rather than exempt all of tests/, this permits exactly that rewrite: a modified
+# test file passes only if applying the substitution to origin/main's content
+# reproduces this branch's content byte for byte. Any other edit still fails.
+MOCK_SERVER_IMPORT = re.compile(r"(?<!tests\.)\baiperf_mock_server\b")
+MOCK_SERVER_REPLACEMENT = "tests.aiperf_mock_server"
+
+
+def _is_only_mock_server_rewrite(base_text: str, head_text: str) -> bool:
+    """Report whether head differs from base solely by the mock-server rewrite."""
+    return MOCK_SERVER_IMPORT.sub(MOCK_SERVER_REPLACEMENT, base_text) == head_text
+
+
+def _blob_text(ref: str, path: str) -> str | None:
+    """Return the decoded file contents at a ref, or None when unreadable."""
+    try:
+        raw = subprocess.run(
+            ["git", "show", f"{ref}:{path}"], capture_output=True, check=True
+        ).stdout
+    except subprocess.CalledProcessError:
+        return None
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+
 
 # Branch-only files under src/ that are not in the cordon. Each needs a reason.
 ALLOWED_NEW: dict[str, str] = {
@@ -123,6 +148,14 @@ def check(base: str, head: str) -> list[str]:
         if path in ALLOWED_MODIFIED:
             continue
         if any(path.startswith(prefix) for prefix in ALLOWED_MODIFIED_PREFIXES):
+            continue
+        base_text = _blob_text(base, path)
+        head_text = _blob_text(head, path)
+        if (
+            base_text is not None
+            and head_text is not None
+            and _is_only_mock_server_rewrite(base_text, head_text)
+        ):
             continue
         violations.append(
             f"MODIFIED vs {base}: {path}\n"

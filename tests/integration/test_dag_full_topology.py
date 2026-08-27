@@ -16,7 +16,7 @@ runs a single root conversation through the DAG loader, and validates:
 4. ``branch_stats`` lands in ``profile_export_aiperf.json`` with the expected
    children-spawned/completed/errored counts.
 
-The shared ``aiperf_mock_server`` fixture in ``tests/integration/conftest.py``
+The shared ``tests.aiperf_mock_server`` fixture in ``tests/integration/conftest.py``
 drives all I/O; no orchestrator or credit-issuer mocking happens here.
 """
 
@@ -97,7 +97,7 @@ class TestDagFullTopologyEndToEnd:
     async def test_full_dag_payload_merge_and_stats(
         self,
         cli: AIPerfCLI,
-        aiperf_mock_server: AIPerfMockServer,
+        tests.aiperf_mock_server: AIPerfMockServer,
     ):
         """Run the two-branch DAG topology and validate merges + stats."""
         assert FIXTURE.exists(), f"fixture missing: {FIXTURE}"
@@ -106,7 +106,7 @@ class TestDagFullTopologyEndToEnd:
             f"""
             aiperf profile \
                 --model Qwen3-0.6B \
-                --url {aiperf_mock_server.url} \
+                --url {tests.aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --input-file {FIXTURE} \
                 --custom-dataset-type dag_jsonl \

@@ -13,7 +13,7 @@ class TestDefaultBehavior:
     """Tests for default behavior."""
 
     async def test_default_behavior(
-        self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer
+        self, cli: AIPerfCLI, tests.aiperf_mock_server: AIPerfMockServer
     ):
         """Test that only providing the model and nothing else still works.
 
@@ -23,7 +23,7 @@ class TestDefaultBehavior:
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {aiperf_mock_server.url}
+                --url {tests.aiperf_mock_server.url}
             """
         )
         assert result.request_count == defaults.request_count

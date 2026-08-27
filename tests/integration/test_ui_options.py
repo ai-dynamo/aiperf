@@ -13,13 +13,13 @@ from tests.integration.conftest import IntegrationTestDefaults as defaults
 class TestUIOptions:
     """Tests for different UI modes."""
 
-    async def test_none_ui(self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer):
+    async def test_none_ui(self, cli: AIPerfCLI, tests.aiperf_mock_server: AIPerfMockServer):
         """None UI mode (no interactive output)."""
         result = await cli.run(
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {aiperf_mock_server.url} \
+                --url {tests.aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --request-count {defaults.request_count} \
                 --concurrency {defaults.concurrency} \

@@ -38,7 +38,7 @@ class TestVideo:
     async def test_video_generation_parameters(
         self,
         cli: AIPerfCLI,
-        aiperf_mock_server: AIPerfMockServer,
+        tests.aiperf_mock_server: AIPerfMockServer,
         video_format: str,
         video_codec: str,
         check_fragmentation: bool,
@@ -50,7 +50,7 @@ class TestVideo:
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {aiperf_mock_server.url} \
+                --url {tests.aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --video-width {width} \
                 --video-height {height} \
@@ -93,7 +93,7 @@ class TestVideo:
     async def test_video_with_audio_embeds_correct_stream(
         self,
         cli: AIPerfCLI,
-        aiperf_mock_server: AIPerfMockServer,
+        tests.aiperf_mock_server: AIPerfMockServer,
         video_format: str,
         video_codec: str,
         expected_audio_codec: str,
@@ -106,7 +106,7 @@ class TestVideo:
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {aiperf_mock_server.url} \
+                --url {tests.aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --video-width {width} \
                 --video-height {height} \
@@ -140,14 +140,14 @@ class TestVideo:
     async def test_video_without_audio_has_no_audio_stream(
         self,
         cli: AIPerfCLI,
-        aiperf_mock_server: AIPerfMockServer,
+        tests.aiperf_mock_server: AIPerfMockServer,
     ):
         """Verify videos without audio enabled have no audio stream (backward compat)."""
         result = await cli.run(
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {aiperf_mock_server.url} \
+                --url {tests.aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --video-width 320 \
                 --video-height 240 \

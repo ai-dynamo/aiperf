@@ -14,14 +14,14 @@ class TestCompletionsEndpoint:
     """Tests for /v1/completions endpoint."""
 
     async def test_basic_completions(
-        self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer
+        self, cli: AIPerfCLI, tests.aiperf_mock_server: AIPerfMockServer
     ):
         """Basic non-streaming completions."""
         result = await cli.run(
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {aiperf_mock_server.url} \
+                --url {tests.aiperf_mock_server.url} \
                 --endpoint-type completions \
                 --request-count {defaults.request_count} \
                 --concurrency {defaults.concurrency} \
@@ -32,14 +32,14 @@ class TestCompletionsEndpoint:
         assert result.request_count == defaults.request_count
 
     async def test_streaming_completions(
-        self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer
+        self, cli: AIPerfCLI, tests.aiperf_mock_server: AIPerfMockServer
     ):
         """Streaming completions with metrics validation."""
         result = await cli.run(
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {aiperf_mock_server.url} \
+                --url {tests.aiperf_mock_server.url} \
                 --endpoint-type completions \
                 --streaming \
                 --request-count {defaults.request_count} \

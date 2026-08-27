@@ -12,7 +12,7 @@ complex interaction patterns and edge cases.
 """
 
 import pytest
-from aiperf_mock_server.config import MockServerConfig
+from tests.aiperf_mock_server.config import MockServerConfig
 
 from aiperf.credit.messages import CreditReturn
 from aiperf.plugin.enums import ArrivalPattern

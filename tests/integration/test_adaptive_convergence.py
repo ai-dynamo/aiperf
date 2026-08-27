@@ -19,7 +19,7 @@ class TestAdaptiveConvergence:
     async def test_adaptive_ci_width_stops_early(
         self,
         cli: AIPerfCLI,
-        aiperf_mock_server: AIPerfMockServer,
+        tests.aiperf_mock_server: AIPerfMockServer,
         temp_output_dir: Path,
     ):
         """Test adaptive strategy stops before max_runs when mock server returns stable metrics."""
@@ -27,7 +27,7 @@ class TestAdaptiveConvergence:
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {aiperf_mock_server.url} \
+                --url {tests.aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --num-profile-runs 5 \
                 --convergence-metric time_to_first_token \
@@ -99,7 +99,7 @@ class TestAdaptiveConvergence:
     async def test_backward_compat_no_convergence_flags(
         self,
         cli: AIPerfCLI,
-        aiperf_mock_server: AIPerfMockServer,
+        tests.aiperf_mock_server: AIPerfMockServer,
         temp_output_dir: Path,
     ):
         """Test that multi-run without convergence flags uses FixedTrialsStrategy."""
@@ -107,7 +107,7 @@ class TestAdaptiveConvergence:
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {aiperf_mock_server.url} \
+                --url {tests.aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --num-profile-runs 3 \
                 --request-count 10 \
@@ -141,7 +141,7 @@ class TestAdaptiveConvergence:
     async def test_adaptive_cv_mode(
         self,
         cli: AIPerfCLI,
-        aiperf_mock_server: AIPerfMockServer,
+        tests.aiperf_mock_server: AIPerfMockServer,
         temp_output_dir: Path,
     ):
         """Test adaptive convergence with CV mode."""
@@ -149,7 +149,7 @@ class TestAdaptiveConvergence:
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {aiperf_mock_server.url} \
+                --url {tests.aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --num-profile-runs 5 \
                 --convergence-metric time_to_first_token \
@@ -178,7 +178,7 @@ class TestAdaptiveConvergence:
     async def test_adaptive_request_rate_mode(
         self,
         cli: AIPerfCLI,
-        aiperf_mock_server: AIPerfMockServer,
+        tests.aiperf_mock_server: AIPerfMockServer,
         temp_output_dir: Path,
     ):
         """Test adaptive convergence works with request-rate benchmarking mode."""
@@ -186,7 +186,7 @@ class TestAdaptiveConvergence:
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {aiperf_mock_server.url} \
+                --url {tests.aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --num-profile-runs 5 \
                 --convergence-metric time_to_first_token \
@@ -210,7 +210,7 @@ class TestAdaptiveConvergence:
     async def test_convergence_metric_without_multi_run_fails(
         self,
         cli: AIPerfCLI,
-        aiperf_mock_server: AIPerfMockServer,
+        tests.aiperf_mock_server: AIPerfMockServer,
         temp_output_dir: Path,
     ):
         """Test that --convergence-metric without --num-profile-runs > 1 raises error."""
@@ -218,7 +218,7 @@ class TestAdaptiveConvergence:
             f"""
             aiperf profile \
                 --model {defaults.model} \
-                --url {aiperf_mock_server.url} \
+                --url {tests.aiperf_mock_server.url} \
                 --endpoint-type chat \
                 --convergence-metric time_to_first_token \
                 --request-count 10 \

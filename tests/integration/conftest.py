@@ -19,8 +19,8 @@ from typing import Any
 import aiohttp
 import pytest
 import pytest_asyncio
-from aiperf_mock_server import MockServerConfig
-from aiperf_mock_server import serve as aiperf_mock_server_serve
+from tests.aiperf_mock_server import MockServerConfig
+from tests.aiperf_mock_server import serve as aiperf_mock_server_serve
 
 from aiperf.common.logging import AIPerfLogger
 from tests.harness.subprocess import _new_process_group_kwargs
@@ -383,7 +383,7 @@ def mock_server_factory() -> Callable[..., AsyncIterator[AIPerfMockServer]]:
 
 
 @pytest_asyncio.fixture(scope="package", loop_scope="package")
-async def aiperf_mock_server() -> AsyncGenerator[AIPerfMockServer, None]:
+async def tests.aiperf_mock_server() -> AsyncGenerator[AIPerfMockServer, None]:
     """Start AIPerf Mock Server for testing.
 
     This fixture starts a mock server with 8 workers and fast mode enabled.
