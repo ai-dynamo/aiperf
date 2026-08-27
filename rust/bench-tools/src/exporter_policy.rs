@@ -17,7 +17,7 @@ use crate::exporter_observable::{
     reject_duplicate_json_keys as reject_observable_duplicates,
     validate_captured_stream_observable,
 };
-use crate::plugin_stats::ExporterMember;
+use crate::plugin_stats::{ExporterEvidenceMode, ExporterMember};
 
 const COMPARISON_MAGIC: &[u8] = b"AIPERF_EXPORTER_COMPARISON_V1\0";
 
@@ -120,6 +120,14 @@ pub struct ExporterObservablePolicyV1 {
 }
 
 impl ExporterObservablePolicyV1 {
+    /// Lifecycle this policy authorizes for controlled exporter evidence.
+    pub fn evidence_mode(&self) -> ExporterEvidenceMode {
+        match self.mode {
+            ExporterPolicyMode::StaticCalibration => ExporterEvidenceMode::StaticCalibration,
+            ExporterPolicyMode::Paired => ExporterEvidenceMode::Paired,
+        }
+    }
+
     /// Serialize the validated policy as RFC 8785 JCS with one trailing newline.
     pub fn canonical_bytes(&self) -> Result<Vec<u8>, ExporterPolicyError> {
         let mut bytes = serde_json_canonicalizer::to_vec(self).map_err(|error| {

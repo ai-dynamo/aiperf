@@ -3,6 +3,11 @@
 
 //! Pins exporter-member evidence to the controlled observable bytes.
 
+use std::collections::BTreeSet;
+
+use aiperf_bench_tools::exporter_policy::{
+    ExporterObservablePolicyV1, parse_exporter_observable_policy,
+};
 use aiperf_bench_tools::plugin_stats::{
     ControlledAttemptDecision, ControlledMeasurementEvaluator, ExporterEvidenceMode,
     ExporterMember, ExporterMemberBinding, ExporterMemberEvidence, ExporterObservableKind,
@@ -18,6 +23,14 @@ const RAW_OBSERVABLE_DIGEST: &str =
 const EMPTY_PROVENANCE: &[u8] = b"[]\n";
 const EMPTY_PROVENANCE_DIGEST: &str =
     "blake3:9fa8dc9570625be2be53d308f958332981ec8fb8137d3dd7ba0ae5da317eaa7d";
+
+fn empty_paired_policy() -> ExporterObservablePolicyV1 {
+    parse_exporter_observable_policy(
+        b"{\"mode\":\"paired\",\"receiver_transport_fields_removed\":[],\"scenarios\":[{\"allows_empty\":false,\"observable_kind\":\"artifact_tree\",\"provenance_slots\":[],\"scenario_id\":\"exporter_100k\"}],\"schema_version\":1}\n",
+        &BTreeSet::new(),
+    )
+    .expect("literal policy validates")
+}
 
 fn paired_member_receipts(member: ExporterMember, observable_digest: &str) -> Vec<u8> {
     let receipts = (0_u64..16)
@@ -48,6 +61,9 @@ fn paired_member_receipts(member: ExporterMember, observable_digest: &str) -> Ve
 }
 
 fn binding(member: ExporterMember) -> ExporterMemberBinding {
+    let policy_blake3 = empty_paired_policy()
+        .canonical_blake3()
+        .expect("literal policy canonicalizes");
     ExporterMemberBinding {
         mode: ExporterEvidenceMode::Paired,
         experiment_identity_blake3: DIGEST.to_owned(),
@@ -57,7 +73,7 @@ fn binding(member: ExporterMember) -> ExporterMemberBinding {
         member,
         corpus_blake3: DIGEST.to_owned(),
         observable_kind: ExporterObservableKind::ArtifactTree,
-        observable_policy_blake3: DIGEST.to_owned(),
+        observable_policy_blake3: policy_blake3,
         build_artifact_blake3: DIGEST.to_owned(),
         build_receipt_blake3: DIGEST.to_owned(),
     }
@@ -95,7 +111,7 @@ fn member_record_bytes(
         "comparison_observable_blake3": RAW_OBSERVABLE_DIGEST,
         "experiment_identity_blake3": DIGEST,
         "member": member,
-        "observable_policy_blake3": DIGEST,
+        "observable_policy_blake3": binding(member).observable_policy_blake3,
         "pair_id": "pair-00",
         "processed_records": 1_600_000,
         "repetition_receipts_blake3": summary.repetition_receipts_blake3,
@@ -332,7 +348,7 @@ fn member_record_cannot_claim_a_duration_other_than_the_receipt_sum() {
         "comparison_observable_blake3": RAW_OBSERVABLE_DIGEST,
         "experiment_identity_blake3": DIGEST,
         "member": "dynamic",
-        "observable_policy_blake3": DIGEST,
+        "observable_policy_blake3": binding(ExporterMember::Dynamic).observable_policy_blake3,
         "pair_id": "pair-00",
         "processed_records": 1_600_000,
         "repetition_receipts_blake3": summary.repetition_receipts_blake3,
@@ -382,11 +398,14 @@ fn controlled_evaluator_classifies_invalid_exporter_evidence_as_a_product_failur
 
     let decision = evaluator
         .record_exporter_pair_evidence(
+            &empty_paired_policy(),
             &binding(ExporterMember::Static),
             &static_evidence,
+            &[],
             &static_record,
             &binding(ExporterMember::Dynamic),
             &dynamic_evidence,
+            &[],
             &forged_dynamic_record,
         )
         .expect("controlled validation returns a terminal product decision");
@@ -408,11 +427,14 @@ fn controlled_evaluator_retains_validated_exporter_member_records() {
 
     let decision = evaluator
         .record_exporter_pair_evidence(
+            &empty_paired_policy(),
             &binding(ExporterMember::Static),
             &static_evidence,
+            &[],
             &static_record,
             &binding(ExporterMember::Dynamic),
             &dynamic_evidence,
+            &[],
             &dynamic_record,
         )
         .expect("controlled exporter pair validates");
@@ -429,5 +451,38 @@ fn controlled_evaluator_retains_validated_exporter_member_records() {
     assert_eq!(
         retained[0].dynamic_record.repetition_receipts_blake3,
         retained[0].dynamic_member.repetition_receipts_blake3
+    );
+}
+
+#[test]
+fn controlled_evaluator_refuses_evidence_not_derived_from_its_bound_policy() {
+    let static_evidence = member_evidence(ExporterMember::Static);
+    let dynamic_evidence = member_evidence(ExporterMember::Dynamic);
+    let static_record = member_record_bytes(ExporterMember::Static, &static_evidence, 0);
+    let dynamic_record = member_record_bytes(ExporterMember::Dynamic, &dynamic_evidence, 0);
+    let mut forged_static_binding = binding(ExporterMember::Static);
+    forged_static_binding.observable_policy_blake3 = DIGEST.to_owned();
+    let mut evaluator = ControlledMeasurementEvaluator::new().expect("authority validates");
+    evaluator.begin_attempt().expect("first attempt starts");
+
+    assert_eq!(
+        evaluator
+            .record_exporter_pair_evidence(
+                &empty_paired_policy(),
+                &forged_static_binding,
+                &static_evidence,
+                &[],
+                &static_record,
+                &binding(ExporterMember::Dynamic),
+                &dynamic_evidence,
+                &[],
+                &dynamic_record,
+            )
+            .expect("policy mismatch is a terminal product decision"),
+        PairAttemptDecision::ExperimentFailed
+    );
+    assert_eq!(
+        evaluator.history()[0].decision,
+        ControlledAttemptDecision::ValidFailure
     );
 }

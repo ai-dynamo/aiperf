@@ -14,6 +14,11 @@ use rand::{Rng, SeedableRng, seq::SliceRandom};
 use rand_pcg::Pcg64Mcg;
 use serde::{Deserialize, Serialize};
 
+use crate::exporter_policy::{
+    ExporterObservablePolicyV1, ProvenanceBindingV1, SelectedBackingPayloadV1,
+    apply_exporter_observable_policy_v1,
+};
+
 const NORMATIVE_BOOTSTRAP_RESAMPLES: usize = 100_000;
 const NORMATIVE_RETAINED_PAIRS: usize = 30;
 const NORMATIVE_MAX_REPLACEMENTS: usize = 5;
@@ -870,11 +875,14 @@ impl ControlledMeasurementEvaluator {
     /// first valid attempt and can never be relabeled as infrastructure noise.
     pub fn record_exporter_pair_evidence(
         &mut self,
+        policy: &ExporterObservablePolicyV1,
         static_binding: &ExporterMemberBinding,
         static_evidence: &ExporterMemberEvidence,
+        static_backing_payloads: &[SelectedBackingPayloadV1],
         static_record_bytes: &[u8],
         dynamic_binding: &ExporterMemberBinding,
         dynamic_evidence: &ExporterMemberEvidence,
+        dynamic_backing_payloads: &[SelectedBackingPayloadV1],
         dynamic_record_bytes: &[u8],
     ) -> Result<PairAttemptDecision, PluginStatsError> {
         let active_ordinal = self
@@ -893,6 +901,18 @@ impl ControlledMeasurementEvaluator {
                     "exporter evidence attempt does not match the active controller attempt",
                 ));
             }
+            validate_exporter_policy_application(
+                policy,
+                static_binding,
+                static_evidence,
+                static_backing_payloads,
+            )?;
+            validate_exporter_policy_application(
+                policy,
+                dynamic_binding,
+                dynamic_evidence,
+                dynamic_backing_payloads,
+            )?;
             let pair = validate_exporter_pair_evidence(
                 &ExporterSampleContract::normative(),
                 static_binding,
@@ -1079,6 +1099,59 @@ impl ControlledMeasurementEvaluator {
         });
         Ok(())
     }
+}
+
+fn validate_exporter_policy_application(
+    policy: &ExporterObservablePolicyV1,
+    binding: &ExporterMemberBinding,
+    evidence: &ExporterMemberEvidence,
+    backing_payloads: &[SelectedBackingPayloadV1],
+) -> Result<(), PluginStatsError> {
+    if policy.evidence_mode() != binding.mode {
+        return Err(PluginStatsError::new(
+            "exporter observable policy mode does not match the member binding",
+        ));
+    }
+    let policy_blake3 = policy
+        .canonical_blake3()
+        .map_err(|error| PluginStatsError::new(format!("invalid exporter policy: {error}")))?;
+    if policy_blake3 != binding.observable_policy_blake3 {
+        return Err(PluginStatsError::new(
+            "exporter observable policy digest does not match the member binding",
+        ));
+    }
+    let repetition_ordinal = u64::try_from(evidence.retained.repetition_ordinal)
+        .map_err(|_| PluginStatsError::new("retained repetition ordinal does not fit u64"))?;
+    let provenance_binding = ProvenanceBindingV1 {
+        experiment_identity_blake3: binding.experiment_identity_blake3.clone(),
+        attempt_ordinal: binding.attempt_ordinal,
+        scenario_id: binding.scenario_id.clone(),
+        pair_id: binding.pair_id.clone(),
+        member: binding.member,
+        repetition_ordinal,
+    };
+    let applied = apply_exporter_observable_policy_v1(
+        policy,
+        &provenance_binding,
+        &evidence.retained.raw_observable_bytes,
+        backing_payloads,
+    )
+    .map_err(|error| {
+        PluginStatsError::new(format!(
+            "exporter observable policy application failed: {error}"
+        ))
+    })?;
+    if applied.comparison_bytes != evidence.retained.comparison_observable_bytes {
+        return Err(PluginStatsError::new(
+            "retained comparison observable was not derived by the bound policy",
+        ));
+    }
+    if applied.provenance_receipt_bytes != evidence.retained.provenance_receipt_bytes {
+        return Err(PluginStatsError::new(
+            "retained provenance receipt was not derived by the bound policy",
+        ));
+    }
+    Ok(())
 }
 
 fn classifier_allows(classifier: &str, event: InfrastructureEvent) -> bool {
