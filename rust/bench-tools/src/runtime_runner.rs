@@ -8,7 +8,9 @@ use std::fmt;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::thread::{JoinHandle, sleep};
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
@@ -29,6 +31,8 @@ const OUTPUT_SCHEMA_V1: &[u8] = b"plugin_runtime_member_output/v1;closed-jcs-lin
 const CALIBRATION_POLICY_BYTES: &[u8] =
     include_bytes!("../../benchmarks/exporter-observable-policy.json");
 const TASKSET: &str = "/usr/bin/taskset";
+const MAX_MEMBER_OUTPUT_BYTES: usize = 1024 * 1024;
+const DEADLINE_MULTIPLIER: u32 = 4;
 
 /// Read-only controller coordinates for acquiring one exporter implementation.
 #[derive(Clone, Copy, Debug)]
@@ -134,6 +138,8 @@ pub struct ControlledRuntimeReportV1 {
     pub executed_member_count: usize,
     /// Digests of exact child stdout in execution order; exporter adapters produce none.
     pub terminal_output_blake3: Vec<String>,
+    /// Bounded stdout/stderr and terminal status for every executed child.
+    pub terminal_member_evidence: Vec<TerminalMemberEvidenceV1>,
     /// Complete validated exporter evidence retained by the controller.
     pub exporter_pair_history: Vec<ControlledExporterPairRecord>,
     /// Canonical evidence binding identity, ledger, report, and raw outputs.
@@ -159,6 +165,7 @@ struct RuntimeEvidenceV1<'a> {
     retained_pair_count: usize,
     executed_member_count: usize,
     terminal_output_blake3: &'a [String],
+    terminal_member_evidence: &'a [TerminalMemberEvidenceV1],
     exporter_pair_history: &'a [ControlledExporterPairRecord],
 }
 
@@ -196,7 +203,57 @@ struct RuntimeMemberOutputV1 {
 struct MemberExecution {
     outcome: MemberTerminalOutcome,
     samples: Vec<PairedSample>,
-    stdout_blake3: Option<String>,
+    terminal_evidence: TerminalMemberEvidenceV1,
+}
+
+/// Controller-observed process termination.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChildTerminalStatus {
+    /// Process exited with this status code.
+    Exited(i32),
+    /// Process terminated from this signal.
+    Signaled(i32),
+    /// Controller deadline expired and the process group was killed and reaped.
+    TimedOut,
+}
+
+/// One bounded child output stream.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct BoundedChildOutput {
+    /// Retained prefix, never larger than the controller bound.
+    pub bytes: Vec<u8>,
+    /// BLAKE3 digest of the retained bytes.
+    pub blake3: String,
+    /// Whether additional bytes were drained and discarded.
+    pub was_truncated: bool,
+}
+
+/// Complete bounded terminal evidence for one runtime member.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct TerminalMemberEvidenceV1 {
+    /// Frozen scenario.
+    pub scenario: String,
+    /// Scheduled pair or warmup identifier.
+    pub pair_id: String,
+    /// Static comparator or dynamic candidate.
+    pub variant: Variant,
+    /// Controller-observed process identifier.
+    pub pid: libc::pid_t,
+    /// Terminal process status.
+    pub terminal_status: ChildTerminalStatus,
+    /// Bounded standard output.
+    pub stdout: BoundedChildOutput,
+    /// Bounded standard error.
+    pub stderr: BoundedChildOutput,
+}
+
+#[derive(Debug)]
+struct BoundedChildResult {
+    pid: libc::pid_t,
+    terminal_status: ChildTerminalStatus,
+    stdout: BoundedChildOutput,
+    stderr: BoundedChildOutput,
 }
 
 struct ExporterExecutionContext<'a> {
@@ -638,6 +695,7 @@ fn run_controlled_runtime_internal(
     let schedule = evaluator.pair_schedule().to_vec();
     let mut executed_member_count = 0_usize;
     let mut terminal_output_blake3 = Vec::new();
+    let mut terminal_member_evidence = Vec::new();
     let mut measured_cases = Vec::with_capacity(cases.len());
 
     for case in &cases {
@@ -679,10 +737,15 @@ fn run_controlled_runtime_internal(
                             &report_context,
                             executed_member_count,
                             terminal_output_blake3,
+                            terminal_member_evidence,
                         );
                     }
                 } else {
-                    let execution = execute_member(
+                    let MemberExecution {
+                        outcome,
+                        samples: _,
+                        terminal_evidence,
+                    } = execute_member(
                         case,
                         &pair_id,
                         variant,
@@ -692,14 +755,13 @@ fn run_controlled_runtime_internal(
                         &inherited_environment,
                     )?;
                     executed_member_count += 1;
-                    if let Some(stdout_blake3) = execution.stdout_blake3 {
-                        terminal_output_blake3.push(stdout_blake3);
-                    }
-                    if execution.outcome != MemberTerminalOutcome::Completed {
+                    terminal_output_blake3.push(terminal_evidence.stdout.blake3.clone());
+                    terminal_member_evidence.push(terminal_evidence);
+                    if outcome != MemberTerminalOutcome::Completed {
                         evaluator
                             .finish_authoritative_product_failure(format!(
                                 "warmup {pair_id} for {} {:?} failed: {:?}",
-                                case.scenario, variant, execution.outcome
+                                case.scenario, variant, outcome
                             ))
                             .map_err(|error| ControlledRuntimeError::new(error.to_string()))?;
                         return runtime_report(
@@ -708,6 +770,7 @@ fn run_controlled_runtime_internal(
                             &report_context,
                             executed_member_count,
                             terminal_output_blake3,
+                            terminal_member_evidence,
                         );
                     }
                 }
@@ -752,11 +815,16 @@ fn run_controlled_runtime_internal(
                                 &report_context,
                                 executed_member_count,
                                 terminal_output_blake3,
+                                terminal_member_evidence,
                             );
                         }
                     }
                 } else {
-                    let execution = execute_member(
+                    let MemberExecution {
+                        outcome,
+                        samples,
+                        terminal_evidence,
+                    } = execute_member(
                         case,
                         &scheduled.pair_id,
                         variant,
@@ -766,14 +834,10 @@ fn run_controlled_runtime_internal(
                         &inherited_environment,
                     )?;
                     executed_member_count += 1;
-                    if let Some(stdout_blake3) = execution.stdout_blake3 {
-                        terminal_output_blake3.push(stdout_blake3);
-                    }
-                    member_records.push(RawMemberTerminalRecord {
-                        variant,
-                        outcome: execution.outcome,
-                    });
-                    pair_samples.extend(execution.samples);
+                    terminal_output_blake3.push(terminal_evidence.stdout.blake3.clone());
+                    terminal_member_evidence.push(terminal_evidence);
+                    member_records.push(RawMemberTerminalRecord { variant, outcome });
+                    pair_samples.extend(samples);
                 }
             }
             let raw_pair = RawPairTerminalRecord {
@@ -817,6 +881,7 @@ fn run_controlled_runtime_internal(
                     &report_context,
                     executed_member_count,
                     terminal_output_blake3,
+                    terminal_member_evidence,
                 );
             }
             samples.extend(pair_samples);
@@ -843,6 +908,7 @@ fn run_controlled_runtime_internal(
         &report_context,
         executed_member_count,
         terminal_output_blake3,
+        terminal_member_evidence,
     )
 }
 
@@ -889,6 +955,157 @@ fn execute_exporter_member(
             workload.as_mut(),
         )
         .map_err(|error| error.to_string())
+}
+
+fn execute_bounded_child(
+    command: &mut Command,
+    deadline: Duration,
+    output_limit: usize,
+) -> Result<BoundedChildResult, ControlledRuntimeError> {
+    if deadline.is_zero() || output_limit == 0 {
+        return Err(ControlledRuntimeError::new(
+            "child deadline and output bound must be positive",
+        ));
+    }
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt as _;
+
+        // The controller owns the child's process group so timeout and terminal
+        // cleanup cannot leave descendants holding the bounded output pipes.
+        unsafe {
+            command.pre_exec(|| {
+                if libc::setpgid(0, 0) != 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+    }
+    let mut child = command.spawn().map_err(|error| {
+        ControlledRuntimeError::new(format!("cannot spawn controlled runtime member: {error}"))
+    })?;
+    let pid = libc::pid_t::try_from(child.id())
+        .map_err(|_| ControlledRuntimeError::new("runtime member PID does not fit pid_t"))?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| ControlledRuntimeError::new("runtime member stdout pipe was not created"))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| ControlledRuntimeError::new("runtime member stderr pipe was not created"))?;
+    let stdout_reader = drain_bounded_output(stdout, output_limit);
+    let stderr_reader = drain_bounded_output(stderr, output_limit);
+    let started = Instant::now();
+    let terminal_status = loop {
+        if let Some(status) = child.try_wait().map_err(|error| {
+            ControlledRuntimeError::new(format!("cannot poll runtime member: {error}"))
+        })? {
+            break child_terminal_status(status);
+        }
+        if started.elapsed() >= deadline {
+            kill_process_group(pid)?;
+            child.wait().map_err(|error| {
+                ControlledRuntimeError::new(format!(
+                    "cannot reap timed-out runtime member: {error}"
+                ))
+            })?;
+            break ChildTerminalStatus::TimedOut;
+        }
+        sleep(Duration::from_millis(5));
+    };
+    kill_process_group_if_present(pid)?;
+    let stdout = join_bounded_output(stdout_reader, "stdout")?;
+    let stderr = join_bounded_output(stderr_reader, "stderr")?;
+    Ok(BoundedChildResult {
+        pid,
+        terminal_status,
+        stdout,
+        stderr,
+    })
+}
+
+fn drain_bounded_output<R>(
+    mut reader: R,
+    limit: usize,
+) -> JoinHandle<Result<BoundedChildOutput, std::io::Error>>
+where
+    R: Read + Send + 'static,
+{
+    std::thread::spawn(move || {
+        let mut retained = Vec::with_capacity(limit.min(64 * 1024));
+        let mut buffer = [0_u8; 64 * 1024];
+        let mut was_truncated = false;
+        loop {
+            let count = reader.read(&mut buffer)?;
+            if count == 0 {
+                break;
+            }
+            let remaining = limit.saturating_sub(retained.len());
+            let retained_count = remaining.min(count);
+            retained.extend_from_slice(&buffer[..retained_count]);
+            was_truncated |= retained_count != count;
+        }
+        Ok(BoundedChildOutput {
+            blake3: digest(&retained),
+            bytes: retained,
+            was_truncated,
+        })
+    })
+}
+
+fn join_bounded_output(
+    reader: JoinHandle<Result<BoundedChildOutput, std::io::Error>>,
+    stream: &str,
+) -> Result<BoundedChildOutput, ControlledRuntimeError> {
+    reader
+        .join()
+        .map_err(|_| {
+            ControlledRuntimeError::new(format!("runtime member {stream} reader panicked"))
+        })?
+        .map_err(|error| {
+            ControlledRuntimeError::new(format!("cannot read runtime member {stream}: {error}"))
+        })
+}
+
+fn child_terminal_status(status: std::process::ExitStatus) -> ChildTerminalStatus {
+    if let Some(code) = status.code() {
+        return ChildTerminalStatus::Exited(code);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt as _;
+
+        return ChildTerminalStatus::Signaled(status.signal().unwrap_or_default());
+    }
+    #[cfg(not(unix))]
+    ChildTerminalStatus::Exited(-1)
+}
+
+fn kill_process_group(pid: libc::pid_t) -> Result<(), ControlledRuntimeError> {
+    #[cfg(unix)]
+    {
+        if unsafe { libc::kill(-pid, libc::SIGKILL) } == 0 {
+            return Ok(());
+        }
+        let error = std::io::Error::last_os_error();
+        if error.raw_os_error() == Some(libc::ESRCH) {
+            return Ok(());
+        }
+        return Err(ControlledRuntimeError::new(format!(
+            "cannot kill runtime member process group: {error}"
+        )));
+    }
+    #[cfg(not(unix))]
+    Err(ControlledRuntimeError::new(
+        "runtime member process-group termination is unavailable on this platform",
+    ))
+}
+
+fn kill_process_group_if_present(pid: libc::pid_t) -> Result<(), ControlledRuntimeError> {
+    kill_process_group(pid)
 }
 
 fn execute_member(
@@ -942,19 +1159,41 @@ fn execute_member(
                 Variant::Dynamic => "dynamic",
             },
         );
-    let output = command.output().map_err(|error| {
-        ControlledRuntimeError::new(format!("cannot execute controlled runtime member: {error}"))
-    })?;
-    if !output.status.success() {
+    let deadline = Duration::from_secs(case.minimum_duration_seconds)
+        .checked_mul(DEADLINE_MULTIPLIER)
+        .ok_or_else(|| ControlledRuntimeError::new("runtime member deadline overflow"))?;
+    let result = execute_bounded_child(&mut command, deadline, MAX_MEMBER_OUTPUT_BYTES)?;
+    let terminal_evidence = TerminalMemberEvidenceV1 {
+        scenario: case.scenario.clone(),
+        pair_id: pair_id.to_owned(),
+        variant,
+        pid: result.pid,
+        terminal_status: result.terminal_status.clone(),
+        stdout: result.stdout,
+        stderr: result.stderr,
+    };
+    if terminal_evidence.terminal_status == ChildTerminalStatus::TimedOut {
         return Ok(MemberExecution {
-            outcome: MemberTerminalOutcome::Crash(format!("process exited with {}", output.status)),
+            outcome: MemberTerminalOutcome::Timeout(format!(
+                "controller deadline expired after {} seconds",
+                deadline.as_secs()
+            )),
             samples: Vec::new(),
-            stdout_blake3: Some(digest(&output.stdout)),
+            terminal_evidence,
         });
     }
-    let stdout_blake3 = digest(&output.stdout);
+    if terminal_evidence.terminal_status != ChildTerminalStatus::Exited(0) {
+        return Ok(MemberExecution {
+            outcome: MemberTerminalOutcome::Crash(format!(
+                "process terminated with {:?}",
+                terminal_evidence.terminal_status
+            )),
+            samples: Vec::new(),
+            terminal_evidence,
+        });
+    }
     let decoded = match decode_member_output(
-        &output.stdout,
+        &terminal_evidence.stdout.bytes,
         case,
         pair_id,
         variant,
@@ -965,7 +1204,7 @@ fn execute_member(
             return Ok(MemberExecution {
                 outcome: MemberTerminalOutcome::MalformedOutput(error.to_string()),
                 samples: Vec::new(),
-                stdout_blake3: Some(stdout_blake3),
+                terminal_evidence,
             });
         }
     };
@@ -987,7 +1226,7 @@ fn execute_member(
     Ok(MemberExecution {
         outcome: MemberTerminalOutcome::Completed,
         samples,
-        stdout_blake3: Some(stdout_blake3),
+        terminal_evidence,
     })
 }
 
@@ -1041,6 +1280,7 @@ fn runtime_report(
     context: &RuntimeReportContext<'_>,
     executed_member_count: usize,
     terminal_output_blake3: Vec<String>,
+    terminal_member_evidence: Vec<TerminalMemberEvidenceV1>,
 ) -> Result<ControlledRuntimeReportV1, ControlledRuntimeError> {
     let decision = evaluator
         .history()
@@ -1084,6 +1324,7 @@ fn runtime_report(
         retained_pair_count,
         executed_member_count,
         terminal_output_blake3: &terminal_output_blake3,
+        terminal_member_evidence: &terminal_member_evidence,
         exporter_pair_history: &exporter_pair_history,
     })
     .map_err(|error| {
@@ -1106,6 +1347,7 @@ fn runtime_report(
         retained_pair_count,
         executed_member_count,
         terminal_output_blake3,
+        terminal_member_evidence,
         exporter_pair_history,
         runtime_evidence_bytes,
         runtime_evidence_blake3,
@@ -1250,7 +1492,7 @@ mod tests {
         let mut command = Command::new("/bin/sh");
         command.args([
             "-c",
-            "while :; do printf 'stdout-payload'; printf 'stderr-payload' >&2; done",
+            "i=0; while [ $i -lt 10000 ]; do printf 'stdout-payload'; printf 'stderr-payload' >&2; i=$((i + 1)); done",
         ]);
 
         let result = execute_bounded_child(&mut command, Duration::from_secs(2), 4096)
