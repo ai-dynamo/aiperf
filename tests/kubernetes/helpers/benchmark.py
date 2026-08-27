@@ -736,7 +736,7 @@ class BenchmarkDeployer:
             "--endpoint-type",
             config.endpoint_type,
             "--image",
-            config.image,
+            config.image if config.image != "aiperf:local" else self.default_image,
             "--concurrency",
             str(config.concurrency),
             "--request-count",
