@@ -15,11 +15,11 @@ use serde::Serialize;
 
 use crate::exporter_observable::{
     ArtifactTreeEntry, ArtifactTreeKind, ReceiverBody, ReceiverBodyEncoding,
-    ReceiverTranscriptEntry, validate_artifact_tree_path,
+    ReceiverTranscriptEntry, validate_artifact_tree_path, validate_receiver_metadata,
 };
 use crate::exporter_policy::{
-    ExporterObservablePolicyV1, ProvenanceBindingV1, SelectedBackingPayloadV1,
-    apply_exporter_observable_policy_v1,
+    AuthenticatedReceiverProtocolV1, ExporterObservablePolicyV1, ProvenanceBindingV1,
+    SelectedBackingPayloadV1, apply_exporter_observable_policy_v1,
 };
 use crate::plugin_stats::{
     ExporterEvidenceMode, ExporterMember, ExporterMemberBinding, ExporterMemberEvidence,
@@ -81,6 +81,8 @@ pub struct ExporterMemberSource<'a> {
     pub build_artifact: &'a File,
     /// Authenticated build receipt bytes whose digest the runner binds.
     pub build_receipt_bytes: &'a [u8],
+    /// Controller-authenticated receiver identity; required only for receiver scenarios.
+    pub receiver_protocol: Option<&'a AuthenticatedReceiverProtocolV1>,
 }
 
 /// Borrowed immutable record from the harness's fixed corpus.
@@ -176,6 +178,7 @@ enum CaptureStorage {
     ArtifactTree(ArtifactCapture),
     CapturedStream(BufWriter<File>),
     ReceiverTranscript {
+        protocol: AuthenticatedReceiverProtocolV1,
         entries: Vec<ReceiverTranscriptEntry>,
         bodies: Vec<Vec<u8>>,
     },
@@ -187,7 +190,10 @@ pub struct HostExporterCapture {
 }
 
 impl HostExporterCapture {
-    fn new(kind: ExporterObservableKind) -> Result<Self, ExporterHarnessError> {
+    fn new(
+        kind: ExporterObservableKind,
+        receiver_protocol: Option<&AuthenticatedReceiverProtocolV1>,
+    ) -> Result<Self, ExporterHarnessError> {
         let storage = match kind {
             ExporterObservableKind::ArtifactTree => CaptureStorage::ArtifactTree(ArtifactCapture {
                 root: tempfile::tempdir().map_err(io_error("create artifact capture root"))?,
@@ -198,6 +204,11 @@ impl HostExporterCapture {
                 BufWriter::new(tempfile::tempfile().map_err(io_error("create stream capture"))?),
             ),
             ExporterObservableKind::ReceiverTranscript => CaptureStorage::ReceiverTranscript {
+                protocol: receiver_protocol.cloned().ok_or_else(|| {
+                    ExporterHarnessError::acquisition(
+                        "receiver capture lacks its authenticated protocol identity",
+                    )
+                })?,
                 entries: Vec::new(),
                 bodies: Vec::new(),
             },
@@ -268,14 +279,23 @@ impl HostExporterCapture {
         &mut self,
         operation: &str,
         target: &str,
-        metadata: Vec<[String; 2]>,
+        mut metadata: Vec<[String; 2]>,
         body: &[u8],
     ) -> Result<ReceiverAcknowledgement, ExporterHarnessError> {
-        let CaptureStorage::ReceiverTranscript { entries, bodies } = &mut self.storage else {
+        let CaptureStorage::ReceiverTranscript {
+            protocol,
+            entries,
+            bodies,
+        } = &mut self.storage
+        else {
             return Err(ExporterHarnessError::product(
                 "receiver output used for a different observable class",
             ));
         };
+        validate_receiver_metadata(&metadata).map_err(|error| {
+            ExporterHarnessError::product(format!("invalid receiver metadata: {error}"))
+        })?;
+        metadata.retain(|pair| !protocol.removed_metadata_keys().contains(&pair[0]));
         let sequence = u64::try_from(entries.len()).map_err(|_| {
             ExporterHarnessError::acquisition("receiver acceptance sequence overflow")
         })?;
@@ -340,7 +360,11 @@ impl HostExporterCapture {
                     transcript_bodies: Vec::new(),
                 })
             }
-            CaptureStorage::ReceiverTranscript { entries, bodies } => {
+            CaptureStorage::ReceiverTranscript {
+                protocol: _,
+                entries,
+                bodies,
+            } => {
                 let mut raw_observable_bytes =
                     serde_json_canonicalizer::to_vec(&entries).map_err(|error| {
                         ExporterHarnessError::acquisition(format!(
@@ -373,9 +397,24 @@ pub struct CompletedExporterMember {
     record: ExporterMemberRecord,
     record_bytes: Vec<u8>,
     summary: ExporterMemberSummary,
+    receiver_protocol: Option<AuthenticatedReceiverProtocolV1>,
 }
 
 impl CompletedExporterMember {
+    /// Controller-authenticated receiver protocol retained with this member.
+    pub fn receiver_protocol(&self) -> Option<&str> {
+        self.receiver_protocol
+            .as_ref()
+            .map(AuthenticatedReceiverProtocolV1::protocol)
+    }
+
+    /// Digest of the authenticated receiver-protocol authority retained with this member.
+    pub fn receiver_protocol_authority_blake3(&self) -> Option<&str> {
+        self.receiver_protocol
+            .as_ref()
+            .map(AuthenticatedReceiverProtocolV1::authority_blake3)
+    }
+
     /// Internally constructed immutable member binding.
     pub fn binding(&self) -> &ExporterMemberBinding {
         &self.binding
@@ -441,12 +480,34 @@ impl ExporterHarnessRunner {
         exporter: &mut E,
     ) -> Result<CompletedExporterMember, ExporterHarnessError> {
         let binding = self.bind_member(source)?;
+        let receiver_protocol = match binding.observable_kind {
+            ExporterObservableKind::ReceiverTranscript => {
+                let protocol = source.receiver_protocol.ok_or_else(|| {
+                    ExporterHarnessError::product(
+                        "receiver scenario requires an authenticated receiver protocol",
+                    )
+                })?;
+                self.policy
+                    .validate_receiver_protocol(protocol)
+                    .map_err(policy_error)?;
+                Some(protocol.clone())
+            }
+            _ => {
+                if source.receiver_protocol.is_some() {
+                    return Err(ExporterHarnessError::product(
+                        "non-receiver scenario cannot bind a receiver protocol",
+                    ));
+                }
+                None
+            }
+        };
         let mut receipts = Vec::with_capacity(REPETITIONS);
         let mut retained = None;
         let mut retained_backing = None;
 
         for repetition_ordinal in 0..REPETITIONS {
-            let mut capture = HostExporterCapture::new(binding.observable_kind)?;
+            let mut capture =
+                HostExporterCapture::new(binding.observable_kind, receiver_protocol.as_ref())?;
             let mut records = ExporterRecordStream {
                 records: &self.corpus,
                 next: 0,
@@ -585,6 +646,7 @@ impl ExporterHarnessRunner {
             record,
             record_bytes,
             summary,
+            receiver_protocol,
         })
     }
 

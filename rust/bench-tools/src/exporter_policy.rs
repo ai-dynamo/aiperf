@@ -113,13 +113,88 @@ struct ExporterObservableScenario {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ExporterObservablePolicyV1 {
+    #[serde(skip)]
+    authenticated_receiver_protocols: BTreeSet<String>,
+    #[serde(skip)]
+    authenticated_receiver_protocols_blake3: String,
     mode: ExporterPolicyMode,
     receiver_transport_fields_removed: Vec<ExporterTransportFieldsRemoved>,
     scenarios: Vec<ExporterObservableScenario>,
     schema_version: u8,
 }
 
+/// Opaque receiver-protocol identity authenticated by one exact policy authority.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AuthenticatedReceiverProtocolV1 {
+    protocol: String,
+    policy_blake3: String,
+    authenticated_receiver_protocols_blake3: String,
+    removed_metadata_keys: BTreeSet<String>,
+}
+
+impl AuthenticatedReceiverProtocolV1 {
+    /// Canonical receiver-protocol identifier.
+    pub fn protocol(&self) -> &str {
+        &self.protocol
+    }
+
+    /// Digest of the complete authenticated receiver-protocol set.
+    pub fn authority_blake3(&self) -> &str {
+        &self.authenticated_receiver_protocols_blake3
+    }
+
+    pub(crate) fn removed_metadata_keys(&self) -> &BTreeSet<String> {
+        &self.removed_metadata_keys
+    }
+}
+
 impl ExporterObservablePolicyV1 {
+    /// Bind one canonical receiver protocol to this policy's authenticated authority.
+    pub fn authenticate_receiver_protocol(
+        &self,
+        protocol: &str,
+    ) -> Result<AuthenticatedReceiverProtocolV1, ExporterPolicyError> {
+        if !is_policy_identifier(protocol)
+            || !self.authenticated_receiver_protocols.contains(protocol)
+        {
+            return Err(ExporterPolicyError::new(
+                "receiver protocol is absent from the authenticated policy authority",
+            ));
+        }
+        let removed_metadata_keys = self
+            .receiver_transport_fields_removed
+            .iter()
+            .find(|removal| removal.protocol == protocol)
+            .map(|removal| removal.keys.iter().cloned().collect())
+            .unwrap_or_default();
+        Ok(AuthenticatedReceiverProtocolV1 {
+            protocol: protocol.to_owned(),
+            policy_blake3: self.canonical_blake3()?,
+            authenticated_receiver_protocols_blake3: self
+                .authenticated_receiver_protocols_blake3
+                .clone(),
+            removed_metadata_keys,
+        })
+    }
+
+    pub(crate) fn validate_receiver_protocol(
+        &self,
+        protocol: &AuthenticatedReceiverProtocolV1,
+    ) -> Result<(), ExporterPolicyError> {
+        if protocol.policy_blake3 != self.canonical_blake3()?
+            || protocol.authenticated_receiver_protocols_blake3
+                != self.authenticated_receiver_protocols_blake3
+            || !self
+                .authenticated_receiver_protocols
+                .contains(protocol.protocol())
+        {
+            return Err(ExporterPolicyError::new(
+                "receiver protocol identity does not match the runner policy authority",
+            ));
+        }
+        Ok(())
+    }
+
     /// Lifecycle this policy authorizes for controlled exporter evidence.
     pub fn evidence_mode(&self) -> ExporterEvidenceMode {
         match self.mode {
@@ -230,16 +305,31 @@ pub fn parse_exporter_observable_policy(
     authenticated_receiver_protocols: &BTreeSet<String>,
 ) -> Result<ExporterObservablePolicyV1, ExporterPolicyError> {
     reject_duplicate_json_keys(bytes)?;
-    let policy: ExporterObservablePolicyV1 = serde_json::from_slice(bytes).map_err(|error| {
-        ExporterPolicyError::new(format!("cannot decode exporter observable policy: {error}"))
-    })?;
+    let mut policy: ExporterObservablePolicyV1 =
+        serde_json::from_slice(bytes).map_err(|error| {
+            ExporterPolicyError::new(format!("cannot decode exporter observable policy: {error}"))
+        })?;
     validate_exporter_policy(&policy, authenticated_receiver_protocols)?;
     if policy.canonical_bytes()? != bytes {
         return Err(ExporterPolicyError::new(
             "exporter observable policy is not exact RFC 8785 JCS plus newline",
         ));
     }
+    policy.authenticated_receiver_protocols = authenticated_receiver_protocols.clone();
+    policy.authenticated_receiver_protocols_blake3 =
+        canonical_protocol_set_blake3(authenticated_receiver_protocols)?;
     Ok(policy)
+}
+
+fn canonical_protocol_set_blake3(
+    protocols: &BTreeSet<String>,
+) -> Result<String, ExporterPolicyError> {
+    let bytes = serde_json_canonicalizer::to_vec(protocols).map_err(|error| {
+        ExporterPolicyError::new(format!(
+            "cannot canonicalize authenticated receiver protocols: {error}"
+        ))
+    })?;
+    Ok(format!("blake3:{}", blake3::hash(&bytes)))
 }
 
 /// Exact backing bytes for one selector named by a policy slot.
@@ -1446,6 +1536,14 @@ fn validate_exporter_policy(
     policy: &ExporterObservablePolicyV1,
     authenticated_receiver_protocols: &BTreeSet<String>,
 ) -> Result<(), ExporterPolicyError> {
+    if authenticated_receiver_protocols
+        .iter()
+        .any(|protocol| !is_policy_identifier(protocol))
+    {
+        return Err(ExporterPolicyError::new(
+            "authenticated receiver protocol identity is not canonical",
+        ));
+    }
     if policy.schema_version != 1 {
         return Err(ExporterPolicyError::new(
             "exporter observable policy schema_version must be 1",
