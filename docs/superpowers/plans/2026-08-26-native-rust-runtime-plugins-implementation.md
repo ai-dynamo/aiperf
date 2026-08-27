@@ -385,8 +385,10 @@ HEAD.
   commit, toolchain, target, features, profiles, commands, artifact digests,
   clean/incremental build timings, binary size, runtime CPU, latency, throughput,
 allocations, and raw-sample locations used by Tasks 37–39.
-  Produces measured package coupling evidence in `package-topology.json`; Task 2
-  consumes it before final member manifests/feature ownership are authored.
+  Produces the exact pre-plugin Cargo package/dependency/feature census in
+  `package-topology.json`; Task 2 consumes it before provisional member
+  manifests and feature ownership are authored. This census does not claim to
+  measure source coupling for packages whose implementation does not yet exist.
 
 - [ ] **Step 1: Write the baseline schema test**
 
@@ -763,12 +765,16 @@ ID, and integrate.
   baseline commands between static/dynamic variants. It exposes a library target
   so integration tests and Task 38 share one
   implementation rather than duplicating statistics.
-- Consumes Task 1 `package-topology.json`, writes the sole measured and reviewed
-  final dependency/feature-ownership matrix, and performs the foundational
+- Consumes Task 1 `package-topology.json`, writes the sole reviewed provisional
+  dependency/feature-ownership projection, and performs the foundational
   root-workspace/lock amendment. Task 7’s explicitly recorded CLI allocator
   dependency/lock delta is the only pre-Task-37 exception. The matrix test
-  rejects every dependency or feature edge not justified by measured source
-  coupling.
+  rejects every current dependency edge not present in that projection and
+  binds each projected package and feature back to the exact Task-1 Cargo
+  census. It must call these rows `reviewed_projection`, never `measured`:
+  Task 3 runs before the projected packages contain their implementations.
+  Each implementation task revalidates the edges it makes real, and Task 40
+  proves the final graph against the implemented source/package ownership.
 
 - [ ] **Step 1: Write failing statistical tests**
 
@@ -778,9 +784,11 @@ rejection, coefficient-of-variation retry limits, and deterministic bootstrap
 seeding using a fixed sample vector. The production change that makes each test
 pass is the corresponding `plugin_stats` function.
 The topology test reads Task-1 `package-topology.json`, requires one reviewed
-owner for every measured dependency/feature edge, compares it to
-`plugin-api/feature-ownership.toml` and Cargo metadata, and rejects an
-unmeasured edge or a dependency-neutral shell left unresolved.
+projection owner for every current dependency and baseline feature edge,
+compares it to `plugin-api/feature-ownership.toml` and Cargo metadata, and
+rejects an unprojected edge or a dependency-neutral shell left unresolved. It
+must not treat free-form projection prose as machine-generated source-coupling
+evidence.
 
 - [ ] **Step 2: Verify RED**
 
@@ -3699,7 +3707,9 @@ The final conformance test now executes the deferred `packaging` and
 sources/versions, target/toolchain, ABI artifacts, allocator, universe record,
 hermetic/linker policy, schema, and no orchestration-private crates), and checks
 post-cutover package/static-path evidence against the exact Task-38 candidate
-object IDs.
+object IDs. It also derives the final dependency/feature graph from Cargo
+metadata and verifies every edge against the implemented source/package owner;
+no Task-3 `reviewed_projection` row is accepted as final coupling evidence.
 
 - [ ] **Step 5: Whole-branch Graham approval, final bundle audit, and commit**
 

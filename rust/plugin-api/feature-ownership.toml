@@ -47,7 +47,7 @@ dependencies = []
 [[package_ownership]]
 package = "aiperf-plugin-api"
 owner = "plugin-api"
-review_state = "measured"
+review_state = "reviewed_projection"
 source_package = "aiperf-runtime"
 coupling_evidence = "Task-2 public boundary requires the core-owned type identity"
 dependencies = [{ package = "aiperf-core", kind = "normal", justification = "API boundary values are owned by aiperf-core" }]
@@ -55,7 +55,7 @@ dependencies = [{ package = "aiperf-core", kind = "normal", justification = "API
 [[package_ownership]]
 package = "aiperf-plugin-sdk"
 owner = "plugin-authoring"
-review_state = "measured"
+review_state = "reviewed_projection"
 source_package = "aiperf-bench-tools"
 coupling_evidence = "Tasks 8-9 author tools consume core/API records and the entry macro"
 dependencies = [
@@ -67,7 +67,7 @@ dependencies = [
 [[package_ownership]]
 package = "aiperf-endpoint-sdk"
 owner = "endpoint-boundary"
-review_state = "measured"
+review_state = "reviewed_projection"
 source_package = "aiperf-runtime"
 coupling_evidence = "Task-1 endpoint source inventory and Task-6 boundary ownership"
 dependencies = [
@@ -78,7 +78,7 @@ dependencies = [
 [[package_ownership]]
 package = "aiperf-transport-sdk"
 owner = "transport-boundary"
-review_state = "measured"
+review_state = "reviewed_projection"
 source_package = "aiperf-runtime"
 coupling_evidence = "Task-1 transport source inventory and Task-6 boundary ownership"
 dependencies = [
@@ -90,7 +90,7 @@ dependencies = [
 [[package_ownership]]
 package = "aiperf-export-sdk"
 owner = "export-boundary"
-review_state = "measured"
+review_state = "reviewed_projection"
 source_package = "aiperf-runtime"
 coupling_evidence = "Task-2 predeclared independent-leaf test seam"
 dependencies = [
@@ -102,7 +102,7 @@ dependencies = [
 [[package_ownership]]
 package = "aiperf-plugin-test-support"
 owner = "plugin-test-infrastructure"
-review_state = "measured"
+review_state = "reviewed_projection"
 source_package = "aiperf-e2e-tests"
 coupling_evidence = "Task-2 non-published fixture boundary"
 dependencies = [{ package = "aiperf-core", kind = "normal", justification = "fixtures use only core-owned public values" }]
@@ -117,7 +117,7 @@ dependencies = []
 [[package_ownership]]
 package = "aiperf-plugin-host"
 owner = "host-composition"
-review_state = "measured"
+review_state = "reviewed_projection"
 source_package = "aiperf-cli"
 coupling_evidence = "Tasks 10-16 host lifecycle consumes only the allowed API/core/SDK layers"
 dependencies = [
@@ -129,7 +129,7 @@ dependencies = [
 [[package_ownership]]
 package = "aiperf-plugin-conformance"
 owner = "plugin-conformance"
-review_state = "measured"
+review_state = "reviewed_projection"
 source_package = "aiperf-e2e-tests"
 coupling_evidence = "Task-36 conformance spans each published SDK and the host loader"
 dependencies = [
@@ -145,7 +145,7 @@ dependencies = [
 [[package_ownership]]
 package = "aiperf-plugin-packaging-tests"
 owner = "plugin-packaging"
-review_state = "measured"
+review_state = "reviewed_projection"
 source_package = "aiperf-e2e-tests"
 coupling_evidence = "Task-35 package lifecycle tests drive SDK output through host installation"
 dependencies = [
@@ -156,7 +156,7 @@ dependencies = [
 [[package_ownership]]
 package = "aiperf-plugin-perf"
 owner = "plugin-performance"
-review_state = "measured"
+review_state = "reviewed_projection"
 source_package = "aiperf-bench-tools"
 coupling_evidence = "Task-38 execution consumes the canonical Task-3 statistics implementation"
 dependencies = [{ package = "aiperf-bench-tools", kind = "normal", justification = "performance execution and acceptance share one statistics implementation" }]
@@ -185,7 +185,7 @@ dependencies = []
 [[package_ownership]]
 package = "aiperf-plugin-export-basic"
 owner = "export-basic"
-review_state = "measured"
+review_state = "reviewed_projection"
 source_package = "aiperf-runtime"
 coupling_evidence = "Task-1 basic exporter leaf inventory"
 dependencies = [
@@ -197,7 +197,7 @@ dependencies = [
 [[package_ownership]]
 package = "aiperf-plugin-export-parquet"
 owner = "export-parquet"
-review_state = "measured"
+review_state = "reviewed_projection"
 source_package = "aiperf-runtime"
 coupling_evidence = "Task-1 parquet feature and exporter leaf inventory"
 dependencies = [
@@ -209,7 +209,7 @@ dependencies = [
 [[package_ownership]]
 package = "aiperf-plugin-export-mlflow"
 owner = "export-mlflow"
-review_state = "measured"
+review_state = "reviewed_projection"
 source_package = "aiperf-runtime"
 coupling_evidence = "Task-1 MLflow exporter leaf inventory"
 dependencies = [
@@ -221,7 +221,7 @@ dependencies = [
 [[package_ownership]]
 package = "aiperf-plugin-export-wandb"
 owner = "export-wandb"
-review_state = "measured"
+review_state = "reviewed_projection"
 source_package = "aiperf-runtime"
 coupling_evidence = "Task-1 W&B exporter leaf inventory"
 dependencies = [
@@ -233,7 +233,7 @@ dependencies = [
 [[package_ownership]]
 package = "aiperf-plugin-export-otel"
 owner = "export-otel"
-review_state = "measured"
+review_state = "reviewed_projection"
 source_package = "aiperf-runtime"
 coupling_evidence = "Task-1 OTel exporter leaf inventory"
 dependencies = [
@@ -245,7 +245,7 @@ dependencies = [
 [[package_ownership]]
 package = "aiperf-plugin-endpoints"
 owner = "endpoints"
-review_state = "measured"
+review_state = "reviewed_projection"
 source_package = "aiperf-runtime"
 coupling_evidence = "Task-1 endpoint implementation and binding inventory"
 dependencies = [
@@ -257,7 +257,7 @@ dependencies = [
 [[package_ownership]]
 package = "aiperf-plugin-transport-http"
 owner = "transport-http"
-review_state = "measured"
+review_state = "reviewed_projection"
 source_package = "aiperf-runtime"
 coupling_evidence = "Task-1 HTTP transport leaf inventory"
 dependencies = [
@@ -270,7 +270,7 @@ dependencies = [
 [[package_ownership]]
 package = "aiperf-plugin-transport-grpc"
 owner = "transport-grpc"
-review_state = "measured"
+review_state = "reviewed_projection"
 source_package = "aiperf-runtime"
 coupling_evidence = "Task-1 gRPC feature and transport leaf inventory"
 dependencies = [
@@ -283,7 +283,7 @@ dependencies = [
 [[package_ownership]]
 package = "aiperf-plugin-transport-websocket"
 owner = "transport-websocket"
-review_state = "measured"
+review_state = "reviewed_projection"
 source_package = "aiperf-runtime"
 coupling_evidence = "Task-1 WebSocket feature and transport leaf inventory"
 dependencies = [
@@ -296,7 +296,7 @@ dependencies = [
 [[package_ownership]]
 package = "aiperf-plugin-transport-dry-run"
 owner = "transport-dry-run"
-review_state = "measured"
+review_state = "reviewed_projection"
 source_package = "aiperf-runtime"
 coupling_evidence = "Task-1 dry-run transport leaf inventory"
 dependencies = [
@@ -308,7 +308,7 @@ dependencies = [
 [[package_ownership]]
 package = "aiperf-plugin-transport-dynosim"
 owner = "transport-dynosim"
-review_state = "measured"
+review_state = "reviewed_projection"
 source_package = "aiperf-runtime"
 coupling_evidence = "Task-1 Dynosim feature and direct-execution leaf inventory"
 dependencies = [

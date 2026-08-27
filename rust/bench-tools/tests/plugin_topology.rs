@@ -191,15 +191,15 @@ fn validate_projection(
     for row in &matrix.package_ownership {
         if row.owner.is_empty() || row.coupling_evidence.trim().is_empty() {
             return Err(format!(
-                "empty owner or coupling evidence for {}",
+                "empty owner or projection basis for {}",
                 row.package
             ));
         }
         match row.review_state.as_str() {
-            "measured" => {
+            "reviewed_projection" => {
                 let source = row.source_package.as_deref().ok_or_else(|| {
                     format!(
-                        "measured package {} lacks a Task-1 source witness",
+                        "projected package {} lacks a Task-1 package witness",
                         row.package
                     )
                 })?;
@@ -330,14 +330,14 @@ fn fixture() -> (OwnershipMatrix, BaselineTopology) {
     .map(|(package, owner)| PackageOwnership {
         package: package.to_owned(),
         owner: owner.to_owned(),
-        review_state: "measured".to_owned(),
+        review_state: "reviewed_projection".to_owned(),
         source_package: Some("aiperf-runtime".to_owned()),
         dependencies: vec![OwnedDependency {
             package: "aiperf-plugin-api".to_owned(),
             kind: "normal".to_owned(),
             justification: "fixture witness".to_owned(),
         }],
-        coupling_evidence: "Task-1 fixture source coupling".to_owned(),
+        coupling_evidence: "Task-1 fixture package projection".to_owned(),
     })
     .collect();
     let matrix = OwnershipMatrix {
@@ -420,7 +420,7 @@ fn projection_rejects_duplicate_package_dependency_feature_and_split_rows() {
 }
 
 #[test]
-fn projection_requires_concrete_task1_cargo_witnesses_and_exact_grpc_splits() {
+fn projection_requires_task1_package_witnesses_and_exact_grpc_splits() {
     let (matrix, baseline) = fixture();
 
     let mut unwitnessed = matrix.clone();
@@ -428,7 +428,7 @@ fn projection_requires_concrete_task1_cargo_witnesses_and_exact_grpc_splits() {
     assert!(
         validate_projection(&unwitnessed, &baseline)
             .unwrap_err()
-            .contains("lacks a Task-1 source witness")
+            .contains("lacks a Task-1 package witness")
     );
 
     let mut drifted = matrix.clone();
@@ -463,7 +463,7 @@ fn projection_requires_concrete_task1_cargo_witnesses_and_exact_grpc_splits() {
     assert!(
         validate_projection(&unevidenced, &baseline)
             .unwrap_err()
-            .contains("empty owner or coupling evidence")
+            .contains("empty owner or projection basis")
     );
 
     let (mut unjustified, baseline) = fixture();
@@ -502,7 +502,7 @@ fn toml_is_a_test_only_dependency() {
 }
 
 #[test]
-fn every_plugin_dependency_and_baseline_feature_has_one_reviewed_owner() {
+fn every_plugin_dependency_and_baseline_feature_has_one_reviewed_projection() {
     let root = workspace_root();
     let matrix_path = root.join("plugin-api/feature-ownership.toml");
     let matrix: OwnershipMatrix = toml::from_str(
