@@ -7,8 +7,11 @@ use std::rc::Rc;
 
 use anyhow::Result;
 
+#[cfg(feature = "cellular")]
 use crate::cellular::ModuloCellPartition;
+#[cfg(feature = "cellular")]
 use crate::cellular::transport::CellPhaseSignal;
+#[cfg(feature = "cellular")]
 use crate::engine::cellular_cell::{await_controller_phase_advance, send_controller_phase_signal};
 use crate::engine::control_hooks::ServerProfilerCoordinator;
 use crate::phase_runtime::ScheduledPhaseSidecar;
@@ -19,19 +22,23 @@ pub(crate) fn sidecar(
     coordinator: Rc<ServerProfilerCoordinator>,
     phase_name: impl Into<String>,
 ) -> Rc<dyn ScheduledPhaseSidecar> {
-    let phase_name = phase_name.into();
-    if ModuloCellPartition::from_env().is_some() {
-        Rc::new(ServerProfilerSidecar {
-            mode: ServerProfilerMode::Cellular { phase_name },
-        })
-    } else {
-        Rc::new(ServerProfilerSidecar {
-            mode: ServerProfilerMode::Local {
-                coordinator,
-                has_ownership: Rc::new(Cell::new(false)),
-            },
-        })
+    #[cfg(feature = "cellular")]
+    {
+        let phase_name = phase_name.into();
+        if ModuloCellPartition::from_env().is_some() {
+            return Rc::new(ServerProfilerSidecar {
+                mode: ServerProfilerMode::Cellular { phase_name },
+            });
+        }
     }
+    #[cfg(not(feature = "cellular"))]
+    let _ = phase_name;
+    Rc::new(ServerProfilerSidecar {
+        mode: ServerProfilerMode::Local {
+            coordinator,
+            has_ownership: Rc::new(Cell::new(false)),
+        },
+    })
 }
 
 struct ServerProfilerSidecar {
@@ -43,9 +50,8 @@ enum ServerProfilerMode {
         coordinator: Rc<ServerProfilerCoordinator>,
         has_ownership: Rc<Cell<bool>>,
     },
-    Cellular {
-        phase_name: String,
-    },
+    #[cfg(feature = "cellular")]
+    Cellular { phase_name: String },
 }
 
 impl ScheduledPhaseSidecar for ServerProfilerSidecar {
@@ -63,6 +69,7 @@ impl ScheduledPhaseSidecar for ServerProfilerSidecar {
                     Ok(())
                 })
             }
+            #[cfg(feature = "cellular")]
             ServerProfilerMode::Cellular { phase_name } => {
                 let phase_name = phase_name.clone();
                 Box::pin(async move {
@@ -95,6 +102,7 @@ impl ScheduledPhaseSidecar for ServerProfilerSidecar {
                     Ok(())
                 })
             }
+            #[cfg(feature = "cellular")]
             ServerProfilerMode::Cellular { phase_name } => {
                 let phase_name = phase_name.clone();
                 Box::pin(async move {

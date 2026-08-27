@@ -158,6 +158,7 @@ pub struct CellRegistrationProof {
     /// Per-run nonce selected by the controller.
     pub run_nonce: [u8; 32],
     /// Exact controller peer and resolved dial address observed by the cell.
+    #[cfg(feature = "cellular")]
     pub(crate) controller_binding: connect::ControllerPeerBinding,
     /// Ed25519 signature over the canonical registration transcript.
     pub signature: Vec<u8>,
