@@ -330,41 +330,7 @@ pub fn run_paired_build_v1(plan: &BuildPairPlanV1) -> Result<BuildPairReportV1, 
     validate_member_identity(&plan.static_member)?;
     validate_member_identity(&plan.dynamic_member)?;
 
-    let pair_record_bytes = canonical_bytes(&CanonicalPairRecordV1 {
-        schema_version: "plugin_build_pair_authority/v1",
-        scenario: &plan.scenario,
-        pair_id: &plan.pair_id,
-        source_commit: &plan.source_commit,
-        experiment_identity_blake3: &plan.experiment_identity_blake3,
-        cargo_executable_blake3: &plan.cargo_executable_blake3,
-        rustc_executable_blake3: &plan.rustc_executable_blake3,
-        rustc_verbose_version_blake3: &rustc_verbose_version_blake3,
-        sysroot_identity_blake3: &plan.sysroot_identity_blake3,
-        inherited_environment_blake3: &inherited_environment_blake3,
-        command: &command,
-        profile: &plan.profile,
-        features: &plan.features,
-        lto: plan.lto,
-        cargo_incremental: "1",
-        build_order: [Variant::Static, Variant::Dynamic],
-        build_duration_use: BuildDurationUseV1::DescriptiveNonGating,
-        member_source_identity_blake3: [
-            &plan.static_member.source_identity_blake3,
-            &plan.dynamic_member.source_identity_blake3,
-        ],
-        member_cargo_lock_blake3: [
-            &plan.static_member.cargo_lock_blake3,
-            &plan.dynamic_member.cargo_lock_blake3,
-        ],
-        member_target_roots: [&static_report.target_root, &dynamic_report.target_root],
-        member_build_receipt_blake3: [
-            &static_report.build_receipt_blake3,
-            &dynamic_report.build_receipt_blake3,
-        ],
-    })?;
-    let pair_record_blake3 = digest(&pair_record_bytes);
-
-    Ok(BuildPairReportV1 {
+    let mut report = BuildPairReportV1 {
         authority: BuildPairAuthorityV1,
         schema_version: "plugin_build_pair/v1".to_owned(),
         scenario: plan.scenario.clone(),
@@ -387,9 +353,12 @@ pub fn run_paired_build_v1(plan: &BuildPairPlanV1) -> Result<BuildPairReportV1, 
         inherited_environment_blake3,
         inherited_build_environment,
         members: [static_report, dynamic_report],
-        pair_record_bytes,
-        pair_record_blake3,
-    })
+        pair_record_bytes: Vec::new(),
+        pair_record_blake3: String::new(),
+    };
+    report.pair_record_bytes = canonical_pair_record_bytes(&report)?;
+    report.pair_record_blake3 = digest(&report.pair_record_bytes);
+    Ok(report)
 }
 
 /// Recompute the immutable paired-build authority identity.
