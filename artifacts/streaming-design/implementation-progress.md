@@ -24,6 +24,7 @@ SPDX-License-Identifier: Apache-2.0
 | Task 1B — item/byte resource budgets | Complete | Task `f27c352251`; merge `2aa38c3acc`; budget tests 15/15 and identity compatibility 10/10; two exact-head reviews approved |
 | Streaming Dynamo reconstruction amendment | Complete | Design `3fea6f2fe0`; executable plan final `3621ec56e5`; two reviews approved; durable ruling and review record committed |
 | Task 5A — typed checkpoint cuts and authority | Complete | Task head `407116c2a2`; merge `20cf021e93`; checkpoint 13/13, authority 2/2, API doctests 8/8, budget/identity 25/25; two exact-head reviews approved |
+| Task 1C — bounded blocking execution owner | Complete | Task head `f7af2069e8`; merge `b82ff70942`; blocking 11/11, budget 15/15, participants 13/13, authority 2/2, doctests 9/9; two exact-head reviews approved |
 
 Baseline note: the full feature-off runtime suite reached execution after the
 repair and reported 1907 passing tests plus one pre-existing version-fixture
@@ -55,6 +56,14 @@ execution/result-plan digests, while only an opaque backend publication or
 leased-read proof can promote one and mint participant release receipts.
 Checkpoint bytes are compact-owned under inseparable move-only leases; prepared
 and restored state cannot bypass digest, length, or budget verification.
+
+Task 1C owns every accepted blocking job through a cancellation-safe reaper,
+retains the complete caller-declared output reservation with arbitrary typed
+outputs, and closes/cancels all owned work on final-owner drop. Checkpoint views
+are quiescent single-flight operations; shutdown is terminal and restored or
+committed decode horizons cannot move backward. A subsequent run-identity
+authority amendment is an explicit prerequisite to Task 5B; it is not folded
+silently into the completed 1C contract.
 
 ## Implementation rulings
 
