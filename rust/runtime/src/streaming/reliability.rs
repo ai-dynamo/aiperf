@@ -4571,6 +4571,11 @@ const fn terminal_invariant_code(invariant: StreamingTerminalInvariant) -> &'sta
 
 #[cfg(test)]
 mod tests {
+    /// Exact bytes every reporter charges for its bounded submission ring
+    /// buffer; test budgets are written relative to it so a change in
+    /// `QueuedHandleIssue`'s layout cannot silently starve them.
+    const QUEUE_CHARGE_BYTES: usize = MAX_QUEUED_SUBMISSIONS * size_of::<QueuedHandleIssue>();
+
     use super::*;
     use crate::streaming::{
         action::{
@@ -5080,8 +5085,8 @@ mod tests {
     #[test]
     fn failed_action_poll_is_ordered_idempotent_and_type_state_exact() {
         let action_budget = StreamingResourceBudget::new(super::super::budget::BudgetLimits {
-            max_items: 64,
-            max_bytes: 64 * 1024,
+            max_items: 65,
+            max_bytes: QUEUE_CHARGE_BYTES + 64 * 1024,
         })
         .unwrap_or_else(|error| panic!("valid action budget: {error}"));
         let run = StreamRunIdentity::new(LogicalReplayRunId::from_bytes([0x81; 32]));
@@ -5157,8 +5162,8 @@ mod tests {
     #[test]
     fn failed_action_retry_replay_then_terminal_attempt_counts_each_identity_once() {
         let action_budget = StreamingResourceBudget::new(super::super::budget::BudgetLimits {
-            max_items: 96,
-            max_bytes: 96 * 1024,
+            max_items: 97,
+            max_bytes: QUEUE_CHARGE_BYTES + 96 * 1024,
         })
         .unwrap_or_else(|error| panic!("valid action budget: {error}"));
         let run = StreamRunIdentity::new(LogicalReplayRunId::from_bytes([0x81; 32]));
@@ -5241,8 +5246,8 @@ mod tests {
     #[test]
     fn action_backpressure_and_gap_closure_never_mint_terminal_identity() {
         let action_budget = StreamingResourceBudget::new(super::super::budget::BudgetLimits {
-            max_items: 64,
-            max_bytes: 64 * 1024,
+            max_items: 65,
+            max_bytes: QUEUE_CHARGE_BYTES + 64 * 1024,
         })
         .unwrap_or_else(|error| panic!("valid action budget: {error}"));
         let run = StreamRunIdentity::new(LogicalReplayRunId::from_bytes([0x81; 32]));
@@ -5310,8 +5315,8 @@ mod tests {
     #[test]
     fn synchronous_action_enqueue_refuses_immediately_without_advancing_state() {
         let action_budget = StreamingResourceBudget::new(super::super::budget::BudgetLimits {
-            max_items: 4,
-            max_bytes: 64 * 1024,
+            max_items: 5,
+            max_bytes: QUEUE_CHARGE_BYTES + 64 * 1024,
         })
         .unwrap_or_else(|error| panic!("valid action budget: {error}"));
         let held = action_budget
@@ -5373,13 +5378,13 @@ mod tests {
         .unwrap_or_else(|error| panic!("valid session rule: {error}"))])
         .unwrap_or_else(|error| panic!("valid session policy: {error}"));
         let reporter_budget = StreamingResourceBudget::new(super::super::budget::BudgetLimits {
-            max_items: 64,
-            max_bytes: 64 * 1024,
+            max_items: 65,
+            max_bytes: QUEUE_CHARGE_BYTES + 64 * 1024,
         })
         .unwrap_or_else(|error| panic!("valid reporter budget: {error}"));
         let install_budget = StreamingResourceBudget::new(super::super::budget::BudgetLimits {
-            max_items: 8,
-            max_bytes: 8 * 1024,
+            max_items: 9,
+            max_bytes: QUEUE_CHARGE_BYTES + 8 * 1024,
         })
         .unwrap_or_else(|error| panic!("valid install budget: {error}"));
         let mut reporter = BudgetOwnedStreamingIssueReporter::new(run, policy, reporter_budget)
@@ -5456,13 +5461,13 @@ mod tests {
         .unwrap_or_else(|error| panic!("valid export policy: {error}"));
         let policy_digest = *policy.digest();
         let reporter_budget = StreamingResourceBudget::new(super::super::budget::BudgetLimits {
-            max_items: 16,
-            max_bytes: 32 * 1024,
+            max_items: 17,
+            max_bytes: QUEUE_CHARGE_BYTES + 32 * 1024,
         })
         .unwrap_or_else(|error| panic!("valid reporter budget: {error}"));
         let export_budget = StreamingResourceBudget::new(super::super::budget::BudgetLimits {
-            max_items: 8,
-            max_bytes: 32 * 1024,
+            max_items: 9,
+            max_bytes: QUEUE_CHARGE_BYTES + 32 * 1024,
         })
         .unwrap_or_else(|error| panic!("valid export budget: {error}"));
         let mut reporter = BudgetOwnedStreamingIssueReporter::new(run, policy, reporter_budget)
@@ -5503,8 +5508,8 @@ mod tests {
         drop(persistence);
         assert_eq!(export_budget.snapshot().used_items, 0);
         let stored_budget = StreamingResourceBudget::new(super::super::budget::BudgetLimits {
-            max_items: 4,
-            max_bytes: 32 * 1024,
+            max_items: 5,
+            max_bytes: QUEUE_CHARGE_BYTES + 32 * 1024,
         })
         .unwrap_or_else(|error| panic!("valid stored budget: {error}"));
         let stored_lease = futures::executor::block_on(stored_budget.acquire(1, stored.len()))
@@ -5603,13 +5608,13 @@ mod tests {
         .unwrap_or_else(|error| panic!("valid export policy: {error}"));
         let policy_digest = *policy.digest();
         let reporter_budget = StreamingResourceBudget::new(super::super::budget::BudgetLimits {
-            max_items: 16,
-            max_bytes: 32 * 1024,
+            max_items: 17,
+            max_bytes: QUEUE_CHARGE_BYTES + 32 * 1024,
         })
         .unwrap_or_else(|error| panic!("valid reporter budget: {error}"));
         let export_budget = StreamingResourceBudget::new(super::super::budget::BudgetLimits {
-            max_items: 8,
-            max_bytes: 32 * 1024,
+            max_items: 9,
+            max_bytes: QUEUE_CHARGE_BYTES + 32 * 1024,
         })
         .unwrap_or_else(|error| panic!("valid export budget: {error}"));
         let mut reporter = BudgetOwnedStreamingIssueReporter::new(run, policy, reporter_budget)
@@ -5672,8 +5677,8 @@ mod tests {
         drop(persistence);
 
         let stored_budget = StreamingResourceBudget::new(super::super::budget::BudgetLimits {
-            max_items: 4,
-            max_bytes: 32 * 1024,
+            max_items: 5,
+            max_bytes: QUEUE_CHARGE_BYTES + 32 * 1024,
         })
         .unwrap_or_else(|error| panic!("valid stored budget: {error}"));
         let wrong_lease = futures::executor::block_on(stored_budget.acquire(1, stored_bytes.len()))
@@ -5760,8 +5765,8 @@ mod tests {
     #[test]
     fn missing_retained_action_attempt_returns_typed_error() {
         let budget = StreamingResourceBudget::new(super::super::budget::BudgetLimits {
-            max_items: 64,
-            max_bytes: 64 * 1024,
+            max_items: 65,
+            max_bytes: QUEUE_CHARGE_BYTES + 64 * 1024,
         })
         .unwrap_or_else(|error| panic!("valid action budget: {error}"));
         let mut reporter = typed_error_action_reporter(
@@ -5773,9 +5778,17 @@ mod tests {
         // entry whose reporter token no longer resolves to a retained action.
         let issue = action_issue(1, 0);
         let evidence = typed_error_action_evidence(&issue);
-        reporter
-            .current_action_attempts
-            .insert(GlobalSequence::new(1), 4242);
+        let orphan_lease = reporter
+            .budget
+            .try_acquire(1, 0)
+            .unwrap_or_else(|error| panic!("orphan attempt entry: {error}"));
+        reporter.current_action_attempts.insert(
+            GlobalSequence::new(1),
+            CurrentActionAttempt {
+                reporter_token: 4242,
+                entry_lease: orphan_lease,
+            },
+        );
         assert!(!reporter.pending_actions.contains_key(&4242));
 
         let before = budget.snapshot();
@@ -5792,8 +5805,8 @@ mod tests {
     #[test]
     fn absent_current_attempt_returns_typed_error_and_keeps_lease() {
         let budget = StreamingResourceBudget::new(super::super::budget::BudgetLimits {
-            max_items: 64,
-            max_bytes: 64 * 1024,
+            max_items: 65,
+            max_bytes: QUEUE_CHARGE_BYTES + 64 * 1024,
         })
         .unwrap_or_else(|error| panic!("valid action budget: {error}"));
         let mut reporter = {
@@ -5801,9 +5814,17 @@ mod tests {
                 budget.clone(),
                 StreamingIssueDisposition::TerminalActionReceipt,
             );
-            reporter
-                .current_action_attempts
-                .insert(GlobalSequence::new(1), 4242);
+            let orphan_lease = reporter
+                .budget
+                .try_acquire(1, 0)
+                .unwrap_or_else(|error| panic!("orphan attempt entry: {error}"));
+            reporter.current_action_attempts.insert(
+                GlobalSequence::new(1),
+                CurrentActionAttempt {
+                    reporter_token: 4242,
+                    entry_lease: orphan_lease,
+                },
+            );
             reporter
         };
         let inventory = FrozenActionInventory::for_test(
@@ -5829,8 +5850,8 @@ mod tests {
     #[test]
     fn undecided_action_without_pending_issue_returns_typed_error() {
         let budget = StreamingResourceBudget::new(super::super::budget::BudgetLimits {
-            max_items: 64,
-            max_bytes: 64 * 1024,
+            max_items: 65,
+            max_bytes: QUEUE_CHARGE_BYTES + 64 * 1024,
         })
         .unwrap_or_else(|error| panic!("valid action budget: {error}"));
         let mut reporter = typed_error_action_reporter(
@@ -5872,8 +5893,8 @@ mod tests {
     #[test]
     fn refused_action_disposition_retains_its_pending_entry() {
         let budget = StreamingResourceBudget::new(super::super::budget::BudgetLimits {
-            max_items: 64,
-            max_bytes: 64 * 1024,
+            max_items: 65,
+            max_bytes: QUEUE_CHARGE_BYTES + 64 * 1024,
         })
         .unwrap_or_else(|error| panic!("valid action budget: {error}"));
         // `Quarantine` is illegal for the Action scope, so `action_disposition`
@@ -5912,7 +5933,7 @@ mod tests {
             reporter
                 .current_action_attempts
                 .get(&GlobalSequence::new(0))
-                .copied(),
+                .map(|attempt| attempt.reporter_token),
             Some(token)
         );
         // The refusal is stable: polling again reports the same typed error
