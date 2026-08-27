@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, call
 
 import pytest
 
-from aiperf.accuracy import worker as worker_module
+from aiperf.rust_shims import accuracy_worker as worker_module
 from aiperf.accuracy.graders._codegen_worker_client import CodegenWorkerError
 from aiperf.rust_shims.accuracy_worker import AccuracyWorker, _Problem, _Registration
 
