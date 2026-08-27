@@ -10,6 +10,10 @@ license.workspace = true
 [dependencies]
 aiperf-core.workspace = true
 aiperf-plugin-api.workspace = true
+csv.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 
 [dev-dependencies]
 aiperf-plugin-test-support.workspace = true
+tempfile.workspace = true
