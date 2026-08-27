@@ -6,4 +6,4 @@
 //! [`aiperf_core::clock`]; this module is the compatibility path for runtime
 //! code and downstream crates that already import `crate::clock::Clock`.
 
-pub use aiperf_core::clock::Clock;
+pub use aiperf_core::clock::{Clock, ClockAnchorError, UtcMonotonicAnchor};
