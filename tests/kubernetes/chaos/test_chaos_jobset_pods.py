@@ -318,7 +318,9 @@ async def _get_worker_pod_uids(
     return out
 
 
-@pytest.mark.timeout(600)
+@pytest.mark.timeout(
+    720
+)  # 180(Running)+180(live_metrics)+60(terminated)+240(Failed)=660s; 720 gives margin
 async def test_c6_kill_controller_container_salvages(
     operator_ready_shared_pid: OperatorDeployer,
     chaos_injector: ChaosInjector,
@@ -503,7 +505,7 @@ async def test_c7_kill_worker_pod_mid_benchmark(
         await _force_delete_cr(kubectl, operator_job_namespace, name)
 
 
-@pytest.mark.timeout(300)
+@pytest.mark.timeout(450)  # 180(Running)+180(terminal)=360s; 450 gives margin
 async def test_c8_kill_event_bus_sidecar(
     operator_ready_shared_pid: OperatorDeployer,
     chaos_injector: ChaosInjector,
@@ -568,7 +570,9 @@ async def test_c8_kill_event_bus_sidecar(
         await _force_delete_cr(kubectl, operator_job_namespace, name)
 
 
-@pytest.mark.timeout(300)
+@pytest.mark.timeout(
+    720
+)  # 180(Running)+180(claim)+45(restart)+240(Completed)=645s; 720 gives margin
 async def test_c9_kill_results_sidecar_mid_fetch(
     operator_ready_shared_pid: OperatorDeployer,
     chaos_injector: ChaosInjector,
