@@ -272,7 +272,7 @@ impl Fixture {
 }
 
 #[test]
-fn raw_member_stdout_cannot_authorize_an_exporter_parity_pass() {
+fn exact_artifact_member_stdout_is_evaluated_for_exporter_parity() {
     let fixture = Fixture::new();
     let build_report = fixture.build_report();
 
@@ -320,10 +320,15 @@ fn raw_member_stdout_cannot_authorize_an_exporter_parity_pass() {
             .len(),
         840
     );
-    assert!(report.statistical_report.is_none());
-    assert_eq!(
-        report.attempt_history[0].reason.as_deref(),
-        Some("controlled exporter history is incomplete for the exact scheduled matrix")
+    let statistical_report = report
+        .statistical_report
+        .as_ref()
+        .expect("exact acquired artifact output reaches statistical evaluation");
+    assert!(
+        statistical_report
+            .metric_reports
+            .iter()
+            .any(|metric| metric.metric == "exporter_nanoseconds_per_record")
     );
 }
 
@@ -356,7 +361,7 @@ fn unrelated_in_process_exporter_workload_is_rejected_before_measurement() {
 }
 
 #[test]
-fn exporter_adapter_acquisition_and_product_errors_are_valid_failures() {
+fn unrelated_exporter_adapter_modes_are_refused_before_measurement() {
     for mode in [
         FakeExporterMode::AcquisitionFailure,
         FakeExporterMode::ProductFailure,
@@ -365,12 +370,14 @@ fn exporter_adapter_acquisition_and_product_errors_are_valid_failures() {
         let build_report = fixture.build_report();
         let mut factory = FakeExporterFactory { mode };
 
-        let report = run_controlled_runtime_with_exporters_v1(&build_report, &mut factory)
-            .expect("adapter failure is retained as a terminal report");
+        let error = run_controlled_runtime_with_exporters_v1(&build_report, &mut factory)
+            .expect_err("unrelated adapters cannot acquire artifact authority");
 
-        assert_eq!(report.decision, ControlledAttemptDecision::ValidFailure);
-        assert_ne!(report.decision, ControlledAttemptDecision::Invalid);
-        assert!(report.statistical_report.is_none());
+        assert!(
+            error
+                .to_string()
+                .contains("unrelated in-process exporter workload")
+        );
     }
 }
 
