@@ -17,7 +17,7 @@ const COMMIT: &str = "0123456789abcdef0123456789abcdef01234567";
 const FORGED_DIGEST: &str =
     "blake3:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 const INVENTORY_DIGEST: &str =
-    "blake3:298ee51d2c9d319b9db3571681e4056d5b57e264661e6892d189a1179c901222";
+    "blake3:8147bb3971d1997fc3dbdeea2e78a457ebaf9ef5b7b6af4ce60603f2f12d9501";
 
 struct StatisticalFixture {
     directory: tempfile::TempDir,
