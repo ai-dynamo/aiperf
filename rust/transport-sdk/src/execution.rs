@@ -313,8 +313,14 @@ impl<B: ExecutionSinkBuilder> ThreadPerCoreExecutor<B> {
                 })?;
             match started_rx.recv() {
                 Ok(Ok(())) => {}
-                Ok(Err(error)) => return Err(anyhow!("worker {worker_id} failed to start: {error}")),
-                Err(_) => return Err(anyhow!("worker {worker_id} exited before reporting startup")),
+                Ok(Err(error)) => {
+                    return Err(anyhow!("worker {worker_id} failed to start: {error}"));
+                }
+                Err(_) => {
+                    return Err(anyhow!(
+                        "worker {worker_id} exited before reporting startup"
+                    ));
+                }
             }
             senders.push(sender);
             threads.push(handle);
@@ -438,7 +444,9 @@ impl<B: ExecutionSinkBuilder> RequestExecutor for ThreadPerCoreExecutor<B> {
         request: &'a dyn BoundaryRequest,
     ) -> Pin<Box<dyn Future<Output = Box<dyn BoundaryTerminal>> + 'a>> {
         let owned = WorkerRequest::from_boundary(request);
-        Box::pin(async move { Box::new(self.execute_command(owned).await) as Box<dyn BoundaryTerminal> })
+        Box::pin(
+            async move { Box::new(self.execute_command(owned).await) as Box<dyn BoundaryTerminal> },
+        )
     }
 }
 
@@ -535,12 +543,8 @@ pub async fn run_worker<S: WorkerSink + 'static>(
                     Ok(request) => {
                         let (reply, _) = oneshot::channel();
                         let command = WorkerCommand { request, reply };
-                        execute_worker_command::<S>(
-                            Rc::clone(&sink),
-                            command,
-                            observer.clone(),
-                        )
-                        .await;
+                        execute_worker_command::<S>(Rc::clone(&sink), command, observer.clone())
+                            .await;
                     }
                     Err(error) => {
                         tracing::debug!(error = %error, component = "transport-sdk", "credit materialization failed");
@@ -571,7 +575,6 @@ pub async fn execute_worker_command<S: WorkerSink + 'static>(
     let WorkerCommand { request, reply } = command;
     let terminal = crate::measure::measure_dispatch(
         &observer,
-        sink.clock(),
         crate::measure::ArrivalFacts::from_request(&request),
         sink.dispatch_measured(&observer, &request),
     )

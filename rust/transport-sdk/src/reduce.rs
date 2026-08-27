@@ -174,7 +174,10 @@ mod tests {
         emit.emit_text("more", ObservedTokenKind::Output, 5_000);
 
         assert_eq!(ttfts.borrow().as_slice(), &[2_000]);
-        assert_eq!(obs.batches.borrow().as_slice(), &[vec![0.003, 0.003, 0.003]]);
+        assert_eq!(
+            obs.batches.borrow().as_slice(),
+            &[vec![0.003, 0.003, 0.003]]
+        );
         assert_eq!(obs.classified.borrow().len(), 1);
     }
 

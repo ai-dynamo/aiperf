@@ -195,6 +195,10 @@ dependencies = [
  "aiperf-core",
  "aiperf-plugin-api",
  "aiperf-plugin-test-support",
+ "csv",
+ "serde",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]
@@ -513,6 +517,13 @@ dependencies = [
  "aiperf-core",
  "aiperf-endpoint-sdk",
  "aiperf-plugin-api",
+ "anyhow",
+ "async-trait",
+ "bytes",
+ "smallvec",
+ "tokio",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]

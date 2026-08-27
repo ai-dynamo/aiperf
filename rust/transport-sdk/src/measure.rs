@@ -17,7 +17,6 @@ use std::cell::RefCell;
 use std::future::Future;
 use std::rc::Rc;
 
-use aiperf_core::clock::Clock;
 use aiperf_core::dispatch::{ReplayTerminalStatus, RequestObserver};
 use anyhow::{Result, anyhow};
 use uuid::Uuid;
@@ -109,11 +108,11 @@ impl<O> WorkerMeasurement<O> {
 /// covers identities no worker ever touched, so dropping the terminal here would
 /// silently lose the request from the record set.
 ///
-/// `clock` supplies the failure instant: reaching for `Instant::now` instead
-/// would leave virtual time under `SimClock` and desynchronize a replay.
+/// The terminal *instant* is not stamped here: on success it comes from the
+/// transport's own measured window, and on failure the observer's own clock
+/// supplies it. Reading a second clock here would be a second time source.
 pub async fn measure_dispatch<F, T>(
     observer: &dyn RequestObserver,
-    clock: &dyn Clock,
     arrival: ArrivalFacts,
     dispatch: F,
 ) -> Result<T>
@@ -128,9 +127,6 @@ where
     );
     let result = dispatch.await;
     if result.is_err() {
-        // Read the clock only on the failure path; the success path's terminal
-        // instant comes from the transport's own measured window.
-        let _failed_at_ns = clock.now_ns();
         observer.on_terminal(arrival.uuid, ReplayTerminalStatus::Failed);
     }
     result
@@ -159,25 +155,8 @@ mod tests {
         }
     }
 
-    struct FixedClock;
-    impl Clock for FixedClock {
-        fn now_ns(&self) -> i64 {
-            42
-        }
-        fn sleep(
-            self: Rc<Self>,
-            _duration_ns: i64,
-        ) -> std::pin::Pin<Box<dyn Future<Output = ()>>> {
-            Box::pin(async {})
-        }
-    }
-
-    fn drive<T>(future: impl Future<Output = T>) -> T {
-        futures_lite_block_on(future)
-    }
-
     /// Minimal executor: these futures never yield to a reactor.
-    fn futures_lite_block_on<T>(future: impl Future<Output = T>) -> T {
+    fn drive<T>(future: impl Future<Output = T>) -> T {
         use std::task::{Context, Poll, Wake, Waker};
         struct NoopWake;
         impl Wake for NoopWake {
@@ -201,8 +180,7 @@ mod tests {
             uuid: Uuid::from_u128(7),
             ..ArrivalFacts::default()
         };
-        let outcome: Result<u8> =
-            drive(measure_dispatch(&observer, &FixedClock, facts, async { Ok(9u8) }));
+        let outcome: Result<u8> = drive(measure_dispatch(&observer, facts, async { Ok(9u8) }));
         assert_eq!(outcome.unwrap(), 9);
         assert_eq!(observer.arrivals.borrow().as_slice(), &[Uuid::from_u128(7)]);
         assert!(observer.terminals.borrow().is_empty());
@@ -215,7 +193,7 @@ mod tests {
             uuid: Uuid::from_u128(11),
             ..ArrivalFacts::default()
         };
-        let outcome: Result<u8> = drive(measure_dispatch(&observer, &FixedClock, facts, async {
+        let outcome: Result<u8> = drive(measure_dispatch(&observer, facts, async {
             Err(anyhow!("connect refused"))
         }));
         assert!(outcome.is_err());

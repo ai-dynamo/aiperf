@@ -40,8 +40,8 @@ pub enum StopReason {
 /// is a cooperative drain that lets in-flight work finish, while an elapsed
 /// deadline is a force escalation. Collapsing them into one boolean loses the
 /// distinction the phase policy depends on.
-pub fn stop_reason(
-    cancellation: &dyn CancellationService,
+pub fn stop_reason<C: CancellationService + ?Sized>(
+    cancellation: &C,
     clock: &dyn Clock,
 ) -> Option<StopReason> {
     if cancellation.is_cancelled() {
@@ -59,7 +59,10 @@ pub fn stop_reason(
 ///
 /// `None` means the phase set no deadline, which is not the same as zero
 /// remaining: a transport must not treat an unbounded phase as already expired.
-pub fn remaining_ns(cancellation: &dyn CancellationService, clock: &dyn Clock) -> Option<i64> {
+pub fn remaining_ns<C: CancellationService + ?Sized>(
+    cancellation: &C,
+    clock: &dyn Clock,
+) -> Option<i64> {
     cancellation
         .deadline_ns()
         .map(|deadline_ns| deadline_ns.saturating_sub(clock.now_ns()).max(0))
