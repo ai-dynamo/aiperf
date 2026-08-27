@@ -252,7 +252,7 @@ impl RequestExecutorFactory for WebSocketExecutionFactory {
     }
 }
 
-struct WebSocketSinkBuilder {
+pub(crate) struct WebSocketSinkBuilder {
     base_urls: Vec<String>,
     model: String,
     transport: crate::transport::http::TransportSinkConfig,
@@ -310,7 +310,7 @@ impl ExecutionSinkBuilder for WebSocketSinkBuilder {
 
 /// Worker-local pool. A semaphore bounds concurrent operations; a checked-out
 /// socket is absent from `idle` and therefore carries exactly one operation.
-struct WebSocketTransportSink {
+pub(crate) struct WebSocketTransportSink {
     clock: Rc<dyn Clock>,
     base_urls: Vec<String>,
     model: String,

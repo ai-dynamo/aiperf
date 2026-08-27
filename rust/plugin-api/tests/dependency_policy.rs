@@ -942,15 +942,20 @@ fn candidate_inventory_policy() {
     );
 
     let planned: BTreeSet<&str> = BTreeSet::new();
-    // Task 6 created these four files as new module-path entries not present in
+    // Task 6 created these three files as new module-path entries not present in
     // the pinned base commit; present-state validation reads the worktree file
     // rather than the base-commit git object.
     let task6_new = BTreeSet::from([
-        "runtime/src/transport/grpc/kserve_binding.rs",
         "runtime/src/transport/ws/sink.rs",
         "runtime/src/transport/dry_run.rs",
         "runtime/src/dynosim/direct.rs",
     ]);
+    // Task 6 renamed this file; the content is byte-identical to the BASE predecessor,
+    // so the inventory uses the predecessor's immutable git-object pin.
+    let task6_renamed: BTreeMap<&str, &str> = BTreeMap::from([(
+        "runtime/src/transport/grpc/kserve_binding.rs",
+        "runtime/src/transport/grpc/binding.rs",
+    )]);
     let facades = BTreeSet::from([
         "runtime/src/endpoints/mod.rs",
         "runtime/src/transport/grpc/mod.rs",
@@ -1019,6 +1024,21 @@ fn candidate_inventory_policy() {
                             panic!("task6_new source missing from worktree: {source_path}: {error}")
                         });
                     assert_eq!(blake3::hash(&content).to_hex().as_str(), digest);
+                } else if let Some(old_path) = task6_renamed.get(source_path) {
+                    // Task-6 renamed files: validate against the BASE object at the old path.
+                    let bytes = Command::new("git")
+                        .args([
+                            "show",
+                            &format!("057d116850cd059bcfa8e259c1e929e913e6ef07:rust/{old_path}"),
+                        ])
+                        .current_dir(repository_root)
+                        .output()
+                        .expect("task6_renamed predecessor object must be readable");
+                    assert!(
+                        bytes.status.success(),
+                        "task6_renamed predecessor object is absent: {old_path}"
+                    );
+                    assert_eq!(blake3::hash(&bytes.stdout).to_hex().as_str(), digest);
                 } else {
                     let bytes = Command::new("git")
                         .args([

@@ -14,18 +14,22 @@ ROOT = Path(sys.argv[1]).resolve()
 IS_CHECK_MODE = "--check" in sys.argv[2:]
 RUST = ROOT / "rust"
 
-# Task 6 (Phase 3) created these four files as new module-path entries. They are
-# `present` in the inventory but do not exist in the pinned base commit. Their
-# BLAKE3 digest is validated against the current worktree file rather than a
-# git object, because no git object for them exists at BASE.
+# Task 6 (Phase 3) created three genuinely new files that have no BASE equivalent.
+# Their BLAKE3 digest is validated against the current worktree file rather than a
+# git object.
 TASK6_NEW = frozenset(
     [
-        "runtime/src/transport/grpc/kserve_binding.rs",
         "runtime/src/transport/ws/sink.rs",
         "runtime/src/transport/dry_run.rs",
         "runtime/src/dynosim/direct.rs",
     ]
 )
+
+# Task 6 (Phase 3) renamed this file; its content is byte-identical to the BASE
+# object at the old path, so we can use an immutable git-object pin.
+TASK6_RENAMED = {
+    "runtime/src/transport/grpc/kserve_binding.rs": "runtime/src/transport/grpc/binding.rs",
+}
 
 rows = []
 
@@ -222,7 +226,10 @@ if len({row[1] for row in rows}) != len(rows):
 output = [
     "# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.",
     "# SPDX-License-Identifier: Apache-2.0",
-    "# Generated mechanically from the immutable Task-1 base tree; do not edit individual rows.",
+    "# Generated mechanically; most rows use immutable git-object pins at base_commit.",
+    "# Three Task-6 rows (ws/sink.rs, dry_run.rs, dynosim/direct.rs) hash worktree",
+    "# bytes because those files have no BASE equivalent. One Task-6 row",
+    "# (grpc/kserve_binding.rs) uses its BASE predecessor's object (grpc/binding.rs).",
     f'base_commit = "{BASE}"',
     "",
 ]
@@ -261,6 +268,14 @@ for path, candidate, owner, classification, is_planned in rows:
             raise SystemExit(f"task6_new source missing from worktree: {path}")
         content = worktree_file.read_bytes()
         output.append(f'blake3 = "{blake3.blake3(content).hexdigest()}"')
+    elif path in TASK6_RENAMED:
+        # Task-6-renamed files are byte-identical to their BASE predecessor.
+        # Use the immutable git-object pin at the old path.
+        old_path = TASK6_RENAMED[path]
+        expected_blob = subprocess.check_output(
+            ["git", "show", f"{BASE}:rust/{old_path}"], cwd=ROOT
+        )
+        output.append(f'blake3 = "{blake3.blake3(expected_blob).hexdigest()}"')
     else:
         expected_blob = subprocess.check_output(
             ["git", "show", f"{BASE}:rust/{path}"], cwd=ROOT

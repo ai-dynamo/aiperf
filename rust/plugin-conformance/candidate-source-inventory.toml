@@ -1,6 +1,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-# Generated mechanically from the immutable Task-1 base tree; do not edit individual rows.
+# Generated mechanically; most rows use immutable git-object pins at base_commit.
+# Three Task-6 rows (ws/sink.rs, dry_run.rs, dynosim/direct.rs) hash worktree
+# bytes because those files have no BASE equivalent. One Task-6 row
+# (grpc/kserve_binding.rs) uses its BASE predecessor's object (grpc/binding.rs).
 base_commit = "057d116850cd059bcfa8e259c1e929e913e6ef07"
 
 [[source]]
@@ -913,7 +916,7 @@ candidate_path = "plugins/transport-websocket/src/transport/ws/sink.rs"
 owner_task = 33
 classification = "implementation_leaf"
 state = "present"
-blake3 = "210be7b6609b21d358c8e3bdba238a3b81eae558e78b867d6bc1de32183bfe47"
+blake3 = "fb1b58e62c555f1188ac6d781bcf8613504dc9a2e017c89957f93786db488857"
 
 [[source]]
 source_path = "runtime/tests/websocket_transport_config.rs"
