@@ -80,6 +80,10 @@ and the `engine` feature measures `230 types / 55 files`. Later task deltas use
 the independently measured present-tree baseline, not the discarded regex
 count.
 
+The Task 1 integration base `5d8ba0c3300921452a78703b0c89531bb605611a`
+independently measures `230 types / 55 files`, `3,888` type-definition lines,
+and `53,768` total lines in contributing files.
+
 | Measure | Value |
 |---|---:|
 | ABI closure, `RunContext` narrowed | 230 types / 55 files |
