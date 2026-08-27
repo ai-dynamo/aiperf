@@ -37,7 +37,9 @@ use crate::transport::core::{
 };
 use crate::transport::http::config::ClientConfig;
 use crate::transport::http::models::HttpVersion;
-use crate::transport::http::transport::headers::apply_default_session_affinity_header;
+use crate::transport::http::transport::headers::{
+    apply_default_session_affinity_header, session_affinity_header_enabled,
+};
 use crate::transport::http::transport::http_transport::HttpTransport;
 use crate::transport::measure::{self, WorkerMeasurement};
 use serde_json::Value;
@@ -563,6 +565,7 @@ impl Dispatcher for TransportSink {
         apply_default_session_affinity_header(
             &mut request.headers,
             request.x_correlation_id.as_deref(),
+            session_affinity_header_enabled(),
         );
         match endpoint {
             PreparedEndpointBinding::Prepared(reference) => {
@@ -852,6 +855,7 @@ impl TransportSink {
         apply_default_session_affinity_header(
             &mut request.headers,
             request.x_correlation_id.as_deref(),
+            session_affinity_header_enabled(),
         );
         // Every product turn carries a prebuilt request body, so `PreparedTurn`
         // always reports endpoint_aware (see PreparedTurn::from_turn). The

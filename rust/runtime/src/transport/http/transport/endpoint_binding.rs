@@ -30,7 +30,9 @@ use crate::transport::http::models::RequestConfig;
 use crate::transport::http::transport::body::{
     JsonBodyEncoder, MultipartBodyEncoder, RequestBodyEncoder,
 };
-use crate::transport::http::transport::headers::apply_default_session_affinity_header;
+use crate::transport::http::transport::headers::{
+    apply_default_session_affinity_header, session_affinity_header_enabled,
+};
 #[cfg(test)]
 use crate::transport::http::transport::headers::build_headers;
 use crate::transport::http::transport::http_transport::HttpTransport;
@@ -365,7 +367,11 @@ where
         url_index,
         reuse,
     } = request;
-    apply_default_session_affinity_header(&mut headers, correlation_id.as_deref());
+    apply_default_session_affinity_header(
+        &mut headers,
+        correlation_id.as_deref(),
+        session_affinity_header_enabled(),
+    );
     let policy = binding.request_policy(endpoint_path.as_deref(), streaming, url_index)?;
     // Media is resolved to its final wire form during dataset generation: local
     // files are encoded to `data:` URLs, and remote HTTP(S) URLs are either sent

@@ -908,6 +908,15 @@ class _HTTPSettings(BaseSettings):
         "When enabled, aiohttp will read proxy settings from HTTP_PROXY, HTTPS_PROXY, "
         "and NO_PROXY environment variables.",
     )
+    X_SESSION_AFFINITY: bool = Field(
+        default=True,
+        description="Derive the router-facing X-Session-Affinity header from the stable "
+        "per-session correlation identifier. Unlike the other X_* transport settings "
+        "here this is ON by default, so it acts as a kill switch: set it to 0 to stop "
+        "AIPerf deriving the header and return the field to whatever the endpoint "
+        "authored. Disabling it removes a routing hint some gateways rely on for "
+        "session locality, which changes cache behavior at the server.",
+    )
     X_SESSION_ID_FROM_CORRELATION_ID: bool = Field(
         default=False,
         description="Also send X-Session-ID with the stable X-Correlation-ID value. "

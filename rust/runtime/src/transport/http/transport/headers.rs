@@ -42,7 +42,35 @@ fn env_flag_enabled(name: &str) -> bool {
         .is_ok_and(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true"))
 }
 
+/// Shared parse for a boolean env toggle that is ON unless explicitly disabled:
+/// `0`/`false` (case-insensitive, trimmed) disables; anything else, including
+/// unset, leaves it enabled.
+fn env_flag_disabled(name: &str) -> bool {
+    std::env::var(name)
+        .is_ok_and(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "0" | "false"))
+}
+
+/// Whether AIPerf derives the router-facing `X-Session-Affinity` header.
+///
+/// Unlike the three opt-in toggles above this is ON by default, so the env var
+/// is a kill switch: `AIPERF_HTTP_X_SESSION_AFFINITY=0` stops AIPerf deriving
+/// the header and returns the field to whatever the endpoint authored. Mirrors
+/// `Environment.HTTP.X_SESSION_AFFINITY` on the Python side.
+///
+/// Resolved once per process rather than per request. The value cannot change
+/// mid-run: a benchmark executes in a fresh child whose environment is fixed
+/// before the first request is built.
+pub fn session_affinity_header_enabled() -> bool {
+    static ENABLED: std::sync::LazyLock<bool> =
+        std::sync::LazyLock::new(|| !env_flag_disabled("AIPERF_HTTP_X_SESSION_AFFINITY"));
+    *ENABLED
+}
+
 /// Add the default router-facing affinity header for a stable correlation ID.
+///
+/// `enabled` comes from [`session_affinity_header_enabled`]; it is a parameter
+/// rather than an env read so this stays a pure function of its arguments and
+/// is unit-testable without mutating process env.
 ///
 /// This policy is shared by the direct transport facade and the native
 /// endpoint-binding path. Both paths receive caller-owned headers, so remove
@@ -51,7 +79,14 @@ fn env_flag_enabled(name: &str) -> bool {
 pub fn apply_default_session_affinity_header(
     headers: &mut BTreeMap<String, String>,
     correlation_id: Option<&str>,
+    enabled: bool,
 ) {
+    // Disabled leaves caller-authored headers untouched rather than stripping
+    // them: the switch turns off AIPerf's derivation, it does not forbid the
+    // endpoint from setting its own affinity header.
+    if !enabled {
+        return;
+    }
     let Some(correlation_id) = correlation_id else {
         headers.retain(|name, _| !name.eq_ignore_ascii_case("X-Session-Affinity"));
         return;
@@ -118,7 +153,11 @@ pub fn build_headers(
     // session-affinity header ALONGSIDE the correlation header. Strip any
     // caller-supplied variants case-insensitively first, since HTTP header
     // names are case-insensitive and `h` is a plain string-keyed map.
-    apply_default_session_affinity_header(&mut h, cfg.correlation_id.as_deref());
+    apply_default_session_affinity_header(
+        &mut h,
+        cfg.correlation_id.as_deref(),
+        session_affinity_header_enabled(),
+    );
     if let Some(corr) = &cfg.correlation_id {
         if x_session_id_from_correlation_id {
             h.retain(|k, _| !k.eq_ignore_ascii_case("X-Session-ID"));
@@ -294,11 +333,31 @@ mod tests {
     fn default_session_affinity_normalization_is_idempotent() {
         let mut headers =
             BTreeMap::from([("X-Session-Affinity".to_string(), "sess-1".to_string())]);
-        apply_default_session_affinity_header(&mut headers, Some("sess-1"));
+        apply_default_session_affinity_header(&mut headers, Some("sess-1"), true);
         assert_eq!(
             headers,
             BTreeMap::from([("X-Session-Affinity".to_string(), "sess-1".to_string(),)])
         );
+    }
+
+    #[test]
+    fn disabled_session_affinity_leaves_authored_headers_untouched() {
+        // The switch turns off AIPerf's derivation; it does not forbid an
+        // endpoint from authoring its own affinity header.
+        let mut headers =
+            BTreeMap::from([("X-Session-Affinity".to_string(), "authored".to_string())]);
+        apply_default_session_affinity_header(&mut headers, Some("sess-1"), false);
+        assert_eq!(
+            headers,
+            BTreeMap::from([("X-Session-Affinity".to_string(), "authored".to_string())])
+        );
+    }
+
+    #[test]
+    fn disabled_session_affinity_derives_nothing() {
+        let mut headers = BTreeMap::new();
+        apply_default_session_affinity_header(&mut headers, Some("sess-1"), false);
+        assert!(headers.is_empty());
     }
 
     #[test]
