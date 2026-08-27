@@ -131,6 +131,12 @@ impl<T> BudgetedBlockingOutput<T> {
     pub const fn class(&self) -> BlockingWorkClass {
         self.class
     }
+
+    /// Consume the wrapper and return the inner value, releasing the budget lease.
+    #[must_use]
+    pub fn into_value(self) -> T {
+        self.value
+    }
 }
 
 impl<T> Deref for BudgetedBlockingOutput<T> {
