@@ -6091,4 +6091,98 @@ mod tests {
             ContentDigest::from_bytes(*blake3::hash(&encoded).as_bytes())
         );
     }
+
+    #[test]
+    fn queue_charge_matches_ring_buffer_capacity() {
+        // Empirical check of the one std guarantee the charge rests on:
+        // `VecDeque::with_capacity` promises *at least* the requested
+        // capacity, so the reporter charges `queue.capacity()` after
+        // construction rather than the requested constant. This asserts the
+        // charge tracks the realized capacity whether or not std over-allocates.
+        let queue: VecDeque<QueuedHandleIssue> = VecDeque::with_capacity(MAX_QUEUED_SUBMISSIONS);
+        assert!(queue.capacity() >= MAX_QUEUED_SUBMISSIONS);
+
+        let realized = super::super::budget::ring_buffer_bytes::<QueuedHandleIssue>(queue.capacity())
+            .unwrap_or_else(|error| panic!("representable ring charge: {error}"));
+        assert!(realized >= submission_queue_charge_bytes());
+
+        let budget = StreamingResourceBudget::new(super::super::budget::BudgetLimits {
+            max_items: 8,
+            max_bytes: QUEUE_CHARGE_BYTES + 4 * 1024,
+        })
+        .unwrap_or_else(|error| panic!("valid budget: {error}"));
+        let reporter = BudgetOwnedStreamingIssueReporter::new(
+            StreamRunIdentity::new(LogicalReplayRunId::from_bytes([0x31; 32])),
+            PreparedStreamingIssuePolicy::new([rule("record_default", None, 0)])
+                .unwrap_or_else(|error| panic!("valid policy: {error}")),
+            budget.clone(),
+        )
+        .unwrap_or_else(|error| panic!("budget-owned reporter: {error}"));
+
+        // The queue is the reporter's only construction-time charge.
+        assert_eq!(budget.snapshot().used_bytes, realized);
+        assert_eq!(budget.snapshot().used_items, 1);
+        drop(reporter);
+        assert_eq!(budget.snapshot().used_bytes, 0);
+        assert_eq!(budget.snapshot().used_items, 0);
+    }
+
+    #[test]
+    fn oversized_component_id_allocation_cannot_bypass_the_charge() {
+        // `String::shrink_to_fit` is documented as best-effort, so this asserts
+        // the safety property directly — the charge is the retained capacity,
+        // which always covers the length — rather than an exact shrink that the
+        // allocator is free not to perform.
+        let mut oversized = String::with_capacity(4096);
+        oversized.push_str("component_id");
+        let id = StreamingIssueComponentId::new(oversized)
+            .unwrap_or_else(|error| panic!("valid component ID: {error}"));
+
+        assert_eq!(id.as_str(), "component_id");
+        assert!(id.retained_bytes() >= id.as_str().len());
+        assert!(id.retained_bytes() <= 4096);
+    }
+
+    #[test]
+    fn reporter_new_reports_budget_exhaustion() {
+        let budget = StreamingResourceBudget::new(super::super::budget::BudgetLimits {
+            max_items: 8,
+            max_bytes: 64,
+        })
+        .unwrap_or_else(|error| panic!("valid budget: {error}"));
+
+        assert!(matches!(
+            BudgetOwnedStreamingIssueReporter::new(
+                StreamRunIdentity::new(LogicalReplayRunId::from_bytes([0x32; 32])),
+                PreparedStreamingIssuePolicy::new([rule("record_default", None, 0)])
+                    .unwrap_or_else(|error| panic!("valid policy: {error}")),
+                budget.clone(),
+            ),
+            Err(StreamingReliabilityError::StateBudget(_))
+        ));
+        assert_eq!(budget.snapshot().used_bytes, 0);
+        assert_eq!(budget.snapshot().used_items, 0);
+    }
+
+    #[test]
+    fn ordered_map_entry_charge_matches_retained_entries() {
+        let receipt_entry = receipt_entry_bytes()
+            .unwrap_or_else(|error| panic!("representable receipt entry: {error}"));
+        assert_eq!(
+            receipt_entry,
+            super::super::budget::ordered_map_entry_bytes::<ContentDigest, RetainedReceipt>()
+                .unwrap_or_else(|error| panic!("representable entry: {error}"))
+        );
+
+        let frontier_entry = input_frontier_entry_bytes()
+            .unwrap_or_else(|error| panic!("representable frontier entry: {error}"));
+        assert_eq!(
+            frontier_entry,
+            super::super::budget::ordered_map_entry_bytes::<
+                StreamingInputDomainIdentity,
+                RetainedInputFrontier,
+            >()
+            .unwrap_or_else(|error| panic!("representable entry: {error}"))
+        );
+    }
 }
