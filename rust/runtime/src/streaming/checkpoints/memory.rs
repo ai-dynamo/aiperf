@@ -1228,6 +1228,7 @@ mod tests {
             EventTimeWatermark, OrderedActionHorizon, TerminalActionHorizon,
         },
         identity::{GlobalSequence, LogicalReplayRunId, SessionCausalFrontier},
+        reliability::HandledIssueCut,
         unit::{EventTimeUtc, SourcePosition},
     };
 
@@ -1264,6 +1265,7 @@ mod tests {
                 event_time: Some(event_time),
                 digest: ContentDigest::from_bytes([value as u8; 32]),
             },
+            handled_issues: HandledIssueCut::empty(),
         }
     }
 

@@ -6,6 +6,11 @@
 //! This module deliberately stops before budget-owned receipt storage and
 //! checkpoint integration. Ordinary owners can construct closed facts, but
 //! only the host can construct a live decision or terminal failure outcome.
+//!
+//! An accepted move-only [`PreparedSessionQuarantineInstall`] is retained by the
+//! reporter and contributes the third root of [`HandledIssueCut`]; it is bound to
+//! the exact barrier and receipt root it was minted against, so the
+//! acknowledgement and the detailed receipt set can only commit together.
 
 use std::{
     cell::{Cell, RefCell},
@@ -1378,6 +1383,13 @@ struct HandledIssueCutWire {
     quarantine_tombstone_root: ContentDigest,
 }
 
+/// Canonical hash domain for the retained session-quarantine tombstone root.
+const QUARANTINE_TOMBSTONE_ROOT_DOMAIN: &[u8] = b"aiperf.streaming.quarantine-tombstone-root.v1";
+
+/// Canonical hash domain binding one quarantine receipt to a tombstone view.
+const QUARANTINE_RECEIPT_BINDING_DOMAIN: &[u8] =
+    b"aiperf.streaming.quarantine-receipt-binding.v1";
+
 impl HandledIssueCut {
     /// Construct the canonical cut containing no handled issues.
     #[must_use]
@@ -1385,7 +1397,7 @@ impl HandledIssueCut {
         Self::checked(
             empty_root(b"aiperf.streaming.issue-receipt-root.v1"),
             empty_root(b"aiperf.streaming.issue-input-frontier-root.v1"),
-            empty_root(b"aiperf.streaming.quarantine-tombstone-root.v1"),
+            empty_root(QUARANTINE_TOMBSTONE_ROOT_DOMAIN),
         )
     }
 
@@ -1878,6 +1890,13 @@ pub enum IssueSequenceUpdate {
     CheckedActionTerminal(CheckedActionTerminalFact),
     /// Reporter-minted dense action gap proof.
     CheckedNoMoreActionsBefore(CheckedNoMoreActionsBefore),
+    /// Move-only session-quarantine acknowledgement returned for acceptance.
+    ///
+    /// Acceptance retains the acknowledgement, its exact payload lease, and its
+    /// exact view lease, and makes its root visible in the next
+    /// [`HandledIssueCut`]. A refused acknowledgement is dropped, releasing both
+    /// leases and leaving previously accepted authority unchanged.
+    PreparedSessionQuarantineInstall(PreparedSessionQuarantineInstall),
 }
 
 /// Fixed-size non-authoritative result of submitting one ordinary issue.
@@ -2238,6 +2257,7 @@ pub struct BudgetOwnedStreamingIssueReporter {
     action_gap_closure: Option<RetainedActionGapClosure>,
     next_reporter_token: u64,
     receipts: BTreeMap<ContentDigest, RetainedReceipt>,
+    accepted_quarantine: Option<PreparedSessionQuarantineInstall>,
     counters: BTreeMap<StreamingIssueCounterKey, RetainedCounter>,
     summary: StreamingIssueSummary,
     is_initialized: bool,
@@ -2287,6 +2307,7 @@ impl BudgetOwnedStreamingIssueReporter {
             action_gap_closure: None,
             next_reporter_token: 0,
             receipts: BTreeMap::new(),
+            accepted_quarantine: None,
             counters: BTreeMap::new(),
             summary: StreamingIssueSummary::empty(),
             is_initialized: false,
@@ -3163,7 +3184,7 @@ impl BudgetOwnedStreamingIssueReporter {
         let handled_cut = HandledIssueCut::checked(
             receipt_root,
             self.input_frontier_root(),
-            HandledIssueCut::empty().quarantine_tombstone_root,
+            self.quarantine_tombstone_root(&receipt_root, barrier)?,
         );
         let wire = IssueReceiptPartitionWire {
             wire_version: ISSUE_RECEIPT_WIRE_VERSION,
@@ -3241,7 +3262,7 @@ impl BudgetOwnedStreamingIssueReporter {
             return Err(StreamingReliabilityError::StaleQuarantineTombstoneView);
         }
         let receipt_binding_root = digest_fields(
-            b"aiperf.streaming.quarantine-receipt-binding.v1",
+            QUARANTINE_RECEIPT_BINDING_DOMAIN,
             &[issue_id.as_bytes(), self.receipt_root().as_bytes()],
         );
         let view_charge_bytes = size_of::<PreparedSessionQuarantineInstall>();
@@ -3264,6 +3285,7 @@ impl BudgetOwnedStreamingIssueReporter {
             .map_err(|_| StreamingReliabilityError::CorruptCheckpointState)?;
         Ok(PreparedSessionQuarantineInstall {
             barrier: barrier.clone(),
+            issue_id,
             tombstone_root: view.tombstone_root(),
             view_revision: view.revision(),
             receipt_binding_root,
@@ -3282,6 +3304,11 @@ impl BudgetOwnedStreamingIssueReporter {
         if current_view.run() != &self.run || barrier.run != self.run {
             return Err(StreamingReliabilityError::ForeignRun);
         }
+        self.revalidate_quarantine_binding(
+            &prepared.issue_id,
+            &prepared.receipt_binding_root,
+            &self.receipt_root(),
+        )?;
         let current_payload_digest = ContentDigest::from_bytes(
             *blake3::hash(current_view.canonical_encoded_entries()).as_bytes(),
         );
@@ -3293,6 +3320,100 @@ impl BudgetOwnedStreamingIssueReporter {
         {
             return Err(StreamingReliabilityError::StaleQuarantineTombstoneView);
         }
+        Ok(())
+    }
+
+    /// Recheck that a retained quarantine receipt still binds this acknowledgement.
+    ///
+    /// The binding is only valid while the exact receipt set that produced it is
+    /// the receipt set about to be cut, so the acknowledgement and the receipt
+    /// root can only ever commit together.
+    fn revalidate_quarantine_binding(
+        &self,
+        issue_id: &ContentDigest,
+        receipt_binding_root: &ContentDigest,
+        receipt_root: &ContentDigest,
+    ) -> Result<(), StreamingReliabilityError> {
+        let retained = self
+            .receipts
+            .get(issue_id)
+            .ok_or(StreamingReliabilityError::QuarantineReceiptUnavailable)?;
+        if retained.outcome.disposition != StreamingIssueDisposition::Quarantine
+            || retained.receipt.scope_kind() != StreamingIssueScopeKind::Session
+        {
+            return Err(StreamingReliabilityError::QuarantineReceiptUnavailable);
+        }
+        let expected = digest_fields(
+            QUARANTINE_RECEIPT_BINDING_DOMAIN,
+            &[issue_id.as_bytes(), receipt_root.as_bytes()],
+        );
+        if expected != *receipt_binding_root {
+            return Err(StreamingReliabilityError::StaleQuarantineTombstoneView);
+        }
+        Ok(())
+    }
+
+    /// Compute the canonical quarantine-tombstone root emitted for one barrier.
+    ///
+    /// With no accepted acknowledgement this is exactly the canonical empty root
+    /// of [`HandledIssueCut::empty`]. With one, the acknowledgement must still be
+    /// bound to `receipt_root` and to `barrier`, otherwise the cut is refused
+    /// rather than silently downgraded to the empty root.
+    fn quarantine_tombstone_root(
+        &self,
+        receipt_root: &ContentDigest,
+        barrier: &CheckpointBarrier,
+    ) -> Result<ContentDigest, StreamingReliabilityError> {
+        let mut hasher = blake3::Hasher::new();
+        update_hash_field(&mut hasher, QUARANTINE_TOMBSTONE_ROOT_DOMAIN);
+        if let Some(accepted) = &self.accepted_quarantine {
+            if accepted.barrier != *barrier {
+                return Err(StreamingReliabilityError::StaleQuarantineTombstoneView);
+            }
+            self.revalidate_quarantine_binding(
+                &accepted.issue_id,
+                &accepted.receipt_binding_root,
+                receipt_root,
+            )?;
+            update_hash_field(&mut hasher, accepted.tombstone_root.as_bytes());
+            update_hash_field(&mut hasher, &accepted.view_revision.to_le_bytes());
+            update_hash_field(&mut hasher, accepted.receipt_binding_root.as_bytes());
+            update_hash_field(&mut hasher, accepted.payload_digest.as_bytes());
+        }
+        Ok(ContentDigest::from_bytes(*hasher.finalize().as_bytes()))
+    }
+
+    /// Accept and retain one move-only quarantine acknowledgement.
+    ///
+    /// Acceptance revalidates reporter-side authority and enforces monotonic
+    /// barrier epoch and view revision, so a stale acknowledgement can never
+    /// become valid again through a digest replay. A refusal drops the
+    /// acknowledgement — releasing its exact payload and view leases — and
+    /// leaves previously accepted authority, receipts, and counters unchanged.
+    fn accept_quarantine_install(
+        &mut self,
+        prepared: PreparedSessionQuarantineInstall,
+    ) -> Result<(), StreamingReliabilityError> {
+        if prepared.barrier.run != self.run {
+            return Err(StreamingReliabilityError::ForeignRun);
+        }
+        let receipt_root = self.receipt_root();
+        self.revalidate_quarantine_binding(
+            &prepared.issue_id,
+            &prepared.receipt_binding_root,
+            &receipt_root,
+        )?;
+        if let Some(accepted) = &self.accepted_quarantine {
+            let is_regressed = prepared.barrier.epoch < accepted.barrier.epoch
+                || prepared.view_revision < accepted.view_revision;
+            let is_inconsistent_replay = prepared.view_revision == accepted.view_revision
+                && (prepared.tombstone_root != accepted.tombstone_root
+                    || prepared.payload_digest != accepted.payload_digest);
+            if is_regressed || is_inconsistent_replay {
+                return Err(StreamingReliabilityError::StaleQuarantineTombstoneView);
+            }
+        }
+        self.accepted_quarantine = Some(prepared);
         Ok(())
     }
 
@@ -3646,6 +3767,7 @@ impl PreparedIssueReceiptResultPartition {
 /// Move-only acknowledgement of one non-destructive session tombstone view.
 pub struct PreparedSessionQuarantineInstall {
     barrier: CheckpointBarrier,
+    issue_id: ContentDigest,
     tombstone_root: ContentDigest,
     view_revision: u64,
     receipt_binding_root: ContentDigest,
@@ -4687,6 +4809,11 @@ pub trait StreamingIssueReporter: StreamingCheckpointParticipant {
         Err(StreamingReliabilityError::ReliabilityStateUnavailable)
     }
 
+    /// Borrow the accepted move-only quarantine acknowledgement, if one is retained.
+    fn accepted_quarantine_install(&self) -> Option<&PreparedSessionQuarantineInstall> {
+        None
+    }
+
     /// Prepare one strict budget-owned derived-sink failure receipt.
     async fn prepare_export_attempt_failure(
         &mut self,
@@ -4831,6 +4958,10 @@ impl StreamingIssueReporter for BudgetOwnedStreamingIssueReporter {
         self.verify_quarantine_install(prepared, current_view, barrier)
     }
 
+    fn accepted_quarantine_install(&self) -> Option<&PreparedSessionQuarantineInstall> {
+        self.accepted_quarantine.as_ref()
+    }
+
     async fn prepare_export_attempt_failure(
         &mut self,
         run: &StreamRunIdentity,
@@ -4864,6 +4995,10 @@ impl StreamingIssueReporter for BudgetOwnedStreamingIssueReporter {
             }
             IssueSequenceUpdate::CheckedNoMoreActionsBefore(closure) => {
                 self.retain_action_gap_closure(closure)?;
+                Ok(None)
+            }
+            IssueSequenceUpdate::PreparedSessionQuarantineInstall(prepared) => {
+                self.accept_quarantine_install(prepared)?;
                 Ok(None)
             }
         }
@@ -5268,6 +5403,7 @@ mod tests {
                     event_time: Some(event_time),
                     digest: ContentDigest::from_bytes([0xa1; 32]),
                 },
+                handled_issues: HandledIssueCut::empty(),
             },
             plan_digest: ContentDigest::from_bytes([0xa2; 32]),
         }
@@ -6020,6 +6156,266 @@ mod tests {
         drop(prepared);
         assert_eq!(install_budget.snapshot().used_items, 0);
         assert_eq!(install_budget.snapshot().used_bytes, 0);
+    }
+
+    fn session_quarantine_policy() -> PreparedStreamingIssuePolicy {
+        PreparedStreamingIssuePolicy::new([StreamingIssueThresholdRule::new(
+            component("session_default"),
+            StreamingIssueScopeKind::Session,
+            StreamingIssueClass::Permanent,
+            None,
+            0,
+            StreamingIssueDisposition::Quarantine,
+            None,
+        )
+        .unwrap_or_else(|error| panic!("valid session rule: {error}"))])
+        .unwrap_or_else(|error| panic!("valid session policy: {error}"))
+    }
+
+    fn session_quarantine_issue(
+        run: StreamRunIdentity,
+        input_domain: StreamingInputDomainIdentity,
+        session: u8,
+        position: u64,
+    ) -> OrdinaryStreamingIssue {
+        OrdinaryStreamingIssue::session(
+            run,
+            input_domain,
+            StableSessionKey::from_bytes([session; 32]),
+            StreamingIssueClass::Permanent,
+            ContentDigest::from_bytes([0xb5; 32]),
+            SourcePosition::new(position),
+            0,
+            ContentDigest::from_bytes([0xb6; 32]),
+            OrdinaryStreamingFailure::Session(SessionCoordinatorError::session(
+                SessionFailureCode::MissingPredecessor,
+            )),
+        )
+        .unwrap_or_else(|error| panic!("valid session issue: {error}"))
+    }
+
+    fn quarantine_reporter_budget() -> StreamingResourceBudget {
+        StreamingResourceBudget::new(super::super::budget::BudgetLimits {
+            max_items: 65,
+            max_bytes: QUEUE_CHARGE_BYTES + 64 * 1024,
+        })
+        .unwrap_or_else(|error| panic!("valid reporter budget: {error}"))
+    }
+
+    fn quarantine_install_budget() -> StreamingResourceBudget {
+        StreamingResourceBudget::new(super::super::budget::BudgetLimits {
+            max_items: 16,
+            max_bytes: 16 * 1024,
+        })
+        .unwrap_or_else(|error| panic!("valid install budget: {error}"))
+    }
+
+    /// Seed one retained session-quarantine receipt and close its input domain.
+    fn quarantine_seeded_reporter(
+        run: StreamRunIdentity,
+        input_domain: &StreamingInputDomainIdentity,
+        session: u8,
+        position: u64,
+    ) -> (BudgetOwnedStreamingIssueReporter, ContentDigest) {
+        let mut reporter =
+            BudgetOwnedStreamingIssueReporter::new(run, session_quarantine_policy(), quarantine_reporter_budget())
+                .unwrap_or_else(|error| panic!("budget-owned reporter: {error}"));
+        let issue = session_quarantine_issue(run, input_domain.clone(), session, position);
+        let issue_id = issue.issue_id();
+        futures::executor::block_on(reporter.report(IssueSequenceUpdate::Issue(issue)))
+            .unwrap_or_else(|error| panic!("retain session issue: {error}"));
+        futures::executor::block_on(reporter.report(IssueSequenceUpdate::NoMoreBefore {
+            input_domain: input_domain.clone(),
+            through: SourcePosition::new(position),
+        }))
+        .unwrap_or_else(|error| panic!("advance session issue: {error}"));
+        (reporter, issue_id)
+    }
+
+    #[test]
+    fn fresh_ledger_cut_is_byte_identical_to_empty() {
+        let run = StreamRunIdentity::new(LogicalReplayRunId::from_bytes([0xda; 32]));
+        let mut reporter = BudgetOwnedStreamingIssueReporter::new(
+            run,
+            session_quarantine_policy(),
+            quarantine_reporter_budget(),
+        )
+        .unwrap_or_else(|error| panic!("budget-owned reporter: {error}"));
+        let barrier = test_barrier(run, 1);
+        let view = futures::executor::block_on(reporter.receipt_partition_view(&barrier))
+            .unwrap_or_else(|error| panic!("prepare partition view: {error}"));
+        assert_eq!(view.handled_cut(), &HandledIssueCut::empty());
+    }
+
+    #[test]
+    fn revalidated_acknowledgement_emits_accepted_tombstone_root() {
+        let run = StreamRunIdentity::new(LogicalReplayRunId::from_bytes([0xd1; 32]));
+        let input_domain = StreamingInputDomainIdentity::new(
+            ContentDigest::from_bytes([0xd2; 32]),
+            ImmutableObjectIdentity::from_bytes([0xd3; 32]),
+        );
+        let install_budget = quarantine_install_budget();
+        let (mut reporter, issue_id) = quarantine_seeded_reporter(run, &input_domain, 0xb4, 7);
+
+        let entries = b"canonical-tombstones";
+        let root = ContentDigest::from_bytes(*blake3::hash(entries).as_bytes());
+        let view = CheckedSessionQuarantineTombstoneView::for_test(run, root, 4, entries);
+        let barrier = test_barrier(run, 3);
+        let prepared = futures::executor::block_on(reporter.prepare_session_quarantine_install(
+            &view,
+            issue_id,
+            &barrier,
+            &install_budget,
+        ))
+        .unwrap_or_else(|error| panic!("prepare quarantine install: {error}"));
+        let binding_root = *prepared.receipt_binding_root();
+        assert_eq!(
+            futures::executor::block_on(
+                reporter.report(IssueSequenceUpdate::PreparedSessionQuarantineInstall(
+                    prepared
+                ))
+            ),
+            Ok(None)
+        );
+        assert!(reporter.accepted_quarantine_install().is_some());
+
+        let partition = futures::executor::block_on(reporter.receipt_partition_view(&barrier))
+            .unwrap_or_else(|error| panic!("prepare partition view: {error}"));
+
+        let mut hasher = blake3::Hasher::new();
+        update_hash_field(&mut hasher, QUARANTINE_TOMBSTONE_ROOT_DOMAIN);
+        update_hash_field(&mut hasher, root.as_bytes());
+        update_hash_field(&mut hasher, &4_u64.to_le_bytes());
+        update_hash_field(&mut hasher, binding_root.as_bytes());
+        update_hash_field(&mut hasher, root.as_bytes());
+        let expected = ContentDigest::from_bytes(*hasher.finalize().as_bytes());
+
+        assert_eq!(
+            partition.handled_cut().quarantine_tombstone_root(),
+            &expected
+        );
+        // The checkpoint wave binds its candidate equality to this root, so the
+        // ledger proves here that the value is real rather than a second empty.
+        assert_ne!(
+            partition.handled_cut().quarantine_tombstone_root(),
+            HandledIssueCut::empty().quarantine_tombstone_root()
+        );
+        assert_eq!(partition.handled_cut().receipt_root(), partition.receipt_root());
+    }
+
+    #[test]
+    fn receipt_root_drift_invalidates_the_accepted_quarantine_acknowledgement() {
+        let run = StreamRunIdentity::new(LogicalReplayRunId::from_bytes([0xd4; 32]));
+        let input_domain = StreamingInputDomainIdentity::new(
+            ContentDigest::from_bytes([0xd5; 32]),
+            ImmutableObjectIdentity::from_bytes([0xd6; 32]),
+        );
+        let install_budget = quarantine_install_budget();
+        let (mut reporter, issue_id) = quarantine_seeded_reporter(run, &input_domain, 0xb4, 7);
+
+        let entries = b"canonical-tombstones";
+        let root = ContentDigest::from_bytes(*blake3::hash(entries).as_bytes());
+        let view = CheckedSessionQuarantineTombstoneView::for_test(run, root, 4, entries);
+        let barrier = test_barrier(run, 3);
+        let prepared = futures::executor::block_on(reporter.prepare_session_quarantine_install(
+            &view,
+            issue_id,
+            &barrier,
+            &install_budget,
+        ))
+        .unwrap_or_else(|error| panic!("prepare quarantine install: {error}"));
+        futures::executor::block_on(
+            reporter.report(IssueSequenceUpdate::PreparedSessionQuarantineInstall(
+                prepared,
+            )),
+        )
+        .unwrap_or_else(|error| panic!("accept quarantine install: {error}"));
+
+        // A later detailed receipt moves the receipt root, so the acknowledgement
+        // and the receipt set can no longer commit together.
+        futures::executor::block_on(reporter.report(IssueSequenceUpdate::Issue(
+            session_quarantine_issue(run, input_domain.clone(), 0xb7, 9),
+        )))
+        .unwrap_or_else(|error| panic!("retain second session issue: {error}"));
+        futures::executor::block_on(reporter.report(IssueSequenceUpdate::NoMoreBefore {
+            input_domain,
+            through: SourcePosition::new(9),
+        }))
+        .unwrap_or_else(|error| panic!("advance second session issue: {error}"));
+
+        let before = install_budget.snapshot();
+        assert_eq!(
+            futures::executor::block_on(reporter.receipt_partition_view(&barrier))
+                .err()
+                .unwrap_or_else(|| panic!("stale acknowledgement must refuse the cut")),
+            StreamingReliabilityError::StaleQuarantineTombstoneView
+        );
+        assert_eq!(reporter.retained_receipt_count(), 2);
+        assert!(reporter.accepted_quarantine_install().is_some());
+        assert_eq!(install_budget.snapshot().used_items, before.used_items);
+        assert_eq!(install_budget.snapshot().used_bytes, before.used_bytes);
+    }
+
+    #[test]
+    fn quarantine_acknowledgement_is_move_only() {
+        let run = StreamRunIdentity::new(LogicalReplayRunId::from_bytes([0xd7; 32]));
+        let input_domain = StreamingInputDomainIdentity::new(
+            ContentDigest::from_bytes([0xd8; 32]),
+            ImmutableObjectIdentity::from_bytes([0xd9; 32]),
+        );
+        let install_budget = quarantine_install_budget();
+        let (mut reporter, issue_id) = quarantine_seeded_reporter(run, &input_domain, 0xb4, 7);
+
+        let entries = b"canonical-tombstones";
+        let root = ContentDigest::from_bytes(*blake3::hash(entries).as_bytes());
+        let barrier = test_barrier(run, 3);
+        let current = CheckedSessionQuarantineTombstoneView::for_test(run, root, 5, entries);
+        let accepted = futures::executor::block_on(reporter.prepare_session_quarantine_install(
+            &current,
+            issue_id,
+            &barrier,
+            &install_budget,
+        ))
+        .unwrap_or_else(|error| panic!("prepare current install: {error}"));
+        futures::executor::block_on(
+            reporter.report(IssueSequenceUpdate::PreparedSessionQuarantineInstall(
+                accepted,
+            )),
+        )
+        .unwrap_or_else(|error| panic!("accept current install: {error}"));
+        let accepted_root =
+            *futures::executor::block_on(reporter.receipt_partition_view(&barrier))
+                .unwrap_or_else(|error| panic!("prepare partition view: {error}"))
+                .handled_cut()
+                .quarantine_tombstone_root();
+        let retained = install_budget.snapshot();
+
+        let regressed_view = CheckedSessionQuarantineTombstoneView::for_test(run, root, 4, entries);
+        let regressed = futures::executor::block_on(reporter.prepare_session_quarantine_install(
+            &regressed_view,
+            issue_id,
+            &barrier,
+            &install_budget,
+        ))
+        .unwrap_or_else(|error| panic!("prepare regressed install: {error}"));
+        assert_eq!(
+            futures::executor::block_on(reporter.report(
+                IssueSequenceUpdate::PreparedSessionQuarantineInstall(regressed)
+            )),
+            Err(StreamingReliabilityError::StaleQuarantineTombstoneView)
+        );
+
+        // The refused acknowledgement was moved into `report` and dropped there,
+        // releasing exactly its own payload and view leases.
+        assert_eq!(install_budget.snapshot().used_items, retained.used_items);
+        assert_eq!(install_budget.snapshot().used_bytes, retained.used_bytes);
+
+        let after = futures::executor::block_on(reporter.receipt_partition_view(&barrier))
+            .unwrap_or_else(|error| panic!("prepare partition view after refusal: {error}"));
+        assert_eq!(
+            after.handled_cut().quarantine_tombstone_root(),
+            &accepted_root
+        );
     }
 
     #[test]

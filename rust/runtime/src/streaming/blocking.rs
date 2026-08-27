@@ -737,6 +737,7 @@ mod tests {
             StreamRunIdentity, TerminalActionHorizon,
         },
         identity::{ContentDigest, GlobalSequence, LogicalReplayRunId, SessionCausalFrontier},
+        reliability::HandledIssueCut,
     };
 
     fn run_id(value: u8) -> StreamRunIdentity {
@@ -757,6 +758,7 @@ mod tests {
                 event_time: None,
                 digest: ContentDigest::from_bytes([value as u8; 32]),
             },
+            handled_issues: HandledIssueCut::empty(),
         }
     }
 

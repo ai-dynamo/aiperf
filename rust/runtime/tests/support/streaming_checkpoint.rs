@@ -20,6 +20,7 @@ use aiperf_runtime::streaming::{
         MemoryLiveBudgetUsage,
     },
     identity::{ContentDigest, GlobalSequence, LogicalReplayRunId, SessionCausalFrontier},
+    reliability::HandledIssueCut,
     results::{
         BudgetedResultDescriptor, CellId, ResultPartition, ResultProjectionId, ResultSchemaVersion,
         ResultSegmentDescriptor, WorkerId,
@@ -47,6 +48,7 @@ pub fn cut_at(value: u64) -> CheckpointCut {
             ),
             digest: ContentDigest::from_bytes([value as u8; 32]),
         },
+        handled_issues: HandledIssueCut::empty(),
     }
 }
 

@@ -128,6 +128,7 @@ fn barrier(run: StreamRunIdentity, epoch: u64) -> CheckpointBarrier {
                 ),
                 digest: ContentDigest::from_bytes([0x71; 32]),
             },
+            handled_issues: HandledIssueCut::empty(),
         },
         plan_digest: ContentDigest::from_bytes([0x72; 32]),
     }
@@ -608,6 +609,12 @@ async fn receipt_partition_handoff_moves_payload_and_view_leases_without_copy() 
         .receipt_partition_view(&barrier(run(0x11), 4))
         .await
         .unwrap_or_else(|error| panic!("prepare issue partition: {error}"));
+    // A run with no accepted quarantine acknowledgement emits byte-identical
+    // pre-fix cut bytes, which is the invariant the checkpoint golden depends on.
+    assert_eq!(
+        view.handled_cut().quarantine_tombstone_root(),
+        HandledIssueCut::empty().quarantine_tombstone_root()
+    );
     let payload_ptr = view.payload_bytes().as_ptr();
     let payload_len = view.payload_bytes().len();
     let receipt_root = *view.receipt_root();

@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use super::{
     budget::BudgetLease,
     identity::{ContentDigest, GlobalSequence, LogicalReplayRunId, SessionCausalFrontier},
+    reliability::HandledIssueCut,
     unit::{EventTimeUtc, SourcePosition, StateBudgetFailureCode},
 };
 
@@ -157,6 +158,8 @@ pub struct CheckpointCut {
     pub event_watermark: EventTimeWatermark,
     /// Session-causal completeness at this cut.
     pub causal_frontier: SessionCausalFrontier,
+    /// Detailed reliability roots handled by this cut.
+    pub handled_issues: HandledIssueCut,
 }
 
 /// Monotonic checkpoint epoch number.
@@ -1502,6 +1505,7 @@ mod tests {
                 event_time: None,
                 digest: ContentDigest::from_bytes([value as u8; 32]),
             },
+            handled_issues: HandledIssueCut::empty(),
         }
     }
 
