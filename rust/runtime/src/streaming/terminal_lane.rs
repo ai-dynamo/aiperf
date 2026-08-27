@@ -830,6 +830,7 @@ fn map_reservation_error(error: BudgetError) -> TerminalLaneError {
         | BudgetError::CannotGrowLease
         | BudgetError::InvalidFragmentItemCharge { .. }
         | BudgetError::ActionPayloadUndercharged { .. }
+        | BudgetError::PartialLeasedBuffer { .. }
         | BudgetError::AccountingOverflow => TerminalLaneError::AccountingCorruption,
     }
 }
