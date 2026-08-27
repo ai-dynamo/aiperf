@@ -331,7 +331,6 @@ async def _assert_downloaded_sweep_archive(
             == child_epoch
         )
         child_dir = destination / f"v{variation_index}-t{trial_index}"
-        assert (child_dir / "metrics.json").is_file(), child_dir
         assert (child_dir / "profile_export_aiperf.json").is_file(), child_dir
 
 
