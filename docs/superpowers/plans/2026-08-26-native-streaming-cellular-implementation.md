@@ -145,6 +145,7 @@ pub(crate) struct ControllerAuthenticatedFrame {
 pub(crate) struct BudgetOwnedFrame { bytes: Bytes, lease: BudgetLease }
 pub(crate) struct AuthenticatedStreamingPayload { bytes: Bytes, lease: BudgetLease }
 pub(crate) struct BudgetOwnedPrepareAction { action: PrepareAction, lease: BudgetLease }
+pub(crate) struct FrameBudgetReservation { lease: BudgetLease, max_frame_bytes: usize }
 
 ```
 
@@ -158,6 +159,7 @@ impl CellSecurityContext {
         destination: CellularRole,
         peer: &velo::PeerInfo,
         payload: &T,
+        reservation: FrameBudgetReservation,
     ) -> anyhow::Result<BudgetOwnedFrame>;
 
     pub(crate) fn authenticate_streaming_from_controller(
@@ -177,7 +179,7 @@ impl CellSecurityContext {
 }
 ```
 
-`BudgetOwnedFrame`, `AuthenticatedStreamingPayload`, and `BudgetOwnedPrepareAction` are non-cloneable and carry the same byte permit through authentication, typed decode, and queue admission. The transport checks `max_frame_bytes` before outer-frame decoding. `decode_prepare_action` uses a custom Serde visitor with a bounded sequence seed: it refuses payload length and content-item counts before reserving their buffers, charges canonical request bytes while reading, checks every declared length with checked arithmetic, and verifies exact item/byte counts and digest. It never uses `DeserializeOwned` for an action payload.
+Before calling the synchronous sealer, the async transport acquires one item plus exactly `max_frame_bytes` and moves it into `FrameBudgetReservation`; the sealer rejects overflow and shrinks the lease to actual encoded bytes. It never allocates a frame without a reservation. `BudgetOwnedFrame`, `AuthenticatedStreamingPayload`, and `BudgetOwnedPrepareAction` are non-cloneable and carry that same permit through authentication, typed decode, and queue admission. The transport checks `max_frame_bytes` before outer-frame decoding. `decode_prepare_action` uses a custom Serde visitor with a bounded sequence seed: it refuses payload length and content-item counts before reserving their buffers, charges canonical request bytes while reading, checks every declared length with checked arithmetic, and verifies exact item/byte counts and digest. It never uses `DeserializeOwned` for an action payload.
 
 Add `AdmissionPurpose::StreamingPlacementEvent` and
 `AdmissionPurpose::StreamingResultPartition` for worker-signed inbound frames.
@@ -232,13 +234,14 @@ In `cellular_registration.rs`, construct the existing controller/worker test aut
 
 ```rust
 #[test]
-fn streaming_frame_binds_destination_purpose_and_payload_before_decode() {
+async fn streaming_frame_binds_destination_purpose_and_payload_before_decode() {
     let fixture = StreamingAuthorityFixture::new(CellularRole::Cell(2));
     let frame = fixture.controller.seal_streaming_to_cell(
         ControllerStreamingPurpose::PrepareAction,
         CellularRole::Cell(2),
         &fixture.cell_peer,
         &fixture.prepare,
+        fixture.frame_reservation().await,
     ).expect("controller seals test frame");
 
     let authenticated = fixture.cell.authenticate_streaming_from_controller(
@@ -398,6 +401,14 @@ pub struct BudgetOwnedSessionRoute { pub route: SessionRoute, pub lease: BudgetL
 impl StreamingPlacementPolicy for StickySessionPlacement {
     fn place(&mut self, action: &OrderedDatasetAction)
         -> Result<PlacementDecision, PlacementError> { self.place_sticky(action) }
+    fn observe_session_terminal(
+        &mut self,
+        session: StableSessionKey,
+        ownership_epoch: SessionOwnershipEpoch,
+        causal_frontier: &SessionCausalFrontier,
+    ) -> Result<(), PlacementError> {
+        self.retire_route_if_fenced(session, ownership_epoch, causal_frontier)
+    }
 }
 
 pub(crate) async fn release_at_controller_target(
@@ -406,8 +417,9 @@ pub(crate) async fn release_at_controller_target(
     submitter: &mut CellularPlacementSubmitter,
     handle: PlacementHandleId,
 ) -> Result<(), PlacementError> {
-    let delay = target_ns.checked_sub(clock.now_ns()).ok_or(PlacementError::TargetOverflow)?;
-    clock.clone().sleep(delay).await;
+    let delay = target_ns.checked_sub(clock.now_ns())
+        .ok_or_else(|| PlacementError::failure(PlacementFailureCode::TargetOverflow))?;
+    clock.sleep(delay).await;
     submitter.release(handle).await
 }
 

@@ -281,6 +281,9 @@ git commit -m "test(e2e): cover streaming transports and cellular"
 - [ ] **Step 1: Write and observe the ignored RED slope gate**
 
 ```rust
+#[path = "support/streaming_soak.rs"]
+mod support;
+
 #[test]
 #[ignore = "release-mode multi-GiB resource gate"]
 fn baseten_hf_and_follow_resources_are_bounded() {

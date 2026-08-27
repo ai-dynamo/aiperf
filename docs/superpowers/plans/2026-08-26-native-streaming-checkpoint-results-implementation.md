@@ -111,7 +111,6 @@ pub struct CheckpointCut {
     pub acquired: AcquisitionHorizon,
     pub decoded: DecodeHorizon,
     pub ordered: OrderedActionHorizon,
-    pub scheduled: ScheduledActionHorizon,
     pub admitted: AdmissionHorizon,
     pub terminal: TerminalActionHorizon,
     pub event_watermark: EventTimeWatermark,
@@ -134,9 +133,16 @@ typed_horizon!(DiscoveryHorizon, SourcePosition);
 typed_horizon!(AcquisitionHorizon, SourcePosition);
 typed_horizon!(DecodeHorizon, SourcePosition);
 typed_horizon!(OrderedActionHorizon, GlobalSequence);
-typed_horizon!(ScheduledActionHorizon, GlobalSequence);
 typed_horizon!(AdmissionHorizon, GlobalSequence);
 typed_horizon!(TerminalActionHorizon, GlobalSequence);
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum EventTimeWatermark {
+    Unknown,
+    Hard { through: EventTimeUtc },
+    Estimated { through: EventTimeUtc, late_policy_digest: ContentDigest },
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CheckpointBarrier {
@@ -256,6 +262,7 @@ pub enum CheckpointError {
         actual: Option<CheckpointGeneration>,
     },
     ParticipantSetMismatch,
+    CutBlockedByInflight { participant: CheckpointParticipantId, job_count: usize },
     ObjectVerification,
     LeaseLost { generation: CheckpointGeneration },
     PostCommitNotification { participant: CheckpointParticipantId },
@@ -275,8 +282,8 @@ fn horizon_domains_cannot_be_substituted_and_round_trip() {
     let encoded = serde_json::to_vec(&cut).unwrap();
     let restored: CheckpointCut = serde_json::from_slice(&encoded).unwrap();
     assert_eq!(restored, cut);
-    assert_eq!(restored.decoded.global_sequence(), GlobalSequence::new(7));
-    assert_eq!(restored.terminal.global_sequence(), GlobalSequence::new(7));
+    assert_eq!(restored.decoded.get(), cut.decoded.get());
+    assert_eq!(restored.terminal.get(), cut.terminal.get());
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -521,8 +528,10 @@ CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime -
 ```rust
 struct MemoryHead {
     generation: Option<CommittedCheckpointGeneration>,
-    objects: BTreeMap<ContentDigest, Bytes>,
+    objects: BTreeMap<ContentDigest, BudgetedStoredObject>,
 }
+
+struct BudgetedStoredObject { bytes: Bytes, storage_lease: BudgetLease }
 
 fn compare_expected(
     head: Option<CheckpointGeneration>,
@@ -535,7 +544,7 @@ fn compare_expected(
 }
 ```
 
-Keep storage behind `Rc<RefCell<MemoryHead>>`; it is test/reference state on one local runtime, not a shared hot-path lock. The transaction owns prepared permits and releases them in `Drop` unless commit transfers them to the committed generation.
+Keep storage behind `Rc<RefCell<MemoryHead>>`; it is test/reference state on one local runtime, not a shared hot-path lock. The transaction owns prepared permits and releases them in `Drop` unless commit transfers them into `BudgetedStoredObject`. Each reader method acquires a separate read-budget lease before cheaply cloning underlying `Bytes`; the returned wrapper owns that full logical-byte charge, so storage and concurrent readers remain independently bounded.
 
 - [ ] **Step 4: Verify GREEN**
 

@@ -264,6 +264,12 @@ pub struct StreamingRunOutcome {
 pub trait StreamingPlacementPolicy: StreamingCheckpointParticipant {
     fn place(&mut self, action: &OrderedDatasetAction)
         -> Result<PlacementDecision, PlacementError>;
+    fn observe_session_terminal(
+        &mut self,
+        session: StableSessionKey,
+        ownership_epoch: SessionOwnershipEpoch,
+        causal_frontier: &SessionCausalFrontier,
+    ) -> Result<(), PlacementError>;
 }
 
 #[async_trait(?Send)]
@@ -573,7 +579,11 @@ pub struct StreamingDistributionSnapshot { pub count: u64, pub sum_ns: u128, pub
 pub struct QueueHighWater { pub items: usize, pub bytes: usize, pub item_limit: usize, pub byte_limit: usize }
 pub enum StreamingStage { Source, Acquire, Decode, Order, Session, Placement, Action, Terminal, Result }
 pub enum StreamingDropReason { Late, Overload, AuthoredPolicy, Duplicate }
-pub struct CheckpointHorizonSnapshot { pub cut: CheckpointCut }
+pub struct ScheduledActionHorizon(GlobalSequence);
+pub struct CheckpointHorizonSnapshot {
+    pub cut: CheckpointCut,
+    pub scheduled: ScheduledActionHorizon,
+}
 
 pub struct StreamingPlaneMetrics {
     pub publication_lag_ns: StreamingDistributionSnapshot,

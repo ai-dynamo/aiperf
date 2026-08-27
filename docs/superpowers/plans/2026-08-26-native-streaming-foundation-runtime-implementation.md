@@ -428,6 +428,12 @@ impl StreamingResourceBudget {
     pub fn snapshot(&self) -> BudgetSnapshot;
 }
 
+impl BudgetLease {
+    pub fn charged_items(&self) -> usize;
+    pub fn charged_bytes(&self) -> usize;
+    pub fn shrink_to(&mut self, items: usize, bytes: usize) -> Result<(), BudgetError>;
+}
+
 pub struct RetainedContentLease(Rc<RetainedContentLeaseInner>);
 struct RetainedContentLeaseInner { lease: BudgetLease }
 
@@ -665,7 +671,7 @@ pub enum DecodeFailureCode { Syntax, Schema, OversizedRecord, InvalidCursor }
 pub enum OrderingFailureCode { LateData, WatermarkViolation, CoordinateOverflow }
 pub enum StateBudgetFailureCode { ItemCapacity, ByteCapacity, SpillCapacity, ProvisionalCapacity }
 pub enum SessionFailureCode { MissingPredecessor, ConflictingMutation, UnboundedCausalityState }
-pub enum PlacementFailureCode { RouteUnavailable, StaleOwnershipEpoch, DigestMismatch, Cancelled }
+pub enum PlacementFailureCode { RouteUnavailable, StaleOwnershipEpoch, DigestMismatch, TargetOverflow, Cancelled }
 pub enum ActionFailureCode { MissingBinding, Dispatch, Endpoint, Cancelled }
 
 pub trait StableStreamingFailure: std::error::Error {
