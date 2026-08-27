@@ -1184,6 +1184,8 @@ fn digest(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::time::{Duration, Instant};
+
     use super::*;
 
     fn invalid_attempt(ordinal: u8, evidence: &[u8]) -> ControlledAttemptRecord {
@@ -1223,5 +1225,23 @@ mod tests {
             .expect_err("three invalid attempts block another invocation");
         assert!(error.to_string().contains("three invalid attempts block"));
         assert_eq!(ledger.history().len(), 3);
+    }
+
+    #[test]
+    fn child_deadline_kills_and_reaps_the_member() {
+        let mut command = Command::new("/bin/sh");
+        command.args(["-c", "trap '' TERM; while :; do :; done"]);
+        let started = Instant::now();
+
+        let result = execute_bounded_child(&mut command, Duration::from_millis(50), 4096)
+            .expect("controller observes a terminal result");
+
+        assert_eq!(result.terminal_status, ChildTerminalStatus::TimedOut);
+        assert!(started.elapsed() < Duration::from_secs(2));
+        assert_eq!(unsafe { libc::kill(result.pid, 0) }, -1);
+        assert_eq!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::ESRCH)
+        );
     }
 }
