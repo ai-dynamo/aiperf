@@ -1,0 +1,1 @@
+{"mode":"paired","receiver_transport_fields_removed":[],"scenarios":[{"allows_empty":false,"observable_kind":"artifact_tree","provenance_slots":[],"scenario_id":"exporter_100k"}],"schema_version":1}

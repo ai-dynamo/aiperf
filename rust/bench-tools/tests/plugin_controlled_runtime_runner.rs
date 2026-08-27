@@ -9,9 +9,15 @@ use aiperf_bench_tools::build_pair::{
     BuildLtoV1, BuildPairMemberV1, BuildPairPlanV1, BuildPairReportV1, run_paired_build_v1,
 };
 use aiperf_bench_tools::exporter_policy::parse_exporter_observable_policy;
-use aiperf_bench_tools::exporter_runner::ExporterHarnessRunner;
-use aiperf_bench_tools::plugin_stats::{ControlledAttemptDecision, Variant};
-use aiperf_bench_tools::runtime_runner::run_controlled_runtime_v1;
+use aiperf_bench_tools::exporter_runner::{
+    ExporterHarnessError, ExporterHarnessRunner, ExporterRecordStream, ExporterWorkload,
+    HostExporterCapture,
+};
+use aiperf_bench_tools::plugin_stats::{ControlledAttemptDecision, ExporterMember, Variant};
+use aiperf_bench_tools::runtime_runner::{
+    ControlledExporterWorkloadFactory, ExporterWorkloadAcquisitionError, ExporterWorkloadRequest,
+    run_controlled_runtime_v1, run_controlled_runtime_with_exporters_v1,
+};
 
 const COMMIT: &str = "0123456789abcdef0123456789abcdef01234567";
 const PREBUILD_IDENTITY: &str =
@@ -34,9 +40,84 @@ fn write_executable(path: &Path, bytes: &[u8]) {
 
 fn runtime_artifact(label: &str) -> Vec<u8> {
     format!(
-        "#!/bin/sh\n# {label}\nset -eu\nmetrics=\nold_ifs=$IFS\nIFS=,\nfor metric in $AIPERF_PARITY_METRICS; do\n  if [ -n \"$metrics\" ]; then metrics=\"$metrics,\"; fi\n  metrics=\"$metrics\\\"$metric\\\":100\"\ndone\nIFS=$old_ifs\nprintf '{{\"active_duration_nanoseconds\":30000000000,\"completed_budget\":%s,\"experiment_identity_blake3\":\"%s\",\"metrics\":{{%s}},\"pair_id\":\"%s\",\"scenario\":\"%s\",\"schema_version\":1,\"variant\":\"%s\"}}\\n' \"$AIPERF_PARITY_REQUEST_BUDGET\" \"$AIPERF_PARITY_EXPERIMENT_IDENTITY\" \"$metrics\" \"$AIPERF_PARITY_PAIR_ID\" \"$AIPERF_PARITY_SCENARIO\" \"$AIPERF_PARITY_VARIANT\"\n"
+        "#!/bin/sh\n# {label}\nset -eu\nmetrics=\nold_ifs=$IFS\nIFS=,\nfor metric in $AIPERF_PARITY_METRICS; do\n  value=100\n  if [ \"$metric\" = exporter_nanoseconds_per_record ]; then\n    if [ \"$AIPERF_PARITY_VARIANT\" = static ]; then value=1; else value=1000; fi\n  fi\n  if [ -n \"$metrics\" ]; then metrics=\"$metrics,\"; fi\n  metrics=\"$metrics\\\"$metric\\\":$value\"\ndone\nIFS=$old_ifs\nprintf '{{\"active_duration_nanoseconds\":30000000000,\"completed_budget\":%s,\"experiment_identity_blake3\":\"%s\",\"metrics\":{{%s}},\"pair_id\":\"%s\",\"scenario\":\"%s\",\"schema_version\":1,\"variant\":\"%s\"}}\\n' \"$AIPERF_PARITY_REQUEST_BUDGET\" \"$AIPERF_PARITY_EXPERIMENT_IDENTITY\" \"$metrics\" \"$AIPERF_PARITY_PAIR_ID\" \"$AIPERF_PARITY_SCENARIO\" \"$AIPERF_PARITY_VARIANT\"\n"
     )
     .into_bytes()
+}
+
+fn runtime_artifact_rejecting_exporter(label: &str) -> Vec<u8> {
+    let script = String::from_utf8(runtime_artifact(label)).expect("fixture script is UTF-8");
+    script
+        .replacen(
+            "set -eu\n",
+            "set -eu\nif [ \"$AIPERF_PARITY_SCENARIO\" = exporter_100k ]; then exit 71; fi\n",
+            1,
+        )
+        .into_bytes()
+}
+
+#[derive(Clone, Copy)]
+enum FakeExporterMode {
+    Complete,
+    AcquisitionFailure,
+    ProductFailure,
+}
+
+struct FakeExporterFactory {
+    mode: FakeExporterMode,
+}
+
+struct FakeExporterWorkload {
+    member: ExporterMember,
+    mode: FakeExporterMode,
+}
+
+impl ControlledExporterWorkloadFactory for FakeExporterFactory {
+    fn acquire(
+        &mut self,
+        request: ExporterWorkloadRequest<'_>,
+    ) -> Result<Box<dyn ExporterWorkload>, ExporterWorkloadAcquisitionError> {
+        if matches!(self.mode, FakeExporterMode::AcquisitionFailure) {
+            return Err(ExporterWorkloadAcquisitionError::new(
+                "fixture adapter acquisition failed",
+            ));
+        }
+        Ok(Box::new(FakeExporterWorkload {
+            member: request.member(),
+            mode: self.mode,
+        }))
+    }
+}
+
+impl ExporterWorkload for FakeExporterWorkload {
+    fn export(
+        &mut self,
+        _repetition_ordinal: u64,
+        records: &mut ExporterRecordStream<'_>,
+        capture: &mut HostExporterCapture,
+    ) -> Result<(), ExporterHarnessError> {
+        if matches!(self.mode, FakeExporterMode::ProductFailure) {
+            return Err(ExporterHarnessError::product(
+                "fixture exporter product failure",
+            ));
+        }
+        let rounds = match self.member {
+            ExporterMember::Static => 8,
+            ExporterMember::Dynamic => 1,
+        };
+        let mut accumulator = 0_u64;
+        for record in records {
+            for round in 0..rounds {
+                accumulator = std::hint::black_box(
+                    accumulator
+                        .wrapping_add(record.ordinal())
+                        .wrapping_add(round),
+                );
+            }
+        }
+        std::hint::black_box(accumulator);
+        capture.write_artifact("records.json", b"{\"status\":\"complete\"}")
+    }
 }
 
 struct Fixture {
@@ -225,6 +306,71 @@ fn raw_member_stdout_cannot_authorize_an_exporter_parity_pass() {
         report.attempt_history[0].reason.as_deref(),
         Some("controlled exporter history is incomplete for the exact scheduled matrix")
     );
+}
+
+#[test]
+fn controller_owned_exporter_adapter_seals_history_without_invoking_exporter_child() {
+    let mut fixture = Fixture::new();
+    fixture.static_artifact = runtime_artifact_rejecting_exporter("static authority fixture");
+    fixture.dynamic_artifact = runtime_artifact_rejecting_exporter("dynamic authority fixture");
+    write_executable(
+        &fixture.static_source.join("artifact-source"),
+        &fixture.static_artifact,
+    );
+    write_executable(
+        &fixture.dynamic_source.join("artifact-source"),
+        &fixture.dynamic_artifact,
+    );
+    let build_report = fixture.build_report();
+    let mut factory = FakeExporterFactory {
+        mode: FakeExporterMode::Complete,
+    };
+
+    let report = run_controlled_runtime_with_exporters_v1(&build_report, &mut factory)
+        .expect("controller-owned exporter execution completes");
+
+    assert_eq!(report.decision, ControlledAttemptDecision::ValidFailure);
+    assert_eq!(report.exporter_pair_history.len(), 30);
+    assert_eq!(report.executed_member_count, 840);
+    assert_eq!(report.terminal_output_blake3.len(), 770);
+    assert!(report.statistical_report.is_none());
+    assert!(
+        report
+            .exporter_pair_history
+            .iter()
+            .all(|pair| pair.static_member.exporter_nanoseconds_per_record != 1.0)
+    );
+    assert!(
+        report
+            .exporter_pair_history
+            .iter()
+            .all(|pair| pair.dynamic_member.exporter_nanoseconds_per_record != 1000.0)
+    );
+    assert!(
+        report.attempt_history[0]
+            .reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("measurement evidence is incomplete"))
+    );
+}
+
+#[test]
+fn exporter_adapter_acquisition_and_product_errors_are_valid_failures() {
+    for mode in [
+        FakeExporterMode::AcquisitionFailure,
+        FakeExporterMode::ProductFailure,
+    ] {
+        let fixture = Fixture::new();
+        let build_report = fixture.build_report();
+        let mut factory = FakeExporterFactory { mode };
+
+        let report = run_controlled_runtime_with_exporters_v1(&build_report, &mut factory)
+            .expect("adapter failure is retained as a terminal report");
+
+        assert_eq!(report.decision, ControlledAttemptDecision::ValidFailure);
+        assert_ne!(report.decision, ControlledAttemptDecision::Invalid);
+        assert!(report.statistical_report.is_none());
+    }
 }
 
 #[test]

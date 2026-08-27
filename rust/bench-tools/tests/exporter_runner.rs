@@ -85,13 +85,25 @@ fn artifact_policy() -> aiperf_bench_tools::exporter_policy::ExporterObservableP
 fn receiver_policy(
     protocol: &str,
 ) -> aiperf_bench_tools::exporter_policy::ExporterObservablePolicyV1 {
+    receiver_policy_with_protocols(&[protocol])
+}
+
+fn receiver_policy_with_protocols(
+    protocols: &[&str],
+) -> aiperf_bench_tools::exporter_policy::ExporterObservablePolicyV1 {
+    let removals = protocols
+        .iter()
+        .map(|protocol| {
+            serde_json::json!({
+                "keys": ["date"],
+                "protocol": protocol,
+            })
+        })
+        .collect::<Vec<_>>();
     parse_exporter_observable_policy(
         &canonical_policy(serde_json::json!({
             "mode": "paired",
-            "receiver_transport_fields_removed": [{
-                "keys": ["date"],
-                "protocol": protocol,
-            }],
+            "receiver_transport_fields_removed": removals,
             "scenarios": [{
                 "allows_empty": false,
                 "observable_kind": "receiver_transcript",
@@ -107,7 +119,10 @@ fn receiver_policy(
             }],
             "schema_version": 1,
         })),
-        &BTreeSet::from([protocol.to_owned()]),
+        &protocols
+            .iter()
+            .map(|protocol| (*protocol).to_owned())
+            .collect(),
     )
     .expect("receiver policy validates")
 }
@@ -657,6 +672,96 @@ fn receiver_protocol_identity_is_controller_bound_and_mismatches_fail_before_exp
     assert_eq!(
         completed.receiver_protocol_authority_blake3(),
         Some(protocol.authority_blake3())
+    );
+}
+
+#[test]
+fn evaluator_retains_matching_receiver_protocol_identity_and_rejects_mismatched_members() {
+    let static_artifact = build_artifact();
+    let dynamic_artifact = build_artifact();
+    let policy = receiver_policy_with_protocols(&["otel_http_v1", "zipkin_http_v1"]);
+    let otel = policy
+        .authenticate_receiver_protocol("otel_http_v1")
+        .expect("controller authenticates OTEL");
+    let zipkin = policy
+        .authenticate_receiver_protocol("zipkin_http_v1")
+        .expect("controller authenticates Zipkin");
+    let runner = ExporterHarnessRunner::new(policy.clone()).expect("runner binds its policy");
+    let mut static_exporter = ReceiverExporter::default();
+    let static_completed = runner
+        .run_member(
+            receiver_source(
+                "pair-00",
+                ExporterMember::Static,
+                &static_artifact,
+                Some(&otel),
+            ),
+            &mut static_exporter,
+        )
+        .expect("static receiver member completes");
+    let mut dynamic_exporter = ReceiverExporter::default();
+    let dynamic_completed = runner
+        .run_member(
+            receiver_source(
+                "pair-00",
+                ExporterMember::Dynamic,
+                &dynamic_artifact,
+                Some(&otel),
+            ),
+            &mut dynamic_exporter,
+        )
+        .expect("dynamic receiver member completes");
+    let mut evaluator = ControlledMeasurementEvaluator::new().expect("authority validates");
+    evaluator.begin_attempt().expect("first attempt starts");
+
+    assert_eq!(
+        evaluator
+            .record_completed_exporter_pair(&policy, &static_completed, &dynamic_completed)
+            .expect("matching receiver identities validate"),
+        PairAttemptDecision::RetainPair
+    );
+    let retained = &evaluator.exporter_pair_history()[0];
+    assert_eq!(retained.receiver_protocol.as_deref(), Some("otel_http_v1"));
+    assert_eq!(
+        retained.receiver_protocol_authority_blake3.as_deref(),
+        Some(otel.authority_blake3())
+    );
+
+    let mut mismatched_dynamic_exporter = ReceiverExporter::default();
+    let mismatched_dynamic = runner
+        .run_member(
+            receiver_source(
+                "pair-01",
+                ExporterMember::Dynamic,
+                &dynamic_artifact,
+                Some(&zipkin),
+            ),
+            &mut mismatched_dynamic_exporter,
+        )
+        .expect("alternate authenticated receiver member completes");
+    let mut static_exporter = ReceiverExporter::default();
+    let static_completed = runner
+        .run_member(
+            receiver_source(
+                "pair-01",
+                ExporterMember::Static,
+                &static_artifact,
+                Some(&otel),
+            ),
+            &mut static_exporter,
+        )
+        .expect("static receiver member completes");
+    let mut evaluator = ControlledMeasurementEvaluator::new().expect("authority validates");
+    evaluator.begin_attempt().expect("first attempt starts");
+    assert_eq!(
+        evaluator
+            .record_completed_exporter_pair(&policy, &static_completed, &mismatched_dynamic)
+            .expect("protocol mismatch is classified"),
+        PairAttemptDecision::ExperimentFailed
+    );
+    assert_eq!(
+        evaluator.history()[0].decision,
+        ControlledAttemptDecision::ValidFailure
     );
 }
 

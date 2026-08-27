@@ -441,6 +441,16 @@ impl NonAuthoritativeExperimentFixture {
             PluginStatsError::new(format!("cannot canonicalize experiment identity: {error}"))
         })
     }
+
+    pub(crate) fn identity_digest_preimage_bytes(&self) -> Result<Vec<u8>, PluginStatsError> {
+        let mut identity = self.identity.clone();
+        identity.identity_digest.clear();
+        serde_json::to_vec(&identity).map_err(|error| {
+            PluginStatsError::new(format!(
+                "cannot encode experiment identity preimage: {error}"
+            ))
+        })
+    }
 }
 
 pub(crate) struct AuthoritativeIdentityInput {
@@ -721,6 +731,10 @@ pub struct ControlledExporterPairRecord {
     pub scenario: String,
     /// Seeded pair identifier.
     pub pair_id: String,
+    /// Matched controller-authenticated receiver protocol, only for receiver scenarios.
+    pub receiver_protocol: Option<String>,
+    /// Digest of the matched authenticated receiver-protocol authority.
+    pub receiver_protocol_authority_blake3: Option<String>,
     /// Validated static member record.
     pub static_record: ExporterMemberRecord,
     /// Validated static member evidence summary.
@@ -990,6 +1004,60 @@ impl ControlledMeasurementEvaluator {
         static_member: &CompletedExporterMember,
         dynamic_member: &CompletedExporterMember,
     ) -> Result<PairAttemptDecision, PluginStatsError> {
+        let receiver_identity = match (
+            static_member.binding().observable_kind,
+            dynamic_member.binding().observable_kind,
+        ) {
+            (
+                ExporterObservableKind::ReceiverTranscript,
+                ExporterObservableKind::ReceiverTranscript,
+            ) => match (
+                static_member.receiver_protocol(),
+                static_member.receiver_protocol_authority_blake3(),
+                dynamic_member.receiver_protocol(),
+                dynamic_member.receiver_protocol_authority_blake3(),
+            ) {
+                (
+                    Some(static_protocol),
+                    Some(static_authority),
+                    Some(dynamic_protocol),
+                    Some(dynamic_authority),
+                ) if static_protocol == dynamic_protocol
+                    && static_authority == dynamic_authority =>
+                {
+                    Some((static_protocol.to_owned(), static_authority.to_owned()))
+                }
+                _ => {
+                    self.finish_active(
+                        ControlledAttemptDecision::ValidFailure,
+                        Some(
+                            "controlled exporter evidence has mismatched receiver protocol identity"
+                                .to_owned(),
+                        ),
+                    )?;
+                    return Ok(PairAttemptDecision::ExperimentFailed);
+                }
+            },
+            (_, _) => {
+                if static_member.receiver_protocol().is_some()
+                    || static_member.receiver_protocol_authority_blake3().is_some()
+                    || dynamic_member.receiver_protocol().is_some()
+                    || dynamic_member
+                        .receiver_protocol_authority_blake3()
+                        .is_some()
+                {
+                    self.finish_active(
+                        ControlledAttemptDecision::ValidFailure,
+                        Some(
+                            "controlled non-receiver exporter evidence carries receiver protocol identity"
+                                .to_owned(),
+                        ),
+                    )?;
+                    return Ok(PairAttemptDecision::ExperimentFailed);
+                }
+                None
+            }
+        };
         self.record_exporter_pair_evidence(
             policy,
             static_member.binding(),
@@ -1000,6 +1068,7 @@ impl ControlledMeasurementEvaluator {
             dynamic_member.evidence(),
             dynamic_member.backing_payloads(),
             dynamic_member.record_bytes(),
+            receiver_identity,
         )
     }
 
@@ -1019,6 +1088,7 @@ impl ControlledMeasurementEvaluator {
         dynamic_evidence: &ExporterMemberEvidence,
         dynamic_backing_payloads: &[SelectedBackingPayloadV1],
         dynamic_record_bytes: &[u8],
+        receiver_identity: Option<(String, String)>,
     ) -> Result<PairAttemptDecision, PluginStatsError> {
         let active_ordinal = self
             .active
@@ -1114,11 +1184,16 @@ impl ControlledMeasurementEvaluator {
             asserted_disposition: None,
         })?;
         if decision == PairAttemptDecision::RetainPair {
+            let (receiver_protocol, receiver_protocol_authority_blake3) = receiver_identity
+                .map(|(protocol, authority)| (Some(protocol), Some(authority)))
+                .unwrap_or((None, None));
             self.exporter_pair_history
                 .push(ControlledExporterPairRecord {
                     experiment_attempt: active_ordinal,
                     scenario: static_binding.scenario_id.clone(),
                     pair_id: static_binding.pair_id.clone(),
+                    receiver_protocol,
+                    receiver_protocol_authority_blake3,
                     static_record,
                     static_member: pair.static_member,
                     static_evidence: static_evidence.clone(),
@@ -1276,11 +1351,23 @@ impl ControlledMeasurementEvaluator {
             }
         };
 
-        let report = evaluate_non_authoritative_simultaneous_fixture(
+        let report = match evaluate_non_authoritative_simultaneous_fixture(
             &input,
             &observed,
             &SimultaneousGatePolicy::normative(),
-        )?;
+        ) {
+            Ok(report) => report,
+            Err(error) => {
+                let decision = ControlledAttemptDecision::ValidFailure;
+                self.finish_active(
+                    decision,
+                    Some(format!(
+                        "controller-owned measurement evidence is incomplete: {error}"
+                    )),
+                )?;
+                return Ok(decision);
+            }
+        };
         let (decision, reason) = if report.is_invalid {
             (
                 ControlledAttemptDecision::Invalid,
@@ -1374,30 +1461,38 @@ impl ControlledMeasurementEvaluator {
                         "controlled exporter history does not match the sealed experiment identity",
                     ));
                 }
-                case.samples.extend([
-                    PairedSample {
+                let scheduled = self
+                    .pair_schedule
+                    .iter()
+                    .find(|scheduled| scheduled.pair_id == pair.pair_id)
+                    .ok_or_else(|| {
+                        PluginStatsError::new(
+                            "controlled exporter history contains an unscheduled pair",
+                        )
+                    })?;
+                for variant in scheduled.member_order {
+                    let (value, artifact_digest) = match variant {
+                        Variant::Static => (
+                            pair.static_member.exporter_nanoseconds_per_record,
+                            identity.static_artifact_blake3,
+                        ),
+                        Variant::Dynamic => (
+                            pair.dynamic_member.exporter_nanoseconds_per_record,
+                            identity.dynamic_artifact_blake3,
+                        ),
+                    };
+                    case.samples.push(PairedSample {
                         scenario: pair.scenario.clone(),
                         pair_id: pair.pair_id.clone(),
-                        variant: Variant::Static,
+                        variant,
                         metric: "exporter_nanoseconds_per_record".to_owned(),
-                        value: pair.static_member.exporter_nanoseconds_per_record,
+                        value,
                         unit: "nanoseconds".to_owned(),
                         commit: identity.source_commit.to_owned(),
-                        artifact_digest: identity.static_artifact_blake3.to_owned(),
+                        artifact_digest: artifact_digest.to_owned(),
                         experiment_identity_digest: identity.experiment_identity_blake3.to_owned(),
-                    },
-                    PairedSample {
-                        scenario: pair.scenario.clone(),
-                        pair_id: pair.pair_id.clone(),
-                        variant: Variant::Dynamic,
-                        metric: "exporter_nanoseconds_per_record".to_owned(),
-                        value: pair.dynamic_member.exporter_nanoseconds_per_record,
-                        unit: "nanoseconds".to_owned(),
-                        commit: identity.source_commit.to_owned(),
-                        artifact_digest: identity.dynamic_artifact_blake3.to_owned(),
-                        experiment_identity_digest: identity.experiment_identity_blake3.to_owned(),
-                    },
-                ]);
+                    });
+                }
             }
         }
         Ok(authoritative)
@@ -3530,6 +3625,8 @@ mod authoritative_exporter_tests {
             experiment_attempt: 1,
             scenario: "exporter_100k".to_owned(),
             pair_id: pair_id.to_owned(),
+            receiver_protocol: None,
+            receiver_protocol_authority_blake3: None,
             static_record,
             static_member,
             static_evidence: evidence.clone(),

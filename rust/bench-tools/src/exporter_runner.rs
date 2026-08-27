@@ -474,7 +474,7 @@ impl ExporterHarnessRunner {
     }
 
     /// Run exactly sixteen sequential active write-and-flush passes.
-    pub fn run_member<E: ExporterWorkload>(
+    pub fn run_member<E: ExporterWorkload + ?Sized>(
         &self,
         source: ExporterMemberSource<'_>,
         exporter: &mut E,

@@ -149,6 +149,11 @@ impl AuthenticatedReceiverProtocolV1 {
 }
 
 impl ExporterObservablePolicyV1 {
+    /// Digest of the complete pre-run authenticated receiver-protocol set.
+    pub fn receiver_protocol_authority_blake3(&self) -> &str {
+        &self.authenticated_receiver_protocols_blake3
+    }
+
     /// Bind one canonical receiver protocol to this policy's authenticated authority.
     pub fn authenticate_receiver_protocol(
         &self,
