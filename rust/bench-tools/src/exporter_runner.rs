@@ -500,9 +500,7 @@ impl ExporterHarnessRunner {
     #[cfg(test)]
     fn new_with_durability_barrier(
         policy: ExporterObservablePolicyV1,
-        durability_barrier: fn(
-            &mut HostExporterCapture,
-        ) -> Result<(), ExporterHarnessError>,
+        durability_barrier: fn(&mut HostExporterCapture) -> Result<(), ExporterHarnessError>,
     ) -> Result<Self, ExporterHarnessError> {
         let mut runner = Self::new(policy)?;
         runner.durability_barrier = durability_barrier;
