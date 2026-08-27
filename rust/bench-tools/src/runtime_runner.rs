@@ -444,6 +444,10 @@ pub struct TerminalMemberEvidenceV1 {
     pub stdout: BoundedChildOutput,
     /// Bounded standard error.
     pub stderr: BoundedChildOutput,
+    /// Whether the affinity monitor ever observed this member holding its
+    /// checked-in pin exactly. A member that terminated before the monitor
+    /// armed ran unmonitored, and a reader of the retained evidence can see it.
+    pub is_affinity_monitored: bool,
 }
 
 #[derive(Debug)]
@@ -453,6 +457,8 @@ struct BoundedChildResult {
     stdout: BoundedChildOutput,
     stderr: BoundedChildOutput,
     infrastructure_event: Option<InfrastructureEvent>,
+    /// Terminal affinity-monitor state, or `None` when the member had no pin.
+    affinity_monitor: Option<AffinityMonitorState>,
 }
 
 struct ExporterExecutionContext<'a> {
@@ -1684,8 +1690,9 @@ fn execute_monitored_child(
     owned.stdout_reader = Some(drain_bounded_output(stdout, output_limit));
     owned.stderr_reader = Some(drain_bounded_output(stderr, output_limit));
     let started = Instant::now();
-    let mut baseline_affinity: Option<BTreeSet<usize>> = None;
-    let mut last_escaping_affinity: Option<BTreeSet<usize>> = None;
+    let mut affinity_monitor = pinned_affinity.map(|_| AffinityMonitorState::NeverArmed {
+        has_observation: false,
+    });
     let mut infrastructure_event = None;
     let terminal_status = loop {
         injected_child_fault("poll")?;
@@ -1694,28 +1701,15 @@ fn execute_monitored_child(
         })? {
             break child_terminal_status(status);
         }
-        if infrastructure_event.is_none()
-            && let Some(pinned) = pinned_affinity
+        if let Some(pinned) = pinned_affinity
+            && let Some(state) = affinity_monitor.as_mut()
+            && !matches!(state, AffinityMonitorState::ArmedThenLost { .. })
         {
             injected_child_fault("affinity")?;
             if let Some(observed) = process_affinity(pid)? {
-                match baseline_affinity {
-                    // The kernel clamps the child against its own cpuset, not
-                    // against the controller's mask, so no predicted set is
-                    // sound; the child's own first in-pin mask is the baseline.
-                    // Masks reaching outside the pin are not armed on: the
-                    // spawned `taskset` still carries the inherited mask for
-                    // the moment between fork and its own `sched_setaffinity`.
-                    None => match classify_first_observed_affinity(&observed, pinned) {
-                        FirstObservedAffinity::HonoursPin => baseline_affinity = Some(observed),
-                        FirstObservedAffinity::EscapesPin(_) => {
-                            last_escaping_affinity = Some(observed);
-                        }
-                    },
-                    Some(ref baseline) if observed != *baseline => {
-                        infrastructure_event = Some(InfrastructureEvent::AffinityLoss);
-                    }
-                    Some(_) => {}
+                *state = advance_affinity_monitor(state, &observed, pinned);
+                if matches!(state, AffinityMonitorState::ArmedThenLost { .. }) {
+                    infrastructure_event = Some(InfrastructureEvent::AffinityLoss);
                 }
             }
         }
@@ -1730,18 +1724,18 @@ fn execute_monitored_child(
         }
         sleep(Duration::from_millis(5));
     };
-    // Never arming is survivable but not silent: the run continues without
-    // affinity evidence for this member and says so.
-    if let Some(pinned) = pinned_affinity
-        && baseline_affinity.is_none()
+    // Never arming is survivable but not silent: the member's affinity went
+    // unmonitored and both the returned state and this warning say so. The
+    // warning distinguishes "sampled, never held the pin" from "too short-lived
+    // to sample at all", which are different facts about the same run.
+    if let (Some(pinned), Some(AffinityMonitorState::NeverArmed { has_observation })) =
+        (pinned_affinity, affinity_monitor.as_ref())
     {
         warn!(
             pid,
             pinned = %format_cpu_set(pinned),
-            last_observed = %last_escaping_affinity
-                .as_ref()
-                .map_or_else(|| "none".to_owned(), format_cpu_set),
-            "runtime member was never observed holding a mask inside its checked-in CPU pin; \
+            has_observation,
+            "runtime member was never observed holding its checked-in CPU pin exactly; \
              affinity monitoring did not arm for it"
         );
     }
@@ -1752,6 +1746,7 @@ fn execute_monitored_child(
         stdout,
         stderr,
         infrastructure_event,
+        affinity_monitor,
     })
 }
 
@@ -2006,41 +2001,69 @@ fn parse_cpu_list(value: &str) -> Result<BTreeSet<usize>, ControlledRuntimeError
     Ok(cpus)
 }
 
-/// How a child's first observed CPU-affinity mask relates to its checked-in pin.
-#[derive(Debug, PartialEq, Eq)]
-enum FirstObservedAffinity {
-    /// The child landed inside the checked-in pin, so the pin was honoured.
-    HonoursPin,
-    /// The child holds CPUs the pin never asked for, listed in ascending order.
-    EscapesPin(Vec<usize>),
+/// State of one member's CPU-affinity monitor, and its terminal result at exit.
+///
+/// The monitor arms on an *exact* match with the checked-in pin and on nothing
+/// else. The spawned process is `taskset` itself, so between `fork` and its own
+/// `sched_setaffinity` it still carries the controller's inherited mask; any
+/// membership test — including "inside the pin" — accepts that inherited mask
+/// whenever the controller happens to be pinned within the scenario pin, arms on
+/// it, and then reports the subsequent widening to the real pin as affinity
+/// loss. Requiring equality with the pin cannot admit the pre-exec window unless
+/// the controller's mask is already exactly the pin, in which case arming on it
+/// is indistinguishable from arming after `exec`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum AffinityMonitorState {
+    /// The pin has not been observed yet, so no deviation can be attributed.
+    NeverArmed {
+        /// Whether any mask at all was sampled before the child terminated.
+        has_observation: bool,
+    },
+    /// The pin was observed and every observation since has matched it.
+    ArmedAndStable,
+    /// The pin was observed and a later observation deviated from it.
+    ArmedThenLost {
+        /// The deviating mask, retained for the affinity-loss diagnostic.
+        observed: BTreeSet<usize>,
+    },
 }
 
-/// Classifies a child's first observed mask against the checked-in pin.
+/// Advances the affinity monitor by one observation.
 ///
-/// The controller cannot predict the mask a child will carry: `sched_setaffinity`
-/// clamps the request against the *target's* cpuset-allowed set, not against the
-/// caller's own mask, so a child can hold CPUs disjoint from its parent's. The
-/// monitor therefore arms on the child's own mask and uses the pin only to judge
-/// which observation is a credible baseline. A mask inside the pin means
-/// `taskset` took effect and later deviation is real affinity loss. A mask
-/// reaching outside the pin is the inherited one the spawned `taskset` still
-/// holds before it pins itself, so it is not armed on; a member that only ever
-/// escapes the pin is reported and left unmonitored rather than refused.
-fn classify_first_observed_affinity(
+/// Deliberately I/O-free: the `sched_getaffinity` call stays at the call site so
+/// the whole arming decision is testable as a pure transition table.
+fn advance_affinity_monitor(
+    state: &AffinityMonitorState,
     observed: &BTreeSet<usize>,
     pinned: &BTreeSet<usize>,
-) -> FirstObservedAffinity {
-    let escaped: Vec<usize> = observed.difference(pinned).copied().collect();
-    if escaped.is_empty() {
-        FirstObservedAffinity::HonoursPin
-    } else {
-        FirstObservedAffinity::EscapesPin(escaped)
+) -> AffinityMonitorState {
+    match state {
+        AffinityMonitorState::NeverArmed { .. } => {
+            if observed == pinned {
+                AffinityMonitorState::ArmedAndStable
+            } else {
+                AffinityMonitorState::NeverArmed {
+                    has_observation: true,
+                }
+            }
+        }
+        AffinityMonitorState::ArmedAndStable => {
+            if observed == pinned {
+                AffinityMonitorState::ArmedAndStable
+            } else {
+                AffinityMonitorState::ArmedThenLost {
+                    observed: observed.clone(),
+                }
+            }
+        }
+        // Terminal: the loss is already recorded and further polling stops.
+        AffinityMonitorState::ArmedThenLost { .. } => state.clone(),
     }
 }
 
 /// Renders a CPU set as an ascending comma-separated list for diagnostics.
-fn format_cpu_set<'a, I: IntoIterator<Item = &'a usize>>(cpus: I) -> String {
-    cpus.into_iter()
+fn format_cpu_set(cpus: &BTreeSet<usize>) -> String {
+    cpus.iter()
         .map(usize::to_string)
         .collect::<Vec<_>>()
         .join(",")
@@ -2273,6 +2296,10 @@ fn execute_member(
         terminal_status: result.terminal_status.clone(),
         stdout: result.stdout,
         stderr: result.stderr,
+        is_affinity_monitored: matches!(
+            result.affinity_monitor,
+            Some(AffinityMonitorState::ArmedAndStable | AffinityMonitorState::ArmedThenLost { .. })
+        ),
     };
     if terminal_evidence.terminal_status == ChildTerminalStatus::TimedOut {
         return Ok(MemberExecution {
@@ -2665,28 +2692,6 @@ mod tests {
             report_blake3: None,
             evidence_tree_blake3: digest(evidence),
         }
-    }
-
-    #[test]
-    fn first_observed_affinity_arms_inside_the_pin_and_only_warns_outside_it() {
-        let pinned: BTreeSet<usize> = (4..=7).collect();
-
-        // A strict subset: the kernel clamped the pin down, monitoring is sound.
-        assert_eq!(
-            classify_first_observed_affinity(&BTreeSet::from([4, 5]), &pinned),
-            FirstObservedAffinity::HonoursPin
-        );
-        // Exactly the pin: taskset took effect verbatim.
-        assert_eq!(
-            classify_first_observed_affinity(&pinned, &pinned),
-            FirstObservedAffinity::HonoursPin
-        );
-        // Reaching outside the pin is the pre-pin inherited mask, named with
-        // the escaping CPUs; it is not armed on and it is not a refusal.
-        assert_eq!(
-            classify_first_observed_affinity(&BTreeSet::from([3, 5, 9]), &pinned),
-            FirstObservedAffinity::EscapesPin(vec![3, 9])
-        );
     }
 
     #[test]
