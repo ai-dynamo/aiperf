@@ -1166,6 +1166,7 @@ Also add the readiness REDs
 `receipt_partition_handoff_moves_payload_and_both_leases_without_copy`,
 `export_persistence_handoff_keeps_encoded_and_parsed_leases_intact`,
 `verified_current_reader_publicly_mints_move_only_begin_predecessor`,
+`stale_opened_head_refuses_before_predecessor_mint_without_adoption`,
 `legacy_reader_has_no_current_predecessor_accessor`,
 `current_participant_restore_uses_verified_reader_not_public_constructor`,
 `checked_legacy_fixture_is_bounded_read_only_and_cannot_overwrite_head`,
@@ -1207,11 +1208,15 @@ receipts remain non-Clone and budget-owned inside the ledger until the exact
 generation callback proves their partition reachable.
 
 Consume the prepared receipt view only through its reliability-owned
-`into_result_partition` handoff. The post-1D-R transaction `stage_results`
+`into_result_partition` handoff. Task 1D-R's `results.rs` owns
+`PreparedCheckpointResultInput`; Task 5E owns the coordinator signature that
+accepts it and passes both its ordinary partitions and optional issue-receipt
+wrapper into `stage_results`. Task 6B returns that existing input type and does
+not overlap `checkpoint_coordinator.rs`. The post-1D-R transaction `stage_results`
 takes `&mut Option<PreparedIssueReceiptResultPartition>` and returns a move-only
 `PreparedResultEpoch` carrying the backend-computed
 `PreparedIssueReceiptEpochBinding`; commit consumes that same prepared epoch.
-Task 6B calls `bind_prepared_result_epoch` synchronously before CAS. Candidate
+Task 5E calls `bind_prepared_result_epoch` synchronously before CAS. Candidate
 prevalidation compares its descriptor, handled cut, receipt root, and exact
 result-index root, while `checkpoint_committed` compares the independently
 derived root in `CommittedParticipantReceipt` with the reporter-retained staged
@@ -1244,10 +1249,19 @@ common reader exposes no participant initializer state; its legacy branch
 returns only opaque `LegacyParticipantState`, which has no conversion to
 `CommittedParticipantState` and cannot enter `StreamingCheckpointParticipant::initialize`.
 The sealed current-v4 reader exposes the only public
-`current_v4_predecessor()` mint; shared integration support calls it after a
-verified open and moves the non-Clone result into `begin_generation`. The
+`current_v4_predecessor(expected)` mint; shared integration support calls it
+only after the verified opened generation equals the retained cloneable
+`CheckpointGeneration` identity, then moves the non-Clone result into
+`begin_generation`. The
 legacy reader trait has no corresponding method, and no crate-private
 projection is required by public successor tests.
+Task 5E retains `Option<CheckpointGeneration>`, never the move-only authority.
+For each non-fresh transaction it opens and leases the current head, compares
+it exactly with that retained identity, and only then mints authority. Missing,
+different, or legacy heads refuse without adoption; a concurrent advance after
+open is still rejected by Task 5B's expected-head prevalidation/final compare.
+After CAS it advances the retained identity before notification, and restart
+reconstructs it from the exact verified restored generation.
 Committed-state storage promotion becomes crate-private and requires the
 private current-v4 reader context; test support must obtain current state
 through the verified current reader rather than a public constructor.

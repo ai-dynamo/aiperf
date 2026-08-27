@@ -184,6 +184,7 @@ The pre-CAS path is an authority chain, not a callback-supplied digest:
 ```rust
 pub struct PreparedIssueReceiptResultPartition { /* private partition/binding */ }
 pub struct PreparedIssueReceiptEpochBinding { /* private roots and view lease */ }
+pub struct PreparedCheckpointResultInput { /* private partitions/issue receipt */ }
 
 impl PreparedIssueReceiptPartitionView {
     pub fn into_result_partition(
@@ -203,6 +204,26 @@ impl PreparedIssueReceiptEpochBinding {
     pub fn handled_cut(&self) -> &HandledIssueCut;
     pub fn result_index_root(&self) -> &ContentDigest;
 }
+
+impl PreparedCheckpointResultInput {
+    pub fn new(
+        partitions: Vec<ResultPartition>,
+        issue_receipts: Option<PreparedIssueReceiptResultPartition>,
+    ) -> Self;
+    pub fn empty() -> Self;
+    pub fn partitions(&self) -> &[ResultPartition];
+    pub(crate) fn stage_inputs(
+        &mut self,
+    ) -> (
+        &mut Vec<ResultPartition>,
+        &mut Option<PreparedIssueReceiptResultPartition>,
+    );
+}
+
+impl std::ops::Deref for PreparedCheckpointResultInput {
+    type Target = [ResultPartition];
+    fn deref(&self) -> &[ResultPartition] { self.partitions() }
+}
 ```
 
 Task 1D-R retires the public `PreparedResultEpoch::into_parts`; commit now
@@ -216,9 +237,20 @@ moves the private `BudgetedCheckpointBytes` and its exact payload lease into a
 `ResultPartition`. The returned wrapper also retains the view lease and fixed
 staged binding; neither wrapper is `Clone` or `Serialize`.
 
-The Task 1D-R transaction overlay accepts that wrapper as a distinct optional
-input to `stage_results`. On success it consumes the wrapper, includes its
-partition in the one canonical result index, and returns a non-Clone
+Task 1D-R's `results.rs` owns the move-only
+`PreparedCheckpointResultInput`. Task 5E owns the only coordinator integration:
+`commit_barrier` accepts that input instead of a bare partition vector, obtains
+both mutable fields through the crate-private `stage_inputs`, and passes them to
+the transaction. Task 6B returns this existing input type and does not modify
+`checkpoint_coordinator.rs`. Thus its issue-receipt wrapper reaches
+`stage_results`; Task 5E never substitutes `None` or detaches it.
+The optional form exists only for Task 5E's pre-6B conformance path with the
+canonical empty handled cut; any nonempty receipt/frontier/tombstone root
+requires `Some`, and every Task 6B-produced input supplies it.
+
+The Task 1D-R transaction overlay accepts the issue wrapper as a distinct
+optional input to `stage_results`. On success it consumes the wrapper, includes
+its partition in the one canonical result index, and returns a non-Clone
 `PreparedResultEpoch` containing `PreparedIssueReceiptEpochBinding` with the
 computed index root. Transaction commit consumes that exact
 `PreparedResultEpoch`; it verifies the returned root against its internally
@@ -227,7 +259,7 @@ index root into the candidate before the existing prevalidation/publication
 sequence. It cannot accept a caller-supplied root or a separately reconstructed
 binding.
 
-Before commit, Task 6B calls the reporter's synchronous
+Before commit, Task 5E calls the reporter's synchronous
 `bind_prepared_result_epoch(&PreparedResultEpoch)`. The reporter accepts only
 the binding created from its retained staged view and records the exact result
 index root without changing its already prepared participant bytes, cut, or
@@ -300,7 +332,8 @@ checkpoint-results plan. Ownership is:
 construct the wrapper. Its common surface is generation identity plus result
 index/segment reads. `view()` returns either a sealed current reader with
 `read_participant -> CommittedParticipantState` and
-`current_v4_predecessor() -> CurrentV4CheckpointGeneration`, or a legacy reader
+`current_v4_predecessor(expected) -> Result<CurrentV4CheckpointGeneration,
+CheckpointError>`, or a legacy reader
 with `read_legacy_participant -> LegacyParticipantState` and no predecessor
 accessor. `LegacyParticipantState` has only `descriptor()` and
 `payload_bytes()` and no conversion into initializer authority.
@@ -311,12 +344,30 @@ accessor. `LegacyParticipantState` has only `descriptor()` and
 `Option<CurrentV4CheckpointGeneration>`. The current wrapper has a private
 field, is move-only, and exposes only `generation()`. Only the sealed current
 reader obtained from a successfully verified `open_latest` can mint it through
-the public borrowed accessor. Shared integration support matches
-`LeasedCheckpointGenerationView::CurrentV4`, performs any participant reads,
-then obtains that authority and moves it into `begin_generation`; matching the
-legacy view provides no callable predecessor method. `CheckpointCommitMetadata.previous`
+the public borrowed accessor, and that accessor first requires its immutable
+generation identity to equal the caller's cloneable expected identity. Shared
+integration support matches `LeasedCheckpointGenerationView::CurrentV4`,
+performs any participant reads, checks the leased head against the retained
+expected `CheckpointGeneration`, then obtains that authority and moves it into
+`begin_generation`; matching the legacy view provides no callable predecessor
+method. `CheckpointCommitMetadata.previous`
 remains an untrusted raw claim compared during prevalidation with the sealed
 expected predecessor.
+
+The Task 5E coordinator retains `Option<CheckpointGeneration>`, never
+`CurrentV4CheckpointGeneration`. Fresh construction uses `None`; resume sets it
+once from the exact verified restored generation before execution. For every
+non-fresh transaction it opens the current head under its run/plan
+expectations, requires exact equality with the retained identity, and only then
+calls `current_v4_predecessor(expected)`. A missing, different, or legacy head
+refuses with `GenerationConflict` or `LegacyReadOnlyHead` without changing the
+retained identity. A concurrent advance after the
+open is still rejected by `begin_generation`/commit expected-head comparison;
+the coordinator never adopts it. Successful CAS replaces the retained identity
+with the committed generation before notification, preserving restart and
+notification-retry behavior without cloning the move-only authority. The
+pre-open comparison supplements and does not replace Task 5B lineage
+prevalidation or its final head comparison under the publication fence.
 
 The generation decoder first rejects bytes exceeding the backend's configured
 generation-object limit. Current-v4 encoding contains the explicit strict field
@@ -428,7 +479,8 @@ The public `CommittedParticipantState::new` is removed. Shared test support adds
 `committed_current_v4_participant_state`, which creates a memory generation,
 opens it as `CurrentV4`, and reads the reachable participant through the current
 reader. The same support module adds `current_v4_predecessor`, which matches the
-verified current view and calls its sealed public borrowed accessor; successor
+verified current view, compares it with the caller's expected immutable
+generation identity, and calls its sealed public borrowed accessor; successor
 backend integration tests move that returned authority into `begin_generation`.
 No integration test imports a crate-private projection. Blocking and
 checkpoint-participant tests use the participant helper. Privacy
@@ -505,10 +557,13 @@ suites:
 - `committed_receipt_binds_exact_result_index_root`;
 - `mismatched_result_index_root_retains_detailed_receipts`;
 - `pre_cas_result_epoch_binding_is_required_and_matches_committed_root`;
+- `prepared_issue_receipt_reaches_staged_index_root_and_post_cas_reporter_ack`;
 - `cancelled_or_dropped_receipt_partition_handoff_retains_reporter_retry`;
 - `receipt_partition_handoff_moves_payload_and_both_leases_without_copy`;
 - `export_persistence_handoff_keeps_encoded_and_parsed_leases_intact`;
 - `verified_current_reader_publicly_mints_move_only_begin_predecessor`;
+- `stale_opened_head_refuses_before_predecessor_mint_without_adoption`;
+- `stale_opened_head_is_refused_without_adopting_concurrent_advance`;
 - `legacy_reader_has_no_current_predecessor_accessor`;
 - `current_participant_restore_uses_verified_reader_not_public_constructor`;
 - `checked_legacy_fixture_is_bounded_read_only_and_cannot_overwrite_head`;

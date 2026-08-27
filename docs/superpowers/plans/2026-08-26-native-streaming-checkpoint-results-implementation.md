@@ -2266,7 +2266,10 @@ async fn every_pre_current_fault_preserves_previous_generation() {
         let (transaction, prepared_results) = support::fully_staged_local_transaction(
             &backend,
             run,
-            Some(support::current_v4_predecessor(&opened)),
+            Some(
+                support::current_v4_predecessor(&opened, first.generation_ref())
+                    .unwrap(),
+            ),
         ).await;
         backend.inject_fault(fault);
         assert_eq!(
@@ -2478,6 +2481,10 @@ git commit -m "feat(runtime): lease and collect checkpoint objects"
 - Create: `rust/runtime/tests/support/streaming_checkpoint_coordinator.rs`
 - Create: `rust/runtime/tests/streaming_checkpoint_coordinator.rs`
 
+Task 5E owns the complete `PreparedCheckpointResultInput` integration in
+`checkpoint_coordinator.rs`. Task 6B produces that existing input type and does
+not reopen or overlap this file.
+
 **Produces:** `StreamingCheckpointCoordinator::commit_barrier`, exact participant-set enforcement, and idempotent post-CAS notification retry.
 
 The coordinator constructor requires one already resolved
@@ -2485,14 +2492,21 @@ The coordinator constructor requires one already resolved
 the no-issue-before-bootstrap lifecycle gate. Task 5E only verifies the injected
 run against every barrier, participant state, backend expectation, committed
 generation, and receipt; it has no allocator, catalog, or implicit "latest run"
-path.
+path. Its existing constructor additionally receives
+`initial_expected: Option<CheckpointGeneration>`: fresh uses `None`; resume
+passes the exact generation identity from its verified restored reader.
 
 ```rust
 impl StreamingCheckpointCoordinator {
+    async fn open_verified_current_predecessor(
+        &self,
+        expected: &CheckpointGeneration,
+    ) -> Result<CurrentV4CheckpointGeneration, CheckpointError>;
+
     pub async fn commit_barrier(
         &mut self,
         barrier: CheckpointBarrier,
-        result_partitions: &mut Vec<ResultPartition>,
+        results: &mut PreparedCheckpointResultInput,
     ) -> Result<CommittedCheckpointGeneration, CheckpointError>;
 }
 ```
@@ -2523,7 +2537,7 @@ struct PartitionInputAuthoritySnapshot {
 async fn post_commit_failure_does_not_roll_back_authoritative_head() {
     let mut fixture = coordinator_support::coordinator_fixture();
     fixture.participant("session").fail_first_commit_notification();
-    let mut partitions = Vec::new();
+    let mut partitions = PreparedCheckpointResultInput::empty();
     let error = fixture.coordinator.commit_barrier(
         coordinator_support::barrier_at(3),
         &mut partitions,
@@ -2541,13 +2555,13 @@ async fn post_commit_failure_does_not_roll_back_authoritative_head() {
 #[tokio::test(flavor = "current_thread")]
 async fn one_coordinator_commits_consecutive_barriers_against_its_advanced_head() {
     let mut fixture = coordinator_support::coordinator_fixture();
-    let mut first_partitions = Vec::new();
+    let mut first_partitions = PreparedCheckpointResultInput::empty();
     let first = fixture
         .coordinator
         .commit_barrier(coordinator_support::barrier_at(3), &mut first_partitions)
         .await
         .unwrap();
-    let mut second_partitions = Vec::new();
+    let mut second_partitions = PreparedCheckpointResultInput::empty();
     let second = fixture
         .coordinator
         .commit_barrier(coordinator_support::barrier_at(7), &mut second_partitions)
@@ -2571,7 +2585,7 @@ async fn one_coordinator_commits_consecutive_barriers_against_its_advanced_head(
 async fn notification_failure_advances_expected_before_same_coordinator_next_barrier() {
     let mut fixture = coordinator_support::coordinator_fixture();
     fixture.participant("session").fail_first_commit_notification();
-    let mut first_partitions = Vec::new();
+    let mut first_partitions = PreparedCheckpointResultInput::empty();
     assert!(matches!(
         fixture
             .coordinator
@@ -2586,7 +2600,7 @@ async fn notification_failure_advances_expected_before_same_coordinator_next_bar
     assert_eq!(fixture.coordinator.expected(), Some(&first));
     assert_eq!(fixture.coordinator.pending_notification_generation(), Some(&first));
 
-    let mut second_partitions = Vec::new();
+    let mut second_partitions = PreparedCheckpointResultInput::empty();
     let second = fixture
         .coordinator
         .commit_barrier(coordinator_support::barrier_at(7), &mut second_partitions)
@@ -2602,7 +2616,7 @@ async fn exact_barrier_retry_notifies_then_returns_same_generation_without_recom
     let mut fixture = coordinator_support::coordinator_fixture();
     let barrier = coordinator_support::barrier_at(3);
     fixture.participant("session").fail_first_commit_notification();
-    let mut first_partitions = Vec::new();
+    let mut first_partitions = PreparedCheckpointResultInput::empty();
     assert!(matches!(
         fixture
             .coordinator
@@ -2613,7 +2627,10 @@ async fn exact_barrier_retry_notifies_then_returns_same_generation_without_recom
     let published = fixture.backend.latest_generation(&fixture.run).unwrap();
     let counters = fixture.backend.stage_commit_counters();
     let inventory = fixture.backend.immutable_object_inventory(&fixture.run);
-    let mut retry_partitions = vec![fixture.uncommitted_partition(99).await];
+    let mut retry_partitions = PreparedCheckpointResultInput::new(
+        vec![fixture.uncommitted_partition(99).await],
+        None,
+    );
     let retry_descriptors = support::partition_descriptors(&retry_partitions);
 
     let repeated = fixture
@@ -2632,7 +2649,7 @@ async fn exact_barrier_retry_notifies_then_returns_same_generation_without_recom
 async fn pending_notification_error_preserves_complete_new_partition_authority() {
     let mut fixture = coordinator_support::coordinator_fixture();
     fixture.participant("session").fail_first_commit_notification();
-    let mut first_partitions = Vec::new();
+    let mut first_partitions = PreparedCheckpointResultInput::empty();
     assert!(matches!(
         fixture
             .coordinator
@@ -2645,7 +2662,7 @@ async fn pending_notification_error_preserves_complete_new_partition_authority()
     ));
     fixture.participant("session").fail_next_commit_notification();
     let (input_budgets, partition) = fixture.uncommitted_partition_with_budgets(7).await;
-    let mut next_partitions = vec![partition];
+    let mut next_partitions = PreparedCheckpointResultInput::new(vec![partition], None);
     let input_before = support::partition_input_authority_snapshot(
         &next_partitions,
         &input_budgets,
@@ -2693,7 +2710,7 @@ async fn cancelling_pending_notification_retry_preserves_pending_and_new_inputs(
     let mut fixture = coordinator_support::coordinator_fixture();
     let first_barrier = coordinator_support::barrier_at(3);
     fixture.participant("session").fail_first_commit_notification();
-    let mut first_partitions = Vec::new();
+    let mut first_partitions = PreparedCheckpointResultInput::empty();
     assert!(matches!(
         fixture
             .coordinator
@@ -2703,7 +2720,7 @@ async fn cancelling_pending_notification_retry_preserves_pending_and_new_inputs(
     ));
     fixture.participant("session").block_next_commit_notification();
     let (input_budgets, partition) = fixture.uncommitted_partition_with_budgets(7).await;
-    let mut next_partitions = vec![partition];
+    let mut next_partitions = PreparedCheckpointResultInput::new(vec![partition], None);
     let input_before = support::partition_input_authority_snapshot(
         &next_partitions,
         &input_budgets,
@@ -2776,13 +2793,22 @@ it only into test observation state and compare the full value, not merely its
 generation number.
 
 Add `pre_cas_failure_retains_issue_receipt_view_for_identical_retry` and
+`prepared_issue_receipt_reaches_staged_index_root_and_post_cas_reporter_ack`,
+`stale_opened_head_is_refused_without_adopting_concurrent_advance`,
 `handled_cut_without_matching_receipt_partition_is_rejected_before_staging`,
 `tombstone_install_ack_requires_same_barrier_receipt_root`, and
 `pre_cas_drop_preserves_quarantine_owner_for_identical_ack_retry`.
 The first injects cancellation and backend refusal after Task 6B consumes the
 barrier view, verifies the ledger retains identical detailed receipts and all
 live charges, retries, and observes retirement only after the same-generation
-commit callback.
+commit callback. The prepared-input case passes a nonempty
+`PreparedCheckpointResultInput` into `commit_barrier`, proves its issue receipt
+descriptor is reachable from the staged/committed result-index root, and proves
+the reporter acknowledges that exact root once only after CAS. The stale-head
+case retains generation A as `coordinator.expected()`, advances the backend to
+B through another writer, then requires `GenerationConflict { expected: A,
+actual: B }`, unchanged coordinator expectation, untouched prepared input, and
+zero participant callbacks.
 
 - [ ] **Step 2: Verify RED**
 
@@ -2816,7 +2842,13 @@ if let Some(published) = self.last_committed.as_ref() {
 }
 let views = self.collect_views(&barrier).await?;
 self.plan.validate_exact_set(&views)?;
-let expected = self.open_verified_current_predecessor().await?;
+let expected_identity = self.expected.clone();
+let expected = match expected_identity.as_ref() {
+    Some(expected) => Some(
+        self.open_verified_current_predecessor(expected).await?,
+    ),
+    None => None,
+};
 let mut transaction = self.backend.begin_generation(
     self.run,
     expected,
@@ -2825,14 +2857,15 @@ let mut transaction = self.backend.begin_generation(
 for view in views {
     transaction.stage_participant(view).await?;
 }
-let mut issue_receipts = None;
+let (result_partitions, issue_receipts) = results.stage_inputs();
 let prepared_results = transaction
-    .stage_results(result_partitions, &mut issue_receipts)
+    .stage_results(result_partitions, issue_receipts)
     .await?;
 self.reporter.bind_prepared_result_epoch(&prepared_results)?;
 let committed = transaction
     .commit(self.metadata(&barrier)?, prepared_results)
     .await?;
+self.expected = Some(committed.generation_ref().clone());
 self.last_committed = Some(PublishedBarrier {
     barrier: barrier.clone(),
     committed: committed.clone(),
@@ -2847,15 +2880,27 @@ Ok(committed)
 ```
 
 Missing/duplicate participants fail before `begin_generation`. The coordinator
-derives each non-fresh expected predecessor by opening and verifying the current
-head, matching its current-v4 view, and calling the sealed public reader
-accessor; it never clones or caches predecessor authority. A legacy view fails
-before `begin_generation`.
+retains `Option<CheckpointGeneration>` as cloneable immutable expected-head
+identity, never `CurrentV4CheckpointGeneration`. Fresh construction uses
+`None`; resume initializes it once from the exact verified restored generation
+before execution. For each non-fresh transaction,
+`open_verified_current_predecessor(expected)` opens the current head under the
+same run/plan expectations, requires exact equality with the retained expected
+identity, matches its current-v4 view, and calls the sealed public reader
+accessor with that identity. A missing or different head returns
+`GenerationConflict` with exact expected/actual identities; a legacy head
+returns `LegacyReadOnlyHead`. All fail without changing `self.expected`. A concurrent advance after this checked open is still
+rejected by begin/commit expected-head comparison rather than adopted. This
+early lease check supplements and never replaces Task 5B's lineage
+prevalidation and final expected-head comparison under the publication fence.
 The coordinator
 requires exactly one Task-6B issue-receipt result partition whose run, barrier,
 receipt root, and handled cut equal the reliability participant view. It stages
 that partition in the same transaction; it never accepts a detached receipt
-list or clones a detailed receipt. For quarantine it additionally requires the
+list or clones a detailed receipt. `None` exists only for Task 5E's pre-6B
+conformance fixtures with the canonical empty handled cut; it is rejected for
+any nonempty receipt/frontier/tombstone root, and the Task 6B-enabled path always
+supplies `Some`. For quarantine it additionally requires the
 separately budgeted `PreparedSessionQuarantineInstall` to carry the same
 barrier, tombstone root, monotonic P1B view revision, and receipt binding. Staging consumes only that
 move-only acknowledgement, not P1B's retained tombstone/map; pre-CAS drop
@@ -2873,25 +2918,29 @@ receipt whose run differs from their initialized/frozen run before considering
 generation ordering or descriptor-digest idempotency. Thus a greater-epoch
 receipt from another run cannot be mistaken for progress. Failed staging/CAS
 drops the transaction and sends no notifications. Notification failure is
-surfaced after publication. The coordinator clones its non-`Copy` expected head
-for `begin_generation`; after Task 1D-R that field is exactly
-`Option<CurrentV4CheckpointGeneration>`. Immediately after successful CAS it advances
-`self.expected` and retains the committed receipt as the pending notification
-before making any fallible callback. The next barrier on that same coordinator
+surfaced after publication. Immediately after successful CAS the coordinator
+replaces its cloneable expected identity with the committed generation and
+retains the committed receipt as the pending notification before making any
+fallible callback. It never stores or clones the move-only predecessor token.
+The next barrier on that same coordinator
 first retries the pending receipt idempotently, clears it only after every
 participant acknowledges it, and then compares the complete incoming barrier to
 the retained published barrier. An exact run/cut/barrier repeat returns that
 same committed generation without collecting views, staging partitions, or
 calling backend commit again. A different barrier continues against the
 already-advanced expected head only after pending notification succeeds.
-`commit_barrier` borrows the caller's partition vector; pending-notification
-retry occurs before inspecting or moving it. Failure or cancellation during the
-retry therefore leaves both the pending authority and every newly supplied
-uncommitted partition intact. The synchronous clear follows the successful
+`commit_barrier` borrows the caller's complete
+`PreparedCheckpointResultInput`; pending-notification retry occurs before
+inspecting or moving either its ordinary partitions or optional issue-receipt
+wrapper. Failure or cancellation during the retry therefore leaves both the
+pending authority and every newly supplied uncommitted input intact. The synchronous clear follows the successful
 notification await with no intervening cancellation point. Restore uses the
 same replay path. A notification error therefore cannot roll back authority,
 strand the coordinator on a stale CAS expectation, duplicate an exact barrier,
-or consume inputs belonging to a later attempt.
+or consume inputs belonging to a later attempt. Restart reconstructs the same
+expected identity from the exact verified restored generation and replays any
+pending notification before preparing a successor; it does not adopt a newer
+head discovered during transaction start.
 
 This publication sequence is one atomic attempt inside the clock-driven
 coordinator loop. Before returning a pre-CAS error to the pipeline, Task 5E
@@ -3317,6 +3366,10 @@ git commit -m "feat(runtime): index streaming result segments"
 - Extend: `rust/runtime/tests/support/streaming_checkpoint.rs`
 - Create: `rust/runtime/tests/streaming_result_epochs.rs`
 
+Task 6B produces Task 1D-R's `PreparedCheckpointResultInput`. It does not modify
+`checkpoint_coordinator.rs`; Task 5E already owns and tests the consuming
+coordinator handoff.
+
 **Produces:** `EpochResultCoordinator`, bounded `ProvisionalResultStore`, terminal-contiguous cut selection, worker accumulator rotation, and `CommittedPartialResult`.
 
 ```rust
@@ -3342,11 +3395,6 @@ pub struct WorkerResultEpoch {
     pub partitions: Vec<ResultPartition>,
 }
 
-pub struct PreparedEpochResults {
-    pub partitions: Vec<ResultPartition>,
-    pub issue_receipts: Option<PreparedIssueReceiptResultPartition>,
-}
-
 impl EpochResultCoordinator {
     pub fn observe_terminal(
         &mut self,
@@ -3356,7 +3404,7 @@ impl EpochResultCoordinator {
         &mut self,
         barrier: &CheckpointBarrier,
         issue_receipts: PreparedIssueReceiptPartitionView,
-    ) -> Result<PreparedEpochResults, ResultPlaneError>;
+    ) -> Result<PreparedCheckpointResultInput, ResultPlaneError>;
     pub fn committed_partial(
         &self,
         generation: &CommittedCheckpointGeneration,
@@ -3399,7 +3447,8 @@ constructs `BudgetedResultDescriptor`, and installs that wrapper with the
 separately budgeted payload. Refusal maps only to
 `PartitionDescriptorCapacityExceeded { items, bytes }`, never backend,
 participant-state, storage, or provisional-hole capacity. The wrapper remains
-charged while Task 5E carries the mutable partition vector into Task 5B and is
+charged while Task 5E carries the complete mutable
+`PreparedCheckpointResultInput` into Task 5B and is
 released only after Task 5B has acquired both aggregate descriptor authorities.
 
 - [ ] **Step 1: Write representative RED tests**
@@ -3503,7 +3552,7 @@ CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime -
 
 - [ ] **Step 3: Implement bounded epoch ownership**
 
-Rotate each worker `MetricsAccumulator` and configured exact/raw/session/provenance projections at the barrier. Consume the move-only issue-receipt view through `into_result_partition`; return that private wrapper in `PreparedEpochResults.issue_receipts` rather than extracting or copying its payload. Task 5E passes both mutable fields to the Task 1D-R `stage_results` overlay, synchronously calls `reporter.bind_prepared_result_epoch(&prepared_results)` after staging returns, and moves the same `PreparedResultEpoch` into `commit`. The stable result participant checkpoints accumulator epochs, index root, terminal horizon, handled-issue root, and all bounded provisional descriptors/leases. Require the barrier `HandledIssueCut`, reliability participant state, issue partition root, and separately budgeted prepared tombstone install acknowledgement, including exact P1B view revision, to match before returning partitions. The acknowledgement is a non-destructive P1B projection; neither the tombstone nor its map moves into 6B. Hold completions above `H` in immutable provisional partitions charged to prepare/provisional budgets; never link them from a committed root until the hole closes. On exhaustion, fence new admission and return the authored overload decision. Partial views page and merge only committed segments through `H`; provisional dashboard data is separately labeled and excluded from totals.
+Rotate each worker `MetricsAccumulator` and configured exact/raw/session/provenance projections at the barrier. Consume the move-only issue-receipt view through `into_result_partition`; return it together with ordinary partitions in `PreparedCheckpointResultInput` rather than extracting or copying its payload. Task 5E consumes both private fields through the Task 1D-R `stage_results` overlay, synchronously calls `reporter.bind_prepared_result_epoch(&prepared_results)` after staging returns, and moves the same `PreparedResultEpoch` into `commit`. Its coordinator RED proves the prepared issue receipt is reachable in the staged index/root and acknowledged only after CAS. The stable result participant checkpoints accumulator epochs, index root, terminal horizon, handled-issue root, and all bounded provisional descriptors/leases. Require the barrier `HandledIssueCut`, reliability participant state, issue partition root, and separately budgeted prepared tombstone install acknowledgement, including exact P1B view revision, to match before returning partitions. The acknowledgement is a non-destructive P1B projection; neither the tombstone nor its map moves into 6B. Hold completions above `H` in immutable provisional partitions charged to prepare/provisional budgets; never link them from a committed root until the hole closes. On exhaustion, fence new admission and return the authored overload decision. Partial views page and merge only committed segments through `H`; provisional dashboard data is separately labeled and excluded from totals.
 
 - [ ] **Step 4: Verify GREEN**
 
@@ -3855,7 +3904,10 @@ pub enum LeasedCheckpointGenerationView<'a> {
 #[async_trait(?Send)]
 pub trait LeasedGenerationReader: sealed::LeasedGenerationReader {
     fn generation(&self) -> &CommittedCheckpointGeneration;
-    fn current_v4_predecessor(&self) -> CurrentV4CheckpointGeneration;
+    fn current_v4_predecessor(
+        &self,
+        expected: &CheckpointGeneration,
+    ) -> Result<CurrentV4CheckpointGeneration, CheckpointError>;
     async fn scan_result_index(
         &self,
         after: Option<ResultIndexCursor>,
@@ -3960,6 +4012,31 @@ pub trait StreamingCheckpointBackend {
     ) -> Result<Box<dyn StreamingGenerationTransaction>, CheckpointError>;
 }
 
+pub struct PreparedCheckpointResultInput {
+    partitions: Vec<ResultPartition>,
+    issue_receipts: Option<PreparedIssueReceiptResultPartition>,
+}
+
+impl PreparedCheckpointResultInput {
+    pub fn new(
+        partitions: Vec<ResultPartition>,
+        issue_receipts: Option<PreparedIssueReceiptResultPartition>,
+    ) -> Self;
+    pub fn empty() -> Self;
+    pub fn partitions(&self) -> &[ResultPartition];
+    pub(crate) fn stage_inputs(
+        &mut self,
+    ) -> (
+        &mut Vec<ResultPartition>,
+        &mut Option<PreparedIssueReceiptResultPartition>,
+    );
+}
+
+impl std::ops::Deref for PreparedCheckpointResultInput {
+    type Target = [ResultPartition];
+    fn deref(&self) -> &[ResultPartition] { self.partitions() }
+}
+
 #[async_trait(?Send)]
 pub trait StreamingGenerationTransaction {
     async fn stage_participant(
@@ -4032,9 +4109,13 @@ the public current-v4 successor path cannot accidentally appear on its surface:
 
 ````rust
 /// ```compile_fail
+/// # use aiperf_runtime::streaming::checkpoint::CheckpointGeneration;
 /// # use aiperf_runtime::streaming::checkpoint_backend::LegacyV3LeasedGenerationReader;
-/// # fn cannot_follow(reader: &dyn LegacyV3LeasedGenerationReader) {
-/// let _ = reader.current_v4_predecessor();
+/// # fn cannot_follow(
+/// #     reader: &dyn LegacyV3LeasedGenerationReader,
+/// #     expected: &CheckpointGeneration,
+/// # ) {
+/// let _ = reader.current_v4_predecessor(expected);
 /// # }
 /// ```
 ````
@@ -4055,10 +4136,12 @@ The wrapper and inner fields are private. `VersionedLeasedGenerationReader` is
 sealed and implemented only for the opaque wrapper by exhaustive private-inner dispatch.
 Its common methods expose only generation/result reads; `view()` selects one
 of two non-convertible borrowed reader authorities. Current-v4 participant
-reads and the only public `current_v4_predecessor` mint remain on sealed
+reads and the only public `current_v4_predecessor(expected)` mint remain on sealed
 `LeasedGenerationReader`. The returned `CurrentV4CheckpointGeneration` is
 move-only and can only be moved into `begin_generation`; the legacy reader trait
-has no such method. Legacy-v3 participant reads return private-field
+has no such method. The mint compares the verified reader's full generation
+identity with the supplied immutable expected identity and returns
+`GenerationConflict` before minting on mismatch. Legacy-v3 participant reads return private-field
 `LegacyParticipantState` from `checkpoint.rs`, which has borrow-only descriptor/byte
 access for export and no conversion into `CommittedParticipantState`.
 Task 1D-R retires the landed public storage constructor
@@ -4107,20 +4190,22 @@ reader:
 ```rust
 pub fn current_v4_predecessor(
     opened: &LeasedCheckpointGeneration,
-) -> CurrentV4CheckpointGeneration {
+    expected: &CheckpointGeneration,
+) -> Result<CurrentV4CheckpointGeneration, CheckpointError> {
     match opened.view() {
         LeasedCheckpointGenerationView::CurrentV4(reader) => {
-            reader.current_v4_predecessor()
+            reader.current_v4_predecessor(expected)
         }
         LeasedCheckpointGenerationView::LegacyV3ReadOnly(_) => {
-            panic!("fixture expected a verified current-v4 generation")
+            Err(CheckpointError::LegacyReadOnlyHead)
         }
     }
 }
 ```
 
-Successor integration tests open and verify current-v4, perform required reads,
-call that helper, and move its result into `begin_generation`. Public tests also
+Successor integration tests retain the expected immutable generation identity,
+open and verify current-v4, perform required reads, call that helper with the
+expected identity, and move its result into `begin_generation`. Public tests also
 assert `CheckpointGenerationStorageVersion`, compile-fail inability to pass
 `LeasedCheckpointGeneration` directly, and compile-fail absence of
 `current_v4_predecessor` on `LegacyV3LeasedGenerationReader`. No crate-private
@@ -4131,7 +4216,7 @@ cancellation leaves the mutable option and ordinary partition vector unchanged;
 success takes both into the staged index and returns the exact non-Clone
 `PreparedResultEpoch`. Its private `PreparedIssueReceiptEpochBinding` contains
 the descriptor/receipt/handled-cut roots, the computed result-index root, and
-the moved view lease. Task 6B synchronously calls
+the moved view lease. Task 5E synchronously calls
 `StreamingIssueReporter::bind_prepared_result_epoch(&prepared_results)` before
 commit. Commit consumes that same prepared result authority, compares it with
 the internally staged root, and passes the binding into candidate
