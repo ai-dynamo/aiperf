@@ -16,14 +16,20 @@ use crate::streaming::{
     budget::{BudgetError, BudgetLease, BudgetLimits, BudgetSnapshot, StreamingResourceBudget},
     checkpoint::{
         BudgetedCheckpointBytes, CheckpointBackendBudgetFailureCode, CheckpointBackendBudgetKind,
-        CheckpointError, CheckpointGeneration, CheckpointGenerationCandidate,
-        CommittedCheckpointGeneration, CommittedParticipantState, ParticipantStateDescriptor,
-        PreparedParticipantState, PrevalidatedCheckpointGenerationCandidate, StreamRunIdentity,
+        CheckpointEpoch, CheckpointError, CheckpointGeneration, CheckpointGenerationCandidate,
+        CommittedCheckpointGeneration, CommittedParticipantState, CurrentV4ParticipantStateContext,
+        DecodedCheckpointGeneration, LegacyParticipantState, LegacyV3CheckpointGeneration,
+        ParticipantStateDescriptor, PreparedParticipantState,
+        PrevalidatedCheckpointGenerationCandidate, StreamRunIdentity,
+        decode_versioned_checkpoint_generation,
     },
     checkpoint_backend::{
-        CheckpointCommitMetadata, CheckpointGenerationExpectations,
-        FrozenGenerationTransactionInputs, LeasedGenerationReader, StreamingCheckpointBackend,
-        StreamingGenerationTransaction, build_prevalidated_candidate, validate_commit_metadata,
+        BudgetOwnedLegacyV3FixtureInventory, CheckpointCommitMetadata,
+        CheckpointGenerationExpectations, CurrentV4CheckpointGeneration,
+        FrozenGenerationTransactionInputs, LeasedCheckpointGeneration, LeasedGenerationReader,
+        LegacyV3FixtureObject, LegacyV3LeasedGenerationReader, LegacyV3ReadOnlyFixture,
+        StreamingCheckpointBackend, StreamingGenerationTransaction, build_prevalidated_candidate,
+        sealed, validate_commit_metadata,
     },
     identity::ContentDigest,
     reliability::PreparedIssueReceiptResultPartition,
@@ -158,9 +164,24 @@ struct MemoryBudgets {
     reads: BackendBudget,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum MemoryGenerationHead {
+    CurrentV4(CommittedCheckpointGeneration),
+    LegacyV3ReadOnly(LegacyV3CheckpointGeneration),
+}
+
+impl MemoryGenerationHead {
+    fn generation(&self) -> &CheckpointGeneration {
+        match self {
+            Self::CurrentV4(generation) => generation.generation_ref(),
+            Self::LegacyV3ReadOnly(generation) => generation.generation(),
+        }
+    }
+}
+
 #[derive(Default)]
 struct MemoryRunHead {
-    generation: Option<CommittedCheckpointGeneration>,
+    generation: Option<MemoryGenerationHead>,
     objects: BTreeMap<StoredObjectKey, BudgetedStoredObject>,
 }
 
@@ -264,6 +285,12 @@ pub struct MemoryResultSummaryCapacityHold {
     _lease: BudgetLease,
 }
 
+/// Opaque test hold over all immutable-storage capacity.
+#[doc(hidden)]
+pub struct MemoryStorageCapacityHold {
+    _lease: BudgetLease,
+}
+
 impl MemoryCheckpointBackend {
     /// Construct a backend after validating all five budgets in field order.
     pub fn new(limits: MemoryCheckpointLimits) -> Result<Self, CheckpointError> {
@@ -300,11 +327,36 @@ impl MemoryCheckpointBackend {
     pub async fn begin_generation(
         &self,
         run: StreamRunIdentity,
-        expected: Option<CheckpointGeneration>,
+        expected: Option<CurrentV4CheckpointGeneration>,
         expectations: CheckpointGenerationExpectations,
     ) -> Result<MemoryGenerationTransaction, CheckpointError> {
         if run != expectations.run {
             return Err(CheckpointError::ObjectVerification);
+        }
+        self.note_state_access();
+        let actual = self
+            .state
+            .borrow()
+            .heads
+            .get(&run)
+            .and_then(|head| head.generation.as_ref())
+            .cloned();
+        if matches!(actual, Some(MemoryGenerationHead::LegacyV3ReadOnly(_))) {
+            return Err(CheckpointError::LegacyReadOnlyHead);
+        }
+        let actual_generation = actual
+            .as_ref()
+            .map(MemoryGenerationHead::generation)
+            .cloned();
+        let expected_generation = expected
+            .as_ref()
+            .map(CurrentV4CheckpointGeneration::generation)
+            .cloned();
+        if actual_generation != expected_generation {
+            return Err(CheckpointError::GenerationConflict {
+                expected: expected_generation,
+                actual: actual_generation,
+            });
         }
         let lease = self.budgets.transactions.acquire(1, 1).await?;
         Ok(MemoryGenerationTransaction {
@@ -323,12 +375,12 @@ impl MemoryCheckpointBackend {
         &self,
         run: &StreamRunIdentity,
         expected: &CheckpointGenerationExpectations,
-    ) -> Result<Option<MemoryGenerationReader>, CheckpointError> {
+    ) -> Result<Option<LeasedCheckpointGeneration>, CheckpointError> {
         if run != &expected.run {
             return Err(CheckpointError::ObjectVerification);
         }
         self.note_state_access();
-        let (generation, object_bytes) = {
+        let (head_identity, object_bytes) = {
             let state = self.state.borrow();
             let Some(head) = state.heads.get(run) else {
                 return Ok(None);
@@ -340,51 +392,82 @@ impl MemoryCheckpointBackend {
                 .objects
                 .get(&(
                     StoredObjectKind::Generation,
-                    *generation.generation_ref().digest(),
+                    *generation.generation().digest(),
                 ))
                 .ok_or(CheckpointError::ObjectVerification)?;
-            (generation.generation(), object.bytes.len())
+            (generation.clone(), object.bytes.len())
         };
         let lease = self.budgets.reads.acquire(1, object_bytes).await?;
         self.note_state_access();
         let stored = {
             let state = self.state.borrow();
             let head = state.heads.get(run).ok_or(CheckpointError::LeaseLost {
-                generation: generation.clone(),
+                generation: head_identity.generation().clone(),
             })?;
-            if head.generation.as_ref().map(|head| head.generation_ref()) != Some(&generation) {
+            if head.generation.as_ref() != Some(&head_identity) {
                 return Err(CheckpointError::LeaseLost {
-                    generation: generation.clone(),
+                    generation: head_identity.generation().clone(),
                 });
             }
             let object = head
                 .objects
-                .get(&(StoredObjectKind::Generation, *generation.digest()))
+                .get(&(
+                    StoredObjectKind::Generation,
+                    *head_identity.generation().digest(),
+                ))
                 .ok_or(CheckpointError::LeaseLost {
-                    generation: generation.clone(),
+                    generation: head_identity.generation().clone(),
                 })?;
             if object.bytes.len() != object_bytes {
                 return Err(CheckpointError::ObjectVerification);
             }
             object.bytes.clone()
         };
-        let candidate: CheckpointGenerationCandidate =
-            serde_json::from_slice(&stored).map_err(|_| CheckpointError::ObjectVerification)?;
-        if candidate.generation() != generation {
-            return Err(CheckpointError::ObjectVerification);
-        }
-        let prevalidated = candidate.prevalidate_for_publication(
-            run,
-            &expected.participant_plan,
-            &expected.execution_plan_digest,
-            &expected.result_plan_digest,
-        )?;
-        let committed = prevalidated.into_committed_after_publication_fence();
-        Ok(Some(MemoryGenerationReader {
-            backend: self.clone(),
-            generation: committed,
-            _generation_lease: lease,
-        }))
+        let decoded =
+            decode_versioned_checkpoint_generation(&stored, self.budgets.storage.limits.max_bytes)?;
+        let opened = match (head_identity, decoded) {
+            (
+                MemoryGenerationHead::CurrentV4(head),
+                DecodedCheckpointGeneration::CurrentV4(candidate),
+            ) => {
+                if candidate.generation() != head.generation() {
+                    return Err(CheckpointError::ObjectVerification);
+                }
+                let prevalidated = candidate.prevalidate_for_publication(
+                    run,
+                    &expected.participant_plan,
+                    &expected.execution_plan_digest,
+                    &expected.result_plan_digest,
+                )?;
+                let committed = prevalidated.into_committed_after_publication_fence();
+                LeasedCheckpointGeneration::current_v4(MemoryGenerationReader {
+                    backend: self.clone(),
+                    generation: committed,
+                    _generation_lease: lease,
+                })
+            }
+            (
+                MemoryGenerationHead::LegacyV3ReadOnly(head),
+                DecodedCheckpointGeneration::LegacyV3ReadOnly(generation),
+            ) => {
+                if generation != head {
+                    return Err(CheckpointError::ObjectVerification);
+                }
+                generation.verify_against(
+                    run,
+                    &expected.participant_plan,
+                    &expected.execution_plan_digest,
+                    &expected.result_plan_digest,
+                )?;
+                LeasedCheckpointGeneration::legacy_v3(MemoryLegacyV3GenerationReader {
+                    backend: self.clone(),
+                    generation,
+                    _generation_lease: lease,
+                })
+            }
+            _ => return Err(CheckpointError::ObjectVerification),
+        };
+        Ok(Some(opened))
     }
 
     /// Snapshot all backend budgets.
@@ -441,6 +524,266 @@ impl MemoryCheckpointBackend {
                 )
             })?;
         Ok(MemoryResultSummaryCapacityHold { _lease: lease })
+    }
+
+    /// Hold all storage capacity for cancellation tests.
+    #[doc(hidden)]
+    pub async fn hold_all_storage_capacity(
+        &self,
+    ) -> Result<MemoryStorageCapacityHold, CheckpointError> {
+        let limits = self.budgets.storage.limits;
+        let lease = self
+            .budgets
+            .storage
+            .resource
+            .acquire(limits.max_items, limits.max_bytes)
+            .await
+            .map_err(|error| {
+                map_budget_error(
+                    CheckpointBackendBudgetKind::Storage,
+                    limits,
+                    limits.max_items,
+                    limits.max_bytes,
+                    error,
+                )
+            })?;
+        Ok(MemoryStorageCapacityHold { _lease: lease })
+    }
+
+    /// Import one fully precharged, strictly verified legacy-v3 read-only head.
+    #[doc(hidden)]
+    pub async fn import_legacy_v3_read_only_fixture(
+        &self,
+        fixture: LegacyV3ReadOnlyFixture,
+    ) -> Result<(), CheckpointError> {
+        let generation = fixture.generation().clone();
+        let run = *generation.run();
+        self.note_state_access();
+        if self
+            .state
+            .borrow()
+            .heads
+            .get(&run)
+            .is_some_and(|head| head.generation.is_some() || !head.objects.is_empty())
+        {
+            return Err(CheckpointError::ObjectVerification);
+        }
+        let object_count = fixture.encoded_object_count();
+        let byte_count = fixture.encoded_byte_count()?;
+        let storage_lease = self
+            .budgets
+            .storage
+            .acquire(object_count, byte_count)
+            .await?;
+
+        self.note_state_access();
+        if self
+            .state
+            .borrow()
+            .heads
+            .get(&run)
+            .is_some_and(|head| head.generation.is_some() || !head.objects.is_empty())
+        {
+            return Err(CheckpointError::ObjectVerification);
+        }
+
+        let (
+            fixture_run,
+            head,
+            generation_object,
+            participant_objects,
+            result_index_object,
+            result_objects,
+        ) = fixture.into_parts();
+        if fixture_run != run || head != *generation.generation() {
+            return Err(CheckpointError::ObjectVerification);
+        }
+        let mut objects = BTreeMap::new();
+        insert_legacy_fixture_object(
+            &mut objects,
+            StoredObjectKind::Generation,
+            generation_object,
+        )?;
+        insert_legacy_fixture_inventory(
+            &mut objects,
+            StoredObjectKind::Participant,
+            participant_objects,
+        )?;
+        insert_legacy_fixture_object(
+            &mut objects,
+            StoredObjectKind::ResultIndex,
+            result_index_object,
+        )?;
+        insert_legacy_fixture_inventory(
+            &mut objects,
+            StoredObjectKind::ResultPayload,
+            result_objects,
+        )?;
+        let bundle = Rc::new(StorageCommitBundle {
+            _storage_lease: storage_lease,
+        });
+        let stored = objects
+            .into_iter()
+            .map(|(key, bytes)| {
+                (
+                    key,
+                    BudgetedStoredObject {
+                        bytes,
+                        _storage_bundle: Rc::clone(&bundle),
+                    },
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+
+        self.note_state_access();
+        let mut state = self.state.borrow_mut();
+        let run_head = state.heads.entry(run).or_default();
+        if run_head.generation.is_some() || !run_head.objects.is_empty() {
+            return Err(CheckpointError::ObjectVerification);
+        }
+        run_head.objects = stored;
+        run_head.generation = Some(MemoryGenerationHead::LegacyV3ReadOnly(generation));
+        Ok(())
+    }
+
+    /// Seed a verified current head at one chosen epoch for overflow-boundary tests.
+    #[doc(hidden)]
+    pub async fn seed_nonempty_committed_generation_at_epoch(
+        &self,
+        run: StreamRunIdentity,
+        epoch: CheckpointEpoch,
+        expected: &CheckpointGenerationExpectations,
+        participants: Vec<PreparedParticipantState>,
+    ) -> Result<CommittedCheckpointGeneration, CheckpointError> {
+        if run != expected.run || participants.is_empty() {
+            return Err(CheckpointError::ObjectVerification);
+        }
+        self.note_state_access();
+        if self
+            .state
+            .borrow()
+            .heads
+            .get(&run)
+            .is_some_and(|head| head.generation.is_some() || !head.objects.is_empty())
+        {
+            return Err(CheckpointError::ObjectVerification);
+        }
+        if participants
+            .iter()
+            .any(|participant| participant.run() != &run)
+        {
+            return Err(CheckpointError::ObjectVerification);
+        }
+        let mut participant_descriptors = participants
+            .iter()
+            .map(|participant| participant.descriptor().clone())
+            .collect::<Vec<_>>();
+        participant_descriptors
+            .sort_unstable_by(|left, right| left.participant_id.cmp(&right.participant_id));
+        if participant_descriptors
+            .iter()
+            .map(|descriptor| &descriptor.participant_id)
+            .ne(expected.participant_plan.ids().iter())
+        {
+            return Err(CheckpointError::ParticipantSetMismatch);
+        }
+        let cut = participant_descriptors[0].represented_cut.clone();
+        if participant_descriptors
+            .iter()
+            .any(|descriptor| descriptor.represented_cut != cut)
+        {
+            return Err(CheckpointError::ParticipantSetMismatch);
+        }
+        let (result_index_root, result_index_bytes) =
+            canonical_result_index_object(std::iter::empty::<&ResultSegmentDescriptor>())?;
+        let candidate = CheckpointGenerationCandidate::new(
+            run,
+            epoch,
+            None,
+            cut,
+            &expected.participant_plan,
+            expected.execution_plan_digest,
+            expected.result_plan_digest,
+            participant_descriptors,
+            result_index_root,
+            false,
+            None,
+        )?
+        .prevalidate_for_publication(
+            &run,
+            &expected.participant_plan,
+            &expected.execution_plan_digest,
+            &expected.result_plan_digest,
+        )?;
+        let generation_bytes = candidate.encode_for_storage()?;
+        let mut object_count = 2usize;
+        let mut storage_bytes = generation_bytes
+            .len()
+            .checked_add(result_index_bytes.len())
+            .ok_or(CheckpointError::ObjectVerification)?;
+        let mut unique_participants = BTreeSet::new();
+        for participant in &participants {
+            if unique_participants.insert(participant.descriptor().content_digest) {
+                object_count = object_count
+                    .checked_add(1)
+                    .ok_or(CheckpointError::ObjectVerification)?;
+                storage_bytes = storage_bytes
+                    .checked_add(participant.payload_bytes().len())
+                    .ok_or(CheckpointError::ObjectVerification)?;
+            }
+        }
+        let lease = self
+            .budgets
+            .storage
+            .acquire(object_count, storage_bytes)
+            .await?;
+        let committed = candidate.into_committed_after_publication_fence();
+        let mut objects = BTreeMap::new();
+        insert_stored_object(
+            &mut objects,
+            (
+                StoredObjectKind::Generation,
+                *committed.generation_ref().digest(),
+            ),
+            generation_bytes,
+        )?;
+        insert_stored_object(
+            &mut objects,
+            (StoredObjectKind::ResultIndex, result_index_root),
+            Bytes::from(result_index_bytes.into_boxed_slice()),
+        )?;
+        for participant in participants {
+            let (_, descriptor, payload) = participant.into_parts();
+            insert_stored_object(
+                &mut objects,
+                (StoredObjectKind::Participant, descriptor.content_digest),
+                Bytes::copy_from_slice(payload.as_bytes()),
+            )?;
+        }
+
+        self.note_state_access();
+        let mut state = self.state.borrow_mut();
+        let head = state.heads.entry(run).or_default();
+        if head.generation.is_some() || !head.objects.is_empty() {
+            return Err(CheckpointError::ObjectVerification);
+        }
+        let bundle = Rc::new(StorageCommitBundle {
+            _storage_lease: lease,
+        });
+        head.objects = objects
+            .into_iter()
+            .map(|(key, bytes)| {
+                (
+                    key,
+                    BudgetedStoredObject {
+                        bytes,
+                        _storage_bundle: Rc::clone(&bundle),
+                    },
+                )
+            })
+            .collect();
+        head.generation = Some(MemoryGenerationHead::CurrentV4(committed.clone()));
+        Ok(committed)
     }
 
     /// Inventory immutable objects retained for one exact run.
@@ -516,16 +859,14 @@ impl StreamingCheckpointBackend for MemoryCheckpointBackend {
         &self,
         run: &StreamRunIdentity,
         expected: &CheckpointGenerationExpectations,
-    ) -> Result<Option<Box<dyn LeasedGenerationReader>>, CheckpointError> {
-        Ok(MemoryCheckpointBackend::open_latest(self, run, expected)
-            .await?
-            .map(|reader| Box::new(reader) as Box<dyn LeasedGenerationReader>))
+    ) -> Result<Option<LeasedCheckpointGeneration>, CheckpointError> {
+        MemoryCheckpointBackend::open_latest(self, run, expected).await
     }
 
     async fn begin_generation(
         &self,
         run: StreamRunIdentity,
-        expected: Option<CheckpointGeneration>,
+        expected: Option<CurrentV4CheckpointGeneration>,
         expectations: CheckpointGenerationExpectations,
     ) -> Result<Box<dyn StreamingGenerationTransaction>, CheckpointError> {
         Ok(Box::new(
@@ -551,7 +892,7 @@ struct StagedResultEpoch {
 pub struct MemoryGenerationTransaction {
     backend: MemoryCheckpointBackend,
     run: StreamRunIdentity,
-    expected: Option<CheckpointGeneration>,
+    expected: Option<CurrentV4CheckpointGeneration>,
     expectations: CheckpointGenerationExpectations,
     _transaction_lease: BudgetLease,
     participants: Vec<StagedParticipant>,
@@ -874,7 +1215,10 @@ impl MemoryGenerationTransaction {
         publish_prevalidated(
             &mut backend.state.borrow_mut(),
             run,
-            expected,
+            expected
+                .as_ref()
+                .map(CurrentV4CheckpointGeneration::generation)
+                .cloned(),
             prevalidated,
             new_objects,
         )
@@ -962,6 +1306,26 @@ fn insert_stored_object(
     Ok(())
 }
 
+fn insert_legacy_fixture_object(
+    objects: &mut BTreeMap<StoredObjectKey, Bytes>,
+    kind: StoredObjectKind,
+    object: LegacyV3FixtureObject,
+) -> Result<(), CheckpointError> {
+    let (digest, bytes) = object.into_storage_parts();
+    insert_stored_object(objects, (kind, digest), bytes)
+}
+
+fn insert_legacy_fixture_inventory(
+    objects: &mut BTreeMap<StoredObjectKey, Bytes>,
+    kind: StoredObjectKind,
+    inventory: BudgetOwnedLegacyV3FixtureInventory,
+) -> Result<(), CheckpointError> {
+    for object in inventory.into_objects() {
+        insert_legacy_fixture_object(objects, kind, object)?;
+    }
+    Ok(())
+}
+
 fn compare_expected(
     head: Option<CheckpointGeneration>,
     expected: Option<CheckpointGeneration>,
@@ -986,7 +1350,8 @@ fn publish_prevalidated(
         .heads
         .get(&run)
         .and_then(|head| head.generation.as_ref())
-        .map(CommittedCheckpointGeneration::generation);
+        .map(MemoryGenerationHead::generation)
+        .cloned();
     compare_expected(actual, expected)?;
     let committed = prevalidated.into_committed_after_publication_fence();
     let returned = committed.clone();
@@ -994,82 +1359,48 @@ fn publish_prevalidated(
     for (key, object) in new_objects {
         run_head.objects.insert(key, object);
     }
-    run_head.generation = Some(committed);
+    run_head.generation = Some(MemoryGenerationHead::CurrentV4(committed));
     Ok(returned)
 }
 
-/// Concrete leased reader for one in-memory committed generation.
-pub struct MemoryGenerationReader {
-    backend: MemoryCheckpointBackend,
-    generation: CommittedCheckpointGeneration,
-    _generation_lease: BudgetLease,
+struct MemoryResultReadAuthority<'a> {
+    backend: &'a MemoryCheckpointBackend,
+    run: &'a StreamRunIdentity,
+    result_index_root: &'a ContentDigest,
 }
 
-impl MemoryGenerationReader {
-    /// Borrow the authoritative generation.
-    #[must_use]
-    pub const fn generation(&self) -> &CommittedCheckpointGeneration {
-        &self.generation
-    }
-
-    /// Scan one reachable descriptor page.
-    pub async fn scan_result_index(
-        &self,
-        after: Option<ResultIndexCursor>,
-        budget: ResultIndexReadBudget,
-    ) -> Result<ResultIndexPage, CheckpointError> {
-        self.scan_result_index_inner(after, budget).await
-    }
-
-    /// Read one reachable result payload.
-    pub async fn read_segment(
-        &self,
-        descriptor: &ResultSegmentDescriptor,
-    ) -> Result<ResultSegmentReader, CheckpointError> {
-        self.read_segment_inner(descriptor).await
-    }
-
-    /// Read one reachable participant payload.
-    pub async fn read_participant(
-        &self,
-        descriptor: &ParticipantStateDescriptor,
-    ) -> Result<CommittedParticipantState, CheckpointError> {
-        self.read_participant_inner(descriptor).await
-    }
-
+impl MemoryResultReadAuthority<'_> {
     fn reachable_descriptors(&self) -> Result<Vec<ResultSegmentDescriptor>, CheckpointError> {
         self.backend.note_state_access();
         let descriptors = {
             let state = self.backend.state.borrow();
             let object = state
                 .heads
-                .get(self.generation.run())
+                .get(self.run)
                 .and_then(|head| {
-                    head.objects.get(&(
-                        StoredObjectKind::ResultIndex,
-                        *self.generation.result_index_root(),
-                    ))
+                    head.objects
+                        .get(&(StoredObjectKind::ResultIndex, *self.result_index_root))
                 })
                 .ok_or(CheckpointError::ObjectVerification)?;
             serde_json::from_slice::<Vec<ResultSegmentDescriptor>>(&object.bytes)
                 .map_err(|_| CheckpointError::ObjectVerification)?
         };
-        if canonical_result_index_root(&descriptors)? != *self.generation.result_index_root()
+        if canonical_result_index_root(&descriptors)? != *self.result_index_root
             || descriptors
                 .iter()
-                .any(|descriptor| descriptor.run != *self.generation.run())
+                .any(|descriptor| descriptor.run != *self.run)
         {
             return Err(CheckpointError::ObjectVerification);
         }
         Ok(descriptors)
     }
 
-    async fn scan_result_index_inner(
+    async fn scan_result_index(
         &self,
         after: Option<ResultIndexCursor>,
         budget: ResultIndexReadBudget,
     ) -> Result<ResultIndexPage, CheckpointError> {
-        let root = *self.generation.result_index_root();
+        let root = *self.result_index_root;
         if after
             .as_ref()
             .is_some_and(|cursor| cursor.root != root || cursor.block != root)
@@ -1148,7 +1479,7 @@ impl MemoryGenerationReader {
         )
     }
 
-    async fn read_segment_inner(
+    async fn read_segment(
         &self,
         descriptor: &ResultSegmentDescriptor,
     ) -> Result<ResultSegmentReader, CheckpointError> {
@@ -1161,7 +1492,7 @@ impl MemoryGenerationReader {
             let state = self.backend.state.borrow();
             state
                 .heads
-                .get(self.generation.run())
+                .get(self.run)
                 .and_then(|head| {
                     head.objects
                         .get(&(StoredObjectKind::ResultPayload, descriptor.payload_digest))
@@ -1175,7 +1506,7 @@ impl MemoryGenerationReader {
             let state = self.backend.state.borrow();
             state
                 .heads
-                .get(self.generation.run())
+                .get(self.run)
                 .and_then(|head| {
                     head.objects
                         .get(&(StoredObjectKind::ResultPayload, descriptor.payload_digest))
@@ -1184,6 +1515,71 @@ impl MemoryGenerationReader {
                 .ok_or(CheckpointError::ObjectVerification)?
         };
         ResultSegmentReader::new(descriptor, BudgetedCheckpointBytes::new(bytes, lease)?)
+    }
+}
+
+/// Concrete leased reader for one in-memory committed generation.
+pub struct MemoryGenerationReader {
+    backend: MemoryCheckpointBackend,
+    generation: CommittedCheckpointGeneration,
+    _generation_lease: BudgetLease,
+}
+
+impl MemoryGenerationReader {
+    /// Borrow the authoritative generation.
+    #[must_use]
+    pub const fn generation(&self) -> &CommittedCheckpointGeneration {
+        &self.generation
+    }
+
+    /// Scan one reachable descriptor page.
+    pub async fn scan_result_index(
+        &self,
+        after: Option<ResultIndexCursor>,
+        budget: ResultIndexReadBudget,
+    ) -> Result<ResultIndexPage, CheckpointError> {
+        self.scan_result_index_inner(after, budget).await
+    }
+
+    /// Read one reachable result payload.
+    pub async fn read_segment(
+        &self,
+        descriptor: &ResultSegmentDescriptor,
+    ) -> Result<ResultSegmentReader, CheckpointError> {
+        self.read_segment_inner(descriptor).await
+    }
+
+    /// Read one reachable participant payload.
+    pub async fn read_participant(
+        &self,
+        descriptor: &ParticipantStateDescriptor,
+    ) -> Result<CommittedParticipantState, CheckpointError> {
+        self.read_participant_inner(descriptor).await
+    }
+
+    async fn scan_result_index_inner(
+        &self,
+        after: Option<ResultIndexCursor>,
+        budget: ResultIndexReadBudget,
+    ) -> Result<ResultIndexPage, CheckpointError> {
+        self.result_authority()
+            .scan_result_index(after, budget)
+            .await
+    }
+
+    async fn read_segment_inner(
+        &self,
+        descriptor: &ResultSegmentDescriptor,
+    ) -> Result<ResultSegmentReader, CheckpointError> {
+        self.result_authority().read_segment(descriptor).await
+    }
+
+    fn result_authority(&self) -> MemoryResultReadAuthority<'_> {
+        MemoryResultReadAuthority {
+            backend: &self.backend,
+            run: self.generation.run(),
+            result_index_root: self.generation.result_index_root(),
+        }
     }
 
     async fn read_participant_inner(
@@ -1224,13 +1620,22 @@ impl MemoryGenerationReader {
                 .map(|object| object.bytes.clone())
                 .ok_or(CheckpointError::ObjectVerification)?
         };
-        CommittedParticipantState::new(
-            *self.generation.run(),
+        let context = CurrentV4ParticipantStateContext::for_reachable_descriptor(
+            &self.generation,
+            descriptor,
+        )?;
+        if context.generation() != self.generation.generation_ref() {
+            return Err(CheckpointError::ObjectVerification);
+        }
+        CommittedParticipantState::from_current_v4_reader(
+            &context,
             descriptor.clone(),
             BudgetedCheckpointBytes::new(bytes, lease)?,
         )
     }
 }
+
+impl sealed::LeasedGenerationReader for MemoryGenerationReader {}
 
 #[async_trait(?Send)]
 impl LeasedGenerationReader for MemoryGenerationReader {
@@ -1255,6 +1660,97 @@ impl LeasedGenerationReader for MemoryGenerationReader {
         descriptor: &ParticipantStateDescriptor,
     ) -> Result<CommittedParticipantState, CheckpointError> {
         self.read_participant_inner(descriptor).await
+    }
+}
+
+struct MemoryLegacyV3GenerationReader {
+    backend: MemoryCheckpointBackend,
+    generation: LegacyV3CheckpointGeneration,
+    _generation_lease: BudgetLease,
+}
+
+impl MemoryLegacyV3GenerationReader {
+    fn result_authority(&self) -> MemoryResultReadAuthority<'_> {
+        MemoryResultReadAuthority {
+            backend: &self.backend,
+            run: self.generation.run(),
+            result_index_root: self.generation.result_index_root(),
+        }
+    }
+
+    async fn read_legacy_participant_inner(
+        &self,
+        descriptor: &ParticipantStateDescriptor,
+    ) -> Result<LegacyParticipantState, CheckpointError> {
+        if !self
+            .generation
+            .participant_descriptors()
+            .contains(descriptor)
+        {
+            return Err(CheckpointError::ObjectVerification);
+        }
+        self.backend.note_state_access();
+        let byte_length = {
+            let state = self.backend.state.borrow();
+            state
+                .heads
+                .get(self.generation.run())
+                .and_then(|head| {
+                    head.objects
+                        .get(&(StoredObjectKind::Participant, descriptor.content_digest))
+                })
+                .map(|object| object.bytes.len())
+                .ok_or(CheckpointError::ObjectVerification)?
+        };
+        let lease = self.backend.budgets.reads.acquire(1, byte_length).await?;
+        self.backend.note_state_access();
+        let bytes = {
+            let state = self.backend.state.borrow();
+            state
+                .heads
+                .get(self.generation.run())
+                .and_then(|head| {
+                    head.objects
+                        .get(&(StoredObjectKind::Participant, descriptor.content_digest))
+                })
+                .map(|object| object.bytes.clone())
+                .ok_or(CheckpointError::ObjectVerification)?
+        };
+        LegacyParticipantState::from_legacy_v3_reader(
+            descriptor.clone(),
+            BudgetedCheckpointBytes::new(bytes, lease)?,
+        )
+    }
+}
+
+#[async_trait(?Send)]
+impl LegacyV3LeasedGenerationReader for MemoryLegacyV3GenerationReader {
+    fn generation(&self) -> &CheckpointGeneration {
+        self.generation.generation()
+    }
+
+    async fn scan_result_index(
+        &self,
+        after: Option<ResultIndexCursor>,
+        budget: ResultIndexReadBudget,
+    ) -> Result<ResultIndexPage, CheckpointError> {
+        self.result_authority()
+            .scan_result_index(after, budget)
+            .await
+    }
+
+    async fn read_segment(
+        &self,
+        descriptor: &ResultSegmentDescriptor,
+    ) -> Result<ResultSegmentReader, CheckpointError> {
+        self.result_authority().read_segment(descriptor).await
+    }
+
+    async fn read_legacy_participant(
+        &self,
+        descriptor: &ParticipantStateDescriptor,
+    ) -> Result<LegacyParticipantState, CheckpointError> {
+        self.read_legacy_participant_inner(descriptor).await
     }
 }
 
@@ -1372,6 +1868,26 @@ mod tests {
         transaction.commit(metadata(None, 1)).await.unwrap()
     }
 
+    async fn current_predecessor(
+        backend: &MemoryCheckpointBackend,
+        run: StreamRunIdentity,
+        expected: &CheckpointGeneration,
+    ) -> CurrentV4CheckpointGeneration {
+        let opened = backend
+            .open_latest(&run, &expectations(run))
+            .await
+            .unwrap()
+            .unwrap();
+        match opened.view() {
+            crate::streaming::checkpoint_backend::LeasedCheckpointGenerationView::CurrentV4(
+                reader,
+            ) => reader.current_v4_predecessor(expected).unwrap(),
+            crate::streaming::checkpoint_backend::LeasedCheckpointGenerationView::LegacyV3ReadOnly(
+                _,
+            ) => panic!("expected current-v4 head"),
+        }
+    }
+
     #[test]
     fn same_typed_digest_rejects_conflicting_object_bytes() {
         let key = (
@@ -1393,8 +1909,9 @@ mod tests {
         let backend = MemoryCheckpointBackend::new(limits()).unwrap();
         let run = StreamRunIdentity::new(LogicalReplayRunId::from_bytes([1; 32]));
         let first = seed_baseline(&backend, run).await;
+        let predecessor = current_predecessor(&backend, run, first.generation_ref()).await;
         let mut transaction = backend
-            .begin_generation(run, Some(first.generation()), expectations(run))
+            .begin_generation(run, Some(predecessor), expectations(run))
             .await
             .unwrap();
         transaction
@@ -1444,6 +1961,7 @@ mod tests {
         let backend = MemoryCheckpointBackend::new(limits()).unwrap();
         let run = StreamRunIdentity::new(LogicalReplayRunId::from_bytes([4; 32]));
         let first = seed_baseline(&backend, run).await;
+        let predecessor = current_predecessor(&backend, run, first.generation_ref()).await;
         let read_limits = backend.budgets.reads.limits;
         let hold = backend
             .budgets
@@ -1460,7 +1978,7 @@ mod tests {
         ));
 
         let mut transaction = backend
-            .begin_generation(run, Some(first.generation()), expectations(run))
+            .begin_generation(run, Some(predecessor), expectations(run))
             .await
             .unwrap();
         transaction
@@ -1487,8 +2005,7 @@ mod tests {
                 .await
                 .unwrap()
                 .unwrap()
-                .generation()
-                .generation_ref(),
+                .generation(),
             second.generation_ref(),
         );
     }
@@ -1511,8 +2028,9 @@ mod tests {
             .bytes = Bytes::from_static(b"conflicting-state");
         let inventory = backend.immutable_object_inventory(&run);
         let usage = backend.live_budget_usage();
+        let predecessor = current_predecessor(&backend, run, first.generation_ref()).await;
         let mut transaction = backend
-            .begin_generation(run, Some(first.generation()), expectations(run))
+            .begin_generation(run, Some(predecessor), expectations(run))
             .await
             .unwrap();
         transaction
@@ -1539,63 +2057,29 @@ mod tests {
     async fn maximum_valid_authoritative_epoch_refuses_without_touching_state_or_leases() {
         let backend = MemoryCheckpointBackend::new(limits()).unwrap();
         let run = StreamRunIdentity::new(LogicalReplayRunId::from_bytes([2; 32]));
-        let baseline = seed_baseline(&backend, run).await;
         let expected = expectations(run);
-        let candidate = CheckpointGenerationCandidate::new(
-            run,
-            CheckpointEpoch::new(u64::MAX),
-            None,
-            baseline.cut().clone(),
-            &expected.participant_plan,
-            expected.execution_plan_digest,
-            expected.result_plan_digest,
-            baseline.participant_descriptors().to_vec(),
-            *baseline.result_index_root(),
-            false,
-            None,
-        )
-        .unwrap()
-        .prevalidate_for_publication(
-            &run,
-            &expected.participant_plan,
-            &expected.execution_plan_digest,
-            &expected.result_plan_digest,
-        )
-        .unwrap();
-        let generation_bytes = candidate.encode_for_storage().unwrap();
-        let generation = candidate.generation().clone();
-        let lease = backend
-            .budgets
-            .storage
-            .acquire(1, generation_bytes.len())
+        let generation = backend
+            .seed_nonempty_committed_generation_at_epoch(
+                run,
+                CheckpointEpoch::new(u64::MAX),
+                &expected,
+                vec![participant(run, u64::MAX).await],
+            )
             .await
-            .unwrap();
-        let bundle = Rc::new(StorageCommitBundle {
-            _storage_lease: lease,
-        });
-        let committed = candidate.into_committed_after_publication_fence();
-        {
-            let mut state = backend.state.borrow_mut();
-            let head = state.heads.get_mut(&run).unwrap();
-            head.objects.insert(
-                (StoredObjectKind::Generation, *generation.digest()),
-                BudgetedStoredObject {
-                    bytes: generation_bytes,
-                    _storage_bundle: bundle,
-                },
-            );
-            head.generation = Some(committed);
-        }
+            .unwrap()
+            .generation();
         let head_before = backend.state.borrow().heads[&run]
             .generation
             .as_ref()
             .unwrap()
-            .generation();
+            .generation()
+            .clone();
         let inventory_before = backend.immutable_object_inventory(&run);
         let usage_before = backend.live_budget_usage();
 
+        let predecessor = current_predecessor(&backend, run, &generation).await;
         let mut transaction = backend
-            .begin_generation(run, Some(generation.clone()), expected)
+            .begin_generation(run, Some(predecessor), expected)
             .await
             .unwrap();
         transaction
@@ -1626,7 +2110,7 @@ mod tests {
                 .as_ref()
                 .unwrap()
                 .generation(),
-            head_before
+            &head_before
         );
         assert_eq!(backend.immutable_object_inventory(&run), inventory_before);
         assert_eq!(backend.live_budget_usage(), usage_before);

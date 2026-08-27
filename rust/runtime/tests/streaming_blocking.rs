@@ -22,11 +22,7 @@ use aiperf_runtime::{
             BlockingCheckpointState, BlockingWorkBudget, BlockingWorkClass, BlockingWorkError,
             StreamingBlockingExecutor,
         },
-        budget::{BudgetLimits, StreamingResourceBudget},
-        checkpoint::{
-            BudgetedCheckpointBytes, CheckpointError, CommittedParticipantState,
-            PreparedParticipantState, StreamingCheckpointParticipant,
-        },
+        checkpoint::{CheckpointError, CommittedParticipantState, StreamingCheckpointParticipant},
         unit::StateBudgetFailureCode,
     },
 };
@@ -61,33 +57,16 @@ async fn committed_blocking_state(
     state: BlockingCheckpointState,
 ) -> CommittedParticipantState {
     let bytes = Bytes::from(state.encode().to_vec());
-    let budget = StreamingResourceBudget::new(BudgetLimits {
-        max_items: 1,
-        max_bytes: bytes.len(),
-    })
-    .expect("state budget");
-    let lease = budget.acquire(1, bytes.len()).await.expect("state lease");
-    let payload = BudgetedCheckpointBytes::new(bytes.clone(), lease).expect("state payload");
-    let prepared = PreparedParticipantState::new(
+    support::committed_current_v4_participant_state(
         support::run_id(1),
         owner.participant_id(),
         BLOCKING_CHECKPOINT_SCHEMA_ID,
         BLOCKING_CHECKPOINT_SCHEMA_VERSION,
         support::cut_at(state.completed_horizon().get().get()),
         1,
-        payload,
+        bytes,
     )
-    .expect("prepared state");
-    let descriptor = prepared.descriptor().clone();
-    drop(prepared);
-
-    let lease = budget
-        .acquire(1, bytes.len())
-        .await
-        .expect("committed state lease");
-    let payload = BudgetedCheckpointBytes::new(bytes, lease).expect("committed state payload");
-    CommittedParticipantState::new(support::run_id(1), descriptor, payload)
-        .expect("verified committed state")
+    .await
 }
 
 #[tokio::test(flavor = "current_thread")]

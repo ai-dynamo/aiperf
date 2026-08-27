@@ -418,24 +418,48 @@ pub struct CommittedParticipantState {
 }
 
 impl CommittedParticipantState {
-    /// Verify exact length, budget ownership, and BLAKE3 before restoration.
-    pub fn new(
-        run: StreamRunIdentity,
+    /// Mint current restore authority from one verified reachable reader.
+    pub(crate) fn from_current_v4_reader(
+        context: &CurrentV4ParticipantStateContext,
         descriptor: ParticipantStateDescriptor,
         payload: BudgetedCheckpointBytes,
     ) -> Result<Self, CheckpointError> {
         let state = Self {
-            run,
+            run: context.run,
             descriptor,
             payload,
         };
-        state.verify()
+        let state = state.verify()?;
+        if state.descriptor.digest()? != context.descriptor_digest {
+            return Err(CheckpointError::ObjectVerification);
+        }
+        Ok(state)
     }
 
     /// Borrow the logical run retaining this verified participant state.
     #[must_use]
     pub const fn run(&self) -> &StreamRunIdentity {
         &self.run
+    }
+
+    /// Assemble verified restore authority directly from checked parts.
+    ///
+    /// Reachability from a committed generation is what `from_current_v4_reader`
+    /// adds; in-crate tests that exercise a restore path already own the exact
+    /// descriptor and payload, so they bind them here under the same
+    /// length-and-digest verification.
+    #[cfg(test)]
+    pub(crate) fn from_verified_parts(
+        run: StreamRunIdentity,
+        descriptor: ParticipantStateDescriptor,
+        payload: BudgetedCheckpointBytes,
+    ) -> Result<Self, CheckpointError> {
+        Self {
+            run,
+            descriptor,
+            payload,
+        }
+        .verify()
     }
 
     /// Re-verify a state assembled by a storage implementation before using it.
@@ -461,6 +485,97 @@ impl CommittedParticipantState {
     #[must_use]
     pub fn payload_bytes(&self) -> &[u8] {
         self.payload.as_bytes()
+    }
+}
+
+/// Borrow-only participant state decoded from a legacy-v3 generation.
+///
+/// Legacy state cannot initialize a current checkpoint participant:
+///
+/// ```compile_fail
+/// # use aiperf_runtime::streaming::checkpoint::{
+/// #     LegacyParticipantState, StreamingCheckpointParticipant,
+/// # };
+/// # async fn cannot_initialize(
+/// #     participant: &mut dyn StreamingCheckpointParticipant,
+/// #     legacy: LegacyParticipantState,
+/// # ) {
+/// participant.initialize(Some(legacy)).await.unwrap();
+/// # }
+/// ```
+///
+/// It also has no public promotion into current restore authority:
+///
+/// ```compile_fail
+/// # use aiperf_runtime::streaming::checkpoint::{
+/// #     CommittedParticipantState, LegacyParticipantState,
+/// # };
+/// # fn cannot_promote(legacy: LegacyParticipantState) {
+/// let _: CommittedParticipantState = legacy.into();
+/// # }
+/// ```
+#[derive(Debug)]
+pub struct LegacyParticipantState {
+    descriptor: ParticipantStateDescriptor,
+    payload: BudgetedCheckpointBytes,
+}
+
+impl LegacyParticipantState {
+    pub(crate) fn from_legacy_v3_reader(
+        descriptor: ParticipantStateDescriptor,
+        payload: BudgetedCheckpointBytes,
+    ) -> Result<Self, CheckpointError> {
+        validate_payload_charge(&payload)?;
+        let byte_length =
+            u64::try_from(payload.bytes.len()).map_err(|_| CheckpointError::ObjectVerification)?;
+        if descriptor.byte_length != byte_length
+            || descriptor.content_digest != digest_bytes(&payload.bytes)
+        {
+            return Err(CheckpointError::ObjectVerification);
+        }
+        Ok(Self {
+            descriptor,
+            payload,
+        })
+    }
+
+    /// Borrow the strictly verified legacy participant descriptor.
+    #[must_use]
+    pub const fn descriptor(&self) -> &ParticipantStateDescriptor {
+        &self.descriptor
+    }
+
+    /// Borrow the immutable legacy participant payload.
+    #[must_use]
+    pub fn payload_bytes(&self) -> &[u8] {
+        self.payload.as_bytes()
+    }
+}
+
+/// Private context proving a participant descriptor is reachable from current-v4 authority.
+pub(crate) struct CurrentV4ParticipantStateContext {
+    run: StreamRunIdentity,
+    generation: CheckpointGeneration,
+    descriptor_digest: ContentDigest,
+}
+
+impl CurrentV4ParticipantStateContext {
+    pub(crate) fn for_reachable_descriptor(
+        generation: &CommittedCheckpointGeneration,
+        descriptor: &ParticipantStateDescriptor,
+    ) -> Result<Self, CheckpointError> {
+        if generation.descriptor(&descriptor.participant_id) != Some(descriptor) {
+            return Err(CheckpointError::ObjectVerification);
+        }
+        Ok(Self {
+            run: *generation.run(),
+            generation: generation.generation(),
+            descriptor_digest: descriptor.digest()?,
+        })
+    }
+
+    pub(crate) const fn generation(&self) -> &CheckpointGeneration {
+        &self.generation
     }
 }
 
@@ -491,6 +606,7 @@ fn digest_bytes(bytes: &[u8]) -> ContentDigest {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct CheckpointGenerationCandidate {
+    storage_version: CurrentCheckpointStorageVersion,
     run: StreamRunIdentity,
     generation: CheckpointGeneration,
     previous: Option<ContentDigest>,
@@ -550,6 +666,7 @@ impl CheckpointGenerationCandidate {
             terminal_reason,
         })?;
         Ok(Self {
+            storage_version: CurrentCheckpointStorageVersion::V4,
             run,
             generation: CheckpointGeneration::new(epoch, digest),
             previous,
@@ -676,6 +793,9 @@ impl CheckpointGenerationCandidate {
     }
 
     fn verify_self(&self) -> Result<(), CheckpointError> {
+        if self.storage_version != CurrentCheckpointStorageVersion::V4 {
+            return Err(CheckpointError::ObjectVerification);
+        }
         validate_committed_generation_shape(
             &self.cut,
             &self.participant_descriptors,
@@ -711,6 +831,12 @@ impl CheckpointGenerationCandidate {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum CurrentCheckpointStorageVersion {
+    V4,
+}
+
 /// Fully verified generation content awaiting only a backend publication fence.
 pub(crate) struct PrevalidatedCheckpointGenerationCandidate {
     candidate: CheckpointGenerationCandidate,
@@ -738,6 +864,7 @@ impl PrevalidatedCheckpointGenerationCandidate {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SerializedCheckpointGenerationCandidate {
+    storage_version: CurrentCheckpointStorageVersion,
     run: StreamRunIdentity,
     generation: CheckpointGeneration,
     previous: Option<ContentDigest>,
@@ -758,6 +885,7 @@ impl<'de> Deserialize<'de> for CheckpointGenerationCandidate {
     {
         let serialized = SerializedCheckpointGenerationCandidate::deserialize(deserializer)?;
         let candidate = Self {
+            storage_version: serialized.storage_version,
             run: serialized.run,
             generation: serialized.generation,
             previous: serialized.previous,
@@ -772,6 +900,233 @@ impl<'de> Deserialize<'de> for CheckpointGenerationCandidate {
         };
         candidate.verify_self().map_err(serde::de::Error::custom)?;
         Ok(candidate)
+    }
+}
+
+#[derive(Deserialize)]
+struct CheckpointGenerationStorageDiscriminator {
+    storage_version: Option<serde_json::Value>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LegacyV3CheckpointCutWire {
+    discovered: DiscoveryHorizon,
+    acquired: AcquisitionHorizon,
+    decoded: DecodeHorizon,
+    ordered: OrderedActionHorizon,
+    admitted: AdmissionHorizon,
+    terminal: TerminalActionHorizon,
+    event_watermark: EventTimeWatermark,
+    causal_frontier: SessionCausalFrontier,
+}
+
+impl LegacyV3CheckpointCutWire {
+    fn into_current(self) -> CheckpointCut {
+        CheckpointCut {
+            discovered: self.discovered,
+            acquired: self.acquired,
+            decoded: self.decoded,
+            ordered: self.ordered,
+            admitted: self.admitted,
+            terminal: self.terminal,
+            event_watermark: self.event_watermark,
+            causal_frontier: self.causal_frontier,
+            // Legacy-v3 generations carry no acknowledgement authority, so the
+            // canonical empty roots are the only representable handled cut.
+            handled_issues: HandledIssueCut::empty(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LegacyV3ParticipantStateDescriptorWire {
+    participant_id: CheckpointParticipantId,
+    schema_id: String,
+    schema_version: u32,
+    represented_cut: LegacyV3CheckpointCutWire,
+    content_digest: ContentDigest,
+    item_count: u64,
+    byte_length: u64,
+}
+
+impl LegacyV3ParticipantStateDescriptorWire {
+    fn into_current(self) -> ParticipantStateDescriptor {
+        ParticipantStateDescriptor {
+            participant_id: self.participant_id,
+            schema_id: self.schema_id,
+            schema_version: self.schema_version,
+            represented_cut: self.represented_cut.into_current(),
+            content_digest: self.content_digest,
+            item_count: self.item_count,
+            byte_length: self.byte_length,
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LegacyV3CheckpointGenerationWire {
+    run: StreamRunIdentity,
+    generation: CheckpointGeneration,
+    previous: Option<ContentDigest>,
+    cut: LegacyV3CheckpointCutWire,
+    participant_plan_digest: ContentDigest,
+    execution_plan_digest: ContentDigest,
+    result_plan_digest: ContentDigest,
+    participant_descriptors: Vec<LegacyV3ParticipantStateDescriptorWire>,
+    result_index_root: ContentDigest,
+    is_final: bool,
+    terminal_reason: Option<CheckpointTerminalReason>,
+}
+
+/// Strictly verified semantic state of one legacy-v3 generation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct LegacyV3CheckpointGeneration {
+    run: StreamRunIdentity,
+    generation: CheckpointGeneration,
+    previous: Option<ContentDigest>,
+    cut: CheckpointCut,
+    participant_plan_digest: ContentDigest,
+    execution_plan_digest: ContentDigest,
+    result_plan_digest: ContentDigest,
+    participant_descriptors: Vec<ParticipantStateDescriptor>,
+    result_index_root: ContentDigest,
+    is_final: bool,
+    terminal_reason: Option<CheckpointTerminalReason>,
+}
+
+impl LegacyV3CheckpointGeneration {
+    fn decode(encoded: &[u8]) -> Result<Self, CheckpointError> {
+        let wire: LegacyV3CheckpointGenerationWire =
+            serde_json::from_slice(encoded).map_err(|_| CheckpointError::ObjectVerification)?;
+        if wire.is_final != wire.terminal_reason.is_some()
+            || wire
+                .participant_descriptors
+                .windows(2)
+                .any(|pair| pair[0].participant_id >= pair[1].participant_id)
+            || wire
+                .participant_descriptors
+                .iter()
+                .any(|descriptor| descriptor.represented_cut != wire.cut)
+        {
+            return Err(CheckpointError::ObjectVerification);
+        }
+        let participant_plan = CheckpointParticipantPlan::new(
+            wire.participant_descriptors
+                .iter()
+                .map(|descriptor| descriptor.participant_id.clone()),
+        )
+        .map_err(|_| CheckpointError::ParticipantSetMismatch)?;
+        if participant_plan.digest() != wire.participant_plan_digest {
+            return Err(CheckpointError::ParticipantSetMismatch);
+        }
+        let cut_bytes = serde_json::to_vec(&wire.cut).map_err(generation_encoding_error)?;
+        let descriptor_bytes =
+            serde_json::to_vec(&wire.participant_descriptors).map_err(generation_encoding_error)?;
+        let digest = committed_generation_digest_from_encoded(
+            b"aiperf.streaming.committed-checkpoint-generation.v3",
+            CheckpointGenerationDigestEncodedFields {
+                run: &wire.run,
+                epoch: wire.generation.epoch(),
+                previous: wire.previous.as_ref(),
+                cut: &cut_bytes,
+                participant_plan_digest: &wire.participant_plan_digest,
+                execution_plan_digest: &wire.execution_plan_digest,
+                result_plan_digest: &wire.result_plan_digest,
+                descriptors: &descriptor_bytes,
+                result_index_root: &wire.result_index_root,
+                is_final: wire.is_final,
+                terminal_reason: wire.terminal_reason,
+            },
+        );
+        if wire.generation.digest() != &digest {
+            return Err(CheckpointError::ObjectVerification);
+        }
+        Ok(Self {
+            run: wire.run,
+            generation: wire.generation,
+            previous: wire.previous,
+            cut: wire.cut.into_current(),
+            participant_plan_digest: wire.participant_plan_digest,
+            execution_plan_digest: wire.execution_plan_digest,
+            result_plan_digest: wire.result_plan_digest,
+            participant_descriptors: wire
+                .participant_descriptors
+                .into_iter()
+                .map(LegacyV3ParticipantStateDescriptorWire::into_current)
+                .collect(),
+            result_index_root: wire.result_index_root,
+            is_final: wire.is_final,
+            terminal_reason: wire.terminal_reason,
+        })
+    }
+
+    pub(crate) fn verify_against(
+        &self,
+        expected_run: &StreamRunIdentity,
+        participant_plan: &CheckpointParticipantPlan,
+        execution_plan_digest: &ContentDigest,
+        result_plan_digest: &ContentDigest,
+    ) -> Result<(), CheckpointError> {
+        if &self.run != expected_run
+            || self.participant_plan_digest != participant_plan.digest()
+            || self
+                .participant_descriptors
+                .iter()
+                .map(|descriptor| &descriptor.participant_id)
+                .ne(participant_plan.ids().iter())
+            || &self.execution_plan_digest != execution_plan_digest
+            || &self.result_plan_digest != result_plan_digest
+        {
+            return Err(CheckpointError::ObjectVerification);
+        }
+        Ok(())
+    }
+
+    pub(crate) const fn run(&self) -> &StreamRunIdentity {
+        &self.run
+    }
+
+    pub(crate) const fn generation(&self) -> &CheckpointGeneration {
+        &self.generation
+    }
+
+    pub(crate) fn participant_descriptors(&self) -> &[ParticipantStateDescriptor] {
+        &self.participant_descriptors
+    }
+
+    pub(crate) const fn result_index_root(&self) -> &ContentDigest {
+        &self.result_index_root
+    }
+}
+
+/// Strict decoded storage version before backend read authority is minted.
+#[derive(Debug)]
+pub(crate) enum DecodedCheckpointGeneration {
+    CurrentV4(CheckpointGenerationCandidate),
+    LegacyV3ReadOnly(LegacyV3CheckpointGeneration),
+}
+
+pub(crate) fn decode_versioned_checkpoint_generation(
+    encoded: &[u8],
+    max_bytes: usize,
+) -> Result<DecodedCheckpointGeneration, CheckpointError> {
+    if encoded.len() > max_bytes {
+        return Err(CheckpointError::ObjectVerification);
+    }
+    let discriminator: CheckpointGenerationStorageDiscriminator =
+        serde_json::from_slice(encoded).map_err(|_| CheckpointError::ObjectVerification)?;
+    match discriminator.storage_version {
+        Some(serde_json::Value::String(version)) if version == "v4" => {
+            serde_json::from_slice(encoded)
+                .map(DecodedCheckpointGeneration::CurrentV4)
+                .map_err(|_| CheckpointError::ObjectVerification)
+        }
+        Some(_) => Err(CheckpointError::ObjectVerification),
+        None => LegacyV3CheckpointGeneration::decode(encoded)
+            .map(DecodedCheckpointGeneration::LegacyV3ReadOnly),
     }
 }
 
@@ -936,6 +1291,42 @@ fn committed_generation_digest(
 ) -> Result<ContentDigest, CheckpointError> {
     let cut = serde_json::to_vec(fields.cut).map_err(generation_encoding_error)?;
     let descriptors = serde_json::to_vec(fields.descriptors).map_err(generation_encoding_error)?;
+    Ok(committed_generation_digest_from_encoded(
+        b"aiperf.streaming.committed-checkpoint-generation.v4",
+        CheckpointGenerationDigestEncodedFields {
+            run: fields.run,
+            epoch: fields.epoch,
+            previous: fields.previous,
+            cut: &cut,
+            participant_plan_digest: fields.participant_plan_digest,
+            execution_plan_digest: fields.execution_plan_digest,
+            result_plan_digest: fields.result_plan_digest,
+            descriptors: &descriptors,
+            result_index_root: fields.result_index_root,
+            is_final: fields.is_final,
+            terminal_reason: fields.terminal_reason,
+        },
+    ))
+}
+
+struct CheckpointGenerationDigestEncodedFields<'a> {
+    run: &'a StreamRunIdentity,
+    epoch: CheckpointEpoch,
+    previous: Option<&'a ContentDigest>,
+    cut: &'a [u8],
+    participant_plan_digest: &'a ContentDigest,
+    execution_plan_digest: &'a ContentDigest,
+    result_plan_digest: &'a ContentDigest,
+    descriptors: &'a [u8],
+    result_index_root: &'a ContentDigest,
+    is_final: bool,
+    terminal_reason: Option<CheckpointTerminalReason>,
+}
+
+fn committed_generation_digest_from_encoded(
+    domain: &[u8],
+    fields: CheckpointGenerationDigestEncodedFields<'_>,
+) -> ContentDigest {
     let terminal_state = match fields.terminal_reason {
         None => [0, 0],
         Some(CheckpointTerminalReason::Completed) => [1, 1],
@@ -943,10 +1334,7 @@ fn committed_generation_digest(
         Some(CheckpointTerminalReason::Cancelled) => [1, 3],
     };
     let mut hasher = blake3::Hasher::new();
-    update_generation_digest_field(
-        &mut hasher,
-        b"aiperf.streaming.committed-checkpoint-generation.v3",
-    );
+    update_generation_digest_field(&mut hasher, domain);
     update_generation_digest_field(&mut hasher, fields.run.logical_replay_run().as_bytes());
     update_generation_digest_field(&mut hasher, &fields.epoch.get().to_le_bytes());
     match fields.previous {
@@ -956,15 +1344,15 @@ fn committed_generation_digest(
             update_generation_digest_field(&mut hasher, previous.as_bytes());
         }
     }
-    update_generation_digest_field(&mut hasher, &cut);
+    update_generation_digest_field(&mut hasher, fields.cut);
     update_generation_digest_field(&mut hasher, fields.participant_plan_digest.as_bytes());
     update_generation_digest_field(&mut hasher, fields.execution_plan_digest.as_bytes());
     update_generation_digest_field(&mut hasher, fields.result_plan_digest.as_bytes());
-    update_generation_digest_field(&mut hasher, &descriptors);
+    update_generation_digest_field(&mut hasher, fields.descriptors);
     update_generation_digest_field(&mut hasher, fields.result_index_root.as_bytes());
     update_generation_digest_field(&mut hasher, &[u8::from(fields.is_final)]);
     update_generation_digest_field(&mut hasher, &terminal_state);
-    Ok(ContentDigest::from_bytes(*hasher.finalize().as_bytes()))
+    ContentDigest::from_bytes(*hasher.finalize().as_bytes())
 }
 
 fn generation_encoding_error(error: serde_json::Error) -> CheckpointError {
@@ -1378,6 +1766,8 @@ pub enum CheckpointError {
         /// Frozen predecessor at the maximum epoch.
         previous: CheckpointGeneration,
     },
+    /// The selected run is headed by a verified legacy-v3 read-only generation.
+    LegacyReadOnlyHead,
     /// A participant was asked to move its completed decode horizon backward.
     DecodeHorizonRegression {
         /// Stable owner refusing the regressing horizon.
@@ -1454,6 +1844,9 @@ impl fmt::Display for CheckpointError {
                 formatter,
                 "checkpoint generation epoch overflow after {previous:?}",
             ),
+            Self::LegacyReadOnlyHead => {
+                write!(formatter, "legacy-v3 checkpoint head is read-only")
+            }
             Self::DecodeHorizonRegression {
                 participant,
                 completed,
@@ -1493,7 +1886,11 @@ impl std::error::Error for CheckpointError {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::streaming::identity::LogicalReplayRunId;
+    use crate::streaming::{
+        budget::{BudgetLimits, StreamingResourceBudget},
+        identity::LogicalReplayRunId,
+    };
+    use bytes::Bytes;
 
     fn run_id(value: u8) -> StreamRunIdentity {
         StreamRunIdentity::new(LogicalReplayRunId::from_bytes([value; 32]))
@@ -1560,6 +1957,49 @@ mod tests {
         )
         .expect("valid unit-test candidate");
         (plan, descriptor, candidate)
+    }
+
+    fn committed_with_descriptor(
+        run: StreamRunIdentity,
+        descriptor: ParticipantStateDescriptor,
+    ) -> CommittedCheckpointGeneration {
+        let plan = CheckpointParticipantPlan::new([descriptor.participant_id.clone()])
+            .expect("valid participant plan");
+        let candidate = CheckpointGenerationCandidate::new(
+            run,
+            CheckpointEpoch::new(1),
+            None,
+            descriptor.represented_cut.clone(),
+            &plan,
+            ContentDigest::from_bytes([0x11; 32]),
+            ContentDigest::from_bytes([0x12; 32]),
+            vec![descriptor],
+            ContentDigest::from_bytes([0x55; 32]),
+            false,
+            None,
+        )
+        .expect("valid candidate");
+        let proof = CheckpointGenerationPublicationProof::for_generation(candidate.generation());
+        candidate
+            .promote(
+                &run,
+                &plan,
+                &ContentDigest::from_bytes([0x11; 32]),
+                &ContentDigest::from_bytes([0x12; 32]),
+                proof,
+            )
+            .expect("matching publication proof")
+    }
+
+    async fn committed_payload(bytes: &'static [u8]) -> BudgetedCheckpointBytes {
+        let bytes = Bytes::from_static(bytes);
+        let budget = StreamingResourceBudget::new(BudgetLimits {
+            max_items: 1,
+            max_bytes: bytes.len(),
+        })
+        .expect("valid payload budget");
+        let lease = budget.acquire(1, bytes.len()).await.expect("payload lease");
+        BudgetedCheckpointBytes::new(bytes, lease).expect("exact payload charge")
     }
 
     fn authoritative_receipt(
@@ -1674,8 +2114,24 @@ mod tests {
         }
     }
 
+    /// Pinned v4 generation-digest golden.
+    ///
+    /// The v4 digest changed for two reasons that landed together: the hash
+    /// domain moved from `aiperf.streaming.committed-checkpoint-generation.v3`
+    /// to `.v4`, and `CheckpointCut` gained `handled_issues`, which the digest
+    /// absorbs through the single opaque `serde_json::to_vec(cut)` field.
+    /// Neither is derivable on paper, so this golden was cut once both were in
+    /// the tree. It differs from the retired v3 pin
+    /// `519bf192518f43e9d4accd6bd8ed38e885a1dce06d8d35579bf5f99b794d10f1`,
+    /// which proves both the domain rename and the handled cut reach the digest.
+    const V4_RUN_BOUND_GENERATION_DIGEST: [u8; 32] = [
+        0xd3, 0xda, 0x51, 0xce, 0x16, 0x99, 0x25, 0x05, 0x80, 0x8e, 0x7a, 0x52, 0x7f, 0xcf, 0xe4,
+        0x90, 0x98, 0x74, 0xb5, 0x7b, 0x5b, 0x35, 0xe0, 0x7e, 0xa4, 0x3c, 0x61, 0xf1, 0x5a, 0x0c,
+        0x13, 0xb3,
+    ];
+
     #[test]
-    fn v3_run_bound_generation_digest_is_stable() {
+    fn v4_run_bound_generation_digest_is_stable() {
         let (_, _, candidate) = candidate(
             run_id(1),
             "session",
@@ -1687,12 +2143,120 @@ mod tests {
 
         assert_eq!(
             candidate.generation().digest(),
-            &ContentDigest::from_bytes([
-                0x74, 0x81, 0x44, 0x6c, 0x4a, 0x43, 0x37, 0x3d, 0x89, 0x42, 0x2d, 0x5a, 0x6a, 0x3d,
-                0x1b, 0xda, 0x4f, 0x84, 0x13, 0xf3, 0x52, 0xd5, 0x76, 0xd1, 0xdb, 0x96, 0xd2, 0x56,
-                0xfd, 0x8e, 0xaf, 0x52,
-            ])
+            &ContentDigest::from_bytes(V4_RUN_BOUND_GENERATION_DIGEST)
         );
+    }
+
+    /// Cross-plane binding proof for the handled cut (finding-02 item 6).
+    ///
+    /// The checkpoint plane must carry the reliability plane's handled-issue
+    /// authority verbatim. This fails closed if candidate construction ever
+    /// synthesizes, folds, or re-derives a handled cut of its own.
+    #[tokio::test(flavor = "current_thread")]
+    async fn candidate_handled_cut_equals_the_reporter_receipt_partition_view() {
+        use crate::streaming::{
+            failure::{DecodeFailureCode, OrdinaryStreamingFailure, StreamFormatError},
+            identity::{ImmutableObjectIdentity, StableRecordId},
+            reliability::{
+                BudgetOwnedStreamingIssueReporter, IssueSequenceUpdate, OrdinaryStreamingIssue,
+                PreparedStreamingIssuePolicy, StreamingInputDomainIdentity, StreamingIssueClass,
+                StreamingIssueComponentId, StreamingIssueDisposition, StreamingIssueReporter,
+                StreamingIssueScopeKind, StreamingIssueThresholdRule,
+                submission_queue_charge_bytes,
+            },
+        };
+        use std::num::NonZeroU64;
+
+        let run = run_id(1);
+        let input_domain = StreamingInputDomainIdentity::new(
+            ContentDigest::from_bytes([0x21; 32]),
+            ImmutableObjectIdentity::from_bytes([0x20; 32]),
+        );
+        let policy = PreparedStreamingIssuePolicy::new(vec![
+            StreamingIssueThresholdRule::new(
+                StreamingIssueComponentId::new("record_default").expect("valid rule identity"),
+                StreamingIssueScopeKind::Record,
+                StreamingIssueClass::Permanent,
+                None,
+                0,
+                StreamingIssueDisposition::Quarantine,
+                NonZeroU64::new(3),
+            )
+            .expect("valid wildcard record rule"),
+        ])
+        .expect("valid record policy");
+        let reporter_budget = StreamingResourceBudget::new(BudgetLimits {
+            max_items: 65,
+            max_bytes: submission_queue_charge_bytes() + 64 * 1024,
+        })
+        .expect("valid reporter budget");
+        let mut reporter = BudgetOwnedStreamingIssueReporter::new(run, policy, reporter_budget)
+            .expect("budget-owned reporter");
+
+        reporter
+            .report(IssueSequenceUpdate::Issue(
+                OrdinaryStreamingIssue::record(
+                    run,
+                    input_domain.clone(),
+                    StableRecordId::from_bytes([0x22; 32]),
+                    StreamingIssueClass::Permanent,
+                    ContentDigest::from_bytes([0x33; 32]),
+                    SourcePosition::new(7),
+                    0,
+                    ContentDigest::from_bytes([0x44; 32]),
+                    OrdinaryStreamingFailure::Format(StreamFormatError::decode(
+                        DecodeFailureCode::Syntax,
+                    )),
+                )
+                .expect("valid record issue"),
+            ))
+            .await
+            .expect("retain one detailed receipt");
+        reporter
+            .report(IssueSequenceUpdate::NoMoreBefore {
+                input_domain,
+                through: SourcePosition::new(7),
+            })
+            .await
+            .expect("advance the input frontier");
+
+        let barrier = CheckpointBarrier {
+            run,
+            epoch: CheckpointEpoch::new(7),
+            cut: cut_at(7),
+            plan_digest: ContentDigest::from_bytes([0x11; 32]),
+        };
+        let view = reporter
+            .receipt_partition_view(&barrier)
+            .await
+            .expect("prepared receipt partition view");
+
+        // A retained receipt and an advanced frontier both move the cut off the
+        // canonical empty roots, so the equality below is a live binding rather
+        // than a comparison of two default values.
+        assert_ne!(*view.handled_cut(), HandledIssueCut::empty());
+
+        let mut cut = cut_at(7);
+        cut.handled_issues = view.handled_cut().clone();
+        let descriptor = descriptor("session", cut.clone());
+        let plan = CheckpointParticipantPlan::new([descriptor.participant_id.clone()])
+            .expect("valid participant plan");
+        let candidate = CheckpointGenerationCandidate::new(
+            run,
+            CheckpointEpoch::new(7),
+            None,
+            cut,
+            &plan,
+            ContentDigest::from_bytes([0x11; 32]),
+            ContentDigest::from_bytes([0x12; 32]),
+            vec![descriptor],
+            ContentDigest::from_bytes([0x55; 32]),
+            false,
+            None,
+        )
+        .expect("valid candidate");
+
+        assert_eq!(&candidate.cut.handled_issues, view.handled_cut());
     }
 
     #[test]
@@ -1853,6 +2417,7 @@ mod tests {
         let receipt = CommittedParticipantReceipt::new(&committed, &descriptor)
             .expect("authority permits an exact receipt");
         assert_eq!(receipt.run(), &run_id(1));
+        assert_eq!(receipt.result_index_root(), committed.result_index_root());
         let mismatched = ParticipantStateDescriptor {
             schema_version: 2,
             ..descriptor.clone()
@@ -1930,5 +2495,115 @@ mod tests {
         ));
         drop(payload);
         assert_eq!(budget.snapshot().used_bytes, 0);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn private_current_reader_constructor_still_verifies_length_and_digest() {
+        let run = run_id(1);
+        let cut = cut_at(1);
+        let payload_digest = digest_bytes(b"state");
+        for descriptor in [
+            ParticipantStateDescriptor {
+                participant_id: CheckpointParticipantId::new("session"),
+                schema_id: "session.v1".into(),
+                schema_version: 1,
+                represented_cut: cut.clone(),
+                content_digest: payload_digest,
+                item_count: 1,
+                byte_length: 4,
+            },
+            ParticipantStateDescriptor {
+                participant_id: CheckpointParticipantId::new("session"),
+                schema_id: "session.v1".into(),
+                schema_version: 1,
+                represented_cut: cut.clone(),
+                content_digest: ContentDigest::from_bytes([0xff; 32]),
+                item_count: 1,
+                byte_length: 5,
+            },
+        ] {
+            let committed = committed_with_descriptor(run, descriptor.clone());
+            let context =
+                CurrentV4ParticipantStateContext::for_reachable_descriptor(&committed, &descriptor)
+                    .expect("descriptor is reachable from current-v4 generation");
+            assert_eq!(
+                CommittedParticipantState::from_current_v4_reader(
+                    &context,
+                    descriptor,
+                    committed_payload(b"state").await,
+                )
+                .unwrap_err(),
+                CheckpointError::ObjectVerification,
+            );
+        }
+    }
+
+    #[test]
+    fn unknown_or_malformed_explicit_v4_never_falls_back_to_v3() {
+        let (_, _, candidate) = candidate(
+            run_id(1),
+            "session",
+            1,
+            None,
+            ContentDigest::from_bytes([0x11; 32]),
+            ContentDigest::from_bytes([0x12; 32]),
+        );
+        let encoded = serde_json::to_vec(&candidate).expect("encode current-v4 candidate");
+        assert!(matches!(
+            decode_versioned_checkpoint_generation(&encoded, encoded.len()),
+            Ok(DecodedCheckpointGeneration::CurrentV4(_))
+        ));
+
+        let mut malformed = serde_json::to_value(&candidate).expect("encode current-v4 value");
+        malformed["generation"]["digest"] =
+            serde_json::to_value(ContentDigest::from_bytes([0xee; 32]))
+                .expect("encode replacement digest");
+        let malformed = serde_json::to_vec(&malformed).expect("encode malformed current-v4");
+        assert_eq!(
+            decode_versioned_checkpoint_generation(&malformed, malformed.len()).unwrap_err(),
+            CheckpointError::ObjectVerification
+        );
+
+        let mut unknown = serde_json::to_value(&candidate).expect("encode current-v4 value");
+        unknown["storage_version"] = serde_json::Value::String("v999".into());
+        let unknown = serde_json::to_vec(&unknown).expect("encode unknown version");
+        assert_eq!(
+            decode_versioned_checkpoint_generation(&unknown, unknown.len()).unwrap_err(),
+            CheckpointError::ObjectVerification
+        );
+    }
+
+    #[test]
+    fn malformed_or_oversized_current_bytes_never_infer_legacy_version() {
+        let (_, _, candidate) = candidate(
+            run_id(1),
+            "session",
+            1,
+            None,
+            ContentDigest::from_bytes([0x11; 32]),
+            ContentDigest::from_bytes([0x12; 32]),
+        );
+        let encoded = serde_json::to_vec(&candidate).expect("encode current-v4 candidate");
+        assert_eq!(
+            decode_versioned_checkpoint_generation(&encoded, encoded.len() - 1).unwrap_err(),
+            CheckpointError::ObjectVerification
+        );
+
+        let mut missing_discriminator =
+            serde_json::to_value(&candidate).expect("encode current-v4 value");
+        missing_discriminator
+            .as_object_mut()
+            .expect("generation is an object")
+            .remove("storage_version");
+        let missing_discriminator =
+            serde_json::to_vec(&missing_discriminator).expect("encode discriminator-free v4");
+        assert_eq!(
+            decode_versioned_checkpoint_generation(
+                &missing_discriminator,
+                missing_discriminator.len(),
+            )
+            .unwrap_err(),
+            CheckpointError::ObjectVerification
+        );
     }
 }

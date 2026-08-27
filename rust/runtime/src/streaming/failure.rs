@@ -529,6 +529,7 @@ impl StableStreamingFailure for CheckpointError {
             },
             Self::ResultIndexReadBudgetTooSmall { .. } => "result_index_read_budget_too_small",
             Self::GenerationEpochOverflow { .. } => "generation_epoch_overflow",
+            Self::LegacyReadOnlyHead => "legacy_read_only_head",
             Self::DecodeHorizonRegression { .. } => "decode_horizon_regression",
             Self::ParticipantUnavailable { .. } => "participant_unavailable",
             Self::ObjectVerification => "object_verification",

@@ -6,14 +6,16 @@ use aiperf_runtime::streaming::{
     checkpoint::{
         AcquisitionHorizon, AdmissionHorizon, BudgetedCheckpointBytes, CheckpointBarrier,
         CheckpointCut, CheckpointEpoch, CheckpointError, CheckpointGeneration,
-        CheckpointParticipantId, CommittedCheckpointGeneration, CommittedParticipantReceipt,
-        CommittedParticipantState, DecodeHorizon, DiscoveryHorizon, EventTimeWatermark,
-        OrderedActionHorizon, ParticipantInitialization, ParticipantStateDescriptor,
-        PreparedParticipantState, StreamRunIdentity, StreamingCheckpointParticipant,
-        TerminalActionHorizon,
+        CheckpointParticipantId, CheckpointTerminalReason, CommittedCheckpointGeneration,
+        CommittedParticipantReceipt, CommittedParticipantState, DecodeHorizon, DiscoveryHorizon,
+        EventTimeWatermark, OrderedActionHorizon, ParticipantInitialization,
+        ParticipantStateDescriptor, PreparedParticipantState, StreamRunIdentity,
+        StreamingCheckpointParticipant, TerminalActionHorizon,
     },
     checkpoint_backend::{
-        CheckpointCommitMetadata, CheckpointGenerationExpectations, StreamingGenerationTransaction,
+        CheckpointCommitMetadata, CheckpointGenerationExpectations, CurrentV4CheckpointGeneration,
+        LeasedCheckpointGeneration, LeasedCheckpointGenerationView, LegacyV3FixtureLimits,
+        LegacyV3FixturePrecharge, LegacyV3ReadOnlyFixture, StreamingGenerationTransaction,
     },
     checkpoints::memory::{
         ImmutableObjectInventory, MemoryCheckpointBackend, MemoryCheckpointLimits,
@@ -38,12 +40,19 @@ use aiperf_runtime::streaming::{
 };
 use async_trait::async_trait;
 use bytes::Bytes;
+use serde::Serialize;
+use std::num::{NonZeroU64, NonZeroUsize};
 
 use aiperf_runtime::streaming::failure::{
     DecodeFailureCode, OrdinaryStreamingFailure, StreamFormatError,
 };
 
 pub fn cut_at(value: u64) -> CheckpointCut {
+    // Epoch-boundary tests pass `u64::MAX`, which no event time represents;
+    // saturating keeps those cuts constructible without changing any value a
+    // signed event time can hold.
+    let event_time = EventTimeUtc::new(i64::try_from(value).unwrap_or(i64::MAX))
+        .expect("non-negative test event time");
     CheckpointCut {
         discovered: DiscoveryHorizon::new(SourcePosition::new(value)),
         acquired: AcquisitionHorizon::new(SourcePosition::new(value)),
@@ -52,13 +61,11 @@ pub fn cut_at(value: u64) -> CheckpointCut {
         admitted: AdmissionHorizon::new(GlobalSequence::new(value)),
         terminal: TerminalActionHorizon::new(GlobalSequence::new(value)),
         event_watermark: EventTimeWatermark::Hard {
-            through: EventTimeUtc::new(value as i64).expect("non-negative test event time"),
+            through: event_time,
         },
         causal_frontier: SessionCausalFrontier {
             through_sequence: GlobalSequence::new(value),
-            event_time: Some(
-                EventTimeUtc::new(value as i64).expect("non-negative test event time"),
-            ),
+            event_time: Some(event_time),
             digest: ContentDigest::from_bytes([value as u8; 32]),
         },
         handled_issues: HandledIssueCut::empty(),
@@ -238,34 +245,6 @@ pub async fn prepared_participant_with_bytes(
     .expect("valid prepared participant")
 }
 
-/// Build one verified committed participant state for a current-schema owner.
-///
-/// The name and signature match the checkpoint branch's helper exactly, so the
-/// rebase resolves in one hunk rather than at every call site.
-pub async fn committed_current_v4_participant_state(
-    run: StreamRunIdentity,
-    participant_id: CheckpointParticipantId,
-    schema_id: &str,
-    schema_version: u32,
-    cut: CheckpointCut,
-    item_count: u64,
-    bytes: Bytes,
-) -> CommittedParticipantState {
-    let byte_length = bytes.len() as u64;
-    let content_digest = ContentDigest::from_bytes(*blake3::hash(&bytes).as_bytes());
-    let descriptor = ParticipantStateDescriptor {
-        participant_id,
-        schema_id: schema_id.to_owned(),
-        schema_version,
-        represented_cut: cut,
-        content_digest,
-        item_count,
-        byte_length,
-    };
-    CommittedParticipantState::new(run, descriptor, checkpoint_payload(bytes).await)
-        .expect("verified committed participant state")
-}
-
 pub async fn result_partition(run: StreamRunIdentity, epoch: u64) -> ResultPartition {
     result_partition_with_projection_for(run, epoch, "projection")
         .await
@@ -364,8 +343,9 @@ pub async fn commit_empty(
     previous: Option<aiperf_runtime::streaming::checkpoint::CheckpointGeneration>,
     epoch: u64,
 ) -> Result<aiperf_runtime::streaming::checkpoint::CommittedCheckpointGeneration, CheckpointError> {
+    let expected = predecessor_for(backend, run, previous.as_ref()).await?;
     let mut transaction = backend
-        .begin_generation(run, previous.clone(), expectations(run))
+        .begin_generation(run, expected, expectations(run))
         .await?;
     transaction
         .stage_participant(prepared_participant(run, epoch).await)
@@ -384,8 +364,9 @@ pub async fn commit_with_segment(
     previous: Option<aiperf_runtime::streaming::checkpoint::CheckpointGeneration>,
     epoch: u64,
 ) -> Result<aiperf_runtime::streaming::checkpoint::CommittedCheckpointGeneration, CheckpointError> {
+    let expected = predecessor_for(backend, run, previous.as_ref()).await?;
     let mut transaction = backend
-        .begin_generation(run, previous.clone(), expectations(run))
+        .begin_generation(run, expected, expectations(run))
         .await?;
     transaction
         .stage_participant(prepared_participant(run, epoch).await)
@@ -399,6 +380,384 @@ pub async fn commit_with_segment(
         .await
 }
 
+pub fn current_v4_predecessor(
+    opened: &LeasedCheckpointGeneration,
+    expected: &CheckpointGeneration,
+) -> Result<CurrentV4CheckpointGeneration, CheckpointError> {
+    match opened.view() {
+        LeasedCheckpointGenerationView::CurrentV4(reader) => {
+            reader.current_v4_predecessor(expected)
+        }
+        LeasedCheckpointGenerationView::LegacyV3ReadOnly(_) => {
+            Err(CheckpointError::LegacyReadOnlyHead)
+        }
+    }
+}
+
+async fn predecessor_for(
+    backend: &MemoryCheckpointBackend,
+    run: StreamRunIdentity,
+    expected: Option<&CheckpointGeneration>,
+) -> Result<Option<CurrentV4CheckpointGeneration>, CheckpointError> {
+    let Some(expected) = expected else {
+        return Ok(None);
+    };
+    let opened = backend
+        .open_latest(&run, &expectations(run))
+        .await?
+        .ok_or_else(|| CheckpointError::GenerationConflict {
+            expected: Some(expected.clone()),
+            actual: None,
+        })?;
+    current_v4_predecessor(&opened, expected).map(Some)
+}
+
+pub async fn committed_current_v4_participant_state(
+    run: StreamRunIdentity,
+    participant_id: CheckpointParticipantId,
+    schema_id: &str,
+    schema_version: u32,
+    cut: CheckpointCut,
+    item_count: u64,
+    bytes: Bytes,
+) -> CommittedParticipantState {
+    let backend = MemoryCheckpointBackend::new(backend_limits()).expect("valid memory backend");
+    let participant_plan = aiperf_runtime::streaming::checkpoint::CheckpointParticipantPlan::new([
+        participant_id.clone(),
+    ])
+    .expect("valid one-participant plan");
+    let expectations = CheckpointGenerationExpectations {
+        run,
+        participant_plan,
+        execution_plan_digest: ContentDigest::from_bytes([0x31; 32]),
+        result_plan_digest: ContentDigest::from_bytes([0x32; 32]),
+    };
+    let payload = checkpoint_payload(bytes).await;
+    let prepared = PreparedParticipantState::new(
+        run,
+        participant_id,
+        schema_id,
+        schema_version,
+        cut.clone(),
+        item_count,
+        payload,
+    )
+    .expect("valid prepared current-v4 participant");
+    let descriptor = prepared.descriptor().clone();
+    let mut transaction = backend
+        .begin_generation(run, None, expectations.clone())
+        .await
+        .expect("begin current-v4 fixture generation");
+    transaction
+        .stage_participant(prepared)
+        .await
+        .expect("stage current-v4 fixture participant");
+    transaction
+        .stage_results(&mut Vec::new(), &mut None)
+        .await
+        .expect("stage canonical empty result epoch");
+    transaction
+        .commit(CheckpointCommitMetadata {
+            previous: None,
+            epoch: CheckpointEpoch::new(1),
+            cut,
+            execution_plan_digest: ContentDigest::from_bytes([0x31; 32]),
+            result_plan_digest: ContentDigest::from_bytes([0x32; 32]),
+            is_final: false,
+            terminal_reason: None,
+        })
+        .await
+        .expect("commit current-v4 fixture generation");
+    let opened = backend
+        .open_latest(&run, &expectations)
+        .await
+        .expect("open current-v4 fixture generation")
+        .expect("current-v4 fixture head");
+    match opened.view() {
+        LeasedCheckpointGenerationView::CurrentV4(reader) => reader
+            .read_participant(&descriptor)
+            .await
+            .expect("read verified current-v4 participant"),
+        LeasedCheckpointGenerationView::LegacyV3ReadOnly(_) => {
+            panic!("fresh fixture must be current-v4")
+        }
+    }
+}
+
+pub struct LegacyV3FixtureExpectation {
+    pub generation: CheckpointGeneration,
+    pub participant: ParticipantStateDescriptor,
+    pub result: ResultSegmentDescriptor,
+}
+
+pub fn legacy_v3_fixture_limits() -> LegacyV3FixtureLimits {
+    LegacyV3FixtureLimits {
+        max_objects: NonZeroUsize::new(4).expect("nonzero fixture object limit"),
+        max_bytes: NonZeroU64::new(1_048_576).expect("nonzero fixture byte limit"),
+    }
+}
+
+pub fn legacy_fixture_budget() -> StreamingResourceBudget {
+    StreamingResourceBudget::new(BudgetLimits {
+        max_items: 16,
+        max_bytes: 1_048_576,
+    })
+    .expect("valid legacy fixture budget")
+}
+
+pub async fn legacy_v3_fixture(
+    budget: &StreamingResourceBudget,
+    run: StreamRunIdentity,
+) -> (LegacyV3ReadOnlyFixture, LegacyV3FixtureExpectation) {
+    let cut = cut_at(1);
+    let participant_bytes = Bytes::from_static(b"legacy-participant-state");
+    let participant_digest =
+        ContentDigest::from_bytes(*blake3::hash(&participant_bytes).as_bytes());
+    let participant = ParticipantStateDescriptor {
+        participant_id: CheckpointParticipantId::new("participant"),
+        schema_id: "test.participant".into(),
+        schema_version: 1,
+        represented_cut: cut.clone(),
+        content_digest: participant_digest,
+        item_count: 1,
+        byte_length: u64::try_from(participant_bytes.len()).expect("small fixture payload"),
+    };
+    let plan = aiperf_runtime::streaming::checkpoint::CheckpointParticipantPlan::new([participant
+        .participant_id
+        .clone()])
+    .expect("valid legacy participant plan");
+    let result_bytes = Bytes::from_static(b"legacy-result-payload");
+    let result_digest = ContentDigest::from_bytes(*blake3::hash(&result_bytes).as_bytes());
+    let result = ResultSegmentDescriptor {
+        run,
+        epoch: CheckpointEpoch::new(1),
+        cell_id: CellId::new(0),
+        worker_id: WorkerId::new(0),
+        projection: ResultProjectionId::new("legacy").expect("valid legacy projection"),
+        schema: ResultSchemaVersion::new(1),
+        first_sequence: GlobalSequence::new(1),
+        last_sequence: GlobalSequence::new(1),
+        item_count: 1,
+        byte_length: u64::try_from(result_bytes.len()).expect("small fixture result"),
+        membership_root: ContentDigest::from_bytes([0x43; 32]),
+        payload_digest: result_digest,
+    };
+    let result_index_bytes = Bytes::from(
+        serde_json::to_vec(std::slice::from_ref(&result))
+            .expect("encode canonical legacy result index")
+            .into_boxed_slice(),
+    );
+    let result_index_root = legacy_result_index_root(&result_index_bytes);
+    let wire_cut = LegacyV3CheckpointCut::from(&cut);
+    let wire_descriptors = vec![LegacyV3ParticipantDescriptor::from(&participant)];
+    let generation_digest = legacy_generation_digest(
+        &run,
+        CheckpointEpoch::new(1),
+        None,
+        &wire_cut,
+        &plan.digest(),
+        &ContentDigest::from_bytes([0x31; 32]),
+        &ContentDigest::from_bytes([0x32; 32]),
+        &wire_descriptors,
+        &result_index_root,
+        false,
+        None,
+    );
+    let generation = CheckpointGeneration::new(CheckpointEpoch::new(1), generation_digest);
+    let generation_bytes = Bytes::from(
+        serde_json::to_vec(&LegacyV3GenerationWire {
+            run,
+            generation: generation.clone(),
+            previous: None,
+            cut: wire_cut,
+            participant_plan_digest: plan.digest(),
+            execution_plan_digest: ContentDigest::from_bytes([0x31; 32]),
+            result_plan_digest: ContentDigest::from_bytes([0x32; 32]),
+            participant_descriptors: wire_descriptors,
+            result_index_root,
+            is_final: false,
+            terminal_reason: None,
+        })
+        .expect("encode valid legacy-v3 generation")
+        .into_boxed_slice(),
+    );
+    let exact_encoded_bytes = generation_bytes.len()
+        + participant_bytes.len()
+        + result_index_bytes.len()
+        + result_bytes.len();
+    let mut precharge = LegacyV3FixturePrecharge::acquire(
+        budget,
+        legacy_v3_fixture_limits(),
+        4,
+        exact_encoded_bytes,
+    )
+    .await
+    .expect("precharge complete legacy fixture");
+    let generation_object = precharge
+        .compact_object(*generation.digest(), &generation_bytes)
+        .expect("compact generation object");
+    let participant_object = precharge
+        .compact_object(participant_digest, &participant_bytes)
+        .expect("compact participant object");
+    let participant_objects = precharge
+        .collect_inventory(std::iter::once(participant_object))
+        .expect("collect participant inventory");
+    let result_index_object = precharge
+        .compact_object(result_index_root, &result_index_bytes)
+        .expect("compact result-index object");
+    let result_object = precharge
+        .compact_object(result_digest, &result_bytes)
+        .expect("compact result payload object");
+    let result_objects = precharge
+        .collect_inventory(std::iter::once(result_object))
+        .expect("collect result inventory");
+    let fixture = precharge
+        .finish(
+            run,
+            generation.clone(),
+            generation_object,
+            participant_objects,
+            result_index_object,
+            result_objects,
+        )
+        .expect("finish valid legacy-v3 fixture");
+    (
+        fixture,
+        LegacyV3FixtureExpectation {
+            generation,
+            participant,
+            result,
+        },
+    )
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+struct LegacyV3CheckpointCut {
+    discovered: DiscoveryHorizon,
+    acquired: AcquisitionHorizon,
+    decoded: DecodeHorizon,
+    ordered: OrderedActionHorizon,
+    admitted: AdmissionHorizon,
+    terminal: TerminalActionHorizon,
+    event_watermark: EventTimeWatermark,
+    causal_frontier: SessionCausalFrontier,
+}
+
+impl From<&CheckpointCut> for LegacyV3CheckpointCut {
+    fn from(cut: &CheckpointCut) -> Self {
+        Self {
+            discovered: cut.discovered.clone(),
+            acquired: cut.acquired.clone(),
+            decoded: cut.decoded.clone(),
+            ordered: cut.ordered.clone(),
+            admitted: cut.admitted.clone(),
+            terminal: cut.terminal.clone(),
+            event_watermark: cut.event_watermark.clone(),
+            causal_frontier: cut.causal_frontier.clone(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+struct LegacyV3ParticipantDescriptor {
+    participant_id: CheckpointParticipantId,
+    schema_id: String,
+    schema_version: u32,
+    represented_cut: LegacyV3CheckpointCut,
+    content_digest: ContentDigest,
+    item_count: u64,
+    byte_length: u64,
+}
+
+impl From<&ParticipantStateDescriptor> for LegacyV3ParticipantDescriptor {
+    fn from(descriptor: &ParticipantStateDescriptor) -> Self {
+        Self {
+            participant_id: descriptor.participant_id.clone(),
+            schema_id: descriptor.schema_id.clone(),
+            schema_version: descriptor.schema_version,
+            represented_cut: LegacyV3CheckpointCut::from(&descriptor.represented_cut),
+            content_digest: descriptor.content_digest,
+            item_count: descriptor.item_count,
+            byte_length: descriptor.byte_length,
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct LegacyV3GenerationWire {
+    run: StreamRunIdentity,
+    generation: CheckpointGeneration,
+    previous: Option<ContentDigest>,
+    cut: LegacyV3CheckpointCut,
+    participant_plan_digest: ContentDigest,
+    execution_plan_digest: ContentDigest,
+    result_plan_digest: ContentDigest,
+    participant_descriptors: Vec<LegacyV3ParticipantDescriptor>,
+    result_index_root: ContentDigest,
+    is_final: bool,
+    terminal_reason: Option<CheckpointTerminalReason>,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn legacy_generation_digest(
+    run: &StreamRunIdentity,
+    epoch: CheckpointEpoch,
+    previous: Option<&ContentDigest>,
+    cut: &LegacyV3CheckpointCut,
+    participant_plan_digest: &ContentDigest,
+    execution_plan_digest: &ContentDigest,
+    result_plan_digest: &ContentDigest,
+    descriptors: &[LegacyV3ParticipantDescriptor],
+    result_index_root: &ContentDigest,
+    is_final: bool,
+    terminal_reason: Option<CheckpointTerminalReason>,
+) -> ContentDigest {
+    let cut = serde_json::to_vec(cut).expect("encode legacy cut");
+    let descriptors = serde_json::to_vec(descriptors).expect("encode legacy descriptors");
+    let terminal_state = match terminal_reason {
+        None => [0, 0],
+        Some(CheckpointTerminalReason::Completed) => [1, 1],
+        Some(CheckpointTerminalReason::Aborted) => [1, 2],
+        Some(CheckpointTerminalReason::Cancelled) => [1, 3],
+    };
+    let mut hasher = blake3::Hasher::new();
+    update_legacy_generation_digest_field(
+        &mut hasher,
+        b"aiperf.streaming.committed-checkpoint-generation.v3",
+    );
+    update_legacy_generation_digest_field(&mut hasher, run.logical_replay_run().as_bytes());
+    update_legacy_generation_digest_field(&mut hasher, &epoch.get().to_le_bytes());
+    match previous {
+        None => update_legacy_generation_digest_field(&mut hasher, &[0]),
+        Some(previous) => {
+            update_legacy_generation_digest_field(&mut hasher, &[1]);
+            update_legacy_generation_digest_field(&mut hasher, previous.as_bytes());
+        }
+    }
+    update_legacy_generation_digest_field(&mut hasher, &cut);
+    update_legacy_generation_digest_field(&mut hasher, participant_plan_digest.as_bytes());
+    update_legacy_generation_digest_field(&mut hasher, execution_plan_digest.as_bytes());
+    update_legacy_generation_digest_field(&mut hasher, result_plan_digest.as_bytes());
+    update_legacy_generation_digest_field(&mut hasher, &descriptors);
+    update_legacy_generation_digest_field(&mut hasher, result_index_root.as_bytes());
+    update_legacy_generation_digest_field(&mut hasher, &[u8::from(is_final)]);
+    update_legacy_generation_digest_field(&mut hasher, &terminal_state);
+    ContentDigest::from_bytes(*hasher.finalize().as_bytes())
+}
+
+fn update_legacy_generation_digest_field(hasher: &mut blake3::Hasher, field: &[u8]) {
+    hasher.update(&(field.len() as u64).to_le_bytes());
+    hasher.update(field);
+}
+
+fn legacy_result_index_root(encoded: &[u8]) -> ContentDigest {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"aiperf.streaming.result-index.v1");
+    hasher.update(&(encoded.len() as u64).to_le_bytes());
+    hasher.update(encoded);
+    ContentDigest::from_bytes(*hasher.finalize().as_bytes())
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PublicationAuthoritySnapshot {
     generation: Option<CheckpointGeneration>,
@@ -410,12 +769,14 @@ pub struct PublicationAuthoritySnapshot {
 pub trait PublicationBackendFixture {
     fn run(&self) -> StreamRunIdentity;
     async fn seed_baseline(&self) -> CommittedCheckpointGeneration;
+    async fn seed_maximum_epoch(&self) -> (StreamRunIdentity, CommittedCheckpointGeneration);
     async fn staged_after(
         &self,
+        run: StreamRunIdentity,
         expected: CheckpointGeneration,
         participant_epoch: u64,
     ) -> Box<dyn StreamingGenerationTransaction>;
-    async fn authority_snapshot(&self) -> PublicationAuthoritySnapshot;
+    async fn authority_snapshot(&self, run: StreamRunIdentity) -> PublicationAuthoritySnapshot;
     fn reset_effect_counter(&self);
     fn effect_counter(&self) -> u64;
 }
@@ -444,18 +805,42 @@ impl PublicationBackendFixture for MemoryPublicationBackendFixture {
             .expect("seed baseline generation")
     }
 
+    async fn seed_maximum_epoch(&self) -> (StreamRunIdentity, CommittedCheckpointGeneration) {
+        let run = run_id(2);
+        let committed = self
+            .backend
+            .seed_nonempty_committed_generation_at_epoch(
+                run,
+                CheckpointEpoch::new(u64::MAX),
+                &expectations(run),
+                vec![prepared_participant(run, u64::MAX).await],
+            )
+            .await
+            .expect("seed maximum current-v4 head in fresh run");
+        (run, committed)
+    }
+
     async fn staged_after(
         &self,
+        run: StreamRunIdentity,
         expected: CheckpointGeneration,
         participant_epoch: u64,
     ) -> Box<dyn StreamingGenerationTransaction> {
+        let opened = self
+            .backend
+            .open_latest(&run, &expectations(run))
+            .await
+            .expect("open lineage head")
+            .expect("lineage head exists");
+        let predecessor =
+            current_v4_predecessor(&opened, &expected).expect("verified current-v4 predecessor");
         let mut transaction = self
             .backend
-            .begin_generation(self.run, Some(expected), expectations(self.run))
+            .begin_generation(run, Some(predecessor), expectations(run))
             .await
             .expect("begin lineage transaction");
         transaction
-            .stage_participant(prepared_participant(self.run, participant_epoch).await)
+            .stage_participant(prepared_participant(run, participant_epoch).await)
             .await
             .expect("stage lineage participant");
         transaction
@@ -465,16 +850,16 @@ impl PublicationBackendFixture for MemoryPublicationBackendFixture {
         Box::new(transaction)
     }
 
-    async fn authority_snapshot(&self) -> PublicationAuthoritySnapshot {
+    async fn authority_snapshot(&self, run: StreamRunIdentity) -> PublicationAuthoritySnapshot {
         let generation = self
             .backend
-            .open_latest(&self.run, &expectations(self.run))
+            .open_latest(&run, &expectations(run))
             .await
             .expect("open memory head")
-            .map(|reader| reader.generation().generation());
+            .map(|reader| reader.generation().clone());
         PublicationAuthoritySnapshot {
             generation,
-            inventory: self.backend.immutable_object_inventory(&self.run),
+            inventory: self.backend.immutable_object_inventory(&run),
             usage: self.backend.live_budget_usage(),
         }
     }
@@ -493,9 +878,9 @@ pub async fn assert_publication_backend_lineage_conformance(
 ) {
     let run = fixture.run();
     let baseline = fixture.seed_baseline().await;
-    let baseline_snapshot = fixture.authority_snapshot().await;
+    let baseline_snapshot = fixture.authority_snapshot(run).await;
 
-    let wrong = fixture.staged_after(baseline.generation(), 2).await;
+    let wrong = fixture.staged_after(run, baseline.generation(), 2).await;
     fixture.reset_effect_counter();
     assert_eq!(
         wrong
@@ -505,9 +890,9 @@ pub async fn assert_publication_backend_lineage_conformance(
         CheckpointError::ObjectVerification,
     );
     assert_eq!(fixture.effect_counter(), 0);
-    assert_eq!(fixture.authority_snapshot().await, baseline_snapshot);
+    assert_eq!(fixture.authority_snapshot(run).await, baseline_snapshot);
 
-    let skipped = fixture.staged_after(baseline.generation(), 2).await;
+    let skipped = fixture.staged_after(run, baseline.generation(), 2).await;
     fixture.reset_effect_counter();
     assert_eq!(
         skipped
@@ -517,16 +902,16 @@ pub async fn assert_publication_backend_lineage_conformance(
         CheckpointError::ObjectVerification,
     );
     assert_eq!(fixture.effect_counter(), 0);
-    assert_eq!(fixture.authority_snapshot().await, baseline_snapshot);
+    assert_eq!(fixture.authority_snapshot(run).await, baseline_snapshot);
 
-    let maximum = CheckpointGeneration::new(
-        CheckpointEpoch::new(u64::MAX),
-        ContentDigest::from_bytes([0xfe; 32]),
-    );
-    let overflow = fixture.staged_after(maximum.clone(), 1).await;
-    let mut overflow_metadata = metadata_at(1);
+    let (maximum_run, maximum_generation) = fixture.seed_maximum_epoch().await;
+    let maximum = maximum_generation.generation();
+    let maximum_snapshot = fixture.authority_snapshot(maximum_run).await;
+    let overflow = fixture
+        .staged_after(maximum_run, maximum.clone(), u64::MAX)
+        .await;
+    let mut overflow_metadata = metadata_at(u64::MAX);
     overflow_metadata.previous = Some(maximum.clone());
-    overflow_metadata.epoch = CheckpointEpoch::new(u64::MAX);
     fixture.reset_effect_counter();
     assert_eq!(
         overflow
@@ -536,7 +921,10 @@ pub async fn assert_publication_backend_lineage_conformance(
         CheckpointError::GenerationEpochOverflow { previous: maximum },
     );
     assert_eq!(fixture.effect_counter(), 0);
-    assert_eq!(fixture.authority_snapshot().await, baseline_snapshot);
+    assert_eq!(
+        fixture.authority_snapshot(maximum_run).await,
+        maximum_snapshot
+    );
 
     assert_eq!(run, baseline.run().to_owned());
 }
