@@ -288,7 +288,7 @@ async fn refresh_backoff_is_exponential_capped_and_clock_driven() {
     local
         .run_until(async {
             let sim = Rc::new(SimClock::new());
-            let clock: Rc<dyn Clock> = Rc::clone(&sim);
+            let clock: Rc<dyn Clock> = Rc::<SimClock>::clone(&sim);
             let pump = tokio::task::spawn_local({
                 let sim = Rc::clone(&sim);
                 async move {
