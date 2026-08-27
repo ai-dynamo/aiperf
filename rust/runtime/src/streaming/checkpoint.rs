@@ -222,31 +222,65 @@ impl ParticipantStateDescriptor {
 }
 
 /// Move-only immutable bytes retaining their checkpoint-state budget charge.
+///
+/// The bytes and lease are intentionally inseparable. Callers can borrow the
+/// bytes, but cannot extract either field and leave uncharged retained storage.
+///
+/// ```compile_fail
+/// # use aiperf_runtime::streaming::checkpoint::BudgetedCheckpointBytes;
+/// # fn cannot_separate(value: BudgetedCheckpointBytes) {
+/// let _bytes = value.bytes;
+/// let _lease = value.lease;
+/// # }
+/// ```
 #[derive(Debug)]
 pub struct BudgetedCheckpointBytes {
-    /// Immutable participant state bytes.
-    pub bytes: Bytes,
-    /// Budget ownership retained for the complete lifetime of `bytes`.
-    pub lease: BudgetLease,
+    bytes: Bytes,
+    lease: BudgetLease,
 }
 
 impl BudgetedCheckpointBytes {
-    /// Bind immutable bytes to an exact one-object byte charge.
+    /// Copy bytes into compact owned storage and bind their exact budget charge.
     pub fn new(bytes: Bytes, lease: BudgetLease) -> Result<Self, CheckpointError> {
         if lease.charged_items() != 1 || lease.charged_bytes() != bytes.len() {
             return Err(CheckpointError::ObjectVerification);
         }
+        let bytes = Bytes::from(bytes.as_ref().to_vec().into_boxed_slice());
         Ok(Self { bytes, lease })
+    }
+
+    /// Borrow the exact immutable participant payload.
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    /// Return the exact compact allocation retained by this payload.
+    #[must_use]
+    pub fn retained_allocation_bytes(&self) -> usize {
+        self.bytes.len()
+    }
+
+    /// Return the byte capacity charged for the retained payload.
+    #[must_use]
+    pub fn charged_bytes(&self) -> usize {
+        self.lease.charged_bytes()
     }
 }
 
 /// Immutable participant state prepared before generation commit.
+///
+/// ```compile_fail
+/// # use aiperf_runtime::streaming::checkpoint::PreparedParticipantState;
+/// # fn cannot_forge_or_separate(value: PreparedParticipantState) {
+/// let _descriptor = value.descriptor;
+/// let _payload = value.payload;
+/// # }
+/// ```
 #[derive(Debug)]
 pub struct PreparedParticipantState {
-    /// Verified state descriptor.
-    pub descriptor: ParticipantStateDescriptor,
-    /// Budget-owned immutable state bytes.
-    pub payload: BudgetedCheckpointBytes,
+    descriptor: ParticipantStateDescriptor,
+    payload: BudgetedCheckpointBytes,
 }
 
 impl PreparedParticipantState {
@@ -276,15 +310,39 @@ impl PreparedParticipantState {
             payload,
         })
     }
+
+    /// Borrow the checked descriptor derived from the retained payload.
+    #[must_use]
+    pub fn descriptor(&self) -> &ParticipantStateDescriptor {
+        &self.descriptor
+    }
+
+    /// Borrow the exact immutable participant payload.
+    #[must_use]
+    pub fn payload_bytes(&self) -> &[u8] {
+        self.payload.as_bytes()
+    }
+
+    /// Move the checked descriptor and inseparable budgeted payload together.
+    #[must_use]
+    pub fn into_parts(self) -> (ParticipantStateDescriptor, BudgetedCheckpointBytes) {
+        (self.descriptor, self.payload)
+    }
 }
 
 /// Verified participant state restored from one committed generation.
+///
+/// ```compile_fail
+/// # use aiperf_runtime::streaming::checkpoint::CommittedParticipantState;
+/// # fn cannot_forge_or_separate(value: CommittedParticipantState) {
+/// let _descriptor = value.descriptor;
+/// let _payload = value.payload;
+/// # }
+/// ```
 #[derive(Debug)]
 pub struct CommittedParticipantState {
-    /// Committed immutable object descriptor.
-    pub descriptor: ParticipantStateDescriptor,
-    /// Newly budget-owned restored bytes.
-    pub payload: BudgetedCheckpointBytes,
+    descriptor: ParticipantStateDescriptor,
+    payload: BudgetedCheckpointBytes,
 }
 
 impl CommittedParticipantState {
@@ -312,6 +370,18 @@ impl CommittedParticipantState {
         }
         Ok(self)
     }
+
+    /// Borrow the verified committed descriptor.
+    #[must_use]
+    pub fn descriptor(&self) -> &ParticipantStateDescriptor {
+        &self.descriptor
+    }
+
+    /// Borrow the verified restored participant payload.
+    #[must_use]
+    pub fn payload_bytes(&self) -> &[u8] {
+        self.payload.as_bytes()
+    }
 }
 
 fn validate_payload_charge(payload: &BudgetedCheckpointBytes) -> Result<(), CheckpointError> {
@@ -326,31 +396,251 @@ fn digest_bytes(bytes: &[u8]) -> ContentDigest {
 }
 
 /// Complete metadata for one atomically committed checkpoint generation.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct CommittedCheckpointGeneration {
-    /// Content-addressed generation identity.
-    pub generation: CheckpointGeneration,
-    /// Digest of the preceding committed generation, if any.
-    pub previous: Option<ContentDigest>,
-    /// Complete typed progress cut.
-    pub cut: CheckpointCut,
-    /// Exact sorted participant descriptor inventory.
-    pub participant_descriptors: Vec<ParticipantStateDescriptor>,
-    /// Root digest of the immutable result index.
-    pub result_index_root: ContentDigest,
-    /// Whether no later generation may extend this run.
-    pub is_final: bool,
-    /// Final terminal condition, present only for a final generation.
-    pub terminal_reason: Option<CheckpointTerminalReason>,
+    generation: CheckpointGeneration,
+    previous: Option<ContentDigest>,
+    cut: CheckpointCut,
+    participant_descriptors: Vec<ParticipantStateDescriptor>,
+    result_index_root: ContentDigest,
+    is_final: bool,
+    terminal_reason: Option<CheckpointTerminalReason>,
 }
 
 impl CommittedCheckpointGeneration {
+    /// Canonicalize and validate a complete committed generation.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        epoch: CheckpointEpoch,
+        previous: Option<ContentDigest>,
+        cut: CheckpointCut,
+        participant_plan: &CheckpointParticipantPlan,
+        mut participant_descriptors: Vec<ParticipantStateDescriptor>,
+        result_index_root: ContentDigest,
+        is_final: bool,
+        terminal_reason: Option<CheckpointTerminalReason>,
+    ) -> Result<Self, CheckpointError> {
+        participant_descriptors
+            .sort_unstable_by(|left, right| left.participant_id.cmp(&right.participant_id));
+        validate_committed_generation_shape(
+            &cut,
+            &participant_descriptors,
+            is_final,
+            terminal_reason,
+        )?;
+        if participant_descriptors
+            .iter()
+            .map(|descriptor| &descriptor.participant_id)
+            .ne(participant_plan.ids().iter())
+        {
+            return Err(CheckpointError::ParticipantSetMismatch);
+        }
+        let digest = committed_generation_digest(
+            epoch,
+            previous.as_ref(),
+            &cut,
+            &participant_descriptors,
+            &result_index_root,
+            is_final,
+            terminal_reason,
+        )?;
+        Ok(Self {
+            generation: CheckpointGeneration::new(epoch, digest),
+            previous,
+            cut,
+            participant_descriptors,
+            result_index_root,
+            is_final,
+            terminal_reason,
+        })
+    }
+
     /// Clone the small content-addressed generation identity.
     #[must_use]
     pub fn generation(&self) -> CheckpointGeneration {
         self.generation.clone()
     }
+
+    /// Borrow the content-addressed generation identity.
+    #[must_use]
+    pub const fn generation_ref(&self) -> &CheckpointGeneration {
+        &self.generation
+    }
+
+    /// Borrow the preceding committed generation digest, when present.
+    #[must_use]
+    pub const fn previous(&self) -> Option<&ContentDigest> {
+        self.previous.as_ref()
+    }
+
+    /// Borrow the complete represented cut.
+    #[must_use]
+    pub const fn cut(&self) -> &CheckpointCut {
+        &self.cut
+    }
+
+    /// Borrow the canonical descriptor inventory.
+    #[must_use]
+    pub fn participant_descriptors(&self) -> &[ParticipantStateDescriptor] {
+        &self.participant_descriptors
+    }
+
+    /// Borrow the immutable result-index root.
+    #[must_use]
+    pub const fn result_index_root(&self) -> &ContentDigest {
+        &self.result_index_root
+    }
+
+    /// Return whether this generation terminates the run.
+    #[must_use]
+    pub const fn is_final(&self) -> bool {
+        self.is_final
+    }
+
+    /// Return the terminal reason, present exactly for final generations.
+    #[must_use]
+    pub const fn terminal_reason(&self) -> Option<CheckpointTerminalReason> {
+        self.terminal_reason
+    }
+
+    /// Verify canonical order, participant set, terminal state, and digest.
+    pub fn verify(&self) -> Result<(), CheckpointError> {
+        validate_committed_generation_shape(
+            &self.cut,
+            &self.participant_descriptors,
+            self.is_final,
+            self.terminal_reason,
+        )?;
+        let expected = committed_generation_digest(
+            self.generation.epoch(),
+            self.previous.as_ref(),
+            &self.cut,
+            &self.participant_descriptors,
+            &self.result_index_root,
+            self.is_final,
+            self.terminal_reason,
+        )?;
+        if self.generation.digest() != &expected {
+            return Err(CheckpointError::ObjectVerification);
+        }
+        Ok(())
+    }
+
+    fn descriptor(
+        &self,
+        participant_id: &CheckpointParticipantId,
+    ) -> Option<&ParticipantStateDescriptor> {
+        self.participant_descriptors
+            .binary_search_by(|descriptor| descriptor.participant_id.cmp(participant_id))
+            .ok()
+            .map(|index| &self.participant_descriptors[index])
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SerializedCommittedCheckpointGeneration {
+    generation: CheckpointGeneration,
+    previous: Option<ContentDigest>,
+    cut: CheckpointCut,
+    participant_descriptors: Vec<ParticipantStateDescriptor>,
+    result_index_root: ContentDigest,
+    is_final: bool,
+    terminal_reason: Option<CheckpointTerminalReason>,
+}
+
+impl<'de> Deserialize<'de> for CommittedCheckpointGeneration {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let serialized = SerializedCommittedCheckpointGeneration::deserialize(deserializer)?;
+        let generation = Self {
+            generation: serialized.generation,
+            previous: serialized.previous,
+            cut: serialized.cut,
+            participant_descriptors: serialized.participant_descriptors,
+            result_index_root: serialized.result_index_root,
+            is_final: serialized.is_final,
+            terminal_reason: serialized.terminal_reason,
+        };
+        generation.verify().map_err(serde::de::Error::custom)?;
+        Ok(generation)
+    }
+}
+
+fn validate_committed_generation_shape(
+    cut: &CheckpointCut,
+    descriptors: &[ParticipantStateDescriptor],
+    is_final: bool,
+    terminal_reason: Option<CheckpointTerminalReason>,
+) -> Result<(), CheckpointError> {
+    if is_final != terminal_reason.is_some() {
+        return Err(CheckpointError::ObjectVerification);
+    }
+    if descriptors
+        .windows(2)
+        .any(|pair| pair[0].participant_id >= pair[1].participant_id)
+    {
+        return Err(CheckpointError::ParticipantSetMismatch);
+    }
+    if descriptors
+        .iter()
+        .any(|descriptor| descriptor.represented_cut != *cut)
+    {
+        return Err(CheckpointError::ParticipantSetMismatch);
+    }
+    Ok(())
+}
+
+fn committed_generation_digest(
+    epoch: CheckpointEpoch,
+    previous: Option<&ContentDigest>,
+    cut: &CheckpointCut,
+    descriptors: &[ParticipantStateDescriptor],
+    result_index_root: &ContentDigest,
+    is_final: bool,
+    terminal_reason: Option<CheckpointTerminalReason>,
+) -> Result<ContentDigest, CheckpointError> {
+    let cut = serde_json::to_vec(cut).map_err(generation_encoding_error)?;
+    let descriptors = serde_json::to_vec(descriptors).map_err(generation_encoding_error)?;
+    let terminal_state = match terminal_reason {
+        None => [0, 0],
+        Some(CheckpointTerminalReason::Completed) => [1, 1],
+        Some(CheckpointTerminalReason::Aborted) => [1, 2],
+        Some(CheckpointTerminalReason::Cancelled) => [1, 3],
+    };
+    let mut hasher = blake3::Hasher::new();
+    update_generation_digest_field(
+        &mut hasher,
+        b"aiperf.streaming.committed-checkpoint-generation.v1",
+    );
+    update_generation_digest_field(&mut hasher, &epoch.get().to_le_bytes());
+    match previous {
+        None => update_generation_digest_field(&mut hasher, &[0]),
+        Some(previous) => {
+            update_generation_digest_field(&mut hasher, &[1]);
+            update_generation_digest_field(&mut hasher, previous.as_bytes());
+        }
+    }
+    update_generation_digest_field(&mut hasher, &cut);
+    update_generation_digest_field(&mut hasher, &descriptors);
+    update_generation_digest_field(&mut hasher, result_index_root.as_bytes());
+    update_generation_digest_field(&mut hasher, &[u8::from(is_final)]);
+    update_generation_digest_field(&mut hasher, &terminal_state);
+    Ok(ContentDigest::from_bytes(*hasher.finalize().as_bytes()))
+}
+
+fn generation_encoding_error(error: serde_json::Error) -> CheckpointError {
+    CheckpointError::Storage {
+        message: format!("could not encode committed checkpoint generation: {error}"),
+    }
+}
+
+fn update_generation_digest_field(hasher: &mut blake3::Hasher, field: &[u8]) {
+    hasher.update(&(field.len() as u64).to_le_bytes());
+    hasher.update(field);
 }
 
 /// Coordinator-selected checkpoint barrier presented to every participant.
@@ -365,16 +655,66 @@ pub struct CheckpointBarrier {
 }
 
 /// Post-CAS notification binding a participant state to its committed generation.
+///
+/// Receipt fields are private so only an exact descriptor present in a verified
+/// committed generation can produce a notification.
+///
+/// ```compile_fail
+/// # use aiperf_runtime::streaming::checkpoint::CommittedParticipantReceipt;
+/// # fn cannot_forge(receipt: CommittedParticipantReceipt) {
+/// let _generation = receipt.generation;
+/// let _participant = receipt.participant_id;
+/// # }
+/// ```
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CommittedParticipantReceipt {
-    /// Authoritative committed generation.
-    pub generation: CheckpointGeneration,
-    /// Stable participant receiving the notification.
-    pub participant_id: CheckpointParticipantId,
-    /// Digest of the committed participant descriptor.
-    pub descriptor_digest: ContentDigest,
-    /// Complete cut represented by that descriptor.
-    pub represented_cut: CheckpointCut,
+    generation: CheckpointGeneration,
+    participant_id: CheckpointParticipantId,
+    descriptor_digest: ContentDigest,
+    represented_cut: CheckpointCut,
+}
+
+impl CommittedParticipantReceipt {
+    /// Construct a receipt for an exact descriptor in a verified generation.
+    pub fn new(
+        generation: &CommittedCheckpointGeneration,
+        descriptor: &ParticipantStateDescriptor,
+    ) -> Result<Self, CheckpointError> {
+        generation.verify()?;
+        if generation.descriptor(&descriptor.participant_id) != Some(descriptor) {
+            return Err(CheckpointError::ObjectVerification);
+        }
+        Ok(Self {
+            generation: generation.generation(),
+            participant_id: descriptor.participant_id.clone(),
+            descriptor_digest: descriptor.digest()?,
+            represented_cut: descriptor.represented_cut.clone(),
+        })
+    }
+
+    /// Borrow the exact authoritative generation identity.
+    #[must_use]
+    pub const fn generation(&self) -> &CheckpointGeneration {
+        &self.generation
+    }
+
+    /// Borrow the stable participant receiving this notification.
+    #[must_use]
+    pub const fn participant_id(&self) -> &CheckpointParticipantId {
+        &self.participant_id
+    }
+
+    /// Borrow the digest of the committed descriptor.
+    #[must_use]
+    pub const fn descriptor_digest(&self) -> &ContentDigest {
+        &self.descriptor_digest
+    }
+
+    /// Borrow the exact cut represented by the committed descriptor.
+    #[must_use]
+    pub const fn represented_cut(&self) -> &CheckpointCut {
+        &self.represented_cut
+    }
 }
 
 /// Stateful streaming owner participating in atomic checkpoint generations.

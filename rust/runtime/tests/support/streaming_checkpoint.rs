@@ -5,11 +5,11 @@ use aiperf_runtime::streaming::{
     budget::{BudgetLimits, StreamingResourceBudget},
     checkpoint::{
         AcquisitionHorizon, AdmissionHorizon, BudgetedCheckpointBytes, CheckpointBarrier,
-        CheckpointCut, CheckpointEpoch, CheckpointError, CheckpointGeneration,
-        CheckpointParticipantId, CommittedParticipantReceipt, CommittedParticipantState,
-        DecodeHorizon, DiscoveryHorizon, EventTimeWatermark, OrderedActionHorizon,
-        ParticipantInitialization, PreparedParticipantState, StreamingCheckpointParticipant,
-        TerminalActionHorizon,
+        CheckpointCut, CheckpointEpoch, CheckpointError, CheckpointParticipantId,
+        CheckpointParticipantPlan, CommittedCheckpointGeneration, CommittedParticipantReceipt,
+        CommittedParticipantState, DecodeHorizon, DiscoveryHorizon, EventTimeWatermark,
+        OrderedActionHorizon, ParticipantInitialization, ParticipantStateDescriptor,
+        PreparedParticipantState, StreamingCheckpointParticipant, TerminalActionHorizon,
     },
     identity::{ContentDigest, GlobalSequence, SessionCausalFrontier},
     unit::{EventTimeUtc, SourcePosition},
@@ -46,19 +46,30 @@ pub fn barrier_at(value: u64) -> CheckpointBarrier {
     }
 }
 
+pub fn generation_for(
+    descriptor: ParticipantStateDescriptor,
+    epoch: u64,
+    previous: Option<ContentDigest>,
+) -> CommittedCheckpointGeneration {
+    let plan = CheckpointParticipantPlan::new([descriptor.participant_id.clone()])
+        .expect("one test participant");
+    CommittedCheckpointGeneration::new(
+        CheckpointEpoch::new(epoch),
+        previous,
+        descriptor.represented_cut.clone(),
+        &plan,
+        vec![descriptor],
+        ContentDigest::from_bytes([0x66; 32]),
+        false,
+        None,
+    )
+    .expect("valid test generation")
+}
+
 pub fn receipt_for(prepared: &PreparedParticipantState) -> CommittedParticipantReceipt {
-    CommittedParticipantReceipt {
-        generation: CheckpointGeneration::new(
-            CheckpointEpoch::new(1),
-            ContentDigest::from_bytes([0x77; 32]),
-        ),
-        participant_id: prepared.descriptor.participant_id.clone(),
-        descriptor_digest: prepared
-            .descriptor
-            .digest()
-            .expect("test descriptor is serializable"),
-        represented_cut: prepared.descriptor.represented_cut.clone(),
-    }
+    let generation = generation_for(prepared.descriptor().clone(), 1, None);
+    CommittedParticipantReceipt::new(&generation, prepared.descriptor())
+        .expect("descriptor belongs to generation")
 }
 
 async fn checkpoint_payload(bytes: Bytes) -> BudgetedCheckpointBytes {
@@ -79,7 +90,9 @@ pub struct CountingParticipant {
     items: u64,
     initialization: ParticipantInitialization,
     released_items: u64,
-    committed_descriptor: Option<ContentDigest>,
+    commit_notifications: u64,
+    prepared_descriptor: Option<ParticipantStateDescriptor>,
+    committed_receipt: Option<CommittedParticipantReceipt>,
 }
 
 impl CountingParticipant {
@@ -89,12 +102,18 @@ impl CountingParticipant {
             items,
             initialization: ParticipantInitialization::default(),
             released_items: 0,
-            committed_descriptor: None,
+            commit_notifications: 0,
+            prepared_descriptor: None,
+            committed_receipt: None,
         }
     }
 
     pub fn released_items(&self) -> u64 {
         self.released_items
+    }
+
+    pub fn commit_notifications(&self) -> u64 {
+        self.commit_notifications
     }
 }
 
@@ -109,14 +128,16 @@ impl StreamingCheckpointParticipant for CountingParticipant {
         barrier: &CheckpointBarrier,
     ) -> Result<PreparedParticipantState, CheckpointError> {
         let bytes = Bytes::from(self.items.to_le_bytes().to_vec());
-        PreparedParticipantState::new(
+        let prepared = PreparedParticipantState::new(
             self.participant_id.clone(),
             "test.counting",
             1,
             barrier.cut.clone(),
             self.items,
             checkpoint_payload(bytes).await,
-        )
+        )?;
+        self.prepared_descriptor = Some(prepared.descriptor().clone());
+        Ok(prepared)
     }
 
     async fn initialize(
@@ -125,11 +146,8 @@ impl StreamingCheckpointParticipant for CountingParticipant {
     ) -> Result<(), CheckpointError> {
         self.initialization.initialize_once()?;
         if let Some(state) = state {
-            let state = state.verify()?;
             let bytes: [u8; 8] = state
-                .payload
-                .bytes
-                .as_ref()
+                .payload_bytes()
                 .try_into()
                 .map_err(|_| CheckpointError::ObjectVerification)?;
             self.items = u64::from_le_bytes(bytes);
@@ -141,14 +159,32 @@ impl StreamingCheckpointParticipant for CountingParticipant {
         &mut self,
         receipt: &CommittedParticipantReceipt,
     ) -> Result<(), CheckpointError> {
-        if receipt.participant_id != self.participant_id {
+        if receipt.participant_id() != &self.participant_id {
             return Err(CheckpointError::ParticipantSetMismatch);
         }
-        if self.committed_descriptor.as_ref() == Some(&receipt.descriptor_digest) {
+        let prepared = self
+            .prepared_descriptor
+            .as_ref()
+            .ok_or(CheckpointError::ObjectVerification)?;
+        if receipt.descriptor_digest() != &prepared.digest()?
+            || receipt.represented_cut() != &prepared.represented_cut
+        {
+            return Err(CheckpointError::ObjectVerification);
+        }
+        if self.committed_receipt.as_ref() == Some(receipt) {
             return Ok(());
         }
+        if let Some(committed) = &self.committed_receipt
+            && receipt.generation().epoch() <= committed.generation().epoch()
+        {
+            return Err(CheckpointError::GenerationConflict {
+                expected: Some(committed.generation().clone()),
+                actual: Some(receipt.generation().clone()),
+            });
+        }
         self.released_items = self.items;
-        self.committed_descriptor = Some(receipt.descriptor_digest);
+        self.commit_notifications += 1;
+        self.committed_receipt = Some(receipt.clone());
         Ok(())
     }
 }
