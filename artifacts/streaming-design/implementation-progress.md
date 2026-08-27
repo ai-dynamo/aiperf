@@ -36,8 +36,8 @@ SPDX-License-Identifier: Apache-2.0
 | Task 1D-R reliability policy | Complete | Task heads `66d4274946` and `472848142d`; merge `2757ca7e3e`; root batch passed contracts 22/22, policy 9/9, reliability units 8/8, streaming doctests 22/22, clippy, scoped rustfmt, and diff checks; spec and Rust-quality review approved |
 | Benchmark security-scope correction | Complete | Normative overlay `benchmark-security-scope-course-correction.md` approved; generation one retains BLAKE3 identity/integrity and existing provider/cellular boundaries, while encrypted resumable closed-loop state and direct base-streaming crypto dependencies are deferred |
 | Base-streaming direct crypto removal | Awaiting final gate | Clean branch `ajc/streaming-security-scope` at `39555dad68`; focused RED/GREEN and feature inventories passed; targeted Clippy status and rustfmt must be completed before review/merge |
-| Task 1D-R reliability ledger | Review rejected | Clean branch `ajc/streaming-task-1dr-ledger` at `a04a978059`; reported focused suites green, but end review found ten load-bearing checkpoint/authority/idempotency/budget/cancellation issues recorded in `handoff-2026-08-27.md` |
-| Task 1D-R versioned checkpoint authority | Waiting on corrected ledger | Clean branch `ajc/streaming-task-1dr-checkpoint` at `484eebfd32`; pre-ledger checkpoint implementation is committed, with only the intentionally stale v4 handled-cut golden red |
+| Task 1D-R reliability ledger | Complete | Branch `ajc/streaming-task-1dr-ledger` at `6afd10587b`; two fix waves addressed all ten findings (B1-B5 code-quality + SC1-SC4 spec-compliance); dual APPROVE verdicts; merge `6afd10587b` into integration; 87 lib + 15 reliability + 22 contracts + 29 checkpoint_backend tests green |
+| Task 1D-R versioned checkpoint authority | Pending rebase | Branch `ajc/streaming-task-1dr-checkpoint` at `50101c69a2`; pending rebase onto updated integration head post-ledger-merge |
 
 Baseline note: the full feature-off runtime suite reached execution after the
 repair and reported 1907 passing tests plus one pre-existing version-fixture
