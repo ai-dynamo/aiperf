@@ -1896,6 +1896,7 @@ async def helm_deployer(
     helm_values: HelmValues,
     operator_deployer: OperatorDeployer,
     worker_namespace_suffix: str,
+    k8s_settings: K8sTestSettings,
 ) -> AsyncGenerator[HelmDeployer, None]:
     """Create a Helm deployer (module-scoped).
 

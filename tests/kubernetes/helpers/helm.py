@@ -508,14 +508,6 @@ class HelmDeployer:
             self.OPERATOR_NAMESPACE,
             check=False,
         )
-        # Cluster-scoped resources from non-helm operator deployments
-        for resource in ["clusterrole", "clusterrolebinding"]:
-            await self.kubectl.run(
-                "delete",
-                resource,
-                "aiperf-operator",
-                check=False,
-            )
         # Add Helm ownership metadata to ALL pre-existing resources that the
         # chart manages. The OperatorDeployer creates these via kubectl apply
         # (not helm), which leaves them without Helm metadata.
