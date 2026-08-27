@@ -1440,15 +1440,16 @@ fn run_controlled_runtime_internal(
                         retain_member_evidence(&mut evaluator, &terminal_evidence)?;
                         terminal_output_blake3.push(terminal_evidence.stdout.blake3.clone());
                         terminal_member_evidence.push(terminal_evidence);
+                        // The pair's retained sample vector and the member
+                        // record hold the same samples, so exactly one copy is
+                        // taken here and the member record then owns the vec.
+                        pair_samples.extend_from_slice(&samples);
                         member_records.push(RawMemberTerminalRecord {
                             variant,
                             outcome,
                             samples,
                             terminal_evidence_index: Some(terminal_evidence_index),
                         });
-                        if let Some(record) = member_records.last() {
-                            pair_samples.extend_from_slice(&record.samples);
-                        }
                     }
                 }
                 // Both members completing means any disturbance the controller
