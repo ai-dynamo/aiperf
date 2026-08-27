@@ -3,7 +3,7 @@
 
 //! Streaming action binding, submission, event driving, and control contracts.
 
-use std::{any::Any, collections::BTreeMap, fmt, rc::Rc};
+use std::{any::Any, fmt, rc::Rc};
 
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -28,6 +28,13 @@ mod reliability_view_seal {
     pub trait FrozenActionInventoryView {}
 }
 
+mod host;
+
+#[cfg(test)]
+pub(crate) use host::{
+    CheckedActionFailureTerminalEvidence, CheckedActionTerminalMembership, FrozenActionInventory,
+};
+
 /// Borrowed checked evidence that one failed action attempt reached terminal.
 ///
 /// Implementations are sealed to action-host child modules. An adapter cannot
@@ -46,6 +53,13 @@ mod reliability_view_seal {
 ///     fn sequence(&self) -> GlobalSequence { unimplemented!() }
 ///     fn terminal_evidence_digest(&self) -> ContentDigest { unimplemented!() }
 /// }
+/// ```
+///
+/// The concrete host proof is not nameable outside the action-host subtree:
+///
+/// ```compile_fail
+/// # use aiperf_runtime::streaming::action::host::CheckedActionFailureTerminalEvidence;
+/// fn main() {}
 /// ```
 pub trait CheckedActionFailureTerminalEvidenceView:
     reliability_view_seal::CheckedActionFailureTerminalEvidenceView
@@ -113,162 +127,6 @@ pub trait FrozenActionInventoryView: reliability_view_seal::FrozenActionInventor
     /// Return whether the exact terminal membership is present.
     fn contains_terminal(&self, sequence: GlobalSequence, membership_digest: ContentDigest)
     -> bool;
-}
-
-/// Crate-owned sealed terminal evidence passed from the action host to the
-/// reliability owner without exposing a public proof constructor.
-#[allow(dead_code)]
-pub(crate) struct CheckedActionFailureTerminalEvidence {
-    run: StreamRunIdentity,
-    action_id: StableActionId,
-    sequence: GlobalSequence,
-    terminal_evidence_digest: ContentDigest,
-}
-
-#[allow(dead_code)]
-impl CheckedActionFailureTerminalEvidence {
-    pub(crate) const fn new(
-        run: StreamRunIdentity,
-        action_id: StableActionId,
-        sequence: GlobalSequence,
-        terminal_evidence_digest: ContentDigest,
-    ) -> Self {
-        Self {
-            run,
-            action_id,
-            sequence,
-            terminal_evidence_digest,
-        }
-    }
-}
-
-impl reliability_view_seal::CheckedActionFailureTerminalEvidenceView
-    for CheckedActionFailureTerminalEvidence
-{
-}
-
-impl CheckedActionFailureTerminalEvidenceView for CheckedActionFailureTerminalEvidence {
-    fn run(&self) -> &StreamRunIdentity {
-        &self.run
-    }
-
-    fn action_id(&self) -> StableActionId {
-        self.action_id
-    }
-
-    fn sequence(&self) -> GlobalSequence {
-        self.sequence
-    }
-
-    fn terminal_evidence_digest(&self) -> ContentDigest {
-        self.terminal_evidence_digest
-    }
-}
-
-/// Crate-owned sealed terminal membership borrowed by the reliability owner.
-#[allow(dead_code)]
-pub(crate) struct CheckedActionTerminalMembership {
-    run: StreamRunIdentity,
-    action_id: StableActionId,
-    sequence: GlobalSequence,
-    outcome: ActionTerminalMembershipOutcomeView,
-    membership_digest: ContentDigest,
-}
-
-#[allow(dead_code)]
-impl CheckedActionTerminalMembership {
-    pub(crate) const fn new(
-        run: StreamRunIdentity,
-        action_id: StableActionId,
-        sequence: GlobalSequence,
-        outcome: ActionTerminalMembershipOutcomeView,
-        membership_digest: ContentDigest,
-    ) -> Self {
-        Self {
-            run,
-            action_id,
-            sequence,
-            outcome,
-            membership_digest,
-        }
-    }
-}
-
-impl reliability_view_seal::CheckedActionTerminalMembershipView
-    for CheckedActionTerminalMembership
-{
-}
-
-impl CheckedActionTerminalMembershipView for CheckedActionTerminalMembership {
-    fn run(&self) -> &StreamRunIdentity {
-        &self.run
-    }
-
-    fn action_id(&self) -> StableActionId {
-        self.action_id
-    }
-
-    fn sequence(&self) -> GlobalSequence {
-        self.sequence
-    }
-
-    fn outcome(&self) -> ActionTerminalMembershipOutcomeView {
-        self.outcome
-    }
-
-    fn membership_digest(&self) -> ContentDigest {
-        self.membership_digest
-    }
-}
-
-/// Crate-owned immutable action inventory borrowed by the reliability owner.
-#[allow(dead_code)]
-pub(crate) struct FrozenActionInventory {
-    run: StreamRunIdentity,
-    through: GlobalSequence,
-    membership_root: ContentDigest,
-    terminals: BTreeMap<GlobalSequence, ContentDigest>,
-}
-
-#[allow(dead_code)]
-impl FrozenActionInventory {
-    pub(crate) fn new(
-        run: StreamRunIdentity,
-        through: GlobalSequence,
-        membership_root: ContentDigest,
-        terminals: BTreeMap<GlobalSequence, ContentDigest>,
-    ) -> Self {
-        Self {
-            run,
-            through,
-            membership_root,
-            terminals,
-        }
-    }
-}
-
-impl reliability_view_seal::FrozenActionInventoryView for FrozenActionInventory {}
-
-impl FrozenActionInventoryView for FrozenActionInventory {
-    fn run(&self) -> &StreamRunIdentity {
-        &self.run
-    }
-
-    fn through(&self) -> GlobalSequence {
-        self.through
-    }
-
-    fn membership_root(&self) -> ContentDigest {
-        self.membership_root
-    }
-
-    fn contains_terminal(
-        &self,
-        sequence: GlobalSequence,
-        membership_digest: ContentDigest,
-    ) -> bool {
-        self.terminals.get(&sequence) == Some(&membership_digest)
-    }
 }
 
 /// Stable action schema selected during compatibility validation.

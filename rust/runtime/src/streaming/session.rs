@@ -24,6 +24,11 @@ mod reliability_view_seal {
     pub trait SessionQuarantineTombstoneView {}
 }
 
+mod host;
+
+#[cfg(test)]
+pub(crate) use host::CheckedSessionQuarantineTombstoneView;
+
 /// Borrowed checked view of the session owner's retained quarantine tombstones.
 ///
 /// Implementations are sealed to session-host child modules. An adapter cannot
@@ -43,6 +48,13 @@ mod reliability_view_seal {
 ///     fn canonical_encoded_entries(&self) -> &[u8] { &[] }
 /// }
 /// ```
+///
+/// The concrete host proof is not nameable outside the session-host subtree:
+///
+/// ```compile_fail
+/// # use aiperf_runtime::streaming::session::host::CheckedSessionQuarantineTombstoneView;
+/// fn main() {}
+/// ```
 pub trait SessionQuarantineTombstoneView:
     reliability_view_seal::SessionQuarantineTombstoneView
 {
@@ -57,59 +69,6 @@ pub trait SessionQuarantineTombstoneView:
 
     /// Borrow the canonical compact tombstone entries.
     fn canonical_encoded_entries(&self) -> &[u8];
-}
-
-/// Crate-owned sealed borrow of the session owner's retained tombstone map.
-///
-/// The borrowed entry slice prevents reliability preparation from moving or
-/// cloning the retained map, while the crate-private constructor keeps the
-/// proof unavailable to adapters.
-#[allow(dead_code)]
-pub(crate) struct CheckedSessionQuarantineTombstoneView<'a> {
-    run: StreamRunIdentity,
-    tombstone_root: ContentDigest,
-    revision: u64,
-    canonical_encoded_entries: &'a [u8],
-}
-
-#[allow(dead_code)]
-impl<'a> CheckedSessionQuarantineTombstoneView<'a> {
-    pub(crate) const fn new(
-        run: StreamRunIdentity,
-        tombstone_root: ContentDigest,
-        revision: u64,
-        canonical_encoded_entries: &'a [u8],
-    ) -> Self {
-        Self {
-            run,
-            tombstone_root,
-            revision,
-            canonical_encoded_entries,
-        }
-    }
-}
-
-impl reliability_view_seal::SessionQuarantineTombstoneView
-    for CheckedSessionQuarantineTombstoneView<'_>
-{
-}
-
-impl SessionQuarantineTombstoneView for CheckedSessionQuarantineTombstoneView<'_> {
-    fn run(&self) -> &StreamRunIdentity {
-        &self.run
-    }
-
-    fn tombstone_root(&self) -> ContentDigest {
-        self.tombstone_root
-    }
-
-    fn revision(&self) -> u64 {
-        self.revision
-    }
-
-    fn canonical_encoded_entries(&self) -> &[u8] {
-        self.canonical_encoded_entries
-    }
 }
 
 /// Immutable registry metadata for one session-program implementation.

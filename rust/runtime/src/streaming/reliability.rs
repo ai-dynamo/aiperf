@@ -4603,7 +4603,7 @@ mod tests {
         let mut reporter = BudgetOwnedStreamingIssueReporter::new(run, policy, action_budget);
 
         let issue = action_issue(1, 0);
-        let evidence = CheckedActionFailureTerminalEvidence::new(
+        let evidence = CheckedActionFailureTerminalEvidence::for_test(
             run,
             issue
                 .scope()
@@ -4623,7 +4623,7 @@ mod tests {
             other => panic!("expected pending, got {other:?}"),
         };
 
-        let success = CheckedActionTerminalMembership::new(
+        let success = CheckedActionTerminalMembership::for_test(
             run,
             StableActionId::from_bytes([1; 32]),
             GlobalSequence::new(0),
@@ -4679,7 +4679,7 @@ mod tests {
         let mut reporter = BudgetOwnedStreamingIssueReporter::new(run, policy, action_budget);
 
         let first_issue = action_issue(0, 0);
-        let first_evidence = CheckedActionFailureTerminalEvidence::new(
+        let first_evidence = CheckedActionFailureTerminalEvidence::for_test(
             run,
             first_issue
                 .scope()
@@ -4711,7 +4711,7 @@ mod tests {
         ));
 
         let second_issue = action_issue(0, 1);
-        let second_evidence = CheckedActionFailureTerminalEvidence::new(
+        let second_evidence = CheckedActionFailureTerminalEvidence::for_test(
             run,
             second_issue
                 .scope()
@@ -4768,7 +4768,7 @@ mod tests {
         let mut reporter = BudgetOwnedStreamingIssueReporter::new(run, policy, action_budget);
 
         let issue = action_issue(2, 0);
-        let evidence = CheckedActionFailureTerminalEvidence::new(
+        let evidence = CheckedActionFailureTerminalEvidence::for_test(
             run,
             issue
                 .scope()
@@ -4788,7 +4788,7 @@ mod tests {
             other => panic!("expected pending, got {other:?}"),
         };
 
-        let inventory = FrozenActionInventory::new(
+        let inventory = FrozenActionInventory::for_test(
             run,
             GlobalSequence::new(1),
             ContentDigest::from_bytes([0xa3; 32]),
@@ -4833,7 +4833,7 @@ mod tests {
         let mut reporter =
             BudgetOwnedStreamingIssueReporter::new(run, policy, action_budget.clone());
         let issue = action_issue(0, 0);
-        let evidence = CheckedActionFailureTerminalEvidence::new(
+        let evidence = CheckedActionFailureTerminalEvidence::for_test(
             run,
             issue
                 .scope()
@@ -4913,7 +4913,7 @@ mod tests {
 
         let entries = b"canonical-tombstones";
         let root = ContentDigest::from_bytes(*blake3::hash(entries).as_bytes());
-        let current = CheckedSessionQuarantineTombstoneView::new(run, root, 4, entries);
+        let current = CheckedSessionQuarantineTombstoneView::for_test(run, root, 4, entries);
         let barrier = test_barrier(run, 3);
         let prepared = futures::executor::block_on(reporter.prepare_session_quarantine_install(
             &current,
@@ -4929,7 +4929,7 @@ mod tests {
         assert_eq!(prepared.view_revision(), 4);
         assert_eq!(prepared.payload_bytes(), entries);
 
-        let replayed_digest = CheckedSessionQuarantineTombstoneView::new(run, root, 5, entries);
+        let replayed_digest = CheckedSessionQuarantineTombstoneView::for_test(run, root, 5, entries);
         assert_eq!(
             reporter.verify_session_quarantine_install(&prepared, &replayed_digest, &barrier,),
             Err(StreamingReliabilityError::StaleQuarantineTombstoneView)
