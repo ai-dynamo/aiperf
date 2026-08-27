@@ -71,10 +71,10 @@ impl Fixture {
         let dynamic_source = directory.path().join("dynamic-source");
         std::fs::create_dir_all(&static_source).expect("static source exists");
         std::fs::create_dir_all(&dynamic_source).expect("dynamic source exists");
-        let static_identity_bytes = b"static source identity\n";
-        let dynamic_identity_bytes = b"dynamic source identity\n";
-        let static_lock_bytes = b"static lock\n";
-        let dynamic_lock_bytes = b"dynamic lock\n";
+        let static_identity_bytes = b"shared complete source identity\n";
+        let dynamic_identity_bytes = b"shared complete source identity\n";
+        let static_lock_bytes = b"shared lock\n";
+        let dynamic_lock_bytes = b"shared lock\n";
         std::fs::write(static_source.join("source.identity"), static_identity_bytes)
             .expect("static source identity is written");
         std::fs::write(
@@ -315,6 +315,36 @@ fn source_identity_and_explicit_target_roots_are_validated_before_execution() {
         .expect("target symlink is created");
     let error = run_paired_build_v1(&fixture.plan()).expect_err("target indirection must fail");
     assert!(error.to_string().contains("target_root"));
+    assert!(!fixture.dynamic_target.exists());
+}
+
+#[test]
+fn both_members_require_one_source_and_lock_authority_before_execution() {
+    let fixture = Fixture::new();
+    let mut mismatched_source = fixture.plan();
+    let other_source_identity = b"other complete source identity\n";
+    std::fs::write(
+        fixture.dynamic_source.join("source.identity"),
+        other_source_identity,
+    )
+    .expect("different dynamic source identity is written");
+    mismatched_source.dynamic_member.source_identity_blake3 = digest(other_source_identity);
+    let error = run_paired_build_v1(&mismatched_source)
+        .expect_err("different complete source identities must fail closed");
+    assert!(error.to_string().contains("source identity"));
+    assert!(!fixture.static_target.exists());
+    assert!(!fixture.dynamic_target.exists());
+
+    let fixture = Fixture::new();
+    let mut mismatched_lock = fixture.plan();
+    let other_lock = b"other lock\n";
+    std::fs::write(fixture.dynamic_source.join("Cargo.lock"), other_lock)
+        .expect("different dynamic lock is written");
+    mismatched_lock.dynamic_member.cargo_lock_blake3 = digest(other_lock);
+    let error = run_paired_build_v1(&mismatched_lock)
+        .expect_err("different Cargo.lock identities must fail closed");
+    assert!(error.to_string().contains("Cargo.lock"));
+    assert!(!fixture.static_target.exists());
     assert!(!fixture.dynamic_target.exists());
 }
 

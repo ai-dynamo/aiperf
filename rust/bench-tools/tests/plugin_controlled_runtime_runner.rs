@@ -165,14 +165,14 @@ impl Fixture {
         for (source, identity, lock, artifact) in [
             (
                 &static_source,
-                b"static source identity\n".as_slice(),
-                b"static lock\n".as_slice(),
+                b"shared complete source identity\n".as_slice(),
+                b"shared lock\n".as_slice(),
                 static_artifact.as_slice(),
             ),
             (
                 &dynamic_source,
-                b"dynamic source identity\n".as_slice(),
-                b"dynamic lock\n".as_slice(),
+                b"shared complete source identity\n".as_slice(),
+                b"shared lock\n".as_slice(),
                 dynamic_artifact.as_slice(),
             ),
         ] {
@@ -206,15 +206,15 @@ impl Fixture {
             Variant::Static => (
                 &self.static_source,
                 &self.static_target,
-                b"static source identity\n".as_slice(),
-                b"static lock\n".as_slice(),
+                b"shared complete source identity\n".as_slice(),
+                b"shared lock\n".as_slice(),
                 self.static_artifact.as_slice(),
             ),
             Variant::Dynamic => (
                 &self.dynamic_source,
                 &self.dynamic_target,
-                b"dynamic source identity\n".as_slice(),
-                b"dynamic lock\n".as_slice(),
+                b"shared complete source identity\n".as_slice(),
+                b"shared lock\n".as_slice(),
                 self.dynamic_artifact.as_slice(),
             ),
         };
