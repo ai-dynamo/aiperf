@@ -108,13 +108,21 @@ impl RecordsShardPartition {
 /// Merges every cell's records into one accumulator for the final report.
 ///
 /// Each record carries the **global cumulative dispatch ordinal**
-/// ([`request_index`](RecordIngest::request_index)) the per-cell issuer stamped — the
+/// ([`global_dispatch_index`](RecordIngest::global_dispatch_index)) the per-cell issuer
+/// stamped — the
 /// exact absolute slot a single-cell run assigns (warmup block `[0, W)`, then
 /// profiling `[W, W+P)`), because the cell adds its phase's global base to its
 /// phase-local index. Records are re-ingested in ascending ordinal order, so both
 /// absolute-slot placement and ragged `append_order` match a single-cell run: the
 /// summary is byte-identical to the same records accumulated as one cell. Run-level
 /// scalars (network RTT, injected side-channel scalars) are applied by the caller.
+///
+/// The gate reads `global_dispatch_index` rather than `request_index` deliberately:
+/// `request_index` is the accumulator ROW, which a fold-and-drop shard keeps dense and
+/// store-local (`0..N_shard`), so validating it would let `W` shards each legitimately
+/// claim ordinal 0. The two coincide only on the retained-record path, where the store
+/// row IS the global slot. Validating the field the report treats as run-wide keeps
+/// this gate correct for both shapes.
 ///
 /// The union of every cell's global ordinals must be a permutation of `0..total`.
 /// This is validated before any record is placed, so a misframed or overlapping wire
@@ -134,7 +142,7 @@ pub fn merge_records_in_global_order(
     let total = records.len();
     let mut seen = vec![false; total];
     for record in &records {
-        match record.request_index {
+        match record.global_dispatch_index {
             Some(ordinal) if ordinal < total => {
                 if std::mem::replace(&mut seen[ordinal], true) {
                     return Err(RecordsMergeError::DuplicateOrdinal(ordinal));
@@ -148,7 +156,7 @@ pub fn merge_records_in_global_order(
     // Stable sort by the dense global dispatch ordinal so the re-ingested order —
     // and therefore every order-sensitive floating-point reduction — reproduces a
     // single-cell run exactly. Validated above as a permutation of 0..total.
-    records.sort_by_key(|record| record.request_index);
+    records.sort_by_key(|record| record.global_dispatch_index);
 
     let mut accumulator = MetricsAccumulator::with_config(config);
     for record in &records {
@@ -443,7 +451,10 @@ mod tests {
         let start = 1_000_000_000 + idx as i64 * 10_000_000;
         let end = start + 5_000_000 + idx as i64 * 100_000;
         let mut record = RecordIngest::minimal(start, end, Phase::Profiling);
+        // Retained-record shape: the store row IS the global slot, so the two
+        // ordinals coincide. `fold_shaped_record` covers the shape where they differ.
         record.request_index = Some(idx as usize);
+        record.global_dispatch_index = Some(idx as usize);
         record.first_token_ns = Some(start + 1_000_000);
         record.token_arrival_ns = vec![
             start + 1_000_000,
@@ -763,6 +774,52 @@ mod tests {
     }
 
     #[test]
+    /// A fold-and-drop shard keeps `request_index` dense and store-local, so two
+    /// shards both number their rows from 0 while carrying distinct run-wide
+    /// `global_dispatch_index` values. A merge gate reading `request_index` would
+    /// reject this as a duplicate; reading the run-wide ordinal accepts it and
+    /// orders it correctly.
+    #[test]
+    fn merge_accepts_fold_shaped_partitions_whose_store_rows_collide() {
+        let fold_shaped = |store_row: usize, global: usize| {
+            let mut r = record(global as u64);
+            r.request_index = Some(store_row);
+            r.global_dispatch_index = Some(global);
+            r
+        };
+        let merged = merge_records_in_global_order(
+            MetricsConfig::default(),
+            vec![
+                // Both shards start their store rows at 0 — legitimately.
+                RecordsShardPartition::new(0, vec![fold_shaped(0, 0), fold_shaped(1, 2)]),
+                RecordsShardPartition::new(1, vec![fold_shaped(0, 1), fold_shaped(1, 3)]),
+            ],
+        );
+        assert!(
+            merged.is_ok(),
+            "colliding store rows must not be read as duplicate global ordinals: {:?}",
+            merged.err()
+        );
+    }
+
+    /// The converse: a genuine duplicate run-wide ordinal is still rejected even
+    /// when the store rows are distinct, so widening the gate did not weaken it.
+    #[test]
+    fn merge_still_rejects_duplicate_global_ordinals_with_distinct_store_rows() {
+        let mut a = record(0);
+        a.request_index = Some(0);
+        a.global_dispatch_index = Some(0);
+        let mut b = record(1);
+        b.request_index = Some(1);
+        b.global_dispatch_index = Some(0);
+        let merged = merge_records_in_global_order(
+            MetricsConfig::default(),
+            vec![RecordsShardPartition::new(0, vec![a, b])],
+        );
+        assert_eq!(merged.unwrap_err(), RecordsMergeError::DuplicateOrdinal(0));
+    }
+
+    #[test]
     fn merge_rejects_ordinals_that_are_not_a_permutation() {
         let dup = merge_records_in_global_order(
             MetricsConfig::default(),
@@ -786,7 +843,7 @@ mod tests {
         );
 
         let mut indexless = record(0);
-        indexless.request_index = None;
+        indexless.global_dispatch_index = None;
         let missing = merge_records_in_global_order(
             MetricsConfig::default(),
             vec![RecordsShardPartition::new(0, vec![indexless])],
