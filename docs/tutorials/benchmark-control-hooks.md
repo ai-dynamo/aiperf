@@ -86,6 +86,7 @@ benchmark:
 | `--reset-kv-cache` | Enable reset with defaults |
 | `--reset-kv-cache-path` | `endpoint.reset_kv_cache.path` |
 | `--reset-kv-cache-timeout-seconds` | `endpoint.reset_kv_cache.timeout_seconds` |
+| `--reset-kv-cache-max-retry-seconds` | `endpoint.reset_kv_cache.max_retry_seconds` |
 | `--server-profiler` | Enable profiler with defaults |
 | `--server-profiler-start-path` | `endpoint.server_profiler.start_path` |
 | `--server-profiler-stop-path` | `endpoint.server_profiler.stop_path` |
