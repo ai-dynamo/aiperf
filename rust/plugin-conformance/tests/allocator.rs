@@ -19,6 +19,16 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
 
+// Cargo's build-script `cargo:rustc-link-lib` is suppressed by the
+// `links = "mimalloc"` deduplication system when forwarding to integration
+// test binaries; only `cargo:rustc-link-search` (the -L paths) reaches them.
+// The `#[link]` attribute below emits -lmimalloc directly through rustc,
+// bypassing Cargo's link-lib propagation path entirely.  The matching
+// search path is provided by the conformance build.rs.
+#[cfg(unix)]
+#[link(name = "mimalloc", kind = "static")]
+extern "C" {}
+
 // ── compile-time constants injected by build.rs ───────────────────────────
 
 /// Platform-specific cdylib filename (e.g. `libaiperf_alloc_v1.so`).
