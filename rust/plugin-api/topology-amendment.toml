@@ -10,7 +10,13 @@ test_support_dev_consumers = ["aiperf-export-sdk"]
 
 [[matrix]]
 state = "task3_reviewed"
-dependency_projection_blake3 = "blake3:17c6a2ec0a00be5bbb276381b37de6586b97ed74dc6b6ef624f51622d05f9d95"
+# Amended by Task 6 Phase 2A: `aiperf-transport-sdk` gained its implementation
+# dependencies (anyhow, async-trait, bytes, smallvec, tokio, tracing, uuid) when
+# the generic execution capsule landed. The capsule needs async channels, so the
+# tokio edge is load-bearing rather than incidental; `aiperf-core` already
+# carries the same edge for `Clock::drive`. Path dependencies are unchanged, so
+# `feature-ownership.toml` package_ownership rows are untouched.
+dependency_projection_blake3 = "blake3:c3a83b47f77587f7213b2fc529c6507919692975d8bcb17bb81fb4ad6c722f1b"
 test_support_dev_consumers = ["aiperf-export-sdk"]
 
 [task3_transition]
