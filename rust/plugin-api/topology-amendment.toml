@@ -10,7 +10,7 @@ test_support_dev_consumers = ["aiperf-export-sdk"]
 
 [[matrix]]
 state = "task3_reviewed"
-dependency_projection_blake3 = "blake3:a194e94568ae4e0dec27d957ee75e8a47f4e94f47e97ca8c9932e0902fdec6f5"
+dependency_projection_blake3 = "blake3:17c6a2ec0a00be5bbb276381b37de6586b97ed74dc6b6ef624f51622d05f9d95"
 test_support_dev_consumers = ["aiperf-export-sdk"]
 
 [task3_transition]
