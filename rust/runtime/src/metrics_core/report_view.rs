@@ -3,6 +3,14 @@
 
 //! Narrow read-only projection of a finalized report for exporters.
 
+use std::sync::Arc;
+
+/// Read-only accessors an exporter needs from a finalized report.
+pub trait ReportView {
+    /// Names of every profiling metric present, in stable report order.
+    fn metric_names(&self) -> Vec<Arc<str>>;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

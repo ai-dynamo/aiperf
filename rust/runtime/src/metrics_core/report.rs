@@ -21,6 +21,7 @@ use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt::{self, Display};
 use std::ops::Deref;
+use std::sync::Arc;
 
 /// Native report schema identifier.
 pub const NATIVE_REPORT_SCHEMA_VERSION: &str = "2.0";
@@ -1165,6 +1166,15 @@ impl NativeReport {
     ) -> Result<Self, ReportMetadataError> {
         self.run.finalize(run_metadata, facts)?;
         Ok(self)
+    }
+}
+
+impl crate::metrics_core::report_view::ReportView for NativeReport {
+    fn metric_names(&self) -> Vec<Arc<str>> {
+        self.metrics
+            .keys()
+            .map(|name| Arc::<str>::from(name.as_str()))
+            .collect()
     }
 }
 

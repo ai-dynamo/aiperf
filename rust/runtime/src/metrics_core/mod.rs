@@ -55,6 +55,7 @@ pub use report::{
     ReportServerMetricsPhaseRange, ReportStats, ReportSteadyState, ReportSummary, ReportTimeslice,
     ReportValue, Reporter, RunOutcome,
 };
+pub use report_view::ReportView;
 pub use sidecar::{SidecarMetric, SidecarSeries, SidecarStats, SidecarTimeslice};
 pub use steady_state::{
     DEFAULT_STEADY_STATE_FRACTION, SteadyStateConfig, SteadyStateOutcome, SteadyWindow,
