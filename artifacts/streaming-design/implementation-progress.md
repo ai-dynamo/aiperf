@@ -20,6 +20,7 @@ SPDX-License-Identifier: Apache-2.0
 | Pre-0 feature-off compile prerequisite | Complete | Task `1320e84a18`; merge `7d54838a7b`; two reviews approved; focused test 1/1 passed |
 | Pre-0b engine-only feature topology | Complete | Task `ceeccf9969`; merge `e8ffaf0cac`; two feature checks and 11 focused tests passed; two reviews approved |
 | Task 0 — feature/dependency freeze | Complete | Task `8e3d5b57b3`; merge `dc81d2987a`; lightweight and S3 inventory tests 1/1 each; two reviews approved |
+| Task 1A — identity and unit vocabulary | Complete | Task `283b6c872c`; merge `f8096d3041`; identity tests 10/10 and visibility doctest 1/1; two exact-head reviews approved |
 
 Baseline note: the full feature-off runtime suite reached execution after the
 repair and reported 1907 passing tests plus one pre-existing version-fixture
@@ -31,6 +32,12 @@ Task 0's default test-discovery check correctly skipped its
 pre-existing `runtime/examples/rps_bench.rs` header-type compile error. The
 S3-enabled focused test passed after clearing only the generated shared Cargo
 cache and disabling dev debug/incremental artifacts to fit available storage.
+
+Task 1A review hardened the durable boundary before merge: the transitional
+zero-charge fragment lease is crate-private, logical-ID conflicts retain both
+complete provenance receipts, and fixed golden vectors pin all six identity
+domains plus length framing. Stable IDs remain independent of worker, cell,
+route, discovery order, and global sequence.
 
 ## Implementation rulings
 
