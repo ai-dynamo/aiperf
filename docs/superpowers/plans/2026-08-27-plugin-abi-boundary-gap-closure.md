@@ -62,13 +62,77 @@ twice.
   **new** follow-up commit. Never `--amend`, never rebase, never reset.
 - Commit whole files (`git add <file> …`). Never hunk-level staging.
 - Base branch for diffs and PRs is `origin/main`; there is no local `main`.
+- **Stable Rust stays authoritative for the product workspace.** Do not add or
+  change `rust-toolchain.toml`, and do not switch the workspace to nightly.
+  rustdoc JSON is a nightly-only format, so the pinned nightly is invoked
+  *only* by the measurement tool and its CI job, as an explicit
+  `cargo +nightly-YYYY-MM-DD rustdoc …` in `abi_closure.rs`. A missing nightly
+  is a tool error, never a product build error.
+- **`cargo xtask` is not a Cargo subcommand until an alias defines it.** Task 1
+  adds `[alias] xtask = "run --package aiperf-xtask --"` to
+  `.cargo/config.toml` (repo root; cargo config discovery walks up from `rust/`,
+  so it applies there). Until that lands, every invocation is spelled
+  `cargo run -p aiperf-xtask -- <subcommand>`.
+- **Hot-path benchmarks run on paper-rig, never on a workstation.** Per the
+  execution tracker's *Authoritative A/B placement* row: "otherwise-idle
+  paper-rig with pinned affinity/topology and recorded noise controls; local
+  workstation forbidden." This binds Task 5.
+
+## Ownership and Sequencing
+
+This plan is owned end-to-end by **one** agent in **one** dedicated worktree. It
+is not a pool of independent tickets.
+
+- **Base:** `5d8ba0c3300921452a78703b0c89531bb605611a`
+  (`merge: integrate native plugin task 1`). Create a dedicated worktree from
+  that exact commit:
+
+  ```bash
+  cd /home/anthony/nvidia/projects/aiperf/ajc/rust
+  git worktree add -b ajc/plugin-abi-gap-closure \
+      .claude/worktrees/plugin-abi-gap-closure 5d8ba0c3300921452a78703b0c89531bb605611a
+  ```
+
+  Do **not** branch from a conflicted working checkout, from `main`, or from a
+  base inferred from a branch name — the tracker is explicit that "the tracker
+  must never infer a base from a branch name." Record this base commit in the
+  tracker before starting, per per-feature gate item 3.
+- **Exclusive ownership:** this agent owns the entire ABI gap-closure sequence.
+  The 40-task plan's Task 4 MUST NOT start until all six tasks here have landed.
+- **Order:**
+  - Task 1 (measurement) may start immediately.
+  - Tasks 2, 3, and 4 fan out in parallel **only after** Task 1's measurement is
+    validated as trustworthy (both checks in Task 1 Step 5). Fanning out against
+    an unvalidated tool produces three unfalsifiable "closure shrank" claims.
+  - Task 5, then Task 6, strictly sequential.
+- **Overlap with concurrently active work:** this plan touches `rust/Cargo.toml`
+  and `rust/Cargo.lock` (Task 1 adds a workspace member),
+  `rust/runtime/src/endpoints/` (Task 4), and `metrics_core/report*` (Tasks 3
+  and 4). Those are live integration surfaces. Do not merge blind — rebase on
+  the recorded integration HEAD and resolve deliberately.
 
 ## Baseline Numbers (measured 2026-08-27 at `110e00321a`)
 
-These are the numbers Task 1 must reproduce before any other task runs. If the
-tool disagrees with these, the tool is wrong — fix the tool, not the baseline.
+These numbers were measured at commit `110e00321a`. They calibrate the tool;
+they are **not** a target the current tree must reproduce.
 
-| Measure | Value |
+Task 1 validates in two steps, in this order:
+
+1. **Calibrate against history.** Run the tool at `110e00321a` (a detached
+   checkout or a `git worktree add` at that commit). It must reproduce the
+   table below. A mismatch here means the traversal rules are wrong — fix the
+   tool.
+2. **Measure the present.** Run the tool at the recorded integration HEAD and
+   commit *that* result as `abi-baseline.json`. The integration branch has moved
+   since `110e00321a`, so a different number there is expected and is data, not
+   a defect.
+
+Every later task's expected closure size is stated as a **delta** from the
+Step 2 measurement, not as an absolute. If a task's measured delta differs
+materially from the predicted one, that is a finding to record before
+proceeding — the leak edge may have changed shape.
+
+| Measure at `110e00321a` | Value |
 |---|---:|
 | ABI closure, `RunContext` narrowed | 193 types / 52 files |
 | ABI type-definition lines | 2,083 |
@@ -125,10 +189,23 @@ Nothing else in this plan can be verified without this. It also gives the
 - Create: `rust/xtask/abi-baseline.json`
 - Create: `rust/xtask/tests/closure_baseline.rs`
 - Modify: `rust/Cargo.toml` (add `"xtask"` to `members`)
+- Modify: `.cargo/config.toml` (repo root — add the `xtask` alias)
 - Create: `.github/workflows/rust-abi-closure.yml`
 
 **Interfaces:**
 - Consumes: nothing from earlier tasks.
+- Produces the `xtask` alias in `.cargo/config.toml`, which is what makes
+  `cargo xtask` a real subcommand rather than a convention:
+
+  ```toml
+  [alias]
+  xtask = "run --package aiperf-xtask --"
+  ```
+
+  Add it without disturbing the existing `[build]`, `[target.*]`, and
+  `[profile.test]` sections. Until it lands, spell every invocation
+  `cargo run -p aiperf-xtask -- <subcommand>`; both forms appear below and are
+  equivalent after this step.
 - Produces:
   - `cargo xtask abi-closure --seeds rust/xtask/abi-seeds.toml --json` printing
     `{"types": <usize>, "files": <usize>, "type_lines": <usize>,
@@ -314,27 +391,58 @@ pub fn compute(seeds: &Seeds) -> Result<Closure> {
 }
 ```
 
-Implement the supporting `rustdoc` module in the same crate: it shells out to
-`cargo +nightly rustdoc -p aiperf-runtime --lib -- -Z unstable-options
---output-format json`, deserializes `target/doc/aiperf_runtime.json`, and maps
-each item id to its `span` (file, `begin.0`, `end.0`) and its structural type
-references. Record the exact nightly toolchain in `rust-toolchain.toml` so the
-gate is reproducible — rustdoc JSON has no format stability guarantee.
+Implement the supporting `rustdoc` module in the same crate. It shells out to
+an **explicitly pinned nightly**, named inline so it never becomes a workspace
+default:
 
-- [ ] **Step 5: Run to verify the baseline reproduces**
-
-Run:
-```bash
-source .venv/bin/activate && cd rust
-cargo run -p aiperf-xtask -- abi-closure --seeds xtask/abi-seeds.toml --json | tee /tmp/abi.json
+```rust
+/// rustdoc JSON is nightly-only and format-unstable, so the toolchain is
+/// pinned here rather than in `rust-toolchain.toml`. The product workspace
+/// stays on stable; only this tool ever asks for nightly.
+const RUSTDOC_TOOLCHAIN: &str = "nightly-2026-08-01";
 ```
 
-Expected: `types` is `193` and `files` is `52`, matching the Baseline Numbers
-table. If it does not, the traversal rules are wrong — most likely it is
-following doc mentions (too many) or missing types behind `Box`/`Rc`/`Arc`/
-`Result`/`Option`/futures (too few). Both count as reachable per
-`design.md`: "including behind `Box`, `Rc`, `Arc`, `Result`, a future, a private
-field, or another container."
+```
+cargo +nightly-2026-08-01 rustdoc -p aiperf-runtime --lib -- \
+    -Z unstable-options --output-format json
+```
+
+It then deserializes `target/doc/aiperf_runtime.json` and maps each item id to
+its `span` (file, `begin.0`, `end.0`) and its structural type references. Do
+**not** add `rust-toolchain.toml`, and do not change any existing toolchain
+setting: a missing nightly must fail the measurement tool with an actionable
+message, never the product build.
+
+- [ ] **Step 5: Validate the tool in two steps**
+
+First calibrate against the commit the baseline table was measured at:
+
+```bash
+source .venv/bin/activate
+git worktree add /tmp/abi-calibrate 110e00321a
+cd /tmp/abi-calibrate/rust
+cargo run -p aiperf-xtask -- abi-closure --seeds xtask/abi-seeds.toml --json \
+  | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["types"], d["files"])'
+```
+
+Expected: `193 52`. A mismatch means the traversal rules are wrong — most
+likely following doc mentions (too many) or missing types behind
+`Box`/`Rc`/`Arc`/`Result`/`Option`/futures (too few). Both count as reachable
+per `design.md`: "including behind `Box`, `Rc`, `Arc`, `Result`, a future, a
+private field, or another container." Fix the tool until `110e00321a`
+reproduces, then remove the calibration worktree.
+
+Then measure the present tree and record it as the baseline:
+
+```bash
+source .venv/bin/activate && cd rust
+cargo run -p aiperf-xtask -- abi-closure --seeds xtask/abi-seeds.toml --json \
+  | tee /tmp/abi.json
+```
+
+Expected: a number that may differ from 193. Record it in the tracker alongside
+the integration HEAD it was measured at. This is the figure every later task's
+delta is measured against.
 
 - [ ] **Step 6: Commit the tool and the baseline**
 
@@ -368,16 +476,29 @@ first-parent history, diff `H^1..H`, and classify:
 Report both the file-granular and type-granular rate. The gap between them is
 the implementation-co-residency cost and is the number Task 6 drives down.
 
-- [ ] **Step 8: Verify the churn baseline reproduces**
+- [ ] **Step 8: Calibrate the churn replay, then record the present rate**
 
-Run:
+Calibrate against history first — `--since` pins the window so the replay is
+reproducible regardless of where HEAD has moved:
+
 ```bash
 source .venv/bin/activate && cd rust
-cargo run -p aiperf-xtask -- abi-churn --merges 120
+cargo xtask abi-churn --since 110e00321a --merges 120
 ```
 
 Expected: `code_units: 54`, file-granular `universe: 19` (35%), type-granular
-`universe: 13` (24%), `one_plugin: 1`.
+`universe: 13` (24%), `one_plugin: 1`. A mismatch means the per-commit span
+recomputation or the merge-unit classification is wrong — fix the tool.
+
+Then record the rate on the present tree, which is what Task 6 Step 5 compares
+against:
+
+```bash
+cargo xtask abi-churn --merges 120
+```
+
+Expected: numbers that may differ from the calibration window. Record them in
+the tracker with the integration HEAD.
 
 - [ ] **Step 9: Wire the CI gate and commit**
 
@@ -551,9 +672,13 @@ cargo run -p aiperf-xtask -- abi-closure --seeds xtask/abi-seeds.toml --json \
   | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["types"], d["files"])'
 ```
 
-Expected: `180` types (down from 193). If it still reports 193, some other edge
-still reaches `WorkerMaterializer` — find it with
-`cargo run -p aiperf-xtask -- abi-closure --why WorkerMaterializer`.
+Expected: **13 fewer types** than the Task 1 Step 2 baseline (at `110e00321a`
+that was 193 → 180; on a moved tree the absolute numbers differ but the delta
+should hold). If the count is unchanged, some other edge still reaches
+`WorkerMaterializer` — find it with
+`cargo xtask abi-closure --why WorkerMaterializer`. If the delta is materially
+larger or smaller than 13, record it before proceeding: the leak has changed
+shape since the audit.
 
 - [ ] **Step 6: Commit**
 
@@ -705,7 +830,11 @@ cargo run -p aiperf-xtask -- abi-closure --seeds xtask/abi-seeds.toml --json \
   | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["types"], d["files"])'
 ```
 
-Expected: `137` types when run after Task 2, or `150` when run standalone.
+Expected: **43 fewer types** than the closure measured immediately before this
+task. At `110e00321a` that was 180 → 137 when run after Task 2, or 193 → 150
+standalone. Record the actual delta; a materially different one means
+`NativeReport`'s reach has changed since the audit and is worth understanding
+before Task 4 amends the same trait.
 
 - [ ] **Step 6: Commit**
 
@@ -897,17 +1026,27 @@ call, not a new allocation.
   `pub trait WorkerSinkExec: WorkerSink + RequestExecutor {}` with a blanket
   impl. `ThreadPerCoreExecutor` loses its type parameter.
 
-- [ ] **Step 1: Record the pre-change benchmark**
+- [ ] **Step 1: Record the pre-change benchmark on paper-rig**
 
-Run:
+**Not on a workstation.** The tracker's *Authoritative A/B placement* row is
+explicit: "otherwise-idle paper-rig with pinned affinity/topology and recorded
+noise controls; local workstation forbidden." A local run cannot distinguish a
+real vtable cost from scheduler noise, and a noisy pass here is worse than no
+measurement — it launders a regression as "within variance."
+
+On paper-rig (`/work-pvc/paper-rig/aiperf-native-plugins-impl`), otherwise
+idle, with pinned affinity:
+
 ```bash
 source .venv/bin/activate && cd rust
-cargo bench -p aiperf-runtime --bench chat_dispatch_bench -- --save-baseline pre-erase
+CARGO_BUILD_JOBS=144 CARGO_INCREMENTAL=1 \
+  cargo bench -p aiperf-runtime --bench chat_dispatch_bench -- --save-baseline pre-erase
 ```
 
-Expected: a saved criterion baseline named `pre-erase`. Record the mean and the
-confidence interval in the commit message of Step 6. **Do not skip this** — after
-the refactor there is no way to reconstruct it without reverting.
+Expected: a saved criterion baseline named `pre-erase`. Record the mean, the
+confidence interval, and the recorded noise controls in the tracker. **Do not
+skip this** — after the refactor there is no way to reconstruct it without
+reverting.
 
 - [ ] **Step 2: Write the failing test**
 
@@ -996,22 +1135,25 @@ cargo test -p aiperf-runtime && cargo test -p aiperf-runtime --features engine
 Expected: PASS across HTTP, gRPC, WebSocket, dry-run, and every dispatch mode
 (`sharded`, `global`, `global-hop`, `global-push`).
 
-- [ ] **Step 6: Run the benchmark gate**
+- [ ] **Step 6: Run the benchmark gate on paper-rig**
 
-Run:
+Same host, same pinning, same noise controls as Step 1:
+
 ```bash
 source .venv/bin/activate && cd rust
-cargo bench -p aiperf-runtime --bench chat_dispatch_bench -- --baseline pre-erase
+CARGO_BUILD_JOBS=144 CARGO_INCREMENTAL=1 \
+  cargo bench -p aiperf-runtime --bench chat_dispatch_bench -- --baseline pre-erase
 ```
 
 Expected: criterion reports **no statistically significant regression**.
 
-**If it regresses:** stop. Do not commit a hot-path regression to satisfy a
-packaging goal. Record the measured delta and escalate the design question:
-either the transport boundary moves up a level (the executor stays
-monomorphized and only the *sink construction* crosses the boundary), or the
-performance goal in `design.md` is amended with the measured number. Both are
-legitimate; silently absorbing the regression is not.
+**Any statistically significant loss rejects this design.** Do not commit a
+hot-path regression to satisfy a packaging goal, and do not re-run until a pass
+appears. Record the measured delta and escalate the design question: either the
+transport boundary moves up a level (the executor stays monomorphized and only
+*sink construction* crosses the boundary), or the performance goal in
+`design.md` is amended with the measured number. Both are legitimate; silently
+absorbing the regression is not.
 
 - [ ] **Step 7: Commit**
 
@@ -1149,8 +1291,11 @@ cargo run -p aiperf-xtask -- abi-churn --merges 120
 
 Expected: budget test PASS, and `abi-churn` reporting file-granular and
 type-granular universe rates that have **converged** — the whole point of the
-split is that the two numbers stop differing. Target: 7–8 of 54 code units
-(13–15%), down from 19 (35%).
+split is that the two numbers stop differing. Compare against the rates
+recorded in Task 1 Step 8 on this same tree, not against the historical
+figures: at `110e00321a` the target was 7–8 of 54 code units (13–15%) down
+from 19 (35%), and the expected *shape* is roughly halving the universe-wide
+rate while the two granularities collapse together.
 
 - [ ] **Step 6: Commit and wire the gate**
 
@@ -1207,6 +1352,8 @@ stopped moving.
 |---|---|---|
 | Hot-path regression from sink erasure | 5 | `chat_dispatch_bench` baseline captured *before*; explicit stop-and-escalate |
 | Serialization drift from interning | 4 | Round-trip test over all 19 + 60 built-in names against exact prior strings |
-| rustdoc JSON format instability | 1 | Pin the nightly in `rust-toolchain.toml`; the gate is reproducible or it is not a gate |
+| rustdoc JSON format instability | 1 | Nightly pinned inline in `abi_closure.rs` (`RUSTDOC_TOOLCHAIN`), never in `rust-toolchain.toml`; the product workspace stays on stable |
+| Measuring a moved tree against a stale absolute | 1 | Two-step validation: calibrate at `110e00321a`, then baseline the integration HEAD; later tasks assert deltas |
+| Hot-path verdict from a noisy host | 5 | Both benchmark runs on otherwise-idle paper-rig with pinned affinity; workstation runs forbidden by the tracker |
 | Report snapshot drift from the view | 3 | Byte-identical snapshot assertion in Step 4 |
 | Four-file move obscuring a real change | 6 | One file per commit, explicit in Step 3 |

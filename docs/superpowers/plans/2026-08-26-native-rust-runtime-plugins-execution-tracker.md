@@ -29,7 +29,7 @@ runtime verification.
 | Local integration HEAD at tracker creation | `a2ce268c8e49e3b1b5334dfd88885562da46b096` | PASS |
 | Baseline hygiene commit | `d4159dc91a11c4afe643cd90ec92fc8974171321` | PASS |
 | Full implementation plan | `docs/superpowers/plans/2026-08-26-native-rust-runtime-plugins-implementation.md`; final hash-bound audits recorded below | PASS |
-| ABI boundary gap-closure plan | `docs/superpowers/plans/2026-08-27-plugin-abi-boundary-gap-closure.md`; six tasks closing measured leaks the full plan does not cover, sequenced before its Task 4 | PENDING |
+| ABI boundary gap-closure plan | `docs/superpowers/plans/2026-08-27-plugin-abi-boundary-gap-closure.md`; six tasks closing measured leaks the full plan does not cover; single-agent exclusive ownership in its own worktree; base `5d8ba0c3300921452a78703b0c89531bb605611a` (`merge: integrate native plugin task 1`); main-plan Task 4 blocked until all six land | PENDING |
 | Frozen parity inventory | `rust/benchmarks/plugin-parity.yaml` | PENDING |
 | SDD ledger | `.superpowers/sdd/2026-08-26-native-rust-runtime-plugins-implementation/progress.md`; plan preflight PASS, implementation execution remains active | ACTIVE |
 | Paper-rig checkout | `/work-pvc/paper-rig/aiperf-native-plugins-impl` | ACTIVE |
