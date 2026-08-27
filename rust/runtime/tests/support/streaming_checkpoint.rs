@@ -48,6 +48,11 @@ use aiperf_runtime::streaming::failure::{
 };
 
 pub fn cut_at(value: u64) -> CheckpointCut {
+    // Epoch-boundary tests pass `u64::MAX`, which no event time represents;
+    // saturating keeps those cuts constructible without changing any value a
+    // signed event time can hold.
+    let event_time = EventTimeUtc::new(i64::try_from(value).unwrap_or(i64::MAX))
+        .expect("non-negative test event time");
     CheckpointCut {
         discovered: DiscoveryHorizon::new(SourcePosition::new(value)),
         acquired: AcquisitionHorizon::new(SourcePosition::new(value)),
@@ -56,13 +61,11 @@ pub fn cut_at(value: u64) -> CheckpointCut {
         admitted: AdmissionHorizon::new(GlobalSequence::new(value)),
         terminal: TerminalActionHorizon::new(GlobalSequence::new(value)),
         event_watermark: EventTimeWatermark::Hard {
-            through: EventTimeUtc::new(value as i64).expect("non-negative test event time"),
+            through: event_time,
         },
         causal_frontier: SessionCausalFrontier {
             through_sequence: GlobalSequence::new(value),
-            event_time: Some(
-                EventTimeUtc::new(value as i64).expect("non-negative test event time"),
-            ),
+            event_time: Some(event_time),
             digest: ContentDigest::from_bytes([value as u8; 32]),
         },
         handled_issues: HandledIssueCut::empty(),
