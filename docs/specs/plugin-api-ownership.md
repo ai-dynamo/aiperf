@@ -17,8 +17,9 @@ allocates the storage it yields, who drops that storage, whether it is compiled
 
 The table is not prose. `aiperf_plugin_api::ownership::GENERATION_1_SURFACE` is
 the machine-readable copy, and the `check-plugin-api-ownership` binary fails
-when an item in that constant is absent from this file. A new boundary item
-therefore cannot land undocumented.
+when an item in that constant is absent from this file. Both artifacts are
+hand-maintained; see [The documentation guard](#the-documentation-guard) for
+what that comparison does and does not catch.
 
 ## Built
 
@@ -148,16 +149,27 @@ not, and `2` when this file cannot be read. The
 `rust/plugin-api/tests/ownership_table.rs` enforces the same property inside
 `cargo test`, so the guard holds locally as well as in CI.
 
+Both sides of that comparison are hand-maintained: the `GENERATION_1_SURFACE`
+constant and the table above. The guard reads no Rust source and consumes no
+rustdoc output, so it catches exactly one failure — a constant row that was
+never written into this file. It does not catch a boundary item added to
+`extension.rs` or `descriptor.rs` and never entered into the constant, and it
+does not compare the argument, return, ownership, or phase columns against
+anything. The source-derived direction is Task 6 work; see the amendment in
+`docs/superpowers/plans/2026-08-26-native-rust-runtime-plugins-implementation.md`.
+Until it lands, adding a row to the constant is the reviewed step that makes a
+new boundary item visible here.
+
 ## Future requirements
 
 - Generation 2 adds the endpoint, transport, and exporter registration methods
   to `PluginRegistrar`, each with its own row. Those rows are the first that can
   carry a hot-path classification, because a registered factory produces objects
   the request path calls.
-- The guard's current check is presence: every constant row is named here. The
-  planned extension compares rustdoc-exported JSON signatures against a TOML
-  ownership table so an argument or return-type change is caught as type drift,
-  not only an addition or removal.
+- Task 6 adds the source-derived direction of the guard: rustdoc-exported JSON
+  for `aiperf-plugin-api` is compared against the ownership table, so a public
+  boundary item missing from `GENERATION_1_SURFACE` and an argument or
+  return-type change both fail, not only a constant row missing from this file.
 - `PluginPackageDescriptor` carries `id`, `version`, and `description` in this
   generation. The manifest-repeated `api_version`, `host_abi_universe_id`, and
   `plugin_artifact_build_id` fields the loader re-compares after the entry call

@@ -11,8 +11,10 @@
 //!
 //! The table is the machine-readable half of
 //! `docs/specs/plugin-api-ownership.md`. The `check-plugin-api-ownership`
-//! binary compares the two and fails when a row is missing from the spec, so a
-//! new boundary item cannot land undocumented.
+//! binary compares the two hand-maintained artifacts and fails when a row here
+//! is missing from the spec. It reads no Rust source, so entering a new
+//! boundary item into this constant is the reviewed step that makes the item
+//! visible to the guard at all; the source-derived direction is Task 6.
 
 /// The precondition that makes every `alloc owner = plugin` /
 /// `drop owner = host` row in [`GENERATION_1_SURFACE`] sound.

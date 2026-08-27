@@ -1023,6 +1023,19 @@ runtime default/engine tests on paper-rig, commit as
 
 ### Task 5: Define the source API, descriptors, ownership table, and rustdoc guard
 
+**Amendment (Task-5 round-1 Graham review, finding I1): the rustdoc-JSON
+comparison is deferred to Task 6.** As originally written, Steps 1 and 3 below
+required the guard to read rustdoc-exported JSON and fail on source additions,
+removals, or type drift. The machinery that does this — `RustdocIndex` in
+`rust/xtask/src/abi_closure.rs` — is seeded from `aiperf-runtime` for the Task-6
+ABI closure, and pointing it at `aiperf-plugin-api` is Task-6 work rather than a
+Task-5 side effect. The Task-5 deliverable is therefore downgraded in writing:
+the guard verifies the hand-maintained `GENERATION_1_SURFACE` constant against
+the hand-maintained ownership table in `docs/specs/plugin-api-ownership.md` and
+reads no Rust source at all. It catches a constant row that was never
+documented; it does not catch a boundary item added to `extension.rs` and never
+entered into the constant. Task 6 owns closing that direction.
+
 **Files:**
 - Modify: `rust/plugin-api/src/lib.rs`
 - Create: `rust/plugin-api/src/id.rs`
@@ -1059,8 +1072,11 @@ pub trait AIPerfExtension {
 Test normalization version 1 exactly: reject non-ASCII; trim ASCII space/tab;
 lowercase ASCII; replace each `-` with `_`; require
 `^[a-z0-9][a-z0-9_]{0,127}$`; reject empty, other bytes, consecutive authored
-separators, redundant aliases, and unsupported versions. The rustdoc guard must
-fail when a boundary method/type is absent from the ownership table.
+separators, redundant aliases, and unsupported versions. The ownership guard
+must fail when a row of the `GENERATION_1_SURFACE` constant is absent from the
+ownership table. Per the amendment above, the source-derived direction — failing
+when a boundary method/type present in the crate's source is absent from the
+table — is Task 6.
 
 - [ ] **Step 2: Verify RED**
 
@@ -1073,8 +1089,9 @@ Expected: FAIL because the API modules and ownership table do not exist.
 Define only generation-1 endpoint/transport/exporter registration methods.
 Each ownership-table row records method, owning crate, argument/return type,
 allocation owner, drop owner, `panic=abort`, and startup/hot-path classification.
-The rustdoc checker compares exported JSON signatures and fails on additions,
-removals, or type drift.
+Per the amendment above, the checker that compares rustdoc-exported JSON
+signatures and fails on additions, removals, or type drift is Task 6; Task 5
+ships only the constant-versus-table presence check.
 
 - [ ] **Step 4: Verify GREEN**
 
@@ -1181,6 +1198,14 @@ misleading names, and orchestration leakage; commit as
 - Create: `rust/core/tests/histogram_contract.rs`
 
 **Interfaces:**
+- Inherited from the Task-5 amendment (round-1 Graham review, finding I1): this
+  task owns the source-derived direction of the plugin-API ownership guard. It
+  points `RustdocIndex` (`rust/xtask/src/abi_closure.rs`) at
+  `aiperf-plugin-api`, fails when a public boundary item in the crate's rustdoc
+  JSON is absent from `GENERATION_1_SURFACE`, and compares argument and return
+  signatures so a rename or type change is caught as drift rather than agreeing
+  with a stale constant. Task 5 shipped only the constant-versus-spec presence
+  check.
 - `aiperf-plugin-api` solely owns the generation-1 endpoint, transport, and
   exporter boundary traits and vocabulary: `EndpointFactory`,
   `TransportFactory`, `ExporterFactory`, the native `Endpoint` compatibility

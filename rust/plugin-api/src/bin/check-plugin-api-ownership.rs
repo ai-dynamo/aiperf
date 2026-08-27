@@ -5,9 +5,16 @@
 //!
 //! Prints the generation-1 ownership table and verifies that every row in
 //! `aiperf_plugin_api::GENERATION_1_SURFACE` also appears in
-//! `docs/specs/plugin-api-ownership.md`. Adding a boundary item without
-//! documenting its ownership facts therefore fails this check rather than
+//! `docs/specs/plugin-api-ownership.md`. A boundary item entered into the
+//! constant without its ownership facts therefore fails this check rather than
 //! landing silently.
+//!
+//! Both sides of the comparison are hand-maintained. This guard reads no Rust
+//! source and consumes no rustdoc output, so it does not detect an item added
+//! to the crate's source and never entered into the constant, and it does not
+//! compare the argument, return, ownership, or phase columns against anything.
+//! The source-derived direction is Task 6 work; see the Task-5 amendment in
+//! `docs/superpowers/plans/2026-08-26-native-rust-runtime-plugins-implementation.md`.
 //!
 //! Exit codes: `0` when the table and the spec agree, `1` when a row is missing
 //! from the spec, `2` when the spec could not be read.
