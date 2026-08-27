@@ -20,7 +20,6 @@ mod extraction;
 mod implementation;
 mod kserve;
 mod metadata;
-#[cfg(test)]
 mod type_id;
 mod models;
 mod registry;
@@ -51,6 +50,7 @@ pub use kserve::{
     KServeV2RankingsFactory, KServeV2VlmFactory,
 };
 pub use metadata::{EndpointDescriptor, EndpointType, Modality};
+pub use type_id::{EndpointTypeId, EndpointTypeRegistry};
 pub use models::{
     AudioResponseData, CreditPhase, EndpointError, EndpointResult, ExtractedPayload, ImageDataItem,
     ImageResponseData, Media, ModelEndpoint, ParsedResponse, RequestInfo, RequestRecord,

@@ -17,8 +17,7 @@ pub mod report_view;
 pub mod sidecar;
 pub mod steady_state;
 pub mod store;
-#[cfg(test)]
-mod tag_id;
+pub mod tag_id;
 pub mod sweepline;
 pub mod units;
 pub mod value;
@@ -39,6 +38,7 @@ pub use catalog::{
     AggregationKind, CATALOG, MetricConsoleGroup, MetricFlags, MetricSpec, MetricTag, MetricType,
     PlotMetricDirection, RecordMetricColumn, record_metric_columns, validate_catalog,
 };
+pub use tag_id::{MetricTagId, MetricTagRegistry};
 pub use counter::{CounterDelta, boundary_counter_delta};
 pub use derived::{delta_ms, network_adjusted_ms};
 pub use ingest::{

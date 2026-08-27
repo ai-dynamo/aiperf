@@ -1178,7 +1178,7 @@ impl crate::metrics_core::report_view::ReportView for NativeReport {
         &self.summary
     }
 
-    fn metric(&self, tag: MetricTag) -> Option<&MetricEntry> {
+    fn metric(&self, tag: crate::metrics_core::MetricTagId) -> Option<&MetricEntry> {
         self.metrics.get(tag.as_str())
     }
 
