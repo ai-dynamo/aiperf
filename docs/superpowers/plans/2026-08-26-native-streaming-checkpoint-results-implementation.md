@@ -17,7 +17,7 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Global Constraints
 
-- Task 5A prerequisites are foundation Tasks 0 and 1A-1B. Foundation Task 1C then implements its blocking owner against the participant contract; Task 5B follows 1C, and foundation Task 1D consumes the complete checkpoint contracts. Later tasks declare additional dependencies explicitly.
+- Task 5A prerequisites are foundation Tasks 0 and 1A-1B. The mandatory serial order is `5A -> 1C -> 5A-R -> 5B -> 1D`: Task 5A-R retrofits logical-run authority across the landed checkpoint and blocking-participant APIs before either backend or remaining object-safe contracts proceed. Later tasks declare additional dependencies explicitly.
 - Cargo commands run from the nested `rust/` workspace; git commands run from the repository root. Every targeted test-suite invocation uses `CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target`.
 - Each task includes the nearest parent module declaration required for its own GREEN build. The integration owner resolves overlapping declaration edits during the required `--no-ff` merge.
 - Checkpoint and result library APIs use explicit `CheckpointError`/`ResultPlaneError`, never `anyhow`.
@@ -75,12 +75,11 @@ mod support;
 ## Dependency and Parallelization Graph
 
 ```text
-5A typed cuts
- `-> 5B backend + memory
-      |-> 5C local durability -----> 5D leases/GC --.
-      |-> 6A result index --------------------------+-> 6B epochs/holes/partial
-      `-> 5E coordinator/post-CAS ------------------'          |
-                                                               `-> 6C1 final/aborted -> 6C2 delivery matrix -> 6D report order
+5A typed cuts -> 1C blocking owner -> 5A-R run authority -> 5B backend/memory -> 1D contracts
+                                                           |-> 5C local durability -> 5D leases/GC --.
+                                                           |-> 6A result index ---------------------+-> 6B epochs/holes/partial
+                                                           `-> 5E coordinator/post-CAS -------------'          |
+                                                                                                                   `-> 6C1 final/aborted -> 6C2 delivery matrix -> 6D report order
 
 2 + 5C -> 5F1 local/none factories
 5B + 5E + 5F1 + A0 -> 5F2 object CAS
@@ -96,7 +95,7 @@ After 5B merges, two worktrees may run concurrently: one owns 5C; the other owns
 **Depends on:** foundation Tasks 0 and 1A-1B.
 
 **Files:**
-- Create: `rust/runtime/src/streaming/checkpoint.rs`; Task 5A owns the participant declaration consumed by foundation Task 1D.
+- Create: `rust/runtime/src/streaming/checkpoint.rs`; Task 5A owns typed cuts, canonical generation authority, and the participant declaration consumed first by foundation Task 1C. Task 5A-R later adds logical-run binding before Task 5B or 1D.
 - Modify: `rust/runtime/src/streaming.rs`
 - Create: `rust/runtime/tests/support/streaming_checkpoint.rs`
 - Create: `rust/runtime/tests/streaming_checkpoint_participants.rs`
@@ -250,6 +249,10 @@ impl CommittedCheckpointGeneration {
     pub fn generation(&self) -> CheckpointGeneration { self.0.generation() }
 }
 
+impl CommittedParticipantReceipt {
+    pub const fn generation(&self) -> &CheckpointGeneration { &self.generation }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CheckpointError {
     AlreadyInitialized,
@@ -276,14 +279,15 @@ canonicalizes descriptors and hashes epoch, predecessor, cut, participant-plan
 digest and exact IDs, execution-plan digest, result-plan digest, result-index
 root, and terminal state. It is serializable/deserializable and self-verifying,
 but it exposes no participant/result state and cannot mint a commit receipt.
-`verify_against` additionally requires the exact frozen participant inventory
-and both semantic plan digests. `CommittedCheckpointGeneration` is an opaque,
+`verify_against` additionally requires the frozen participant inventory and
+both semantic plan digests. `CommittedCheckpointGeneration` is an opaque,
 serialize-only authoritative wrapper with no public constructor or
 `Deserialize`; Task 5B promotes a candidate only with an opaque move-only proof
 created after successful CAS or a leased current-root read. Candidate
 deserialization is a custom private-wire-DTO implementation that performs
 self-verification; unchecked derived `Deserialize` is forbidden. Only that wrapper
-can construct `CommittedParticipantReceipt`.
+can construct `CommittedParticipantReceipt`. Task 5A-R adds the run field to
+these already-checked authority types after the Task 1C participant exists.
 
 All invariant-bearing state fields are private and checked-construction-only.
 `BudgetedCheckpointBytes::new` compact-copies the visible input into exact-sized
@@ -364,9 +368,334 @@ git add rust/runtime/src/streaming.rs rust/runtime/src/streaming/checkpoint.rs r
 git commit -m "feat(runtime): define streaming checkpoint cuts"
 ```
 
+### Task 5A-R: Logical-Run Authority Retrofit
+
+**Depends on:** landed Tasks 5A and foundation 1C. This task is mandatory and
+serial: `5A -> 1C -> 5A-R -> 5B -> 1D`. It resolves the cross-run authority gap
+introduced only after the frozen Task 1C contract was implemented.
+
+**Files:**
+- Modify: `rust/runtime/src/streaming/checkpoint.rs`
+- Modify: `rust/runtime/src/streaming/blocking.rs`
+- Extend: `rust/runtime/tests/support/streaming_checkpoint.rs`
+- Extend: `rust/runtime/tests/streaming_checkpoint_participants.rs`
+- Update all five existing external `CheckpointGenerationCandidate::verify_against`
+  calls in `rust/runtime/tests/streaming_checkpoint_participants.rs` to pass the
+  expected run; update the internal call in
+  `CheckpointGenerationCandidate::promote` in `checkpoint.rs` as part of the
+  same signature change, along with the existing `checkpoint.rs` unit callers
+  of `promote`.
+- Extend: `rust/runtime/tests/streaming_blocking.rs`
+- Unit tests: `#[cfg(test)]` in `rust/runtime/src/streaming/checkpoint.rs` owns
+  crate-private publication-proof/promotion and authoritative counting-participant
+  receipt cases.
+- Unit tests: `#[cfg(test)]` in `rust/runtime/src/streaming/blocking.rs` owns the
+  authoritative blocking-participant receipt case.
+
+**Produces:** a checked stable run identity around `LogicalReplayRunId`,
+run-bound barriers/state/generations/receipts, and participant-side refusal
+before any mutation.
+
+```rust
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct StreamRunIdentity(LogicalReplayRunId);
+
+impl StreamRunIdentity {
+    pub const fn new(logical_replay_run: LogicalReplayRunId) -> Self {
+        Self(logical_replay_run)
+    }
+    pub const fn logical_replay_run(&self) -> &LogicalReplayRunId {
+        &self.0
+    }
+}
+
+pub struct CheckpointBarrier {
+    pub run: StreamRunIdentity,
+    pub epoch: CheckpointEpoch,
+    pub cut: CheckpointCut,
+    pub plan_digest: ContentDigest,
+}
+
+impl PreparedParticipantState {
+    pub fn new(
+        run: StreamRunIdentity,
+        participant_id: CheckpointParticipantId,
+        schema_id: impl Into<String>,
+        schema_version: u32,
+        represented_cut: CheckpointCut,
+        item_count: u64,
+        payload: BudgetedCheckpointBytes,
+    ) -> Result<Self, CheckpointError>;
+    pub const fn run(&self) -> &StreamRunIdentity;
+    pub fn into_parts(
+        self,
+    ) -> (
+        StreamRunIdentity,
+        ParticipantStateDescriptor,
+        BudgetedCheckpointBytes,
+    );
+}
+
+impl CommittedParticipantState {
+    pub fn new(
+        run: StreamRunIdentity,
+        descriptor: ParticipantStateDescriptor,
+        payload: BudgetedCheckpointBytes,
+    ) -> Result<Self, CheckpointError>;
+    pub const fn run(&self) -> &StreamRunIdentity;
+}
+
+impl CheckpointGenerationCandidate {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        run: StreamRunIdentity,
+        epoch: CheckpointEpoch,
+        previous: Option<ContentDigest>,
+        cut: CheckpointCut,
+        participant_plan: &CheckpointParticipantPlan,
+        execution_plan_digest: ContentDigest,
+        result_plan_digest: ContentDigest,
+        participant_descriptors: Vec<ParticipantStateDescriptor>,
+        result_index_root: ContentDigest,
+        is_final: bool,
+        terminal_reason: Option<CheckpointTerminalReason>,
+    ) -> Result<Self, CheckpointError>;
+    pub const fn run(&self) -> &StreamRunIdentity;
+    pub fn verify_against(
+        &self,
+        expected_run: &StreamRunIdentity,
+        participant_plan: &CheckpointParticipantPlan,
+        execution_plan_digest: &ContentDigest,
+        result_plan_digest: &ContentDigest,
+    ) -> Result<(), CheckpointError>;
+    pub(crate) fn promote(
+        self,
+        expected_run: &StreamRunIdentity,
+        participant_plan: &CheckpointParticipantPlan,
+        execution_plan_digest: &ContentDigest,
+        result_plan_digest: &ContentDigest,
+        proof: CheckpointGenerationPublicationProof,
+    ) -> Result<CommittedCheckpointGeneration, CheckpointError>;
+}
+
+impl CommittedCheckpointGeneration {
+    pub const fn run(&self) -> &StreamRunIdentity;
+}
+
+impl CommittedParticipantReceipt {
+    pub const fn run(&self) -> &StreamRunIdentity;
+}
+```
+
+`ParticipantStateDescriptor` deliberately remains run-free: its public strict
+DTO shape and digest semantics do not change, so byte-identical participant
+state in two runs has the same descriptor digest. `PreparedParticipantState`
+and `CommittedParticipantState` instead carry private run identity around that
+descriptor and payload. Their constructors reject wrapper/context disagreement,
+and their borrow accessors cannot detach run from payload authority.
+`PreparedParticipantState::into_parts` consumes the wrapper and returns run,
+descriptor, and still-budgeted bytes together, so Task 5B staging cannot erase
+the run while moving the payload. Canonical candidate
+construction takes the run, stores it privately, and includes it as its own
+length-framed field in the domain-separated generation digest. The canonical
+hash domain is bumped from v2 to exactly
+`aiperf.streaming.committed-checkpoint-generation.v3`; immediately after the
+length-framed domain, hash one distinct length-framed field containing the raw
+`candidate.run.logical_replay_run().as_bytes()`, then the existing epoch,
+predecessor, cut, plan, descriptor, result-root, and terminal fields in their
+existing order. Do not hash the wrapper's Serde encoding or mix run bytes into
+another field. Custom candidate
+deserialization verifies the serialized run along with the digest. Promotion
+proofs bind the exact run-bound generation. The private run propagates unchanged
+through `CommittedCheckpointGeneration` and `CommittedParticipantReceipt`, with
+borrow-only accessors.
+
+`verify_against` compares `self.run()` with `expected_run` first, before
+self-hash, participant inventory, or semantic-plan checks. A mismatch returns
+`CheckpointError::ObjectVerification`. `promote` also requires an explicit
+`expected_run`, passes it into `verify_against`, and only then compares the
+opaque publication proof with the verified generation. A self-consistent
+foreign-run candidate plus its own matching proof therefore cannot be promoted
+under the caller's expected run.
+
+Every participant stores the exact initialized/frozen run. It rejects a foreign
+barrier before fencing admission, acquiring state budget, or changing any
+prepared/committed field. It rejects a foreign receipt before epoch/digest
+idempotency checks or state release. The Task 1C blocking owner follows the same
+ordering, so foreign input cannot change `is_accepting`, completed horizon,
+prepared descriptor, committed receipt, or any budget snapshot.
+
+`StreamRunIdentity` accepts only `LogicalReplayRunId`; it never contains,
+derives from, or accepts `RunIncarnationId`. Task 5C remains the sole owner of
+incarnation allocation while acquiring durable writer authority.
+
+- [ ] **Step 1: Write representative RED tests**
+
+```rust
+#[test]
+fn identical_generation_content_in_distinct_runs_has_distinct_digest() {
+    let first = support::candidate_for_run(support::run_id(1), 7);
+    let second = support::candidate_for_run(support::run_id(2), 7);
+    assert_ne!(first.generation().digest(), second.generation().digest());
+}
+
+#[test]
+fn serialized_candidate_rejects_tampered_run() {
+    let first = support::candidate_for_run(support::run_id(1), 7);
+    let tampered = support::replace_serialized_run(&first, support::run_id(2));
+    assert!(serde_json::from_slice::<CheckpointGenerationCandidate>(&tampered).is_err());
+}
+
+/// ```compile_fail
+/// # use aiperf_runtime::streaming::{checkpoint::StreamRunIdentity, identity::RunIncarnationId};
+/// let _ = StreamRunIdentity::new(RunIncarnationId::from_bytes([1; 32]));
+/// ```
+
+#[tokio::test(flavor = "current_thread")]
+async fn foreign_barrier_is_rejected_before_blocking_owner_fences() {
+    let mut owner = support::blocking_owner_for_run(1);
+    let before = owner.snapshot();
+    assert!(matches!(
+        owner.checkpoint_view(&support::barrier_for_run(2, 7)).await,
+        Err(CheckpointError::ObjectVerification)
+    ));
+    assert_eq!(owner.snapshot(), before);
+    assert!(owner.snapshot().is_accepting);
+}
+```
+
+Keep crate-private authority construction out of integration support. Add these
+RED cases inside the production modules' existing `#[cfg(test)]` modules, where
+the private proof and participant internals are legitimately visible:
+
+```rust
+// rust/runtime/src/streaming/checkpoint.rs
+#[test]
+fn v3_run_bound_generation_digest_is_stable() {
+    // Fixed fixture: run=[0x01;32], epoch=7, no predecessor, participant
+    // "session"/"test.v1", cut=7 with unknown event watermark, descriptor
+    // content=[0x44;32], item_count=1, byte_length=4, execution=[0x11;32],
+    // result plan=[0x12;32], result root=[0x55;32], non-final.
+    let candidate = v3_golden_candidate();
+    assert_eq!(
+        candidate.generation().digest(),
+        &ContentDigest::from_bytes([
+            0x51, 0x9b, 0xf1, 0x92, 0x51, 0x8f, 0x43, 0xe9,
+            0xd4, 0xac, 0xcd, 0x6b, 0xd8, 0xed, 0x38, 0xe8,
+            0x85, 0xa1, 0xdc, 0xe0, 0x6d, 0x8d, 0x35, 0x57,
+            0x9b, 0xf5, 0xf9, 0x9b, 0x79, 0x4d, 0x10, 0xf1,
+        ]),
+    );
+}
+
+#[test]
+fn cross_run_publication_proof_cannot_promote_candidate() {
+    let (first, _, _, _) = candidate_fixture_for_run(run_id(1), 7);
+    let (second, plan, execution_plan, result_plan) =
+        candidate_fixture_for_run(run_id(2), 7);
+    let wrong_generation_proof =
+        CheckpointGenerationPublicationProof::for_generation(first.generation());
+    assert!(second.clone()
+        .promote(
+            &run_id(2),
+            &plan,
+            &execution_plan,
+            &result_plan,
+            wrong_generation_proof,
+        )
+        .is_err());
+
+    let matching_foreign_proof =
+        CheckpointGenerationPublicationProof::for_generation(second.generation());
+    assert!(second
+        .promote(
+            &run_id(1),
+            &plan,
+            &execution_plan,
+            &result_plan,
+            matching_foreign_proof,
+        )
+        .is_err());
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn greater_epoch_foreign_receipt_does_not_mutate_counting_participant() {
+    let mut counting = counting_participant_for_run(1);
+    let (local, foreign) = authoritative_receipts_with_identical_descriptor(
+        (run_id(1), 1),
+        (run_id(2), 99),
+    );
+    assert_eq!(local.descriptor_digest(), foreign.descriptor_digest());
+    let counting_before = counting.snapshot();
+    assert!(counting.checkpoint_committed(&foreign).await.is_err());
+    assert_eq!(counting.snapshot(), counting_before);
+}
+
+// rust/runtime/src/streaming/blocking.rs
+#[tokio::test(flavor = "current_thread")]
+async fn greater_epoch_foreign_receipt_does_not_mutate_blocking_owner() {
+    let mut blocking = blocking_owner_for_run(1);
+    let (local, foreign) = authoritative_receipts_with_identical_descriptor(
+        (run_id(1), 1),
+        (run_id(2), 99),
+    );
+    assert_eq!(local.descriptor_digest(), foreign.descriptor_digest());
+    let blocking_before = blocking.snapshot();
+    assert!(blocking.checkpoint_committed(&foreign).await.is_err());
+    assert_eq!(blocking.snapshot(), blocking_before);
+}
+```
+
+- [ ] **Step 2: Verify RED**
+
+```bash
+CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime --features streaming --test streaming_checkpoint_participants --test streaming_blocking
+CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime --features streaming --lib
+```
+
+Expected: run-bound constructors/accessors are absent and the cross-run tests do
+not compile or fail behaviorally against landed 5A+1C. The integration suite
+uses only public digest/deserialization/barrier APIs; the full library run owns
+private proof/promotion and authoritative receipt construction.
+
+- [ ] **Step 3: Implement the minimal run-bound retrofit**
+
+Add run-bound checked constructors and private fields to participant state,
+barrier, canonical candidate, committed generation, and committed receipt. Do
+not add run to `ParticipantStateDescriptor`; preserve its strict public DTO and
+digest. Make prepared-state consumption transfer the run, descriptor, and
+budgeted payload as one tuple.
+Update the five external `verify_against` calls and the internal `promote`
+verification call to pass an explicit expected run. Update canonical
+hashing/deserialization/proof verification and pin the v3 digest. Initialize the
+counting and blocking participants with one immutable run and perform run checks
+before every fencing or notification mutation. Do not add backend behavior,
+incarnation identity, or writer leasing.
+
+- [ ] **Step 4: Verify GREEN**
+
+Run Step 2, including the complete streaming-feature library suite, then run:
+
+```bash
+CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime --features streaming --doc
+```
+
+Expected:
+the fixed v3 digest, digest separation, tamper/proof refusal, incarnation type exclusion, foreign
+barrier no-op, and greater-epoch foreign receipt no-op pass for both participant
+fixtures without regressing Task 1C cancellation/checkpoint tests.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add rust/runtime/src/streaming/checkpoint.rs rust/runtime/src/streaming/blocking.rs rust/runtime/tests/support/streaming_checkpoint.rs rust/runtime/tests/streaming_checkpoint_participants.rs rust/runtime/tests/streaming_blocking.rs
+git commit -m "fix(runtime): bind checkpoint participants to logical runs"
+```
+
 ### Task 5B: Atomic Backend Contract and In-Memory Reference
 
-**Depends on:** Task 5A and foundation Task 1C.
+**Depends on:** Task 5A-R. Foundation Task 1D starts only after this task lands.
 
 **Files:**
 - Create: `rust/runtime/src/streaming/checkpoint_backend.rs`
@@ -374,6 +703,7 @@ git commit -m "feat(runtime): define streaming checkpoint cuts"
 - Create: `rust/runtime/src/streaming/checkpoints/memory.rs`
 - Create: `rust/runtime/src/streaming/results.rs`
 - Modify: `rust/runtime/src/streaming.rs`
+- Extend: `rust/runtime/tests/support/streaming_checkpoint.rs`; Task 5B owns run-scoped backend fixtures while preserving the Task 5A-R participant fixtures.
 - Create: `rust/runtime/tests/streaming_checkpoint_backend.rs`
 
 **Produces these exact interfaces:**
@@ -388,6 +718,7 @@ pub trait StreamingCheckpointBackend {
     ) -> Result<Option<Box<dyn LeasedGenerationReader>>, CheckpointError>;
     async fn begin_generation(
         &self,
+        run: StreamRunIdentity,
         expected: Option<CheckpointGeneration>,
         expectations: CheckpointGenerationExpectations,
     ) -> Result<Box<dyn StreamingGenerationTransaction>, CheckpointError>;
@@ -520,20 +851,68 @@ pub struct CheckpointCommitMetadata {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CheckpointGenerationExpectations {
+    pub run: StreamRunIdentity,
     pub participant_plan: CheckpointParticipantPlan,
     pub execution_plan_digest: ContentDigest,
     pub result_plan_digest: ContentDigest,
 }
 ```
 
-`begin_generation` freezes these expectations into the transaction before any
-staging. `commit` requires metadata's explicitly named semantic digests to
-match, builds the canonical candidate, performs the backend's conditional
-publication, and only then creates the opaque exact-generation proof used for
-promotion. `open_latest` acquires the current-root lease, decodes a candidate,
-calls `verify_against` with the supplied expectations, and only then exposes an
-authoritative reader. No participant or result bytes are readable before this
-promotion boundary.
+`begin_generation` first requires its explicit `run` to equal
+`expectations.run`, then freezes both into the transaction before any staging.
+Every staged `ResultSegmentDescriptor.run` must equal that transaction run.
+`commit` requires metadata's explicitly named semantic digests to match, builds
+the canonical candidate with the same run, performs conditional publication
+against that run's head, and only then creates the opaque exact-generation proof
+used for promotion. The memory reference stores a separate head and immutable
+object namespace for each `StreamRunIdentity`; a commit or stale writer on one
+run cannot observe, replace, or conflict with another run's head.
+
+`open_latest` first requires its explicit `run` to equal `expected.run`, then
+acquires only that run's current-root lease, decodes a candidate, and calls
+`verify_against` with the exact run plus supplied expectations before exposing
+an authoritative reader. This run binding applies even to empty generations:
+identical epochs, cuts, descriptors, and result roots in different logical runs
+remain distinct generations. No participant or result bytes are readable before
+this promotion boundary.
+
+Task 5B does not allocate or persist `RunIncarnationId` and does not acquire a
+durable writer lease. Task 5C owns incarnation allocation and the durable
+single-writer/fencing protocol. The in-memory Task 5B CAS is run-scoped reference
+semantics, not durable writer authority.
+
+Run discovery is a product-boundary responsibility, not a backend fallback.
+Task V1 in the product/verification plan owns the Config-v2/protocol projection
+of an explicit fresh-or-resume choice and the resume locator that carries the
+exact `StreamRunIdentity`. A fresh invocation allocates its logical identity and
+commits the bootstrap generation before any source poll, endpoint issue, or
+externally visible result; that generation contains the exact participant
+inventory and one canonical zero-partition result epoch. A resume invocation
+must receive that same identity through the explicit locator/product projection,
+or recover it through a future catalog selected by that locator. Missing or
+unresolvable resume identity is a refusal: neither Task 5B nor any caller may
+silently allocate a replacement logical run. Task V1 also owns the product
+ordering that commits the bootstrap before source polling or endpoint issue.
+Task 5E receives the already resolved identity by constructor injection and
+uses it for canonical bootstrap/barrier commits; it performs no fresh
+allocation, resume lookup, locator parsing, or fallback selection. Task 5C
+allocates only a new writer incarnation after the logical run has been resolved.
+
+Every transaction must stage the exact frozen participant inventory and call
+`stage_results` exactly once. A zero-partition result epoch is valid, but an
+omitted result epoch is not: it produces one canonical empty index root with
+zero item/byte totals. A second `stage_results` call is rejected. At commit,
+every result descriptor must match both the transaction run and
+`CheckpointCommitMetadata.epoch`; run is checked during staging and rechecked at
+commit, while epoch is authoritative only when metadata is supplied. No
+participant state or result epoch may be inferred from absence.
+
+A leased reader exposes only descriptors reachable from its exact committed
+generation. `read_participant` requires the complete supplied descriptor to be
+present in that generation's participant inventory. `read_segment` requires the
+complete supplied descriptor to be reachable from that generation's verified
+result-index root. A content-addressed object existing elsewhere in the backend,
+including another generation or run, is not read authority.
 
 - [ ] **Step 1: Write representative RED tests**
 
@@ -541,9 +920,10 @@ promotion boundary.
 #[tokio::test(flavor = "current_thread")]
 async fn stale_writer_cannot_merge_or_replace_head() {
     let backend = MemoryCheckpointBackend::new(support::backend_limits());
-    let first = support::commit_empty(&backend, None, 1).await.unwrap();
-    let stale = backend.begin_generation(None, support::expectations()).await.unwrap();
-    let current = backend.begin_generation(Some(first.generation()), support::expectations()).await.unwrap();
+    let run = support::run_id(1);
+    let first = support::commit_empty(&backend, run, None, 1).await.unwrap();
+    let stale = backend.begin_generation(run, None, support::expectations(run)).await.unwrap();
+    let current = backend.begin_generation(run, Some(first.generation()), support::expectations(run)).await.unwrap();
     current.commit(support::metadata_at(2)).await.unwrap();
     let error = stale.commit(support::metadata_at(1)).await.unwrap_err();
     assert!(matches!(error, CheckpointError::GenerationConflict { .. }));
@@ -552,11 +932,110 @@ async fn stale_writer_cannot_merge_or_replace_head() {
 #[tokio::test(flavor = "current_thread")]
 async fn dropped_transaction_publishes_nothing_and_releases_budget() {
     let backend = MemoryCheckpointBackend::new(support::backend_limits());
-    let transaction = backend.begin_generation(None, support::expectations()).await.unwrap();
+    let run = support::run_id(1);
+    let transaction = backend.begin_generation(run, None, support::expectations(run)).await.unwrap();
     assert_eq!(backend.prepared_transactions(), 1);
     drop(transaction);
     assert_eq!(backend.prepared_transactions(), 0);
-    assert!(backend.open_latest(&support::run_id(), &support::expectations()).await.unwrap().is_none());
+    assert!(backend.open_latest(&run, &support::expectations(run)).await.unwrap().is_none());
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn empty_generations_and_heads_are_isolated_by_logical_run() {
+    let backend = MemoryCheckpointBackend::new(support::backend_limits());
+    let first_run = support::run_id(1);
+    let second_run = support::run_id(2);
+    let first = support::commit_empty(&backend, first_run, None, 1).await.unwrap();
+    let second = support::commit_empty(&backend, second_run, None, 1).await.unwrap();
+    assert_ne!(first.generation().digest(), second.generation().digest());
+    assert_eq!(
+        backend.open_latest(&first_run, &support::expectations(first_run)).await.unwrap().unwrap().generation(),
+        &first.generation(),
+    );
+    assert_eq!(
+        backend.open_latest(&second_run, &support::expectations(second_run)).await.unwrap().unwrap().generation(),
+        &second.generation(),
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn explicit_expectation_and_result_runs_must_match_transaction_run() {
+    let backend = MemoryCheckpointBackend::new(support::backend_limits());
+    let run = support::run_id(1);
+    let other = support::run_id(2);
+    assert!(matches!(
+        backend.begin_generation(run, None, support::expectations(other)).await,
+        Err(CheckpointError::ObjectVerification)
+    ));
+    assert!(matches!(
+        backend.open_latest(&run, &support::expectations(other)).await,
+        Err(CheckpointError::ObjectVerification)
+    ));
+
+    let mut transaction = backend
+        .begin_generation(run, None, support::expectations(run))
+        .await
+        .unwrap();
+    assert!(matches!(
+        transaction.stage_results(vec![support::result_partition(other, 1)]).await,
+        Err(CheckpointError::ObjectVerification)
+    ));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn commit_requires_exact_participants_and_one_canonical_result_epoch() {
+    let backend = MemoryCheckpointBackend::new(support::backend_limits());
+    let run = support::run_id(1);
+
+    let mut omitted_results = support::transaction_with_all_participants(&backend, run).await;
+    assert!(omitted_results.commit(support::metadata_at(1)).await.is_err());
+
+    let mut omitted_participant = backend
+        .begin_generation(run, None, support::expectations(run))
+        .await
+        .unwrap();
+    omitted_participant.stage_results(Vec::new()).await.unwrap();
+    assert!(matches!(
+        omitted_participant.commit(support::metadata_at(1)).await,
+        Err(CheckpointError::ParticipantSetMismatch)
+    ));
+
+    let mut exact = support::transaction_with_all_participants(&backend, run).await;
+    let empty = exact.stage_results(Vec::new()).await.unwrap();
+    assert_eq!(empty.item_count(), 0);
+    assert_eq!(empty.byte_length(), 0);
+    assert!(exact.stage_results(Vec::new()).await.is_err());
+    exact.commit(support::metadata_at(1)).await.unwrap();
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn result_epoch_and_reader_reachability_are_generation_scoped() {
+    let backend = MemoryCheckpointBackend::new(support::backend_limits());
+    let run = support::run_id(1);
+    let mut transaction = support::transaction_with_all_participants(&backend, run).await;
+    transaction
+        .stage_results(vec![support::result_partition(run, 2)])
+        .await
+        .unwrap();
+    assert!(matches!(
+        transaction.commit(support::metadata_at(1)).await,
+        Err(CheckpointError::ObjectVerification)
+    ));
+
+    let first = support::commit_generation_with_segment(&backend, run, None, 1).await.unwrap();
+    let reader = backend
+        .open_latest(&run, &support::expectations(run))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(reader
+        .read_segment(&support::unreachable_segment(run, 1))
+        .await
+        .is_err());
+    assert!(reader
+        .read_participant(&support::unreachable_participant(&first))
+        .await
+        .is_err());
 }
 ```
 
@@ -569,9 +1048,13 @@ CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime -
 - [ ] **Step 3: Implement the minimal reference backend**
 
 ```rust
-struct MemoryHead {
+struct MemoryRunHead {
     generation: Option<CommittedCheckpointGeneration>,
     objects: BTreeMap<ContentDigest, BudgetedStoredObject>,
+}
+
+struct MemoryState {
+    heads: BTreeMap<StreamRunIdentity, MemoryRunHead>,
 }
 
 struct BudgetedStoredObject { bytes: Bytes, storage_lease: BudgetLease }
@@ -587,11 +1070,21 @@ fn compare_expected(
 }
 ```
 
-Keep storage behind `Rc<RefCell<MemoryHead>>`; it is test/reference state on one local runtime, not a shared hot-path lock. The transaction owns prepared permits and releases them in `Drop` unless commit transfers them into `BudgetedStoredObject`. Each reader method acquires a separate read-budget lease before cheaply cloning underlying `Bytes`; the returned wrapper owns that full logical-byte charge, so storage and concurrent readers remain independently bounded.
+Keep storage behind `Rc<RefCell<MemoryState>>`; it is test/reference state on one
+local runtime, not a shared hot-path lock. Resolve the `MemoryRunHead` by the
+transaction's exact `StreamRunIdentity` before comparing or publishing the head.
+Never compare a writer against a global or different-run generation. The
+transaction owns prepared permits and releases them in `Drop` unless commit
+transfers them into `BudgetedStoredObject`. Each reader method acquires a
+separate read-budget lease before cheaply cloning underlying `Bytes`; the
+returned wrapper owns that full logical-byte charge, so storage and concurrent
+readers remain independently bounded.
 
 - [ ] **Step 4: Verify GREEN**
 
-Run Step 2. Expected: atomic participant+result publication, stale-writer refusal, immutable read verification, and RAII abort pass.
+Run Step 2. Expected: atomic participant+result publication, same-run stale-writer
+refusal, cross-run independence, empty-generation run binding, transaction/result
+run mismatch refusal, immutable read verification, and RAII abort pass.
 
 - [ ] **Step 5: Commit**
 
@@ -645,12 +1138,13 @@ async fn every_pre_current_fault_preserves_previous_generation() {
     for fault in LocalCommitFault::before_current_publication() {
         let directory = tempfile::tempdir().unwrap();
         let backend = support::local_backend(directory.path(), None);
-        let first = support::commit_empty(&backend, None, 1).await.unwrap();
+        let run = support::run_id(1);
+        let first = support::commit_empty(&backend, run, None, 1).await.unwrap();
         backend.inject_fault(fault);
-        let transaction = backend.begin_generation(Some(first.generation()), support::expectations()).await.unwrap();
+        let transaction = backend.begin_generation(run, Some(first.generation()), support::expectations(run)).await.unwrap();
         assert!(transaction.commit(support::metadata_at(2)).await.is_err());
         let reopened = support::local_backend(directory.path(), None);
-        let latest = reopened.open_latest(&support::run_id(), &support::expectations()).await.unwrap().unwrap();
+        let latest = reopened.open_latest(&run, &support::expectations(run)).await.unwrap().unwrap();
     assert_eq!(latest.generation().generation(), first.generation());
     }
 }
@@ -658,7 +1152,11 @@ async fn every_pre_current_fault_preserves_previous_generation() {
 #[tokio::test(flavor = "current_thread")]
 async fn checkpoint_tree_is_private_no_follow_and_tmp_is_raii_cleaned() {
     let fixture = support::local_filesystem_fixture();
-    let transaction = fixture.backend.begin_generation(None, support::expectations()).await.unwrap();
+    let transaction = fixture.backend.begin_generation(
+        fixture.run,
+        None,
+        support::expectations(fixture.run),
+    ).await.unwrap();
     assert_eq!(fixture.mode(fixture.run_root()), 0o700);
     assert!(fixture.all_regular_file_modes_are(0o600));
     assert!(fixture.symlink_swap_current().is_err());
@@ -802,6 +1300,13 @@ git commit -m "feat(runtime): lease and collect checkpoint objects"
 
 **Produces:** `StreamingCheckpointCoordinator::commit_barrier`, exact participant-set enforcement, and idempotent post-CAS notification retry.
 
+The coordinator constructor requires one already resolved
+`StreamRunIdentity`. Product Task V1 is the sole fresh/resume resolver and owns
+the no-issue-before-bootstrap lifecycle gate. Task 5E only verifies the injected
+run against every barrier, participant state, backend expectation, committed
+generation, and receipt; it has no allocator, catalog, or implicit "latest run"
+path.
+
 ```rust
 impl StreamingCheckpointCoordinator {
     pub async fn commit_barrier(
@@ -832,6 +1337,22 @@ async fn post_commit_failure_does_not_roll_back_authoritative_head() {
     fixture.restore_and_replay_notifications().await.unwrap();
     assert_eq!(fixture.participant("session").commit_notifications(), 1);
 }
+
+#[tokio::test(flavor = "current_thread")]
+async fn greater_epoch_receipt_from_another_run_never_reaches_participant() {
+    let mut fixture = coordinator_support::coordinator_fixture_for_run(1);
+    let foreign = fixture
+        .commit_identical_participant_for_run_and_epoch(2, 99)
+        .await
+        .unwrap();
+    let error = fixture
+        .coordinator
+        .replay_committed_notifications(&foreign)
+        .await
+        .unwrap_err();
+    assert!(matches!(error, CheckpointError::ObjectVerification));
+    assert_eq!(fixture.participant("session").commit_notifications(), 0);
+}
 ```
 
 - [ ] **Step 2: Verify RED**
@@ -847,6 +1368,7 @@ CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime -
 let views = self.collect_views(&barrier).await?;
 self.plan.validate_exact_set(&views)?;
 let mut transaction = self.backend.begin_generation(
+    self.run,
     self.expected,
     self.generation_expectations.clone(),
 ).await?;
@@ -859,7 +1381,16 @@ self.notify_committed(&committed).await?;
 Ok(committed)
 ```
 
-Missing/duplicate participants fail before `begin_generation`. Failed staging/CAS drops the transaction and sends no notifications. Notification failure is surfaced after publication and is replayed from committed receipts during restore.
+Missing/duplicate participants fail before `begin_generation`. The coordinator
+requires `barrier.run == self.run == generation_expectations.run` before
+collecting views, and it checks `committed.run()` and every `receipt.run()` again
+before dispatching participant callbacks. Participants independently reject a
+receipt whose run differs from their initialized/frozen run before considering
+generation ordering or descriptor-digest idempotency. Thus a greater-epoch
+receipt from another run cannot be mistaken for progress. Failed staging/CAS
+drops the transaction and sends no notifications. Notification failure is
+surfaced after publication and is replayed from committed receipts during
+restore.
 
 - [ ] **Step 4: Verify GREEN**
 

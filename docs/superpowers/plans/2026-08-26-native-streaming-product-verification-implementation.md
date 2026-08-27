@@ -33,15 +33,69 @@ SPDX-License-Identifier: Apache-2.0
 - Modify: `rust/cli/src/lib.rs`
 - Modify: `rust/runtime/src/engine/protocol_v2.rs`
 - Modify: `rust/runtime/src/engine/application.rs`
+- Modify: `rust/runtime/src/config/model/dataset_stream.rs`; Task V1 owns the
+  fresh/resume extension to the strict Config-v2 model originally landed by
+  foundation Task 3.
+- Modify: `rust/runtime/src/config/model/mod.rs`
+- Modify: `rust/runtime/src/config/model/config.rs`
+- Modify: `rust/runtime/src/config/resolve.rs`
+- Modify: `rust/runtime/src/config/validate.rs`
 - Create: `rust/cli/src/streaming_results.rs`
 - Create: `docs/streaming-datasets.md`
 - Test: `rust/cli/tests/streaming_config.rs`
 - Test: `rust/cli/tests/streaming_capabilities.rs`
 - Test: `rust/cli/tests/streaming_results.rs`
+- Extend test: `rust/runtime/tests/streaming_protocol_v2.rs` for Config-v2
+  model, resolution, validation, and typed Protocol-v2 run-start projection.
 - Create fixture: `rust/cli/tests/fixtures/streaming-shadow.yaml`
+- Create fixture: `rust/cli/tests/fixtures/streaming-shadow-resume.yaml`
 
 **Interfaces:**
-- Produces: Config-v2-first `dataset_streams`/`shadow_replay`; feature-accurate capability inventory; bounded latest-generation reader output; final/aborted metadata.
+- Produces: Config-v2-first `dataset_streams`/`shadow_replay`; explicit
+  fresh/resume logical-run selection and exact resume locator; feature-accurate
+  capability inventory; bounded latest-generation reader output; final/aborted
+  metadata.
+
+```rust
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
+pub enum StreamingRunStartConfigV2 {
+    Fresh,
+    Resume { locator: StreamResumeLocatorConfigV2 },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StreamResumeLocatorConfigV2 {
+    pub logical_replay_run_id: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
+pub enum StreamingRunStartV2 {
+    Fresh,
+    Resume { locator: StreamResumeLocatorV2 },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StreamResumeLocatorV2 {
+    pub logical_replay_run_id: LogicalReplayRunId,
+}
+```
+
+`StreamingRunStartConfigV2` lives in
+`rust/runtime/src/config/model/dataset_stream.rs`, the exact shared Config-v2
+model owned by this task. `model/config.rs` carries the authored dataset-stream
+section, `model/mod.rs` exports it, `config/resolve.rs` projects it to Protocol
+v2, and `config/validate.rs` rejects invalid fresh/resume combinations before
+application construction. The loader accepts exactly one canonical checked
+lowercase-hex logical ID in its resume locator and projects it to the typed
+Protocol-v2 `LogicalReplayRunId`; malformed, missing, or unknown fields fail
+before application bootstrap. The checkpoint backend location remains in its
+existing config and cannot be redirected by the run locator. `Fresh` carries no
+caller-authored ID. `Resume` always carries the exact locator and never means
+"latest arbitrary run".
 
 - [ ] **Step 1: Write the RED public-surface test**
 
@@ -54,6 +108,34 @@ fn normative_streaming_yaml_projects_without_python_or_secrets() {
     let json = serde_json::to_string(&projected).unwrap();
     assert!(!json.contains("secret-value"));
     assert!(!projected.requires_python());
+}
+
+#[test]
+fn config_projects_exact_fresh_or_resume_run_selection() {
+    let fresh = project_profile(include_str!("fixtures/streaming-shadow.yaml")).unwrap();
+    assert_eq!(fresh.streaming.run_start, StreamingRunStartV2::Fresh);
+
+    let resumed = project_profile(
+        include_str!("fixtures/streaming-shadow-resume.yaml"),
+    ).unwrap();
+    assert_eq!(
+        resumed.streaming.run_start,
+        StreamingRunStartV2::Resume {
+            locator: StreamResumeLocatorV2 {
+                logical_replay_run_id: support::logical_run_id(7),
+            },
+        },
+    );
+}
+
+#[test]
+fn malformed_or_missing_resume_run_id_fails_config_validation() {
+    for authored in [
+        support::resume_yaml_without_logical_run_id(),
+        support::resume_yaml_with_logical_run_id("not-canonical-hex"),
+    ] {
+        assert!(validate_and_resolve_profile(&authored).is_err());
+    }
 }
 
 #[test]
@@ -74,15 +156,73 @@ fn latest_generation_renders_through_bounded_pages() {
         assert!(!rendered.contains_provisional_membership());
     }
 }
+
+#[tokio::test(flavor = "current_thread")]
+async fn unresolved_resume_refuses_without_allocating_a_replacement_run() {
+    let fixture = product_fixture_with_missing_resume_root();
+    let requested = fixture.resume_locator_for_run(7);
+    let error = fixture.start(StreamingRunStartV2::Resume { locator: requested })
+        .await
+        .unwrap_err();
+    assert!(matches!(error, ProductError::ResumeRunUnresolved { .. }));
+    assert_eq!(fixture.logical_run_allocations(), 0);
+    assert_eq!(fixture.source_polls(), 0);
+    assert_eq!(fixture.endpoint_issues(), 0);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn fresh_bootstrap_generation_precedes_source_poll_and_endpoint_issue() {
+    let fixture = product_fixture_with_lifecycle_probe();
+    let started = fixture.start(StreamingRunStartV2::Fresh).await.unwrap();
+    assert_eq!(fixture.logical_run_allocations(), 1);
+    assert_eq!(started.resume_locator().logical_replay_run_id, started.run());
+    let events = fixture.events().await;
+    assert!(events.starts_with(&[
+        LifecycleEvent::LogicalRunAllocated,
+        LifecycleEvent::BootstrapGenerationCommitted,
+        LifecycleEvent::FirstSourcePoll,
+        LifecycleEvent::FirstEndpointIssue,
+    ]));
+    let bootstrap = fixture.bootstrap_generation().await;
+    assert!(bootstrap.has_exact_participant_inventory());
+    assert_eq!(bootstrap.result_epoch_count(), 1);
+    assert_eq!(bootstrap.result_partition_count(), 0);
+}
 ```
 
 - [ ] **Step 2: Verify red**
 
 Run: `CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-cli --features streaming-s3,cellular,parquet --test streaming_config --test streaming_capabilities --test streaming_results`
 
+Run the shared Config-v2 model/resolution/validation unit tests as well:
+
+```bash
+CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime --features streaming --lib config::
+CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime --features streaming --test streaming_protocol_v2
+```
+
 - [ ] **Step 3: Implement exact public behavior**
 
-Project strict source/format/session/action/time/order/late/overload/checkpoint/result values into Protocol v2. Expose only registered descriptors. Add bounded partial-generation rendering and final/aborted generation metadata; do not add source-specific flag families in generation 1. Document fidelity, completeness, watermark, overload, restart, raw/sensitive state, result retention, cellular authority, and sizing.
+Project strict source/format/session/action/time/order/late/overload/checkpoint/result
+values and `StreamingRunStartV2` into Protocol v2. The application resolves the
+run before constructing source or endpoint execution: `Fresh` allocates exactly
+one `LogicalReplayRunId`, converts it to `StreamRunIdentity`, commits the initial
+generation with the exact frozen participant inventory and one canonical empty
+result epoch, and returns its exact `StreamResumeLocatorV2`. `Resume` opens only
+the locator's run, verifies the run-bound generation/expectations, and reuses
+that exact identity. If the locator is absent, malformed, or cannot resolve a
+committed generation, refuse before source polling or endpoint issue and do not
+call the fresh allocator. A future catalog may resolve the same explicit locator
+but may not replace its ID.
+
+Wire the resolved `StreamRunIdentity` into the Task 5E coordinator constructor;
+Task 5E accepts only this injected resolved value and performs no config parsing,
+resume discovery, fallback allocation, or catalog selection. Expose only
+registered descriptors. Add bounded partial-generation rendering and
+final/aborted generation metadata; do not add source-specific flag families in
+generation 1. Document fidelity, completeness, watermark, overload, restart,
+raw/sensitive state, result retention, cellular authority, run-locator handling,
+and sizing.
 
 - [ ] **Step 4: Verify green and generated surfaces**
 
@@ -97,7 +237,7 @@ pre-commit run check-docs-current --all-files
 - [ ] **Step 5: Commit**
 
 ```bash
-git add rust/cli/src/lib.rs rust/cli/src/flags.rs rust/cli/src/load.rs rust/cli/src/yaml.rs rust/cli/src/streaming_results.rs rust/cli/tests/streaming_config.rs rust/cli/tests/streaming_capabilities.rs rust/cli/tests/streaming_results.rs rust/cli/tests/fixtures/streaming-shadow.yaml rust/runtime/src/engine/protocol_v2.rs rust/runtime/src/engine/application.rs docs/streaming-datasets.md
+git add rust/cli/src/lib.rs rust/cli/src/flags.rs rust/cli/src/load.rs rust/cli/src/yaml.rs rust/cli/src/streaming_results.rs rust/cli/tests/streaming_config.rs rust/cli/tests/streaming_capabilities.rs rust/cli/tests/streaming_results.rs rust/cli/tests/fixtures/streaming-shadow.yaml rust/cli/tests/fixtures/streaming-shadow-resume.yaml rust/runtime/src/config/model/dataset_stream.rs rust/runtime/src/config/model/mod.rs rust/runtime/src/config/model/config.rs rust/runtime/src/config/resolve.rs rust/runtime/src/config/validate.rs rust/runtime/src/engine/protocol_v2.rs rust/runtime/src/engine/application.rs rust/runtime/tests/streaming_protocol_v2.rs docs/streaming-datasets.md
 git commit -m "feat(cli): expose native streaming replay"
 ```
 
