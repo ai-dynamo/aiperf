@@ -25,7 +25,7 @@ use std::{
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, ser::SerializeSeq};
 use serde_json::value::RawValue;
 
 use super::{
@@ -33,7 +33,7 @@ use super::{
         ActionTerminalMembershipOutcomeView, CheckedActionFailureTerminalEvidenceView,
         CheckedActionTerminalMembershipView, FrozenActionInventoryView,
     },
-    budget::{BudgetError, BudgetLease, StreamingResourceBudget},
+    budget::{BudgetError, BudgetLease, LeasedByteBuffer, StreamingResourceBudget},
     checkpoint::{
         BudgetedCheckpointBytes, CheckpointBarrier, CheckpointEpoch, CheckpointError,
         CheckpointGeneration, CheckpointParticipantId, CommittedCheckpointGeneration,
@@ -3201,51 +3201,50 @@ impl BudgetOwnedStreamingIssueReporter {
             self.input_frontier_root(),
             self.quarantine_tombstone_root(&receipt_root, barrier)?,
         );
+        let receipt_count = u64::try_from(self.receipts.len())
+            .map_err(|_| StreamingReliabilityError::CounterOverflow)?;
         let wire = IssueReceiptPartitionWire {
             wire_version: ISSUE_RECEIPT_WIRE_VERSION,
             run: self.run,
             barrier_epoch: barrier.epoch,
             receipt_root,
             handled_cut: &handled_cut,
-            receipts: self
-                .receipts
-                .values()
-                .map(|value| {
-                    std::str::from_utf8(value.receipt.encoded_bytes())
-                        .map_err(|_| StreamingReliabilityError::CorruptCheckpointState)
-                        .and_then(|encoded| {
-                            RawValue::from_string(encoded.to_owned())
-                                .map_err(|_| StreamingReliabilityError::CorruptCheckpointState)
-                        })
-                })
-                .collect::<Result<Vec<_>, _>>()?,
+            receipts: RetainedReceiptSequence {
+                receipts: &self.receipts,
+            },
         };
-        let encoded = serde_json::to_vec(&wire)
-            .map_err(|_| StreamingReliabilityError::CorruptCheckpointState)?;
+        // Measure before admission: the encoder streams, so the exact payload
+        // length is known without materializing a single payload byte.
+        let payload_bytes_len =
+            measured_json_len(&wire).map_err(|_| StreamingReliabilityError::CorruptCheckpointState)?;
         let view_charge_bytes = size_of::<PreparedIssueReceiptPartitionView>();
-        let (payload_lease, view_lease) = self
+        let aggregate_bytes = payload_bytes_len
+            .checked_add(view_charge_bytes)
+            .ok_or(StreamingReliabilityError::CounterOverflow)?;
+        let mut payload_lease = self
             .budget
-            .acquire_pair(
-                super::budget::BudgetCharge {
-                    items: 1,
-                    bytes: encoded.len(),
-                },
-                super::budget::BudgetCharge {
-                    items: 1,
-                    bytes: view_charge_bytes,
-                },
-            )
+            .acquire(2, aggregate_bytes)
             .await
             .map_err(state_budget_error)?;
-        let payload = BudgetedCheckpointBytes::new(Bytes::from(encoded), payload_lease)
+        // Everything below this point is synchronous: the aggregate is split to
+        // exact leases with no suspension between admission and subdivision.
+        let view_lease = payload_lease
+            .split_off(1, view_charge_bytes)
+            .map_err(state_budget_error)?;
+        let mut payload_buffer =
+            LeasedByteBuffer::with_exact_capacity(payload_lease).map_err(state_budget_error)?;
+        serde_json::to_writer(&mut payload_buffer, &wire)
+            .map_err(|_| StreamingReliabilityError::CorruptCheckpointState)?;
+        let (payload_bytes, payload_lease) =
+            payload_buffer.into_full().map_err(state_budget_error)?;
+        let payload = BudgetedCheckpointBytes::from_compact(payload_bytes, payload_lease)
             .map_err(|_| StreamingReliabilityError::CorruptCheckpointState)?;
         Ok(PreparedIssueReceiptPartitionView {
             run: self.run,
             barrier: barrier.clone(),
             receipt_root,
             handled_cut,
-            receipt_count: u64::try_from(self.receipts.len())
-                .map_err(|_| StreamingReliabilityError::CounterOverflow)?,
+            receipt_count,
             payload,
             view_lease,
         })
@@ -3281,22 +3280,28 @@ impl BudgetOwnedStreamingIssueReporter {
             &[issue_id.as_bytes(), self.receipt_root().as_bytes()],
         );
         let view_charge_bytes = size_of::<PreparedSessionQuarantineInstall>();
-        let (payload_lease, view_lease) = budget
-            .acquire_pair(
-                super::budget::BudgetCharge {
-                    items: 1,
-                    bytes: entries.len(),
-                },
-                super::budget::BudgetCharge {
-                    items: 1,
-                    bytes: view_charge_bytes,
-                },
-            )
+        let aggregate_bytes = entries
+            .len()
+            .checked_add(view_charge_bytes)
+            .ok_or(StreamingReliabilityError::CounterOverflow)?;
+        let mut payload_lease = budget
+            .acquire(2, aggregate_bytes)
             .await
-            .map_err(|error| {
-                StreamingReliabilityError::QuarantineInstallBudget(budget_failure_code(error))
-            })?;
-        let payload = BudgetedCheckpointBytes::new(Bytes::copy_from_slice(entries), payload_lease)
+            .map_err(quarantine_install_budget_error)?;
+        // Synchronous from here: the aggregate is split to exact leases and the
+        // payload is copied into a buffer that cannot exceed its charge.
+        let view_lease = payload_lease
+            .split_off(1, view_charge_bytes)
+            .map_err(quarantine_install_budget_error)?;
+        let mut payload_buffer = LeasedByteBuffer::with_exact_capacity(payload_lease)
+            .map_err(quarantine_install_budget_error)?;
+        payload_buffer
+            .write_all(entries)
+            .map_err(|_| StreamingReliabilityError::CorruptCheckpointState)?;
+        let (payload_bytes, payload_lease) = payload_buffer
+            .into_full()
+            .map_err(quarantine_install_budget_error)?;
+        let payload = BudgetedCheckpointBytes::from_compact(payload_bytes, payload_lease)
             .map_err(|_| StreamingReliabilityError::CorruptCheckpointState)?;
         Ok(PreparedSessionQuarantineInstall {
             barrier: barrier.clone(),
@@ -3481,12 +3486,13 @@ impl BudgetOwnedStreamingIssueReporter {
             is_exhausted,
         };
         let embedded_receipt = persisted_receipt_from_issue(&issue, disposition, threshold);
-        let embedded_encoded = serde_json::to_vec(&embedded_receipt)
-            .map_err(|_| StreamingReliabilityError::CorruptCheckpointState)?;
-        let embedded_receipt_length = u64::try_from(embedded_encoded.len())
+        // The embedded encoding is never retained; only its length and digest
+        // are. Streaming into the hasher avoids the buffer entirely.
+        let (embedded_encoded_len, embedded_receipt_digest) =
+            measured_json_digest(&embedded_receipt)
+                .map_err(|_| StreamingReliabilityError::CorruptCheckpointState)?;
+        let embedded_receipt_length = u64::try_from(embedded_encoded_len)
             .map_err(|_| StreamingReliabilityError::ExportReceiptDigestLengthMismatch)?;
-        let embedded_receipt_digest =
-            ContentDigest::from_bytes(*blake3::hash(&embedded_encoded).as_bytes());
         let issue_id = embedded_receipt.issue_id;
         let persisted = PersistedExportIssueReceipt {
             wire_version: EXPORT_RECEIPT_WIRE_VERSION,
@@ -3502,27 +3508,35 @@ impl BudgetOwnedStreamingIssueReporter {
             embedded_receipt_length,
             embedded_receipt,
         };
-        let encoded = serde_json::to_vec(&persisted)
+        // Measure before admission: the encoder streams, so the exact encoded
+        // length is known without materializing a single payload byte.
+        let encoded_len = measured_json_len(&persisted)
             .map_err(|_| StreamingReliabilityError::CorruptCheckpointState)?;
+        let receipt_length = u64::try_from(encoded_len)
+            .map_err(|_| StreamingReliabilityError::ExportReceiptDigestLengthMismatch)?;
         let parsed_charge_bytes = parsed_export_receipt_bytes(&persisted)
             .map_err(|_| StreamingReliabilityError::CounterOverflow)?;
-        let (encoded_lease, parsed_lease) = budget
-            .acquire_pair(
-                super::budget::BudgetCharge {
-                    items: 1,
-                    bytes: encoded.len(),
-                },
-                super::budget::BudgetCharge {
-                    items: 1,
-                    bytes: parsed_charge_bytes,
-                },
-            )
+        let aggregate_bytes = encoded_len
+            .checked_add(parsed_charge_bytes)
+            .ok_or(StreamingReliabilityError::CounterOverflow)?;
+        let mut parsed_lease = budget
+            .acquire(2, aggregate_bytes)
             .await
             .map_err(export_budget_error)?;
-        let receipt_length = u64::try_from(encoded.len())
-            .map_err(|_| StreamingReliabilityError::ExportReceiptDigestLengthMismatch)?;
-        let receipt_digest = ContentDigest::from_bytes(*blake3::hash(&encoded).as_bytes());
-        let encoded = BudgetedCheckpointBytes::new(Bytes::from(encoded), encoded_lease)
+        // Synchronous from here: the aggregate is split to exact leases and
+        // written into a buffer that cannot exceed its charge, so no suspension
+        // separates admission from allocation.
+        let encoded_lease = parsed_lease
+            .split_off(1, encoded_len)
+            .map_err(export_budget_error)?;
+        let mut encoded_buffer =
+            LeasedByteBuffer::with_exact_capacity(encoded_lease).map_err(export_budget_error)?;
+        serde_json::to_writer(&mut encoded_buffer, &persisted)
+            .map_err(|_| StreamingReliabilityError::CorruptCheckpointState)?;
+        let (encoded_bytes, encoded_lease) =
+            encoded_buffer.into_full().map_err(export_budget_error)?;
+        let receipt_digest = ContentDigest::from_bytes(*blake3::hash(&encoded_bytes).as_bytes());
+        let encoded = BudgetedCheckpointBytes::from_compact(encoded_bytes, encoded_lease)
             .map_err(|_| StreamingReliabilityError::CorruptCheckpointState)?;
         Ok(PreparedExportAttemptFailure {
             decision: CheckedExportAttemptDecision {
@@ -3639,7 +3653,34 @@ struct IssueReceiptPartitionWire<'a> {
     handled_cut: &'a HandledIssueCut,
     /// Each retained receipt is embedded verbatim from its canonical encoding,
     /// so the partition payload never re-serializes a materialized DTO.
-    receipts: Vec<Box<RawValue>>,
+    receipts: RetainedReceiptSequence<'a>,
+}
+
+/// Borrowed retained-receipt map serialized as its verbatim receipt sequence.
+///
+/// Encoding directly from the map produces the byte-identical JSON array a
+/// materialized `Vec<Box<RawValue>>` produced, in the same `BTreeMap` key order,
+/// without the intermediate vector and its per-receipt `String` copy — neither
+/// of which the budget ever charged.
+struct RetainedReceiptSequence<'a> {
+    receipts: &'a BTreeMap<ContentDigest, RetainedReceipt>,
+}
+
+impl Serialize for RetainedReceiptSequence<'_> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut sequence = serializer.serialize_seq(Some(self.receipts.len()))?;
+        for retained in self.receipts.values() {
+            // The retained bytes are the canonical encoding, so they are
+            // borrowed as raw JSON rather than re-encoded from a parsed DTO.
+            let raw: &RawValue = serde_json::from_slice(retained.receipt.encoded_bytes())
+                .map_err(serde::ser::Error::custom)?;
+            sequence.serialize_element(raw)?;
+        }
+        sequence.end()
+    }
 }
 
 /// Non-destructive move-only detailed-receipt partition prepared at a barrier.
@@ -4256,7 +4297,8 @@ pub async fn restore_durable_export_issue_receipt(
     parsed_budget: &StreamingResourceBudget,
 ) -> Result<BudgetOwnedExportIssueReceipt, StreamingReliabilityError> {
     let expected_reference = &context.expected_reference;
-    let encoded_length = u64::try_from(encoded.as_bytes().len())
+    let encoded_len = encoded.as_bytes().len();
+    let encoded_length = u64::try_from(encoded_len)
         .map_err(|_| StreamingReliabilityError::ExportReceiptDigestLengthMismatch)?;
     let encoded_digest = ContentDigest::from_bytes(*blake3::hash(encoded.as_bytes()).as_bytes());
     if encoded_length != expected_reference.receipt_length
@@ -4264,6 +4306,14 @@ pub async fn restore_durable_export_issue_receipt(
     {
         return Err(StreamingReliabilityError::ExportReceiptDigestLengthMismatch);
     }
+    // Admit the proved parse upper bound before the parse allocates anything.
+    // Every refusal below drops this lease, releasing the whole reservation.
+    let parsed_reservation_bytes =
+        restored_export_receipt_bound_bytes().map_err(|_| StreamingReliabilityError::CounterOverflow)?;
+    let mut parsed_lease = parsed_budget
+        .acquire(1, parsed_reservation_bytes)
+        .await
+        .map_err(export_budget_error)?;
     let wire: PersistedExportIssueReceiptWire = serde_json::from_slice(encoded.as_bytes())
         .map_err(|_| StreamingReliabilityError::DerivedExportReceiptUnreachable)?;
     if wire.wire_version != EXPORT_RECEIPT_WIRE_VERSION {
@@ -4397,12 +4447,12 @@ pub async fn restore_durable_export_issue_receipt(
     }
 
     // Serialize the recomputed receipt, not the document, so the retained bytes
-    // are provably the ones the policy authorizes.
-    let embedded_encoded = serde_json::to_vec(&embedded_receipt)
+    // are provably the ones the policy authorizes. The encoding is never kept —
+    // only its length and digest — so it streams into the hasher.
+    let (embedded_encoded_len, embedded_digest) = measured_json_digest(&embedded_receipt)
         .map_err(|_| StreamingReliabilityError::DerivedExportReceiptUnreachable)?;
-    let embedded_length = u64::try_from(embedded_encoded.len())
+    let embedded_length = u64::try_from(embedded_encoded_len)
         .map_err(|_| StreamingReliabilityError::ExportReceiptDigestLengthMismatch)?;
-    let embedded_digest = ContentDigest::from_bytes(*blake3::hash(&embedded_encoded).as_bytes());
     if embedded_receipt_length != embedded_length
         || embedded_receipt_digest != embedded_digest
         || expected_reference.embedded_receipt_length != embedded_length
@@ -4425,11 +4475,11 @@ pub async fn restore_durable_export_issue_receipt(
         embedded_receipt_length: embedded_length,
         embedded_receipt,
     };
+    // Synchronous exact-down adjustment on the success path only.
     let parsed_charge_bytes = parsed_export_receipt_bytes(&receipt)
         .map_err(|_| StreamingReliabilityError::CounterOverflow)?;
-    let parsed_lease = parsed_budget
-        .acquire(1, parsed_charge_bytes)
-        .await
+    parsed_lease
+        .shrink_to(1, parsed_charge_bytes)
         .map_err(export_budget_error)?;
     Ok(BudgetOwnedExportIssueReceipt {
         receipt,
@@ -4437,6 +4487,26 @@ pub async fn restore_durable_export_issue_receipt(
         parsed_lease,
         parsed_charge_bytes,
     })
+}
+
+/// Return a proved upper bound on one restored export receipt's parse charge.
+///
+/// [`parsed_export_receipt_bytes`] is four fixed structural terms plus the
+/// retained bytes of at most four checked component identifiers, each bounded by
+/// [`MAX_COMPONENT_ID_BYTES`]. Acquiring this bound before the parse and
+/// shrinking to the exact charge afterwards keeps the parsed document inside the
+/// budget for its whole life, rather than admitting it after the fact.
+fn restored_export_receipt_bound_bytes() -> Result<usize, BudgetError> {
+    super::budget::checked_sum([
+        size_of::<PersistedExportIssueReceipt>(),
+        size_of::<PersistedStreamingIssueReceipt>(),
+        size_of::<PreparedExportAttemptFailure>(),
+        size_of::<CheckedExportAttemptDecision>(),
+        MAX_COMPONENT_ID_BYTES,
+        MAX_COMPONENT_ID_BYTES,
+        MAX_COMPONENT_ID_BYTES,
+        MAX_COMPONENT_ID_BYTES,
+    ])
 }
 
 fn persisted_receipt_from_wire(
@@ -4960,6 +5030,10 @@ fn state_budget_error(error: BudgetError) -> StreamingReliabilityError {
 
 fn export_budget_error(error: BudgetError) -> StreamingReliabilityError {
     StreamingReliabilityError::ExportReceiptBudget(budget_failure_code(error))
+}
+
+fn quarantine_install_budget_error(error: BudgetError) -> StreamingReliabilityError {
+    StreamingReliabilityError::QuarantineInstallBudget(budget_failure_code(error))
 }
 
 /// Sole mutable host reliability owner and checkpoint participant.
