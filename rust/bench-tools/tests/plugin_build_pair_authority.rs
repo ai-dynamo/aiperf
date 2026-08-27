@@ -6,7 +6,8 @@
 use std::path::{Path, PathBuf};
 
 use aiperf_bench_tools::build_pair::{
-    BuildLtoV1, BuildPairMemberV1, BuildPairPlanV1, run_paired_build_v1,
+    BuildDurationUseV1, BuildLtoV1, BuildPairMemberV1, BuildPairPlanV1,
+    build_pair_authority_blake3_v1, run_paired_build_v1,
 };
 use aiperf_bench_tools::plugin_stats::Variant;
 
@@ -241,10 +242,29 @@ fn one_controller_executes_both_members_with_one_frozen_command_and_environment(
         assert_eq!(receipt["rustc_executable_blake3"], fixture.rustc_digest);
         assert_eq!(receipt["sysroot_identity_blake3"], fixture.sysroot_identity);
         assert_eq!(receipt["cargo_incremental"], "1");
+        assert!(receipt.get("active_duration_ns").is_none());
         let mut canonical = Vec::new();
         serde_json_canonicalizer::to_writer(&receipt, &mut canonical)
             .expect("receipt canonicalizes");
         assert_eq!(member.build_receipt_bytes, canonical);
+
+        assert_eq!(report.build_duration_use, BuildDurationUseV1::DescriptiveNonGating);
+        assert_eq!(
+            digest(&member.build_observation_receipt_bytes),
+            member.build_observation_receipt_blake3
+        );
+        let observation: serde_json::Value =
+            serde_json::from_slice(&member.build_observation_receipt_bytes)
+                .expect("observation receipt is canonical JSON");
+        assert_eq!(
+            observation["active_duration_ns"],
+            serde_json::json!(member.active_duration_ns)
+        );
+        assert_eq!(observation["duration_use"], "descriptive_non_gating");
+        assert_eq!(
+            observation["build_authority_receipt_blake3"],
+            member.build_receipt_blake3
+        );
     }
     assert_eq!(digest(&report.pair_record_bytes), report.pair_record_blake3);
     let pair_record: serde_json::Value =
@@ -255,6 +275,58 @@ fn one_controller_executes_both_members_with_one_frozen_command_and_environment(
             report.members[0].build_receipt_blake3,
             report.members[1].build_receipt_blake3
         ])
+    );
+    assert_eq!(
+        pair_record["build_order"],
+        serde_json::json!(["static", "dynamic"])
+    );
+    assert_eq!(
+        pair_record["build_duration_use"],
+        "descriptive_non_gating"
+    );
+    assert!(
+        pair_record
+            .get("member_build_observation_receipt_blake3")
+            .is_none()
+    );
+}
+
+#[test]
+fn duration_only_observations_leave_build_authority_identity_unchanged() {
+    let fixture = Fixture::new();
+    let report = run_paired_build_v1(&fixture.plan()).expect("paired build completes");
+    let original_authority =
+        build_pair_authority_blake3_v1(&report).expect("build authority validates");
+    let mut changed_observations = report.clone();
+
+    for (member, duration) in changed_observations
+        .members
+        .iter_mut()
+        .zip([11_u128, 99_u128])
+    {
+        member.active_duration_ns = duration;
+        let mut receipt: serde_json::Value =
+            serde_json::from_slice(&member.build_observation_receipt_bytes)
+                .expect("observation receipt parses");
+        receipt["active_duration_ns"] = serde_json::json!(duration);
+        member.build_observation_receipt_bytes =
+            serde_json_canonicalizer::to_vec(&receipt).expect("observation canonicalizes");
+        member.build_observation_receipt_blake3 =
+            digest(&member.build_observation_receipt_bytes);
+    }
+
+    assert_ne!(
+        report.members[0].build_observation_receipt_blake3,
+        changed_observations.members[0].build_observation_receipt_blake3
+    );
+    assert_eq!(
+        report.members[0].build_receipt_blake3,
+        changed_observations.members[0].build_receipt_blake3
+    );
+    assert_eq!(
+        original_authority,
+        build_pair_authority_blake3_v1(&changed_observations)
+            .expect("duration-only mutation preserves immutable authority")
     );
 }
 
