@@ -197,8 +197,11 @@ new boundary item visible here.
   machine-readable copy of the table above.
 - `rust/plugin-api/src/bin/check-plugin-api-ownership.rs` — the guard binary.
 - `rust/plugin-api/tests/ownership_table.rs` — normalization, version, typed
-  error, and guard behavior tests. The registrar and entry-shape tests live in
-  `rust/plugin-api/src/extension.rs` because `PluginRegistrar::new` is
-  `pub(crate)`.
+  error, and guard behavior tests, plus the out-of-crate compilation of the
+  plugin-authoring surface: the entry shape, `PluginDeclarationV1`,
+  `from_authored`, `PLUGIN_ENTRY_SYMBOL_V1`, and an `AIPerfExtension` impl are
+  named from an external target, so narrowing any of them is a compile error.
+  Only the registrar tests live in `rust/plugin-api/src/extension.rs`, because
+  `PluginRegistrar::new` is `pub(crate)`.
 - `docs/specs/2026-08-26-native-rust-runtime-plugins-design.md` — the whole
   plugin-system design this boundary belongs to.

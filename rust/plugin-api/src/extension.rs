@@ -175,9 +175,13 @@ impl fmt::Debug for PluginRegistrar<'_> {
 
 #[cfg(test)]
 mod tests {
-    // These live in `src` rather than `tests/` because they exercise the
-    // host side of the seam: `PluginRegistrar::new` is `pub(crate)`, which is
-    // the property that makes a plugin-minted foreign origin unconstructible.
+    // Only the registrar tests live here, and only because they call
+    // `PluginRegistrar::new`, which is `pub(crate)` — the property that makes a
+    // plugin-minted foreign origin unconstructible. The entry shape,
+    // `PluginDeclarationV1`, `from_authored`, `PLUGIN_ENTRY_SYMBOL_V1`, and the
+    // `AIPerfExtension` impl are public, so they are exercised from outside the
+    // crate in `tests/ownership_table.rs`, where narrowing their visibility is a
+    // compile error.
     use std::sync::LazyLock;
 
     use super::*;
@@ -210,31 +214,10 @@ mod tests {
         }
     }
 
-    static EXTENSION: TestExtension = TestExtension;
-
-    /// The exact shape the SDK macro exports under `aiperf_plugin_entry_v1`.
-    unsafe fn entry() -> PluginDeclarationV1 {
-        PluginDeclarationV1 {
-            package: &PACKAGE,
-            extension: &EXTENSION,
-        }
-    }
-
     #[test]
-    fn a_declaration_is_produced_by_the_entry_shape_and_read_through_borrows() {
-        let entry_point: PluginEntryV1 = entry;
-        // SAFETY: `entry` is this test's own Rust-ABI function with the exact
-        // `PluginEntryV1` signature, standing in for a validated library symbol.
-        let declaration = unsafe { entry_point() };
-
-        assert_eq!(declaration.package.id.as_str(), "aiperf_export_otlp");
-        assert_eq!(declaration.package.version, "0.12.0");
-        assert_eq!(declaration.package.description, "OpenTelemetry exporter");
-        assert_eq!(PLUGIN_ENTRY_SYMBOL_V1, "aiperf_plugin_entry_v1");
-
-        let mut registrar = PluginRegistrar::new(declaration.package);
-        declaration
-            .extension
+    fn a_host_bound_registrar_records_in_order_and_describes_its_own_package() {
+        let mut registrar = PluginRegistrar::new(&PACKAGE);
+        TestExtension
             .register(&mut registrar)
             .expect("registration must succeed");
 
@@ -276,18 +259,12 @@ mod tests {
     }
 
     #[test]
-    fn the_extension_trait_is_object_safe_and_registers_through_a_box() {
+    fn the_extension_trait_registers_through_a_box() {
         let boxed: Box<dyn AIPerfExtension> = Box::new(TestExtension);
         let mut registrar = PluginRegistrar::new(&PACKAGE);
         boxed
             .register(&mut registrar)
             .expect("boxed trait object registers");
         assert_eq!(registrar.observed().len(), 2);
-
-        // `AIPerfExtension: Send + Sync` is what lets the host move a
-        // declaration onto another thread; a `Box<dyn AIPerfExtension>` must
-        // satisfy it too.
-        fn assert_send_sync<T: Send + Sync + 'static>() {}
-        assert_send_sync::<Box<dyn AIPerfExtension>>();
     }
 }
