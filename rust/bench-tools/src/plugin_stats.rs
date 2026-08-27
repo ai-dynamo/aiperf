@@ -475,6 +475,452 @@ pub enum AttemptDisposition {
     ProductFailure,
 }
 
+/// One infrastructure event named by the frozen inventory classifier.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum InfrastructureEvent {
+    /// The benchmark host rebooted during a pair.
+    HostReboot,
+    /// The harness lost its required CPU-affinity assignment.
+    AffinityLoss,
+    /// The mock server died for a reason unrelated to either member.
+    MockServerDeathUnrelatedToMember,
+}
+
+impl InfrastructureEvent {
+    fn classifier_name(self) -> &'static str {
+        match self {
+            Self::HostReboot => "host_reboot",
+            Self::AffinityLoss => "affinity_loss",
+            Self::MockServerDeathUnrelatedToMember => "mock_death_unrelated_to_member",
+        }
+    }
+}
+
+/// Raw terminal outcome observed by the same-process measurement controller.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum MemberTerminalOutcome {
+    /// The member completed its frozen workload and emitted measurement rows.
+    Completed,
+    /// The measured process crashed or exited unexpectedly.
+    Crash(String),
+    /// The member exceeded its frozen deadline.
+    Timeout(String),
+    /// The member returned before completing its frozen request budget.
+    IncompleteBudget {
+        /// Frozen request budget.
+        expected: u64,
+        /// Successfully completed requests.
+        completed: u64,
+    },
+    /// The member emitted output that the harness could not validate.
+    MalformedOutput(String),
+    /// Any other measured-product error.
+    ProductError(String),
+    /// A raw infrastructure event whose eligibility is decided by inventory.
+    Infrastructure(InfrastructureEvent),
+}
+
+/// One member's raw terminal record in exact execution order.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RawMemberTerminalRecord {
+    /// Static or dynamic artifact that ran.
+    pub variant: Variant,
+    /// Raw terminal outcome observed by the controller.
+    pub outcome: MemberTerminalOutcome,
+}
+
+/// One whole pair attempt observed by the same-process controller.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RawPairTerminalRecord {
+    /// Frozen inventory scenario name.
+    pub scenario: String,
+    /// Seeded pair identifier.
+    pub pair_id: String,
+    /// Exact member order used for this raw attempt.
+    pub member_order: [Variant; 2],
+    /// Both raw member terminal records in execution order.
+    pub members: Vec<RawMemberTerminalRecord>,
+    /// Untrusted caller explanation retained only for diagnosis.
+    pub asserted_reason: Option<String>,
+    /// Untrusted caller classification retained only for diagnosis.
+    pub asserted_disposition: Option<AttemptDisposition>,
+}
+
+/// Controller decision after observing one raw pair attempt.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PairAttemptDecision {
+    /// Both members completed; retain the pair's measured rows.
+    RetainPair,
+    /// Discard both members and repeat the pair in its original order.
+    ReplaceWholePair {
+        /// Exact order the replacement must use.
+        member_order: [Variant; 2],
+        /// One-based replacement ordinal for the scenario and attempt.
+        replacement_ordinal: usize,
+    },
+    /// The complete attempt exceeded the five-pair replacement cap.
+    AttemptInvalid,
+    /// A product outcome made the first valid failure authoritative.
+    ExperimentFailed,
+}
+
+/// Controller-derived outcome of one complete experiment attempt.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ControlledAttemptDecision {
+    /// Infrastructure/noise rules invalidated the attempt.
+    Invalid,
+    /// The statistically valid attempt passed.
+    ValidPass,
+    /// A product or statistical failure made the attempt authoritative.
+    ValidFailure,
+}
+
+/// One retained complete-attempt decision.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ControlledAttemptRecord {
+    /// One-based contiguous attempt ordinal.
+    pub ordinal: u8,
+    /// Controller-derived terminal decision.
+    pub decision: ControlledAttemptDecision,
+    /// Controller-derived terminal diagnosis.
+    pub reason: Option<String>,
+}
+
+/// One retained raw pair attempt and its controller-derived classification.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ControlledPairAttemptRecord {
+    /// Complete experiment attempt that owned this pair attempt.
+    pub experiment_attempt: u8,
+    /// Raw terminal record, including any untrusted caller assertion.
+    pub raw: RawPairTerminalRecord,
+    /// Reason derived solely from raw outcomes and the frozen classifier.
+    pub derived_reason: String,
+    /// Decision derived by the controller.
+    pub decision: PairAttemptDecision,
+}
+
+#[derive(Debug)]
+struct ActiveControlledAttempt {
+    ordinal: u8,
+    replacements_by_scenario: BTreeMap<String, usize>,
+}
+
+/// Same-process authority for pair replacement and complete-attempt lifecycle.
+///
+/// The evaluator reads classifiers and limits only from the compiled inventory.
+/// It never consults [`InvalidationAttempt::reason`],
+/// [`InvalidationAttempt::disposition`], or the assertion fields on
+/// [`RawPairTerminalRecord`] when deriving a decision. This seam deliberately
+/// is not serializable; standalone caller-supplied evaluation remains refused.
+#[derive(Debug)]
+pub struct ControlledMeasurementEvaluator {
+    inventory: FrozenInventoryAuthority,
+    pair_schedule: Vec<PairSchedule>,
+    active: Option<ActiveControlledAttempt>,
+    history: Vec<ControlledAttemptRecord>,
+    raw_pair_history: Vec<ControlledPairAttemptRecord>,
+    last_statistical_report: Option<SimultaneousGateReport>,
+}
+
+impl ControlledMeasurementEvaluator {
+    /// Acquire the compiled inventory and initialize an empty attempt history.
+    pub fn new() -> Result<Self, PluginStatsError> {
+        let inventory = checked_in_inventory_authority()?;
+        let seed = inventory
+            .cases
+            .first()
+            .map(|case| case.bootstrap_seed)
+            .ok_or_else(|| PluginStatsError::new("checked-in inventory has no cases"))?;
+        Ok(Self {
+            inventory,
+            pair_schedule: pair_schedule(seed),
+            active: None,
+            history: Vec::new(),
+            raw_pair_history: Vec::new(),
+            last_statistical_report: None,
+        })
+    }
+
+    /// Exact seeded pair schedule whose order every replacement must preserve.
+    pub fn pair_schedule(&self) -> &[PairSchedule] {
+        &self.pair_schedule
+    }
+
+    /// Controller-derived complete-attempt history.
+    pub fn history(&self) -> &[ControlledAttemptRecord] {
+        &self.history
+    }
+
+    /// Append-only raw pair history, including rejected caller assertions.
+    pub fn raw_pair_history(&self) -> &[ControlledPairAttemptRecord] {
+        &self.raw_pair_history
+    }
+
+    /// Most recent report derived from complete controlled measurements.
+    pub fn last_statistical_report(&self) -> Option<&SimultaneousGateReport> {
+        self.last_statistical_report.as_ref()
+    }
+
+    /// Start the next attempt after no attempt or an invalid attempt.
+    pub fn begin_attempt(&mut self) -> Result<u8, PluginStatsError> {
+        if self.active.is_some() {
+            return Err(PluginStatsError::new(
+                "a controlled experiment attempt is already active",
+            ));
+        }
+        if self
+            .history
+            .last()
+            .is_some_and(|attempt| attempt.decision != ControlledAttemptDecision::Invalid)
+        {
+            return Err(PluginStatsError::new(
+                "the first valid experiment attempt is authoritative",
+            ));
+        }
+        if self.history.len() >= usize::from(NORMATIVE_MAX_EXPERIMENT_ATTEMPTS) {
+            return Err(PluginStatsError::new(
+                "three invalid attempts block the experiment",
+            ));
+        }
+        let ordinal = u8::try_from(self.history.len() + 1)
+            .map_err(|_| PluginStatsError::new("experiment attempt ordinal overflow"))?;
+        self.active = Some(ActiveControlledAttempt {
+            ordinal,
+            replacements_by_scenario: BTreeMap::new(),
+        });
+        Ok(ordinal)
+    }
+
+    /// Classify and retain one raw pair terminal record.
+    pub fn record_pair(
+        &mut self,
+        raw: RawPairTerminalRecord,
+    ) -> Result<PairAttemptDecision, PluginStatsError> {
+        let active = self
+            .active
+            .as_ref()
+            .ok_or_else(|| PluginStatsError::new("no controlled experiment attempt is active"))?;
+        let experiment_attempt = active.ordinal;
+        let case = self
+            .inventory
+            .cases
+            .iter()
+            .find(|case| case.scenario == raw.scenario)
+            .ok_or_else(|| PluginStatsError::new("raw pair names an unknown scenario"))?;
+        let planned = self
+            .pair_schedule
+            .iter()
+            .find(|pair| pair.pair_id == raw.pair_id)
+            .ok_or_else(|| PluginStatsError::new("raw pair is absent from the seeded schedule"))?;
+        if raw.member_order != planned.member_order
+            || raw.members.len() != raw.member_order.len()
+            || raw
+                .members
+                .iter()
+                .zip(raw.member_order)
+                .any(|(member, expected)| member.variant != expected)
+        {
+            return Err(PluginStatsError::new(
+                "raw pair does not retain both members in seeded order",
+            ));
+        }
+
+        let mut product_reasons = Vec::new();
+        let mut infrastructure_events = Vec::new();
+        for member in &raw.members {
+            match &member.outcome {
+                MemberTerminalOutcome::Completed => {}
+                MemberTerminalOutcome::Crash(reason) => {
+                    product_reasons.push(format!("{:?} crash: {reason}", member.variant));
+                }
+                MemberTerminalOutcome::Timeout(reason) => {
+                    product_reasons.push(format!("{:?} timeout: {reason}", member.variant));
+                }
+                MemberTerminalOutcome::IncompleteBudget {
+                    expected,
+                    completed,
+                } => product_reasons.push(format!(
+                    "{:?} incomplete budget: completed {completed} of {expected}",
+                    member.variant
+                )),
+                MemberTerminalOutcome::MalformedOutput(reason) => {
+                    product_reasons.push(format!("{:?} malformed output: {reason}", member.variant))
+                }
+                MemberTerminalOutcome::ProductError(reason) => {
+                    product_reasons.push(format!("{:?} product error: {reason}", member.variant))
+                }
+                MemberTerminalOutcome::Infrastructure(event) => {
+                    if classifier_allows(&case.invalidation_classifier, *event) {
+                        infrastructure_events.push(*event);
+                    } else {
+                        product_reasons.push(format!(
+                            "unclassified infrastructure event: {}",
+                            event.classifier_name()
+                        ));
+                    }
+                }
+            }
+        }
+
+        if !product_reasons.is_empty() {
+            let reason = product_reasons.join("; ");
+            let decision = PairAttemptDecision::ExperimentFailed;
+            self.raw_pair_history.push(ControlledPairAttemptRecord {
+                experiment_attempt,
+                raw,
+                derived_reason: reason.clone(),
+                decision,
+            });
+            self.finish_active(ControlledAttemptDecision::ValidFailure, Some(reason))?;
+            return Ok(decision);
+        }
+
+        if let Some(event) = infrastructure_events.first().copied() {
+            let replacement_ordinal = {
+                let active = self.active.as_mut().ok_or_else(|| {
+                    PluginStatsError::new("no controlled experiment attempt is active")
+                })?;
+                let replacements = active
+                    .replacements_by_scenario
+                    .entry(raw.scenario.clone())
+                    .or_default();
+                *replacements += 1;
+                *replacements
+            };
+            let derived_reason = event.classifier_name().to_owned();
+            if replacement_ordinal > NORMATIVE_MAX_REPLACEMENTS {
+                let decision = PairAttemptDecision::AttemptInvalid;
+                self.raw_pair_history.push(ControlledPairAttemptRecord {
+                    experiment_attempt,
+                    raw,
+                    derived_reason: derived_reason.clone(),
+                    decision,
+                });
+                self.finish_active(
+                    ControlledAttemptDecision::Invalid,
+                    Some(format!(
+                        "{} exceeded the five-pair replacement cap",
+                        case.scenario
+                    )),
+                )?;
+                return Ok(decision);
+            }
+            let decision = PairAttemptDecision::ReplaceWholePair {
+                member_order: planned.member_order,
+                replacement_ordinal,
+            };
+            self.raw_pair_history.push(ControlledPairAttemptRecord {
+                experiment_attempt,
+                raw,
+                derived_reason,
+                decision,
+            });
+            return Ok(decision);
+        }
+
+        let decision = PairAttemptDecision::RetainPair;
+        self.raw_pair_history.push(ControlledPairAttemptRecord {
+            experiment_attempt,
+            raw,
+            derived_reason: "completed".to_owned(),
+            decision,
+        });
+        Ok(decision)
+    }
+
+    /// Evaluate complete same-process measurements and finish the active attempt.
+    ///
+    /// Pair replacement is authorized only through [`Self::record_pair`]. Any
+    /// caller-populated [`PairedCase::invalidation_attempts`] is therefore a
+    /// product/protocol failure, regardless of its asserted disposition.
+    pub fn finish_measurements(
+        &mut self,
+        input: &SimultaneousGateInput,
+        observed: &NonAuthoritativeExperimentFixture,
+    ) -> Result<ControlledAttemptDecision, PluginStatsError> {
+        if self.active.is_none() {
+            return Err(PluginStatsError::new(
+                "no controlled experiment attempt is active",
+            ));
+        }
+        if input
+            .cases
+            .iter()
+            .any(|case| !case.invalidation_attempts.is_empty())
+        {
+            let decision = ControlledAttemptDecision::ValidFailure;
+            self.finish_active(
+                decision,
+                Some(
+                    "caller-supplied invalidation reasons and dispositions are not authoritative"
+                        .to_owned(),
+                ),
+            )?;
+            return Ok(decision);
+        }
+
+        let report = match evaluate_non_authoritative_simultaneous_fixture(
+            input,
+            observed,
+            &SimultaneousGatePolicy::normative(),
+        ) {
+            Ok(report) => report,
+            Err(error) => {
+                let decision = ControlledAttemptDecision::ValidFailure;
+                self.finish_active(
+                    decision,
+                    Some(format!(
+                        "controlled measurement output is malformed: {error}"
+                    )),
+                )?;
+                return Ok(decision);
+            }
+        };
+        let (decision, reason) = if report.is_invalid {
+            (
+                ControlledAttemptDecision::Invalid,
+                report.invalidation_reason.clone(),
+            )
+        } else if report.passed {
+            (ControlledAttemptDecision::ValidPass, None)
+        } else {
+            (
+                ControlledAttemptDecision::ValidFailure,
+                Some("one or more controlled performance gates failed".to_owned()),
+            )
+        };
+        self.last_statistical_report = Some(report);
+        self.finish_active(decision, reason)?;
+        Ok(decision)
+    }
+
+    fn finish_active(
+        &mut self,
+        decision: ControlledAttemptDecision,
+        reason: Option<String>,
+    ) -> Result<(), PluginStatsError> {
+        let active = self
+            .active
+            .take()
+            .ok_or_else(|| PluginStatsError::new("no controlled experiment attempt is active"))?;
+        self.history.push(ControlledAttemptRecord {
+            ordinal: active.ordinal,
+            decision,
+            reason,
+        });
+        Ok(())
+    }
+}
+
+fn classifier_allows(classifier: &str, event: InfrastructureEvent) -> bool {
+    classifier
+        .split_once(';')
+        .map(|(events, _)| events)
+        .unwrap_or(classifier)
+        .split('|')
+        .any(|allowed| allowed == event.classifier_name())
+}
+
 /// Normative simultaneous-gate settings.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]

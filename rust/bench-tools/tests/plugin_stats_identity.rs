@@ -6,7 +6,8 @@
 use std::collections::BTreeMap;
 
 use aiperf_bench_tools::plugin_stats::{
-    MachineObservation, MetricGateKind, NonAuthoritativeExperimentFixture,
+    AttemptDisposition, ControlledAttemptDecision, ControlledMeasurementEvaluator,
+    InvalidationAttempt, MachineObservation, MetricGateKind, NonAuthoritativeExperimentFixture,
     NonAuthoritativeObservationFixture, PairedCase, PairedSample, RatioDirection,
     SimultaneousGateInput, SimultaneousGatePolicy, Variant, checked_in_case_plans,
     checked_in_inventory_digest, evaluate_non_authoritative_simultaneous_fixture,
@@ -379,6 +380,93 @@ fn production_cli_refuses_consistently_forged_receipt_files_and_rows() {
         String::from_utf8_lossy(&output.stderr)
             .contains("same-process controlled measurement capability")
     );
+}
+
+#[test]
+fn controlled_evaluation_rejects_caller_asserted_invalidations_as_a_valid_failure() {
+    let mut fixture = statistical_fixture();
+    let case = &mut fixture.input.cases[0];
+    let pair_id = fixture.observed.pair_schedule()[0].pair_id.clone();
+    let member_order = fixture.observed.pair_schedule()[0].member_order;
+    let members = case
+        .samples
+        .iter()
+        .filter(|sample| sample.pair_id == pair_id && sample.metric == case.primary_metric)
+        .cloned()
+        .collect::<Vec<_>>();
+    case.invalidation_attempts.push(InvalidationAttempt {
+        pair_id,
+        experiment_attempt: 1,
+        replacement_ordinal: 1,
+        member_order,
+        members,
+        reason: "forged infrastructure reason".to_owned(),
+        disposition: AttemptDisposition::InfrastructureInvalid,
+    });
+
+    let mut evaluator = ControlledMeasurementEvaluator::new().expect("authority validates");
+    evaluator.begin_attempt().expect("attempt starts");
+    assert_eq!(
+        evaluator
+            .finish_measurements(&fixture.input, &fixture.observed)
+            .expect("caller assertions are classified as a product failure"),
+        ControlledAttemptDecision::ValidFailure
+    );
+    assert!(evaluator.begin_attempt().is_err());
+    assert!(evaluator.last_statistical_report().is_none());
+}
+
+#[test]
+fn controlled_evaluation_makes_the_first_statistical_failure_authoritative() {
+    let mut fixture = statistical_fixture();
+    let case = fixture
+        .input
+        .cases
+        .iter_mut()
+        .find(|case| case.scenario == "exporter_100k")
+        .expect("allocation scenario exists");
+    for pair_id in fixture
+        .observed
+        .pair_schedule()
+        .iter()
+        .map(|pair| pair.pair_id.as_str())
+    {
+        let static_value = case
+            .samples
+            .iter()
+            .find(|sample| {
+                sample.pair_id == pair_id
+                    && sample.metric == "allocation_count_per_successful_request"
+                    && sample.variant == Variant::Static
+            })
+            .expect("static allocation measurement exists")
+            .value;
+        case.samples
+            .iter_mut()
+            .find(|sample| {
+                sample.pair_id == pair_id
+                    && sample.metric == "allocation_count_per_successful_request"
+                    && sample.variant == Variant::Dynamic
+            })
+            .expect("dynamic allocation measurement exists")
+            .value = static_value / 0.99;
+    }
+
+    let mut evaluator = ControlledMeasurementEvaluator::new().expect("authority validates");
+    evaluator.begin_attempt().expect("attempt starts");
+    assert_eq!(
+        evaluator
+            .finish_measurements(&fixture.input, &fixture.observed)
+            .expect("complete controlled measurements evaluate"),
+        ControlledAttemptDecision::ValidFailure
+    );
+    assert!(
+        !evaluator
+            .last_statistical_report()
+            .expect("statistical report is retained")
+            .passed
+    );
+    assert!(evaluator.begin_attempt().is_err());
 }
 
 #[test]
