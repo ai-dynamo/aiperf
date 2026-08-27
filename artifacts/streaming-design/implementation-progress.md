@@ -18,6 +18,7 @@ SPDX-License-Identifier: Apache-2.0
 | Architecture specification | Complete | `spec-review-record.md` |
 | Executable implementation plan | Complete | `implementation-plan-review-record.md` |
 | Pre-0 feature-off compile prerequisite | Complete | Task `1320e84a18`; merge `7d54838a7b`; two reviews approved; focused test 1/1 passed |
+| Pre-0b engine-only feature topology | Complete | Task `ceeccf9969`; merge `e8ffaf0cac`; two feature checks and 11 focused tests passed; two reviews approved |
 | Task 0 — feature/dependency freeze | In progress | Pending task branch and reviews |
 
 Baseline note: the full feature-off runtime suite reached execution after the
