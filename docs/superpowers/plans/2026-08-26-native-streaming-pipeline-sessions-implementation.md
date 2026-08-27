@@ -416,6 +416,12 @@ or route map. Once ready, the pipeline synchronously calls
 budget future without installing a route. The local implementation returns no
 route charge because it introduces no persistent route map.
 
+The policy and admission owner may each retain a cheap clone of the same
+`StreamingResourceBudget` accounting handle. They never share the route map.
+The policy uses its handle only during checkpoint initialization to reacquire
+leases for restored routes before polling begins; live capacity waits remain
+owned exclusively by the separately borrowable admission object.
+
 `LocalStreamingPlacement` implements the same separately owned admission/policy/submitter/driver/control split as cellular without a transport hop. Placement policy, placement driver, `ActiveExecutionSet`, `StreamingBlockingExecutor`, and `EpochResultCoordinator` are stable checkpoint participants; dynamic handles, blocking jobs, and result segments aggregate beneath them. Pipeline preparation freezes the exact required participant set before source polling. `PlacementEvent::Action` is the only route back into session state.
 
 - [ ] **Step 4: Verify green**

@@ -394,6 +394,7 @@ pub struct StickySessionPlacement {
     cell_count: u32,
     routes: BTreeMap<StableSessionKey, BudgetOwnedSessionRoute>,
     pending_reservation: Option<(StableSessionKey, BudgetLease)>,
+    route_budget: StreamingResourceBudget,
 }
 
 pub struct BudgetOwnedSessionRoute { pub route: SessionRoute, pub lease: BudgetLease }
@@ -501,6 +502,17 @@ Budget exhaustion remains ordinary async backpressure, and a pending wait does
 not block route retirement. Only one reservation may be pending because the
 fused worker performs install/place as adjacent serial operations.
 
+`StreamingResourceBudget` is a cheaply cloned accounting handle.
+`StickySessionPlacement` and `CellularRouteAdmission` each retain one clone;
+they do not share or synchronize the route map. On
+`StreamingCheckpointParticipant::initialize(Some(...))`, the policy validates
+the complete restored route set, reacquires every route's item/byte charge
+through its budget handle, and constructs `BudgetOwnedSessionRoute` entries
+before source polling begins. If the restored set exceeds the authored budget,
+initialization fails with the stable state-budget error and no partial restored
+map becomes visible. During live execution only `CellularRouteAdmission`
+awaits capacity, so terminal retirement remains independently callable.
+
 A terminal session receipt removes its route after the causal frontier and
 checkpoint participant no longer reference it, dropping the lease back to the
 budget. `accept_prepare` consumes and stores the non-cloneable
@@ -511,6 +523,7 @@ terminal/cancel acknowledgement; it cannot call the endpoint action submitter.
 duplicate-conflicting, or wrong-route release returns a typed failure and
 leaves the action fenced. Add
 `route_reservation_selects_terminal_retirement_and_then_completes` and
+`restored_routes_are_charged_and_block_new_admission_until_retired` and
 `million_sequential_closed_sessions_reclaim_routes_with_constant_high_water`.
 
 - [ ] **Step 4: Verify sticky-session and event-return tests**

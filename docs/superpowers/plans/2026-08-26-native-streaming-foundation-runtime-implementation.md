@@ -420,6 +420,7 @@ git commit -m "feat(runtime): define streaming identity vocabulary"
 
 ```rust
 pub struct BudgetLimits { pub max_items: usize, pub max_bytes: usize }
+#[derive(Clone)]
 pub struct StreamingResourceBudget;
 impl StreamingResourceBudget {
     pub fn new(limits: BudgetLimits) -> Result<Self, BudgetError>;
