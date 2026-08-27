@@ -162,6 +162,74 @@ class TestBufferedJSONLWriterMixin:
         await writer._close_file()
 
     @pytest.mark.asyncio
+    async def test_buffered_write_stops_retrying_flush_after_write_error(
+        self, temp_output_file
+    ):
+        """Once a write fails, further appends must not re-trigger flush attempts.
+
+        Restoring a failed batch onto ``self._buffer`` and letting every
+        subsequent ``buffered_write`` call re-detach the (growing) buffer
+        would re-attempt a doomed flush on every batch boundary: unbounded
+        write amplification and retained-buffer growth with no back-pressure.
+        The circuit breaker on ``_write_error`` bounds the number of flush
+        attempts regardless of how many records are appended afterward.
+        """
+        batch_size = 10
+        num_records = 300
+        writer = BufferedJSONLWriterMixin[SampleRecord](
+            output_file=temp_output_file,
+            batch_size=batch_size,
+        )
+        await writer.initialize()
+        writer._file_handle.write = AsyncMock(side_effect=OSError("disk full"))
+
+        flush_calls = 0
+        real_flush_buffer = writer._flush_buffer
+
+        async def counting_flush_buffer(buffer_to_flush):
+            nonlocal flush_calls
+            flush_calls += 1
+            return await real_flush_buffer(buffer_to_flush)
+
+        writer._flush_buffer = counting_flush_buffer
+
+        all_tasks: list[asyncio.Task] = []
+        real_execute_async = writer.execute_async
+
+        def tracking_execute_async(coro):
+            task = real_execute_async(coro)
+            all_tasks.append(task)
+            return task
+
+        writer.execute_async = tracking_execute_async
+
+        for i in range(num_records):
+            await writer.buffered_write(SampleRecord(id=i, value=f"record_{i}"))
+            # Yield so a just-detached flush task actually runs and records
+            # ``_write_error`` before the next append checks it -- mirrors
+            # production, where writes interleave with real event-loop I/O
+            # instead of firing every batch synchronously back-to-back.
+            await asyncio.sleep(0)
+        # Retrieve every flush task's result so a failed task's exception
+        # doesn't surface as an "exception was never retrieved" warning.
+        if all_tasks:
+            await asyncio.gather(*all_tasks, return_exceptions=True)
+
+        assert writer._write_error is not None
+        # Exactly one flush attempt: the first batch boundary trips the
+        # breaker, and every later append is gated on ``_write_error``
+        # instead of re-detaching and re-flushing a growing buffer.
+        assert flush_calls == 1
+        assert writer.lines_written == num_records
+        # The one failed flush restores its detached batch onto the buffer,
+        # and every later append is retained rather than dropped: nothing is
+        # silently lost even though flushing stopped being retried.
+        assert len(writer._buffer) == num_records
+
+        writer._file_handle.write = AsyncMock(return_value=None)
+        await writer._close_file()
+
+    @pytest.mark.asyncio
     async def test_periodic_flush_loop_survives_unexpected_error(
         self, temp_output_file
     ):

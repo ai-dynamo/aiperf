@@ -29,6 +29,14 @@ from aiperf.transports.http_defaults import AioHttpDefaults
 JSON_CONTENT_TYPE_PREFIX = "application/json"
 OPENMETRICS_CONTENT_TYPE_PREFIX = "application/openmetrics-text"
 
+# A stalling endpoint (headers sent, then no chunk delivery) is bounded by
+# `sock_read` rather than the collection cadence, so scrapes can pile up
+# in-flight when the read timeout dwarfs the interval between them. This
+# multiplier only flags configurations far outside that relationship -
+# it stays above the built-in defaults' own ratio (~90x) so it doesn't
+# fire on an unmodified install.
+READ_TIMEOUT_TO_INTERVAL_WARN_RATIO = 100
+
 # `create_tcp_connector` is exposed as a module attribute via __getattr__ to
 # break a circular import at module-load time:
 # `aiperf.transports.aiohttp_client` imports `AIPerfLoggerMixin` from
@@ -287,6 +295,32 @@ class BaseMetricsCollectorMixin(AIPerfLifecycleMixin, ABC, Generic[TRecord]):
         """
         return self._collection_interval
 
+    def _warn_if_read_timeout_far_exceeds_collection_interval(self) -> None:
+        """Warn when the scrape read timeout dwarfs the collection cadence.
+
+        `sock_read` bounds each inter-chunk gap, not the total scrape, so a
+        stalling endpoint can only ever delay a given scrape by up to
+        ``METRICS_SCRAPE_READ_TIMEOUT``. When that timeout is far above the
+        interval at which new scrapes are issued, a single stall can leave
+        many scrapes in flight simultaneously. This is a sanity check, not a
+        hard failure - it never blocks initialization.
+        """
+        read_timeout = Environment.HTTP.METRICS_SCRAPE_READ_TIMEOUT
+        if (
+            read_timeout
+            > self._collection_interval * READ_TIMEOUT_TO_INTERVAL_WARN_RATIO
+        ):
+            self.warning(
+                lambda: (
+                    f"METRICS_SCRAPE_READ_TIMEOUT ({read_timeout}s) for {self._display_url} "
+                    f"is more than {READ_TIMEOUT_TO_INTERVAL_WARN_RATIO}x the collection "
+                    f"interval ({self._collection_interval}s). A stalling metrics endpoint "
+                    f"could leave many scrapes in flight at once. Consider lowering "
+                    f"AIPERF_HTTP_METRICS_SCRAPE_READ_TIMEOUT or raising the collection "
+                    f"interval."
+                )
+            )
+
     @on_init
     async def _initialize_http_client(self) -> None:
         """Initialize the aiohttp client session with trace config.
@@ -300,6 +334,7 @@ class BaseMetricsCollectorMixin(AIPerfLifecycleMixin, ABC, Generic[TRecord]):
         Configures TraceConfig to capture HTTP timing events for precise correlation.
         Uses create_tcp_connector to apply standard socket settings including IP version.
         """
+        self._warn_if_read_timeout_far_exceeds_collection_interval()
         timeout = aiohttp.ClientTimeout(
             total=None,  # No total timeout for ongoing scrapes
             connect=self._reachability_timeout,  # Fast connection timeout only

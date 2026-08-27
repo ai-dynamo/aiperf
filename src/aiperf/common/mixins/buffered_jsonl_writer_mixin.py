@@ -142,8 +142,15 @@ class BufferedJSONLWriterMixin(AIPerfLifecycleMixin, Generic[BaseModelT]):
             self._buffer.append(json_bytes)
             self.lines_written += 1
 
-            # Check if we need to flush
-            if len(self._buffer) >= self._batch_size:
+            # Check if we need to flush. Once a write has failed, further
+            # batch-size-triggered flushes are skipped: every attempt would
+            # re-detach the (now growing) buffer, fail again on the same
+            # broken handle, and restore it -- unbounded write amplification
+            # for a doomed write. Records still accumulate in ``self._buffer``
+            # so nothing is silently dropped, and ``flush_buffer()`` still
+            # raises from ``_write_error`` at the finalization barrier, so the
+            # failure is not lost -- just no longer retried on every append.
+            if self._write_error is None and len(self._buffer) >= self._batch_size:
                 buffer_to_flush = self._buffer
                 self._buffer = []
 
