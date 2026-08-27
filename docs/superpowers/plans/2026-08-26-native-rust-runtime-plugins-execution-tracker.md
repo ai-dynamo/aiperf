@@ -24,18 +24,18 @@ runtime verification.
 | Item | Value | Status |
 |---|---|---|
 | Specification | `docs/superpowers/specs/2026-08-26-native-rust-runtime-plugins-design.md` | PASS |
-| Specification tip | `fd6c2b12bf` (`docs: record native plugin lab evidence`) | PASS |
+| Specification tip | `449284d0bc` (`docs(plugins): specify zero-loss execution capsule`) | PASS |
 | Local integration branch | `ajc/native-rust-runtime-plugins` | ACTIVE |
-| Local integration HEAD at tracker creation | `a2ce268c8e49e3b1b5334dfd88885562da46b096` | PASS |
+| Current local integration HEAD | `979f7d4ff04a72b7715311bde1d25fff4f7ea68d` | ACTIVE |
 | Baseline hygiene commit | `d4159dc91a11c4afe643cd90ec92fc8974171321` | PASS |
 | Full implementation plan | `docs/superpowers/plans/2026-08-26-native-rust-runtime-plugins-implementation.md`; final hash-bound audits recorded below | PASS |
-| ABI boundary gap-closure plan | `docs/superpowers/plans/2026-08-27-plugin-abi-boundary-gap-closure.md`; six tasks closing measured leaks the full plan does not cover; single-agent exclusive ownership in its own worktree; base `5d8ba0c3300921452a78703b0c89531bb605611a` (`merge: integrate native plugin task 1`); main-plan Task 4 blocked until all six land | PENDING |
+| ABI boundary gap-closure plan | Tasks 1–4 plus Task-5 rejection integrated through `e68ca98c9d`; corrected Task-6 branch `ajc/plugin-abi-gap-task6-corrected` and worktree `.worktrees/plugin-abi-gap-closure-task6` start from that exact post-Task-5 commit; main-plan Task 4 remains blocked until Task 6 lands | ACTIVE |
 | Frozen parity inventory | `rust/benchmarks/plugin-parity.yaml` | PENDING |
 | SDD ledger | `.superpowers/sdd/2026-08-26-native-rust-runtime-plugins-implementation/progress.md`; plan preflight PASS, implementation execution remains active | ACTIVE |
-| Paper-rig checkout | `/work-pvc/paper-rig/aiperf-native-plugins-impl` | ACTIVE |
-| Paper-rig Cargo target | persistent block volume mounted at `/cargo-target`; `CARGO_INCREMENTAL=1` | ACTIVE |
+| Paper-rig checkout | repository `/work-pvc/paper-rig/repos/aiperf-native-plugins`; task worktrees under `/work-pvc/paper-rig/worktrees/` | ACTIVE |
+| Paper-rig Cargo target | 1 TiB persistent NVMe-class Hyperdisk mounted at `/nvme`; task-isolated targets under `/nvme/cargo-target/`; `CARGO_INCREMENTAL=1` | ACTIVE |
 | Ordinary gate placement | paper-rig by default; switch the whole gate local only when measured paper-rig wall/queue/I/O time is slower | ACTIVE |
-| Authoritative A/B placement | otherwise-idle paper-rig with pinned affinity/topology and recorded noise controls; local workstation forbidden | PENDING |
+| Authoritative A/B placement | otherwise-idle paper-rig with pinned affinity/topology and recorded noise controls; Task-5 erased-executor A/B completed there and rejected the design; final product A/B remains pending | ACTIVE |
 | Allocator authority prerequisite | Task 7 four-target conformance plus paper-rig A/B; exact provider/shim object must be integrated before Task 17/native entry | PENDING |
 
 The local integration branch contains non-plugin remediation commits after
@@ -145,6 +145,7 @@ feature.
 | Feature/task/unit | Base | Implementer model/effort | Graham pass-1 model/effort | Graham pass-2 model/effort | Branch | Local worktree | Paper-rig worktree | RED command/output digest | Minimal GREEN commit/focused-output digest | Refactor object/diff decision/focused-output digest | Complete-suite command/output digest | fmt command/output digest | Clippy command/output digest | Paper-rig env/tini/Python/cache evidence | Graham pass-1 range/report/verdict | Review-fix commits | Graham pass-2 range/report/verdict | Post-review gate/output digest | Commit→bundle→local-object map | Integration or private-candidate state | Status |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | 1 | `caa3ff6fcf20ffe36a7704abe16274bedadbb9fb` | `gpt-5.6-terra` / `medium` | PENDING | PENDING | `ajc/native-plugin-task-1` | `/home/anthony/nvidia/projects/aiperf/ajc/native-plugin-worktrees/task-1` | `/work-pvc/paper-rig/aiperf-native-plugin-worktrees/task-1` | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | `ISOLATED_NOT_INTEGRATED` | ACTIVE |
+| 3 | `653db4d56e46b0d988bcb32e16a1e68f78d3ea96` | parallel `gpt-5.6-sol`/`gpt-5.6-terra` | `gpt-5.6-sol` / `xhigh` | PENDING | `ajc/native-plugin-task3-exporter-authority` plus review-fix branches | `.worktrees/native-plugin-task3-exporter-authority` plus isolated `*-fix-r1` worktrees | `/work-pvc/paper-rig/worktrees/task3-exporter-authority-final` | focused RED commits retained in branch/report | implementation head `f247b0102d` | per-request exporter authority intentionally remains fail-closed pending Tasks 37/38 | paper-rig `cargo test -p aiperf-bench-tools --all-targets`: PASS | direct exact-range `rustfmt --check --edition 2024`: PASS | paper-rig Rust 1.98 `cargo clippy -p aiperf-bench-tools --all-targets -- -D warnings`: PASS | pod UID `e10ca3ad-743c-474d-9754-57c7c883d3ec`; 144 CPUs; persistent `/nvme`; explicit GKE context | `653db4d..f247b010`; report SHA-256 `ffec7d744f6ca4d4fd99f7d122ed98e5bb80f33932e39a3461c5137ec9780c8a`; **NO-GO C4/I6/M2** | fix round 1 ACTIVE in build/runtime/topology partitions | PENDING | PENDING | three verified local bundles through `f247b0102d` | `INTEGRATED_BUT_NOT_MERGEABLE_REVIEW_FIXES_ACTIVE` | ACTIVE |
 
 Required independently tracked unit names are Tasks `1`–`40`, plus
 `12-core`, `12-elf`, `12-macho`, `12-pe`, `33-websocket`, `33-dry-run`,
@@ -258,7 +259,7 @@ PASS from another component or from the composite candidate. The columns are:
 
 | Feature/task/unit | Pass-1 range | Pass-1 reviewer model/effort | Pass-1 report digest/findings | Fix commits | Pass-2 exact final range | Pass-2 fresh reviewer model/effort | Pass-2 report digest/verdict | Unresolved findings | Status |
 |---|---|---|---|---|---|---|---|---|---|
-| _pending_ | | | | | | | | | PENDING |
+| Task 3 | `653db4d56e46b0d988bcb32e16a1e68f78d3ea96..f247b0102d8b0b38e49669d833947181ced227fe` | `gpt-5.6-sol` / `xhigh` | SHA-256 `ffec7d744f6ca4d4fd99f7d122ed98e5bb80f33932e39a3461c5137ec9780c8a`; NO-GO C4/I6/M2 | fix round 1 ACTIVE | PENDING | PENDING | PENDING | C4/I6/M2 | FAIL |
 
 ## Commit bundle and local-import ledger
 
@@ -268,7 +269,10 @@ comparison.
 
 | Feature/task | Commit | Bundle path | `git bundle verify` | Local object ID | Integration result | Status |
 |---|---|---|---|---|---|---|
-| _pending_ | | | | | | PENDING |
+| Task 3 exporter authority | `1c8179474b` | `bundles/task3-exporter-authority-1c8179474b-paper.bundle` (SHA-256 `8ed9df3e450f16b8f0d0c31a43772f7d9cb47e7f2babeb7788da86602c6e2c56`) | PASS | exact | merged by `501284b65c` with later incremental commits | PASS |
+| Task 3 Clippy cleanup | `65867e16f6` | `bundles/task3-clippy-clean-65867e16f6.bundle` (SHA-256 `a577afbd3587a5c4aeb537d2ba1797573f78b4c7d2250da94a5ed927d8d852e0`) | PASS | exact | merged by `501284b65c` | PASS |
+| Task 3 Rust-1.98 lint | `f247b0102d` | `bundles/task3-rust-1.98-lint-f247b0102d.bundle` (SHA-256 `24364e8190ae3793530757a66486436ab3471e2b11d35926ed0ab284385e6aa1`) | PASS | exact | merged by `d8808fc494` | PASS |
+| Zero-loss execution capsule spec/plan | `449284d0bc` | `bundles/zero-loss-execution-capsule-449284d0bc.bundle` (SHA-256 `c4859fabb5d31b0232edbee7be62bff59ea7635560e372c2245c6d7a4c0c75af`) | PASS | exact | authored on local integration branch | PASS |
 
 ## Platform and release matrix
 
