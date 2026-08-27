@@ -456,6 +456,13 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
         ``f"{config.phase.value}_{config.phase_index}"`` -> ``"warmup_0"``.
         Comparing a cosmetic label would drop the scrape back onto the
         arrival-contiguity fallback that stamping exists to retire.
+
+        The active phase's ``phase_name`` is carried over as well, not just the
+        occurrence id. ``ServerMetricsAccumulator`` keys both its export
+        captures and its synthetic-index table on the display label alongside
+        the index, so leaving the divergent name in place exports one phase
+        occurrence twice -- once per label, each summarizing the *same* samples
+        because both captures filter on the same ``sample_phase_index``.
         """
         active = self._active_phase
         if active is None or active.instance_id is None:
@@ -466,7 +473,11 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
             active.profiling_index,
         ):
             return identity
-        return replace(identity, instance_id=active.instance_id)
+        return replace(
+            identity,
+            instance_id=active.instance_id,
+            phase_name=active.phase_name or identity.phase_name,
+        )
 
     @on_message(MessageType.CREDIT_PHASE_START)
     async def _on_credit_phase_start(self, message: CreditPhaseStartMessage) -> None:
