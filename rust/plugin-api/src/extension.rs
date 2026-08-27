@@ -16,7 +16,7 @@
 //! duplicates. The endpoint, transport, and exporter category methods land on
 //! top of this seam without changing the entry shape.
 
-use std::{fmt, marker::PhantomData};
+use std::{collections::HashSet, fmt, marker::PhantomData};
 
 use crate::{
     descriptor::{PluginCategoryDescriptor, PluginPackageDescriptor},
@@ -96,6 +96,10 @@ pub trait AIPerfExtension: Send + Sync {
 pub struct PluginRegistrar<'a> {
     package: &'static PluginPackageDescriptor,
     observed: Vec<RegistryId>,
+    // Registration order is the reportable fact, but duplicate detection must
+    // not be quadratic once generation-2 category methods multiply the call
+    // count, so the identifiers are also held in a set.
+    seen: HashSet<RegistryId>,
     host_state: PhantomData<&'a ()>,
 }
 
@@ -105,6 +109,7 @@ impl PluginRegistrar<'_> {
         Self {
             package,
             observed: Vec::new(),
+            seen: HashSet::new(),
             host_state: PhantomData,
         }
     }
@@ -126,7 +131,7 @@ impl PluginRegistrar<'_> {
     /// one package is a plugin authoring bug, so it is rejected here rather
     /// than silently resolved by priority later.
     pub fn record_registration(&mut self, id: RegistryId) -> Result<(), ExtensionError> {
-        if self.observed.contains(&id) {
+        if !self.seen.insert(id.clone()) {
             return Err(ExtensionError::for_id(
                 id,
                 "identifier already registered by this package",
