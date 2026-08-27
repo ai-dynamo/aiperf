@@ -535,10 +535,9 @@ fn prepare_reset_hook(
             "endpoint.reset_kv_cache.path",
         )?,
         max_retry_ns: match config.max_retry_seconds {
-            Some(seconds) => nonnegative_seconds_to_ns(
-                seconds,
-                "endpoint.reset_kv_cache.max_retry_seconds",
-            )?,
+            Some(seconds) => {
+                nonnegative_seconds_to_ns(seconds, "endpoint.reset_kv_cache.max_retry_seconds")?
+            }
             None => DEFAULT_RESET_KV_CACHE_MAX_RETRY_NS,
         },
         handles: handles.to_vec(),
@@ -577,23 +576,35 @@ struct ControlHookAttemptError {
     is_retryable: bool,
 }
 
-async fn attempt_control_request(
-    handle: &dyn ControlPlaneHttp,
+/// Per-hook facts shared by every attempt against every endpoint origin.
+struct ControlHookPlan {
     kind: &'static str,
-    index: usize,
-    path: &str,
+    path: String,
     timeout_ns: i64,
+    /// Statuses treated as transient; empty means every non-2xx is fatal.
+    retryable_status_codes: &'static [u16],
+}
+
+async fn attempt_control_request(
+    plan: &ControlHookPlan,
+    handle: &dyn ControlPlaneHttp,
+    index: usize,
     target_url: &str,
     clock: &Rc<dyn Clock>,
-    retryable_status_codes: &[u16],
 ) -> std::result::Result<(), ControlHookAttemptError> {
-    let absolute_deadline_ns = clock.now_ns().saturating_add(timeout_ns);
+    let ControlHookPlan {
+        kind,
+        path,
+        timeout_ns,
+        retryable_status_codes,
+    } = plan;
+    let absolute_deadline_ns = clock.now_ns().saturating_add(*timeout_ns);
     let response = handle
         .execute(
             ControlPlaneRequest {
                 request_id: format!("control-hook-{kind}-{index}"),
                 method: ControlPlaneMethod::Post,
-                path: path.to_owned(),
+                path: path.clone(),
             },
             absolute_deadline_ns,
             LocalCancellationSignal::new(),
@@ -631,29 +642,25 @@ async fn execute_control_hook(
     clock: Rc<dyn Clock>,
     max_retry_ns: i64,
 ) -> Result<ControlHookOutcome> {
-    // Only reset_kv_cache opts into transient-busy status retries; a profiler
-    // hook passes an empty set so every non-2xx stays fatal.
-    let retryable_status_codes: &[u16] = if max_retry_ns > 0 {
-        &RESET_KV_CACHE_RETRYABLE_STATUS_CODES
-    } else {
-        &[]
+    let plan = ControlHookPlan {
+        kind,
+        path,
+        timeout_ns,
+        // Only reset_kv_cache opts into transient-busy status retries; a
+        // profiler hook passes a zero budget and keeps every non-2xx fatal.
+        retryable_status_codes: if max_retry_ns > 0 {
+            &RESET_KV_CACHE_RETRYABLE_STATUS_CODES
+        } else {
+            &[]
+        },
     };
     let request_count = handles.len();
     for (index, (handle, target_url)) in handles.into_iter().zip(target_urls).enumerate() {
         let retry_deadline_ns = clock.now_ns().saturating_add(max_retry_ns);
         let mut backoff_ns = RETRY_BACKOFF_INITIAL_NS;
         loop {
-            let attempt = attempt_control_request(
-                handle.as_ref(),
-                kind,
-                index,
-                &path,
-                timeout_ns,
-                &target_url,
-                &clock,
-                retryable_status_codes,
-            )
-            .await;
+            let attempt =
+                attempt_control_request(&plan, handle.as_ref(), index, &target_url, &clock).await;
             let failure = match attempt {
                 Ok(()) => break,
                 Err(failure) => failure,
@@ -1008,10 +1015,9 @@ mod tests {
 
     #[test]
     fn transient_reset_statuses_retry_within_budget_and_other_statuses_fail_fast() {
-        for (statuses, expected_attempts, expects_success) in [
-            (vec![503, 503, 204], 3, true),
-            (vec![400], 1, false),
-        ] {
+        for (statuses, expected_attempts, expects_success) in
+            [(vec![503, 503, 204], 3, true), (vec![400], 1, false)]
+        {
             let sim_clock = Rc::new(SimClock::new());
             let clock: Rc<dyn Clock> = sim_clock.clone();
             let provider = RecordingProvider::with_statuses(&statuses);
