@@ -1,0 +1,26 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+schema_version = 1
+
+[[symbol_ownership]]
+symbol = "FrozenAIPerfRegistry"
+owner_crate = "aiperf-plugin-api"
+source_path = "plugin-api/src/frozen.rs"
+producer_task = 15
+construction_crate = "aiperf-plugin-host"
+consumer_crates = ["aiperf-runtime"]
+composition_crate = "aiperf-cli"
+state = "planned"
+composition_state = "planned"
+
+[[symbol_ownership]]
+symbol = "FrozenPluginUniverse"
+owner_crate = "aiperf-plugin-api"
+source_path = "plugin-api/src/frozen.rs"
+producer_task = 15
+construction_crate = "aiperf-plugin-host"
+consumer_crates = ["aiperf-runtime"]
+composition_crate = "aiperf-cli"
+state = "planned"
+composition_state = "planned"

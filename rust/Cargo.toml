@@ -8,6 +8,32 @@ resolver = "3"
 # BOTH the entry point and the execution engine, re-execing itself (`aiperf
 # --execute`) over the protocol-v2 stdio seam for each run/probe/cell.
 members = [
+    "plugin-api",
+    "core",
+    "plugin-sdk",
+    "endpoint-sdk",
+    "transport-sdk",
+    "export-sdk",
+    "plugin-sdk-macros",
+    "plugin-host",
+    "plugin-conformance",
+    "plugin-test-support",
+    "plugin-packaging-tests",
+    "plugin-perf",
+    "plugin-static-comparator",
+    "allocator-provider",
+    "allocator-shim",
+    "plugins/export-basic",
+    "plugins/export-parquet",
+    "plugins/export-mlflow",
+    "plugins/export-wandb",
+    "plugins/export-otel",
+    "plugins/endpoints",
+    "plugins/transport-http",
+    "plugins/transport-grpc",
+    "plugins/transport-websocket",
+    "plugins/transport-dry-run",
+    "plugins/transport-dynosim",
     "runtime",
     "cli",
     "mock-server",
@@ -79,6 +105,7 @@ serde_json = "1"
 sha2 = "0.10"
 smallvec = { version = "1", features = ["serde"] }
 tiktoken-rs = "0.9"
+tempfile = "3"
 tokio = { version = "1", features = ["full"] }
 tokio-tungstenite = { version = "0.26", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
 tokio-util = { version = "0.7", features = ["rt"] }
