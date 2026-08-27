@@ -36,11 +36,14 @@ use super::{
     budget::{BudgetError, BudgetLease, StreamingResourceBudget},
     checkpoint::{
         BudgetedCheckpointBytes, CheckpointBarrier, CheckpointEpoch, CheckpointError,
-        CheckpointGeneration, CheckpointParticipantId, CommittedParticipantReceipt,
-        CommittedParticipantState, PreparedParticipantState, StreamRunIdentity,
-        StreamingCheckpointParticipant,
+        CheckpointGeneration, CheckpointParticipantId, CommittedCheckpointGeneration,
+        CommittedParticipantReceipt, CommittedParticipantState, PreparedParticipantState,
+        StreamRunIdentity, StreamingCheckpointParticipant,
     },
-    failure::{OrdinaryStreamingFailure, StreamingFailureStage},
+    failure::{
+        OrdinaryStreamingFailure, ResultExportError, ResultExportFailureCode,
+        StableStreamingFailure, StreamingFailureStage,
+    },
     identity::{
         ContentDigest, GlobalSequence, ImmutableObjectIdentity, StableActionId, StableRecordId,
         StableSessionKey,
@@ -1667,6 +1670,18 @@ pub enum StreamingReliabilityError {
     NonContiguousExportCounter,
     /// Durable status does not make this receipt reachable.
     DerivedExportReceiptUnreachable,
+    /// Status authority names a generation that is not a committed final generation.
+    NonFinalGenerationAuthority,
+    /// Export receipt names a stage/code pair no export failure can produce.
+    ExportReceiptFailureUnrepresentable,
+    /// Export receipt facts cannot reconstruct a legal ordinary issue.
+    ExportReceiptClassCodeMismatch,
+    /// Export receipt names a rule the frozen policy does not select.
+    ExportReceiptRuleMismatch,
+    /// Export receipt exhaustion disagrees with the recomputed retry limit.
+    ExportReceiptExhaustionMismatch,
+    /// Export receipt disposition disagrees with the recomputed policy decision.
+    ExportReceiptDispositionMismatch,
     /// Export receipt encoded or parsed state could not obtain exact capacity.
     ExportReceiptBudget(StateBudgetFailureCode),
     /// The current-attempt index names a reporter token with no retained action.
@@ -3901,6 +3916,25 @@ pub struct DerivedExportReceiptReference {
 }
 
 impl DerivedExportReceiptReference {
+    /// Rebuild the reference from the four durably persisted status fields.
+    ///
+    /// This is the sole reconstruction seam for a post-restart status owner. It is
+    /// private to `reliability`: outside this module the only way to obtain a
+    /// reference remains an in-process prepared failure.
+    const fn from_status_fields(
+        receipt_digest: ContentDigest,
+        receipt_length: u64,
+        embedded_receipt_digest: ContentDigest,
+        embedded_receipt_length: u64,
+    ) -> Self {
+        Self {
+            receipt_digest,
+            receipt_length,
+            embedded_receipt_digest,
+            embedded_receipt_length,
+        }
+    }
+
     /// Borrow the raw BLAKE3 digest of the complete export receipt.
     #[must_use]
     pub const fn receipt_digest(&self) -> &ContentDigest {
@@ -4028,46 +4062,194 @@ impl PreparedExportReceiptPersistence {
     }
 }
 
-/// Sealed status-authored expectations used for ledger-free receipt reopen.
-pub struct DurableExportReceiptValidationContext {
+/// Verified predecessor status for one derived export sink attempt.
+///
+/// This type is the sole proof that a caller read its `last_attempt_ordinal`,
+/// `counter_before`, and receipt reference from a durably persisted predecessor
+/// status bound to a committed final checkpoint generation. It has private
+/// fields, no constructor reachable outside this module, and no `Deserialize`,
+/// so it cannot be forged from wire bytes or fabricated by a sibling module.
+///
+/// ```compile_fail
+/// # use aiperf_runtime::streaming::reliability::VerifiedDerivedSinkAttemptStatus;
+/// # fn cannot_fabricate(status: VerifiedDerivedSinkAttemptStatus) {
+/// let _ordinal = status.last_attempt_ordinal;
+/// # }
+/// ```
+pub struct VerifiedDerivedSinkAttemptStatus {
     run: StreamRunIdentity,
     generation: CheckpointGeneration,
     sink_id: StreamingIssueComponentId,
-    policy_digest: ContentDigest,
-    expected_attempt_ordinal: u32,
-    expected_counter_before: u64,
+    last_attempt_ordinal: u32,
+    counter_before: u64,
+    reference: DerivedExportReceiptReference,
 }
 
-impl DurableExportReceiptValidationContext {
-    /// Construct validation inputs only after the status owner has verified its
-    /// independently persisted predecessor fields.
-    #[allow(dead_code)]
-    pub(crate) fn from_status_authority(
-        run: StreamRunIdentity,
-        generation: CheckpointGeneration,
+impl VerifiedDerivedSinkAttemptStatus {
+    /// Bind independently persisted predecessor fields to a committed final
+    /// generation.
+    ///
+    /// The run and generation are taken from the committed authority rather than
+    /// from the caller, so a status owner cannot name a generation it does not
+    /// hold. Density is enforced here, once, rather than at every reader: the
+    /// forward path defines `counter_before` as `u64::from(attempt_ordinal)`, so
+    /// any other pairing is not a reachable predecessor status.
+    fn from_status_owner(
+        final_generation: &CommittedCheckpointGeneration,
         sink_id: StreamingIssueComponentId,
-        policy_digest: ContentDigest,
-        expected_attempt_ordinal: u32,
-        expected_counter_before: u64,
-    ) -> Self {
-        Self {
-            run,
-            generation,
-            sink_id,
-            policy_digest,
-            expected_attempt_ordinal,
-            expected_counter_before,
+        last_attempt_ordinal: u32,
+        counter_before: u64,
+        reference: DerivedExportReceiptReference,
+    ) -> Result<Self, StreamingReliabilityError> {
+        if !final_generation.is_final() {
+            return Err(StreamingReliabilityError::NonFinalGenerationAuthority);
         }
+        if u64::from(last_attempt_ordinal) != counter_before {
+            return Err(StreamingReliabilityError::NonContiguousExportCounter);
+        }
+        Ok(Self {
+            run: *final_generation.run(),
+            generation: final_generation.generation(),
+            sink_id,
+            last_attempt_ordinal,
+            counter_before,
+            reference,
+        })
+    }
+
+    /// Borrow the logical run proven by the committed generation.
+    #[must_use]
+    pub const fn run(&self) -> &StreamRunIdentity {
+        &self.run
+    }
+
+    /// Borrow the committed final generation identity.
+    #[must_use]
+    pub const fn generation(&self) -> &CheckpointGeneration {
+        &self.generation
+    }
+
+    /// Borrow the derived sink this status describes.
+    #[must_use]
+    pub const fn sink_id(&self) -> &StreamingIssueComponentId {
+        &self.sink_id
+    }
+
+    /// Return the independently derived predecessor attempt ordinal.
+    #[must_use]
+    pub const fn last_attempt_ordinal(&self) -> u32 {
+        self.last_attempt_ordinal
+    }
+
+    /// Return the independently derived predecessor counter.
+    #[must_use]
+    pub const fn counter_before(&self) -> u64 {
+        self.counter_before
+    }
+
+    /// Borrow the durable outer and embedded receipt reference.
+    #[must_use]
+    pub const fn receipt_reference(&self) -> &DerivedExportReceiptReference {
+        &self.reference
     }
 }
 
+/// Sealed status-authored expectations used for ledger-free receipt reopen.
+///
+/// The context borrows the frozen policy rather than retaining its digest.
+/// Retaining only a digest would make the restore path structurally unable to
+/// recompute a decision and force it to replay the one the durable document
+/// carries. The borrow is deliberate: `PreparedStreamingIssuePolicy` is owned by
+/// the run's frozen configuration for the whole restore, so no reference count is
+/// warranted.
+pub struct DurableExportReceiptValidationContext<'policy> {
+    run: StreamRunIdentity,
+    generation: CheckpointGeneration,
+    sink_id: StreamingIssueComponentId,
+    policy: &'policy PreparedStreamingIssuePolicy,
+    expected_attempt_ordinal: u32,
+    expected_counter_before: u64,
+    expected_reference: DerivedExportReceiptReference,
+}
+
+impl<'policy> DurableExportReceiptValidationContext<'policy> {
+    /// Mint validation inputs only from a committed final generation and a
+    /// verified predecessor status bound to that same generation.
+    ///
+    /// Both authorities are required and cross-checked. The status already
+    /// carries the run and generation it was minted against; passing the
+    /// committed generation again proves the caller is restoring under the
+    /// generation it currently holds, not under a stale status object.
+    fn from_final_generation_status(
+        final_generation: &CommittedCheckpointGeneration,
+        policy: &'policy PreparedStreamingIssuePolicy,
+        status: &VerifiedDerivedSinkAttemptStatus,
+    ) -> Result<Self, StreamingReliabilityError> {
+        if !final_generation.is_final() {
+            return Err(StreamingReliabilityError::NonFinalGenerationAuthority);
+        }
+        if status.run != *final_generation.run() {
+            return Err(StreamingReliabilityError::ExportReceiptRunMismatch);
+        }
+        if status.generation != final_generation.generation() {
+            return Err(StreamingReliabilityError::ExportReceiptGenerationMismatch);
+        }
+        Ok(Self {
+            run: status.run,
+            generation: status.generation.clone(),
+            sink_id: status.sink_id.clone(),
+            policy,
+            expected_attempt_ordinal: status.last_attempt_ordinal,
+            expected_counter_before: status.counter_before,
+            expected_reference: status.reference.clone(),
+        })
+    }
+}
+
+/// Rebuild the exact typed export failure named by a persisted stage and code.
+///
+/// The export failure space is closed and small, so an exhaustive search over the
+/// constructors is both correct and cheaper than a parallel string table that
+/// could drift from `failure.rs`. Returning `None` is the only correct answer for
+/// a stage/code pair no constructor can produce: such a pair is unreachable, not
+/// merely unrecognized.
+fn export_failure_for_stage_and_code(
+    stage: StreamingFailureStage,
+    code: &StreamingIssueComponentId,
+) -> Option<OrdinaryStreamingFailure> {
+    const FAILURE_CODES: [ResultExportFailureCode; 3] = [
+        ResultExportFailureCode::Io,
+        ResultExportFailureCode::Unavailable,
+        ResultExportFailureCode::Attempt,
+    ];
+    const BUDGET_CODES: [StateBudgetFailureCode; 4] = [
+        StateBudgetFailureCode::ItemCapacity,
+        StateBudgetFailureCode::ByteCapacity,
+        StateBudgetFailureCode::SpillCapacity,
+        StateBudgetFailureCode::ProvisionalCapacity,
+    ];
+    FAILURE_CODES
+        .into_iter()
+        .map(ResultExportError::failure)
+        .chain(BUDGET_CODES.into_iter().map(ResultExportError::state_budget))
+        .find(|error| error.stage() == stage && error.code() == code.as_str())
+        .map(OrdinaryStreamingFailure::Export)
+}
+
 /// Strictly restore one status-reachable export receipt without a live ledger.
+///
+/// Every field of the returned receipt is either taken from the verified status
+/// authority in `context` or recomputed here through the frozen policy. The
+/// durable document supplies only comparison inputs and the three facts a status
+/// record does not carry: issue class, semantic context digest, and scope
+/// tiebreaker. Those three are validated transitively, because any change to them
+/// alters the recomputed issue identity or the selected rule.
 pub async fn restore_durable_export_issue_receipt(
     encoded: BudgetedCheckpointBytes,
-    expected_reference: &DerivedExportReceiptReference,
-    context: &DurableExportReceiptValidationContext,
+    context: &DurableExportReceiptValidationContext<'_>,
     parsed_budget: &StreamingResourceBudget,
 ) -> Result<BudgetOwnedExportIssueReceipt, StreamingReliabilityError> {
+    let expected_reference = &context.expected_reference;
     let encoded_length = u64::try_from(encoded.as_bytes().len())
         .map_err(|_| StreamingReliabilityError::ExportReceiptDigestLengthMismatch)?;
     let encoded_digest = ContentDigest::from_bytes(*blake3::hash(encoded.as_bytes()).as_bytes());
@@ -4081,6 +4263,9 @@ pub async fn restore_durable_export_issue_receipt(
     if wire.wire_version != EXPORT_RECEIPT_WIRE_VERSION {
         return Err(StreamingReliabilityError::DerivedExportReceiptUnreachable);
     }
+    if wire.embedded_receipt.wire_version != ISSUE_RECEIPT_WIRE_VERSION {
+        return Err(StreamingReliabilityError::DerivedExportReceiptUnreachable);
+    }
     if wire.run != context.run || wire.embedded_receipt.run != context.run {
         return Err(StreamingReliabilityError::ExportReceiptRunMismatch);
     }
@@ -4090,42 +4275,28 @@ pub async fn restore_durable_export_issue_receipt(
     if wire.sink_id != context.sink_id {
         return Err(StreamingReliabilityError::ExportReceiptSinkMismatch);
     }
-    if wire.attempt_ordinal != context.expected_attempt_ordinal
-        || wire.embedded_receipt.order.retry_ordinal != context.expected_attempt_ordinal
-        || wire.embedded_receipt.threshold.retry_ordinal != context.expected_attempt_ordinal
-    {
-        return Err(StreamingReliabilityError::ExportReceiptAttemptMismatch);
-    }
-    if wire.policy_digest != context.policy_digest
-        || wire.embedded_receipt.threshold.policy_digest != context.policy_digest
+    let policy_digest = *context.policy.digest();
+    if wire.policy_digest != policy_digest
+        || wire.embedded_receipt.threshold.policy_digest != policy_digest
     {
         return Err(StreamingReliabilityError::ExportReceiptPolicyMismatch);
     }
-    if wire.counter_before != context.expected_counter_before
-        || wire.embedded_receipt.threshold.prior_matching_count != context.expected_counter_before
-        || wire.counter_after
-            != wire
-                .counter_before
-                .checked_add(1)
-                .ok_or(StreamingReliabilityError::NonContiguousExportCounter)?
-        || wire.embedded_receipt.threshold.resulting_matching_count != wire.counter_after
-    {
-        return Err(StreamingReliabilityError::NonContiguousExportCounter);
-    }
-    if wire.embedded_receipt.wire_version != ISSUE_RECEIPT_WIRE_VERSION
-        || wire.embedded_receipt.terminal_invariant.is_some()
-        || wire.embedded_receipt.class == StreamingIssueClass::Invariant
-        || wire.embedded_receipt.disposition == StreamingIssueDisposition::FailRun
-        || !scope_order_matches(&wire.embedded_receipt.scope, &wire.embedded_receipt.order)
-    {
+
+    // Convert once, then read only the converted receipt. The wire DTO is not
+    // consulted again for any embedded fact, so no later check can accidentally
+    // trust a field that the total equality comparison below does not cover.
+    let embedded_receipt_digest = wire.embedded_receipt_digest;
+    let embedded_receipt_length = wire.embedded_receipt_length;
+    let outer_issue_id = wire.issue_id;
+    let outer_attempt_ordinal = wire.attempt_ordinal;
+    let outer_counter_before = wire.counter_before;
+    let outer_counter_after = wire.counter_after;
+    let stored_receipt = persisted_receipt_from_wire(wire.embedded_receipt);
+
+    if stored_receipt.terminal_invariant.is_some() {
         return Err(StreamingReliabilityError::DerivedExportReceiptUnreachable);
     }
-    if !wire.embedded_receipt.threshold.is_exhausted
-        && wire.embedded_receipt.disposition != StreamingIssueDisposition::Retry
-    {
-        return Err(StreamingReliabilityError::DerivedExportReceiptUnreachable);
-    }
-    match &wire.embedded_receipt.scope {
+    match &stored_receipt.scope {
         StreamingIssueScope::Export {
             exporter_id,
             generation,
@@ -4138,36 +4309,114 @@ pub async fn restore_durable_export_issue_receipt(
         }
         _ => return Err(StreamingReliabilityError::ExportReceiptGenerationMismatch),
     }
-    let recomputed_issue_id = issue_id_from_wire(&wire.embedded_receipt);
-    if wire.issue_id != recomputed_issue_id || wire.embedded_receipt.issue_id != recomputed_issue_id
+
+    // The status authority owns the ordinal. Everything ordinal-derived below is
+    // computed from the status value, never from the document.
+    let attempt_ordinal = context.expected_attempt_ordinal;
+    if outer_attempt_ordinal != attempt_ordinal
+        || stored_receipt.order.retry_ordinal != attempt_ordinal
+        || stored_receipt.threshold.retry_ordinal != attempt_ordinal
     {
+        return Err(StreamingReliabilityError::ExportReceiptAttemptMismatch);
+    }
+    let counter_before = u64::from(attempt_ordinal);
+    if counter_before != context.expected_counter_before {
+        return Err(StreamingReliabilityError::NonContiguousExportCounter);
+    }
+    let counter_after = counter_before
+        .checked_add(1)
+        .ok_or(StreamingReliabilityError::NonContiguousExportCounter)?;
+    if outer_counter_before != counter_before
+        || outer_counter_after != counter_after
+        || stored_receipt.threshold.prior_matching_count != counter_before
+        || stored_receipt.threshold.resulting_matching_count != counter_after
+    {
+        return Err(StreamingReliabilityError::NonContiguousExportCounter);
+    }
+
+    // Re-derive the typed failure, then rebuild the issue through the same checked
+    // constructor the forward path uses. The constructor derives stage and code
+    // from the failure, so a tampered stage or code cannot survive: it either
+    // names no constructible failure, or it re-derives to different bytes and the
+    // equality comparison below rejects it.
+    let failure = export_failure_for_stage_and_code(stored_receipt.stage, &stored_receipt.code)
+        .ok_or(StreamingReliabilityError::ExportReceiptFailureUnrepresentable)?;
+    let issue = OrdinaryStreamingIssue::export(
+        context.run,
+        context.sink_id.clone(),
+        context.generation.clone(),
+        stored_receipt.class,
+        stored_receipt.semantic_context_digest,
+        attempt_ordinal,
+        stored_receipt.order.scope_tiebreaker,
+        failure,
+    )
+    .map_err(|_| StreamingReliabilityError::ExportReceiptClassCodeMismatch)?;
+
+    // Recompute the exact legal policy decision through the merged policy engine.
+    let rule = context.policy.rule_for(&issue)?;
+    let is_exhausted = counter_before >= u64::from(rule.retry_limit);
+    let disposition = if is_exhausted {
+        rule.exhausted_disposition
+    } else {
+        StreamingIssueDisposition::Retry
+    };
+    if !is_allowed_authored_disposition(StreamingIssueScopeKind::Export, issue.class, disposition) {
+        return Err(StreamingReliabilityError::IllegalDisposition);
+    }
+    if stored_receipt.threshold.rule_id != rule.rule_id {
+        return Err(StreamingReliabilityError::ExportReceiptRuleMismatch);
+    }
+    if stored_receipt.threshold.is_exhausted != is_exhausted {
+        return Err(StreamingReliabilityError::ExportReceiptExhaustionMismatch);
+    }
+    if stored_receipt.disposition != disposition {
+        return Err(StreamingReliabilityError::ExportReceiptDispositionMismatch);
+    }
+    let threshold = StreamingIssueThresholdReceipt {
+        policy_digest,
+        rule_id: rule.rule_id.clone(),
+        prior_matching_count: counter_before,
+        resulting_matching_count: counter_after,
+        retry_ordinal: attempt_ordinal,
+        is_exhausted,
+    };
+    let embedded_receipt = persisted_receipt_from_issue(&issue, disposition, threshold);
+    if embedded_receipt != stored_receipt {
         return Err(StreamingReliabilityError::DerivedExportReceiptUnreachable);
     }
-    let embedded_receipt = persisted_receipt_from_wire(wire.embedded_receipt);
+    let issue_id = embedded_receipt.issue_id;
+    if outer_issue_id != issue_id {
+        return Err(StreamingReliabilityError::DerivedExportReceiptUnreachable);
+    }
+
+    // Serialize the recomputed receipt, not the document, so the retained bytes
+    // are provably the ones the policy authorizes.
     let embedded_encoded = serde_json::to_vec(&embedded_receipt)
         .map_err(|_| StreamingReliabilityError::DerivedExportReceiptUnreachable)?;
     let embedded_length = u64::try_from(embedded_encoded.len())
         .map_err(|_| StreamingReliabilityError::ExportReceiptDigestLengthMismatch)?;
     let embedded_digest = ContentDigest::from_bytes(*blake3::hash(&embedded_encoded).as_bytes());
-    if wire.embedded_receipt_length != embedded_length
-        || wire.embedded_receipt_digest != embedded_digest
+    if embedded_receipt_length != embedded_length
+        || embedded_receipt_digest != embedded_digest
         || expected_reference.embedded_receipt_length != embedded_length
         || expected_reference.embedded_receipt_digest != embedded_digest
     {
         return Err(StreamingReliabilityError::ExportReceiptDigestLengthMismatch);
     }
+
     let receipt = PersistedExportIssueReceipt {
-        wire_version: wire.wire_version,
-        run: wire.run,
-        generation: wire.generation,
-        sink_id: wire.sink_id,
-        attempt_ordinal: wire.attempt_ordinal,
-        issue_id: wire.issue_id,
-        policy_digest: wire.policy_digest,
-        counter_before: wire.counter_before,
-        counter_after: wire.counter_after,
-        embedded_receipt_digest: wire.embedded_receipt_digest,
-        embedded_receipt_length: wire.embedded_receipt_length,
+        wire_version: EXPORT_RECEIPT_WIRE_VERSION,
+        run: context.run,
+        generation: context.generation.clone(),
+        sink_id: context.sink_id.clone(),
+        attempt_ordinal,
+        issue_id,
+        policy_digest,
+        counter_before,
+        counter_after,
+        embedded_receipt_digest: embedded_digest,
+        embedded_receipt_length: embedded_length,
         embedded_receipt,
     };
     let parsed_charge_bytes = parsed_export_receipt_bytes(&receipt)
@@ -4208,43 +4457,6 @@ fn persisted_receipt_from_wire(
             is_exhausted: wire.threshold.is_exhausted,
         },
     }
-}
-
-fn issue_id_from_wire(wire: &PersistedStreamingIssueReceiptWire) -> ContentDigest {
-    let mut hasher = blake3::Hasher::new();
-    update_hash_field(&mut hasher, b"aiperf.streaming.issue-receipt.v2");
-    update_hash_field(&mut hasher, wire.run.logical_replay_run().as_bytes());
-    hash_scope(&mut hasher, &wire.scope);
-    update_hash_field(&mut hasher, issue_class_tag(wire.class));
-    update_hash_field(&mut hasher, failure_stage_tag(wire.stage));
-    update_hash_field(&mut hasher, wire.code.as_str().as_bytes());
-    update_hash_field(&mut hasher, wire.semantic_context_digest.as_bytes());
-    update_hash_field(&mut hasher, &[u8::from(wire.order.input_domain.is_some())]);
-    if let Some(input_domain) = &wire.order.input_domain {
-        update_hash_field(&mut hasher, input_domain.stream_identity.as_bytes());
-        update_hash_field(&mut hasher, input_domain.source_identity.as_bytes());
-    }
-    update_hash_field(
-        &mut hasher,
-        &[u8::from(wire.order.source_position.is_some())],
-    );
-    if let Some(source_position) = wire.order.source_position {
-        update_hash_field(&mut hasher, &source_position.get().to_le_bytes());
-    }
-    update_hash_field(
-        &mut hasher,
-        &[u8::from(wire.order.global_sequence.is_some())],
-    );
-    if let Some(global_sequence) = wire.order.global_sequence {
-        update_hash_field(&mut hasher, &global_sequence.get().to_le_bytes());
-    }
-    update_hash_field(&mut hasher, &wire.order.retry_ordinal.to_le_bytes());
-    update_hash_field(&mut hasher, wire.order.scope_tiebreaker.as_bytes());
-    update_hash_field(&mut hasher, &[u8::from(wire.terminal_invariant.is_some())]);
-    if let Some(invariant) = wire.terminal_invariant {
-        update_hash_field(&mut hasher, terminal_invariant_tag(invariant));
-    }
-    ContentDigest::from_bytes(*hasher.finalize().as_bytes())
 }
 
 /// Return a proven upper bound on the strict-v2 encoding of the receipt one
@@ -5300,8 +5512,10 @@ mod tests {
             CheckedActionTerminalMembership, FrozenActionInventory,
         },
         checkpoint::{
-            AcquisitionHorizon, AdmissionHorizon, CheckpointCut, DecodeHorizon, DiscoveryHorizon,
-            EventTimeWatermark, OrderedActionHorizon, TerminalActionHorizon,
+            AcquisitionHorizon, AdmissionHorizon, CheckpointCut, CheckpointGenerationCandidate,
+            CheckpointGenerationPublicationProof, CheckpointParticipantPlan,
+            CheckpointTerminalReason, DecodeHorizon, DiscoveryHorizon, EventTimeWatermark,
+            OrderedActionHorizon, TerminalActionHorizon,
         },
         failure::{
             ActionExecutionError, ActionFailureCode, DecodeFailureCode, ResultExportError,
@@ -6418,109 +6632,117 @@ mod tests {
         );
     }
 
-    #[test]
-    fn export_failure_persistence_restores_from_status_authority_without_ledger() {
-        let run = StreamRunIdentity::new(LogicalReplayRunId::from_bytes([0xc1; 32]));
-        let generation = CheckpointGeneration::new(
-            CheckpointEpoch::new(9),
-            ContentDigest::from_bytes([0xc2; 32]),
-        );
-        let sink_id = component("native_report");
-        let policy = PreparedStreamingIssuePolicy::new([StreamingIssueThresholdRule::new(
-            component("export_default"),
-            StreamingIssueScopeKind::Export,
-            StreamingIssueClass::Permanent,
-            None,
-            0,
-            StreamingIssueDisposition::ExportIncomplete,
-            None,
-        )
-        .unwrap_or_else(|error| panic!("valid export rule: {error}"))])
-        .unwrap_or_else(|error| panic!("valid export policy: {error}"));
-        let policy_digest = *policy.digest();
-        let reporter_budget = StreamingResourceBudget::new(super::super::budget::BudgetLimits {
-            max_items: 17,
-            max_bytes: QUEUE_CHARGE_BYTES + 32 * 1024,
-        })
-        .unwrap_or_else(|error| panic!("valid reporter budget: {error}"));
-        let export_budget = StreamingResourceBudget::new(super::super::budget::BudgetLimits {
-            max_items: 9,
-            max_bytes: QUEUE_CHARGE_BYTES + 32 * 1024,
-        })
-        .unwrap_or_else(|error| panic!("valid export budget: {error}"));
-        let mut reporter = BudgetOwnedStreamingIssueReporter::new(run, policy, reporter_budget)
-            .unwrap_or_else(|error| panic!("budget-owned reporter: {error}"));
-        let issue = OrdinaryStreamingIssue::export(
-            run,
-            sink_id.clone(),
-            generation.clone(),
-            StreamingIssueClass::Permanent,
-            ContentDigest::from_bytes([0xc3; 32]),
-            0,
-            ContentDigest::from_bytes([0xc4; 32]),
-            OrdinaryStreamingFailure::Export(ResultExportError::failure(
-                ResultExportFailureCode::Attempt,
-            )),
-        )
-        .unwrap_or_else(|error| panic!("valid export issue: {error}"));
-        let prepared = futures::executor::block_on(reporter.prepare_export_attempt_failure(
-            &run,
-            &generation,
-            &sink_id,
-            0,
-            ResultSinkAttemptOutcome::Failed(issue),
-            &export_budget,
-        ))
-        .unwrap_or_else(|error| panic!("prepare export failure: {error}"));
-        assert!(prepared.is_exhausted());
-        assert_eq!(prepared.attempt_ordinal(), 0);
-        assert_eq!(prepared.counter_before(), 0);
-        let issue_id = prepared.issue_id();
-        let reference = prepared.receipt_reference().clone();
-        let persistence = prepared.into_persistence();
-        assert_eq!(persistence.issue_id(), issue_id);
-        assert_eq!(export_budget.snapshot().used_items, 2);
+    /// Mint one committed, final, participant-free checkpoint generation.
+    fn committed_final_generation(
+        run: StreamRunIdentity,
+        epoch: u64,
+    ) -> CommittedCheckpointGeneration {
+        committed_generation_with_finality(run, epoch, true)
+    }
 
-        let stored = persistence.encoded_bytes().to_vec();
-        let tamper_source = stored.clone();
-        drop(persistence);
-        assert_eq!(export_budget.snapshot().used_items, 0);
-        let stored_budget = StreamingResourceBudget::new(super::super::budget::BudgetLimits {
-            max_items: 5,
-            max_bytes: QUEUE_CHARGE_BYTES + 32 * 1024,
-        })
-        .unwrap_or_else(|error| panic!("valid stored budget: {error}"));
-        let stored_lease = futures::executor::block_on(stored_budget.acquire(1, stored.len()))
-            .unwrap_or_else(|error| panic!("charge stored receipt: {error}"));
-        let stored = BudgetedCheckpointBytes::new(Bytes::from(stored), stored_lease)
-            .unwrap_or_else(|error| panic!("valid stored receipt bytes: {error}"));
-        let context = DurableExportReceiptValidationContext::from_status_authority(
+    fn committed_generation_with_finality(
+        run: StreamRunIdentity,
+        epoch: u64,
+        is_final: bool,
+    ) -> CommittedCheckpointGeneration {
+        let event_time =
+            EventTimeUtc::new(1).unwrap_or_else(|error| panic!("valid event time: {error}"));
+        let cut = CheckpointCut {
+            discovered: DiscoveryHorizon::new(SourcePosition::new(1)),
+            acquired: AcquisitionHorizon::new(SourcePosition::new(1)),
+            decoded: DecodeHorizon::new(SourcePosition::new(1)),
+            ordered: OrderedActionHorizon::new(GlobalSequence::new(1)),
+            admitted: AdmissionHorizon::new(GlobalSequence::new(1)),
+            terminal: TerminalActionHorizon::new(GlobalSequence::new(1)),
+            event_watermark: EventTimeWatermark::Hard {
+                through: event_time,
+            },
+            causal_frontier: SessionCausalFrontier {
+                through_sequence: GlobalSequence::new(1),
+                event_time: Some(event_time),
+                digest: ContentDigest::from_bytes([0xe1; 32]),
+            },
+            handled_issues: HandledIssueCut::empty(),
+        };
+        let plan = CheckpointParticipantPlan::new([])
+            .unwrap_or_else(|error| panic!("valid empty participant plan: {error}"));
+        let candidate = CheckpointGenerationCandidate::new(
             run,
-            generation,
-            sink_id,
-            policy_digest,
-            0,
-            0,
-        );
-        let restored = futures::executor::block_on(restore_durable_export_issue_receipt(
-            stored,
-            &reference,
-            &context,
-            &stored_budget,
-        ))
-        .unwrap_or_else(|error| panic!("restore durable export receipt: {error}"));
-        assert_eq!(restored.issue_id(), issue_id);
-        assert_eq!(
-            restored.encoded_charge_bytes(),
-            reference.receipt_length() as usize
-        );
-        assert_eq!(stored_budget.snapshot().used_items, 2);
-        drop(restored);
-        assert_eq!(stored_budget.snapshot().used_items, 0);
+            CheckpointEpoch::new(epoch),
+            None,
+            cut,
+            &plan,
+            ContentDigest::from_bytes([0xe2; 32]),
+            ContentDigest::from_bytes([0xe3; 32]),
+            Vec::new(),
+            ContentDigest::from_bytes([0xe4; 32]),
+            is_final,
+            is_final.then_some(CheckpointTerminalReason::Completed),
+        )
+        .unwrap_or_else(|error| panic!("valid generation candidate: {error}"));
+        let proof = CheckpointGenerationPublicationProof::for_generation(candidate.generation());
+        candidate
+            .promote(
+                &run,
+                &plan,
+                &ContentDigest::from_bytes([0xe2; 32]),
+                &ContentDigest::from_bytes([0xe3; 32]),
+                proof,
+            )
+            .unwrap_or_else(|error| panic!("promote committed generation: {error}"))
+    }
 
-        let mut wire: PersistedExportIssueReceiptWire = serde_json::from_slice(&tamper_source)
-            .unwrap_or_else(|error| panic!("decode test export receipt: {error}"));
-        wire.embedded_receipt.threshold.is_exhausted = false;
+    /// Build the two-class export policy used by the recomputation tests.
+    ///
+    /// `Permanent` exhausts on the first attempt; `Retryable` allows three
+    /// retries. A tampered class therefore selects a different rule, which is the
+    /// property the class-tampering test relies on.
+    fn export_recomputation_policy() -> PreparedStreamingIssuePolicy {
+        PreparedStreamingIssuePolicy::new([
+            StreamingIssueThresholdRule::new(
+                component("export_permanent"),
+                StreamingIssueScopeKind::Export,
+                StreamingIssueClass::Permanent,
+                None,
+                0,
+                StreamingIssueDisposition::ExportIncomplete,
+                None,
+            )
+            .unwrap_or_else(|error| panic!("valid permanent export rule: {error}")),
+            StreamingIssueThresholdRule::new(
+                component("export_retryable"),
+                StreamingIssueScopeKind::Export,
+                StreamingIssueClass::Retryable,
+                None,
+                3,
+                StreamingIssueDisposition::ExportIncomplete,
+                None,
+            )
+            .unwrap_or_else(|error| panic!("valid retryable export rule: {error}")),
+        ])
+        .unwrap_or_else(|error| panic!("valid export policy: {error}"))
+    }
+
+    /// Charge and wrap durable bytes for one restore attempt.
+    fn charged_bytes(budget: &StreamingResourceBudget, bytes: &[u8]) -> BudgetedCheckpointBytes {
+        let lease = futures::executor::block_on(budget.acquire(1, bytes.len()))
+            .unwrap_or_else(|error| panic!("charge durable receipt: {error}"));
+        BudgetedCheckpointBytes::new(Bytes::copy_from_slice(bytes), lease)
+            .unwrap_or_else(|error| panic!("valid durable receipt bytes: {error}"))
+    }
+
+    fn export_restore_budget() -> StreamingResourceBudget {
+        StreamingResourceBudget::new(super::super::budget::BudgetLimits {
+            max_items: 4,
+            max_bytes: 32 * 1024,
+        })
+        .unwrap_or_else(|error| panic!("valid restore budget: {error}"))
+    }
+
+    /// Re-encode a mutated wire document and derive its matching reference.
+    fn reencode_tampered(
+        wire: PersistedExportIssueReceiptWire,
+    ) -> (Vec<u8>, DerivedExportReceiptReference) {
         let embedded_receipt = persisted_receipt_from_wire(wire.embedded_receipt);
         let embedded_encoded = serde_json::to_vec(&embedded_receipt)
             .unwrap_or_else(|error| panic!("encode tampered embedded receipt: {error}"));
@@ -6541,50 +6763,26 @@ mod tests {
             embedded_receipt_length,
             embedded_receipt,
         };
-        let tampered = serde_json::to_vec(&tampered_receipt)
+        let encoded = serde_json::to_vec(&tampered_receipt)
             .unwrap_or_else(|error| panic!("encode tampered export receipt: {error}"));
-        let tampered_reference = DerivedExportReceiptReference {
-            receipt_digest: ContentDigest::from_bytes(*blake3::hash(&tampered).as_bytes()),
-            receipt_length: tampered.len() as u64,
+        let reference = DerivedExportReceiptReference::from_status_fields(
+            ContentDigest::from_bytes(*blake3::hash(&encoded).as_bytes()),
+            encoded.len() as u64,
             embedded_receipt_digest,
             embedded_receipt_length,
-        };
-        let tampered_lease = futures::executor::block_on(stored_budget.acquire(1, tampered.len()))
-            .unwrap_or_else(|error| panic!("charge tampered receipt: {error}"));
-        let tampered = BudgetedCheckpointBytes::new(Bytes::from(tampered), tampered_lease)
-            .unwrap_or_else(|error| panic!("valid tampered receipt bytes: {error}"));
-        assert!(matches!(
-            futures::executor::block_on(restore_durable_export_issue_receipt(
-                tampered,
-                &tampered_reference,
-                &context,
-                &stored_budget,
-            )),
-            Err(StreamingReliabilityError::DerivedExportReceiptUnreachable)
-        ));
-        assert_eq!(stored_budget.snapshot().used_items, 0);
+        );
+        (encoded, reference)
     }
 
-    #[test]
-    fn later_export_exhaustion_restores_only_under_exact_status_counter() {
-        let run = StreamRunIdentity::new(LogicalReplayRunId::from_bytes([0xd1; 32]));
-        let generation = CheckpointGeneration::new(
-            CheckpointEpoch::new(12),
-            ContentDigest::from_bytes([0xd2; 32]),
-        );
-        let sink_id = component("native_report");
-        let policy = PreparedStreamingIssuePolicy::new([StreamingIssueThresholdRule::new(
-            component("export_default"),
-            StreamingIssueScopeKind::Export,
-            StreamingIssueClass::Permanent,
-            None,
-            1,
-            StreamingIssueDisposition::ExportIncomplete,
-            None,
-        )
-        .unwrap_or_else(|error| panic!("valid export rule: {error}"))])
-        .unwrap_or_else(|error| panic!("valid export policy: {error}"));
-        let policy_digest = *policy.digest();
+    /// Prepare one export failure through the forward path and return its
+    /// durable bytes, status reference, and deterministic identity.
+    fn prepared_export_bytes(
+        run: StreamRunIdentity,
+        generation: &CheckpointGeneration,
+        sink_id: &StreamingIssueComponentId,
+        class: StreamingIssueClass,
+        attempt_ordinal: u32,
+    ) -> (Vec<u8>, DerivedExportReceiptReference, ContentDigest) {
         let reporter_budget = StreamingResourceBudget::new(super::super::budget::BudgetLimits {
             max_items: 17,
             max_bytes: QUEUE_CHARGE_BYTES + 32 * 1024,
@@ -6592,120 +6790,343 @@ mod tests {
         .unwrap_or_else(|error| panic!("valid reporter budget: {error}"));
         let export_budget = StreamingResourceBudget::new(super::super::budget::BudgetLimits {
             max_items: 9,
-            max_bytes: QUEUE_CHARGE_BYTES + 32 * 1024,
+            max_bytes: 32 * 1024,
         })
         .unwrap_or_else(|error| panic!("valid export budget: {error}"));
-        let mut reporter = BudgetOwnedStreamingIssueReporter::new(run, policy, reporter_budget)
-            .unwrap_or_else(|error| panic!("budget-owned reporter: {error}"));
-
-        let first_issue = OrdinaryStreamingIssue::export(
+        let mut reporter = BudgetOwnedStreamingIssueReporter::new(
+            run,
+            export_recomputation_policy(),
+            reporter_budget,
+        )
+        .unwrap_or_else(|error| panic!("budget-owned reporter: {error}"));
+        let issue = OrdinaryStreamingIssue::export(
             run,
             sink_id.clone(),
             generation.clone(),
-            StreamingIssueClass::Permanent,
-            ContentDigest::from_bytes([0xd3; 32]),
-            0,
-            ContentDigest::from_bytes([0xd4; 32]),
+            class,
+            ContentDigest::from_bytes([0xc3; 32]),
+            attempt_ordinal,
+            ContentDigest::from_bytes([0xc4; 32]),
             OrdinaryStreamingFailure::Export(ResultExportError::failure(
                 ResultExportFailureCode::Attempt,
             )),
         )
-        .unwrap_or_else(|error| panic!("valid first export issue: {error}"));
-        let first = futures::executor::block_on(reporter.prepare_export_attempt_failure(
+        .unwrap_or_else(|error| panic!("valid export issue: {error}"));
+        let prepared = futures::executor::block_on(reporter.prepare_export_attempt_failure(
             &run,
-            &generation,
-            &sink_id,
-            0,
-            ResultSinkAttemptOutcome::Failed(first_issue),
-            &export_budget,
-        ))
-        .unwrap_or_else(|error| panic!("prepare first export failure: {error}"));
-        assert!(!first.is_exhausted());
-        assert_eq!(first.counter_before(), 0);
-        drop(first);
-
-        let second_issue = OrdinaryStreamingIssue::export(
-            run,
-            sink_id.clone(),
-            generation.clone(),
-            StreamingIssueClass::Permanent,
-            ContentDigest::from_bytes([0xd3; 32]),
-            1,
-            ContentDigest::from_bytes([0xd5; 32]),
-            OrdinaryStreamingFailure::Export(ResultExportError::failure(
-                ResultExportFailureCode::Attempt,
-            )),
-        )
-        .unwrap_or_else(|error| panic!("valid second export issue: {error}"));
-        let second = futures::executor::block_on(reporter.prepare_export_attempt_failure(
-            &run,
-            &generation,
-            &sink_id,
-            1,
-            ResultSinkAttemptOutcome::Failed(second_issue),
-            &export_budget,
-        ))
-        .unwrap_or_else(|error| panic!("prepare second export failure: {error}"));
-        assert!(second.is_exhausted());
-        assert_eq!(second.counter_before(), 1);
-        let issue_id = second.issue_id();
-        let reference = second.receipt_reference().clone();
-        let persistence = second.into_persistence();
-        let stored_bytes = persistence.encoded_bytes().to_vec();
-        drop(persistence);
-
-        let stored_budget = StreamingResourceBudget::new(super::super::budget::BudgetLimits {
-            max_items: 5,
-            max_bytes: QUEUE_CHARGE_BYTES + 32 * 1024,
-        })
-        .unwrap_or_else(|error| panic!("valid stored budget: {error}"));
-        let wrong_lease = futures::executor::block_on(stored_budget.acquire(1, stored_bytes.len()))
-            .unwrap_or_else(|error| panic!("charge stored receipt: {error}"));
-        let wrong_bytes =
-            BudgetedCheckpointBytes::new(Bytes::copy_from_slice(&stored_bytes), wrong_lease)
-                .unwrap_or_else(|error| panic!("valid stored receipt bytes: {error}"));
-        let wrong_context = DurableExportReceiptValidationContext::from_status_authority(
-            run,
-            generation.clone(),
-            sink_id.clone(),
-            policy_digest,
-            1,
-            0,
-        );
-        assert!(matches!(
-            futures::executor::block_on(restore_durable_export_issue_receipt(
-                wrong_bytes,
-                &reference,
-                &wrong_context,
-                &stored_budget,
-            )),
-            Err(StreamingReliabilityError::NonContiguousExportCounter)
-        ));
-        assert_eq!(stored_budget.snapshot().used_items, 0);
-
-        let stored_lease =
-            futures::executor::block_on(stored_budget.acquire(1, stored_bytes.len()))
-                .unwrap_or_else(|error| panic!("recharge stored receipt: {error}"));
-        let stored = BudgetedCheckpointBytes::new(Bytes::from(stored_bytes), stored_lease)
-            .unwrap_or_else(|error| panic!("valid stored receipt bytes: {error}"));
-        let context = DurableExportReceiptValidationContext::from_status_authority(
-            run,
             generation,
             sink_id,
-            policy_digest,
-            1,
-            1,
-        );
+            attempt_ordinal,
+            ResultSinkAttemptOutcome::Failed(issue),
+            &export_budget,
+        ))
+        .unwrap_or_else(|error| panic!("prepare export failure: {error}"));
+        let issue_id = prepared.issue_id();
+        let reference = prepared.receipt_reference().clone();
+        let persistence = prepared.into_persistence();
+        let bytes = persistence.encoded_bytes().to_vec();
+        drop(persistence);
+        assert_eq!(export_budget.snapshot().used_items, 0);
+        (bytes, reference, issue_id)
+    }
+
+    /// Mint the verified status and validation context for one restore attempt.
+    fn export_restore_context<'policy>(
+        committed: &CommittedCheckpointGeneration,
+        policy: &'policy PreparedStreamingIssuePolicy,
+        sink_id: StreamingIssueComponentId,
+        attempt_ordinal: u32,
+        reference: DerivedExportReceiptReference,
+    ) -> DurableExportReceiptValidationContext<'policy> {
+        let status = VerifiedDerivedSinkAttemptStatus::from_status_owner(
+            committed,
+            sink_id,
+            attempt_ordinal,
+            u64::from(attempt_ordinal),
+            reference,
+        )
+        .unwrap_or_else(|error| panic!("verified status: {error}"));
+        DurableExportReceiptValidationContext::from_final_generation_status(
+            committed, policy, &status,
+        )
+        .unwrap_or_else(|error| panic!("mint validation context: {error}"))
+    }
+
+    #[test]
+    fn export_restore_recomputes_policy_decision() {
+        let run = StreamRunIdentity::new(LogicalReplayRunId::from_bytes([0xc1; 32]));
+        let committed = committed_final_generation(run, 9);
+        let generation = committed.generation();
+        let sink_id = component("native_report");
+        let (bytes, reference, issue_id) =
+            prepared_export_bytes(run, &generation, &sink_id, StreamingIssueClass::Permanent, 0);
+
+        let policy = export_recomputation_policy();
+        let context =
+            export_restore_context(&committed, &policy, sink_id, 0, reference.clone());
+        let budget = export_restore_budget();
         let restored = futures::executor::block_on(restore_durable_export_issue_receipt(
-            stored,
-            &reference,
+            charged_bytes(&budget, &bytes),
             &context,
-            &stored_budget,
+            &budget,
+        ))
+        .unwrap_or_else(|error| panic!("restore durable export receipt: {error}"));
+
+        assert_eq!(restored.issue_id(), issue_id);
+        assert_eq!(
+            restored.encoded_charge_bytes(),
+            reference.receipt_length() as usize
+        );
+        let embedded = &restored.receipt.embedded_receipt;
+        assert_eq!(embedded.threshold.rule_id, component("export_permanent"));
+        assert!(embedded.threshold.is_exhausted);
+        assert_eq!(
+            embedded.disposition,
+            StreamingIssueDisposition::ExportIncomplete
+        );
+        assert_eq!(embedded.threshold.prior_matching_count, 0);
+        assert_eq!(embedded.threshold.resulting_matching_count, 1);
+        assert_eq!(budget.snapshot().used_items, 2);
+        drop(restored);
+        assert_eq!(budget.snapshot().used_items, 0);
+    }
+
+    #[test]
+    fn export_restore_rejects_status_fields_that_fail_verification() {
+        let run = StreamRunIdentity::new(LogicalReplayRunId::from_bytes([0xc5; 32]));
+        let committed = committed_final_generation(run, 4);
+        let generation = committed.generation();
+        let sink_id = component("native_report");
+        let (bytes, reference, _) =
+            prepared_export_bytes(run, &generation, &sink_id, StreamingIssueClass::Permanent, 0);
+        let policy = export_recomputation_policy();
+        let budget = export_restore_budget();
+
+        let decode = || -> PersistedExportIssueReceiptWire {
+            serde_json::from_slice(&bytes)
+                .unwrap_or_else(|error| panic!("decode test export receipt: {error}"))
+        };
+
+        // A rule the frozen policy never selects for these facts.
+        let mut wire = decode();
+        wire.embedded_receipt.threshold.rule_id = component("export_retryable");
+        let (tampered, tampered_reference) = reencode_tampered(wire);
+        let context =
+            export_restore_context(&committed, &policy, sink_id.clone(), 0, tampered_reference);
+        assert_eq!(
+            futures::executor::block_on(restore_durable_export_issue_receipt(
+                charged_bytes(&budget, &tampered),
+                &context,
+                &budget,
+            ))
+            .err(),
+            Some(StreamingReliabilityError::ExportReceiptRuleMismatch)
+        );
+        assert_eq!(budget.snapshot().used_items, 0);
+
+        // A class that selects a different rule, and so a different rule identity.
+        let mut wire = decode();
+        wire.embedded_receipt.class = StreamingIssueClass::Retryable;
+        let (tampered, tampered_reference) = reencode_tampered(wire);
+        let context =
+            export_restore_context(&committed, &policy, sink_id.clone(), 0, tampered_reference);
+        assert_eq!(
+            futures::executor::block_on(restore_durable_export_issue_receipt(
+                charged_bytes(&budget, &tampered),
+                &context,
+                &budget,
+            ))
+            .err(),
+            Some(StreamingReliabilityError::ExportReceiptRuleMismatch)
+        );
+        assert_eq!(budget.snapshot().used_items, 0);
+
+        // A host-owned class no ordinary issue can carry.
+        let mut wire = decode();
+        wire.embedded_receipt.class = StreamingIssueClass::Invariant;
+        let (tampered, tampered_reference) = reencode_tampered(wire);
+        let context =
+            export_restore_context(&committed, &policy, sink_id.clone(), 0, tampered_reference);
+        assert_eq!(
+            futures::executor::block_on(restore_durable_export_issue_receipt(
+                charged_bytes(&budget, &tampered),
+                &context,
+                &budget,
+            ))
+            .err(),
+            Some(StreamingReliabilityError::ExportReceiptClassCodeMismatch)
+        );
+        assert_eq!(budget.snapshot().used_items, 0);
+
+        // A code no export failure constructor can produce.
+        let mut wire = decode();
+        wire.embedded_receipt.code = component("result_export_forged");
+        let (tampered, tampered_reference) = reencode_tampered(wire);
+        let context = export_restore_context(&committed, &policy, sink_id, 0, tampered_reference);
+        assert_eq!(
+            futures::executor::block_on(restore_durable_export_issue_receipt(
+                charged_bytes(&budget, &tampered),
+                &context,
+                &budget,
+            ))
+            .err(),
+            Some(StreamingReliabilityError::ExportReceiptFailureUnrepresentable)
+        );
+        assert_eq!(budget.snapshot().used_items, 0);
+    }
+
+    #[test]
+    fn export_restore_recomputes_retry_limit_and_exhaustion_exactly() {
+        let run = StreamRunIdentity::new(LogicalReplayRunId::from_bytes([0xd1; 32]));
+        let committed = committed_final_generation(run, 7);
+        let generation = committed.generation();
+        let sink_id = component("native_report");
+        let policy = export_recomputation_policy();
+        let budget = export_restore_budget();
+
+        // Retryable rule, limit three: ordinal one is below the limit, so the
+        // recomputed decision is a non-exhausted retry.
+        let (bytes, reference, issue_id) =
+            prepared_export_bytes(run, &generation, &sink_id, StreamingIssueClass::Retryable, 1);
+        let context = export_restore_context(&committed, &policy, sink_id.clone(), 1, reference);
+        let restored = futures::executor::block_on(restore_durable_export_issue_receipt(
+            charged_bytes(&budget, &bytes),
+            &context,
+            &budget,
+        ))
+        .unwrap_or_else(|error| panic!("restore retryable export receipt: {error}"));
+        assert_eq!(restored.issue_id(), issue_id);
+        {
+            let embedded = &restored.receipt.embedded_receipt;
+            assert!(!embedded.threshold.is_exhausted);
+            assert_eq!(embedded.disposition, StreamingIssueDisposition::Retry);
+            assert_eq!(embedded.threshold.rule_id, component("export_retryable"));
+        }
+        drop(restored);
+        assert_eq!(budget.snapshot().used_items, 0);
+
+        // Flipping exhaustion alone is rejected against the recomputed limit.
+        let mut wire: PersistedExportIssueReceiptWire = serde_json::from_slice(&bytes)
+            .unwrap_or_else(|error| panic!("decode retryable receipt: {error}"));
+        wire.embedded_receipt.threshold.is_exhausted = true;
+        let (tampered, tampered_reference) = reencode_tampered(wire);
+        let context = export_restore_context(&committed, &policy, sink_id, 1, tampered_reference);
+        assert_eq!(
+            futures::executor::block_on(restore_durable_export_issue_receipt(
+                charged_bytes(&budget, &tampered),
+                &context,
+                &budget,
+            ))
+            .err(),
+            Some(StreamingReliabilityError::ExportReceiptExhaustionMismatch)
+        );
+        assert_eq!(budget.snapshot().used_items, 0);
+    }
+
+    #[test]
+    fn export_restore_rejects_tampered_disposition() {
+        let run = StreamRunIdentity::new(LogicalReplayRunId::from_bytes([0xd6; 32]));
+        let committed = committed_final_generation(run, 3);
+        let generation = committed.generation();
+        let sink_id = component("native_report");
+        let (bytes, _, _) =
+            prepared_export_bytes(run, &generation, &sink_id, StreamingIssueClass::Permanent, 0);
+        let policy = export_recomputation_policy();
+        let budget = export_restore_budget();
+
+        // Exhausted plus an illegal export disposition: the prior reachability gate
+        // accepted this document because it only constrained the non-exhausted case.
+        let mut wire: PersistedExportIssueReceiptWire = serde_json::from_slice(&bytes)
+            .unwrap_or_else(|error| panic!("decode permanent receipt: {error}"));
+        wire.embedded_receipt.disposition = StreamingIssueDisposition::Quarantine;
+        let (tampered, tampered_reference) = reencode_tampered(wire);
+        let context = export_restore_context(&committed, &policy, sink_id, 0, tampered_reference);
+        assert_eq!(
+            futures::executor::block_on(restore_durable_export_issue_receipt(
+                charged_bytes(&budget, &tampered),
+                &context,
+                &budget,
+            ))
+            .err(),
+            Some(StreamingReliabilityError::ExportReceiptDispositionMismatch)
+        );
+        assert_eq!(budget.snapshot().used_items, 0);
+    }
+
+    #[test]
+    fn derived_export_reference_cannot_be_built_from_unverified_fields() {
+        let run = StreamRunIdentity::new(LogicalReplayRunId::from_bytes([0xd9; 32]));
+        let committed = committed_final_generation(run, 11);
+        let generation = committed.generation();
+        let sink_id = component("native_report");
+        let (bytes, reference, issue_id) =
+            prepared_export_bytes(run, &generation, &sink_id, StreamingIssueClass::Permanent, 1);
+
+        // A non-dense predecessor pair is not a reachable status.
+        assert_eq!(
+            VerifiedDerivedSinkAttemptStatus::from_status_owner(
+                &committed,
+                sink_id.clone(),
+                1,
+                0,
+                reference.clone(),
+            )
+            .err(),
+            Some(StreamingReliabilityError::NonContiguousExportCounter)
+        );
+
+        // A generation that was never made final cannot author export status.
+        let non_final = committed_generation_with_finality(run, 12, false);
+        assert_eq!(
+            VerifiedDerivedSinkAttemptStatus::from_status_owner(
+                &non_final,
+                sink_id.clone(),
+                1,
+                1,
+                reference.clone(),
+            )
+            .err(),
+            Some(StreamingReliabilityError::NonFinalGenerationAuthority)
+        );
+
+        // A status minted against one generation cannot restore under another.
+        let policy = export_recomputation_policy();
+        let status = VerifiedDerivedSinkAttemptStatus::from_status_owner(
+            &committed,
+            sink_id,
+            1,
+            1,
+            reference,
+        )
+        .unwrap_or_else(|error| panic!("verified status: {error}"));
+        let other_final = committed_final_generation(run, 13);
+        assert_eq!(
+            DurableExportReceiptValidationContext::from_final_generation_status(
+                &other_final,
+                &policy,
+                &status,
+            )
+            .err(),
+            Some(StreamingReliabilityError::ExportReceiptGenerationMismatch)
+        );
+
+        // The matching authority restores, and the decision is the recomputed one.
+        let context = DurableExportReceiptValidationContext::from_final_generation_status(
+            &committed, &policy, &status,
+        )
+        .unwrap_or_else(|error| panic!("mint validation context: {error}"));
+        let budget = export_restore_budget();
+        let restored = futures::executor::block_on(restore_durable_export_issue_receipt(
+            charged_bytes(&budget, &bytes),
+            &context,
+            &budget,
         ))
         .unwrap_or_else(|error| panic!("restore later durable export receipt: {error}"));
         assert_eq!(restored.issue_id(), issue_id);
+        assert_eq!(restored.receipt.counter_before, 1);
+        assert_eq!(restored.receipt.counter_after, 2);
         drop(restored);
-        assert_eq!(stored_budget.snapshot().used_items, 0);
+        assert_eq!(budget.snapshot().used_items, 0);
     }
 
     fn typed_error_action_reporter(
