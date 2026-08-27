@@ -13,17 +13,19 @@ SPDX-License-Identifier: Apache-2.0
 
 **Tech Stack:** Rust 2024, `async_trait(?Send)`, AIPerf streaming contracts, `hf-hub`, Arrow/Parquet, `aws-config = 1.11.0`, `aws-sdk-s3 = 1.144.0`, BLAKE3, bounded blocking executor.
 
-**Spec:** `artifacts/streaming-design/streaming-dataset-shadow-replay-design.md` at base approval `505efc06b0`, amended by `3fea6f2fe0`.
+**Spec:** `artifacts/streaming-design/streaming-dataset-shadow-replay-design.md` at base approval `505efc06b0`, amended by `3fea6f2fe0` and `artifacts/streaming-design/reliability-continuation-course-correction.md`.
 
 ## Global Constraints
 
-- Requires the integrated contract foundation through Task 1E and registry Task 2. Each adapter implements checkpoint participant state from Tasks 5A-5B; it does not depend on a concrete checkpoint backend/coordinator.
+- Requires the integrated contract foundation through Tasks 1D-R and 1E plus registry Task 2. Each adapter implements checkpoint participant state from Tasks 5A-R/5B; it does not depend on a concrete checkpoint backend/coordinator.
 - Source and format worktrees never edit one another's modules or select one another by concrete type.
 - Every acquired/decoded value retains its item+byte lease until incorporation or terminal handoff.
 - Blocking file, network-body, Arrow, sort, digest, and catalog work uses `StreamingBlockingExecutor`.
 - No adapter calls `SystemTime`, `Instant`, Tokio timers, or Python.
 - Cargo commands run from the nested `rust/` workspace; git commands run from the repository root. Tests use `CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target`.
 - Each task includes the nearest parent module declaration required for its own GREEN build; declaration conflicts are resolved during integration.
+- Adapters emit only non-serializable `OrdinaryStreamingIssue` facts plus ordered no-more-before updates through the host reporter and never choose `FailRun`. Record/session facts bind the exact stream and immutable source identity. Adapters release or transfer every owned lease according to the returned fixed-size outcome before decoding the next unit.
+- For Tasks A1-A6, Step 1 includes the task-owned RED rows in “Reliability-Continuation Amendment” below, Step 3 implements them, and the existing Step 2/4 command is the one RED/GREEN suite. Do not commit an adapter before its reliability rows pass.
 
 ## File Structure
 
@@ -53,11 +55,16 @@ rust/runtime/src/graph/recorded/content.rs          shared pure recorded-content
 - Modify: `rust/runtime/src/streaming.rs`
 - Test: `rust/runtime/tests/streaming_aws_client.rs`
 
-**Produces:** one feature-gated `AwsS3ClientFactory` that resolves region, endpoint, proxy, TLS, and credential-provider inputs into a worker-local `aws_sdk_s3::Client`. The factory exposes client construction only—no list/get/put/CAS policy—and its `Debug`/errors contain opaque credential-source IDs but never credentials.
+**Produces:** one feature-gated `AwsS3ClientFactory` that resolves region, endpoint, proxy, TLS, and credential-provider inputs into a worker-local `aws_sdk_s3::Client`, plus the sole shared `AwsCredentialProviderAuthority` used by S3 source and object-checkpoint consumers. The authority is injected, refresh-capable through the host `Clock`, bounded, and redacts credential material from `Debug`, errors, checkpoints, and provenance. The factory exposes client construction only—no list/get/put/CAS policy—and its `Debug`/errors contain opaque credential-source IDs but never credentials.
 
 - [ ] **Step 1: Write and observe RED**
 
-Add `client_factory_honors_endpoint_and_redacts_credentials`; run `CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime --features streaming-s3 --test streaming_aws_client`. Feature-off absence is owned by the adapter completion gate's exact `lightweight_streaming_inventory_excludes_s3` test.
+Add `client_factory_honors_endpoint_and_redacts_credentials` and
+`credential_refresh_rebuilds_client_without_changing_source_authority`; run
+`CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime --features streaming-s3 --test streaming_aws_client`.
+Feature-off absence is owned by the adapter completion gate's exact
+`lightweight_streaming_inventory_excludes_s3` test. Task A6 consumes this
+authority and must not define a second AWS credential provider.
 
 - [ ] **Step 2: Implement and verify GREEN**
 
@@ -218,7 +225,7 @@ git commit -m "feat(dataset): decode bounded streaming JSONL"
 - Test: `rust/runtime/tests/streaming_hf_source.rs`
 
 **Interfaces:**
-- Produces: source ID `hf_hub`; `HfSourceCursor { repository, commit, subset, split, shard, row_group, row, decoder_digest }`; content-addressed `HfShardCatalog` root and bounded cursor.
+- Produces: source ID `hf_hub`; `HfSourceCursor { repository, commit, subset, split, shard, row_group, row, decoder_digest }`; content-addressed `HfShardCatalog` root and bounded cursor; injected redacted `HfCredentialProvider` whose bounded refresh uses the host `Clock`.
 
 - [ ] **Step 1: Write the RED pinning/catalog test**
 
@@ -232,6 +239,25 @@ async fn prepared_revision_and_complete_inventory_are_immutable() {
     assert_eq!(catalog.commit(), "commit-a");
     assert!(catalog.peak_heap_items() <= catalog.configured_heap_items());
 }
+
+#[tokio::test(flavor = "current_thread")]
+async fn expired_credential_refresh_retries_the_exact_pinned_object() {
+    let fixture = expired_hf_credential_fixture("commit-a", "shard-7");
+    let object = fixture.source().next_partition().await.unwrap();
+    assert_eq!(object.identity(), fixture.pinned_object("commit-a", "shard-7"));
+    assert_eq!(fixture.refreshes(), 1);
+    assert!(fixture.debug_and_errors_are_redacted());
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn refresh_exhaustion_holes_only_unchanged_immutable_identity() {
+    let unchanged = exhausted_refresh_fixture("commit-a", "shard-7");
+    assert!(unchanged.next_partition().await.unwrap().is_hole());
+
+    let drifted = exhausted_refresh_with_identity_drift("commit-a", "commit-b");
+    assert!(matches!(drifted.next_partition().await.unwrap_err(),
+        StreamingFailure::FrozenSemanticDrift { .. }));
+}
 ```
 
 - [ ] **Step 2: Verify red**
@@ -240,7 +266,7 @@ Run: `CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-run
 
 - [ ] **Step 3: Implement pinned finite acquisition**
 
-Resolve revision once to a commit SHA. Accept only complete static split inventories or API inventories explicitly marked complete; refuse script/generated/heuristic datasets. External-sort bounded runs to a content-addressed disk catalog, acquire immutable cache leases, redact gated tokens from every debug/error/checkpoint/provenance value, and run source conformance.
+Resolve revision once to a commit SHA. Accept only complete static split inventories or API inventories explicitly marked complete; refuse script/generated/heuristic datasets. External-sort bounded runs to a content-addressed disk catalog, acquire immutable cache leases, and run source conformance. Inject a redacted refresh-capable credential provider; on authentication expiry, use bounded `Clock`-driven refresh/backoff and rebuild the request for the exact pinned commit/shard/object identity. Never re-resolve a symbolic revision during refresh. Exhaustion may produce a partition `Hole` only after proving the immutable identity is unchanged; any revision, shard, or content-authority drift is sealed `FrozenSemanticDrift`/`FailRun`. Credential bytes never enter `Debug`, errors, checkpoints, provenance, or issue receipts.
 
 - [ ] **Step 4: Verify green**
 
@@ -516,10 +542,72 @@ git add rust/runtime/src/streaming/sources.rs rust/runtime/src/streaming/sources
 git commit -m "feat(dataset): follow immutable S3 partitions"
 ```
 
+## Reliability-Continuation Amendment
+
+Tasks A1-A6 consume the exact Task 1D-R `StreamingIssueReporter`; the reporter
+is injected in source/format prepare contexts and remains host-owned. No adapter
+implements its own threshold counter or sleep loop. Existing task suites gain
+the following RED cases before their production step, then pass in the same one
+task GREEN invocation already specified above.
+
+| Owner | Fault and scope | Required disposition/effect | RED tests added to the owner's existing suite |
+|---|---|---|---|
+| A1 local source | an opened immutable partition disappears before bounded acquisition | retry, then partition hole; later rename-published partitions continue | `missing_partition_becomes_checkpointed_hole_and_follow_continues` |
+| A2 JSONL | isolated syntax, schema, or oversized line with a recoverable next boundary | record quarantine; release bytes through the quarantined receipt and decode the next line | `malformed_jsonl_record_is_quarantined_without_aborting_partition`, `quarantine_restores_without_double_count` |
+| A3 HF | transient catalog/shard authentication or read failure | credential refresh/read retry under `Clock`, then partition hole only if the frozen immutable identity is still known | `hf_shard_retry_exhaustion_records_hole_and_continues` |
+| A3 HF | revision/inventory/object identity, length, or digest changes after freeze; no authorized immutable source can be acquired without substituting identity | invariant issue and host-validated fail-run before decode | `hf_identity_or_authority_drift_never_degrades_to_hole` |
+| A4 Baseten | invalid row isolated to one record or recoverable session | record/session quarantine, deterministic state retirement, continue later row groups | `bad_baseten_row_quarantines_only_its_record`, `bad_trace_session_retires_state_and_next_session_continues` |
+| A4 Baseten | prepared Arrow/Parquet schema or projection changes | frozen-semantic invariant, fail-run before mixed-schema emission | `baseten_schema_drift_is_terminal_before_fragment_output` |
+| A5 Dynamo | malformed request/replay metadata confined to one producer tree | record/session quarantine after the exact closure proof; no guessed reconstruction | `invalid_replay_tree_is_quarantined_and_neighbor_tree_continues` |
+| A5 Dynamo | tokenizer, synthesis-profile, block-size, or bound semantic digest changes | frozen-semantic invariant and fail-run | existing profile-mismatch tests plus `bound_profile_drift_cannot_be_quarantined` |
+| A6 S3 | list/get throttling, notification loss, or ranged-read timeout | bounded retry, reconciliation, then partition hole with later object continuation | `s3_retry_exhaustion_records_hole_and_reconciliation_continues` |
+| A6 S3 | version/ETag/size/digest differs from the frozen object identity; authorization can succeed only by selecting another object | identity invariant and fail-run | `s3_identity_substitution_is_refused_not_holed` |
+
+The source/format conformance cases now require these observations:
+
+```rust
+#[tokio::test(flavor = "current_thread")]
+async fn ordinary_adapter_faults_leave_the_stream_live() {
+    for case in continuation_adapter_cases() {
+        let report = case.run_fault_then_valid_unit().await;
+        assert_eq!(report.issue_receipts, 1);
+        assert_eq!(report.valid_units_after_fault, 1);
+        assert!(!report.is_run_failed);
+        assert!(report.all_item_and_byte_leases_settled());
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn adapter_issue_receipt_is_stable_across_checkpoint_resume() {
+    let first = jsonl_fault_fixture().run_until_issue_then_checkpoint().await;
+    let resumed = jsonl_fault_fixture().resume(first.generation()).await;
+    assert_eq!(resumed.issue_id, first.issue_id);
+    assert_eq!(resumed.threshold_count, 1);
+}
+```
+
+Partition holes advance only the source-acquisition frontier represented by the
+typed hole receipt and same-generation `HandledIssueCut`; they never fabricate decoded/session/action progress.
+Quarantine advances only through the exact record/session boundary proven by
+the decoder/coordinator and keeps the unit out of successful logical metric
+membership. A missing boundary that prevents truthful continuation escalates
+to the ordering/cut invariant owner; the adapter does not guess a cursor.
+
+Every record/session issue and no-more-before update carries the same checked
+`StreamingInputDomainIdentity`. Add `same_record_id_in_two_sources_has_distinct_issue_id`
+and `hole_then_later_valid_checkpoint_resume_keeps_receipt_reachable`; the latter
+must refuse restore when either handled-cut root or receipt partition is absent.
+
+Transient source authentication may refresh and retry without changing the
+frozen object identity. Capability/credential refusal discovered before the run
+remains preflight failure. During a run, fail-run is allowed only when no
+authorized immutable source can be acquired without falsifying the already
+frozen identity; it is never selected merely because one refresh attempt failed.
+
 ## Adapter Completion Gate
 
 ```bash
-CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime --features streaming-s3,parquet --test streaming_contract_conformance --test streaming_local_source --test streaming_jsonl_format --test streaming_hf_source --test streaming_baseten_format --test streaming_dynamo_format --test streaming_s3_source
+CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime --features streaming-s3,parquet --test streaming_reliability --test streaming_contract_conformance --test streaming_local_source --test streaming_jsonl_format --test streaming_hf_source --test streaming_baseten_format --test streaming_dynamo_format --test streaming_s3_source
 CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime --no-default-features --features streaming --test streaming_feature_inventory lightweight_streaming_inventory_excludes_s3 -- --exact
 ```
 

@@ -13,14 +13,16 @@ SPDX-License-Identifier: Apache-2.0
 
 **Tech Stack:** Rust 2024, Tokio current-thread `LocalSet`, AIPerf engine/clock/dispatch/phase/capture seams, XChaCha20-Poly1305, zeroize.
 
-**Spec:** `artifacts/streaming-design/streaming-dataset-shadow-replay-design.md` at base approval `505efc06b0`, amended by `3fea6f2fe0`.
+**Spec:** `artifacts/streaming-design/streaming-dataset-shadow-replay-design.md` at base approval `505efc06b0`, amended by `3fea6f2fe0` and `artifacts/streaming-design/reliability-continuation-course-correction.md`.
 
 ## Global Constraints
 
-- Requires foundation/runtime, checkpoint/results, and adapter Tasks A1-A2 before the first executable workload.
+- Requires foundation/runtime through Task 1D-R, checkpoint/results, and adapter Tasks A1-A2 before the first executable workload.
 - No `NativeDatasetPlan::Streaming`, complete `GraphTraceProgram`, per-action boxed driver, unbounded queue/task/vector, or Python path.
 - One profiling phase in generation 1; warmup/live-profile combinations fail during capability agreement.
 - Every accepted action reaches exactly one terminal receipt; checkpoint cuts remain typed by stage.
+- Ordinary session and endpoint faults become scoped issue receipts and cannot bubble out as workload-fatal errors. `FailRun` remains restricted to checked authority, conflicting-content, frozen-semantic, truthful-order/cut, and accounting invariants.
+- For P1B/P2/P3/P4/P7, each task's RED step includes its row in “Reliability-Continuation Amendment” below and its production step owns the GREEN behavior; the amendment is not a post-task follow-up.
 - Cargo commands run from the nested `rust/` workspace; git commands run from the repository root. All builds use the shared `/mnt/4tb` target.
 - Each task includes the nearest parent module declaration required for its own GREEN build; declaration conflicts are resolved during integration.
 
@@ -95,7 +97,7 @@ git commit -m "feat(runtime): preserve conversations across stream chunks"
 
 ### Task P1B: Session Closure and Bounded Causality Policies
 
-**Depends on:** Task P1.
+**Depends on:** Task P1 and foundation Task 1D-R.
 
 **Files:**
 - Modify: `rust/runtime/src/streaming/session/conversation.rs`
@@ -108,7 +110,35 @@ sorted finite completeness receipts, typed `WholeProducerTreeClosureReceipt`,
 and explicit refusal when neither a finite bound nor spill/drop/fail policy
 exists. The tree receipt binds one root plus the exact closed descendant
 inventory and is minted only after the coordinator proves the entire rooted
-producer tree complete.
+producer tree complete. P1B also owns the durable budgeted
+`SessionQuarantineTombstone` map keyed by exact `(input_domain, session)`.
+It consumes the landed `SessionCausalFrontier` and defines the checked
+`SessionQuarantineClosureProof` whose only variants are authored close, hard
+watermark, verified finite seal, verified complete sorted run, and exhausted
+authored missing-predecessor policy. Partition EOF is not a closure proof.
+
+```rust
+pub struct SessionQuarantineTombstone {
+    run: StreamRunIdentity,
+    input_domain: StreamingInputDomainIdentity,
+    session_key: StableSessionKey,
+    issue_id: ContentDigest,
+    causal_frontier: SessionCausalFrontier,
+    closure_proof: SessionQuarantineClosureProof,
+    encoded: BudgetedCheckpointBytes,
+    parsed_lease: BudgetLease,
+}
+```
+
+Only P1B's checked installer constructs this private-field, non-`Clone` type.
+Borrow-only accessors expose identity/frontier/proof; checkpoint/result transfer
+never moves the wrapper. P1B's retained map exposes
+`SessionQuarantineTombstoneMap::checked_view()` and implements 1D-R's
+crate-private sealed `SessionQuarantineTombstoneView` for that borrowed view
+only. The checked view captures the map's run/root/revision and borrowed
+canonical entries; it cannot outlive or move the map. 1D-R uses the view to
+prepare a separately charged move-only install acknowledgement. External
+callers cannot implement or forge it.
 
 - [ ] **Step 1: Write the RED policy matrix**
 
@@ -164,6 +194,57 @@ fn crashed_spill_run_is_reclaimed_only_after_owner_lease_expiry() {
     assert!(fixture.reclaim_bounded(2).unwrap().removed_orphan());
     assert!(fixture.max_scan_page_items() <= 2);
 }
+
+#[tokio::test(flavor = "current_thread")]
+async fn quarantined_session_cannot_resurrect_and_tombstone_survives_resume() {
+    let committed = quarantine_at_frontier_then_checkpoint(session("s"), frontier(4)).await;
+    let mut restored = restore_sessions(committed).await;
+    restored.observe(fragment("s", 5)).await.unwrap();
+    assert!(!restored.has_live_session("s"));
+    assert_eq!(restored.tombstone("s").causal_frontier(), frontier(5));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn quarantine_requires_tombstone_root_ack_in_same_generation() {
+    let mut fixture = quarantined_session_fixture_across_chunks();
+    fixture.observe(fragment("s", 4)).await.unwrap();
+    fixture.quarantine_with_checked_closure("s").await.unwrap();
+    assert!(fixture.reporter().handled_cut().is_err());
+    let generation = fixture.checkpoint_tombstone_and_receipt().await.unwrap();
+    fixture.acknowledge_generation_root(&generation).await.unwrap();
+    assert!(fixture.reporter().handled_cut().unwrap().covers("s"));
+    let mut restored = fixture.restart_from(generation).await.unwrap();
+    restored.observe(fragment("s", 5)).await.unwrap();
+    assert!(!restored.has_live_session("s"));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn late_fragment_invalidates_prepared_root_and_requires_fresh_ack() {
+    let mut fixture = quarantined_session_fixture_across_chunks();
+    fixture.quarantine_with_checked_closure("s").await.unwrap();
+    let stale = fixture.prepare_tombstone_install(barrier(1)).await.unwrap();
+    assert_eq!(stale.payload_charge_bytes(), fixture.expected_ack_payload_bytes());
+    assert_eq!(stale.view_charge_bytes(), fixture.expected_ack_view_bytes());
+    fixture.observe(fragment("s", 5)).await.unwrap();
+    assert!(fixture.stage_tombstone_install(stale, barrier(1)).await.is_err());
+    let fresh = fixture.prepare_tombstone_install(barrier(2)).await.unwrap();
+    assert_eq!(fresh.payload_charge_bytes(), fixture.expected_reencoded_ack_payload_bytes());
+    assert_eq!(fresh.view_charge_bytes(), fixture.expected_ack_view_bytes());
+    fixture.stage_tombstone_install(fresh, barrier(2)).await.unwrap();
+    assert_eq!(fixture.tombstone("s").causal_frontier(), frontier(5));
+    assert_ne!(fixture.stale_view_revision(), fixture.current_view_revision());
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn pre_cas_drop_preserves_owned_tombstone_for_identical_retry() {
+    let fixture = quarantined_session_fixture();
+    let first = fixture.prepare_tombstone_install(barrier(1)).await.unwrap();
+    let root = first.tombstone_root();
+    drop(first);
+    assert!(fixture.contains_tombstone("s"));
+    let retry = fixture.prepare_tombstone_install(barrier(1)).await.unwrap();
+    assert_eq!(retry.tombstone_root(), root);
+}
 ```
 
 - [ ] **Step 2: Verify RED**
@@ -178,6 +259,19 @@ Individual session closure, root discovery, and partition EOF never mint
 `WholeProducerTreeClosureReceipt`. Only verified finite seal/external-sort or an
 equivalent authored hard completeness proof covering the exact root descendant
 inventory may mint it; the receipt is checkpointed with that inventory.
+Quarantine atomically retires live/pending/spilled session state and installs a
+non-Clone budget-owned tombstone with run, input-domain, session key, issue ID,
+`SessionCausalFrontier`, and checked `SessionQuarantineClosureProof`. Later
+chunks extend that frontier without recreating the session. The reporter may
+advance its handled cut through `Quarantine` only after the separately budgeted
+prepared install acknowledgement and issue receipt are reachable at the same
+barrier and their tombstone root is acknowledged by the committed generation.
+Preparing or dropping an acknowledgement is non-destructive. A later fragment
+is excluded, checked-extends the retained `SessionCausalFrontier`, invalidates
+the prior root/acknowledgement, and requires a fresh acknowledgement. Retain the tombstone through checkpoint/resume until exact source
+no-more-before evidence proves no later fragment, the final tombstone and issue
+receipt are reachable in one generation, and generation-reader retention no
+longer reaches it.
 
 - [ ] **Step 4: Verify GREEN and commit**
 
@@ -244,7 +338,7 @@ Run Step 2 plus finite Dynamo parity tests and commit only the named files with
 
 ### Task P2: Multiplexed Action Host and State-Only Sink
 
-**Depends on:** Task P1B.
+**Depends on:** Task P1B and foundation Task 1D-R.
 
 **Files:**
 - Create: `rust/runtime/src/streaming/action/host.rs`
@@ -253,7 +347,7 @@ Run Step 2 plus finite Dynamo parity tests and commit only the named files with
 - Test: `rust/runtime/tests/streaming_action_binding.rs`
 
 **Interfaces:**
-- Produces: `StreamingActionHost`, `ActiveExecutionSet`, exact schema binding map, one submitter/driver/control triple per binding, and built-in `session_state` action sink.
+- Produces: `StreamingActionHost`, `ActiveExecutionSet`, exact schema binding map, one submitter/driver/control triple per binding, built-in `session_state` action sink, the sealed pre-receipt `CheckedActionFailureTerminalEvidenceView`, and the finalized `CheckedActionTerminalMembershipView`, each implemented only by P2 private host state.
 
 ```rust
 pub struct ActiveExecutionSet {
@@ -262,12 +356,16 @@ pub struct ActiveExecutionSet {
 }
 
 pub struct ActiveExecution {
-    pub submitted: SubmittedAction,
-    pub last_event_ordinal: u64,
-    pub terminal_receipt: Option<ActionTerminalReceipt>,
-    pub lease: BudgetLease,
+    submitted: SubmittedAction,
+    last_event_ordinal: u64,
+    terminal_receipt: Option<BudgetOwnedActionTerminalReceipt>,
+    lease: BudgetLease,
 }
 ```
+
+`ActiveExecution` exposes borrow-only submitted/event accessors and
+`take_terminal_receipt`, which transfers the complete budget-owned wrapper to
+the results plane. No accessor can separate receipt bytes from either lease.
 
 - [ ] **Step 1: Write the RED lifecycle test**
 
@@ -281,6 +379,62 @@ async fn accepted_actions_have_one_terminal_receipt_in_event_order() {
     driver.emit(handle.terminal(2)).await;
     assert_eq!(host.drain_events().await.unwrap().ordinals(), [0, 1, 2]);
     assert_eq!(host.terminal_membership("a"), 1);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn valid_terminal_membership_view_prepares_reporter_fact() {
+    let mut fixture = action_reliability_fixture();
+    fixture.finish(action(7), sequence(8), ActionTerminalOutcome::Succeeded);
+    let terminal = fixture.prepare_action_terminal(action(7)).unwrap();
+    fixture.report(IssueSequenceUpdate::CheckedActionTerminal(terminal)).await.unwrap();
+    assert_eq!(fixture.reporter().terminal_membership(action(7)), 1);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn failed_action_prepares_receipt_then_finalizes_without_circular_issue_id() {
+    let mut fixture = failed_action_reliability_fixture(action(7), sequence(8));
+    let queued = fixture.enqueue_failed_action(ordinary_endpoint_issue()).unwrap();
+    let prepared = match fixture.poll_failed_action(queued).unwrap() {
+        ActionFailureDisposition::TerminalActionReceipt(prepared) => prepared,
+        other => panic!("expected terminal action receipt, got {other:?}"),
+    };
+    let issue_id = prepared.issue_id();
+    assert_eq!(fixture.reporter().action_frontier(), sequence(7));
+    let receipt = fixture.finish_failed_action(prepared).unwrap();
+    assert_eq!(receipt.issue_id(), issue_id);
+    let terminal = fixture.prepare_action_terminal(action(7)).unwrap();
+    fixture.report(IssueSequenceUpdate::CheckedActionTerminal(terminal)).await.unwrap();
+    assert_eq!(fixture.reporter().action_frontier(), sequence(8));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn dropped_failed_action_preparation_retries_same_id_without_double_count() {
+    let mut fixture = failed_action_reliability_fixture(action(7), sequence(8));
+    let queued = fixture.enqueue_failed_action(ordinary_endpoint_issue()).unwrap();
+    let first = fixture.poll_terminal_action_failure(queued).unwrap();
+    let issue_id = first.issue_id();
+    drop(first);
+    let replay = fixture.enqueue_failed_action(ordinary_endpoint_issue()).unwrap();
+    let retry = fixture.poll_terminal_action_failure(replay).unwrap();
+    assert_eq!(retry.issue_id(), issue_id);
+    assert_eq!(fixture.reporter().action_issue_count(), 1);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn action_policy_dispositions_are_type_separated_and_nonblocking() {
+    for (policy, expected) in [
+        (action_retry_policy(), "retry"),
+        (action_backpressure_policy(), "backpressure"),
+        (action_terminal_policy(), "terminal_action_receipt"),
+    ] {
+        let mut fixture = ordered_failed_action_fixture(policy);
+        let queued = fixture.enqueue_failed_action(ordinary_endpoint_issue()).unwrap();
+        assert!(!fixture.reporter_is_borrowed_across_yield());
+        tokio::task::yield_now().await;
+        let disposition = fixture.poll_after_dense_predecessor(queued).unwrap();
+        assert_eq!(disposition.name(), expected);
+        assert_eq!(disposition.can_construct_terminal_receipt(), expected == "terminal_action_receipt");
+    }
 }
 ```
 
@@ -307,7 +461,7 @@ git commit -m "feat(runtime): multiplex streaming action bindings"
 
 ### Task P3: Bounded Pipeline and Local Placement
 
-**Depends on:** Tasks P2, 5E, 6B, and 7A.
+**Depends on:** Tasks P2, 5E, 6B, 7A, and foundation Task 1D-R.
 
 **Files:**
 - Create: `rust/runtime/src/streaming/pipeline.rs`
@@ -327,7 +481,12 @@ pub struct StreamingPhaseContext {
     pub stop: StreamingStopReceiver,
 }
 
-pub enum StreamingTerminalReason { Sealed, Cancelled, Failed }
+pub enum StreamingTerminalReason {
+    Sealed,
+    Cancelled,
+    DrainedAfterReliabilityFence { issue_id: ContentDigest },
+    FailedInvariant { issue_id: ContentDigest },
+}
 
 pub struct StreamingRunOutcome {
     pub terminal_reason: StreamingTerminalReason,
@@ -521,7 +680,7 @@ git commit -m "feat(runtime): compose bounded streaming pipeline"
 
 ### Task P4: Scheduled-Request Sink and Executable Shadow Workload
 
-**Depends on:** Tasks P3, 4B, and 6D plus adapter Tasks A1-A2. The Dynamo product
+**Depends on:** Tasks P3, 4B, 6D, foundation Task 1D-R, plus adapter Tasks A1-A2. The Dynamo product
 path additionally depends on A5P, A5, and P1C; capability agreement must omit or
 refuse that composition until all three factories are present.
 
@@ -536,7 +695,7 @@ refuse that composition until all three factories are present.
 
 **Interfaces:**
 - Consumes: `NativeTransportExecution::{executor_factory,request_materializer}`, reusable phase/capture service, bounded `ScheduledRuntime`, `PreparedRunnerOperation`.
-- Produces: action schema `session_request.v1`; executable registered workload ID `shadow_replay`; `ShadowReplayPreparedOperation`.
+- Produces: action schema `session_request.v1`; executable registered workload ID `shadow_replay`; `ShadowReplayPreparedOperation`; the immutable action inventory whose borrowed view alone implements sealed `FrozenActionInventoryView`.
 
 - [ ] **Step 1: Write the RED operation test**
 
@@ -548,6 +707,17 @@ async fn local_shadow_run_replays_cross_chunk_session_at_delayed_targets() {
     assert_eq!(outcome.records().stable_action_ids(), ["turn-0", "turn-1"]);
     assert_eq!(outcome.records().target_times_ns(), [1_300, 1_500]);
     assert_eq!(outcome.report().checkpoint_generation(), Some(2));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn frozen_action_inventory_prepares_gap_only_after_every_terminal() {
+    let mut fixture = shadow_action_inventory_fixture(2);
+    fixture.finish(sequence(0));
+    assert!(fixture.prepare_no_more_actions_before(sequence(1)).is_err());
+    fixture.finish(sequence(1));
+    let gap = fixture.prepare_no_more_actions_before(sequence(1)).unwrap();
+    fixture.report(IssueSequenceUpdate::CheckedNoMoreActionsBefore(gap)).await.unwrap();
+    assert_eq!(fixture.reporter().action_frontier(), sequence(1));
 }
 ```
 
@@ -566,6 +736,14 @@ impl PreparedRunnerOperation for ShadowReplayPreparedOperation {
 ```
 
 Materialize requests through the selected endpoint, submit through extracted dispatcher/runtime facilities, and translate observer events to action events without new token-path hooks. Produce and register the `scheduled_request` action-sink factory and the `shadow_replay` workload only in this executable commit. Prepare every selected factory once and initialize participants before polling. Refuse unsupported phase/resource/exporter/accuracy combinations during validation.
+
+Freeze the exact dense action inventory before publishing a no-more-actions
+frontier. Its private inventory alone implements the action-module-sealed
+`FrozenActionInventoryView`; the borrowed view binds the run, through sequence,
+terminal-membership root, and lookup proof for every sequence through that
+frontier. P4 passes this view to
+`StreamingIssueReporter::prepare_no_more_actions_before` and cannot construct
+the returned opaque checked update.
 
 Dynamo actions arrive here only after P1C has reconstructed canonical content;
 P4 never interprets Dynamo hashes or owns a second synthesis cache. The static
@@ -703,7 +881,7 @@ git commit -m "feat(runtime): protect target-closed-loop session state"
 
 ### Task P7: Streaming-Plane Observability
 
-**Depends on:** Tasks P3, P4, 6B, and 7A.
+**Depends on:** Tasks P3, P4, 6B, 7A, and foundation Task 1D-R.
 
 **Files:**
 - Create: `rust/runtime/src/streaming/observability.rs`
@@ -774,10 +952,115 @@ git add rust/runtime/src/streaming.rs rust/runtime/src/streaming/observability.r
 git commit -m "feat(runtime): report streaming plane metrics"
 ```
 
+## Reliability-Continuation Amendment
+
+The issue reporter is a separately owned run-scoped participant. Session and
+action components borrow it only at explicit event boundaries; they do not hold
+that borrow across source, endpoint, checkpoint, or control awaits. These
+changes extend the existing tasks and their single RED/GREEN commands:
+
+| Owner | New responsibility | Required RED cases |
+|---|---|---|
+| P1/P1B | retire a quarantined record/session and every owned pending-predecessor/spill lease at the exact causal frontier; install a durable `(input_domain, session)` tombstone; never treat conflicting stable content as ordinary quarantine | `missing_predecessor_policy_quarantines_only_the_bounded_session`, `quarantined_session_cannot_resurrect_and_tombstone_survives_resume`, `conflicting_stable_content_remains_terminal` |
+| P2 | convert endpoint timeout/HTTP/gRPC/application faults through the reporter-owned sealed `ActionFailureDisposition`: enqueue without retaining a reporter borrow, poll dense-order completion at later event boundaries, reschedule `Retry`, pause/fence `Backpressure`, and consume only `TerminalActionReceipt(PreparedActionFailureIdentity)` into exactly one checked `ActionTerminalReceipt`; then expose finalized membership so 1D-R can mint the fact; retry only when pre-acceptance safety or target idempotency proves no uncontrolled duplicate | `endpoint_failure_is_terminal_for_action_not_run`, `retry_exhaustion_emits_one_failed_terminal_receipt`, `failed_action_prepares_receipt_then_finalizes_without_circular_issue_id`, `dropped_failed_action_preparation_retries_same_id_without_double_count`, `action_policy_dispositions_are_type_separated_and_nonblocking`, `action_terminal_receipt_rejects_foreign_run_action_and_success_error_collision`, `valid_terminal_membership_view_prepares_reporter_fact`, `forged_action_success_and_unproved_gap_are_unnameable`, `action_terminal_fact_rejects_mismatched_action_or_sequence`, `tampered_action_terminal_receipt_fails_strict_restore`, `later_action_issues_after_terminal_failure` |
+| P3 | apply the exhaustive scope/disposition matrix, accept `Continue` only from the sealed no-membership-loss path, and honor `needs_admission_fence` by stopping new work and truthfully draining; call failed-run shutdown only for the module-private classifier's `FailRun` decision | `ordinary_issue_never_enters_failed_run_shutdown`, `continue_without_no_membership_loss_proof_is_unnameable`, `continuation_threshold_fences_admission_then_drains_truthful_prefix` |
+| P4 | inject the resolved frozen reliability policy/reporter into every stage and include its policy digest in execution-plan agreement; expose the private sealed frozen-action-inventory view used by the reporter to prove dense no-more-actions gap closure; no adapter/workload default may replace it | `pipeline_rejects_reliability_policy_digest_mismatch_before_poll_or_issue`, `frozen_action_inventory_view_prepares_gap_only_after_every_terminal` |
+| P7 | expose counts by scope/class/disposition, retry ordinals, hole/quarantine membership, failed terminal actions, admission-fence state, and incomplete derived sinks | `observability_separates_failed_action_from_failed_run` |
+
+P2 adds the following outcome without changing stable logical action identity:
+
+```rust
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+pub enum ActionTerminalOutcome {
+    Succeeded,
+    EndpointFailure { issue_id: ContentDigest },
+    Cancelled,
+}
+
+#[derive(Debug, Eq, PartialEq, Serialize)]
+pub struct ActionTerminalReceipt {
+    run: StreamRunIdentity,
+    action_id: StableActionId,
+    global_sequence: GlobalSequence,
+    outcome: ActionTerminalOutcome,
+    content_digest: ContentDigest,
+}
+
+pub struct BudgetOwnedActionTerminalReceipt {
+    receipt: ActionTerminalReceipt,
+    encoded: BudgetedCheckpointBytes,
+    parsed_lease: BudgetLease,
+}
+```
+
+The checked receipt constructor binds the issue scope to the same run and
+action. Its failure overload consumes the payload of
+`ActionFailureDisposition::TerminalActionReceipt`; the sealed `Retry` and
+`Backpressure` payloads expose no conversion or terminal identity, and there is
+no constructor taking a raw issue ID or ordinary issue. It rejects two terminals for one action and a success/error membership
+collision. The live receipt and wrapper fields are private; neither type is
+`Clone`, and the live receipt does not implement `Deserialize`. A private
+unknown-field-denying wire DTO is decoded only by a bounded context-taking
+restore function receiving the expected run, expected action, exact terminal
+membership context, and budget; it re-runs the checked constructor before any
+live state is returned. Compile-fail and serde RED prove callers cannot
+literal-construct fields, deserialize a forged live receipt, separate the
+encoded bytes or parsed lease, replay an error across run/action, or collide
+success/error membership. The wrapper's compact encoded allocation and parsed
+heap are charged separately and remain inseparable while owned by
+`ActiveExecution`; `take_terminal_receipt` transfers it intact into the
+budget-owned result partition.
+P2 and P4 do not mint reliability facts. For failure P2 first exposes sealed
+terminal evidence without an issue ID, synchronously enqueues it and later
+polls without holding a reporter borrow across an await. It handles `Retry` and
+`Backpressure` without terminalizing, consumes only reporter-owned
+`TerminalActionReceipt(PreparedActionFailureIdentity)` into
+`BudgetOwnedActionTerminalReceipt`, and
+only then exposes finalized membership. P2/P4 otherwise expose their respective
+action-module-sealed borrowed terminal-membership and frozen-inventory views;
+`StreamingIssueReporter::prepare_action_terminal` and
+`prepare_no_more_actions_before` validate those views and mint private-field
+`CheckedActionTerminalFact` and `CheckedNoMoreActionsBefore`. No raw reporter
+update accepts an arbitrary `Option<issue>` or frontier. Failure facts must bind
+the receipt issue to the exact action and sequence, success facts must bind the
+successful terminal membership, and gap proofs cover every sequence they
+advance through.
+Endpoint retry attempts remain telemetry; only the first reachable
+logical terminal receipt contributes to metrics. Retry exhaustion selects
+`TerminalActionReceipt`, never `FailRun`. A frozen threshold may
+pause admission for truthful draining but cannot reclassify the endpoint fault
+as an invariant. The endpoint admission-fence threshold counts cumulative
+committed failed-action receipts. Success does not reset it, so source/worker
+arrival order cannot change the threshold crossing; add
+`endpoint_failure_threshold_is_cumulative_across_success_and_restart`.
+
+Add this integrated RED matrix to `streaming_pipeline_sim` before P3 production
+changes:
+
+```rust
+#[tokio::test(flavor = "current_thread")]
+async fn scoped_faults_continue_and_invariants_stop() {
+    for case in reliability_pipeline_cases() {
+        let observed = case.run().await;
+        assert_eq!(observed.disposition, case.expected_disposition);
+        assert_eq!(observed.later_actions_issued, case.expected_later_actions);
+        assert_eq!(observed.is_run_failed, case.expected_fail_run);
+        assert!(observed.receipts_and_horizons_are_truthful());
+        assert!(observed.all_scoped_state_is_settled());
+    }
+}
+```
+
+The matrix includes record quarantine, session quarantine, partition hole,
+endpoint timeout, endpoint permanent terminal response, retry exhaustion,
+admission fencing, conflicting stable content, foreign run/proof, watermark
+regression, frozen plan drift, and lease/membership accounting corruption. Only
+the final five invariant/authority rows may set `is_run_failed`.
+
 ## Subsystem Completion Gate
 
 ```bash
-CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime --features streaming,parquet --test streaming_session_continuity --test streaming_session_closure --test streaming_action_binding --test streaming_pipeline_sim --test streaming_shadow_operation --test streaming_graph_sessions --test streaming_sensitive_state --test streaming_observability
+CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime --features streaming,parquet --test streaming_reliability --test streaming_session_continuity --test streaming_session_closure --test streaming_action_binding --test streaming_pipeline_sim --test streaming_shadow_operation --test streaming_graph_sessions --test streaming_sensitive_state --test streaming_observability
 ```
 
 Review must confirm bounded high-water diagnostics, no new hot-token callback/allocation, no source/format switches, no placeholder capabilities, and existing finite scheduled/graph behavior unchanged.

@@ -13,11 +13,11 @@ SPDX-License-Identifier: Apache-2.0
 
 **Tech Stack:** Rust 2024, Tokio current-thread runtimes, `async_trait(?Send)`, BLAKE3, strict Serde DTOs, existing `Clock`, `MetricsAccumulator`, `RecordIngest`, `NativeReport`, `PreparedRunOutcome`, `PreparedReportCommit`, and the Task-1 `StreamingBlockingExecutor`/resource budgets.
 
-**Spec:** `artifacts/streaming-design/streaming-dataset-shadow-replay-design.md` at base approval `505efc06b0`, amended by `3fea6f2fe0`, especially “Checkpoint and delivery semantics” and “Checkpoint-based results”.
+**Spec:** `artifacts/streaming-design/streaming-dataset-shadow-replay-design.md` at base approval `505efc06b0`, amended by `3fea6f2fe0` and `artifacts/streaming-design/reliability-continuation-course-correction.md`, especially “Checkpoint and delivery semantics” and “Checkpoint-based results”.
 
 ## Global Constraints
 
-- Task 5A prerequisites are foundation Tasks 0 and 1A-1B. The mandatory serial order is `5A -> 1C -> 5A-R -> 5B -> 1D`: Task 5A-R retrofits logical-run authority across the landed checkpoint and blocking-participant APIs before either backend or remaining object-safe contracts proceed. Later tasks declare additional dependencies explicitly.
+- Task 5A prerequisites are foundation Tasks 0 and 1A-1B. The mandatory serial order is `5A -> 1C -> 5A-R -> 5B -> 1D -> 1D-R`: Task 5A-R retrofits logical-run authority across the landed checkpoint and blocking-participant APIs before either backend or remaining object-safe contracts proceed; Task 1D-R then owns neutral retry/continuation authority used by 5E and result tasks. Later tasks declare additional dependencies explicitly.
 - Cargo commands run from the nested `rust/` workspace; git commands run from the repository root. Every targeted test-suite invocation uses `CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target`.
 - Each task includes the nearest parent module declaration required for its own GREEN build. The integration owner resolves overlapping declaration edits during the required `--no-ff` merge.
 - Checkpoint and result library APIs use explicit `CheckpointError`/`ResultPlaneError`, never `anyhow`.
@@ -27,6 +27,8 @@ SPDX-License-Identifier: Apache-2.0
 - Filesystem writes, hashing of large objects, fsync, index compaction, and final artifact compaction run through `StreamingBlockingExecutor`.
 - No lock is held across `.await`; no `Arc<Mutex<_>>` enters request/token paths; no unbounded channel or cumulative descriptor `Vec` is permitted.
 - Test-only fault injection is injected through private traits/enums and cannot be selected in production config.
+- A retryable or capacity checkpoint attempt and any compaction/export failure leave the current generation authoritative. Only run/proof/writer/CAS authority mismatch, impossible truthful cut, frozen semantic drift, conflicting content, or accounting corruption may select `FailRun`.
+- Each affected task's RED step includes its row in “Reliability-Continuation Amendment” below and its existing focused command is the RED/GREEN gate; the matrix is normative task scope, not a later retrofit.
 - Each task ends with one focused commit and independent behavior plus Graham review. Downstream work starts only from an integrated commit containing every declared dependency.
 
 ## Exact File Map
@@ -44,6 +46,7 @@ rust/runtime/src/streaming/results.rs                    # capture plan, correla
 rust/runtime/src/streaming/results/index.rs              # bounded persistent content-addressed index
 rust/runtime/src/streaming/results/epoch.rs              # worker rotation, holes, provisional state
 rust/runtime/src/streaming/results/compactor.rs          # partial/final/aborted assembly
+rust/runtime/src/streaming/results/sink_status.rs        # durable derived-sink retry/incomplete status
 rust/runtime/tests/streaming_checkpoint_participants.rs
 rust/runtime/tests/streaming_checkpoint_backend.rs
 rust/runtime/tests/streaming_local_checkpoint.rs
@@ -75,18 +78,25 @@ mod support;
 ## Dependency and Parallelization Graph
 
 ```text
-5A typed cuts -> 1C blocking owner -> 5A-R run authority -> 5B backend/memory -> 1D contracts
-                                                           |-> 5C local durability -> 5D leases/GC --.
-                                                           |-> 6A result index ---------------------+-> 6B epochs/holes/partial
-                                                           `-> 5E coordinator/post-CAS -------------'          |
+5A typed cuts -> 1C blocking owner -> 5A-R run authority -> 5B backend/memory -> 1D contracts -> 1D-R reliability
+                                                                                  |-> 5C local durability -> 5D leases/GC --.
+                                                                                  |-> 6A result index ---------------------+-> 6B epochs/holes/partial
+                                                                                  `-> 5E coordinator/post-CAS -------------'          |
                                                                                                                    `-> 6C1 final/aborted -> 6C2 delivery matrix -> 6D report order
 
 2 + 5C -> 5F1 local/none factories
-5B + 5E + 5F1 + A0 -> 5F2 object CAS
+1D-R + 5B + 5E + 5F1 + A0 -> 5F2 object CAS
 5D + 5F2 + P6 -> 5F3 object leases/GC/encryption
 ```
 
-After 5B merges, two worktrees may run concurrently: one owns 5C; the other owns 6A. A third worktree may run 5E because it owns only `checkpoint_coordinator.rs` and its dedicated support/test files. Merge 5C and 6A before starting 5D. Merge 5D, 5E, and 6A before cutting 6B. Tasks 6C1, 6C2, and 6D serialize after 6B. Each worktree lands the minimal parent module declaration needed to compile; the integration owner resolves declaration conflicts. Tasks 5F1-5F3 follow their explicit cross-plan prerequisites.
+After 5B merges, foundation Tasks 1D then 1D-R serialize before 5C, 5E, 6A,
+or any backend task. Task 1D-R changes the backend open/predecessor authority,
+so local, layered, and object implementations must consume that landed seam.
+After 1D-R, 5C, 5E, and 6A may run in parallel. Merge 5C and 6A before starting
+5D; merge 5D, 5E, and 6A before cutting 6B. Tasks 6C1, 6C2, and 6D serialize
+after 6B. Each worktree lands the minimal parent module declaration needed to
+compile; the integration owner resolves declaration conflicts. Tasks 5F1-5F3
+follow their explicit cross-plan prerequisites.
 
 ---
 
@@ -2203,7 +2213,7 @@ git commit -m "feat(runtime): add atomic checkpoint backend contract"
 
 ### Task 5C: Crash-Durable Local Generation Store
 
-**Depends on:** Task 5B.
+**Depends on:** Task 5B and foundation Task 1D-R.
 
 **Files:**
 - Create: `rust/runtime/src/streaming/checkpoints/local.rs`
@@ -2251,7 +2261,7 @@ async fn every_pre_current_fault_preserves_previous_generation() {
         let transaction = support::fully_staged_local_transaction(
             &backend,
             run,
-            Some(first.generation()),
+            Some(first.current_v4_generation()),
         ).await;
         backend.inject_fault(fault);
         assert_eq!(
@@ -2264,7 +2274,7 @@ async fn every_pre_current_fault_preserves_previous_generation() {
         assert!(backend.injected_fault_was_reached(fault));
         let reopened = support::local_backend(directory.path(), None);
         let latest = reopened.open_latest(&run, &support::expectations(run)).await.unwrap().unwrap();
-        assert_eq!(latest.generation().generation_ref(), first.generation_ref());
+        assert_eq!(latest.generation(), first.generation_ref());
     }
 }
 
@@ -2274,6 +2284,31 @@ async fn local_backend_conforms_to_shared_pre_io_lineage_validation() {
         support::local_publication_backend_fixture(),
     )
     .await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn local_open_exposes_v3_read_only_and_begin_refuses_it_by_type() {
+    let backend = support::local_backend_with_legacy_v3_head();
+    let opened = backend.open_latest(&support::run_id(1), &support::expectations(support::run_id(1))).await.unwrap().unwrap();
+    assert_eq!(opened.version(), CheckpointGenerationStorageVersion::LegacyV3ReadOnly);
+    assert!(matches!(
+        backend.begin_generation(support::run_id(1), None, support::expectations(support::run_id(1))).await,
+        Err(CheckpointError::LegacyReadOnlyHead),
+    ));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn legacy_participant_is_export_only_and_cannot_initialize() {
+    let fixture = support::local_backend_with_legacy_v3_head_and_participant();
+    let opened = fixture.backend.open_latest(&fixture.run, &fixture.expectations).await.unwrap().unwrap();
+    let legacy = match opened.view() {
+        LeasedCheckpointGenerationView::LegacyV3ReadOnly(reader) => {
+            reader.read_legacy_participant(&fixture.descriptor).await.unwrap()
+        }
+        LeasedCheckpointGenerationView::CurrentV4(_) => panic!("fixture must be legacy"),
+    };
+    assert_eq!(legacy.payload(), fixture.expected_payload.as_ref());
+    assert_eq!(fixture.participant_initialize_calls(), 0);
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -2330,12 +2365,15 @@ Create every run/tmp/lease directory as exact `0700` through no-follow directory
 Before constructing or enqueueing that blocking job, local commit consumes its
 frozen staging data through Task 5B's shared lineage/candidate seam. A lineage
 refusal therefore executes no `LocalCheckpointFilesystem` method and never
-looks up `CURRENT`.
+looks up `CURRENT`. Reopen uses 1D-R's strict versioned decoder and returns the
+explicit leased enum; local begin accepts only `CurrentV4CheckpointGeneration`
+and cannot perform filesystem work for legacy-v3 authority.
 
 - [ ] **Step 4: Verify GREEN**
 
 Run Step 2. Expected: every fault exposes a complete prior/next generation,
 shared pre-I/O lineage conformance passes, two writers cannot both commit,
+legacy-v3 opens read-only and cannot begin a successor,
 mutation/no-follow tests fail closed, and no filesystem method runs on
 `LocalSet`.
 
@@ -2424,7 +2462,7 @@ git commit -m "feat(runtime): lease and collect checkpoint objects"
 
 ### Task 5E: Checkpoint Coordinator and Post-CAS Notification
 
-**Depends on:** Task 5B. It may run parallel with 5C and 6A.
+**Depends on:** Task 5B and foundation Task 1D-R. It may run parallel with 5C and 6A after 1D-R merges.
 
 **Files:**
 - Create: `rust/runtime/src/streaming/checkpoint_coordinator.rs`
@@ -2485,7 +2523,7 @@ async fn post_commit_failure_does_not_roll_back_authoritative_head() {
     assert!(matches!(error, CheckpointError::PostCommitNotification { .. }));
     let latest = fixture.backend.open_latest(&fixture.run, &fixture.expectations).await.unwrap().unwrap();
     assert_eq!(
-        latest.generation().generation_ref(),
+        latest.generation(),
         &coordinator_support::generation(1),
     );
     fixture.restore_and_replay_notifications().await.unwrap();
@@ -2516,8 +2554,7 @@ async fn one_coordinator_commits_consecutive_barriers_against_its_advanced_head(
             .await
             .unwrap()
             .unwrap()
-            .generation()
-            .generation_ref(),
+            .generation(),
         second.generation_ref(),
     );
 }
@@ -2730,6 +2767,15 @@ committed generation/receipt authority. Error and cancellation assertions clone
 it only into test observation state and compare the full value, not merely its
 generation number.
 
+Add `pre_cas_failure_retains_issue_receipt_view_for_identical_retry` and
+`handled_cut_without_matching_receipt_partition_is_rejected_before_staging`,
+`tombstone_install_ack_requires_same_barrier_receipt_root`, and
+`pre_cas_drop_preserves_quarantine_owner_for_identical_ack_retry`.
+The first injects cancellation and backend refusal after Task 6B consumes the
+barrier view, verifies the ledger retains identical detailed receipts and all
+live charges, retries, and observes retirement only after the same-generation
+commit callback.
+
 - [ ] **Step 2: Verify RED**
 
 ```bash
@@ -2744,7 +2790,7 @@ struct PublishedBarrier {
     committed: CommittedCheckpointGeneration,
 }
 
-// barrier -> views -> validate -> stage -> CAS -> notifications
+// validate run -> replay publication -> views -> validate -> stage -> CAS -> retain publication -> notifications
 self.validate_barrier_run(&barrier)?;
 if let Some(pending) = self.pending_notification.as_ref() {
     let is_exact_repeat = pending.barrier == barrier;
@@ -2773,7 +2819,7 @@ for view in views {
 }
 transaction.stage_results(result_partitions).await?;
 let committed = transaction.commit(self.metadata(&barrier)?).await?;
-self.expected = Some(committed.generation());
+self.expected = Some(committed.current_v4_generation());
 self.last_committed = Some(PublishedBarrier {
     barrier: barrier.clone(),
     committed: committed.clone(),
@@ -2788,7 +2834,20 @@ Ok(committed)
 ```
 
 Missing/duplicate participants fail before `begin_generation`. The coordinator
-requires `barrier.run == self.run == generation_expectations.run` before pending
+requires exactly one Task-6B issue-receipt result partition whose run, barrier,
+receipt root, and handled cut equal the reliability participant view. It stages
+that partition in the same transaction; it never accepts a detached receipt
+list or clones a detailed receipt. For quarantine it additionally requires the
+separately budgeted `PreparedSessionQuarantineInstall` to carry the same
+barrier, tombstone root, monotonic P1B view revision, and receipt binding. Staging consumes only that
+move-only acknowledgement, not P1B's retained tombstone/map; pre-CAS drop
+therefore permits identical re-preparation, while a later-fragment extension
+invalidates the old root and must be re-acknowledged. Immediately before
+staging, the coordinator calls
+`verify_session_quarantine_install(&prepared, &current_p1b_view, &barrier)`;
+stale run/barrier/root/revision/receipt/payload refuses without consuming the
+acknowledgement or P1B view. It requires
+`barrier.run == self.run == generation_expectations.run` before pending
 notification retry or collecting views, and it checks `committed.run()` and
 every `receipt.run()` again
 before dispatching participant callbacks. Participants independently reject a
@@ -2797,7 +2856,8 @@ generation ordering or descriptor-digest idempotency. Thus a greater-epoch
 receipt from another run cannot be mistaken for progress. Failed staging/CAS
 drops the transaction and sends no notifications. Notification failure is
 surfaced after publication. The coordinator clones its non-`Copy` expected head
-for `begin_generation`; immediately after successful CAS it advances
+for `begin_generation`; after Task 1D-R that field is exactly
+`Option<CurrentV4CheckpointGeneration>`. Immediately after successful CAS it advances
 `self.expected` and retains the committed receipt as the pending notification
 before making any fallible callback. The next barrier on that same coordinator
 first retries the pending receipt idempotently, clears it only after every
@@ -2814,6 +2874,16 @@ notification await with no intervening cancellation point. Restore uses the
 same replay path. A notification error therefore cannot roll back authority,
 strand the coordinator on a stale CAS expectation, duplicate an exact barrier,
 or consume inputs belonging to a later attempt.
+
+This publication sequence is one atomic attempt inside the clock-driven
+coordinator loop. Before returning a pre-CAS error to the pipeline, Task 5E
+passes the typed attempt failure to the reliability module's checkpoint
+classifier entry point. Retryable failures reuse the same expected head with
+the next host-issued logical retry ordinal; capacity backpressures or fences
+admission for truthful draining. Only a reporter-checked `FailRun` for foreign
+authority, stale writer/CAS, impossible truthful cut, frozen semantic drift,
+conflicting content, or accounting corruption exits as a failed run. Post-CAS
+notification retry never re-enters `begin_generation`.
 
 - [ ] **Step 4: Verify GREEN**
 
@@ -2885,7 +2955,7 @@ git commit -m "feat(runtime): register local checkpoint backends"
 
 ### Task 5F2: Conditional Object-Store CAS Backend
 
-**Depends on:** Tasks 5B, 5E, 5F1, and adapter Task A0 (neutral AWS client construction).
+**Depends on:** Tasks 5B, 5E, 5F1, foundation Task 1D-R, and adapter Task A0 (neutral AWS client construction).
 
 **Files:**
 - Create: `rust/runtime/src/streaming/checkpoints/object_store.rs`
@@ -2999,6 +3069,19 @@ async fn object_backend_conforms_to_shared_pre_io_lineage_validation() {
     )
     .await;
 }
+
+
+#[tokio::test(flavor = "current_thread")]
+async fn object_open_exposes_v3_read_only_and_never_attempts_successor_cas() {
+    let fixture = support::object_backend_with_legacy_v3_head();
+    let opened = fixture.backend.open_latest(&fixture.run, &fixture.expectations).await.unwrap().unwrap();
+    assert_eq!(opened.version(), CheckpointGenerationStorageVersion::LegacyV3ReadOnly);
+    assert!(matches!(
+        fixture.backend.begin_generation(fixture.run.clone(), None, fixture.expectations.clone()).await,
+        Err(CheckpointError::LegacyReadOnlyHead),
+    ));
+    assert_eq!(fixture.store.pointer_cas_calls(), 0);
+}
 ```
 
 - [ ] **Step 2: Verify RED**
@@ -3016,11 +3099,14 @@ conditionally replacing one pointer using the exact prior provider version.
 Stream uploads and ranged restores under permits; never assemble a complete
 multi-GiB object in `Bytes`. Register `object_store` only under `streaming-s3`.
 Providers without exact conditional pointer update fail capability agreement
-before effects.
+before effects. Object restore uses 1D-R's strict versioned leased-open seam;
+pointer CAS begin accepts only `CurrentV4CheckpointGeneration`, so legacy-v3
+authority cannot reach provider I/O or CAS.
 
 - [ ] **Step 4: Verify GREEN**
 
 Run Step 2. Expected: stale-writer, shared pre-I/O lineage conformance,
+legacy-v3 read-only open/no-successor-CAS,
 every-upload-fault, CAS, crash-after-CAS, feature inventory, oversized-metadata,
 and bounded chunk high-water cases pass.
 
@@ -3203,7 +3289,7 @@ git commit -m "feat(runtime): index streaming result segments"
 
 ### Task 6B: Epoch Rotation, Provisional Holes, and Partial Results
 
-**Depends on:** Tasks 5D, 5E, and 6A.
+**Depends on:** Tasks 5D, 5E, 6A, and foundation Task 1D-R.
 
 **Files:**
 - Create: `rust/runtime/src/streaming/results/epoch.rs`
@@ -3224,6 +3310,8 @@ pub struct CommittedPartialResult {
     pub provisional_request_count: u64,
     pub active_session_count: u64,
     pub incomplete_session_count: u64,
+    pub issue_summary: StreamingIssueSummary,
+    pub failed_action_count: u64,
     pub metrics: BTreeMap<String, MetricEntry>,
     pub provisional: Option<ProvisionalDashboardSummary>,
 }
@@ -3244,6 +3332,7 @@ impl EpochResultCoordinator {
     pub async fn prepare_epoch(
         &mut self,
         barrier: &CheckpointBarrier,
+        issue_receipts: PreparedIssueReceiptPartitionView,
     ) -> Result<Vec<ResultPartition>, ResultPlaneError>;
     pub fn committed_partial(
         &self,
@@ -3291,6 +3380,18 @@ charged while Task 5E carries the mutable partition vector into Task 5B and is
 released only after Task 5B has acquired both aggregate descriptor authorities.
 
 - [ ] **Step 1: Write representative RED tests**
+
+Before production changes add
+`issue_receipts_rotate_and_restore_exactly_once`,
+`quarantine_hole_and_failed_action_are_excluded_from_success_membership`, and
+`conflicting_issue_membership_cannot_publish_result_epoch` from the reliability
+matrix below. Also add
+`hole_then_valid_record_checkpoint_resume_requires_same_generation_receipt`,
+which records a partition hole, processes a later valid record, commits both
+the `HandledIssueCut` and receipt partition, resumes, and proves the source
+frontier cannot cross the hole if either root is removed or changed.
+Add `quarantine_result_epoch_requires_same_barrier_tombstone_install_ack` and
+`stale_tombstone_root_after_late_fragment_is_rejected_without_consuming_quarantine_owner`.
 
 ```rust
 #[tokio::test(flavor = "current_thread")]
@@ -3375,7 +3476,7 @@ CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime -
 
 - [ ] **Step 3: Implement bounded epoch ownership**
 
-Rotate each worker `MetricsAccumulator` and configured exact/raw/session/provenance projections at the barrier. The stable result participant checkpoints accumulator epochs, index root, terminal horizon, and all bounded provisional descriptors/leases. Hold completions above `H` in immutable provisional partitions charged to prepare/provisional budgets; never link them from a committed root until the hole closes. On exhaustion, fence new admission and return the authored overload decision. Partial views page and merge only committed segments through `H`; provisional dashboard data is separately labeled and excluded from totals.
+Rotate each worker `MetricsAccumulator` and configured exact/raw/session/provenance projections at the barrier. Consume the move-only issue-receipt view into exactly one budget-owned result partition without cloning detailed receipts. The stable result participant checkpoints accumulator epochs, index root, terminal horizon, handled-issue root, and all bounded provisional descriptors/leases. Require the barrier `HandledIssueCut`, reliability participant state, issue partition root, and separately budgeted prepared tombstone install acknowledgement, including exact P1B view revision, to match before returning partitions. The acknowledgement is a non-destructive P1B projection; neither the tombstone nor its map moves into 6B. Hold completions above `H` in immutable provisional partitions charged to prepare/provisional budgets; never link them from a committed root until the hole closes. On exhaustion, fence new admission and return the authored overload decision. Partial views page and merge only committed segments through `H`; provisional dashboard data is separately labeled and excluded from totals.
 
 - [ ] **Step 4: Verify GREEN**
 
@@ -3392,17 +3493,52 @@ git commit -m "feat(runtime): rotate checkpoint result epochs"
 
 ### Task 6C1: Deterministic Final/Aborted Generation and Compaction
 
-**Depends on:** Task 6B and the existing `PreparedRunOutcome`/`PreparedReportCommit` interfaces. This task must merge before source or cellular E2E claims restart correctness.
+**Depends on:** Task 6B, foundation Task 1D-R, and the existing `PreparedRunOutcome`/`PreparedReportCommit` interfaces. This task must merge before source or cellular E2E claims restart correctness.
 
 **Files:**
 - Create: `rust/runtime/src/streaming/results/compactor.rs`
+- Create: `rust/runtime/src/streaming/results/sink_status.rs`
 - Modify: `rust/runtime/src/streaming/results.rs`
+- Unit tests: `#[cfg(test)]` in `rust/runtime/src/streaming/results/sink_status.rs`
 - Extend: `rust/runtime/tests/support/streaming_checkpoint.rs`
 - Create: `rust/runtime/tests/streaming_result_finalization.rs`
 
 - [ ] **Step 1: Write RED finalization tests**
 
-Add `report_lease_releases_only_after_authoritative_report_commit`, `unsafe_abort_preserves_last_partial_without_fabricating_terminal_root`, `safe_abort_commits_complete_aborted_generation`, `compaction_order_is_stable_across_page_sizes`, and `compaction_failure_retains_reconstructable_generation`.
+Add `report_lease_releases_only_after_authoritative_report_commit`,
+`unsafe_abort_preserves_last_partial_without_fabricating_terminal_root`,
+`safe_abort_commits_complete_aborted_generation`,
+`compaction_order_is_stable_across_page_sizes`,
+`compaction_failure_retains_reconstructable_generation`,
+`crash_before_initial_status_is_found_by_generation_sink_reconciliation`,
+`crash_or_cancellation_before_receipt_status_cas_reuses_exact_ordinal`,
+`crash_or_cancellation_after_receipt_status_cas_reopens_exact_pending_status`, and
+`durable_output_before_complete_cas_recovers_complete`,
+`reopen_rejects_tampered_or_unreachable_export_receipt`,
+`receipt_attempt_or_issue_mismatch_refuses_before_store_io`,
+`illegal_sink_transition_and_terminal_successor_are_unnameable`,
+`retry_ordinal_overflow_refuses_before_store_io`, and
+`reopened_status_and_receipt_retain_exact_encoded_and_parsed_charges`,
+`reporter_prepares_exactly_charged_export_failure_from_retained_receipt`,
+`reporter_rejects_foreign_run_generation_sink_or_ordinal`,
+`durable_writer_and_probe_are_the_only_output_proof_minting_paths`, and
+`unbudgeted_or_forged_export_tokens_are_unnameable`,
+`post_final_restart_reopens_pending_from_generation_and_derived_store_without_issue_ledger`,
+`missing_or_tampered_embedded_receipt_or_reference_refuses_reopen`, and
+`restart_reconstructs_exact_sink_ordinal_and_counter`,
+`first_attempt_exhausted_restart_uses_status_ordinal_zero_and_counter_zero`, and
+`multi_retry_exhausted_restart_uses_status_authored_last_ordinal_and_counter`. All store/supervisor
+cases are `#[tokio::test(flavor = "current_thread")] async`: they await CAS,
+drop and reopen durable state, and assert the exact full generation, sink,
+ordinal, receipt, head, inventory, and live parsed/encoded budget charges.
+The post-final restart fixture explicitly drops execution, reporter, and every
+mutable ledger object before reopening only the leased final generation plus a
+fresh derived status store instance.
+The crate unit module owns `prepared_export_failure_cannot_mix_decision_and_receipt`,
+`durable_output_proof_rejects_foreign_run_generation_or_sink`, and privacy
+compile-fail coverage for the sealed writer/probe and transition fields.
+Public integration cases drive those paths only through the retry-supervisor
+fixture; they do not name crate-private decisions, proofs, or transition traits.
 
 - [ ] **Step 2: Verify RED**
 
@@ -3423,19 +3559,30 @@ pub struct PreparedStreamingReport {
 pub trait StreamingResultCompactor {
     async fn compact(
         &self,
-        reader: Box<dyn LeasedGenerationReader>,
+        reader: LeasedCheckpointGeneration,
     ) -> Result<PreparedStreamingReport, ResultPlaneError>;
 }
 ```
 
 Seal and commit final/aborted generation first. Traverse bounded index pages in fixed `(epoch, cell_id, worker_id, projection_id, first_global_sequence, digest)` order, stream output through the blocking owner, and retain the report lease through durable persistence. Unsafe abort retains the last partial root without fabricating a terminal generation. This task does not implement delivery restart or endpoint idempotency policy.
 
+Create the full-generation-scoped compactor
+`PendingAttempt { next_ordinal: 0 }` status before the first attempt. Ordinary
+read/write/sync failure CASes `PendingRetry`, retains the
+generation/report lease, and retries through bounded blocking ownership; it
+does not create an aborted generation or roll back execution. Success CASes the
+status to `Complete`. The bounded retry supervisor pages pending work and is
+restartable. Implement the awaited durable reopen and cancellation cases from
+Step 1; synchronous model-only tests are insufficient. An invariant
+digest/index/accounting conflict is reported through Task 1D-R and may select
+checked `FailRun` without changing the already committed generation.
+
 - [ ] **Step 4: Verify GREEN and commit**
 
 Run Step 2, then commit:
 
 ```bash
-git add rust/runtime/src/streaming/results.rs rust/runtime/src/streaming/results/compactor.rs rust/runtime/tests/support/streaming_checkpoint.rs rust/runtime/tests/streaming_result_finalization.rs
+git add rust/runtime/src/streaming/results.rs rust/runtime/src/streaming/results/compactor.rs rust/runtime/src/streaming/results/sink_status.rs rust/runtime/tests/support/streaming_checkpoint.rs rust/runtime/tests/streaming_result_finalization.rs
 git commit -m "feat(runtime): finalize checkpointed streaming results"
 ```
 
@@ -3546,10 +3693,11 @@ git commit -m "feat(runtime): enforce streaming delivery restart policy"
 
 ### Task 6D: Coordinator Report-Persistence and Lease Ordering
 
-**Depends on:** Tasks 6C1 and 6C2.
+**Depends on:** Tasks 6C1, 6C2, and foundation Task 1D-R.
 
 **Files:**
 - Modify: `rust/runtime/src/engine/coordinator.rs:483-538`
+- Modify: `rust/runtime/src/streaming/results/sink_status.rs`
 - Test in: `rust/runtime/src/engine/coordinator.rs`
 
 **Produces:** the generic non-cellular and cellular ordering final generation CAS → leased compaction → durable report rename → synchronous `PreparedReportCommit::commit` → report-retention lease release.
@@ -3557,8 +3705,8 @@ git commit -m "feat(runtime): enforce streaming delivery restart policy"
 - [ ] **Step 1: Add the in-module RED test**
 
 ```rust
-#[test]
-fn streaming_report_persists_before_commit_lease_release() {
+#[tokio::test(flavor = "current_thread")]
+async fn streaming_report_persists_before_commit_lease_release() {
     let fixture = report_persistence_fixture();
     let events = fixture.events();
     persist_prepared_report(
@@ -3568,24 +3716,25 @@ fn streaming_report_persists_before_commit_lease_release() {
         fixture.artifact_dir(),
         fixture.export_config(),
         fixture.exporters(),
-    ).unwrap();
+    ).await.unwrap();
     assert_eq!(
         events.borrow().as_slice(),
         ["final_generation", "compact", "report_rename", "report_commit", "lease_release"],
     );
 }
 
-#[test]
-fn streaming_report_failure_retains_generation_and_skips_commit_hook() {
+#[tokio::test(flavor = "current_thread")]
+async fn streaming_report_failure_records_retry_and_skips_commit_hook() {
     let fixture = failing_report_persistence_fixture();
-    assert!(persist_prepared_report(
+    let status = persist_prepared_report(
         fixture.outcome(),
         fixture.report_run_metadata(),
         fixture.report_path(),
         fixture.artifact_dir(),
         fixture.export_config(),
         fixture.exporters(),
-    ).is_err());
+    ).await.unwrap();
+    assert!(matches!(status.state(), ResultSinkState::PendingRetry { .. }));
     assert!(fixture.final_generation_is_reconstructable());
     assert_eq!(fixture.report_commit_calls(), 0);
 }
@@ -3599,18 +3748,600 @@ CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime -
 
 - [ ] **Step 3: Integrate without exposing private helpers**
 
-Keep `persist_prepared_report` private. Thread `PreparedStreamingReport` through `PreparedRunOutcome`, persist the authoritative native report with the existing atomic file path, and call the synchronous commit hook only after rename succeeds. On failure, preserve the leased generation/diagnostic root for reconstruction and do not call the hook.
+Keep `persist_prepared_report` private. Thread `PreparedStreamingReport` through
+`PreparedRunOutcome`, persist the authoritative native report with the existing
+atomic file path, and call the synchronous commit hook only after rename
+succeeds. Async orchestration awaits the derived receipt/status CAS before
+returning. On an ordinary sink failure, preserve the leased full generation,
+leased reader, and diagnostic root, atomically record the inseparable
+budget-owned export receipt with `PendingRetry`, do not call the hook, and
+return derived-sink status rather than a failed execution outcome. The bounded
+supervisor first reconciles retained generations against the frozen sink
+inventory, then enumerates and retries after execution or restart; authored
+exhaustion reaches `Exhausted`/export-incomplete and releases only the
+optional-export attempt lease, never checkpoint authority.
 
 - [ ] **Step 4: Verify GREEN**
 
-Run Step 2. Expected: both success ordering and persistence-failure retention tests pass in one suite invocation.
+Run Step 2. Expected: success ordering, persistence retry-status retention, and export-incomplete-without-rollback tests pass in one suite invocation.
 
 - [ ] **Step 5: Review and commit**
 
 ```bash
-git add rust/runtime/src/engine/coordinator.rs
+git add rust/runtime/src/engine/coordinator.rs rust/runtime/src/streaming/results/sink_status.rs
 git commit -m "feat(engine): commit streaming report lease after persistence"
 ```
+
+## Reliability-Continuation Amendment
+
+Tasks 5E, 6B, 6C1, and 6D depend on foundation Task 1D-R. Tasks 5C and
+5F2 retain backend mechanism ownership and add only the stable failure facts
+needed by the host classifier. A backend never chooses a run disposition.
+
+### Task 1D-R backend-authority overlay
+
+Task 5B's finalized transaction, prevalidation, budget, and publication text
+above remains its landed pre-1D-R contract. Foundation Task 1D-R owns this
+subsequent signature/type substitution in `checkpoint_backend.rs`, memory
+support, and backend tests; no 5B validation order or ownership changes:
+
+```rust
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CurrentV4CheckpointGeneration(CheckpointGeneration);
+
+impl CurrentV4CheckpointGeneration {
+    pub fn generation(&self) -> &CheckpointGeneration { &self.0 }
+}
+
+impl CommittedCheckpointGeneration {
+    pub(crate) fn current_v4_generation(&self) -> CurrentV4CheckpointGeneration {
+        CurrentV4CheckpointGeneration(self.generation().clone())
+    }
+}
+
+pub struct LeasedCheckpointGeneration(LeasedCheckpointGenerationInner);
+
+enum LeasedCheckpointGenerationInner {
+    CurrentV4(Box<dyn LeasedGenerationReader>),
+    LegacyV3ReadOnly(Box<dyn LegacyV3LeasedGenerationReader>),
+}
+
+pub enum LeasedCheckpointGenerationView<'a> {
+    CurrentV4(&'a dyn LeasedGenerationReader),
+    LegacyV3ReadOnly(&'a dyn LegacyV3LeasedGenerationReader),
+}
+
+pub struct LegacyParticipantState {
+    descriptor: ParticipantStateDescriptor,
+    payload: BudgetedCheckpointBytes,
+}
+
+pub(crate) struct CurrentV4ParticipantStateContext {
+    run: StreamRunIdentity,
+    generation: CheckpointGeneration,
+    descriptor_digest: ContentDigest,
+}
+
+impl LegacyParticipantState {
+    pub fn descriptor(&self) -> &ParticipantStateDescriptor { &self.descriptor }
+    pub fn payload(&self) -> &[u8] { self.payload.as_bytes() }
+}
+
+impl CommittedParticipantState {
+    pub(crate) fn from_current_v4_reader(
+        context: &CurrentV4ParticipantStateContext,
+        descriptor: ParticipantStateDescriptor,
+        payload: BudgetedCheckpointBytes,
+    ) -> Result<Self, CheckpointError>;
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CheckpointGenerationStorageVersion {
+    CurrentV4,
+    LegacyV3ReadOnly,
+}
+
+#[async_trait(?Send)]
+pub trait VersionedLeasedGenerationReader {
+    fn version(&self) -> CheckpointGenerationStorageVersion;
+    fn generation(&self) -> &CheckpointGeneration;
+    fn view(&self) -> LeasedCheckpointGenerationView<'_>;
+    async fn scan_result_index(
+        &self,
+        after: Option<ResultIndexCursor>,
+        budget: ResultIndexReadBudget,
+    ) -> Result<ResultIndexPage, CheckpointError>;
+    async fn read_segment(
+        &self,
+        descriptor: &ResultSegmentDescriptor,
+    ) -> Result<ResultSegmentReader, CheckpointError>;
+}
+
+pub(crate) trait CurrentV4PredecessorProjection {
+    fn current_v4_predecessor(&self) -> Option<CurrentV4CheckpointGeneration>;
+}
+
+#[async_trait(?Send)]
+pub trait LegacyV3LeasedGenerationReader {
+    /// Returns the strictly decoded semantic generation for read/export only.
+    fn generation(&self) -> &CheckpointGeneration;
+    async fn scan_result_index(
+        &self,
+        after: Option<ResultIndexCursor>,
+        budget: ResultIndexReadBudget,
+    ) -> Result<ResultIndexPage, CheckpointError>;
+    async fn read_segment(
+        &self,
+        descriptor: &ResultSegmentDescriptor,
+    ) -> Result<ResultSegmentReader, CheckpointError>;
+    async fn read_legacy_participant(
+        &self,
+        descriptor: &ParticipantStateDescriptor,
+    ) -> Result<LegacyParticipantState, CheckpointError>;
+}
+
+#[async_trait(?Send)]
+pub trait StreamingCheckpointBackend {
+    async fn open_latest(
+        &self,
+        run: &StreamRunIdentity,
+        expected: &CheckpointGenerationExpectations,
+    ) -> Result<Option<LeasedCheckpointGeneration>, CheckpointError>;
+    async fn begin_generation(
+        &self,
+        run: StreamRunIdentity,
+        expected: Option<CurrentV4CheckpointGeneration>,
+        expectations: CheckpointGenerationExpectations,
+    ) -> Result<Box<dyn StreamingGenerationTransaction>, CheckpointError>;
+}
+```
+
+Task 1D-R puts real rustdoc compile-fail examples on the public authority types;
+these are compiled by the foundation `--doc` gate rather than invoked as fake
+functions from integration tests. The `LeasedCheckpointGeneration` docs include:
+
+````rust
+/// ```compile_fail
+/// # use aiperf_runtime::streaming::checkpoint_backend::{
+/// #     CheckpointGenerationExpectations, LeasedCheckpointGeneration,
+/// #     StreamingCheckpointBackend,
+/// # };
+/// # use aiperf_runtime::streaming::checkpoint::StreamRunIdentity;
+/// # async fn cannot_succeed(
+/// #     backend: &dyn StreamingCheckpointBackend,
+/// #     run: StreamRunIdentity,
+/// #     opened: LeasedCheckpointGeneration,
+/// #     expectations: CheckpointGenerationExpectations,
+/// # ) {
+/// let _ = backend.begin_generation(run, Some(opened), expectations).await;
+/// # }
+/// ```
+````
+
+The `LegacyParticipantState` docs separately prove that legacy read authority
+cannot initialize a participant or be promoted through a public conversion:
+
+````rust
+/// ```compile_fail
+/// # use aiperf_runtime::streaming::checkpoint::StreamingCheckpointParticipant;
+/// # use aiperf_runtime::streaming::checkpoint_backend::LegacyParticipantState;
+/// # async fn cannot_initialize(
+/// #     participant: &mut dyn StreamingCheckpointParticipant,
+/// #     legacy: LegacyParticipantState,
+/// # ) {
+/// participant.initialize(Some(legacy)).await.unwrap();
+/// # }
+/// ```
+///
+/// ```compile_fail
+/// # use aiperf_runtime::streaming::checkpoint::CommittedParticipantState;
+/// # use aiperf_runtime::streaming::checkpoint_backend::LegacyParticipantState;
+/// # fn cannot_promote(legacy: LegacyParticipantState) {
+/// let _: CommittedParticipantState = legacy.into();
+/// # }
+/// ```
+````
+
+The wrapper and inner fields are private. `VersionedLeasedGenerationReader` is
+implemented only for the opaque wrapper by exhaustive private-inner dispatch.
+Its common methods expose only generation/result reads; `view()` selects one
+of two non-convertible borrowed reader authorities. Current-v4 participant
+reads remain on `LeasedGenerationReader`. Legacy-v3 participant reads return
+private-field `LegacyParticipantState`, which has borrow-only descriptor/byte
+access for export and no conversion into `CommittedParticipantState`.
+Task 1D-R retires the landed public storage constructor
+`CommittedParticipantState::new`: its replacement
+`from_current_v4_reader` is crate-private and requires the private-field context
+minted only while a verified current-v4 reader checks a reachable descriptor.
+The context binds run, full generation, and descriptor digest. Copying a legacy
+descriptor/payload into a new budget lease therefore still cannot construct
+initializer authority.
+The v4 path alone has a crate-private checked projection to
+`CurrentV4CheckpointGeneration`; the v3 decoder never constructs
+`CommittedCheckpointGeneration`. Task 1D-R changes
+`FrozenGenerationTransactionInputs.expected`, `compare_expected`, and memory
+head comparison to the current-v4 wrapper. `CheckpointCommitMetadata.previous`
+remains an untrusted raw lineage claim and is only compared with the generation
+inside that sealed expected authority during prevalidation; it is never a
+`begin_generation` predecessor. Local, layered, and object backends implement
+the same final signature and versioned-open behavior.
+Task 1D-R adds `CheckpointError::LegacyReadOnlyHead`; memory/local/object
+`begin_generation(..., None, ...)` must still inspect the actual per-run head
+and return that error rather than treating a present v3 head as fresh. Thus
+neither typed predecessor erasure nor omission can follow or replace v3.
+
+The crate-private projection is tested only beside its implementation:
+
+```rust
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn current_v4_projection_exists_only_for_verified_v4() {
+        let opened = support::opened_current_v4();
+        assert_eq!(opened.current_v4_predecessor().unwrap().generation(), opened.generation());
+    }
+
+    #[test]
+    fn legacy_v3_has_no_current_predecessor_projection() {
+        let opened = support::opened_legacy_v3();
+        assert!(opened.current_v4_predecessor().is_none());
+    }
+}
+```
+
+Public integration tests assert only `CheckpointGenerationStorageVersion` and
+compile-fail inability to pass `LeasedCheckpointGeneration` where
+`begin_generation` requires `CurrentV4CheckpointGeneration`; they never import
+or invoke `CurrentV4PredecessorProjection`.
+
+### Owned interfaces
+
+Task 6C1 creates `rust/runtime/src/streaming/results/sink_status.rs`; Task 6D
+extends it for report/export sinks without changing checkpoint authority. It
+consumes Task 1D-R's `ResultSinkAttemptOutcome`,
+`PreparedExportAttemptFailure`, `BudgetOwnedExportIssueReceipt`, and checked
+reporter method rather than redeclaring or reconstructing them:
+
+Task 6C1 extends `ResultPlaneError` with the explicit non-string variants
+`ExportIssuePreparation(StreamingReliabilityError)`,
+`DurableOutputProofMismatch`, `IllegalSinkTransition`, and
+`RetryOrdinalOverflow`. The nested reliability error provides the exact typed
+run/generation/sink/attempt/unavailable/budget refusal. Each has one stable
+lowercase code and retains no raw sink payload or credential text.
+
+```rust
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResultSinkState {
+    PendingAttempt { next_ordinal: u32 },
+    PendingRetry { next_ordinal: u32, last_issue_id: ContentDigest },
+    Complete,
+    Exhausted {
+        last_issue_id: ContentDigest,
+        last_attempt_ordinal: u32,
+        counter_before: u64,
+    },
+}
+
+#[derive(Debug, Eq, PartialEq, Serialize)]
+pub struct PersistedResultSinkStatus {
+    run: StreamRunIdentity,
+    generation: CheckpointGeneration,
+    sink_id: StreamingIssueComponentId,
+    state: ResultSinkState,
+    receipt_reference: Option<DerivedExportReceiptReference>,
+}
+
+pub struct BudgetOwnedResultSinkStatus {
+    status: PersistedResultSinkStatus,
+    linked_receipt: ResultSinkReceiptLink,
+    encoded: BudgetedCheckpointBytes,
+    parsed_lease: BudgetLease,
+}
+
+enum ResultSinkReceiptLink {
+    NoIssue,
+    Prepared(PreparedExportAttemptFailure),
+    Verified {
+        receipt: BudgetOwnedExportIssueReceipt,
+        reachability: SealedDurableExportReceiptReachability,
+    },
+}
+
+pub(crate) struct SealedDurableExportReceiptReachability {
+    status_digest: ContentDigest,
+    reference: DerivedExportReceiptReference,
+}
+
+pub(crate) struct SealedDurableSinkOutputProof {
+    run: StreamRunIdentity,
+    generation: CheckpointGeneration,
+    sink_id: StreamingIssueComponentId,
+    output_digest: ContentDigest,
+}
+
+pub(crate) enum ResultSinkDriverOutcome {
+    Failed(ResultSinkAttemptOutcome),
+    DurableOutput(SealedDurableSinkOutputProof),
+}
+
+#[async_trait::async_trait(?Send)]
+pub(crate) trait DurableResultSinkWriter: sealed::DurableResultSinkWriter {
+    async fn write_durable(
+        &mut self,
+        authority: &mut ResultSinkAttemptAuthority,
+    ) -> Result<SealedDurableSinkOutputProof, ResultPlaneError>;
+}
+
+#[async_trait::async_trait(?Send)]
+pub(crate) trait DurableResultSinkProbe: sealed::DurableResultSinkProbe {
+    async fn probe_durable(
+        &mut self,
+        authority: &mut ResultSinkAttemptAuthority,
+    ) -> Result<Option<SealedDurableSinkOutputProof>, ResultPlaneError>;
+}
+
+pub(crate) struct CheckedResultSinkTransition {
+    expected_status_digest: Option<ContentDigest>,
+    next: BudgetOwnedResultSinkStatus,
+    durable_output: Option<SealedDurableSinkOutputProof>,
+}
+
+pub(crate) trait ResultSinkTransitionAuthority: sealed::ResultSinkTransitionAuthority {
+    fn initialize_pending_attempt(
+        &self,
+        generation: &LeasedCheckpointGeneration,
+        sink_id: &StreamingIssueComponentId,
+    ) -> Result<CheckedResultSinkTransition, ResultPlaneError>;
+    fn record_failed_attempt(
+        &self,
+        current: BudgetOwnedResultSinkStatus,
+        prepared: PreparedExportAttemptFailure,
+    ) -> Result<CheckedResultSinkTransition, ResultPlaneError>;
+    fn record_complete(
+        &self,
+        current: BudgetOwnedResultSinkStatus,
+        proof: SealedDurableSinkOutputProof,
+    ) -> Result<CheckedResultSinkTransition, ResultPlaneError>;
+}
+
+pub struct ResultSinkStatusPage {
+    statuses: Box<[BudgetOwnedResultSinkStatus]>,
+    next: Option<ResultSinkStatusCursor>,
+    page_lease: BudgetLease,
+}
+
+#[async_trait::async_trait(?Send)]
+pub(crate) trait ResultSinkStatusStore {
+    async fn load(
+        &mut self,
+        generation: &LeasedCheckpointGeneration,
+        sink_id: &StreamingIssueComponentId,
+        receipt_budget: &StreamingResourceBudget,
+    ) -> Result<Option<BudgetOwnedResultSinkStatus>, ResultPlaneError>;
+    async fn compare_and_set(
+        &mut self,
+        transition: CheckedResultSinkTransition,
+    ) -> Result<(), ResultPlaneError>;
+    async fn reconcile_retained_generations(
+        &mut self,
+        generations: &mut dyn RetainedGenerationInventory,
+        frozen_sinks: &FrozenResultSinkInventory,
+    ) -> Result<(), ResultPlaneError>;
+    async fn pending_page(
+        &mut self,
+        after: Option<ResultSinkStatusCursor>,
+        budget: ResultSinkStatusReadBudget,
+    ) -> Result<ResultSinkStatusPage, ResultPlaneError>;
+}
+```
+
+Only checked constructors create persisted status, live status, export receipt,
+or transition objects. They bind the run/full generation/sink/ordinal to a
+leased committed generation. `PersistedExportIssueReceipt` additionally binds
+the verified export-scoped `issue_id` and full reachable persisted issue
+authority. Its wrapper separately charges exact compact encoded bytes and every
+retained parsed inline/heap allocation. The first durable state is exactly
+`PendingAttempt { next_ordinal: 0 }` with no issue. `PendingRetry` and
+`Exhausted` retain one inseparable verified export-scoped receipt whose ID
+matches state; `PendingAttempt` and `Complete` carry `NoIssue`. Status bytes are
+checked so the first pair has exactly one `receipt_reference` and the latter
+pair has none; mismatched presence is corrupt state.
+manually deserialized through strict unknown-field-denying private wire DTOs
+and the same checked constructors. Load follows any `PendingRetry`/`Exhausted`
+receipt reference, verifies its outer and embedded digest/length, constructs a
+validation context from the leased final generation's reliability participant
+policy digest plus status-authored predecessor authority, and calls reliability-owned
+`restore_durable_export_issue_receipt`. It verifies exact run/full generation/
+sink/attempt/ID/policy/counter binding, then returns live authority plus
+`SealedDurableExportReceiptReachability`. The live wrapper owns exact compact immutable
+encoded bytes and cannot be cloned or separated from its charge. Its
+`parsed_lease` exactly charges the retained `PersistedResultSinkStatus` inline
+allocation plus compact sink ID/state heap bytes; the encoded allocation keeps
+its separate exact `BudgetedCheckpointBytes` charge. Status is
+durable derived metadata keyed by `(run, generation, sink_id)` under the report-
+retention lease. It may advance monotonically by exact CAS, but cannot change a
+generation digest, CURRENT/head, resume cut, participant receipt, or result
+membership root. `Exhausted` means export incomplete, not execution rollback.
+`ResultSinkReceiptLink::Prepared` exists only inside the move-only pre-CAS
+candidate and holds the entire `PreparedExportAttemptFailure`; the store
+consumes it intact while writing receipt plus status. It is never returned by
+`load`, and no API splits its checked decision from its receipt authority.
+The `Verified` variant can be created only by successful durable load and keeps
+the receipt inseparable from the status-digest/reference reachability proof.
+The foundation `StreamingIssueReporter` directly owns
+`prepare_export_attempt_failure(run, full_generation, sink, ordinal, outcome,
+budget)`. Its sole outcome variant contains a checked ordinary export issue;
+the method verifies the attempt against the final generation/sink authority,
+derives the dense per-sink counter from the status-owned ordinal, embeds the
+complete detailed receipt plus frozen policy/counter proof, and builds one move-only
+`PreparedExportAttemptFailure`. That value inseparably contains the checked
+retry/exhaust decision and a verified persisted receipt authority; no caller
+can pair a decision with different receipt bytes. Checked construction compacts
+the encoded receipt into exact-owned bytes and charges that allocation
+separately, then charges `PersistedExportIssueReceipt`, compact sink/error-code
+heap, `PreparedExportAttemptFailure` plus checked-decision inline storage, and
+the embedded detailed receipt under the parsed lease. The
+two stored charge counts must equal their leases and expose integers only. It
+returns the typed `StreamingReliabilityError` export receipt variants before
+transition or store I/O; Task 6C1 maps those without loss to
+`ResultPlaneError::ExportIssuePreparation`.
+
+`DurableResultSinkWriter` and `DurableResultSinkProbe` have private sealed
+supertraits and are implemented only by the configured host durable writer and
+recovery probe. Their successful write/probe paths alone construct
+`SealedDurableSinkOutputProof` after verifying exact run, full generation,
+sink, and durable output digest. Sibling callers can consume a proof but cannot
+implement a minting trait or construct its fields.
+
+`LocalResultSinkStatusStore` lives in the same file, receives an exact private
+run-artifact root and `StreamingBlockingExecutor`, writes create-new/no-follow
+`0600` immutable receipt objects, then status bytes containing the exact
+`DerivedExportReceiptReference`, then one atomically renamed pointer, and fsyncs
+file and parent before returning. `compare_and_set` accepts only
+`CheckedResultSinkTransition`; callers cannot submit arbitrary next state plus
+optional receipt. Candidate construction, before store I/O, permits only absent
+→ `PendingAttempt(0)`, pending(n) → `PendingRetry(n+1, issue)` or
+`Exhausted(issue)` with a receipt whose attempt and issue ID match, and pending
+→ `Complete` with `SealedDurableSinkOutputProof`. It checked-adds ordinals and
+requires one intact `PreparedExportAttemptFailure`, refuses overflow;
+`Complete` and `Exhausted` have no successor. The method is one
+derived-status transaction: it durably writes the inseparable export receipt,
+then status bytes with the receipt reference, then CASes/fsyncs the status
+pointer. Memory performs object insertion plus status/reference replacement in
+one mutation; local/object mechanisms publish immutable objects before their
+single checked pointer CAS. A crash exposes either the prior status or the
+complete next status with its reachable embedded receipt; pre-CAS orphan
+objects are never enumerated. It does
+not modify checkpoint-generation authority. Every status/page owns its exact item/byte
+lease and is non-Clone. Absence is never interpreted as retry. A private
+`reconcile_retained_generations` first walks a bounded leased inventory of every
+retained generation and exact frozen sink, so a crash before any initial row is
+discoverable. The private `recover_sink_inventory` verifier uses the exact
+leased generation/reader, frozen sink plan, durable output probe, and bounded
+store enumeration to construct initial
+`PendingAttempt` or verified `Complete`; neither state can be fabricated by an
+ordinary caller. Object-backed
+checkpoint authority does not smuggle this derived pointer into generation CAS.
+
+Task 6C1 creates one clock-injected `ResultSinkRetrySupervisor` with bounded
+attempt/task/status budgets. It pages all pending statuses, survives execution
+completion, and resumes after process restart. Attempt ordinal advances only by
+status CAS; a crash before CAS repeats the same ordinal/issue ID, while a crash
+after durable output but before `Complete` is resolved by the recovery verifier.
+For every pending page entry it resolves the exact retained full-generation
+lease, invokes `ResultSinkStatusStore::load` with that lease and a receipt
+budget, and carries the returned `SealedDurableExportReceiptReachability` for
+the whole attempt. It never depends on a live execution reporter or restored
+checkpoint issue ledger. Missing receipt objects, mismatched references, or a
+noncontiguous reconstructed ordinal/counter return an error before a writer is
+called and leave status, generation inventory, and all preexisting charges
+unchanged.
+
+The persisted `Exhausted` state records `last_attempt_ordinal` and
+`counter_before` as independently checked status authority, not values learned
+from its receipt. The transition constructor derives both from the predecessor
+status and requires the prepared failure to agree before any store I/O. On
+restart, load builds the validation context from those status fields first and
+then compares the strictly decoded receipt; first-attempt exhaustion is exactly
+ordinal `0`/counter-before `0`, while multi-retry exhaustion preserves the
+checked predecessor counter. Missing, overflowed, or inconsistent fields are
+corrupt status and cannot be repaired by trusting embedded receipt bytes.
+
+```rust
+pub struct ResultSinkAttemptAuthority {
+    status: BudgetOwnedResultSinkStatus,
+    generation_lease: GenerationLease,
+    reader: LeasedCheckpointGeneration,
+}
+
+#[async_trait::async_trait(?Send)]
+pub(crate) trait ResultSinkAttemptDriver {
+    async fn attempt(
+        &mut self,
+        authority: &mut ResultSinkAttemptAuthority,
+    ) -> Result<ResultSinkDriverOutcome, ResultPlaneError>;
+}
+
+impl ResultSinkRetrySupervisor {
+    pub(crate) async fn run_pending_page(
+        &mut self,
+        store: &mut dyn ResultSinkStatusStore,
+        generations: &mut dyn RetainedGenerationInventory,
+        frozen_sinks: &FrozenResultSinkInventory,
+        driver: &mut dyn ResultSinkAttemptDriver,
+    ) -> Result<Option<ResultSinkStatusCursor>, ResultPlaneError>;
+}
+```
+
+`ResultSinkAttemptAuthority` exposes only borrow-only status/generation/reader
+access while the attempt is live. The supervisor alone may move its status into
+the atomic transition and release the reader plus generation lease afterward.
+
+`run_pending_page` never has more than the authored item/byte/task budgets live,
+persists the next status by exact CAS before releasing its generation lease, and
+returns a durable cursor so restart repeats or continues without losing work.
+On `ResultSinkDriverOutcome::Failed(outcome)`, it borrows the retained reporter
+to call `prepare_export_attempt_failure` with the attempt authority's exact
+run/full generation/sink/ordinal, then moves the resulting prepared pair and
+current status into `record_failed_attempt`. On durable output it accepts only
+the proof minted by the sealed writer/probe path. No branch manufactures a
+decision, receipt, or proof from raw fields.
+
+Task 6B consumes the non-destructive budget-owned issue-receipt partition view
+and includes its bytes plus bounded disposition counters in the result epoch.
+The issue-ledger participant checkpoints policy digest, counters, retry ordinals,
+per-domain sequencer frontiers/pending root, handled cut, and receipt-index root
+in the same generation. A failed checkpoint attempt cannot retire its receipts;
+retry reconstructs the identical partition and the next successful generation
+includes it once.
+
+### Fault ownership and RED/GREEN matrix
+
+Add each RED case to the named task's existing focused suite before production
+changes. Run that task's existing one GREEN command after implementation.
+
+| Owner/suite | Injected fault | Required GREEN observation | RED test |
+|---|---|---|---|
+| 5C `streaming_local_checkpoint` | participant/object/index write, fsync, or rename transient before CURRENT | stable retryable failure fact; previous generation remains head; prepared bytes/leases clean up. The 5E/V3 host row observes `Retry` and later commit once | `transient_local_checkpoint_attempt_preserves_previous_head` |
+| 5F2 `streaming_object_checkpoint` | object PUT/sync/service-unavailable transient before pointer CAS | stable retryable failure fact; no reader visibility or notification; same expected head retained. The 5E/V3 host row observes `Retry` | `transient_object_attempt_preserves_same_expectation` |
+| 5E `streaming_checkpoint_coordinator` | prepare budget unavailable | capacity/backpressure; pause admission if required; no partial generation or participant mutation | `checkpoint_capacity_pauses_and_retries_without_abort` |
+| 5E | post-CAS notification fault | generation stays authoritative; retry idempotent notification; never roll back | existing `post_commit_failure_does_not_roll_back_authoritative_head` plus issue-receipt assertion |
+| 5B/5E/5F2 | foreign run/proof, stale writer lease, or failed expected-head CAS | checked invariant `FailRun`; no state mutation/notification | `authority_mismatch_is_the_only_checkpoint_attempt_fail_run` |
+| 6B `streaming_result_epochs` | hole/quarantine/failed action receipts around rotation and resume | exact counters and immutable receipt membership through the truthful terminal horizon; handled cut cannot cross a missing datum without its same-generation receipt/tombstone; duplicate replay counts once | `issue_receipts_rotate_and_restore_exactly_once`, `hole_then_later_valid_checkpoint_resume_preserves_membership` |
+| 6B | result index/member accounting conflict or impossible terminal cut | accounting/truth invariant `FailRun`; no fabricated root | `conflicting_issue_membership_cannot_publish_result_epoch` |
+| 6C1 `streaming_result_finalization` | generation committed before initial status; failure/cancellation around checked retry CAS; tampered/unreachable receipt; illegal, terminal, or overflowing transition; durable output before `Complete` CAS | checked `PendingAttempt(0)` recovery or exact ordinal replay; only sealed candidates mutate status; reopen verifies full receipt plus exact charges; bounded supervisor retains full-generation lease/reader | `crash_before_initial_status_is_found_by_generation_sink_reconciliation`, `crash_or_cancellation_before_receipt_status_cas_reuses_exact_ordinal`, `crash_or_cancellation_after_receipt_status_cas_reopens_exact_pending_status`, `reopen_rejects_tampered_or_unreachable_export_receipt`, `illegal_sink_transition_and_terminal_successor_are_unnameable`, `retry_ordinal_overflow_refuses_before_store_io`, `durable_output_before_complete_cas_recovers_complete` |
+| 6D coordinator unit suite | native report persistence/export failure before retry CAS or restart with pending status | report commit hook waits; bounded supervisor enumerates and retries the exact full generation; execution generation remains readable | `streaming_report_retry_retains_generation_and_sink_status`, `restart_enumerates_pending_report_sink_once` |
+| 6D | exporter retry exhaustion/permanent unavailability | `ExportIncomplete` and `Exhausted`; product reports export incomplete; no failed generation | `export_exhaustion_is_incomplete_sink_not_failed_run` |
+
+The integrated conformance assertion is:
+
+```rust
+fn assert_reliability_fault(observed: FaultObservation, expected: ExpectedFault) {
+    assert_eq!(observed.disposition, expected.disposition);
+    assert_eq!(observed.current_generation, expected.current_generation);
+    assert_eq!(observed.issue_receipt_count, expected.issue_receipt_count);
+    assert_eq!(observed.is_run_failed, expected.is_authority_or_truth_invariant);
+    assert!(observed.reachable_objects_verify());
+    assert!(observed.resume_cut_is_truthful());
+}
+```
+
+Checkpoint retry delays route through injected `Clock` and are excluded from
+issue identity. Capacity applies backpressure or pauses admission for truthful
+draining. It becomes terminal only if lease/accounting invariants are corrupt.
+Compaction/export retry may outlive execution, but owns bounded attempt state and
+a report-retention lease; it cannot keep an unbounded future/task/log set.
+
+### Completion evidence added by this amendment
+
+- `streaming_checkpoint_coordinator`: retry/capacity attempts, stable issue IDs,
+  authority-only fail-run, and no rollback after CAS.
+- `streaming_result_epochs`: issue-receipt projection, threshold counters,
+  restore idempotency, and exact exclusion of quarantined/holed successful
+  membership.
+- `streaming_result_finalization`: compaction/export budget-owned sink status, retry,
+  exhaustion, reconstructability, and zero execution rollback.
 
 ## Completion Audit
 
@@ -3624,5 +4355,6 @@ Before merging Task 6D, verify the following evidence is present in the named ta
 - `streaming_result_index`: logical versus attempt identity, membership roots, identical retry, conflicting reachable payload, tolerated unreachable orphan.
 - `streaming_result_epochs`: exact/sketch rotation, provenance/session projections, terminal holes, provisional bounds, partial authority.
 - `streaming_result_finalization`: all delivery modes, endpoint idempotency on/off, crash matrix, deterministic compaction, final/aborted/cancelled outcomes, report lease ordering.
+- `streaming_reliability`: authority-only fail-run, stable issue receipt golden, checkpointed thresholds, topology-independent restore idempotency.
 
 Run the repository-wide gates only after this subsystem plan is integrated into the master plan; they are not substitutes for the one targeted RED/GREEN command in each task.

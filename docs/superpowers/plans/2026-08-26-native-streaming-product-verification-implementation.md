@@ -13,7 +13,7 @@ SPDX-License-Identifier: Apache-2.0
 
 **Tech Stack:** Rust 2024, native `aiperf`, `aiperf-mock-server`, dry-run and E2E harnesses, Linux `/proc` resource sampling, Config-v2 YAML/JSON schema.
 
-**Spec:** `artifacts/streaming-design/streaming-dataset-shadow-replay-design.md` at base approval `505efc06b0`, amended by `3fea6f2fe0`.
+**Spec:** `artifacts/streaming-design/streaming-dataset-shadow-replay-design.md` at base approval `505efc06b0`, amended by `3fea6f2fe0` and `artifacts/streaming-design/reliability-continuation-course-correction.md`.
 
 ## Global Constraints
 
@@ -21,6 +21,7 @@ SPDX-License-Identifier: Apache-2.0
 - Every E2E invocation pins a freshly built binary; no harness searches `target/` implicitly.
 - Soak data lives under `/mnt/4tb/aiperf-streaming-soak/` and is never committed.
 - The progress ledger records exact command, commit, review, invariant, and evidence paths.
+- Public defaults are reliability-first: ordinary data, endpoint, checkpoint-attempt, compaction, and exporter faults produce scoped receipts/status and continue or truthfully drain. Config cannot authorize ordinary-fault `FailRun`.
 
 ---
 
@@ -49,12 +50,14 @@ SPDX-License-Identifier: Apache-2.0
   model, resolution, validation, and typed Protocol-v2 run-start projection.
 - Create fixture: `rust/cli/tests/fixtures/streaming-shadow.yaml`
 - Create fixture: `rust/cli/tests/fixtures/streaming-shadow-resume.yaml`
+- Create fixture: `rust/cli/tests/fixtures/streaming-shadow-reliability.yaml`
 
 **Interfaces:**
 - Produces: Config-v2-first `dataset_streams`/`shadow_replay`; explicit
   fresh/resume logical-run selection and exact resume locator; feature-accurate
   capability inventory; bounded latest-generation reader output; final/aborted
-  metadata.
+  metadata; strict reliability policy projection; bounded issue/disposition
+  counters and derived-sink status.
 
 ```rust
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -98,6 +101,11 @@ caller-authored ID. `Resume` always carries the exact locator and never means
 "latest arbitrary run".
 
 - [ ] **Step 1: Write the RED public-surface test**
+
+Write the six V1 reliability RED cases in the normative amendment below in
+this same step, before running Step 2; `streaming-shadow-reliability.yaml` is
+referenced before it exists so the intended RED includes missing model/fixture
+and result-projection behavior.
 
 ```rust
 #[test]
@@ -237,9 +245,183 @@ pre-commit run check-docs-current --all-files
 - [ ] **Step 5: Commit**
 
 ```bash
-git add rust/cli/src/lib.rs rust/cli/src/flags.rs rust/cli/src/load.rs rust/cli/src/yaml.rs rust/cli/src/streaming_results.rs rust/cli/tests/streaming_config.rs rust/cli/tests/streaming_capabilities.rs rust/cli/tests/streaming_results.rs rust/cli/tests/fixtures/streaming-shadow.yaml rust/cli/tests/fixtures/streaming-shadow-resume.yaml rust/runtime/src/config/model/dataset_stream.rs rust/runtime/src/config/model/mod.rs rust/runtime/src/config/model/config.rs rust/runtime/src/config/resolve.rs rust/runtime/src/config/validate.rs rust/runtime/src/engine/protocol_v2.rs rust/runtime/src/engine/application.rs rust/runtime/tests/streaming_protocol_v2.rs docs/streaming-datasets.md
+git add rust/cli/src/lib.rs rust/cli/src/flags.rs rust/cli/src/load.rs rust/cli/src/yaml.rs rust/cli/src/streaming_results.rs rust/cli/tests/streaming_config.rs rust/cli/tests/streaming_capabilities.rs rust/cli/tests/streaming_results.rs rust/cli/tests/fixtures/streaming-shadow.yaml rust/cli/tests/fixtures/streaming-shadow-resume.yaml rust/cli/tests/fixtures/streaming-shadow-reliability.yaml rust/runtime/src/config/model/dataset_stream.rs rust/runtime/src/config/model/mod.rs rust/runtime/src/config/model/config.rs rust/runtime/src/config/resolve.rs rust/runtime/src/config/validate.rs rust/runtime/src/engine/protocol_v2.rs rust/runtime/src/engine/application.rs rust/runtime/tests/streaming_protocol_v2.rs docs/streaming-datasets.md
 git commit -m "feat(cli): expose native streaming replay"
 ```
+
+## Reliability-Continuation Product Amendment
+
+This section is normative for V1-V6. It does not add a separate implementation
+branch: V1 owns public model/protocol/results wiring; V3 owns the reusable fault
+matrix; V4 owns real-binary proof; V5 owns sustained-fault boundedness; V6 owns
+the evidence ledger.
+
+### V1 Config-v2 and result ownership
+
+Task V1 depends explicitly on foundation Task 1D-R and the downstream
+reliability amendments. Add `StreamingReliabilityPolicyV2` to
+`rust/runtime/src/config/model/dataset_stream.rs` and its exact resolved
+projection to `engine/protocol_v2.rs`:
+
+```rust
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StreamingReliabilityPolicyV2 {
+    pub partition_retry_limit: u32,
+    pub endpoint_retry_limit: u32,
+    pub checkpoint_retry_limit: u32,
+    pub export_retry_limit: u32,
+    pub retry_backoff_ms: u64,
+    pub partition_holes_before_admission_fence: Option<NonZeroU64>,
+    pub quarantines_before_admission_fence: Option<NonZeroU64>,
+    pub endpoint_failures_before_admission_fence: Option<NonZeroU64>,
+    pub checkpoint_failures_before_admission_fence: Option<NonZeroU64>,
+}
+```
+
+Add the strict bounded result rendering DTOs to
+`rust/cli/src/streaming_results.rs`; they consume Task 6B summaries and Task 6D
+sink status and are not accepted as authored config:
+
+```rust
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StreamingSinkStatusV2 {
+    pub sink_id: String,
+    pub generation: u64,
+    pub generation_digest: String,
+    pub state: StreamingSinkStateV2,
+    pub retry_ordinal: u32,
+    pub last_issue_id: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StreamingSinkStateV2 {
+    PendingAttempt,
+    PendingRetry,
+    Exhausted,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StreamingReliabilitySummaryV2 {
+    pub retry_count: u64,
+    pub quarantine_count: u64,
+    pub hole_count: u64,
+    pub continued_failure_count: u64,
+    pub failed_action_count: u64,
+    pub is_admission_fenced: bool,
+    pub is_degraded: bool,
+    pub incomplete_sinks: Vec<StreamingSinkStatusV2>,
+}
+```
+
+Default retry limits are `3`, `0`, `3`, and `3` for partitions, endpoint
+actions, checkpoint attempts, and derived exports respectively; default backoff
+is `100` ms. The checkpoint-attempt admission fence defaults to `Some(3)`; the other
+three admission-fence thresholds default to `None`. The endpoint threshold is
+cumulative committed failed-action receipts; it has no arrival-sensitive reset
+or misleading consecutive semantics. Endpoint retry default `0` avoids
+uncontrolled target duplication; capability agreement may permit authored
+retries only when pre-acceptance or endpoint logical idempotency is proven.
+Retry timing uses injected `Clock` and does not enter receipt identity.
+
+Checkpoint retry exhaustion selects `Backpressure` plus admission fencing and keeps a
+bounded clock-driven retry owner alive while the truthful prefix drains; it
+does not fail the run or advance a generation. A successful later attempt may
+release the fence only if no other frozen threshold requires draining.
+
+There is deliberately no authored `fail_run` disposition. Validation rejects
+zero backoff with a nonzero retry limit, overflow in duration conversion,
+unknown fields, an endpoint retry policy without the required idempotency
+capability, and any policy/protocol digest mismatch before source polling or
+endpoint issue. The frozen policy digest enters execution-plan and checkpoint
+expectations.
+
+Result projection validates `sink_id` with the Task 1D-R component-ID rules,
+renders `last_issue_id` as exact lowercase 64-hex BLAKE3, and sorts incomplete
+sinks by `(generation, generation_digest, sink_id)`. `is_degraded` is derived
+from nonzero hole/quarantine/failed-action/continued-failure counts or admission
+fencing, never authored.
+
+Add V1 RED tests:
+
+- `ordinary_fail_run_policy_is_not_authorable`;
+- `reliability_policy_unknown_fields_are_rejected`;
+- `endpoint_retry_requires_safe_acceptance_or_idempotency`;
+- `endpoint_failure_threshold_is_cumulative_and_arrival_order_independent`;
+- `reliability_digest_mismatch_refuses_before_poll_or_issue`;
+- `partial_results_expose_issue_counts_and_incomplete_sinks`;
+- `degraded_run_is_not_rendered_as_failed_run`;
+- `continued_failure_sets_degraded`;
+- `sink_status_requires_full_generation_identity_and_pending_attempt_zero`.
+- `late_input_domain_and_reverse_action_arrival_preserve_domain_local_thresholds`;
+- `legacy_v3_is_read_only_and_cannot_precede_or_mix_with_v4`;
+- `legacy_v3_participant_state_is_export_only_and_cannot_initialize`;
+- `copied_legacy_participant_bytes_cannot_mint_current_v4_context`;
+- `raw_action_terminal_or_gap_update_is_not_public_protocol_vocabulary`;
+- `host_membership_and_frozen_inventory_views_are_the_only_action_fact_path`;
+- `failed_action_prepares_identity_then_finalizes_without_circular_issue_id`;
+- `dropped_failed_action_preparation_retries_same_id_without_double_count`;
+- `action_retry_backpressure_and_terminal_dispositions_are_type_separated`;
+- `dense_action_classification_does_not_hold_reporter_borrow_across_wait`;
+- `tombstone_root_extension_requires_same_barrier_reacknowledgement`;
+- `tombstone_ack_charges_payload_and_view_without_moving_session_map`;
+- `sink_transition_status_cannot_be_authored_without_checked_candidate`;
+- `export_failure_receipt_and_durable_output_proof_have_checked_producers`;
+- `post_final_export_restart_uses_only_generation_and_derived_status_store`;
+- `tampered_embedded_export_receipt_or_counter_refuses_reopen`;
+- `first_attempt_and_multi_retry_exhausted_status_reopen_from_independent_counter_authority`;
+- `hf_credential_refresh_preserves_pinned_object_identity`.
+
+All lifecycle RED tests remain current-thread Tokio async and await the startup
+result. Update `docs/streaming-datasets.md` with scope/class/disposition
+semantics, default thresholds, successful-metric exclusion, degraded truthful
+completion, admission fencing, and the authority-only terminal boundary.
+
+### V3-V6 fault and evidence ownership
+
+| Product task | Required fault rows and assertion |
+|---|---|
+| V3 checkpoint/result conformance | transient local/object write/sync, checkpoint capacity, post-CAS notification, compaction, report, and exporter faults retain current head and retry/status; async current-thread sink cases await the sealed transition-candidate CAS, drop execution plus every mutable reporter ledger, then reopen from only the leased final generation and a fresh derived status store; the atomic status reference makes its embedded detailed receipt reachable, while exhausted status independently supplies its checked last-attempt ordinal and counter-before (including first-attempt zero and multi-retry cases); strict restore rejects missing/tampered digest, length, policy, binding, ordinal, or counter authority; illegal/terminal/overflow transitions and crashes before initial status and on both sides of the receipt/status CAS are covered; retained-generation plus frozen-sink reconciliation recovers by full generation identity and exact encoded/parsed charges; memory/local/object open exposes explicit current-v4 versus legacy-v3 leased authority, begin accepts only current-v4, and legacy participant state remains export-only/non-convertible to initialization; foreign run/proof/writer/CAS, impossible cut, or result accounting conflict alone fail-run |
+| V4A socket-free | local/HF-compatible partition hole, malformed JSONL record, Baseten session quarantine/tombstone, endpoint terminal failure through the reporter-owned prepare-then-finalize path (including dropped-preparation idempotency), admission fence, forged action terminal/gap refusal, hole→later-valid→checkpoint→resume exact receipt+tombstone-root reachability, late-fragment root invalidation/re-ack, compaction retry, and export incomplete all preserve truthful partial/final results; expired HF credentials refresh against the exact pinned object, while exhausted unchanged identity holes and identity drift fails closed |
+| V4B server/cellular | HTTP and gRPC failed action receipts continue later actions; S3 hole continues later objects through the shared A0 credential authority; security/placement digest/ownership/release-proof mismatches remain fail-closed before issue |
+| V5A/V5B soak | deterministic injected ordinary faults at a fixed rate do not create positive RSS/task/FD/receipt-index slope; retry, per-input-domain and action sequencer, tombstone, parsed+encoded receipt/status, and sink-supervisor queues remain within item/byte limits; reverse/late domains and scheduled restart do not change thresholds or double-count receipts |
+| V6 ledger | every matrix row records exact owner, RED observation, GREEN command, commit, public status, and whether `FailRun` was constructible; any ordinary-fault fail-run is a release blocker |
+
+V3 expands its existing `CheckpointFault::ALL` test with the exact expected
+disposition/status table rather than only `complete_or_previous`:
+
+```rust
+for case in reliability_fault_matrix() {
+    let observed = fixture.run_with_fault(case.fault);
+    assert_eq!(observed.disposition, case.expected_disposition);
+    assert_eq!(observed.is_run_failed, case.is_authority_truth_or_accounting_invariant);
+    assert_eq!(observed.current_generation, case.expected_generation);
+    assert!(observed.issue_receipts_are_idempotent());
+    assert!(observed.result_and_resume_membership_is_truthful());
+}
+```
+
+Every V3 case that calls the async status store or retry supervisor is
+`#[tokio::test(flavor = "current_thread")] async`, awaits the status/receipt
+CAS, drops and reopens the durable store, and asserts the exact full generation,
+frozen sink inventory, ordinal, receipt reachability, and unchanged execution
+head. A synchronous helper may build cases but may not stand in for awaited
+durability or restart.
+
+V4 real-binary output must distinguish:
+
+- `failed`: only a checked terminal-boundary invariant;
+- `degraded`: execution continued or truthfully drained with holes,
+  quarantines, or failed terminal actions;
+- `export_incomplete`: the authoritative native generation is readable while a
+  compactor/report/optional exporter is pending or exhausted.
+
+No derived sink failure rewrites an execution outcome or checkpoint head. No
+ordinary data fault is hidden: the summary, immutable issue-receipt projection,
+and excluded successful membership must agree exactly.
 
 ### Task V2: Delivery-Mode and Target-Idempotency Crash Matrix
 
@@ -318,7 +500,7 @@ Run: `CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-run
 
 - [ ] **Step 3: Cover the exact external observations**
 
-Faults include participant/result/index write, file/object sync, pointer rename/CAS, after publication before notification, reader lease loss, GC with reader/prepared lease, compaction, report persistence, safe aborted-generation commit, unsafe shutdown retaining prior partial root, and a long terminal hole excluding bounded provisional completions. Assert current generation, reachable roots, callback count, horizons, and resumability—not private call order except durability order.
+Faults include participant/result/index write, file/object sync, pointer rename/CAS, after publication before notification, reader lease loss, GC with reader/prepared lease, compaction, report persistence, safe aborted-generation commit, unsafe shutdown retaining prior partial root, and a long terminal hole excluding bounded provisional completions. For every row assert the exact scoped class/disposition, issue ID/count, admission or sink status, current generation, reachable roots, callback count, horizons, and resumability—not private call order except durability order. Transient/capacity rows retry, backpressure, continue, or expose pending/incomplete sink status; only authority, conflicting-content, frozen-semantic, impossible truthful cut, or accounting rows may observe failed-run shutdown.
 
 - [ ] **Step 4: Verify green**
 
