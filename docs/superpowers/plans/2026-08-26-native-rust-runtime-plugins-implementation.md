@@ -411,6 +411,15 @@ set, invalidation classifier, harness/mock digest, firmware, memory topology,
 and canonical inventory digest. TTFT and ITL p50/p90/p99 are mandatory measured
 secondary metrics and are rejected as `primary_metric`. It rejects an omitted
 identity field.
+For every exporter scenario it additionally requires exactly these fields and
+values: `corpus_records: 100000`, `sample_repetitions: 16`,
+`processed_records: 1600000`, and `retained_artifact_records: 100000`.
+It requires 16 sequential per-repetition receipts, each proving exactly 100,000
+emitted records and the same output digest, one retained 100,000-record output
+artifact, active exporter duration equal to the receipt-duration sum, no
+sleep/padding, and active duration at least 30 seconds. Exporter
+nanoseconds-per-record must divide by `processed_records`, not the retained
+artifact count or wall-clock duration.
 `plugin_task_gate_inventory.rs` parses the script, Task Gate Matrix, and
 Implementation-unit Gate Matrix; it requires exactly one case for every integer
 1 through 40 plus every named implementation unit, and rejects a case missing a
@@ -438,7 +447,9 @@ cache/profile/features. Record canonical commands and BLAKE3 artifact digests.
 Run the spec’s paired runtime scenarios against the in-repo mock server and
 store raw samples under `artifacts/native-plugin-baseline/raw/`. Author
 `rust/benchmarks/plugin-parity.yaml` using schema version `1` and relative
-raw-sample paths.
+raw-sample paths. For the exporter sample, retain one deterministic 100,000-
+record artifact and 16 sequential receipts for identical 100,000-record passes;
+record `processed_records: 1600000` and only the summed active pass duration.
 Implement `run-plugin-task-gates.sh` as an exhaustive integer `case` over the
 Task Gate Matrix below. It rejects missing/unknown task IDs, runs with
 `set -eu`, preserves all compiler/cache variables, and propagates the first
@@ -713,6 +724,16 @@ maximum-degradation bootstrap distribution, and invalidation attempts. Tests
 pin AB/BA pairing, same-member-order replacement of only invalid pairs, retained
 members/reason, refusal to replace valid failures, and the five-replacement/
 three-attempt limits.
+Exporter sample construction is fixed: one deterministic 100,000-record corpus
+and exact pass, 16 sequential repetitions per retained member, identical output
+digest and exactly 100,000 records per repetition, one retained 100,000-record
+artifact, and `processed_records = 1600000`. Its duration is the sum of active
+repetition durations; startup and inter-repetition gaps are excluded, no sleep
+or padding is permitted, and valid active duration is at least 30 seconds.
+`exporter_nanoseconds_per_record` divides by `processed_records`. Fixed-vector
+tests reject changes to `corpus_records`, `sample_repetitions`,
+`processed_records`, or `retained_artifact_records` as performance-contract
+changes.
 
 The shell runner sets `CARGO_INCREMENTAL=1`, accepts an explicit target path,
 and records rather than mutates existing wrapper/cache variables.
@@ -3188,7 +3209,13 @@ candidate component:
   Task-33/34 deterministic single-worker and multi-worker applicable cases;
 - `genai_perf_v1`, `server_metrics`, `timeslice`, `accuracy_csv`,
   `server_metrics_parquet`, `console_txt`, `otel`, `mlflow`, and `wandb` each
-  run a 100,000-record exporter case; OTel additionally runs exact/folded/sketch,
+  run an exporter case with `corpus_records: 100000`,
+  `sample_repetitions: 16`, `processed_records: 1600000`, and
+  `retained_artifact_records: 100000`; every retained member performs 16
+  sequential exact passes, emits exactly 100,000 records with identical output
+  digest per pass, retains one 100,000-record output artifact plus the 16
+  receipts, sums active pass duration only (>=30 seconds), and divides exporter
+  nanoseconds by `processed_records`; OTel additionally runs exact/folded/sketch,
   single-worker/four-worker, same-host/cross-host cellular, and telemetry off/on;
 - allocator startup/steady-state/teardown and endpoint dispatch, transport
   dispatch, response reduction, capture fold, and exporter write microbenchmarks

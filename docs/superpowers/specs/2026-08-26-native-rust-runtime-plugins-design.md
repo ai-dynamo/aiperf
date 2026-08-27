@@ -1835,7 +1835,15 @@ The initial acceptance protocol is normative:
   (equivalently, dynamic may not be more than 1% worse);
 - define exporter duration ratio as `static / dynamic` and require the lower
   endpoint of its 95% interval to be at least `0.99` for exporter nanoseconds
-  per record;
+  per record. The exporter case has one exact deterministic corpus/pass of
+  100,000 records. One retained sample is exactly 16 sequential repetitions of
+  that same pass: each repetition must emit exactly 100,000 records and have
+  the identical output digest. The runner retains one 100,000-record artifact
+  plus per-repetition receipts, sets `processed_records = 1,600,000`, measures
+  active exporter duration as the sum of those repetitions only, and divides it
+  by `processed_records`. Startup, inter-repetition, and other wall-clock gaps
+  are excluded; sleep or padding is forbidden; valid summed active duration is
+  at least 30 seconds;
 - require no increase in allocation count or allocated bytes per successful
   request in deterministic endpoint, transport-dispatch, response-reduction,
   and exporter-capture microbenchmarks;
@@ -1889,7 +1897,10 @@ Before the first dynamic migration, the repository adds
 contains at least HTTP non-streaming at concurrency 1 and 64, HTTP streaming at
 concurrency 1 and 64 with 32 deterministic response chunks, gRPC unary and
 streaming at concurrency 1 and 64, a four-worker run, OTLP-disabled and OTLP-
-enabled capture runs, and an exporter pass over 100,000 deterministic records.
+enabled capture runs, and an exporter pass whose exact deterministic corpus is
+100,000 records. Exporter inventory entries additionally freeze
+`corpus_records: 100000`, `sample_repetitions: 16`,
+`processed_records: 1600000`, and `retained_artifact_records: 100000`.
 Each entry freezes request budget, minimum valid duration, core assignment,
 mock-server placement, response shape, warmup count, estimator, bootstrap seed,
 primary metric and ratio direction, measured metrics, and the infrastructure-
