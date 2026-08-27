@@ -1697,6 +1697,7 @@ fn execute_monitored_child(
 struct OwnedChildGroup {
     child: std::process::Child,
     pid: Option<libc::pid_t>,
+    is_cleaned: bool,
     stdout_reader: Option<JoinHandle<Result<BoundedChildOutput, std::io::Error>>>,
     stderr_reader: Option<JoinHandle<Result<BoundedChildOutput, std::io::Error>>>,
 }
@@ -1706,15 +1707,19 @@ impl OwnedChildGroup {
         Self {
             child,
             pid: None,
+            is_cleaned: false,
             stdout_reader: None,
             stderr_reader: None,
         }
     }
 
-    /// Run the complete cleanup and return both bounded spools.
+    /// Run the complete cleanup once and return both bounded spools.
     ///
     /// Every step runs even after an earlier one fails; the first error is the
-    /// one reported, so a cleanup fault cannot mask the primary failure.
+    /// one reported, so a cleanup fault cannot mask the primary failure. The
+    /// terminal path releases the guard and the guard is then dropped, so this
+    /// is guarded against a second run: re-signalling a reaped pid would target
+    /// whatever process group the host has since assigned that number.
     fn cleanup(
         &mut self,
     ) -> (
@@ -1722,6 +1727,10 @@ impl OwnedChildGroup {
         Option<BoundedChildOutput>,
         Option<BoundedChildOutput>,
     ) {
+        if self.is_cleaned {
+            return (None, None, None);
+        }
+        self.is_cleaned = true;
         let mut first_error = injected_child_fault("cleanup").err();
         let mut retain = |error: ControlledRuntimeError| {
             if first_error.is_none() {
@@ -1799,7 +1808,8 @@ impl OwnedChildGroup {
 impl Drop for OwnedChildGroup {
     fn drop(&mut self) {
         // An early return already carries the primary error, so cleanup faults
-        // here are discarded rather than masking it.
+        // here are discarded rather than masking it. After `release` this is a
+        // no-op.
         let _ = self.cleanup();
     }
 }
@@ -2630,6 +2640,37 @@ mod tests {
             let pid = last_owned_child_pid().expect("the controller took ownership of a leader");
             assert_reaped(pid);
         }
+    }
+
+    #[test]
+    fn owned_group_cleanup_runs_exactly_once() {
+        let mut child = Command::new("/bin/sh")
+            .args(["-c", "echo released"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("the fixture leader spawns");
+        let pid = libc::pid_t::try_from(child.id()).expect("the fixture pid fits pid_t");
+        let stdout = child.stdout.take().expect("the fixture stdout pipe exists");
+        let stderr = child.stderr.take().expect("the fixture stderr pipe exists");
+        let mut owned = OwnedChildGroup::new(child);
+        owned.pid = Some(pid);
+        owned.stdout_reader = Some(drain_bounded_output(stdout, 4096));
+        owned.stderr_reader = Some(drain_bounded_output(stderr, 4096));
+
+        let (first_error, first_stdout, first_stderr) = owned.cleanup();
+        assert!(first_error.is_none(), "{first_error:?}");
+        assert_eq!(
+            first_stdout.expect("the first cleanup surfaces stdout").bytes,
+            b"released\n"
+        );
+        assert!(first_stderr.is_some());
+
+        // A second run would signal a pid the host has already recycled.
+        let (second_error, second_stdout, second_stderr) = owned.cleanup();
+        assert!(second_error.is_none(), "{second_error:?}");
+        assert!(second_stdout.is_none());
+        assert!(second_stderr.is_none());
     }
 
     #[test]
