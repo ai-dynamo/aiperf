@@ -19,12 +19,18 @@ SPDX-License-Identifier: Apache-2.0
 | Executable implementation plan | Complete | `implementation-plan-review-record.md` |
 | Pre-0 feature-off compile prerequisite | Complete | Task `1320e84a18`; merge `7d54838a7b`; two reviews approved; focused test 1/1 passed |
 | Pre-0b engine-only feature topology | Complete | Task `ceeccf9969`; merge `e8ffaf0cac`; two feature checks and 11 focused tests passed; two reviews approved |
-| Task 0 — feature/dependency freeze | In progress | Pending task branch and reviews |
+| Task 0 — feature/dependency freeze | Complete | Task `8e3d5b57b3`; merge `dc81d2987a`; lightweight and S3 inventory tests 1/1 each; two reviews approved |
 
 Baseline note: the full feature-off runtime suite reached execution after the
 repair and reported 1907 passing tests plus one pre-existing version-fixture
 failure (`0.0.0` expected versus package version `0.12.0`). The streaming work
 does not alter or mask that fixture.
+
+Task 0's default test-discovery check correctly skipped its
+`required-features = ["streaming"]` target, then encountered the unrelated
+pre-existing `runtime/examples/rps_bench.rs` header-type compile error. The
+S3-enabled focused test passed after clearing only the generated shared Cargo
+cache and disabling dev debug/incremental artifacts to fit available storage.
 
 ## Implementation rulings
 
