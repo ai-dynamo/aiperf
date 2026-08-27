@@ -500,7 +500,7 @@ fn evaluator_accepts_only_harness_completed_exporter_members() {
     evaluator.begin_attempt().expect("first attempt starts");
 
     let decision = evaluator
-        .record_completed_exporter_pair(&policy, &static_completed, &dynamic_completed)
+        .record_completed_exporter_pair(&policy, static_completed, dynamic_completed)
         .expect("sealed pair validates");
 
     assert_eq!(decision, PairAttemptDecision::RetainPair);
