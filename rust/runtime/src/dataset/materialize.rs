@@ -13,7 +13,6 @@
 use std::sync::Arc;
 
 use bytes::{BufMut, Bytes, BytesMut};
-use serde_json::{Map, Value};
 
 use crate::dataset::error::{DatasetError, Result};
 use crate::dataset::segment::{Handle, Payload, SegmentStore};
@@ -212,6 +211,7 @@ mod tests {
 
     use super::*;
     use crate::dataset::segment::SegmentPool;
+    use serde_json::Value;
 
     struct Splices(HashMap<String, Vec<Bytes>>);
 

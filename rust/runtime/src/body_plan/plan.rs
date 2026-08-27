@@ -24,15 +24,11 @@
 //! `transport::grpc` — instead of assembling JSON only to parse it back.
 
 use super::{
-    BodyPlan, FieldName, FieldProgram, FieldValue, LiteralValue, PreparedWsMessage,
-    PreparedWsMessageRole, PreparedWsOpcode, PreparedWsOperation, RequestBody,
+    BodyPlan, FieldName, FieldProgram, FieldValue, LiteralValue, PreparedWsOperation, RequestBody,
 };
 
 use std::borrow::Cow;
-use std::fmt::{self, Display, Formatter};
 
-use base64::Engine;
-use base64::engine::general_purpose::STANDARD;
 use bytes::{BufMut, Bytes, BytesMut};
 use serde_json::Value;
 use smallvec::SmallVec;
@@ -1067,6 +1063,7 @@ fn segment_field_wire<S: SegmentStore + ?Sized>(store: &S, handle: Handle) -> Re
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::body_plan::{PreparedWsMessage, PreparedWsMessageRole};
     use crate::dataset::materialize::build_message_body_from_wires;
     use crate::dataset::segment::{InMemorySegmentStore, SegmentPool};
 
