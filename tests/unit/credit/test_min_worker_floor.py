@@ -2,12 +2,14 @@
 # SPDX-License-Identifier: Apache-2.0
 """Dispatchable-worker floor and membership-notification tests."""
 
+import time
 from collections import defaultdict
 from collections.abc import Iterator
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.credit.sticky_router import StickyCreditRouter, WorkerLoad
 
 
@@ -31,6 +33,7 @@ def _router(alive: int, peak: int) -> StickyCreditRouter:
     r._cancellation_pending = False
     r._credits_complete = False
     r._on_worker_lost = None
+    r._stale_worker_strikes = {}
     r._worker_available_event = MagicMock()
     r.warning = MagicMock()
     r.trace = MagicMock()
@@ -81,17 +84,30 @@ class TestWorkerFloor:
 
 class TestRouterDoesNotDecideTheBreach:
     @pytest.mark.asyncio
-    async def test_breach_is_left_for_timing_manager(
+    async def test_evict_stale_workers_task_stale_heartbeat_evicts_via_warning_not_error(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        """Eviction is reported at WARNING; the floor breach is left for TimingManager (never ERROR)."""
         from aiperf.common.environment import Environment
 
         router = _router(alive=1, peak=10)
         monkeypatch.setattr(Environment.WORKER, "MIN_ALIVE_FRACTION", 0.5)
+        stale_after_s = Environment.WORKER.STALE_TIME * 3
+        router._workers["w-0"].last_heartbeat_ns = time.time_ns() - int(
+            (stale_after_s + 5) * NANOS_PER_SECOND
+        )
 
+        # First sweep only suspects the worker (two-strike gate).
         await router._evict_stale_workers_task()
-        await router._evict_stale_workers_task()
+        assert "w-0" in router._workers, "first sweep must not evict on one strike"
 
+        # Second consecutive sweep confirms and evicts it.
+        await router._evict_stale_workers_task()
+        assert "w-0" not in router._workers, (
+            "stale worker must be evicted on the second consecutive sweep"
+        )
+
+        router.warning.assert_called()
         router.error.assert_not_called()
 
     @pytest.mark.asyncio
@@ -101,11 +117,21 @@ class TestRouterDoesNotDecideTheBreach:
         """Workers legitimately stop reporting once credits are complete."""
         from aiperf.common.environment import Environment
 
-        router = _router(alive=0, peak=10)
+        router = _router(alive=1, peak=10)
         router._credits_complete = True
         monkeypatch.setattr(Environment.WORKER, "MIN_ALIVE_FRACTION", 0.5)
+        stale_after_s = Environment.WORKER.STALE_TIME * 3
+        router._workers["w-0"].last_heartbeat_ns = time.time_ns() - int(
+            (stale_after_s + 5) * NANOS_PER_SECOND
+        )
 
         await router._evict_stale_workers_task()
+        await router._evict_stale_workers_task()
+
+        assert "w-0" in router._workers, (
+            "eviction must be suppressed once credits are complete"
+        )
+        router.warning.assert_not_called()
         router.error.assert_not_called()
 
 
