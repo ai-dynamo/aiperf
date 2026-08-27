@@ -608,6 +608,22 @@ impl CheckpointGenerationCandidate {
         Ok(())
     }
 
+    pub(crate) fn prevalidate_for_publication(
+        self,
+        expected_run: &StreamRunIdentity,
+        participant_plan: &CheckpointParticipantPlan,
+        execution_plan_digest: &ContentDigest,
+        result_plan_digest: &ContentDigest,
+    ) -> Result<PrevalidatedCheckpointGenerationCandidate, CheckpointError> {
+        self.verify_against(
+            expected_run,
+            participant_plan,
+            execution_plan_digest,
+            result_plan_digest,
+        )?;
+        Ok(PrevalidatedCheckpointGenerationCandidate { candidate: self })
+    }
+
     #[allow(dead_code)]
     pub(crate) fn promote(
         self,
@@ -665,6 +681,30 @@ impl CheckpointGenerationCandidate {
             return Err(CheckpointError::ObjectVerification);
         }
         Ok(())
+    }
+}
+
+/// Fully verified generation content awaiting only a backend publication fence.
+pub(crate) struct PrevalidatedCheckpointGenerationCandidate {
+    candidate: CheckpointGenerationCandidate,
+}
+
+impl PrevalidatedCheckpointGenerationCandidate {
+    /// Borrow the generation identity used for the final head comparison.
+    pub(crate) fn generation(&self) -> &CheckpointGeneration {
+        &self.candidate.generation
+    }
+
+    /// Encode the already verified candidate before entering publication state.
+    pub(crate) fn encode_for_storage(&self) -> Result<Bytes, CheckpointError> {
+        serde_json::to_vec(&self.candidate)
+            .map(|bytes| Bytes::from(bytes.into_boxed_slice()))
+            .map_err(generation_encoding_error)
+    }
+
+    /// Mint committed authority after the backend's successful publication fence.
+    pub(crate) fn into_committed_after_publication_fence(self) -> CommittedCheckpointGeneration {
+        CommittedCheckpointGeneration(self.candidate)
     }
 }
 
@@ -1226,6 +1266,36 @@ impl fmt::Display for CheckpointParticipantPlanError {
 
 impl std::error::Error for CheckpointParticipantPlanError {}
 
+/// Backend-owned resource category used in stable checkpoint failures.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CheckpointBackendBudgetKind {
+    /// In-progress generation transactions.
+    Transaction,
+    /// Prepared result-index descriptor collections.
+    PreparedIndex,
+    /// Immutable checkpoint object storage.
+    Storage,
+    /// Descriptor summaries returned to the caller.
+    ResultSummary,
+    /// Concurrent generation and object reads.
+    Read,
+}
+
+/// Stable failure classification for backend-owned resource budgets.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CheckpointBackendBudgetFailureCode {
+    /// Requested or configured item capacity is insufficient.
+    ItemCapacity,
+    /// Requested or configured byte capacity is insufficient.
+    ByteCapacity,
+    /// The resource budget has been closed.
+    Closed,
+    /// A permit count or accounting transition cannot be represented.
+    Unrepresentable,
+}
+
 /// Stable checkpoint preparation, storage, restore, or notification failure.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CheckpointError {
@@ -1253,6 +1323,25 @@ pub enum CheckpointError {
         participant: CheckpointParticipantId,
         /// Stable nested state-budget failure code.
         code: StateBudgetFailureCode,
+    },
+    /// Capacity owned by the checkpoint backend was unavailable or invalid.
+    BackendBudget {
+        /// Stable backend resource category.
+        budget: CheckpointBackendBudgetKind,
+        /// Stable capacity failure classification.
+        code: CheckpointBackendBudgetFailureCode,
+    },
+    /// The caller's page limit cannot retain even the next reachable descriptor.
+    ResultIndexReadBudgetTooSmall {
+        /// Exact retained bytes required for the next page.
+        required_bytes: u64,
+        /// Maximum retained bytes allowed by the caller.
+        max_bytes: u64,
+    },
+    /// The exact successor of the frozen predecessor cannot be represented.
+    GenerationEpochOverflow {
+        /// Frozen predecessor at the maximum epoch.
+        previous: CheckpointGeneration,
     },
     /// A participant was asked to move its completed decode horizon backward.
     DecodeHorizonRegression {
@@ -1314,6 +1403,21 @@ impl fmt::Display for CheckpointError {
                 formatter,
                 "checkpoint state budget failed for {:?}: {code:?}",
                 participant.as_str()
+            ),
+            Self::BackendBudget { budget, code } => write!(
+                formatter,
+                "checkpoint backend {budget:?} budget failed: {code:?}",
+            ),
+            Self::ResultIndexReadBudgetTooSmall {
+                required_bytes,
+                max_bytes,
+            } => write!(
+                formatter,
+                "result-index page requires {required_bytes} retained bytes but the caller allowed {max_bytes}",
+            ),
+            Self::GenerationEpochOverflow { previous } => write!(
+                formatter,
+                "checkpoint generation epoch overflow after {previous:?}",
             ),
             Self::DecodeHorizonRegression {
                 participant,
@@ -1747,5 +1851,19 @@ mod tests {
         let next_receipt = CommittedParticipantReceipt::new(&next_committed, &descriptor)
             .expect("next authoritative receipt");
         assert_ne!(receipt, next_receipt);
+    }
+
+    #[test]
+    fn prevalidated_publication_transition_is_infallible() {
+        let run = run_id(1);
+        let execution_plan = ContentDigest::from_bytes([0x11; 32]);
+        let result_plan = ContentDigest::from_bytes([0x12; 32]);
+        let (plan, _, candidate) = candidate(run, "session", 1, None, execution_plan, result_plan);
+        let prevalidated = candidate
+            .prevalidate_for_publication(&run, &plan, &execution_plan, &result_plan)
+            .expect("valid candidate prevalidates");
+
+        fn requires_committed(_: CommittedCheckpointGeneration) {}
+        requires_committed(prevalidated.into_committed_after_publication_fence());
     }
 }

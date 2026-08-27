@@ -6,7 +6,10 @@
 pub mod blocking;
 pub mod budget;
 pub mod checkpoint;
+pub mod checkpoint_backend;
+pub mod checkpoints;
 pub mod identity;
+pub mod results;
 pub mod unit;
 
 /// Whether the lightweight native streaming runtime is compiled.
