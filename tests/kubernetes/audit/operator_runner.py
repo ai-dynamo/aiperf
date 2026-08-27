@@ -40,6 +40,7 @@ class OperatorAuditConfig:
     endpoint_url: str = "http://aiperf-mock-server.default.svc.cluster.local:8000/v1"
     model_name: str = "mock-model"
     tokenizer_name: str = "gpt2"
+    operator_namespace: str = "aiperf-system"
 
 
 class OperatorAuditRunner:
@@ -101,6 +102,8 @@ class OperatorAuditRunner:
             job_name,
             "--namespace",
             namespace,
+            "--operator-namespace",
+            self.deployer.OPERATOR_NAMESPACE,
             "--output",
             str(dest_dir),
             "--all",

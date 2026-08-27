@@ -1810,6 +1810,7 @@ def operator_audit_config(k8s_settings: K8sTestSettings):  # type: ignore[return
         else [],
         node_selector=_parse_node_selector(k8s_settings.job_node_selector),
         tolerations=_gpu_node_tolerations() if k8s_settings.tolerate_gpu_nodes else [],
+        operator_namespace=k8s_settings.operator_namespace,
     )
 
 

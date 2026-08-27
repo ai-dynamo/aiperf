@@ -218,13 +218,19 @@ class SweepAuditRunner:
             sweep_name,
             "--namespace",
             namespace,
+            "--operator-namespace",
+            self.config.operator_namespace,
             "--output",
             str(dest_dir),
             "--all",
         ]
+        if self.kubectl.context:
+            cmd.extend(["--kube-context", self.kubectl.context])
         env = dict(os.environ)
         if kubeconfig:
             env["KUBECONFIG"] = kubeconfig
+        elif self.kubectl.kubeconfig:
+            env["KUBECONFIG"] = self.kubectl.kubeconfig
 
         proc = await asyncio.create_subprocess_exec(
             *cmd,
