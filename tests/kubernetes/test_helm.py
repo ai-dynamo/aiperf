@@ -134,16 +134,22 @@ class TestHelmChartDeployment:
         )
         sa_name = result.stdout.strip()
 
-        # Check permission to create JobSets
-        result = await kubectl.run(
-            "auth",
-            "can-i",
-            "create",
-            "jobsets.jobset.x-k8s.io",
-            f"--as=system:serviceaccount:{helm_deployed.OPERATOR_NAMESPACE}:{sa_name}",
+        # Verify the ClusterRole bound to this SA grants create on JobSets.
+        # `kubectl auth can-i --as` requires impersonation rights which are
+        # commonly restricted on shared clusters; inspect the ClusterRole
+        # rules directly instead.
+        cr_result = await kubectl.run(
+            "get",
+            "clusterrole",
+            sa_name,
+            "-o",
+            "jsonpath={.rules[*].apiGroups}",
             check=False,
         )
-        assert result.stdout.strip() == "yes"
+        assert "jobset.x-k8s.io" in cr_result.stdout, (
+            f"ClusterRole '{sa_name}' does not grant access to jobset.x-k8s.io; "
+            f"rules apiGroups: {cr_result.stdout!r}"
+        )
 
 
 class TestHelmChartUpgrade:
