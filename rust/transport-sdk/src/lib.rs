@@ -31,6 +31,7 @@ pub mod execution;
 pub mod measure;
 pub mod reduce;
 pub mod retry;
+pub mod service_helpers;
 
 pub use direct::{
     CreditMaterializer, ExecutionSinkBuilder, WorkerRequest, WorkerSink, WorkerTerminal,
@@ -46,6 +47,10 @@ pub use reduce::{
     TokenEmitter, absorb_observed_endpoint_metrics, absorb_observed_usage, append_text,
 };
 pub use retry::retry_connect;
+pub use service_helpers::{
+    DirectServicesExt, StopReason, record_duration_ns, record_finite, remaining_ns, stop_reason,
+    total_graph_nodes, write_artifact,
+};
 
 /// The source API version exposed by provisional plugin crate shells.
 pub const PLUGIN_SOURCE_API_VERSION: &str = "1.0.0";
