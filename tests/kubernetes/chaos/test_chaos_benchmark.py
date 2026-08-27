@@ -92,11 +92,11 @@ def _metric_p99(metrics: dict[str, Any], key: str) -> float | None:
 
 
 async def _force_delete_cr(kubectl: KubectlClient, namespace: str, name: str) -> None:
-    """Drop the CR without blocking on finalizer settlement.
+    """Delete the CR and wait for pods to terminate.
 
-    Mirrors the teardown pattern in ``test_chaos_cancellation.py`` so
-    that a failed assertion never leaves an AIPerfJob around to poison
-    the next test.
+    Uses --wait=true so the operator finalizer runs to completion before
+    returning. This prevents lingering benchmark pods from starving the
+    next test that runs on the same cluster worker.
     """
     await kubectl.run(
         "delete",
@@ -105,7 +105,7 @@ async def _force_delete_cr(kubectl: KubectlClient, namespace: str, name: str) ->
         "-n",
         namespace,
         "--ignore-not-found",
-        "--wait=false",
+        "--wait=true",
         check=False,
     )
 

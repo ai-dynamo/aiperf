@@ -38,7 +38,12 @@ pytestmark = [pytest.mark.asyncio, pytest.mark.k8s_slow]
 
 
 async def _force_delete(kubectl: KubectlClient, namespace: str, name: str) -> None:
-    """Best-effort CR delete; used as the unconditional finally-path."""
+    """Delete the CR and wait for pods to terminate.
+
+    Uses --wait=true so the operator finalizer runs to completion before
+    returning. This prevents lingering benchmark pods from starving the
+    next test that runs on the same cluster worker.
+    """
     await kubectl.run(
         "delete",
         "aiperfjob",
@@ -46,7 +51,7 @@ async def _force_delete(kubectl: KubectlClient, namespace: str, name: str) -> No
         "-n",
         namespace,
         "--ignore-not-found",
-        "--wait=false",
+        "--wait=true",
         check=False,
     )
 

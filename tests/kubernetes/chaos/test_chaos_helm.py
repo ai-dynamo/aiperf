@@ -284,7 +284,7 @@ async def test_h2_upgrade_with_inflight_job_preserves_cr(
     longrun = AIPerfJobConfig(
         concurrency=3,
         request_count=None,
-        benchmark_duration=120.0,
+        benchmark_duration=45.0,  # 45s: just long enough to still be Running during upgrade
         warmup_request_count=5,
         image=k8s_settings.aiperf_image,
         tolerations=_gpu_node_tolerations() if k8s_settings.tolerate_gpu_nodes else [],
