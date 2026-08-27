@@ -140,7 +140,7 @@ impl Fixture {
     fn new() -> Self {
         let directory = tempfile::tempdir().expect("temporary fixture directory");
         let cargo = directory.path().join("cargo");
-        let cargo_bytes = b"#!/bin/sh\nset -eu\ncp artifact-source \"$CARGO_TARGET_DIR/artifact.bin\"\nchmod 755 \"$CARGO_TARGET_DIR/artifact.bin\"\n".to_vec();
+        let cargo_bytes = b"#!/bin/sh\nset -eu\ncase \"$CARGO_TARGET_DIR\" in\n  *static-target) cp static-artifact-source \"$CARGO_TARGET_DIR/artifact.bin\" ;;\n  *dynamic-target) cp dynamic-artifact-source \"$CARGO_TARGET_DIR/artifact.bin\" ;;\n  *) exit 65 ;;\nesac\nchmod 755 \"$CARGO_TARGET_DIR/artifact.bin\"\n".to_vec();
         write_executable(&cargo, &cargo_bytes);
 
         let sysroot = directory.path().join("sysroot");
@@ -162,24 +162,23 @@ impl Fixture {
         std::fs::create_dir_all(&dynamic_source).expect("dynamic source exists");
         let static_artifact = runtime_artifact("static authority fixture");
         let dynamic_artifact = runtime_artifact("dynamic authority fixture");
-        for (source, identity, lock, artifact) in [
+        for (source, identity, lock) in [
             (
                 &static_source,
-                b"static source identity\n".as_slice(),
-                b"static lock\n".as_slice(),
-                static_artifact.as_slice(),
+                b"shared complete source identity\n".as_slice(),
+                b"shared lock\n".as_slice(),
             ),
             (
                 &dynamic_source,
-                b"dynamic source identity\n".as_slice(),
-                b"dynamic lock\n".as_slice(),
-                dynamic_artifact.as_slice(),
+                b"shared complete source identity\n".as_slice(),
+                b"shared lock\n".as_slice(),
             ),
         ] {
             std::fs::write(source.join("source.identity"), identity)
                 .expect("source identity is written");
             std::fs::write(source.join("Cargo.lock"), lock).expect("lock is written");
-            write_executable(&source.join("artifact-source"), artifact);
+            write_executable(&source.join("static-artifact-source"), &static_artifact);
+            write_executable(&source.join("dynamic-artifact-source"), &dynamic_artifact);
         }
 
         let static_target = directory.path().join("static-target");
@@ -206,15 +205,15 @@ impl Fixture {
             Variant::Static => (
                 &self.static_source,
                 &self.static_target,
-                b"static source identity\n".as_slice(),
-                b"static lock\n".as_slice(),
+                b"shared complete source identity\n".as_slice(),
+                b"shared lock\n".as_slice(),
                 self.static_artifact.as_slice(),
             ),
             Variant::Dynamic => (
                 &self.dynamic_source,
                 &self.dynamic_target,
-                b"dynamic source identity\n".as_slice(),
-                b"dynamic lock\n".as_slice(),
+                b"shared complete source identity\n".as_slice(),
+                b"shared lock\n".as_slice(),
                 self.dynamic_artifact.as_slice(),
             ),
         };
@@ -227,6 +226,19 @@ impl Fixture {
             target_root: target.clone(),
             artifact_relative_path: PathBuf::from("artifact.bin"),
             expected_artifact_blake3: digest(artifact),
+        }
+    }
+
+    fn synchronize_source_artifacts(&self) {
+        for source in [&self.static_source, &self.dynamic_source] {
+            write_executable(
+                &source.join("static-artifact-source"),
+                &self.static_artifact,
+            );
+            write_executable(
+                &source.join("dynamic-artifact-source"),
+                &self.dynamic_artifact,
+            );
         }
     }
 
@@ -309,18 +321,29 @@ fn raw_member_stdout_cannot_authorize_an_exporter_parity_pass() {
 }
 
 #[test]
+fn cloned_build_report_revalidates_the_complete_source_tree() {
+    let fixture = Fixture::new();
+    let cloned_report = fixture.build_report().clone();
+    std::fs::write(
+        fixture.dynamic_source.join("source.identity"),
+        b"source changed after the build report was cloned\n",
+    )
+    .expect("retained dynamic source is changed");
+
+    let error = run_controlled_runtime_v1(&cloned_report)
+        .expect_err("a stale complete-source census must not authorize runtime measurement");
+    assert!(
+        error.to_string().contains("source tree"),
+        "unexpected refusal: {error}"
+    );
+}
+
+#[test]
 fn controller_owned_exporter_adapter_seals_history_without_invoking_exporter_child() {
     let mut fixture = Fixture::new();
     fixture.static_artifact = runtime_artifact_rejecting_exporter("static authority fixture");
     fixture.dynamic_artifact = runtime_artifact_rejecting_exporter("dynamic authority fixture");
-    write_executable(
-        &fixture.static_source.join("artifact-source"),
-        &fixture.static_artifact,
-    );
-    write_executable(
-        &fixture.dynamic_source.join("artifact-source"),
-        &fixture.dynamic_artifact,
-    );
+    fixture.synchronize_source_artifacts();
     let build_report = fixture.build_report();
     let mut factory = FakeExporterFactory {
         mode: FakeExporterMode::Complete,
@@ -394,11 +417,8 @@ fn standalone_caller_authored_evaluation_remains_refused() {
 fn terminal_failure_is_retained_once_with_its_exact_empty_output_digest() {
     let mut fixture = Fixture::new();
     let failing_artifact = b"#!/bin/sh\nexit 9\n".to_vec();
-    write_executable(
-        &fixture.static_source.join("artifact-source"),
-        &failing_artifact,
-    );
     fixture.static_artifact = failing_artifact;
+    fixture.synchronize_source_artifacts();
     let build_report = fixture.build_report();
 
     let report = run_controlled_runtime_v1(&build_report)
