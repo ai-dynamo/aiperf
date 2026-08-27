@@ -37,6 +37,8 @@ pub struct PairedSample {
     pub commit: String,
     /// Digest of the measured artifact.
     pub artifact_digest: String,
+    /// Digest of the complete experiment authority that produced this member.
+    pub experiment_identity_digest: String,
 }
 
 /// Artifact member in a paired comparison.
@@ -102,6 +104,170 @@ pub enum RatioDirection {
     DynamicOverStatic,
     /// Latency, CPU, and exporter duration are static divided by dynamic.
     StaticOverDynamic,
+}
+
+/// One normative metric and its fixed comparison direction.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NormativeMetric {
+    /// Canonical metric name.
+    pub metric: String,
+    /// Direction fixed by the performance contract.
+    pub direction: RatioDirection,
+}
+
+/// Complete normative metric inventory for one benchmark case.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NormativeCase {
+    /// Canonical benchmark case name.
+    pub scenario: String,
+    /// The one legal primary metric for this case.
+    pub primary_metric: String,
+    /// Exact complete metric set, sorted by canonical metric name.
+    pub metrics: Vec<NormativeMetric>,
+}
+
+/// Authenticated complete `(component, case, metric, direction)` inventory.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NormativeInventory {
+    /// Inventory schema version.
+    pub schema_version: u32,
+    /// Migrated component governed by this inventory.
+    pub component: String,
+    /// Exact complete case set, sorted by scenario.
+    pub cases: Vec<NormativeCase>,
+    /// BLAKE3 digest of the preceding canonical fields.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub digest: String,
+}
+
+impl NormativeInventory {
+    /// Construct and authenticate a canonical complete inventory.
+    pub fn new(
+        component: impl Into<String>,
+        mut cases: Vec<NormativeCase>,
+    ) -> Result<Self, PluginStatsError> {
+        cases.sort_by(|left, right| left.scenario.cmp(&right.scenario));
+        for case in &mut cases {
+            case.metrics
+                .sort_by(|left, right| left.metric.cmp(&right.metric));
+        }
+        let mut inventory = Self {
+            schema_version: 1,
+            component: component.into(),
+            cases,
+            digest: String::new(),
+        };
+        validate_inventory_shape(&inventory)?;
+        inventory.digest = inventory.computed_digest()?;
+        Ok(inventory)
+    }
+
+    fn computed_digest(&self) -> Result<String, PluginStatsError> {
+        let mut canonical = self.clone();
+        canonical.digest.clear();
+        canonical_blake3(&canonical, "normative inventory")
+    }
+}
+
+/// One exact retained pair and its seeded member order.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PairSchedule {
+    /// Canonical pair identifier.
+    pub pair_id: String,
+    /// Exact AB/BA order for this pair.
+    pub member_order: [Variant; 2],
+}
+
+/// Complete authenticated identity for one parity experiment.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExperimentIdentity {
+    /// Identity schema version.
+    pub schema_version: u32,
+    /// Exact source commit shared by both compared artifacts.
+    pub source_commit: String,
+    /// Complete source-tree digest.
+    pub source_tree_digest: String,
+    /// Exact Cargo.lock digest.
+    pub cargo_lock_digest: String,
+    /// Exact compiler identity.
+    pub rustc: String,
+    /// Exact compiler sysroot digest.
+    pub sysroot_digest: String,
+    /// Rust compilation target.
+    pub target: String,
+    /// Optimized profile identity.
+    pub profile: String,
+    /// Expected static comparator artifact digest.
+    pub static_artifact_digest: String,
+    /// Expected dynamic plugin artifact digest.
+    pub dynamic_artifact_digest: String,
+    /// Benchmark harness artifact digest.
+    pub harness_artifact_digest: String,
+    /// Mock-server artifact digest.
+    pub mock_server_artifact_digest: String,
+    /// Authenticated complete normative inventory digest.
+    pub inventory_digest: String,
+    /// CPU model identity.
+    pub cpu_model: String,
+    /// CPU stepping identity.
+    pub cpu_stepping: String,
+    /// CPU microcode identity.
+    pub microcode: String,
+    /// Core topology identity.
+    pub core_topology: String,
+    /// Memory topology identity.
+    pub memory_topology: String,
+    /// Firmware identity.
+    pub firmware: String,
+    /// Kernel identity.
+    pub kernel: String,
+    /// Allocator/provider identity.
+    pub allocator_provider: String,
+    /// CPU frequency/governor identity.
+    pub frequency_governor: String,
+    /// Affinity and isolation identity.
+    pub affinity_isolation: String,
+    /// Mock-server placement identity.
+    pub mock_server_placement: String,
+    /// Every environment value admitted by the harness.
+    pub environment: BTreeMap<String, String>,
+    /// Seed governing both the exact pair schedule and bootstrap.
+    pub bootstrap_seed: u64,
+    /// Complete exact 30-pair AB/BA schedule.
+    pub pair_schedule: Vec<PairSchedule>,
+    /// BLAKE3 digest of every preceding identity field.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub identity_digest: String,
+}
+
+impl ExperimentIdentity {
+    /// Validate, digest, and seal a complete experiment identity.
+    pub fn seal(mut self) -> Result<Self, PluginStatsError> {
+        validate_experiment_identity_shape(&self)?;
+        self.identity_digest = self.computed_digest()?;
+        Ok(self)
+    }
+
+    fn computed_digest(&self) -> Result<String, PluginStatsError> {
+        let mut canonical = self.clone();
+        canonical.identity_digest.clear();
+        canonical_blake3(&canonical, "experiment identity")
+    }
+}
+
+/// One authoritative simultaneous-gate input document.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SimultaneousGateInput {
+    /// Complete experiment and artifact identity.
+    pub experiment_identity: ExperimentIdentity,
+    /// Exact samples for every inventory case and metric.
+    pub cases: Vec<PairedCase>,
 }
 
 /// All retained measurements and invalidated raw attempts for one scenario.
@@ -218,6 +384,20 @@ pub struct SimultaneousMetricReport {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct SimultaneousGateReport {
+    /// Component whose complete normative inventory was evaluated.
+    pub component: String,
+    /// Authenticated normative inventory digest.
+    pub inventory_digest: String,
+    /// Complete experiment identity digest shared by every sample.
+    pub experiment_identity_digest: String,
+    /// Seed used to generate the schedule and joint bootstrap.
+    pub bootstrap_seed: u64,
+    /// Complete exact retained AB/BA schedule.
+    pub pair_schedule: Vec<PairSchedule>,
+    /// Expected static comparator artifact digest.
+    pub static_artifact_digest: String,
+    /// Expected dynamic plugin artifact digest.
+    pub dynamic_artifact_digest: String,
     /// Reports in scenario then metric order.
     pub metric_reports: Vec<SimultaneousMetricReport>,
     /// Deterministic maximum-degradation value for every paired resample.
@@ -472,33 +652,56 @@ pub fn evaluate_paired_gate(
 
 /// Evaluate the complete case/metric matrix with one max-degradation bootstrap.
 pub fn evaluate_simultaneous_gate(
-    cases: &[PairedCase],
+    input: &SimultaneousGateInput,
+    inventory: &NormativeInventory,
+    expected_inventory_digest: &str,
     policy: &SimultaneousGatePolicy,
-    bootstrap_seed: u64,
 ) -> Result<SimultaneousGateReport, PluginStatsError> {
     validate_policy(policy)?;
-    if cases.is_empty() {
-        return Err(PluginStatsError::new("simultaneous gate has no cases"));
+    validate_inventory(inventory, expected_inventory_digest)?;
+    validate_experiment_identity(&input.experiment_identity, inventory)?;
+    if input
+        .cases
+        .iter()
+        .flat_map(|case| &case.samples)
+        .any(|sample| {
+            sample.experiment_identity_digest != input.experiment_identity.identity_digest
+        })
+    {
+        return Err(PluginStatsError::new(
+            "a sample row is bound to a different experiment identity",
+        ));
     }
 
-    let mut sorted_cases = cases.iter().collect::<Vec<_>>();
-    sorted_cases.sort_by(|left, right| left.scenario.cmp(&right.scenario));
-    if sorted_cases
-        .windows(2)
-        .any(|window| window[0].scenario == window[1].scenario)
-    {
+    let cases_by_scenario = input
+        .cases
+        .iter()
+        .map(|case| (case.scenario.as_str(), case))
+        .collect::<BTreeMap<_, _>>();
+    if cases_by_scenario.len() != input.cases.len() {
         return Err(PluginStatsError::new(
             "simultaneous gate contains a duplicate scenario",
         ));
     }
+    let expected_scenarios = inventory
+        .cases
+        .iter()
+        .map(|case| case.scenario.as_str())
+        .collect::<Vec<_>>();
+    if cases_by_scenario.keys().copied().collect::<Vec<_>>() != expected_scenarios {
+        return Err(PluginStatsError::new(
+            "supplied case set differs from the authenticated normative inventory",
+        ));
+    }
+
     let mut vectors = Vec::new();
     let mut invalidation_attempts = Vec::new();
-    for case in sorted_cases {
-        let (_, is_primary) = metric_direction(&case.primary_metric)?;
-        if !is_primary {
+    for normative_case in &inventory.cases {
+        let case = cases_by_scenario[normative_case.scenario.as_str()];
+        if case.primary_metric != normative_case.primary_metric {
             return Err(PluginStatsError::new(format!(
-                "{} is a secondary metric and cannot be primary",
-                case.primary_metric
+                "case {} primary metric differs from the authenticated inventory",
+                case.scenario
             )));
         }
         if case
@@ -518,19 +721,30 @@ pub fn evaluate_simultaneous_gate(
             .collect::<Vec<_>>();
         metrics.sort();
         metrics.dedup();
-        if !metrics.iter().any(|metric| metric == &case.primary_metric) {
+        let expected_metrics = normative_case
+            .metrics
+            .iter()
+            .map(|metric| metric.metric.clone())
+            .collect::<Vec<_>>();
+        if metrics != expected_metrics {
             return Err(PluginStatsError::new(format!(
-                "case {} omits its primary metric {}",
-                case.scenario, case.primary_metric
+                "case {} metric set differs from the authenticated normative inventory",
+                case.scenario
             )));
         }
-        for metric in metrics {
-            let (direction, _) = metric_direction(&metric)?;
-            let vector = collect_metric(&case.samples, &metric, direction)?;
-            validate_balanced_orders(&vector, policy.retained_pairs)?;
+        for sample in &case.samples {
+            validate_sample_against_identity(sample, &input.experiment_identity)?;
+        }
+        for normative_metric in &normative_case.metrics {
+            let vector = collect_metric(
+                &case.samples,
+                &normative_metric.metric,
+                normative_metric.direction,
+            )?;
+            validate_exact_schedule(&vector, &input.experiment_identity.pair_schedule)?;
             vectors.push(vector);
         }
-        validate_invalidations(case, policy)?;
+        validate_invalidations(case, policy, &input.experiment_identity)?;
         invalidation_attempts.extend(case.invalidation_attempts.iter().cloned());
     }
     vectors.sort_by(|left, right| {
@@ -541,49 +755,38 @@ pub fn evaluate_simultaneous_gate(
         .iter()
         .map(|vector| arithmetic_mean(&vector.ratios))
         .collect::<Result<Vec<_>, _>>()?;
-    let mut vectors_by_scenario = BTreeMap::<&str, Vec<usize>>::new();
-    for (index, vector) in vectors.iter().enumerate() {
-        vectors_by_scenario
-            .entry(vector.scenario.as_str())
-            .or_default()
-            .push(index);
-    }
-    for indexes in vectors_by_scenario.values() {
-        let reference_pair_ids = &vectors[indexes[0]].pair_ids;
-        if indexes.iter().any(|index| {
-            vectors[*index].pair_ids != *reference_pair_ids
-                || vectors[*index].pair_orders != vectors[indexes[0]].pair_orders
-        }) {
-            return Err(PluginStatsError::new(
-                "metrics in one case do not share retained pair IDs and member order",
-            ));
-        }
+    let reference_pair_ids = &vectors[0].pair_ids;
+    let reference_pair_orders = &vectors[0].pair_orders;
+    if vectors.iter().any(|vector| {
+        vector.pair_ids != *reference_pair_ids || vector.pair_orders != *reference_pair_orders
+    }) {
+        return Err(PluginStatsError::new(
+            "all normative cases and metrics must share the exact retained pair schedule",
+        ));
     }
 
-    let mut rng = Pcg64Mcg::seed_from_u64(bootstrap_seed);
+    let mut rng = Pcg64Mcg::seed_from_u64(input.experiment_identity.bootstrap_seed);
     let mut maximum_degradation_bootstrap_distribution =
         Vec::with_capacity(policy.bootstrap_resamples);
     let mut resampled_totals = vec![0.0; vectors.len()];
     for _ in 0..policy.bootstrap_resamples {
         resampled_totals.fill(0.0);
         let mut maximum_degradation = 0.0_f64;
-        for indexes in vectors_by_scenario.values() {
-            let pair_count = vectors[indexes[0]].ratios.len();
-            for _ in 0..pair_count {
-                let pair_index = rng.random_range(0..pair_count);
-                for index in indexes {
-                    resampled_totals[*index] += vectors[*index].ratios[pair_index];
-                }
+        let pair_count = vectors[0].ratios.len();
+        for _ in 0..pair_count {
+            let pair_index = rng.random_range(0..pair_count);
+            for (index, vector) in vectors.iter().enumerate() {
+                resampled_totals[index] += vector.ratios[pair_index];
             }
-            for index in indexes {
-                let resampled_ratio = resampled_totals[*index] / pair_count as f64;
-                if !resampled_ratio.is_finite() {
-                    return Err(PluginStatsError::new(
-                        "simultaneous bootstrap produced a non-finite ratio",
-                    ));
-                }
-                maximum_degradation = maximum_degradation.max(observed[*index] - resampled_ratio);
+        }
+        for index in 0..vectors.len() {
+            let resampled_ratio = resampled_totals[index] / pair_count as f64;
+            if !resampled_ratio.is_finite() {
+                return Err(PluginStatsError::new(
+                    "simultaneous bootstrap produced a non-finite ratio",
+                ));
             }
+            maximum_degradation = maximum_degradation.max(observed[index] - resampled_ratio);
         }
         maximum_degradation_bootstrap_distribution.push(maximum_degradation);
     }
@@ -630,6 +833,13 @@ pub fn evaluate_simultaneous_gate(
     let is_invalid = !noise_reasons.is_empty();
     let passed = !is_invalid && metric_reports.iter().all(|report| report.passed);
     Ok(SimultaneousGateReport {
+        component: inventory.component.clone(),
+        inventory_digest: inventory.digest.clone(),
+        experiment_identity_digest: input.experiment_identity.identity_digest.clone(),
+        bootstrap_seed: input.experiment_identity.bootstrap_seed,
+        pair_schedule: input.experiment_identity.pair_schedule.clone(),
+        static_artifact_digest: input.experiment_identity.static_artifact_digest.clone(),
+        dynamic_artifact_digest: input.experiment_identity.dynamic_artifact_digest.clone(),
         metric_reports,
         maximum_degradation_bootstrap_distribution,
         invalidation_attempts,
@@ -782,6 +992,199 @@ fn validate_policy(policy: &SimultaneousGatePolicy) -> Result<(), PluginStatsErr
     Ok(())
 }
 
+fn canonical_blake3<T: Serialize>(value: &T, label: &str) -> Result<String, PluginStatsError> {
+    let bytes = serde_json::to_vec(value)
+        .map_err(|error| PluginStatsError::new(format!("cannot encode {label}: {error}")))?;
+    Ok(format!("blake3:{}", blake3::hash(&bytes).to_hex()))
+}
+
+fn validate_inventory_shape(inventory: &NormativeInventory) -> Result<(), PluginStatsError> {
+    if inventory.schema_version != 1 || inventory.component.is_empty() || inventory.cases.is_empty()
+    {
+        return Err(PluginStatsError::new(
+            "normative inventory identity is incomplete",
+        ));
+    }
+    if inventory
+        .cases
+        .windows(2)
+        .any(|pair| pair[0].scenario >= pair[1].scenario)
+    {
+        return Err(PluginStatsError::new(
+            "normative inventory cases are not uniquely sorted",
+        ));
+    }
+    for case in &inventory.cases {
+        if case.scenario.is_empty() || case.primary_metric.is_empty() || case.metrics.is_empty() {
+            return Err(PluginStatsError::new(
+                "normative inventory case is incomplete",
+            ));
+        }
+        if case
+            .metrics
+            .windows(2)
+            .any(|pair| pair[0].metric >= pair[1].metric)
+        {
+            return Err(PluginStatsError::new(
+                "normative inventory metrics are not uniquely sorted",
+            ));
+        }
+        let mut has_primary = false;
+        for metric in &case.metrics {
+            let (expected_direction, is_primary) = metric_direction(&metric.metric)?;
+            if expected_direction != metric.direction {
+                return Err(PluginStatsError::new(format!(
+                    "inventory direction for {}/{} differs from the metric contract",
+                    case.scenario, metric.metric
+                )));
+            }
+            if metric.metric == case.primary_metric {
+                if !is_primary {
+                    return Err(PluginStatsError::new(format!(
+                        "{} is a secondary metric and cannot be primary",
+                        metric.metric
+                    )));
+                }
+                has_primary = true;
+            }
+        }
+        if !has_primary {
+            return Err(PluginStatsError::new(format!(
+                "case {} omits its primary metric {}",
+                case.scenario, case.primary_metric
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn validate_inventory(
+    inventory: &NormativeInventory,
+    expected_inventory_digest: &str,
+) -> Result<(), PluginStatsError> {
+    validate_inventory_shape(inventory)?;
+    if !is_blake3_digest(expected_inventory_digest)
+        || !is_blake3_digest(&inventory.digest)
+        || inventory.computed_digest()? != inventory.digest
+        || inventory.digest != expected_inventory_digest
+    {
+        return Err(PluginStatsError::new(
+            "normative inventory does not match the independently bound expected digest",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_experiment_identity_shape(
+    identity: &ExperimentIdentity,
+) -> Result<(), PluginStatsError> {
+    let required_strings = [
+        identity.source_commit.as_str(),
+        identity.rustc.as_str(),
+        identity.target.as_str(),
+        identity.profile.as_str(),
+        identity.cpu_model.as_str(),
+        identity.cpu_stepping.as_str(),
+        identity.microcode.as_str(),
+        identity.core_topology.as_str(),
+        identity.memory_topology.as_str(),
+        identity.firmware.as_str(),
+        identity.kernel.as_str(),
+        identity.allocator_provider.as_str(),
+        identity.frequency_governor.as_str(),
+        identity.affinity_isolation.as_str(),
+        identity.mock_server_placement.as_str(),
+    ];
+    if identity.schema_version != 1
+        || required_strings.iter().any(|value| value.is_empty())
+        || !is_lower_hex(&identity.source_commit, 40)
+    {
+        return Err(PluginStatsError::new(
+            "experiment identity has an omitted or invalid scalar field",
+        ));
+    }
+    for digest in [
+        &identity.source_tree_digest,
+        &identity.cargo_lock_digest,
+        &identity.sysroot_digest,
+        &identity.static_artifact_digest,
+        &identity.dynamic_artifact_digest,
+        &identity.harness_artifact_digest,
+        &identity.mock_server_artifact_digest,
+        &identity.inventory_digest,
+    ] {
+        if !is_blake3_digest(digest) {
+            return Err(PluginStatsError::new(
+                "experiment identity has a noncanonical digest",
+            ));
+        }
+    }
+    if identity.environment.is_empty()
+        || identity.environment.iter().any(|(name, _)| name.is_empty())
+    {
+        return Err(PluginStatsError::new(
+            "experiment identity omits the admitted environment",
+        ));
+    }
+    let expected_orders = balanced_pair_orders(identity.bootstrap_seed);
+    if identity.pair_schedule.len() != NORMATIVE_RETAINED_PAIRS
+        || identity
+            .pair_schedule
+            .iter()
+            .zip(expected_orders)
+            .enumerate()
+            .any(|(pair, (scheduled, expected_order))| {
+                scheduled.pair_id != format!("pair-{pair:02}")
+                    || scheduled.member_order != expected_order
+            })
+    {
+        return Err(PluginStatsError::new(
+            "experiment identity does not contain the seeded exact 30-pair schedule",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_experiment_identity(
+    identity: &ExperimentIdentity,
+    inventory: &NormativeInventory,
+) -> Result<(), PluginStatsError> {
+    validate_experiment_identity_shape(identity)?;
+    if identity.inventory_digest != inventory.digest {
+        return Err(PluginStatsError::new(
+            "experiment identity is bound to a different normative inventory",
+        ));
+    }
+    if !is_blake3_digest(&identity.identity_digest)
+        || identity.computed_digest()? != identity.identity_digest
+    {
+        return Err(PluginStatsError::new(
+            "experiment identity digest does not authenticate its complete contents",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_sample_against_identity(
+    sample: &PairedSample,
+    identity: &ExperimentIdentity,
+) -> Result<(), PluginStatsError> {
+    validate_sample_identity(sample)?;
+    let expected_artifact = match sample.variant {
+        Variant::Static => &identity.static_artifact_digest,
+        Variant::Dynamic => &identity.dynamic_artifact_digest,
+    };
+    if sample.commit != identity.source_commit
+        || sample.artifact_digest != *expected_artifact
+        || sample.experiment_identity_digest != identity.identity_digest
+    {
+        return Err(PluginStatsError::new(
+            "sample does not match the complete experiment or variant artifact identity",
+        ));
+    }
+    Ok(())
+}
+
 fn metric_direction(metric: &str) -> Result<(RatioDirection, bool), PluginStatsError> {
     match metric {
         "successful_requests_per_second" | "output_tokens_per_second" => {
@@ -855,10 +1258,11 @@ fn collect_metric(
                 )));
             }
         };
-        let ratio = match direction {
-            RatioDirection::DynamicOverStatic => dynamic_value / static_value,
-            RatioDirection::StaticOverDynamic => static_value / dynamic_value,
+        let (numerator, denominator) = match direction {
+            RatioDirection::DynamicOverStatic => (dynamic_value, static_value),
+            RatioDirection::StaticOverDynamic => (static_value, dynamic_value),
         };
+        let ratio = zero_aware_ratio(numerator, denominator);
         if !ratio.is_finite() || ratio <= 0.0 {
             return Err(PluginStatsError::new(format!(
                 "pair {pair_id} produced an invalid positive ratio"
@@ -883,9 +1287,9 @@ fn collect_metric(
 }
 
 fn validate_sample_identity(sample: &PairedSample) -> Result<(), PluginStatsError> {
-    if !sample.value.is_finite() || sample.value <= 0.0 {
+    if !sample.value.is_finite() || sample.value < 0.0 {
         return Err(PluginStatsError::new(format!(
-            "{} contains a non-finite or non-positive value",
+            "{} contains a non-finite or negative value",
             sample.metric
         )));
     }
@@ -895,10 +1299,20 @@ fn validate_sample_identity(sample: &PairedSample) -> Result<(), PluginStatsErro
         || sample.unit.is_empty()
         || !is_lower_hex(&sample.commit, 40)
         || !is_blake3_digest(&sample.artifact_digest)
+        || !is_blake3_digest(&sample.experiment_identity_digest)
     {
         return Err(PluginStatsError::new("sample identity is incomplete"));
     }
     Ok(())
+}
+
+fn zero_aware_ratio(numerator: f64, denominator: f64) -> f64 {
+    match (numerator, denominator) {
+        (0.0, 0.0) => 1.0,
+        (0.0, _) => f64::EPSILON,
+        (_, 0.0) => 1.0 / f64::EPSILON,
+        _ => numerator / denominator,
+    }
 }
 
 fn is_blake3_digest(value: &str) -> bool {
@@ -914,26 +1328,30 @@ fn is_lower_hex(value: &str, expected_length: usize) -> bool {
             .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
 }
 
-fn validate_balanced_orders(
+fn validate_exact_schedule(
     vector: &MetricVector,
-    retained_pairs: usize,
+    pair_schedule: &[PairSchedule],
 ) -> Result<(), PluginStatsError> {
-    if vector.ratios.len() != retained_pairs {
+    if vector.ratios.len() != pair_schedule.len() {
         return Err(PluginStatsError::new(format!(
-            "{}/{} retains {} pairs instead of {retained_pairs}",
+            "{}/{} retains {} pairs instead of {}",
             vector.scenario,
             vector.metric,
-            vector.ratios.len()
+            vector.ratios.len(),
+            pair_schedule.len()
         )));
     }
-    let static_first = vector
-        .pair_orders
+    if vector
+        .pair_ids
         .iter()
-        .filter(|order| order[0] == Variant::Static)
-        .count();
-    if static_first * 2 != retained_pairs {
+        .zip(&vector.pair_orders)
+        .zip(pair_schedule)
+        .any(|((pair_id, member_order), planned)| {
+            pair_id != &planned.pair_id || member_order != &planned.member_order
+        })
+    {
         return Err(PluginStatsError::new(format!(
-            "{}/{} does not have balanced AB/BA order",
+            "{}/{} differs from the seeded exact pair schedule",
             vector.scenario, vector.metric
         )));
     }
@@ -943,6 +1361,7 @@ fn validate_balanced_orders(
 fn validate_invalidations(
     case: &PairedCase,
     policy: &SimultaneousGatePolicy,
+    identity: &ExperimentIdentity,
 ) -> Result<(), PluginStatsError> {
     if case.invalidation_attempts.len() > policy.max_replacement_pairs {
         return Err(PluginStatsError::new(format!(
@@ -990,7 +1409,7 @@ fn validate_invalidations(
         if attempt.members.iter().any(|sample| {
             sample.scenario != case.scenario
                 || sample.pair_id != attempt.pair_id
-                || validate_sample_identity(sample).is_err()
+                || validate_sample_against_identity(sample, identity).is_err()
         }) {
             return Err(PluginStatsError::new(
                 "invalidated raw members have inconsistent identity or value",
@@ -999,9 +1418,16 @@ fn validate_invalidations(
         let retained = retained_orders
             .get(attempt.pair_id.as_str())
             .ok_or_else(|| PluginStatsError::new("invalidated pair has no retained replacement"))?;
-        if retained.as_slice() != attempt.member_order {
+        let planned = identity
+            .pair_schedule
+            .iter()
+            .find(|planned| planned.pair_id == attempt.pair_id)
+            .ok_or_else(|| PluginStatsError::new("invalidated pair is absent from the schedule"))?;
+        if retained.as_slice() != planned.member_order
+            || attempt.member_order != planned.member_order
+        {
             return Err(PluginStatsError::new(
-                "replacement changed the invalidated pair's member order",
+                "replacement changed the invalidated pair's seeded member order",
             ));
         }
         let raw_order = attempt
@@ -1064,9 +1490,13 @@ fn coefficient_of_variation(values: &[f64]) -> Result<f64, PluginStatsError> {
     }
     let mean = arithmetic_mean(values)?;
     if mean == 0.0 {
-        return Err(PluginStatsError::new(
-            "coefficient of variation has a zero mean",
-        ));
+        return if values.iter().all(|value| *value == 0.0) {
+            Ok(0.0)
+        } else {
+            Err(PluginStatsError::new(
+                "coefficient of variation has a zero mean",
+            ))
+        };
     }
     let squared_deviations = values
         .iter()

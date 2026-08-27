@@ -10,8 +10,8 @@ use std::{
 };
 
 use aiperf_bench_tools::plugin_stats::{
-    PairedCase, SimultaneousGatePolicy, decode_samples_jsonl, encode_samples_jsonl,
-    evaluate_simultaneous_gate,
+    NormativeInventory, SimultaneousGateInput, SimultaneousGatePolicy, decode_samples_jsonl,
+    encode_samples_jsonl, evaluate_simultaneous_gate,
 };
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -21,13 +21,14 @@ fn main() -> Result<(), Box<dyn Error>> {
             let samples = decode_samples_jsonl(&fs::read(input)?)?;
             io::stdout().write_all(&encode_samples_jsonl(&samples)?)?;
         }
-        [mode, input, seed] if mode == "evaluate" => {
-            let cases: Vec<PairedCase> = serde_json::from_slice(&fs::read(input)?)?;
-            let bootstrap_seed = seed.parse::<u64>()?;
+        [mode, inventory_path, expected_inventory_digest, input] if mode == "evaluate" => {
+            let inventory: NormativeInventory = serde_json::from_slice(&fs::read(inventory_path)?)?;
+            let input: SimultaneousGateInput = serde_json::from_slice(&fs::read(input)?)?;
             let report = evaluate_simultaneous_gate(
-                &cases,
+                &input,
+                &inventory,
+                expected_inventory_digest,
                 &SimultaneousGatePolicy::normative(),
-                bootstrap_seed,
             )?;
             let stdout = io::stdout();
             let mut output = stdout.lock();
@@ -36,7 +37,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
         _ => {
             return Err(
-                "usage: plugin-runtime-bench canonicalize-jsonl <samples.jsonl> | evaluate <cases.json> <seed>"
+                "usage: plugin-runtime-bench canonicalize-jsonl <samples.jsonl> | evaluate <inventory.json> <expected-inventory-digest> <input.json>"
                     .into(),
             );
         }

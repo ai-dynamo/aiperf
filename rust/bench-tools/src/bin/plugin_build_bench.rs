@@ -86,6 +86,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             unit: "nanoseconds".to_owned(),
             commit: required(&options, "--commit")?.to_owned(),
             artifact_digest: format!("blake3:{}", blake3::hash(&artifact).to_hex()),
+            experiment_identity_digest: required(&options, "--experiment-identity-digest")?
+                .to_owned(),
         },
         command: command.to_vec(),
         target_dir: target_dir.to_owned(),

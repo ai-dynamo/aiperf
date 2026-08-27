@@ -3,15 +3,168 @@
 
 //! Behavioral contract for native-plugin paired performance statistics.
 
+use std::collections::BTreeMap;
+
 use aiperf_bench_tools::plugin_stats::{
-    AttemptDisposition, ExperimentAttempt, ExporterRepetition, ExporterSampleContract,
-    InvalidationAttempt, NonInferiorityGate, PairedCase, PairedSample, SimultaneousGatePolicy,
-    Variant, balanced_pair_orders, decode_samples_jsonl, encode_samples_jsonl,
-    evaluate_exporter_sample, evaluate_paired_gate, evaluate_simultaneous_gate,
-    validate_experiment_attempts,
+    AttemptDisposition, ExperimentAttempt, ExperimentIdentity, ExporterRepetition,
+    ExporterSampleContract, InvalidationAttempt, NonInferiorityGate, NormativeCase,
+    NormativeInventory, NormativeMetric, PairSchedule, PairedCase, PairedSample, RatioDirection,
+    SimultaneousGateInput, SimultaneousGatePolicy, Variant, balanced_pair_orders,
+    decode_samples_jsonl, encode_samples_jsonl, evaluate_exporter_sample, evaluate_paired_gate,
+    evaluate_simultaneous_gate, validate_experiment_attempts,
 };
 
 const DIGEST: &str = "blake3:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+const DYNAMIC_DIGEST: &str =
+    "blake3:1123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+fn direction(metric: &str) -> RatioDirection {
+    match metric {
+        "successful_requests_per_second" | "output_tokens_per_second" => {
+            RatioDirection::DynamicOverStatic
+        }
+        _ => RatioDirection::StaticOverDynamic,
+    }
+}
+
+fn authoritative_input(
+    mut cases: Vec<PairedCase>,
+    seed: u64,
+) -> (NormativeInventory, SimultaneousGateInput) {
+    let inventory = NormativeInventory::new(
+        "test-component",
+        cases
+            .iter()
+            .map(|case| {
+                let mut metrics = case
+                    .samples
+                    .iter()
+                    .map(|sample| sample.metric.clone())
+                    .collect::<Vec<_>>();
+                metrics.sort();
+                metrics.dedup();
+                NormativeCase {
+                    scenario: case.scenario.clone(),
+                    primary_metric: case.primary_metric.clone(),
+                    metrics: metrics
+                        .into_iter()
+                        .map(|metric| NormativeMetric {
+                            direction: direction(&metric),
+                            metric,
+                        })
+                        .collect(),
+                }
+            })
+            .collect(),
+    )
+    .expect("test inventory is canonical");
+    let pair_schedule = balanced_pair_orders(seed)
+        .into_iter()
+        .enumerate()
+        .map(|(pair, member_order)| PairSchedule {
+            pair_id: format!("pair-{pair:02}"),
+            member_order,
+        })
+        .collect::<Vec<_>>();
+    for case in &mut cases {
+        let mut reordered = Vec::with_capacity(case.samples.len());
+        let mut metrics = case
+            .samples
+            .iter()
+            .map(|sample| sample.metric.clone())
+            .collect::<Vec<_>>();
+        metrics.sort();
+        metrics.dedup();
+        for planned in &pair_schedule {
+            for metric in &metrics {
+                for variant in planned.member_order {
+                    let mut sample = case
+                        .samples
+                        .iter()
+                        .find(|sample| {
+                            sample.pair_id == planned.pair_id
+                                && sample.metric == *metric
+                                && sample.variant == variant
+                        })
+                        .expect("fixture has both members")
+                        .clone();
+                    sample.artifact_digest = match variant {
+                        Variant::Static => DIGEST.to_owned(),
+                        Variant::Dynamic => DYNAMIC_DIGEST.to_owned(),
+                    };
+                    reordered.push(sample);
+                }
+            }
+        }
+        case.samples = reordered;
+        for invalidation in &mut case.invalidation_attempts {
+            let planned = pair_schedule
+                .iter()
+                .find(|planned| planned.pair_id == invalidation.pair_id)
+                .expect("invalidation pair is planned");
+            invalidation.member_order = planned.member_order;
+            invalidation.members.sort_by_key(|sample| {
+                planned
+                    .member_order
+                    .iter()
+                    .position(|variant| variant == &sample.variant)
+            });
+            for sample in &mut invalidation.members {
+                sample.artifact_digest = match sample.variant {
+                    Variant::Static => DIGEST.to_owned(),
+                    Variant::Dynamic => DYNAMIC_DIGEST.to_owned(),
+                };
+            }
+        }
+    }
+    let identity = ExperimentIdentity {
+        schema_version: 1,
+        source_commit: "0123456789abcdef0123456789abcdef01234567".to_owned(),
+        source_tree_digest: DIGEST.to_owned(),
+        cargo_lock_digest: DIGEST.to_owned(),
+        rustc: "rustc 1.97.1".to_owned(),
+        sysroot_digest: DIGEST.to_owned(),
+        target: "x86_64-unknown-linux-gnu".to_owned(),
+        profile: "release".to_owned(),
+        static_artifact_digest: DIGEST.to_owned(),
+        dynamic_artifact_digest: DYNAMIC_DIGEST.to_owned(),
+        harness_artifact_digest: DIGEST.to_owned(),
+        mock_server_artifact_digest: DIGEST.to_owned(),
+        inventory_digest: inventory.digest.clone(),
+        cpu_model: "test-cpu".to_owned(),
+        cpu_stepping: "1".to_owned(),
+        microcode: "1".to_owned(),
+        core_topology: "cores=0-7".to_owned(),
+        memory_topology: "node0=0-7".to_owned(),
+        firmware: "test-firmware".to_owned(),
+        kernel: "test-kernel".to_owned(),
+        allocator_provider: "test-mimalloc".to_owned(),
+        frequency_governor: "performance".to_owned(),
+        affinity_isolation: "mock=0-3;client=4-7".to_owned(),
+        mock_server_placement: "disjoint".to_owned(),
+        environment: BTreeMap::from([("RUSTC_WRAPPER".to_owned(), "sccache".to_owned())]),
+        bootstrap_seed: seed,
+        pair_schedule,
+        identity_digest: String::new(),
+    }
+    .seal()
+    .expect("test identity is complete");
+    for case in &mut cases {
+        for sample in &mut case.samples {
+            sample.experiment_identity_digest = identity.identity_digest.clone();
+        }
+        for invalidation in &mut case.invalidation_attempts {
+            for sample in &mut invalidation.members {
+                sample.experiment_identity_digest = identity.identity_digest.clone();
+            }
+        }
+    }
+    let input = SimultaneousGateInput {
+        experiment_identity: identity,
+        cases,
+    };
+    (inventory, input)
+}
 
 fn sample(pair: usize, variant: Variant, metric: &str, value: f64) -> PairedSample {
     PairedSample {
@@ -23,6 +176,7 @@ fn sample(pair: usize, variant: Variant, metric: &str, value: f64) -> PairedSamp
         unit: "ratio-source".to_owned(),
         commit: "0123456789abcdef0123456789abcdef01234567".to_owned(),
         artifact_digest: DIGEST.to_owned(),
+        experiment_identity_digest: DIGEST.to_owned(),
     }
 }
 
@@ -117,14 +271,14 @@ fn canonical_jsonl_has_the_exact_field_order_and_round_trips() {
         decode_samples_jsonl(&encoded).expect("canonical JSONL parses"),
         samples
     );
-    assert!(decode_samples_jsonl(
-        b"{\"pair_id\":\"pair-00\",\"scenario\":\"http_streaming_c64\",\"variant\":\"static\",\"metric\":\"successful_requests_per_second\",\"value\":100.0,\"unit\":\"ratio-source\",\"commit\":\"x\",\"artifact_digest\":\"x\"}\n"
-    )
-    .is_err());
+    let wrong_order = format!(
+        "{{\"pair_id\":\"pair-00\",\"scenario\":\"http_streaming_c64\",\"variant\":\"static\",\"metric\":\"successful_requests_per_second\",\"value\":100.0,\"unit\":\"ratio-source\",\"commit\":\"0123456789abcdef0123456789abcdef01234567\",\"artifact_digest\":\"{DIGEST}\",\"experiment_identity_digest\":\"{DIGEST}\"}}\n"
+    );
+    assert!(decode_samples_jsonl(wrong_order.as_bytes()).is_err());
 }
 
 #[test]
-fn statistics_reject_non_finite_and_non_positive_ratio_inputs() {
+fn statistics_reject_non_finite_and_negative_inputs_but_accept_zero_zero() {
     let mut samples = balanced_samples(&["cpu_nanoseconds_per_successful_request"], 1.0);
     samples[0].value = f64::NAN;
     assert!(
@@ -138,6 +292,16 @@ fn statistics_reject_non_finite_and_non_positive_ratio_inputs() {
 
     let mut samples = balanced_samples(&["cpu_nanoseconds_per_successful_request"], 1.0);
     samples[0].value = 0.0;
+    samples[1].value = 0.0;
+    let report = evaluate_paired_gate(
+        &samples,
+        &NonInferiorityGate::standard("cpu_nanoseconds_per_successful_request"),
+        7,
+    )
+    .expect("zero/zero latency is a neutral valid pair");
+    assert_eq!(report.paired_ratios[0], 1.0);
+
+    samples[0].value = -1.0;
     assert!(
         evaluate_paired_gate(
             &samples,
@@ -167,9 +331,10 @@ fn simultaneous_gate_covers_primary_and_secondary_matrix_deterministically() {
         invalidation_attempts: Vec::new(),
     };
     let policy = SimultaneousGatePolicy::normative();
-    let first = evaluate_simultaneous_gate(std::slice::from_ref(&case), &policy, 20260826)
+    let (inventory, input) = authoritative_input(vec![case], 20260826);
+    let first = evaluate_simultaneous_gate(&input, &inventory, &inventory.digest, &policy)
         .expect("full metric matrix is valid");
-    let second = evaluate_simultaneous_gate(&[case], &policy, 20260826)
+    let second = evaluate_simultaneous_gate(&input, &inventory, &inventory.digest, &policy)
         .expect("full metric matrix is valid");
 
     assert_eq!(first, second);
@@ -207,19 +372,27 @@ fn runtime_bench_invocations_emit_byte_identical_summaries() {
         ),
         invalidation_attempts: Vec::new(),
     };
+    let (inventory, input) = authoritative_input(vec![case], 20260826);
     let directory = tempfile::tempdir().expect("temporary fixture directory");
     let cases_path = directory.path().join("cases.json");
+    let inventory_path = directory.path().join("inventory.json");
     std::fs::write(
         &cases_path,
-        serde_json::to_vec(&vec![case]).expect("fixture serializes"),
+        serde_json::to_vec(&input).expect("fixture serializes"),
     )
     .expect("fixture is written");
+    std::fs::write(
+        &inventory_path,
+        serde_json::to_vec(&inventory).expect("inventory serializes"),
+    )
+    .expect("inventory is written");
     let run = || {
         std::process::Command::new(env!("CARGO_BIN_EXE_plugin_runtime_bench"))
             .args([
                 "evaluate",
+                inventory_path.to_str().expect("temporary path is UTF-8"),
+                &inventory.digest,
                 cases_path.to_str().expect("temporary path is UTF-8"),
-                "20260826",
             ])
             .output()
             .expect("runtime benchmark executes")
@@ -241,13 +414,20 @@ fn runtime_bench_invocations_emit_byte_identical_summaries() {
 
 #[test]
 fn secondary_metric_is_rejected_as_a_primary_name() {
-    let case = PairedCase {
-        scenario: "bad-primary".to_owned(),
-        primary_metric: "ttft_p99".to_owned(),
-        samples: balanced_samples(&["ttft_p99"], 1.0),
-        invalidation_attempts: Vec::new(),
-    };
-    assert!(evaluate_simultaneous_gate(&[case], &SimultaneousGatePolicy::normative(), 1,).is_err());
+    assert!(
+        NormativeInventory::new(
+            "bad-primary",
+            vec![NormativeCase {
+                scenario: "bad-primary".to_owned(),
+                primary_metric: "ttft_p99".to_owned(),
+                metrics: vec![NormativeMetric {
+                    metric: "ttft_p99".to_owned(),
+                    direction: RatioDirection::StaticOverDynamic,
+                }],
+            }],
+        )
+        .is_err()
+    );
 }
 
 #[test]
@@ -264,8 +444,14 @@ fn cv_noise_invalidates_without_converting_a_valid_failure_into_a_retry() {
         samples,
         invalidation_attempts: Vec::new(),
     };
-    let report = evaluate_simultaneous_gate(&[case], &SimultaneousGatePolicy::normative(), 9)
-        .expect("noise is an invalid report");
+    let (inventory, input) = authoritative_input(vec![case], 9);
+    let report = evaluate_simultaneous_gate(
+        &input,
+        &inventory,
+        &inventory.digest,
+        &SimultaneousGatePolicy::normative(),
+    )
+    .expect("noise is an invalid report");
     assert!(report.is_invalid);
     assert!(!report.passed);
     assert!(
@@ -323,34 +509,41 @@ fn pair_replacement_retains_raw_members_reason_order_and_caps_at_five() {
         samples: samples.clone(),
         invalidation_attempts: vec![invalidation.clone()],
     };
-    let report = evaluate_simultaneous_gate(&[case], &SimultaneousGatePolicy::normative(), 10)
-        .expect("one same-order infrastructure replacement is valid");
-    assert_eq!(report.invalidation_attempts, vec![invalidation.clone()]);
+    let (inventory, input) = authoritative_input(vec![case], 10);
+    let report = evaluate_simultaneous_gate(
+        &input,
+        &inventory,
+        &inventory.digest,
+        &SimultaneousGatePolicy::normative(),
+    )
+    .expect("one same-order infrastructure replacement is valid");
+    assert_eq!(report.invalidation_attempts.len(), 1);
 
-    let mut wrong_order = invalidation.clone();
-    wrong_order.member_order = [Variant::Dynamic, Variant::Static];
-    let wrong_case = PairedCase {
-        scenario: "http_streaming_c64".to_owned(),
-        primary_metric: "successful_requests_per_second".to_owned(),
-        samples: samples.clone(),
-        invalidation_attempts: vec![wrong_order],
-    };
+    let mut wrong_input = input.clone();
+    wrong_input.cases[0].invalidation_attempts[0]
+        .member_order
+        .reverse();
     assert!(
-        evaluate_simultaneous_gate(&[wrong_case], &SimultaneousGatePolicy::normative(), 10)
-            .is_err()
+        evaluate_simultaneous_gate(
+            &wrong_input,
+            &inventory,
+            &inventory.digest,
+            &SimultaneousGatePolicy::normative(),
+        )
+        .is_err()
     );
 
-    let mut product_failure = invalidation.clone();
-    product_failure.disposition = AttemptDisposition::ProductFailure;
-    let product_case = PairedCase {
-        scenario: "http_streaming_c64".to_owned(),
-        primary_metric: "successful_requests_per_second".to_owned(),
-        samples: samples.clone(),
-        invalidation_attempts: vec![product_failure],
-    };
+    let mut product_input = input.clone();
+    product_input.cases[0].invalidation_attempts[0].disposition =
+        AttemptDisposition::ProductFailure;
     assert!(
-        evaluate_simultaneous_gate(&[product_case], &SimultaneousGatePolicy::normative(), 10)
-            .is_err()
+        evaluate_simultaneous_gate(
+            &product_input,
+            &inventory,
+            &inventory.digest,
+            &SimultaneousGatePolicy::normative(),
+        )
+        .is_err()
     );
 
     let too_many = (1..=6)
@@ -365,9 +558,15 @@ fn pair_replacement_retains_raw_members_reason_order_and_caps_at_five() {
         samples,
         invalidation_attempts: too_many,
     };
+    let (capped_inventory, capped_input) = authoritative_input(vec![capped_case], 10);
     assert!(
-        evaluate_simultaneous_gate(&[capped_case], &SimultaneousGatePolicy::normative(), 10)
-            .is_err()
+        evaluate_simultaneous_gate(
+            &capped_input,
+            &capped_inventory,
+            &capped_inventory.digest,
+            &SimultaneousGatePolicy::normative(),
+        )
+        .is_err()
     );
 }
 
