@@ -226,3 +226,89 @@ async def test_stamped_instance_ids_separate_repeated_warmups() -> None:
         if result.phase_name == AGENTIC_WARMUP_PHASE_NAME
     ]
     assert len(warmup_results) == 2
+
+
+def _labelled_warmup_record(
+    timestamp_ns: int, *, phase_name: str, phase_instance_id: int
+) -> ServerMetricsRecord:
+    """A declared (indexed) warmup scrape carrying an explicit display label."""
+    return ServerMetricsRecord(
+        endpoint_url="http://server:8000/metrics",
+        timestamp_ns=timestamp_ns,
+        benchmark_phase=CreditPhase.WARMUP,
+        phase_index=0,
+        profiling_index=None,
+        phase_name=phase_name,
+        phase_kind="warmup",
+        phase_instance_id=phase_instance_id,
+        metrics={
+            "vllm:num_requests_running": MetricFamily(
+                type=PrometheusMetricType.GAUGE,
+                description="running",
+                samples=[MetricSample(value=float(timestamp_ns))],
+            )
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_divergent_phase_labels_split_one_occurrence() -> None:
+    """Export captures are keyed by display label, so labels must be unified upstream.
+
+    ``_phase_captures`` is keyed on ``(sample_phase_index, phase_name)``. Two
+    scrapes of the same phase occurrence that disagree on the cosmetic label
+    therefore become two exported ``ServerMetricsResults`` -- and because both
+    captures filter samples on the same ``sample_phase_index``, the two results
+    summarize the *same* samples under different names.
+
+    That is why ``ServerMetricsManager._stamped_like_active`` carries the active
+    phase's ``phase_name`` onto rebuilt scrape identities and not just the
+    occurrence id: the two publishers of a phase with no configured name fall
+    back to different labels (``"warmup"`` vs ``"warmup_0"``). This test pins the
+    accumulator behavior that makes that unification load-bearing.
+    """
+    accumulator = ServerMetricsAccumulator(
+        run=make_run_from_cli(
+            CLIConfig(
+                model_names=["model"],
+                endpoint_type=EndpointType.CHAT,
+                urls=["http://server:8000/v1/chat/completions"],
+            )
+        )
+    )
+    for record in (
+        _labelled_warmup_record(10, phase_name="warmup", phase_instance_id=1),
+        _labelled_warmup_record(20, phase_name="warmup", phase_instance_id=1),
+        _labelled_warmup_record(30, phase_name="warmup_0", phase_instance_id=1),
+    ):
+        await accumulator.process_record(record)
+
+    results = await accumulator.export_results(ExportContext(start_ns=10, end_ns=31))
+
+    assert results is not None
+    assert [result.phase_name for result in results.phase_results] == [
+        "warmup",
+        "warmup_0",
+    ]
+
+    unified = ServerMetricsAccumulator(
+        run=make_run_from_cli(
+            CLIConfig(
+                model_names=["model"],
+                endpoint_type=EndpointType.CHAT,
+                urls=["http://server:8000/v1/chat/completions"],
+            )
+        )
+    )
+    for record in (
+        _labelled_warmup_record(10, phase_name="warmup", phase_instance_id=1),
+        _labelled_warmup_record(20, phase_name="warmup", phase_instance_id=1),
+        _labelled_warmup_record(30, phase_name="warmup", phase_instance_id=1),
+    ):
+        await unified.process_record(record)
+
+    unified_results = await unified.export_results(
+        ExportContext(start_ns=10, end_ns=31)
+    )
+    assert unified_results is not None
+    assert [result.phase_name for result in unified_results.phase_results] == ["warmup"]

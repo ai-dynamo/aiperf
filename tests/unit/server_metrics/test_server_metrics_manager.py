@@ -1909,6 +1909,13 @@ class TestPhaseOccurrenceIdReachesEveryScrape:
 
         assert captured, "baseline scrape must have been taken"
         assert captured[0].instance_id == minted
+        assert captured[0].phase_name == "warmup", (
+            "the occurrence id alone is not enough: ServerMetricsAccumulator "
+            "keys its export captures on (sample_phase_index, phase_name), so a "
+            "baseline scrape keeping its divergent label exports this one warmup "
+            "twice -- see "
+            "test_named_phase_results.test_divergent_phase_labels_split_one_occurrence"
+        )
 
     @pytest.mark.asyncio
     async def test_identity_for_a_different_phase_is_not_stamped(
