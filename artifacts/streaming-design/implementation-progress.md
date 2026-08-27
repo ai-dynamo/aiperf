@@ -9,7 +9,7 @@ SPDX-License-Identifier: Apache-2.0
 - Normative specification: base `505efc06b0`, content-reconstruction amendment `3fea6f2fe0`
 - Approved executable plan set: base `e16aa2c71f802a9ad17a241464374e4d7b5ba19b`, content amendment final `3621ec56e5`, checkpoint run-authority amendment `f4bd60e95b`
 - Implementation start: `cd4a600e6c`
-- Status: Task 5B checkpoint backend integrated; Task 1D contracts in progress
+- Status: Task 1D contracts integrated; Task 1D-R reliability authority next
 
 ## Durable milestones
 
@@ -30,6 +30,8 @@ SPDX-License-Identifier: Apache-2.0
 | Task 5B backend budget/atomicity contract correction | Complete | Plan head `329fc592b2`; merge `aaeb93c612`; two exact-head reviews approved; implementation may start |
 | Reliability-first continuation amendment | Complete | Final head `68984da352`; merge `cf1ba627db`; spec and architecture review approved; inserts Task 1D-R after Task 1D and before every executable streaming path |
 | Task 5B — atomic checkpoint backend and results contract | Complete | Task head `0be64a1386`; merge `f761d6cd82`; backend 27/27, compatibility 27/27, memory units, doctests, clippy, and scoped rustfmt passed in the root final batch; spec and Rust-quality review approved |
+| Task 1D-R implementation-readiness correction | Complete | Final head `c3146fb476`; merge `5c06fd34d7`; spec and architecture review approved; closes versioned-head, pre-CAS receipt-root, move-only handoff, bounded legacy fixture, and stale-writer plan gaps |
+| Task 1D — object-safe streaming contracts | Complete | Task head `84ad2da32e` rebased as `90a88e04fe` plus final EOF fix; merge `1264653069`; root batch passed contracts 22/22, streaming units 16/16, doctests 16/16, clippy, and scoped rustfmt; spec and Rust-quality review approved |
 
 Baseline note: the full feature-off runtime suite reached execution after the
 repair and reported 1907 passing tests plus one pre-existing version-fixture
