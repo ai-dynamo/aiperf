@@ -6,7 +6,7 @@
 use aiperf_bench_tools::plugin_stats::{
     ExporterEvidenceMode, ExporterMember, ExporterMemberBinding, ExporterMemberEvidence,
     ExporterObservableKind, ExporterSampleContract, RetainedExporterEvidence,
-    validate_exporter_member_evidence,
+    validate_exporter_member_evidence, validate_exporter_pair_evidence,
 };
 
 const DIGEST: &str = "blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -17,7 +17,7 @@ const EMPTY_PROVENANCE: &[u8] = b"[]\n";
 const EMPTY_PROVENANCE_DIGEST: &str =
     "blake3:9fa8dc9570625be2be53d308f958332981ec8fb8137d3dd7ba0ae5da317eaa7d";
 
-fn paired_member_receipts() -> Vec<u8> {
+fn paired_member_receipts(member: ExporterMember, observable_digest: &str) -> Vec<u8> {
     let receipts = (0_u64..16)
         .map(|repetition_ordinal| {
             serde_json::json!({
@@ -25,15 +25,15 @@ fn paired_member_receipts() -> Vec<u8> {
                 "attempt_ordinal": 0,
                 "build_artifact_blake3": DIGEST,
                 "build_receipt_blake3": DIGEST,
-                "comparison_observable_blake3": RAW_OBSERVABLE_DIGEST,
+                "comparison_observable_blake3": observable_digest,
                 "corpus_blake3": DIGEST,
                 "experiment_identity_blake3": DIGEST,
-                "member": "dynamic",
+                "member": member,
                 "observable_kind": "artifact_tree",
                 "pair_id": "pair-00",
                 "processed_records": 100_000,
                 "provenance_receipt_blake3": EMPTY_PROVENANCE_DIGEST,
-                "raw_observable_blake3": RAW_OBSERVABLE_DIGEST,
+                "raw_observable_blake3": observable_digest,
                 "repetition_ordinal": repetition_ordinal,
                 "scenario_id": "exporter_100k",
                 "schema_version": 1
@@ -45,14 +45,14 @@ fn paired_member_receipts() -> Vec<u8> {
     bytes
 }
 
-fn binding() -> ExporterMemberBinding {
+fn binding(member: ExporterMember) -> ExporterMemberBinding {
     ExporterMemberBinding {
         mode: ExporterEvidenceMode::Paired,
         experiment_identity_blake3: DIGEST.to_owned(),
         attempt_ordinal: 0,
         scenario_id: "exporter_100k".to_owned(),
         pair_id: "pair-00".to_owned(),
-        member: ExporterMember::Dynamic,
+        member,
         corpus_blake3: DIGEST.to_owned(),
         observable_kind: ExporterObservableKind::ArtifactTree,
         observable_policy_blake3: DIGEST.to_owned(),
@@ -63,7 +63,7 @@ fn binding() -> ExporterMemberBinding {
 
 #[test]
 fn retained_observable_mutation_invalidates_the_exporter_member() {
-    let receipt_bytes = paired_member_receipts();
+    let receipt_bytes = paired_member_receipts(ExporterMember::Dynamic, RAW_OBSERVABLE_DIGEST);
     let retained = RetainedExporterEvidence {
         repetition_ordinal: 0,
         raw_observable_bytes: RAW_OBSERVABLE.to_vec(),
@@ -77,7 +77,7 @@ fn retained_observable_mutation_invalidates_the_exporter_member() {
 
     let summary = validate_exporter_member_evidence(
         &ExporterSampleContract::normative(),
-        &binding(),
+        &binding(ExporterMember::Dynamic),
         &evidence,
     )
     .expect("complete paired exporter evidence is valid");
@@ -88,12 +88,53 @@ fn retained_observable_mutation_invalidates_the_exporter_member() {
     forged.retained.raw_observable_bytes.push(b' ');
     let error = validate_exporter_member_evidence(
         &ExporterSampleContract::normative(),
-        &binding(),
+        &binding(ExporterMember::Dynamic),
         &forged,
     )
     .expect_err("retained raw bytes cannot be rewritten under the receipt");
     assert_eq!(
         error.to_string(),
         "retained raw observable digest does not match its repetition receipt"
+    );
+}
+
+#[test]
+fn comparison_observable_must_match_across_the_pair() {
+    let static_evidence = ExporterMemberEvidence {
+        repetition_receipt_bytes: paired_member_receipts(
+            ExporterMember::Static,
+            RAW_OBSERVABLE_DIGEST,
+        ),
+        retained: RetainedExporterEvidence {
+            repetition_ordinal: 0,
+            raw_observable_bytes: RAW_OBSERVABLE.to_vec(),
+            comparison_observable_bytes: RAW_OBSERVABLE.to_vec(),
+            provenance_receipt_bytes: EMPTY_PROVENANCE.to_vec(),
+        },
+    };
+    let dynamic_evidence = ExporterMemberEvidence {
+        repetition_receipt_bytes: paired_member_receipts(
+            ExporterMember::Dynamic,
+            EMPTY_PROVENANCE_DIGEST,
+        ),
+        retained: RetainedExporterEvidence {
+            repetition_ordinal: 0,
+            raw_observable_bytes: EMPTY_PROVENANCE.to_vec(),
+            comparison_observable_bytes: EMPTY_PROVENANCE.to_vec(),
+            provenance_receipt_bytes: EMPTY_PROVENANCE.to_vec(),
+        },
+    };
+
+    let error = validate_exporter_pair_evidence(
+        &ExporterSampleContract::normative(),
+        &binding(ExporterMember::Static),
+        &static_evidence,
+        &binding(ExporterMember::Dynamic),
+        &dynamic_evidence,
+    )
+    .expect_err("a pair cannot compare unequal observable bytes");
+    assert_eq!(
+        error.to_string(),
+        "static and dynamic exporter comparison observables differ"
     );
 }

@@ -813,6 +813,15 @@ pub struct ExporterMemberSummary {
     pub repetitions: Vec<ExporterRepetitionReceipt>,
 }
 
+/// Validated static and dynamic members for one exporter pair.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct ExporterPairSummary {
+    /// Validated static comparator member.
+    pub static_member: ExporterMemberSummary,
+    /// Validated dynamic plugin member.
+    pub dynamic_member: ExporterMemberSummary,
+}
+
 /// Validated exporter member summary.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -1454,6 +1463,54 @@ pub fn validate_exporter_member_evidence(
         comparison_observable_blake3,
         repetition_receipts_blake3: format!("blake3:{}", blake3::hash(&canonical)),
         repetitions,
+    })
+}
+
+/// Validate the two complete members of one paired exporter comparison.
+///
+/// This function validates evidence already captured by the controlled runner;
+/// it does not grant caller-supplied files or JSON authority to pass a gate.
+pub fn validate_exporter_pair_evidence(
+    contract: &ExporterSampleContract,
+    static_binding: &ExporterMemberBinding,
+    static_evidence: &ExporterMemberEvidence,
+    dynamic_binding: &ExporterMemberBinding,
+    dynamic_evidence: &ExporterMemberEvidence,
+) -> Result<ExporterPairSummary, PluginStatsError> {
+    if static_binding.mode != ExporterEvidenceMode::Paired
+        || dynamic_binding.mode != ExporterEvidenceMode::Paired
+        || static_binding.member != ExporterMember::Static
+        || dynamic_binding.member != ExporterMember::Dynamic
+    {
+        return Err(PluginStatsError::new(
+            "exporter pair must contain paired static and dynamic members",
+        ));
+    }
+    if static_binding.experiment_identity_blake3 != dynamic_binding.experiment_identity_blake3
+        || static_binding.attempt_ordinal != dynamic_binding.attempt_ordinal
+        || static_binding.scenario_id != dynamic_binding.scenario_id
+        || static_binding.pair_id != dynamic_binding.pair_id
+        || static_binding.corpus_blake3 != dynamic_binding.corpus_blake3
+        || static_binding.observable_kind != dynamic_binding.observable_kind
+        || static_binding.observable_policy_blake3 != dynamic_binding.observable_policy_blake3
+    {
+        return Err(PluginStatsError::new(
+            "static and dynamic exporter members do not share one immutable pair binding",
+        ));
+    }
+
+    let static_member =
+        validate_exporter_member_evidence(contract, static_binding, static_evidence)?;
+    let dynamic_member =
+        validate_exporter_member_evidence(contract, dynamic_binding, dynamic_evidence)?;
+    if static_member.comparison_observable_blake3 != dynamic_member.comparison_observable_blake3 {
+        return Err(PluginStatsError::new(
+            "static and dynamic exporter comparison observables differ",
+        ));
+    }
+    Ok(ExporterPairSummary {
+        static_member,
+        dynamic_member,
     })
 }
 
