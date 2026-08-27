@@ -9,7 +9,7 @@ SPDX-License-Identifier: Apache-2.0
 - Normative specification: base `505efc06b0`, content-reconstruction amendment `3fea6f2fe0`
 - Approved executable plan set: base `e16aa2c71f802a9ad17a241464374e4d7b5ba19b`, content amendment final `3621ec56e5`, checkpoint run-authority amendment `f4bd60e95b`
 - Implementation start: `cd4a600e6c`
-- Status: Task 1D-R policy and budget slices integrated; ledger and versioned checkpoint slices in progress
+- Status: paused at `handoff-2026-08-27.md`; Task 1D-R ledger requires one review fix wave before checkpoint integration
 
 ## Durable milestones
 
@@ -35,6 +35,9 @@ SPDX-License-Identifier: Apache-2.0
 | Task 1D-R budget primitives | Complete | Task head `e2e4d77703`; merge `979f7d4ff0`; root batch passed 74 integration tests, 16 streaming units, 16 doctests, clippy, and scoped rustfmt; spec and Rust-quality review approved |
 | Task 1D-R reliability policy | Complete | Task heads `66d4274946` and `472848142d`; merge `2757ca7e3e`; root batch passed contracts 22/22, policy 9/9, reliability units 8/8, streaming doctests 22/22, clippy, scoped rustfmt, and diff checks; spec and Rust-quality review approved |
 | Benchmark security-scope correction | Complete | Normative overlay `benchmark-security-scope-course-correction.md` approved; generation one retains BLAKE3 identity/integrity and existing provider/cellular boundaries, while encrypted resumable closed-loop state and direct base-streaming crypto dependencies are deferred |
+| Base-streaming direct crypto removal | Awaiting final gate | Clean branch `ajc/streaming-security-scope` at `39555dad68`; focused RED/GREEN and feature inventories passed; targeted Clippy status and rustfmt must be completed before review/merge |
+| Task 1D-R reliability ledger | Review rejected | Clean branch `ajc/streaming-task-1dr-ledger` at `a04a978059`; reported focused suites green, but end review found ten load-bearing checkpoint/authority/idempotency/budget/cancellation issues recorded in `handoff-2026-08-27.md` |
+| Task 1D-R versioned checkpoint authority | Waiting on corrected ledger | Clean branch `ajc/streaming-task-1dr-checkpoint` at `484eebfd32`; pre-ledger checkpoint implementation is committed, with only the intentionally stale v4 handled-cut golden red |
 
 Baseline note: the full feature-off runtime suite reached execution after the
 repair and reported 1907 passing tests plus one pre-existing version-fixture
