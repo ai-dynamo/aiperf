@@ -850,6 +850,7 @@ fn acquire_source_tree_authority(
 fn census_source_tree(source_root: &Path) -> Result<SourceTreeAuthorityV1, BuildPairError> {
     let mut entries = Vec::new();
     collect_source_tree_entries(source_root, source_root, &mut entries)?;
+    entries.sort_by(|left, right| left.path.cmp(&right.path));
     let receipt = SourceTreeReceiptV1 {
         schema_version: "plugin_complete_source_tree/v1".to_owned(),
         exclusions: Vec::new(),
