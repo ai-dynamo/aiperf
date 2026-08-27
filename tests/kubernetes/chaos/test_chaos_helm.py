@@ -31,7 +31,11 @@ from pathlib import Path
 import pytest
 
 from tests.kubernetes.chaos.chaos_injector import ChaosInjector
-from tests.kubernetes.conftest import K8sTestSettings, _create_helm_values
+from tests.kubernetes.conftest import (
+    K8sTestSettings,
+    _create_helm_values,
+    _gpu_node_tolerations,
+)
 from tests.kubernetes.helpers.helm import (
     HelmClient,
     HelmDeployer,
@@ -174,6 +178,7 @@ async def test_h1_install_job_uninstall_reinstall_is_clean(
         request_count=30,
         warmup_request_count=5,
         image=k8s_settings.aiperf_image,
+        tolerations=_gpu_node_tolerations() if k8s_settings.tolerate_gpu_nodes else [],
     )
 
     try:
@@ -280,6 +285,7 @@ async def test_h2_upgrade_with_inflight_job_preserves_cr(
         benchmark_duration=120.0,
         warmup_request_count=5,
         image=k8s_settings.aiperf_image,
+        tolerations=_gpu_node_tolerations() if k8s_settings.tolerate_gpu_nodes else [],
     )
     cr_name = "chaos-h2"
 
@@ -445,6 +451,9 @@ async def test_h3_invalid_values_fail_fast_and_recover(
             request_count=30,
             warmup_request_count=5,
             image=k8s_settings.aiperf_image,
+            tolerations=_gpu_node_tolerations()
+            if k8s_settings.tolerate_gpu_nodes
+            else [],
         )
         result = await good_deployer.run_job(config, name="h3-recovery", timeout=240)
         assert result.success, (
@@ -511,6 +520,9 @@ async def test_h4_missing_jobset_crd_surfaces_error(
             request_count=30,
             warmup_request_count=5,
             image=k8s_settings.aiperf_image,
+            tolerations=_gpu_node_tolerations()
+            if k8s_settings.tolerate_gpu_nodes
+            else [],
         )
         await deployer.create_job(config, name=cr_name, namespace=job_ns)
 

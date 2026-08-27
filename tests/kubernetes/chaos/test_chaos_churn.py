@@ -30,6 +30,7 @@ from tests.kubernetes.chaos.chaos_injector import (
     AIPERF_CLAIM_ANNOTATION,
     ChaosInjector,
 )
+from tests.kubernetes.conftest import _gpu_node_tolerations
 from tests.kubernetes.helpers.kubectl import KubectlClient
 from tests.kubernetes.helpers.operator import AIPerfJobConfig, OperatorDeployer
 
@@ -74,6 +75,7 @@ async def test_c10_rapid_create_delete_recreate_same_name(
         request_count=30,
         warmup_request_count=5,
         image=k8s_settings.aiperf_image,
+        tolerations=_gpu_node_tolerations() if k8s_settings.tolerate_gpu_nodes else [],
     )
     try:
         # Cycle 1: create + wait for JobSet + delete + wait drain.
@@ -165,6 +167,7 @@ async def test_c11_parallel_jobs_delete_subset(
         benchmark_duration=120.0,
         warmup_request_count=5,
         image=k8s_settings.aiperf_image,
+        tolerations=_gpu_node_tolerations() if k8s_settings.tolerate_gpu_nodes else [],
     )
     try:
         # Create both in parallel.

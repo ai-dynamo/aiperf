@@ -29,6 +29,7 @@ import yaml
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.kubernetes.constants import KueueLabels
+from tests.kubernetes.conftest import _gpu_node_tolerations
 from tests.kubernetes.helpers.benchmark import BenchmarkConfig, BenchmarkDeployer
 from tests.kubernetes.helpers.kubectl import KubectlClient
 from tests.kubernetes.helpers.kueue import KueueManager
@@ -272,6 +273,9 @@ class TestKueueOperatorIntegration:
             if k8s_settings.image_pull_secret
             else [],
             queue_name=kueue_queues,
+            tolerations=_gpu_node_tolerations()
+            if k8s_settings.tolerate_gpu_nodes
+            else [],
         )
         await kueue_manager.create_local_queue(
             name=kueue_queues,
@@ -319,6 +323,9 @@ class TestKueueOperatorIntegration:
             else [],
             queue_name=kueue_queues,
             priority_class="test-priority",
+            tolerations=_gpu_node_tolerations()
+            if k8s_settings.tolerate_gpu_nodes
+            else [],
         )
         await kueue_manager.create_local_queue(
             name=kueue_queues,

@@ -32,6 +32,7 @@ from tests.kubernetes.chaos.toxiproxy import (
     TOXIPROXY_SERVICE,
     ToxiproxyInjector,
 )
+from tests.kubernetes.conftest import _gpu_node_tolerations
 from tests.kubernetes.helpers.kubectl import KubectlClient
 from tests.kubernetes.helpers.operator import AIPerfJobConfig, OperatorDeployer
 
@@ -61,6 +62,7 @@ def longrun_config(k8s_settings) -> AIPerfJobConfig:
         benchmark_duration=120.0,
         warmup_request_count=5,
         image=k8s_settings.aiperf_image,
+        tolerations=_gpu_node_tolerations() if k8s_settings.tolerate_gpu_nodes else [],
     )
 
 
@@ -311,6 +313,7 @@ async def test_b3_mock_server_latency_injection(
             warmup_request_count=longrun_config.warmup_request_count,
             image=longrun_config.image,
             endpoint_url=toxiproxy_endpoint,
+            tolerations=longrun_config.tolerations,
         )
         await operator_ready.create_job(
             config=cfg, name=name, namespace=operator_job_namespace

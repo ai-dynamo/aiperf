@@ -27,6 +27,7 @@ import pytest
 import pytest_asyncio
 
 from tests.kubernetes.chaos.chaos_injector import ChaosInjector
+from tests.kubernetes.conftest import _gpu_node_tolerations
 from tests.kubernetes.helpers.kubectl import KubectlClient
 from tests.kubernetes.helpers.operator import AIPerfJobConfig, OperatorDeployer
 
@@ -59,6 +60,7 @@ def longrun_config(k8s_settings) -> AIPerfJobConfig:  # noqa: ANN001 - k8s_setti
         benchmark_duration=120.0,
         warmup_request_count=5,
         image=k8s_settings.aiperf_image,
+        tolerations=_gpu_node_tolerations() if k8s_settings.tolerate_gpu_nodes else [],
     )
 
 
@@ -71,6 +73,7 @@ def short_fetch_config(k8s_settings) -> AIPerfJobConfig:  # noqa: ANN001 - k8s_s
         benchmark_duration=60.0,
         warmup_request_count=5,
         image=k8s_settings.aiperf_image,
+        tolerations=_gpu_node_tolerations() if k8s_settings.tolerate_gpu_nodes else [],
     )
 
 

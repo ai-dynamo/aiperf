@@ -15,6 +15,7 @@ import yaml
 
 from aiperf.kubernetes.subproc import run_command
 from aiperf.operator.environment import OperatorEnvironment
+from tests.kubernetes.conftest import _gpu_node_tolerations
 from tests.kubernetes.helpers.kubectl import KubectlClient
 from tests.kubernetes.helpers.operator import AIPerfJobConfig, OperatorDeployer
 
@@ -113,30 +114,31 @@ async def _submit_sweep(
     image: str,
     kube_context: str,
     image_pull_policy: str = "IfNotPresent",
+    tolerations: list[dict] | None = None,
 ) -> None:
-    result = await run_command(
-        [
-            "uv",
-            "run",
-            "aiperf",
-            "kube",
-            "sweep",
-            "--config",
-            str(config_path),
-            "--name",
-            name,
-            "--namespace",
-            namespace,
-            "--image",
-            image,
-            "--image-pull-policy",
-            image_pull_policy,
-            "--kube-context",
-            kube_context,
-            "--detach",
-        ],
-        timeout=90,
-    )
+    cmd = [
+        "uv",
+        "run",
+        "aiperf",
+        "kube",
+        "sweep",
+        "--config",
+        str(config_path),
+        "--name",
+        name,
+        "--namespace",
+        namespace,
+        "--image",
+        image,
+        "--image-pull-policy",
+        image_pull_policy,
+        "--kube-context",
+        kube_context,
+        "--detach",
+    ]
+    if tolerations:
+        cmd.extend(["--tolerations", orjson.dumps(tolerations).decode()])
+    result = await run_command(cmd, timeout=90)
     assert result.ok, (
         f"aiperf kube sweep failed:\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}"
     )
@@ -274,6 +276,9 @@ async def test_grid_sweep_completes_and_harvests_aggregate(
         image=k8s_settings.aiperf_image,
         kube_context=kubectl.context,
         image_pull_policy=k8s_settings.image_pull_policy,
+        tolerations=_gpu_node_tolerations()
+        if k8s_settings.tolerate_gpu_nodes
+        else None,
     )
     try:
         doc = await _wait_for_durable_sweep(
@@ -403,6 +408,9 @@ async def test_adaptive_sweep_runs_shared_planner_and_archives_history(
         image=k8s_settings.aiperf_image,
         kube_context=kubectl.context,
         image_pull_policy=k8s_settings.image_pull_policy,
+        tolerations=_gpu_node_tolerations()
+        if k8s_settings.tolerate_gpu_nodes
+        else None,
     )
     try:
         doc = await _wait_for_durable_sweep(
@@ -494,6 +502,9 @@ async def test_sobol_sweep_archives_sampling_design_with_parent_epoch(
         image=k8s_settings.aiperf_image,
         kube_context=kubectl.context,
         image_pull_policy=k8s_settings.image_pull_policy,
+        tolerations=_gpu_node_tolerations()
+        if k8s_settings.tolerate_gpu_nodes
+        else None,
     )
     try:
         doc = await _wait_for_durable_sweep(
@@ -562,6 +573,9 @@ async def test_multi_run_without_parameter_axis_uses_one_cell_sweep(
         image=k8s_settings.aiperf_image,
         kube_context=kubectl.context,
         image_pull_policy=k8s_settings.image_pull_policy,
+        tolerations=_gpu_node_tolerations()
+        if k8s_settings.tolerate_gpu_nodes
+        else None,
     )
     try:
         doc = await _wait_for_durable_sweep(

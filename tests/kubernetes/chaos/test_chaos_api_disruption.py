@@ -45,6 +45,7 @@ from tests.kubernetes.chaos.toxiproxy import (
     TOXIPROXY_CONTROLLER_HTTP_PORT,
     ToxiproxyInjector,
 )
+from tests.kubernetes.conftest import _gpu_node_tolerations
 from tests.kubernetes.helpers.kubectl import KubectlClient
 from tests.kubernetes.helpers.operator import AIPerfJobConfig, OperatorDeployer
 
@@ -106,6 +107,7 @@ async def test_c15_pause_apiserver_30s_recovers(
         benchmark_duration=120.0,
         warmup_request_count=5,
         image=k8s_settings.aiperf_image,
+        tolerations=_gpu_node_tolerations() if k8s_settings.tolerate_gpu_nodes else [],
     )
     try:
         await operator_ready_apiserver_toxiproxy_routed.create_job(
@@ -167,6 +169,7 @@ async def test_c16_block_operator_controller_http_falls_back(
         benchmark_duration=120.0,
         warmup_request_count=5,
         image=k8s_settings.aiperf_image,
+        tolerations=_gpu_node_tolerations() if k8s_settings.tolerate_gpu_nodes else [],
     )
 
     # Sanity-check: operator was deployed through the shared fixture, so

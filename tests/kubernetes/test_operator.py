@@ -21,7 +21,7 @@ from dataclasses import replace
 
 import pytest
 
-from tests.kubernetes.conftest import K8sTestSettings
+from tests.kubernetes.conftest import K8sTestSettings, _gpu_node_tolerations
 from tests.kubernetes.helpers.deadline import (
     await_before_deadline,
     delete_and_observe_until_deadline,
@@ -438,6 +438,9 @@ class TestOperatorCancellation:
             image_pull_secrets=[k8s_settings.image_pull_secret]
             if k8s_settings.image_pull_secret
             else [],
+            tolerations=_gpu_node_tolerations()
+            if k8s_settings.tolerate_gpu_nodes
+            else [],
         )
 
         result = await operator_ready.create_job(cancel_test_config)
@@ -518,6 +521,9 @@ class TestOperatorErrorHandling:
             image_pull_policy=k8s_settings.image_pull_policy,
             image_pull_secrets=[k8s_settings.image_pull_secret]
             if k8s_settings.image_pull_secret
+            else [],
+            tolerations=_gpu_node_tolerations()
+            if k8s_settings.tolerate_gpu_nodes
             else [],
         )
 
@@ -642,6 +648,9 @@ class TestOperatorErrorHandling:
             image_pull_policy=k8s_settings.image_pull_policy,
             image_pull_secrets=[k8s_settings.image_pull_secret]
             if k8s_settings.image_pull_secret
+            else [],
+            tolerations=_gpu_node_tolerations()
+            if k8s_settings.tolerate_gpu_nodes
             else [],
         )
 
@@ -907,6 +916,9 @@ class TestOperatorScaling:
             image_pull_secrets=[k8s_settings.image_pull_secret]
             if k8s_settings.image_pull_secret
             else [],
+            tolerations=_gpu_node_tolerations()
+            if k8s_settings.tolerate_gpu_nodes
+            else [],
         )
 
         result = await operator_ready.run_job(config, timeout=180)
@@ -935,6 +947,9 @@ class TestOperatorScaling:
             image_pull_policy=k8s_settings.image_pull_policy,
             image_pull_secrets=[k8s_settings.image_pull_secret]
             if k8s_settings.image_pull_secret
+            else [],
+            tolerations=_gpu_node_tolerations()
+            if k8s_settings.tolerate_gpu_nodes
             else [],
         )
 

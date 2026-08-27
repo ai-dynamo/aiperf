@@ -21,7 +21,7 @@ from dataclasses import replace
 
 import pytest
 
-from tests.kubernetes.conftest import K8sTestSettings
+from tests.kubernetes.conftest import K8sTestSettings, _gpu_node_tolerations
 from tests.kubernetes.helpers.deadline import (
     await_before_deadline,
     delete_and_observe_until_deadline,
@@ -498,6 +498,9 @@ class TestHelmErrorHandling:
             image_pull_secrets=[k8s_settings.image_pull_secret]
             if k8s_settings.image_pull_secret
             else [],
+            tolerations=_gpu_node_tolerations()
+            if k8s_settings.tolerate_gpu_nodes
+            else [],
         )
 
         result = await helm_deployed.create_job(
@@ -744,6 +747,9 @@ class TestHelmScaling:
             image_pull_secrets=[k8s_settings.image_pull_secret]
             if k8s_settings.image_pull_secret
             else [],
+            tolerations=_gpu_node_tolerations()
+            if k8s_settings.tolerate_gpu_nodes
+            else [],
         )
 
         result = await helm_deployed.run_job(config, timeout=180)
@@ -769,6 +775,9 @@ class TestHelmScaling:
             image_pull_policy=k8s_settings.image_pull_policy,
             image_pull_secrets=[k8s_settings.image_pull_secret]
             if k8s_settings.image_pull_secret
+            else [],
+            tolerations=_gpu_node_tolerations()
+            if k8s_settings.tolerate_gpu_nodes
             else [],
         )
 
