@@ -83,6 +83,15 @@ class ResultsRouter(MessageBusClientMixin, BaseRouter):
 async def get_results(component: ResultsDep) -> BenchmarkResultsResponse:
     """Get final benchmark results."""
     if component._final_results is not None:
+        if not component._benchmark_complete:
+            # PROCESS_ALL_RESULTS can land first: it is published by
+            # RecordsManager, BENCHMARK_COMPLETE by the controller, and there
+            # is no ordering guarantee between them (the grace window below
+            # exists for the opposite arrival order). Reporting COMPLETE here
+            # would defeat the export-safety gate in `_on_benchmark_complete`
+            # and tell a client to fetch artifact files the controller has not
+            # finished writing.
+            return BenchmarkResultsResponse(status=BenchmarkStatus.RUNNING)
         status = (
             BenchmarkStatus.CANCELLED
             if component._final_results.results.was_cancelled

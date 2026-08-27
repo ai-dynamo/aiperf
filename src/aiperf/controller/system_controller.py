@@ -637,25 +637,38 @@ class SystemController(SignalHandlerMixin, BaseService):
             return
 
         if self._result_join_coordinator.evict_service(service_id, reason):
-            self.warning(
-                f"Evicted '{service_id}' from the result-join barrier ({reason}); "
-                "results for this producer will be missing from the run"
-            )
-            self._exit_errors.append(
-                ExitErrorInfo(
-                    error_details=ErrorDetails(
-                        message=(
-                            f"Result producer '{service_id}' died before reporting "
-                            f"({reason}). The exported results are missing this "
-                            "producer's share of the run and are not comparable to "
-                            "a complete benchmark."
-                        ),
-                        type="ProducerReaped",
-                    ),
-                    operation="result_producer_reaped",
-                    service_id=service_id,
+            # Membership in the barrier and *degradation* are different
+            # questions, and the eviction return answers only the first: a
+            # producer that already delivered every domain it owed (marked done
+            # via complete_domain) is fully represented in the export, so its
+            # later death must not report the run as missing its share.
+            # ``evicted`` is the coordinator's record of who was still pending,
+            # so consult that rather than bare barrier membership.
+            if service_id in self._result_join_coordinator.evicted:
+                self.warning(
+                    f"Evicted '{service_id}' from the result-join barrier ({reason}); "
+                    "results for this producer will be missing from the run"
                 )
-            )
+                self._exit_errors.append(
+                    ExitErrorInfo(
+                        error_details=ErrorDetails(
+                            message=(
+                                f"Result producer '{service_id}' died before reporting "
+                                f"({reason}). The exported results are missing this "
+                                "producer's share of the run and are not comparable to "
+                                "a complete benchmark."
+                            ),
+                            type="ProducerReaped",
+                        ),
+                        operation="result_producer_reaped",
+                        service_id=service_id,
+                    )
+                )
+            else:
+                self.info(
+                    f"Producer '{service_id}' died after delivering all of its "
+                    f"results ({reason}); the export is unaffected"
+                )
             self._forget_reaped_service(service_id)
             await self._check_and_trigger_shutdown()
             return

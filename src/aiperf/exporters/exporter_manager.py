@@ -3,6 +3,7 @@
 
 import asyncio
 import io
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -311,10 +312,17 @@ class ExporterManager(AIPerfLoggerMixin):
             error_summary=phase_result.error_summary,
             branch_stats=phase_result.branch_stats,
         )
-        artifact_writers: tuple[tuple[str, Any], ...] = (
+        # Factories, not coroutine objects: the loop below awaits these one at
+        # a time, and a BaseException (notably CancelledError, which the
+        # per-artifact ``except Exception`` deliberately does not swallow)
+        # unwinds out of this function. Pre-building all four coroutines meant
+        # the ones not yet reached were discarded unawaited -- abandoned work
+        # plus a "coroutine was never awaited" RuntimeWarning. Building each
+        # one only when it is about to be awaited makes that unreachable.
+        artifact_writers: tuple[tuple[str, Callable[[], Awaitable[None]]], ...] = (
             (
                 "metrics_json",
-                self._write_phase_export(
+                lambda: self._write_phase_export(
                     exporter_cls=MetricsJsonExporter,
                     phase_profile=phase_profile,
                     file_path=phase_dir
@@ -325,7 +333,7 @@ class ExporterManager(AIPerfLoggerMixin):
             ),
             (
                 "metrics_csv",
-                self._write_phase_export(
+                lambda: self._write_phase_export(
                     exporter_cls=MetricsCsvExporter,
                     phase_profile=phase_profile,
                     file_path=phase_dir
@@ -336,7 +344,7 @@ class ExporterManager(AIPerfLoggerMixin):
             ),
             (
                 "gpu_telemetry_json",
-                self._write_phase_observability_export(
+                lambda: self._write_phase_observability_export(
                     phase_result=phase_result,
                     phase_dir=phase_dir,
                     manifest_entry=manifest_entry,
@@ -348,7 +356,7 @@ class ExporterManager(AIPerfLoggerMixin):
             ),
             (
                 "server_metrics_json",
-                self._write_phase_observability_export(
+                lambda: self._write_phase_observability_export(
                     phase_result=phase_result,
                     phase_dir=phase_dir,
                     manifest_entry=manifest_entry,
@@ -360,9 +368,9 @@ class ExporterManager(AIPerfLoggerMixin):
             ),
         )
         failures: list[ExporterFailure] = []
-        for manifest_key, artifact_coro in artifact_writers:
+        for manifest_key, make_artifact_coro in artifact_writers:
             try:
-                await artifact_coro
+                await make_artifact_coro()
             except Exception as exc:  # noqa: BLE001 - recorded as a per-artifact failure
                 failures.append(
                     ExporterFailure(
