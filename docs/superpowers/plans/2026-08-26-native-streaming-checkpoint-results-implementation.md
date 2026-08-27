@@ -2258,15 +2258,23 @@ async fn every_pre_current_fault_preserves_previous_generation() {
         let backend = support::local_backend(directory.path(), None);
         let run = support::run_id(1);
         let first = support::commit_empty(&backend, run, None, 1).await.unwrap();
-        let transaction = support::fully_staged_local_transaction(
+        let opened = backend
+            .open_latest(&run, &support::expectations(run))
+            .await
+            .unwrap()
+            .unwrap();
+        let (transaction, prepared_results) = support::fully_staged_local_transaction(
             &backend,
             run,
-            Some(first.current_v4_generation()),
+            Some(support::current_v4_predecessor(&opened)),
         ).await;
         backend.inject_fault(fault);
         assert_eq!(
             transaction
-                .commit(support::metadata_with_lineage(Some(first.generation()), 2))
+                .commit(
+                    support::metadata_with_lineage(Some(first.generation()), 2),
+                    prepared_results,
+                )
                 .await
                 .unwrap_err(),
             support::injected_local_fault_error(fault),
@@ -2808,7 +2816,7 @@ if let Some(published) = self.last_committed.as_ref() {
 }
 let views = self.collect_views(&barrier).await?;
 self.plan.validate_exact_set(&views)?;
-let expected = self.expected.clone();
+let expected = self.open_verified_current_predecessor().await?;
 let mut transaction = self.backend.begin_generation(
     self.run,
     expected,
@@ -2817,9 +2825,14 @@ let mut transaction = self.backend.begin_generation(
 for view in views {
     transaction.stage_participant(view).await?;
 }
-transaction.stage_results(result_partitions).await?;
-let committed = transaction.commit(self.metadata(&barrier)?).await?;
-self.expected = Some(committed.current_v4_generation());
+let mut issue_receipts = None;
+let prepared_results = transaction
+    .stage_results(result_partitions, &mut issue_receipts)
+    .await?;
+self.reporter.bind_prepared_result_epoch(&prepared_results)?;
+let committed = transaction
+    .commit(self.metadata(&barrier)?, prepared_results)
+    .await?;
 self.last_committed = Some(PublishedBarrier {
     barrier: barrier.clone(),
     committed: committed.clone(),
@@ -2834,6 +2847,11 @@ Ok(committed)
 ```
 
 Missing/duplicate participants fail before `begin_generation`. The coordinator
+derives each non-fresh expected predecessor by opening and verifying the current
+head, matching its current-v4 view, and calling the sealed public reader
+accessor; it never clones or caches predecessor authority. A legacy view fails
+before `begin_generation`.
+The coordinator
 requires exactly one Task-6B issue-receipt result partition whose run, barrier,
 receipt root, and handled cut equal the reliability participant view. It stages
 that partition in the same transaction; it never accepts a detached receipt
@@ -3324,6 +3342,11 @@ pub struct WorkerResultEpoch {
     pub partitions: Vec<ResultPartition>,
 }
 
+pub struct PreparedEpochResults {
+    pub partitions: Vec<ResultPartition>,
+    pub issue_receipts: Option<PreparedIssueReceiptResultPartition>,
+}
+
 impl EpochResultCoordinator {
     pub fn observe_terminal(
         &mut self,
@@ -3333,7 +3356,7 @@ impl EpochResultCoordinator {
         &mut self,
         barrier: &CheckpointBarrier,
         issue_receipts: PreparedIssueReceiptPartitionView,
-    ) -> Result<Vec<ResultPartition>, ResultPlaneError>;
+    ) -> Result<PreparedEpochResults, ResultPlaneError>;
     pub fn committed_partial(
         &self,
         generation: &CommittedCheckpointGeneration,
@@ -3383,6 +3406,10 @@ released only after Task 5B has acquired both aggregate descriptor authorities.
 
 Before production changes add
 `issue_receipts_rotate_and_restore_exactly_once`,
+`issue_receipt_partition_moves_payload_and_leases_without_copy`,
+`pre_cas_result_epoch_binding_matches_committed_receipt_root`,
+`cancelled_or_dropped_issue_receipt_stage_retains_identical_reporter_retry`,
+`mismatched_committed_result_index_root_retains_detailed_receipts`,
 `quarantine_hole_and_failed_action_are_excluded_from_success_membership`, and
 `conflicting_issue_membership_cannot_publish_result_epoch` from the reliability
 matrix below. Also add
@@ -3476,7 +3503,7 @@ CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime -
 
 - [ ] **Step 3: Implement bounded epoch ownership**
 
-Rotate each worker `MetricsAccumulator` and configured exact/raw/session/provenance projections at the barrier. Consume the move-only issue-receipt view into exactly one budget-owned result partition without cloning detailed receipts. The stable result participant checkpoints accumulator epochs, index root, terminal horizon, handled-issue root, and all bounded provisional descriptors/leases. Require the barrier `HandledIssueCut`, reliability participant state, issue partition root, and separately budgeted prepared tombstone install acknowledgement, including exact P1B view revision, to match before returning partitions. The acknowledgement is a non-destructive P1B projection; neither the tombstone nor its map moves into 6B. Hold completions above `H` in immutable provisional partitions charged to prepare/provisional budgets; never link them from a committed root until the hole closes. On exhaustion, fence new admission and return the authored overload decision. Partial views page and merge only committed segments through `H`; provisional dashboard data is separately labeled and excluded from totals.
+Rotate each worker `MetricsAccumulator` and configured exact/raw/session/provenance projections at the barrier. Consume the move-only issue-receipt view through `into_result_partition`; return that private wrapper in `PreparedEpochResults.issue_receipts` rather than extracting or copying its payload. Task 5E passes both mutable fields to the Task 1D-R `stage_results` overlay, synchronously calls `reporter.bind_prepared_result_epoch(&prepared_results)` after staging returns, and moves the same `PreparedResultEpoch` into `commit`. The stable result participant checkpoints accumulator epochs, index root, terminal horizon, handled-issue root, and all bounded provisional descriptors/leases. Require the barrier `HandledIssueCut`, reliability participant state, issue partition root, and separately budgeted prepared tombstone install acknowledgement, including exact P1B view revision, to match before returning partitions. The acknowledgement is a non-destructive P1B projection; neither the tombstone nor its map moves into 6B. Hold completions above `H` in immutable provisional partitions charged to prepare/provisional budgets; never link them from a committed root until the hole closes. On exhaustion, fence new admission and return the authored overload decision. Partial views page and merge only committed segments through `H`; provisional dashboard data is separately labeled and excluded from totals.
 
 - [ ] **Step 4: Verify GREEN**
 
@@ -3520,6 +3547,8 @@ Add `report_lease_releases_only_after_authoritative_report_commit`,
 `retry_ordinal_overflow_refuses_before_store_io`, and
 `reopened_status_and_receipt_retain_exact_encoded_and_parsed_charges`,
 `reporter_prepares_exactly_charged_export_failure_from_retained_receipt`,
+`export_failure_consumes_into_persistence_without_reallocation_or_lease_split`,
+`status_store_persists_encoded_export_receipt_while_intact_owner_is_live`,
 `reporter_rejects_foreign_run_generation_sink_or_ordinal`,
 `durable_writer_and_probe_are_the_only_output_proof_minting_paths`, and
 `unbudgeted_or_forged_export_tokens_are_unnameable`,
@@ -3783,7 +3812,9 @@ needed by the host classifier. A backend never chooses a run disposition.
 Task 5B's finalized transaction, prevalidation, budget, and publication text
 above remains its landed pre-1D-R contract. Foundation Task 1D-R owns this
 subsequent signature/type substitution in `checkpoint_backend.rs`, memory
-support, and backend tests; no 5B validation order or ownership changes:
+support, and backend tests. Only pre-fence prepared authority signatures change;
+Task 5B's validation, acquisition, fault-point, head-comparison, and publication
+order do not:
 
 ```rust
 // Task 1D-R extends the existing private receipt fields with this committed
@@ -3802,17 +3833,11 @@ impl CommittedParticipantReceipt {
     pub fn result_index_root(&self) -> &ContentDigest { &self.result_index_root }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq)]
 pub struct CurrentV4CheckpointGeneration(CheckpointGeneration);
 
 impl CurrentV4CheckpointGeneration {
     pub fn generation(&self) -> &CheckpointGeneration { &self.0 }
-}
-
-impl CommittedCheckpointGeneration {
-    pub(crate) fn current_v4_generation(&self) -> CurrentV4CheckpointGeneration {
-        CurrentV4CheckpointGeneration(self.generation().clone())
-    }
 }
 
 pub struct LeasedCheckpointGeneration(LeasedCheckpointGenerationInner);
@@ -3825,6 +3850,25 @@ enum LeasedCheckpointGenerationInner {
 pub enum LeasedCheckpointGenerationView<'a> {
     CurrentV4(&'a dyn LeasedGenerationReader),
     LegacyV3ReadOnly(&'a dyn LegacyV3LeasedGenerationReader),
+}
+
+#[async_trait(?Send)]
+pub trait LeasedGenerationReader: sealed::LeasedGenerationReader {
+    fn generation(&self) -> &CommittedCheckpointGeneration;
+    fn current_v4_predecessor(&self) -> CurrentV4CheckpointGeneration;
+    async fn scan_result_index(
+        &self,
+        after: Option<ResultIndexCursor>,
+        budget: ResultIndexReadBudget,
+    ) -> Result<ResultIndexPage, CheckpointError>;
+    async fn read_segment(
+        &self,
+        descriptor: &ResultSegmentDescriptor,
+    ) -> Result<ResultSegmentReader, CheckpointError>;
+    async fn read_participant(
+        &self,
+        descriptor: &ParticipantStateDescriptor,
+    ) -> Result<CommittedParticipantState, CheckpointError>;
 }
 
 // Defined in checkpoint.rs, beside CommittedParticipantState.
@@ -3882,10 +3926,6 @@ impl LeasedCheckpointGeneration {
     pub fn view(&self) -> LeasedCheckpointGenerationView<'_>;
 }
 
-pub(crate) trait CurrentV4PredecessorProjection {
-    fn current_v4_predecessor(&self) -> Option<CurrentV4CheckpointGeneration>;
-}
-
 #[async_trait(?Send)]
 pub trait LegacyV3LeasedGenerationReader {
     /// Returns the strictly decoded semantic generation for read/export only.
@@ -3918,6 +3958,24 @@ pub trait StreamingCheckpointBackend {
         expected: Option<CurrentV4CheckpointGeneration>,
         expectations: CheckpointGenerationExpectations,
     ) -> Result<Box<dyn StreamingGenerationTransaction>, CheckpointError>;
+}
+
+#[async_trait(?Send)]
+pub trait StreamingGenerationTransaction {
+    async fn stage_participant(
+        &mut self,
+        state: PreparedParticipantState,
+    ) -> Result<(), CheckpointError>;
+    async fn stage_results(
+        &mut self,
+        partitions: &mut Vec<ResultPartition>,
+        issue_receipts: &mut Option<PreparedIssueReceiptResultPartition>,
+    ) -> Result<PreparedResultEpoch, CheckpointError>;
+    async fn commit(
+        self: Box<Self>,
+        metadata: CheckpointCommitMetadata,
+        prepared_results: PreparedResultEpoch,
+    ) -> Result<CommittedCheckpointGeneration, CheckpointError>;
 }
 ```
 
@@ -3969,13 +4027,39 @@ cannot initialize a participant or be promoted through a public conversion:
 /// ```
 ````
 
+`LegacyV3LeasedGenerationReader` also owns this compiled negative example, so
+the public current-v4 successor path cannot accidentally appear on its surface:
+
+````rust
+/// ```compile_fail
+/// # use aiperf_runtime::streaming::checkpoint_backend::LegacyV3LeasedGenerationReader;
+/// # fn cannot_follow(reader: &dyn LegacyV3LeasedGenerationReader) {
+/// let _ = reader.current_v4_predecessor();
+/// # }
+/// ```
+````
+
+`CurrentV4CheckpointGeneration` separately proves that successor authority is
+move-only:
+
+````rust
+/// ```compile_fail
+/// # use aiperf_runtime::streaming::checkpoint_backend::CurrentV4CheckpointGeneration;
+/// # fn cannot_clone(authority: CurrentV4CheckpointGeneration) {
+/// let _second = authority.clone();
+/// # }
+/// ```
+````
+
 The wrapper and inner fields are private. `VersionedLeasedGenerationReader` is
 sealed and implemented only for the opaque wrapper by exhaustive private-inner dispatch.
 Its common methods expose only generation/result reads; `view()` selects one
 of two non-convertible borrowed reader authorities. Current-v4 participant
-reads remain on `LeasedGenerationReader`. Legacy-v3 participant reads return
-private-field `LegacyParticipantState` from `checkpoint.rs`, which has
-borrow-only descriptor/byte
+reads and the only public `current_v4_predecessor` mint remain on sealed
+`LeasedGenerationReader`. The returned `CurrentV4CheckpointGeneration` is
+move-only and can only be moved into `begin_generation`; the legacy reader trait
+has no such method. Legacy-v3 participant reads return private-field
+`LegacyParticipantState` from `checkpoint.rs`, which has borrow-only descriptor/byte
 access for export and no conversion into `CommittedParticipantState`.
 Task 1D-R retires the landed public storage constructor
 `CommittedParticipantState::new`: its replacement
@@ -3984,9 +4068,9 @@ minted only while a verified current-v4 reader checks a reachable descriptor.
 The context binds run, full generation, and descriptor digest. Copying a legacy
 descriptor/payload into a new budget lease therefore still cannot construct
 initializer authority.
-The v4 path alone has a crate-private checked projection to
-`CurrentV4CheckpointGeneration`; the v3 decoder never constructs
-`CommittedCheckpointGeneration`. Task 1D-R changes
+The verified v4 reader alone can mint `CurrentV4CheckpointGeneration`; the v3
+decoder never constructs `CommittedCheckpointGeneration` or implements the
+sealed current reader trait. Task 1D-R changes
 `FrozenGenerationTransactionInputs.expected`, `compare_expected`, and memory
 head comparison to the current-v4 wrapper. `CheckpointCommitMetadata.previous`
 remains an untrusted raw lineage claim and is only compared with the generation
@@ -4006,45 +4090,66 @@ failed explicit-v4 verification, a v4-shaped cut without the v4 discriminator,
 or v3 bytes carrying handled roots return `ObjectVerification` and never retry
 the v3 decoder.
 
-Memory integration tests use the doc-hidden checked
-`LegacyV3FixtureObject`, `LegacyV3ReadOnlyFixture::new`, and
+Memory integration tests use the doc-hidden precharged
+`LegacyV3FixturePrecharge`, its `compact_object`/`collect_inventory`/`finish`
+methods, and
 `MemoryCheckpointBackend::import_legacy_v3_read_only_fixture` seam specified by
 `artifacts/streaming-design/task-1dr-implementation-readiness-correction.md`.
-It bounds and verifies the complete fixture, acquires all missing storage before
-one mutation, requires an empty run head, and can install only
-`LegacyV3ReadOnly`; it cannot overwrite a head or mint current authority.
+It atomically admits the whole fixture under explicit authored item/byte limits
+before any compact copy or boxed inventory allocation, verifies the complete
+fixture, acquires all
+missing storage before one mutation, requires an empty run head, and can install
+only `LegacyV3ReadOnly`; it cannot overwrite a head or mint current authority.
 
-The crate-private projection is tested only beside its implementation:
+Shared public test support drives a successor only through a verified current
+reader:
 
 ```rust
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn current_v4_projection_exists_only_for_verified_v4() {
-        let opened = support::opened_current_v4();
-        assert_eq!(opened.current_v4_predecessor().unwrap().generation(), opened.generation());
-    }
-
-    #[test]
-    fn legacy_v3_has_no_current_predecessor_projection() {
-        let opened = support::opened_legacy_v3();
-        assert!(opened.current_v4_predecessor().is_none());
+pub fn current_v4_predecessor(
+    opened: &LeasedCheckpointGeneration,
+) -> CurrentV4CheckpointGeneration {
+    match opened.view() {
+        LeasedCheckpointGenerationView::CurrentV4(reader) => {
+            reader.current_v4_predecessor()
+        }
+        LeasedCheckpointGenerationView::LegacyV3ReadOnly(_) => {
+            panic!("fixture expected a verified current-v4 generation")
+        }
     }
 }
 ```
 
-Public integration tests assert only `CheckpointGenerationStorageVersion` and
-compile-fail inability to pass `LeasedCheckpointGeneration` where
-`begin_generation` requires `CurrentV4CheckpointGeneration`; they never import
-or invoke `CurrentV4PredecessorProjection`.
+Successor integration tests open and verify current-v4, perform required reads,
+call that helper, and move its result into `begin_generation`. Public tests also
+assert `CheckpointGenerationStorageVersion`, compile-fail inability to pass
+`LeasedCheckpointGeneration` directly, and compile-fail absence of
+`current_v4_predecessor` on `LegacyV3LeasedGenerationReader`. No crate-private
+projection remains.
+
+The `stage_results` overlay is the sole special-partition handoff. Refusal or
+cancellation leaves the mutable option and ordinary partition vector unchanged;
+success takes both into the staged index and returns the exact non-Clone
+`PreparedResultEpoch`. Its private `PreparedIssueReceiptEpochBinding` contains
+the descriptor/receipt/handled-cut roots, the computed result-index root, and
+the moved view lease. Task 6B synchronously calls
+`StreamingIssueReporter::bind_prepared_result_epoch(&prepared_results)` before
+commit. Commit consumes that same prepared result authority, compares it with
+the internally staged root, and passes the binding into candidate
+prevalidation. This adds no mutation, await, or fallible operation after Task
+5B's existing final publication fence.
+Task 1D-R removes public `PreparedResultEpoch::into_parts`; the existing
+root/descriptors/count/length borrow accessors remain, while commit and its
+crate-private transaction consumer are the only operations that can consume and
+separate the complete prepared epoch.
 
 ### Owned interfaces
 
 Task 6C1 creates `rust/runtime/src/streaming/results/sink_status.rs`; Task 6D
 extends it for report/export sinks without changing checkpoint authority. It
 consumes Task 1D-R's `ResultSinkAttemptOutcome`,
-`PreparedExportAttemptFailure`, `BudgetOwnedExportIssueReceipt`, and checked
-reporter method rather than redeclaring or reconstructing them:
+`PreparedExportAttemptFailure`, `PreparedExportReceiptPersistence`,
+`BudgetOwnedExportIssueReceipt`, and checked reporter method rather than
+redeclaring or reconstructing them:
 
 Task 6C1 extends `ResultPlaneError` with the explicit non-string variants
 `ExportIssuePreparation(StreamingReliabilityError)`,
@@ -4085,7 +4190,7 @@ pub struct BudgetOwnedResultSinkStatus {
 
 enum ResultSinkReceiptLink {
     NoIssue,
-    Prepared(PreparedExportAttemptFailure),
+    Prepared(PreparedExportReceiptPersistence),
     Verified {
         receipt: BudgetOwnedExportIssueReceipt,
         reachability: SealedDurableExportReceiptReachability,
@@ -4140,7 +4245,7 @@ pub(crate) trait ResultSinkTransitionAuthority: sealed::ResultSinkTransitionAuth
     fn record_failed_attempt(
         &self,
         current: BudgetOwnedResultSinkStatus,
-        prepared: PreparedExportAttemptFailure,
+        prepared: PreparedExportReceiptPersistence,
     ) -> Result<CheckedResultSinkTransition, ResultPlaneError>;
     fn record_complete(
         &self,
@@ -4208,9 +4313,13 @@ retention lease. It may advance monotonically by exact CAS, but cannot change a
 generation digest, CURRENT/head, resume cut, participant receipt, or result
 membership root. `Exhausted` means export incomplete, not execution rollback.
 `ResultSinkReceiptLink::Prepared` exists only inside the move-only pre-CAS
-candidate and holds the entire `PreparedExportAttemptFailure`; the store
-consumes it intact while writing receipt plus status. It is never returned by
-`load`, and no API splits its checked decision from its receipt authority.
+candidate and holds the reliability-owned
+`PreparedExportReceiptPersistence`. Task 6C1 obtains it only by consuming
+`PreparedExportAttemptFailure::into_persistence`; the store borrows its encoded
+bytes while the wrapper retains the entire failure, both exact leases, and the
+checked decision, then consumes it intact while writing receipt plus status.
+It is never returned by `load`, and no API splits its checked decision from its
+receipt authority.
 The `Verified` variant can be created only by successful durable load and keeps
 the receipt inseparable from the status-digest/reference reachability proof.
 The foundation `StreamingIssueReporter` directly owns
@@ -4248,7 +4357,7 @@ optional receipt. Candidate construction, before store I/O, permits only absent
 → `PendingAttempt(0)`, pending(n) → `PendingRetry(n+1, issue)` or
 `Exhausted(issue)` with a receipt whose attempt and issue ID match, and pending
 → `Complete` with `SealedDurableSinkOutputProof`. It checked-adds ordinals and
-requires one intact `PreparedExportAttemptFailure`, refuses overflow;
+requires one intact `PreparedExportReceiptPersistence`, refuses overflow;
 `Complete` and `Exhausted` have no successor. The method is one
 derived-status transaction: it durably writes the inseparable export receipt,
 then status bytes with the receipt reference, then CASes/fsyncs the status
@@ -4327,10 +4436,11 @@ persists the next status by exact CAS before releasing its generation lease, and
 returns a durable cursor so restart repeats or continues without losing work.
 On `ResultSinkDriverOutcome::Failed(outcome)`, it borrows the retained reporter
 to call `prepare_export_attempt_failure` with the attempt authority's exact
-run/full generation/sink/ordinal, then moves the resulting prepared pair and
-current status into `record_failed_attempt`. On durable output it accepts only
-the proof minted by the sealed writer/probe path. No branch manufactures a
-decision, receipt, or proof from raw fields.
+run/full generation/sink/ordinal, consumes the result through
+`into_persistence`, then moves that intact persistence owner and current status
+into `record_failed_attempt`. On durable output it accepts only the proof minted
+by the sealed writer/probe path. No branch manufactures a decision, receipt, or
+proof from raw fields.
 
 Task 6B consumes the non-destructive budget-owned issue-receipt partition view
 and includes its bytes plus bounded disposition counters in the result epoch.

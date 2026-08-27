@@ -26,6 +26,8 @@ modifies:
   one combined-then-split pair acquisition;
 - `rust/runtime/src/streaming/blocking.rs` for the new handled-cut field in unit
   fixtures;
+- `rust/runtime/src/streaming/results.rs` for the move-only prepared-result
+  binding carried back into transaction commit;
 - `rust/runtime/tests/streaming_budget.rs` for synchronous and pair-acquisition
   accounting/cancellation proofs;
 - `rust/runtime/tests/streaming_blocking.rs` and
@@ -33,8 +35,8 @@ modifies:
   `CommittedParticipantState::new` construction with verified current-v4 reader
   fixtures.
 
-No Task 1D-R Rust change is required in `identity.rs`, `results.rs`, an adapter,
-or a later P2/P4 module.
+No Task 1D-R Rust change is required in `identity.rs`, an adapter, or a later
+P2/P4 module.
 
 ## Budget seams
 
@@ -124,7 +126,9 @@ Task 1D-R supplies these checked constructors and accessors; none returns a
   quarantine_tombstone_root}`. `empty` returns the canonical three empty roots;
   only the reporter and strict decoder construct a non-empty cut.
 - `PreparedIssueReceiptPartitionView::{run, barrier, receipt_root, handled_cut,
-  payload_bytes, payload_charge_bytes, view_charge_bytes}`.
+  payload_bytes, payload_charge_bytes, view_charge_bytes,
+  into_result_partition}`. The consuming conversion is specified below; no
+  public operation extracts its payload or either lease.
 - `PreparedActionRetry::retry_ordinal` and
   `PreparedActionBackpressure::needs_admission_fence`. The approved sealed
   `ActionFailureDisposition` remains exhaustive: `Pending`, `Retry`, and
@@ -140,7 +144,7 @@ Task 1D-R supplies these checked constructors and accessors; none returns a
   parsed_charge_bytes}`; `DerivedExportReceiptReference` borrow accessors for all
   four digest/length fields; and
   `PreparedExportAttemptFailure::{receipt, issue_id, is_exhausted,
-  attempt_ordinal, counter_before, receipt_reference}`.
+  attempt_ordinal, counter_before, receipt_reference, into_persistence}`.
 
 The export attempt ordinal and counter exposed by the prepared failure are
 comparison inputs, not derived-status authority. Task 6C1 independently derives
@@ -174,10 +178,107 @@ shared test support are migrated in this task.
 exact `result_index_root: ContentDigest` and exposes
 `result_index_root(&self) -> &ContentDigest`. The constructor derives it from
 the authoritative `CommittedCheckpointGeneration`; callers cannot supply it.
-The reporter retires detailed receipts only when the callback's run, full
-generation, participant descriptor/cut, and result-index root match the root
-recorded for its staged receipt view. A pre-CAS drop or mismatched root retains
-the view and detailed receipts unchanged.
+
+The pre-CAS path is an authority chain, not a callback-supplied digest:
+
+```rust
+pub struct PreparedIssueReceiptResultPartition { /* private partition/binding */ }
+pub struct PreparedIssueReceiptEpochBinding { /* private roots and view lease */ }
+
+impl PreparedIssueReceiptPartitionView {
+    pub fn into_result_partition(
+        self,
+        descriptor: BudgetedResultDescriptor,
+    ) -> Result<PreparedIssueReceiptResultPartition, StreamingReliabilityError>;
+}
+
+impl PreparedResultEpoch {
+    pub fn issue_receipt_binding(
+        &self,
+    ) -> Option<&PreparedIssueReceiptEpochBinding>;
+}
+
+impl PreparedIssueReceiptEpochBinding {
+    pub fn receipt_root(&self) -> &ContentDigest;
+    pub fn handled_cut(&self) -> &HandledIssueCut;
+    pub fn result_index_root(&self) -> &ContentDigest;
+}
+```
+
+Task 1D-R retires the public `PreparedResultEpoch::into_parts`; commit now
+consumes the intact epoch authority. Its existing root/descriptors/count/length
+borrow accessors remain public, and only the transaction's crate-private
+consumer can separate its summary, issue binding, and leases.
+
+The consuming conversion validates the reserved issue-receipt projection,
+run, barrier epoch, receipt/membership root, descriptor digest and length, then
+moves the private `BudgetedCheckpointBytes` and its exact payload lease into a
+`ResultPartition`. The returned wrapper also retains the view lease and fixed
+staged binding; neither wrapper is `Clone` or `Serialize`.
+
+The Task 1D-R transaction overlay accepts that wrapper as a distinct optional
+input to `stage_results`. On success it consumes the wrapper, includes its
+partition in the one canonical result index, and returns a non-Clone
+`PreparedResultEpoch` containing `PreparedIssueReceiptEpochBinding` with the
+computed index root. Transaction commit consumes that exact
+`PreparedResultEpoch`; it verifies the returned root against its internally
+staged index and binds the descriptor, receipt root, handled cut, and result
+index root into the candidate before the existing prevalidation/publication
+sequence. It cannot accept a caller-supplied root or a separately reconstructed
+binding.
+
+Before commit, Task 6B calls the reporter's synchronous
+`bind_prepared_result_epoch(&PreparedResultEpoch)`. The reporter accepts only
+the binding created from its retained staged view and records the exact result
+index root without changing its already prepared participant bytes, cut, or
+counters and without retiring detailed receipts. After CAS,
+`checkpoint_committed` retires them only when the callback's run, full
+generation, participant descriptor/cut, and `CommittedParticipantReceipt`
+result-index root match that retained pre-CAS binding. A mismatched root, a
+dropped or cancelled pre-CAS transaction, or a dropped prepared epoch leaves
+the reporter's detailed receipts and retry identity unchanged. Cancellation of
+`stage_results` leaves its `&mut Option<PreparedIssueReceiptResultPartition>`
+intact; success takes it exactly once. Dropping any unconsumed wrapper releases
+its exact leases without changing reporter state.
+
+The exact method added to `StreamingIssueReporter` is:
+
+```rust
+fn bind_prepared_result_epoch(
+    &mut self,
+    prepared: &PreparedResultEpoch,
+) -> Result<(), StreamingReliabilityError>;
+```
+
+## Move-only downstream handoffs
+
+Task 6C1 persists export evidence through this reliability-owned conversion:
+
+```rust
+pub struct PreparedExportReceiptPersistence { /* private intact failure */ }
+
+impl PreparedExportAttemptFailure {
+    pub fn into_persistence(self) -> PreparedExportReceiptPersistence;
+}
+
+impl PreparedExportReceiptPersistence {
+    pub fn encoded_bytes(&self) -> &[u8];
+    pub fn receipt_reference(&self) -> &DerivedExportReceiptReference;
+    pub fn issue_id(&self) -> ContentDigest;
+    pub fn is_exhausted(&self) -> bool;
+    pub fn attempt_ordinal(&self) -> u32;
+    pub fn counter_before(&self) -> u64;
+}
+```
+
+This is a consuming, allocation-free wrapper conversion. It preserves the
+entire `PreparedExportAttemptFailure`, including encoded and parsed leases and
+the checked decision. Task 6C1's checked transition accepts only
+`PreparedExportReceiptPersistence`; the status store borrows `encoded_bytes`
+while that intact owner remains inside the move-only transition and consumes
+the transition only after receipt-object plus status publication. There is no
+`into_bytes`, `into_receipt`, decision/receipt split, or constructor from raw
+bytes/reference fields.
 
 ## Current-v4 and legacy-v3 leased authority
 
@@ -191,25 +292,31 @@ checkpoint-results plan. Ownership is:
 - `checkpoint_backend.rs`: `CurrentV4CheckpointGeneration`,
   `CheckpointGenerationStorageVersion`, opaque `LeasedCheckpointGeneration`,
   its borrowed `LeasedCheckpointGenerationView`, the sealed common reader
-  trait, current and legacy reader traits, and the crate-private predecessor
-  projection.
+  trait, the sealed current reader with its public predecessor mint, and the
+  legacy reader without that mint.
 
 `LeasedCheckpointGeneration` implements the sealed
 `VersionedLeasedGenerationReader`; external code cannot implement that trait or
 construct the wrapper. Its common surface is generation identity plus result
-index/segment reads. `view()` returns either a current reader with
-`read_participant -> CommittedParticipantState` or a legacy reader with
-`read_legacy_participant -> LegacyParticipantState`. `LegacyParticipantState`
-has only `descriptor()` and `payload_bytes()` and no conversion into initializer
-authority.
+index/segment reads. `view()` returns either a sealed current reader with
+`read_participant -> CommittedParticipantState` and
+`current_v4_predecessor() -> CurrentV4CheckpointGeneration`, or a legacy reader
+with `read_legacy_participant -> LegacyParticipantState` and no predecessor
+accessor. `LegacyParticipantState` has only `descriptor()` and
+`payload_bytes()` and no conversion into initializer authority.
 
 `StreamingCheckpointBackend::open_latest` returns
 `Result<Option<LeasedCheckpointGeneration>, CheckpointError>`.
 `begin_generation` accepts
 `Option<CurrentV4CheckpointGeneration>`. The current wrapper has a private
-field and only `generation()` publicly; only the current reader's crate-private
-projection can mint it. `CheckpointCommitMetadata.previous` remains an untrusted
-raw claim compared during prevalidation with the sealed expected predecessor.
+field, is move-only, and exposes only `generation()`. Only the sealed current
+reader obtained from a successfully verified `open_latest` can mint it through
+the public borrowed accessor. Shared integration support matches
+`LeasedCheckpointGenerationView::CurrentV4`, performs any participant reads,
+then obtains that authority and moves it into `begin_generation`; matching the
+legacy view provides no callable predecessor method. `CheckpointCommitMetadata.previous`
+remains an untrusted raw claim compared during prevalidation with the sealed
+expected predecessor.
 
 The generation decoder first rejects bytes exceeding the backend's configured
 generation-object limit. Current-v4 encoding contains the explicit strict field
@@ -227,39 +334,62 @@ The bounded discriminator applies these rules before full decode:
 V3 verifies the v3 hash domain and constructs private legacy semantic state;
 v4 verifies the v4 hash domain and alone constructs committed/current authority.
 
-The memory backend adds the doc-hidden bounded integration seam
-below. The two fixture DTOs live in `checkpoint_backend.rs`; the import method
-lives in `checkpoints/memory.rs`. `LegacyV3FixtureObject::new` compact-copies
-the encoded bytes and rejects an unrepresentable retained-byte charge.
-`LegacyV3ReadOnlyFixture::new` rejects duplicate object digests and checked
-item/byte-total overflow before retaining its boxed inventory. Role-specific
-digest verification remains in the importer, where the legacy hash domains and
-reachable descriptors are available.
+The memory backend adds the doc-hidden precharged integration seam below. The
+fixture types live in `checkpoint_backend.rs`; the import method lives in
+`checkpoints/memory.rs`. No public object/inventory constructor accepts a raw
+slice, `Vec`, or bare boxed inventory. The sole method that copies authored
+bytes is reachable only after one whole-fixture precharge succeeds.
 
 ```rust
 #[doc(hidden)]
-pub struct LegacyV3FixtureObject { /* private digest and exact boxed bytes */ }
-
-impl LegacyV3FixtureObject {
-    pub fn new(
-        digest: ContentDigest,
-        encoded: &[u8],
-    ) -> Result<Self, CheckpointError>;
+pub struct LegacyV3FixtureLimits {
+    pub max_objects: NonZeroUsize,
+    pub max_bytes: NonZeroU64,
 }
 
 #[doc(hidden)]
-pub struct LegacyV3ReadOnlyFixture { /* private run, head, and objects */ }
+pub struct LegacyV3FixturePrecharge { /* private limits and aggregate lease */ }
 
-impl LegacyV3ReadOnlyFixture {
-    pub fn new(
+impl LegacyV3FixturePrecharge {
+    pub async fn acquire(
+        budget: &StreamingResourceBudget,
+        limits: LegacyV3FixtureLimits,
+        exact_objects: usize,
+        exact_encoded_bytes: usize,
+    ) -> Result<Self, CheckpointError>;
+
+    pub fn compact_object(
+        &mut self,
+        digest: ContentDigest,
+        encoded: &[u8],
+    ) -> Result<LegacyV3FixtureObject, CheckpointError>;
+
+    pub fn collect_inventory<I>(
+        &mut self,
+        objects: I,
+    ) -> Result<BudgetOwnedLegacyV3FixtureInventory, CheckpointError>
+    where
+        I: ExactSizeIterator<Item = LegacyV3FixtureObject>;
+
+    pub fn finish(
+        self,
         run: StreamRunIdentity,
         head: CheckpointGeneration,
         generation_object: LegacyV3FixtureObject,
-        participant_objects: Box<[LegacyV3FixtureObject]>,
+        participant_objects: BudgetOwnedLegacyV3FixtureInventory,
         result_index_object: LegacyV3FixtureObject,
-        result_objects: Box<[LegacyV3FixtureObject]>,
-    ) -> Result<Self, CheckpointError>;
+        result_objects: BudgetOwnedLegacyV3FixtureInventory,
+    ) -> Result<LegacyV3ReadOnlyFixture, CheckpointError>;
 }
+
+#[doc(hidden)]
+pub struct LegacyV3FixtureObject { /* private digest/precharged compact bytes */ }
+
+#[doc(hidden)]
+pub struct BudgetOwnedLegacyV3FixtureInventory { /* private objects/lease */ }
+
+#[doc(hidden)]
+pub struct LegacyV3ReadOnlyFixture { /* private precharged ownership */ }
 
 impl MemoryCheckpointBackend {
     #[doc(hidden)]
@@ -270,11 +400,25 @@ impl MemoryCheckpointBackend {
 }
 ```
 
-The importer bounds the generation object before decoding; enforces the same
-strict v3 decoder, object digest/length/reachability checks, exact run/head
-identity, and backend storage budgets; requires an empty run head and object
-namespace; acquires the complete missing-object storage charge before mutation;
-and atomically installs only a `LegacyV3ReadOnly` head. It cannot create current
+`acquire` checked-computes payload plus boxed-inline structural bytes, rejects
+counts/bytes above `LegacyV3FixtureLimits`, and performs one atomic budget
+acquisition before any fixture-owned allocation. `compact_object` synchronously
+splits the exact payload sublease before compact-copying; `collect_inventory`
+splits the exact structural sublease before allocating its box. `finish`
+requires the authored object count and encoded-byte total to be exhausted
+exactly, rejects duplicate or misplaced digests, and moves every sublease into
+the fixture. There is no independently callable constructor for an object,
+inventory, or fixture and no sequential await after the aggregate acquisition.
+
+The importer bounds the already charged generation object before decoding;
+enforces the same strict v3 decoder, object digest/length/reachability checks,
+exact run/head identity, and backend storage budgets; requires an empty run head
+and object namespace; acquires the complete missing-object storage charge before
+mutation; and atomically installs only a `LegacyV3ReadOnly` head. Cancellation
+before that aggregate acquisition completes mutates nothing; dropping the
+future or fixture releases every fixture and partial acquisition charge exactly.
+Success transfers immutable bytes under the backend storage lease and releases
+fixture charges after the one publication mutation. It cannot create current
 authority or overwrite any head. Unit tests may use a smaller private builder;
 public integration support uses only this checked seam.
 
@@ -283,7 +427,11 @@ public integration support uses only this checked seam.
 The public `CommittedParticipantState::new` is removed. Shared test support adds
 `committed_current_v4_participant_state`, which creates a memory generation,
 opens it as `CurrentV4`, and reads the reachable participant through the current
-reader. Blocking and checkpoint-participant tests use that helper. Privacy
+reader. The same support module adds `current_v4_predecessor`, which matches the
+verified current view and calls its sealed public borrowed accessor; successor
+backend integration tests move that returned authority into `begin_generation`.
+No integration test imports a crate-private projection. Blocking and
+checkpoint-participant tests use the participant helper. Privacy
 tests still prove that copying legacy descriptor/payload bytes into a new
 `BudgetedCheckpointBytes` cannot call the crate-private promotion function.
 
@@ -314,10 +462,13 @@ source nor a format owns it. The harness borrows that owned reporter only after
 a stage future returns and releases the borrow before the next
 source/format/control await. Ordinary scripted faults are classified and
 reported, then the harness proves the next valid unit remains available.
-`StreamSourceError::Stopped` is owned by host stop control: it is
-valid only after the harness calls the separate source control's `stop`, wakes
-the pending source future, creates no issue receipt, advances no source seal or
-frontier, and is never adapter-authored continuation policy.
+Task 1D's `StreamSourceError` stores stopped state behind a private kind and
+private host-stop token; only the paired host stop channel constructs it. The
+public observation is `is_stopped()`, with stable stage `Source` and code
+`"stopped"`; there is no public unit variant or constructor an adapter can
+forge. It is valid only after the harness calls the separate source control's
+`stop`, wakes the pending source future, creates no issue receipt, advances no
+source seal or frontier, and is never adapter-authored continuation policy.
 
 ## Task 5B publication atomicity
 
@@ -353,14 +504,24 @@ suites:
 - `handled_issue_cut_is_clone_compatible_with_checkpoint_cut`;
 - `committed_receipt_binds_exact_result_index_root`;
 - `mismatched_result_index_root_retains_detailed_receipts`;
+- `pre_cas_result_epoch_binding_is_required_and_matches_committed_root`;
+- `cancelled_or_dropped_receipt_partition_handoff_retains_reporter_retry`;
+- `receipt_partition_handoff_moves_payload_and_both_leases_without_copy`;
+- `export_persistence_handoff_keeps_encoded_and_parsed_leases_intact`;
+- `verified_current_reader_publicly_mints_move_only_begin_predecessor`;
+- `legacy_reader_has_no_current_predecessor_accessor`;
 - `current_participant_restore_uses_verified_reader_not_public_constructor`;
 - `checked_legacy_fixture_is_bounded_read_only_and_cannot_overwrite_head`;
+- `oversized_legacy_fixture_refuses_before_backend_budget_or_state_access`;
+- `cancelled_legacy_import_releases_fixture_and_storage_charges`;
+- `dropped_legacy_fixture_releases_exact_payload_and_inventory_precharge`;
 - `unknown_or_malformed_explicit_v4_never_falls_back_to_v3`;
 - `v4_shape_without_explicit_v4_discriminator_is_refused`;
 - `action_disposition_variants_expose_only_their_approved_type_state`;
 - `first_and_later_exhaustion_compare_status_owned_ordinal_and_counter`;
 - `conformance_reporter_is_released_before_each_await`;
-- `host_stop_wakes_pending_source_without_issue_or_seal`.
+- `host_stop_wakes_pending_source_without_issue_or_seal`;
+- `external_source_cannot_construct_stopped_error` (rustdoc compile-fail).
 
 The existing v2 issue golden, v4 generation golden, v3 read-only, reverse/skew,
 privacy, stale tombstone, export restore, pre-CAS retry, and high-fault budget
