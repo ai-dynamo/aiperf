@@ -26,7 +26,7 @@ use super::{
 const INITIAL_CHECKPOINT_EPOCH: CheckpointEpoch = CheckpointEpoch::new(1);
 
 /// Immutable registry metadata for one checkpoint backend implementation.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct StreamingCheckpointBackendDescriptor {
     /// Stable registry identifier.
     pub id: &'static str,
@@ -34,6 +34,40 @@ pub struct StreamingCheckpointBackendDescriptor {
     pub description: &'static str,
     /// Whether the backend durably publishes atomic generations.
     pub is_durable: bool,
+    /// Whether opened generations remain reachable through explicit read leases.
+    pub has_leased_readers: bool,
+    /// Whether participant and result state publish as one atomic generation.
+    pub has_atomic_generations: bool,
+    /// Whether checkpoint-native result segments are supported.
+    pub has_result_segments: bool,
+    /// Whether sensitive participant state is protected at rest.
+    pub protects_sensitive_state: bool,
+    /// Reachability and collection policy for committed objects.
+    pub retention: CheckpointRetention,
+    /// Backend placement visible to cellular validation.
+    pub placement: CheckpointBackendPlacement,
+    /// Whether backend progress can run under a virtual clock.
+    pub supports_virtual_clock: bool,
+}
+
+/// Committed checkpoint object retention behavior.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CheckpointRetention {
+    /// State is process-local and retained only while its run is active.
+    Ephemeral,
+    /// Objects remain reachable through committed generation roots.
+    GenerationReachability,
+}
+
+/// Checkpoint backend placement behavior.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CheckpointBackendPlacement {
+    /// Backend state is local to the controller process.
+    ControllerLocal,
+    /// One authoritative backend is reachable across cells.
+    SharedAcrossCells,
 }
 
 /// Capabilities required from a selected checkpoint backend.

@@ -7,7 +7,16 @@ use std::{fmt, rc::Rc};
 
 use serde::{Deserialize, Serialize};
 
-use super::{checkpoint::CheckpointError, unit::StateBudgetFailureCode};
+use async_trait::async_trait;
+
+use super::{
+    checkpoint::{CheckpointError, StreamingCheckpointParticipant},
+    identity::{
+        ContentDigest, GlobalSequence, ImmutableObjectIdentity, LogicalReplayRunId, StableActionId,
+        StableRecordId, StableSessionKey,
+    },
+    unit::{SourcePosition, StateBudgetFailureCode},
+};
 
 /// Stable stage at which a streaming failure occurred.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -59,7 +68,7 @@ macro_rules! failure_codes {
         }
 
         impl $name {
-            const fn code(self) -> &'static str {
+            pub const fn code(self) -> &'static str {
                 match self {
                     $(Self::$variant => $code),+
                 }
@@ -79,8 +88,6 @@ failure_codes! {
         MutatedObject => "mutated_object",
         /// The selected source is unavailable.
         SourceUnavailable => "source_unavailable",
-        /// Host control requested source shutdown.
-        Stopped => "stopped",
     }
 }
 
@@ -95,6 +102,8 @@ failure_codes! {
         IdentityMismatch => "identity_mismatch",
         /// An authored object limit was exceeded.
         ObjectLimitExceeded => "object_limit_exceeded",
+        /// Retained acquired bytes and their capacity lease disagree.
+        BudgetInvariant => "budget_invariant",
     }
 }
 
@@ -117,6 +126,8 @@ failure_codes! {
         SynthesisAuthorityMismatch => "synthesis_authority_mismatch",
         /// The immutable synthesis profile cannot be prepared.
         SynthesisProfileUnavailable => "synthesis_profile_unavailable",
+        /// Retained resume bytes and their capacity lease disagree.
+        BudgetInvariant => "budget_invariant",
     }
 }
 
@@ -171,6 +182,8 @@ failure_codes! {
         Endpoint => "endpoint",
         /// Action execution was cancelled.
         Cancelled => "cancelled",
+        /// Retained payload bytes and their capacity lease disagree.
+        BudgetInvariant => "budget_invariant",
     }
 }
 
@@ -183,301 +196,189 @@ const fn budget_code(code: StateBudgetFailureCode) -> &'static str {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum StreamSourceErrorKind {
+    Source(SourceFailureCode),
+    Acquisition(AcquisitionFailureCode),
+    Ordering(OrderingFailureCode),
+    ControlledStop,
+}
+
 /// Source discovery and immutable-acquisition error.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum StreamSourceError {
-    /// Source-owned discovery or snapshot failure.
-    Source {
-        /// Stable failure classification.
-        code: SourceFailureCode,
-        /// Bounded human-readable context.
-        message: String,
-    },
-    /// Immutable partition acquisition failure.
-    Acquisition {
-        /// Stable failure classification.
-        code: AcquisitionFailureCode,
-        /// Bounded human-readable context.
-        message: String,
-    },
-    /// Source-owned ordering or frontier failure.
-    Ordering {
-        /// Stable failure classification.
-        code: OrderingFailureCode,
-        /// Bounded human-readable context.
-        message: String,
-    },
-    /// Host control stopped a pending source.
-    Stopped {
-        /// Bounded human-readable context.
-        message: String,
-    },
+///
+/// Controlled stop cannot be constructed by an adapter:
+///
+/// ```compile_fail
+/// use aiperf_runtime::streaming::failure::StreamSourceError;
+/// let _ = StreamSourceError::controlled_stop();
+/// ```
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct StreamSourceError {
+    kind: StreamSourceErrorKind,
 }
 
 impl StreamSourceError {
-    /// Construct a source-discovery failure.
-    pub fn source(code: SourceFailureCode, message: impl Into<String>) -> Self {
-        Self::Source {
-            code,
-            message: message.into(),
+    /// Construct a source-discovery failure from a closed classification.
+    pub const fn source(code: SourceFailureCode) -> Self {
+        Self {
+            kind: StreamSourceErrorKind::Source(code),
         }
     }
 
-    /// Construct an immutable-acquisition failure.
-    pub fn acquisition(code: AcquisitionFailureCode, message: impl Into<String>) -> Self {
-        Self::Acquisition {
-            code,
-            message: message.into(),
+    /// Construct an immutable-acquisition failure from a closed classification.
+    pub const fn acquisition(code: AcquisitionFailureCode) -> Self {
+        Self {
+            kind: StreamSourceErrorKind::Acquisition(code),
         }
     }
 
-    /// Construct a source-ordering failure.
-    pub fn ordering(code: OrderingFailureCode, message: impl Into<String>) -> Self {
-        Self::Ordering {
-            code,
-            message: message.into(),
+    /// Construct a source-ordering failure from a closed classification.
+    pub const fn ordering(code: OrderingFailureCode) -> Self {
+        Self {
+            kind: StreamSourceErrorKind::Ordering(code),
         }
     }
 
-    /// Construct a host-requested stop outcome.
-    pub fn stopped(message: impl Into<String>) -> Self {
-        Self::Stopped {
-            message: message.into(),
+    pub(crate) const fn controlled_stop() -> Self {
+        Self {
+            kind: StreamSourceErrorKind::ControlledStop,
         }
     }
 
-    fn failure_stage(&self) -> StreamingFailureStage {
-        match self {
-            Self::Source { .. } | Self::Stopped { .. } => StreamingFailureStage::Source,
-            Self::Acquisition { .. } => StreamingFailureStage::Acquisition,
-            Self::Ordering { .. } => StreamingFailureStage::Ordering,
+    /// Return whether this error is the opaque host-controlled stop outcome.
+    #[must_use]
+    pub const fn is_stopped(&self) -> bool {
+        matches!(self.kind, StreamSourceErrorKind::ControlledStop)
+    }
+
+    const fn failure_stage(&self) -> StreamingFailureStage {
+        match self.kind {
+            StreamSourceErrorKind::Source(_) | StreamSourceErrorKind::ControlledStop => {
+                StreamingFailureStage::Source
+            }
+            StreamSourceErrorKind::Acquisition(_) => StreamingFailureStage::Acquisition,
+            StreamSourceErrorKind::Ordering(_) => StreamingFailureStage::Ordering,
         }
     }
 
-    fn failure_code(&self) -> &'static str {
-        match self {
-            Self::Source { code, .. } => code.code(),
-            Self::Acquisition { code, .. } => code.code(),
-            Self::Ordering { code, .. } => code.code(),
-            Self::Stopped { .. } => SourceFailureCode::Stopped.code(),
-        }
-    }
-
-    fn message(&self) -> &str {
-        match self {
-            Self::Source { message, .. }
-            | Self::Acquisition { message, .. }
-            | Self::Ordering { message, .. }
-            | Self::Stopped { message } => message,
+    const fn failure_code(&self) -> &'static str {
+        match self.kind {
+            StreamSourceErrorKind::Source(code) => code.code(),
+            StreamSourceErrorKind::Acquisition(code) => code.code(),
+            StreamSourceErrorKind::Ordering(code) => code.code(),
+            StreamSourceErrorKind::ControlledStop => "stopped",
         }
     }
 }
 
 /// Format decode, ordering, or state-budget error.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum StreamFormatError {
     /// Decoder-owned format failure.
-    Decode {
-        /// Stable failure classification.
-        code: DecodeFailureCode,
-        /// Bounded human-readable context.
-        message: String,
-    },
+    Decode(DecodeFailureCode),
     /// Format-owned ordering or frontier failure.
-    Ordering {
-        /// Stable failure classification.
-        code: OrderingFailureCode,
-        /// Bounded human-readable context.
-        message: String,
-    },
+    Ordering(OrderingFailureCode),
     /// Decoder state exceeded an explicit capacity.
-    StateBudget {
-        /// Stable failure classification.
-        code: StateBudgetFailureCode,
-        /// Bounded human-readable context.
-        message: String,
-    },
+    StateBudget(StateBudgetFailureCode),
 }
 
 impl StreamFormatError {
     /// Construct a decode failure.
-    pub fn decode(code: DecodeFailureCode, message: impl Into<String>) -> Self {
-        Self::Decode {
-            code,
-            message: message.into(),
-        }
+    pub const fn decode(code: DecodeFailureCode) -> Self {
+        Self::Decode(code)
     }
-
     /// Construct an ordering failure.
-    pub fn ordering(code: OrderingFailureCode, message: impl Into<String>) -> Self {
-        Self::Ordering {
-            code,
-            message: message.into(),
-        }
+    pub const fn ordering(code: OrderingFailureCode) -> Self {
+        Self::Ordering(code)
     }
-
     /// Construct a state-budget failure.
-    pub fn state_budget(code: StateBudgetFailureCode, message: impl Into<String>) -> Self {
-        Self::StateBudget {
-            code,
-            message: message.into(),
+    pub const fn state_budget(code: StateBudgetFailureCode) -> Self {
+        Self::StateBudget(code)
+    }
+    const fn failure_stage(&self) -> StreamingFailureStage {
+        match self {
+            Self::Decode(_) => StreamingFailureStage::Decode,
+            Self::Ordering(_) => StreamingFailureStage::Ordering,
+            Self::StateBudget(_) => StreamingFailureStage::StateBudget,
         }
     }
-
-    fn failure_stage(&self) -> StreamingFailureStage {
+    const fn failure_code(&self) -> &'static str {
         match self {
-            Self::Decode { .. } => StreamingFailureStage::Decode,
-            Self::Ordering { .. } => StreamingFailureStage::Ordering,
-            Self::StateBudget { .. } => StreamingFailureStage::StateBudget,
-        }
-    }
-
-    fn failure_code(&self) -> &'static str {
-        match self {
-            Self::Decode { code, .. } => code.code(),
-            Self::Ordering { code, .. } => code.code(),
-            Self::StateBudget { code, .. } => budget_code(*code),
-        }
-    }
-
-    fn message(&self) -> &str {
-        match self {
-            Self::Decode { message, .. }
-            | Self::Ordering { message, .. }
-            | Self::StateBudget { message, .. } => message,
+            Self::Decode(code) => code.code(),
+            Self::Ordering(code) => code.code(),
+            Self::StateBudget(code) => budget_code(*code),
         }
     }
 }
 
 /// Session coordination or retained-state error.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SessionCoordinatorError {
     /// Session-program semantic failure.
-    Session {
-        /// Stable failure classification.
-        code: SessionFailureCode,
-        /// Bounded human-readable context.
-        message: String,
-    },
+    Session(SessionFailureCode),
     /// Session state exceeded an explicit capacity.
-    StateBudget {
-        /// Stable failure classification.
-        code: StateBudgetFailureCode,
-        /// Bounded human-readable context.
-        message: String,
-    },
+    StateBudget(StateBudgetFailureCode),
 }
 
 impl SessionCoordinatorError {
     /// Construct a session semantic failure.
-    pub fn session(code: SessionFailureCode, message: impl Into<String>) -> Self {
-        Self::Session {
-            code,
-            message: message.into(),
-        }
+    pub const fn session(code: SessionFailureCode) -> Self {
+        Self::Session(code)
     }
-
     /// Construct a session state-budget failure.
-    pub fn state_budget(code: StateBudgetFailureCode, message: impl Into<String>) -> Self {
-        Self::StateBudget {
-            code,
-            message: message.into(),
+    pub const fn state_budget(code: StateBudgetFailureCode) -> Self {
+        Self::StateBudget(code)
+    }
+    const fn failure_stage(&self) -> StreamingFailureStage {
+        match self {
+            Self::Session(_) => StreamingFailureStage::Session,
+            Self::StateBudget(_) => StreamingFailureStage::StateBudget,
         }
     }
-
-    fn failure_stage(&self) -> StreamingFailureStage {
+    const fn failure_code(&self) -> &'static str {
         match self {
-            Self::Session { .. } => StreamingFailureStage::Session,
-            Self::StateBudget { .. } => StreamingFailureStage::StateBudget,
-        }
-    }
-
-    fn failure_code(&self) -> &'static str {
-        match self {
-            Self::Session { code, .. } => code.code(),
-            Self::StateBudget { code, .. } => budget_code(*code),
-        }
-    }
-
-    fn message(&self) -> &str {
-        match self {
-            Self::Session { message, .. } | Self::StateBudget { message, .. } => message,
+            Self::Session(code) => code.code(),
+            Self::StateBudget(code) => budget_code(*code),
         }
     }
 }
 
 /// Action binding, placement, dispatch, or retained-state error.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ActionExecutionError {
     /// Placement authority refused the action.
-    Placement {
-        /// Stable failure classification.
-        code: PlacementFailureCode,
-        /// Bounded human-readable context.
-        message: String,
-    },
+    Placement(PlacementFailureCode),
     /// The selected binding or dispatch path failed.
-    Action {
-        /// Stable failure classification.
-        code: ActionFailureCode,
-        /// Bounded human-readable context.
-        message: String,
-    },
+    Action(ActionFailureCode),
     /// Action state exceeded an explicit capacity.
-    StateBudget {
-        /// Stable failure classification.
-        code: StateBudgetFailureCode,
-        /// Bounded human-readable context.
-        message: String,
-    },
+    StateBudget(StateBudgetFailureCode),
 }
 
 impl ActionExecutionError {
     /// Construct a placement failure.
-    pub fn placement(code: PlacementFailureCode, message: impl Into<String>) -> Self {
-        Self::Placement {
-            code,
-            message: message.into(),
-        }
+    pub const fn placement(code: PlacementFailureCode) -> Self {
+        Self::Placement(code)
     }
-
     /// Construct an action failure.
-    pub fn action(code: ActionFailureCode, message: impl Into<String>) -> Self {
-        Self::Action {
-            code,
-            message: message.into(),
-        }
+    pub const fn action(code: ActionFailureCode) -> Self {
+        Self::Action(code)
     }
-
     /// Construct an action state-budget failure.
-    pub fn state_budget(code: StateBudgetFailureCode, message: impl Into<String>) -> Self {
-        Self::StateBudget {
-            code,
-            message: message.into(),
+    pub const fn state_budget(code: StateBudgetFailureCode) -> Self {
+        Self::StateBudget(code)
+    }
+    const fn failure_stage(&self) -> StreamingFailureStage {
+        match self {
+            Self::Placement(_) => StreamingFailureStage::Placement,
+            Self::Action(_) => StreamingFailureStage::Dispatch,
+            Self::StateBudget(_) => StreamingFailureStage::StateBudget,
         }
     }
-
-    fn failure_stage(&self) -> StreamingFailureStage {
+    const fn failure_code(&self) -> &'static str {
         match self {
-            Self::Placement { .. } => StreamingFailureStage::Placement,
-            Self::Action { .. } => StreamingFailureStage::Dispatch,
-            Self::StateBudget { .. } => StreamingFailureStage::StateBudget,
-        }
-    }
-
-    fn failure_code(&self) -> &'static str {
-        match self {
-            Self::Placement { code, .. } => code.code(),
-            Self::Action { code, .. } => code.code(),
-            Self::StateBudget { code, .. } => budget_code(*code),
-        }
-    }
-
-    fn message(&self) -> &str {
-        match self {
-            Self::Placement { message, .. }
-            | Self::Action { message, .. }
-            | Self::StateBudget { message, .. } => message,
+            Self::Placement(code) => code.code(),
+            Self::Action(code) => code.code(),
+            Self::StateBudget(code) => budget_code(*code),
         }
     }
 }
@@ -486,17 +387,14 @@ macro_rules! impl_failure {
     ($error:ty) => {
         impl fmt::Display for $error {
             fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-                write!(formatter, "{}: {}", self.failure_code(), self.message())
+                formatter.write_str(self.failure_code())
             }
         }
-
         impl std::error::Error for $error {}
-
         impl StableStreamingFailure for $error {
             fn stage(&self) -> StreamingFailureStage {
                 self.failure_stage()
             }
-
             fn code(&self) -> &'static str {
                 self.failure_code()
             }
@@ -525,7 +423,18 @@ impl StableStreamingFailure for CheckpointError {
             Self::ParticipantSetMismatch => "participant_set_mismatch",
             Self::CutBlockedByInflight { .. } => "cut_blocked_by_inflight",
             Self::StateBudget { code, .. } => budget_code(*code),
-            Self::BackendBudget { .. } => "backend_budget",
+            Self::BackendBudget { code, .. } => match code {
+                super::checkpoint::CheckpointBackendBudgetFailureCode::ItemCapacity => {
+                    "backend_item_capacity"
+                }
+                super::checkpoint::CheckpointBackendBudgetFailureCode::ByteCapacity => {
+                    "backend_byte_capacity"
+                }
+                super::checkpoint::CheckpointBackendBudgetFailureCode::Closed => "backend_closed",
+                super::checkpoint::CheckpointBackendBudgetFailureCode::Unrepresentable => {
+                    "backend_unrepresentable"
+                }
+            },
             Self::ResultIndexReadBudgetTooSmall { .. } => "result_index_read_budget_too_small",
             Self::GenerationEpochOverflow { .. } => "generation_epoch_overflow",
             Self::DecodeHorizonRegression { .. } => "decode_horizon_regression",
@@ -539,63 +448,267 @@ impl StableStreamingFailure for CheckpointError {
     }
 }
 
-/// Immutable issue record accepted by the host reliability boundary.
-#[derive(Debug, Eq, PartialEq)]
-pub struct StreamingIssue {
-    /// Stable stage retaining failure authority.
-    pub stage: StreamingFailureStage,
-    /// Stable machine-readable code.
-    pub code: &'static str,
-    /// Bounded human-readable context.
-    pub message: String,
+/// Scope whose ordinary work observed an issue.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum StreamingIssueScope {
+    /// Run-wide source or policy work.
+    Run,
+    /// One immutable partition generation.
+    Partition { partition: ImmutableObjectIdentity },
+    /// One stable source record.
+    Record { record: StableRecordId },
+    /// One stable logical session.
+    Session { session: StableSessionKey },
+    /// One stable executable action.
+    Action { action: StableActionId },
+    /// One checkpoint attempt identified by its successor epoch.
+    CheckpointAttempt { epoch: u64 },
 }
 
-impl StreamingIssue {
-    /// Capture the stable identity and display context of one failure.
+/// Reliability class asserted by a closed typed ordinary failure.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum StreamingIssueClass {
+    /// The same operation may succeed after bounded retry.
+    Retryable,
+    /// The named input cannot succeed under the validated plan.
+    Permanent,
+    /// The observation contradicts a runtime invariant.
+    Invariant,
+    /// Explicit bounded capacity is currently unavailable.
+    Capacity,
+}
+
+/// Stable order domain for deterministic issue handling.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum StreamingIssueOrderKey {
+    /// Source inventory or record order.
+    Source(SourcePosition),
+    /// Host-assigned global action order.
+    Global(GlobalSequence),
+    /// Checkpoint successor epoch order.
+    Checkpoint(u64),
+}
+
+/// Closed ordinary failures accepted from source, format, session, and action adapters.
+#[derive(Debug, Eq, PartialEq)]
+pub enum OrdinaryStreamingFailure {
+    /// Source-owned failure.
+    Source(StreamSourceError),
+    /// Format-owned failure.
+    Format(StreamFormatError),
+    /// Session-program failure.
+    Session(SessionCoordinatorError),
+    /// Action-binding failure.
+    Action(ActionExecutionError),
+}
+
+impl OrdinaryStreamingFailure {
+    /// Stable stage retaining authority for this typed failure.
     #[must_use]
-    pub fn from_failure(failure: &dyn StableStreamingFailure) -> Self {
-        Self {
-            stage: failure.stage(),
-            code: failure.code(),
-            message: failure.to_string(),
+    pub fn stage(&self) -> StreamingFailureStage {
+        match self {
+            Self::Source(error) => error.stage(),
+            Self::Format(error) => error.stage(),
+            Self::Session(error) => error.stage(),
+            Self::Action(error) => error.stage(),
+        }
+    }
+
+    /// Stable closed failure code.
+    #[must_use]
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::Source(error) => error.code(),
+            Self::Format(error) => error.code(),
+            Self::Session(error) => error.code(),
+            Self::Action(error) => error.code(),
         }
     }
 }
 
-/// Host-owned sink behind the source/format issue reporting handle.
-pub trait StreamingIssueReporterOps {
-    /// Accept one typed issue without selecting retry or shutdown policy.
-    fn report(&self, issue: StreamingIssue);
+/// Invalid combination of an issue scope and deterministic order domain.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum StreamingIssueValidationError {
+    /// The chosen order key cannot order the chosen scope.
+    OrderScopeMismatch,
+    /// Controlled stop is host control, not an ordinary adapter issue.
+    ControlledStopIsNotOrdinary,
+}
+
+impl fmt::Display for StreamingIssueValidationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "invalid streaming issue: {self:?}")
+    }
+}
+
+impl std::error::Error for StreamingIssueValidationError {}
+
+/// Move-only typed ordinary issue submitted to the host reliability owner.
+#[derive(Debug, Eq, PartialEq)]
+pub struct OrdinaryStreamingIssue {
+    run: LogicalReplayRunId,
+    scope: StreamingIssueScope,
+    class: StreamingIssueClass,
+    semantic_context_digest: ContentDigest,
+    order: StreamingIssueOrderKey,
+    failure: OrdinaryStreamingFailure,
+}
+
+impl OrdinaryStreamingIssue {
+    /// Validate and bind typed issue facts without selecting a host disposition.
+    pub fn new(
+        run: LogicalReplayRunId,
+        scope: StreamingIssueScope,
+        class: StreamingIssueClass,
+        semantic_context_digest: ContentDigest,
+        order: StreamingIssueOrderKey,
+        failure: OrdinaryStreamingFailure,
+    ) -> Result<Self, StreamingIssueValidationError> {
+        if matches!(&failure, OrdinaryStreamingFailure::Source(error) if error.is_stopped()) {
+            return Err(StreamingIssueValidationError::ControlledStopIsNotOrdinary);
+        }
+        let has_compatible_order = matches!(
+            (&scope, order),
+            (StreamingIssueScope::Run, _)
+                | (
+                    StreamingIssueScope::Partition { .. },
+                    StreamingIssueOrderKey::Source(_)
+                )
+                | (
+                    StreamingIssueScope::Record { .. },
+                    StreamingIssueOrderKey::Source(_)
+                )
+                | (
+                    StreamingIssueScope::Session { .. },
+                    StreamingIssueOrderKey::Global(_)
+                )
+                | (
+                    StreamingIssueScope::Action { .. },
+                    StreamingIssueOrderKey::Global(_)
+                )
+                | (
+                    StreamingIssueScope::CheckpointAttempt { .. },
+                    StreamingIssueOrderKey::Checkpoint(_)
+                )
+        );
+        if !has_compatible_order {
+            return Err(StreamingIssueValidationError::OrderScopeMismatch);
+        }
+        Ok(Self {
+            run,
+            scope,
+            class,
+            semantic_context_digest,
+            order,
+            failure,
+        })
+    }
+
+    /// Borrow the logical run identity.
+    #[must_use]
+    pub const fn run(&self) -> &LogicalReplayRunId {
+        &self.run
+    }
+    /// Borrow the typed issue scope.
+    #[must_use]
+    pub const fn scope(&self) -> &StreamingIssueScope {
+        &self.scope
+    }
+    /// Return the submitted reliability class.
+    #[must_use]
+    pub const fn class(&self) -> StreamingIssueClass {
+        self.class
+    }
+    /// Borrow the semantic context digest.
+    #[must_use]
+    pub const fn semantic_context_digest(&self) -> &ContentDigest {
+        &self.semantic_context_digest
+    }
+    /// Return the deterministic order key.
+    #[must_use]
+    pub const fn order(&self) -> StreamingIssueOrderKey {
+        self.order
+    }
+    /// Borrow the closed typed failure.
+    #[must_use]
+    pub const fn failure(&self) -> &OrdinaryStreamingFailure {
+        &self.failure
+    }
+}
+
+/// Fixed-size non-authoritative result of submitting one ordinary issue.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum StreamingIssueReportStatus {
+    /// The host retained the issue for ordered classification.
+    Accepted,
+    /// The bounded host input ledger has no current capacity.
+    Backpressured,
+}
+
+/// Closed reporter submission failure.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum StreamingIssueReportError {
+    /// The reporter has closed.
+    Closed,
+    /// The reporter rejected internally inconsistent typed facts.
+    InvalidIssue,
+}
+
+impl fmt::Display for StreamingIssueReportError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "streaming issue reporter error: {self:?}")
+    }
+}
+
+impl std::error::Error for StreamingIssueReportError {}
+
+/// Worker-local host endpoint behind the cloneable reporter handle.
+#[async_trait(?Send)]
+pub trait StreamingIssueReporterEndpoint {
+    /// Submit one move-only typed issue and return bounded admission status.
+    async fn report(
+        &self,
+        issue: OrdinaryStreamingIssue,
+    ) -> Result<StreamingIssueReportStatus, StreamingIssueReportError>;
 }
 
 /// Cloneable opaque injection handle for host-owned reliability reporting.
 #[derive(Clone)]
-pub struct StreamingIssueReporter {
-    inner: Rc<dyn StreamingIssueReporterOps>,
+pub struct StreamingIssueReporterHandle {
+    inner: Rc<dyn StreamingIssueReporterEndpoint>,
 }
 
-impl StreamingIssueReporter {
-    /// Erase one worker-local host reporting implementation.
+impl StreamingIssueReporterHandle {
+    /// Erase one worker-local host reporting endpoint.
     #[must_use]
     pub fn new<T>(reporter: T) -> Self
     where
-        T: StreamingIssueReporterOps + 'static,
+        T: StreamingIssueReporterEndpoint + 'static,
     {
         Self {
             inner: Rc::new(reporter),
         }
     }
 
-    /// Forward one typed issue without applying reliability policy locally.
-    pub fn report(&self, issue: StreamingIssue) {
-        self.inner.report(issue);
+    /// Submit one typed issue without granting adapter disposition authority.
+    pub async fn report(
+        &self,
+        issue: OrdinaryStreamingIssue,
+    ) -> Result<StreamingIssueReportStatus, StreamingIssueReportError> {
+        self.inner.report(issue).await
     }
 }
 
-impl fmt::Debug for StreamingIssueReporter {
+impl fmt::Debug for StreamingIssueReporterHandle {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("StreamingIssueReporter")
+            .debug_struct("StreamingIssueReporterHandle")
             .finish_non_exhaustive()
     }
+}
+
+/// Sole mutable host reliability owner and checkpoint participant.
+pub trait StreamingIssueReporter: StreamingCheckpointParticipant {
+    /// Return the cloneable adapter injection handle.
+    fn handle(&self) -> StreamingIssueReporterHandle;
 }

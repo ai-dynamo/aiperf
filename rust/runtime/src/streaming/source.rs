@@ -3,16 +3,17 @@
 
 //! Streaming source discovery, immutable acquisition, and stop contracts.
 
-use std::any::Any;
+use std::{any::Any, num::NonZeroUsize};
 
 use async_trait::async_trait;
 use bytes::Bytes;
+use serde::Serialize;
 use serde_json::value::RawValue;
 
 use super::{
     budget::{BudgetLease, StreamingResourceBudget},
     checkpoint::StreamingCheckpointParticipant,
-    failure::StreamingIssueReporter,
+    failure::StreamingIssueReporterHandle,
     identity::{ContentDigest, ImmutableObjectIdentity},
     unit::SourcePosition,
 };
@@ -20,25 +21,94 @@ use super::{
 pub use super::failure::{AcquisitionFailureCode, SourceFailureCode, StreamSourceError};
 
 /// Immutable registry metadata for one streaming source implementation.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct StreamingSourceDescriptor {
     /// Stable registry identifier.
     pub id: &'static str,
     /// Human-readable implementation description.
     pub description: &'static str,
-    /// Access shapes the source can acquire.
+    /// Whether the source is finite or follows new objects.
+    pub mode: StreamingSourceMode,
+    /// Callable access shapes the source can acquire.
     pub access: &'static [PartitionAccessKind],
+    /// Ordering guarantee made by source discovery.
+    pub ordering: StreamingSourceOrdering,
+    /// Exact resume granularities the source can honor.
+    pub resume: &'static [StreamingResumeGranularity],
+    /// Whether source records carry event time.
+    pub has_event_time: bool,
+    /// Whether source records carry producer-stable identities.
+    pub has_stable_record_ids: bool,
+    /// Retention needed to reacquire immutable content.
+    pub retention: StreamingSourceRetention,
+    /// Placement behavior supported by discovery and acquisition.
+    pub placement: StreamingSourcePlacement,
+    /// Whether the source can execute without wall-clock timers.
+    pub supports_virtual_clock: bool,
+}
+
+/// Source inventory lifecycle.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StreamingSourceMode {
+    /// Inventory is complete after an explicit seal.
+    Finite,
+    /// Inventory may grow until host control stops it.
+    Follow,
 }
 
 /// Partition access shape advertised during compatibility validation.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum PartitionAccessKind {
     /// Bounded forward byte chunks.
     Sequential,
-    /// An immutable owned local snapshot.
-    SeekableLocal,
-    /// Bounded immutable byte ranges.
-    RangeReadable,
+}
+
+/// Ordering guaranteed by source discovery.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StreamingSourceOrdering {
+    /// No ordering beyond immutable object identity.
+    None,
+    /// Stable partition positions are monotonic.
+    Partition,
+    /// Event-time completeness frontiers are monotonic.
+    EventTime,
+}
+
+/// Resume coordinate accepted by a source/format combination.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StreamingResumeGranularity {
+    /// Resume at an immutable partition boundary.
+    Partition,
+    /// Resume at an exact byte offset.
+    Byte,
+    /// Resume at a format row-group boundary.
+    RowGroup,
+    /// Resume at an exact canonical record boundary.
+    Record,
+}
+
+/// Source-owned retained-state requirement.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StreamingSourceRetention {
+    /// Only caller-budgeted acquired chunks are retained.
+    BoundedMemory,
+    /// Immutable objects remain reachable through the committed resume root.
+    ResumeRootReachability,
+}
+
+/// Source work placement supported by the implementation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StreamingSourcePlacement {
+    /// Discovery and acquisition remain controller-local.
+    ControllerOnly,
+    /// Immutable partition assignments may be placed on workers or cells.
+    ImmutablePartitionAssignment,
 }
 
 /// Type-erased, strictly validated source configuration.
@@ -69,7 +139,7 @@ pub struct StreamingSourcePrepareContext {
     /// Budget used for immutable acquired partition bytes.
     pub acquisition_budget: AcquisitionBudget,
     /// Host-owned reliability issue reporting boundary.
-    pub issue_reporter: StreamingIssueReporter,
+    pub issue_reporter: StreamingIssueReporterHandle,
 }
 
 /// Startup source validation and preparation contract.
@@ -159,12 +229,13 @@ impl StreamingStopReceiver {
     }
 
     /// Wait until stop is requested.
-    pub async fn stopped(&mut self) {
+    pub async fn stopped(&mut self) -> Result<(), StreamSourceError> {
         while !*self.receiver.borrow_and_update() {
             if self.receiver.changed().await.is_err() {
-                return;
+                break;
             }
         }
+        Err(StreamSourceError::controlled_stop())
     }
 }
 
@@ -240,10 +311,6 @@ pub struct SourceSeal {
 pub enum PartitionAccessRequest {
     /// Begin or resume bounded sequential reads at an exact byte offset.
     Sequential { resume_offset: u64 },
-    /// Acquire an immutable owned seekable local snapshot.
-    SeekableLocal,
-    /// Acquire authority for bounded immutable byte ranges.
-    RangeReadable,
 }
 
 /// Budget authority supplied to immutable partition acquisition.
@@ -286,30 +353,49 @@ pub trait SourcePartitionContent {
 /// Move-only acquired partition bytes and their exact retained capacity.
 #[derive(Debug)]
 pub struct AcquiredPartition {
+    position: SourcePosition,
     identity: ImmutableObjectIdentity,
     bytes: Bytes,
+    cursor: usize,
     lease: BudgetLease,
 }
 
 impl AcquiredPartition {
     /// Bind immutable bytes to identity and an exact one-item byte charge.
     pub fn new(
+        position: SourcePosition,
         identity: ImmutableObjectIdentity,
+        resume_offset: u64,
         bytes: Bytes,
         lease: BudgetLease,
     ) -> Result<Self, StreamSourceError> {
         if lease.charged_items() != 1 || lease.charged_bytes() != bytes.len() {
             return Err(StreamSourceError::acquisition(
-                super::failure::AcquisitionFailureCode::IdentityMismatch,
-                "acquired partition budget does not match retained bytes",
+                super::failure::AcquisitionFailureCode::BudgetInvariant,
             ));
         }
+        let cursor = usize::try_from(resume_offset)
+            .ok()
+            .filter(|cursor| *cursor <= bytes.len())
+            .ok_or_else(|| {
+                StreamSourceError::acquisition(
+                    super::failure::AcquisitionFailureCode::ObjectLimitExceeded,
+                )
+            })?;
         let bytes = Bytes::from(bytes.as_ref().to_vec().into_boxed_slice());
         Ok(Self {
+            position,
             identity,
             bytes,
+            cursor,
             lease,
         })
+    }
+
+    /// Return the stable position bound to this acquired content.
+    #[must_use]
+    pub const fn position(&self) -> SourcePosition {
+        self.position
     }
 
     /// Borrow the immutable source-object generation identity.
@@ -318,10 +404,18 @@ impl AcquiredPartition {
         &self.identity
     }
 
-    /// Borrow the exact acquired bytes.
-    #[must_use]
-    pub fn as_bytes(&self) -> &[u8] {
-        &self.bytes
+    /// Borrow and advance by at most `max_bytes` without minting retained capacity.
+    pub fn next_chunk(&mut self, max_bytes: NonZeroUsize) -> Option<&[u8]> {
+        if self.cursor == self.bytes.len() {
+            return None;
+        }
+        let end = self
+            .cursor
+            .saturating_add(max_bytes.get())
+            .min(self.bytes.len());
+        let chunk = &self.bytes[self.cursor..end];
+        self.cursor = end;
+        Some(chunk)
     }
 
     /// Return the exact retained byte charge.

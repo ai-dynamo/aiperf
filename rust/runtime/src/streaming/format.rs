@@ -6,20 +6,26 @@
 use std::any::Any;
 
 use async_trait::async_trait;
+use bytes::Bytes;
+use serde::Serialize;
 use serde_json::value::RawValue;
 
 use super::{
+    budget::BudgetLease,
     checkpoint::StreamingCheckpointParticipant,
-    failure::StreamingIssueReporter,
+    failure::StreamingIssueReporterHandle,
     identity::{ContentDigest, ImmutableObjectIdentity},
-    source::{AcquiredPartition, SourceFrontier, SourceSeal, StreamingSourceDescriptor},
+    source::{
+        AcquiredPartition, PartitionAccessKind, SourceFrontier, SourceSeal,
+        StreamingSourceDescriptor,
+    },
     unit::{EventTimeUtc, StreamingSessionFragment},
 };
 
 pub use super::failure::{DecodeFailureCode, OrderingFailureCode, StreamFormatError};
 
 /// Immutable registry metadata for one streaming format implementation.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct StreamingFormatDescriptor {
     /// Stable registry identifier.
     pub id: &'static str,
@@ -27,6 +33,46 @@ pub struct StreamingFormatDescriptor {
     pub description: &'static str,
     /// Semantic digest of canonical decoding behavior.
     pub semantic_digest: ContentDigest,
+    /// Accepted immutable input media types.
+    pub media_types: &'static [&'static str],
+    /// Accepted source record schemas.
+    pub input_schemas: &'static [&'static str],
+    /// Callable source access required by this format.
+    pub required_access: PartitionAccessKind,
+    /// Projection behavior supported without whole-dataset retention.
+    pub projection: FormatProjection,
+    /// Canonical fragment schema emitted by this format.
+    pub output_schema: &'static str,
+    /// Whether emitted fragments preserve event time.
+    pub has_event_time: bool,
+    /// Whether emitted fragments preserve stable record identity.
+    pub has_stable_record_ids: bool,
+    /// Decoder retained-state behavior.
+    pub retention: FormatStateRetention,
+    /// Whether decoding can run under a virtual clock.
+    pub supports_virtual_clock: bool,
+}
+
+/// Format projection capability.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FormatProjection {
+    /// Every field of each accepted record is decoded.
+    FullRecord,
+    /// A validated bounded field projection can be decoded.
+    BoundedFields,
+}
+
+/// Format-owned retained-state requirement.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FormatStateRetention {
+    /// Decoder state is caller-budgeted and independent of total input size.
+    BoundedMemory,
+    /// Validated spill authority is required for decoder state.
+    BoundedSpill,
+    /// The implementation requires the complete input resident at once.
+    ResidentInput,
 }
 
 /// Type-erased, strictly validated format configuration.
@@ -57,7 +103,7 @@ pub struct StreamingFormatPrepareContext {
     /// Semantic namespace of the selected stream.
     pub stream_semantic_digest: ContentDigest,
     /// Host-owned reliability issue reporting boundary.
-    pub issue_reporter: StreamingIssueReporter,
+    pub issue_reporter: StreamingIssueReporterHandle,
 }
 
 /// Startup format validation and preparation contract.
@@ -128,7 +174,7 @@ pub struct DecodeBatchBudget {
 }
 
 /// Host-bound decoder checkpoint for one immutable partition.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Debug)]
 pub struct DecoderCheckpoint {
     /// Immutable partition generation being resumed.
     pub partition: ImmutableObjectIdentity,
@@ -139,24 +185,34 @@ pub struct DecoderCheckpoint {
 }
 
 /// Opaque format-private resume cursor retained by the host.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Debug)]
 pub struct DecoderResumeState {
-    bytes: Box<[u8]>,
+    bytes: Bytes,
+    lease: BudgetLease,
 }
 
 impl DecoderResumeState {
-    /// Construct a compact opaque decoder cursor.
-    #[must_use]
-    pub fn new(bytes: impl Into<Box<[u8]>>) -> Self {
-        Self {
-            bytes: bytes.into(),
+    /// Construct a compact opaque decoder cursor with an exact retained charge.
+    pub fn new(bytes: Bytes, lease: BudgetLease) -> Result<Self, StreamFormatError> {
+        if lease.charged_items() != 1 || lease.charged_bytes() != bytes.len() {
+            return Err(StreamFormatError::decode(
+                DecodeFailureCode::BudgetInvariant,
+            ));
         }
+        let bytes = Bytes::from(bytes.as_ref().to_vec().into_boxed_slice());
+        Ok(Self { bytes, lease })
     }
 
     /// Borrow the exact opaque decoder cursor bytes.
     #[must_use]
     pub fn as_bytes(&self) -> &[u8] {
         &self.bytes
+    }
+
+    /// Return the exact retained byte charge.
+    #[must_use]
+    pub fn charged_bytes(&self) -> usize {
+        self.lease.charged_bytes()
     }
 }
 
@@ -177,7 +233,7 @@ pub struct DecodedFragmentBatch {
 }
 
 /// Receipt proving one immutable partition was exhausted.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Debug)]
 pub struct DecodeReceipt {
     /// Immutable partition generation that was exhausted.
     pub partition: ImmutableObjectIdentity,

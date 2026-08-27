@@ -42,7 +42,7 @@ impl DatasetActionSchema {
 }
 
 /// Immutable registry metadata for one streaming action sink implementation.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct StreamingActionSinkDescriptor {
     /// Stable registry identifier.
     pub id: &'static str,
@@ -50,6 +50,36 @@ pub struct StreamingActionSinkDescriptor {
     pub description: &'static str,
     /// Action schemas accepted by this implementation.
     pub accepted_schemas: &'static [&'static str],
+    /// Transport implementations accepted by this binding.
+    pub transport_ids: &'static [&'static str],
+    /// Endpoint families accepted by this binding.
+    pub endpoint_kinds: &'static [&'static str],
+    /// Result retention required while actions execute.
+    pub retention: ActionResultRetention,
+    /// Placement supported by the binding.
+    pub placement: ActionPlacement,
+    /// Whether the binding can run under a virtual clock.
+    pub supports_virtual_clock: bool,
+}
+
+/// Action result retention behavior.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ActionResultRetention {
+    /// Terminal results can be emitted under bounded streaming budgets.
+    StreamingTerminal,
+    /// Complete result history must remain resident.
+    ResidentTotal,
+}
+
+/// Action binding placement behavior.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ActionPlacement {
+    /// Binding state is local to one worker.
+    WorkerLocal,
+    /// Binding supports fenced routing across cells.
+    RoutedAcrossCells,
 }
 
 /// Type-erased, strictly validated action-sink configuration.
@@ -350,9 +380,8 @@ impl BudgetedActionUpdate {
     /// Bind compact normalized bytes to an exact one-item byte charge.
     pub fn new(bytes: Bytes, lease: BudgetLease) -> Result<Self, ActionExecutionError> {
         if lease.charged_items() != 1 || lease.charged_bytes() != bytes.len() {
-            return Err(ActionExecutionError::state_budget(
-                super::unit::StateBudgetFailureCode::ByteCapacity,
-                "action update budget does not match retained bytes",
+            return Err(ActionExecutionError::action(
+                ActionFailureCode::BudgetInvariant,
             ));
         }
         let bytes = Bytes::from(bytes.as_ref().to_vec().into_boxed_slice());

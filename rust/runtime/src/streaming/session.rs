@@ -6,6 +6,7 @@
 use std::any::Any;
 
 use async_trait::async_trait;
+use serde::Serialize;
 use serde_json::value::RawValue;
 
 use super::{
@@ -20,14 +21,64 @@ use super::{
 pub use super::failure::{SessionCoordinatorError, SessionFailureCode};
 
 /// Immutable registry metadata for one session-program implementation.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct StreamingSessionProgramDescriptor {
     /// Stable registry identifier.
     pub id: &'static str,
     /// Human-readable implementation description.
     pub description: &'static str,
+    /// Canonical fragment schemas accepted by this program.
+    pub fragment_input_schemas: &'static [&'static str],
     /// Action schemas the program can emit.
     pub action_schemas: &'static [&'static str],
+    /// Exact completeness proofs that can close session state.
+    pub closure: &'static [SessionClosureCapability],
+    /// Session retained-state requirement.
+    pub retention: SessionStateRetention,
+    /// Session ownership placement supported by the program.
+    pub placement: SessionPlacement,
+    /// Whether coordination can run under a virtual clock.
+    pub supports_virtual_clock: bool,
+}
+
+/// Completeness evidence sufficient to close a session.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionClosureCapability {
+    /// An explicit terminal record closes the session.
+    ExplicitClose,
+    /// A monotonic producer sequence proves closure.
+    MonotonicSequence,
+    /// A hard event-time watermark proves closure.
+    HardWatermark,
+    /// A finite source seal proves closure.
+    FiniteSeal,
+    /// A complete source order permits a final sorted pass.
+    CompleteSortedRun,
+    /// Inactivity closes a session with explicitly lossy semantics.
+    LossyInactivity,
+}
+
+/// Session-program retained-state requirement.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionStateRetention {
+    /// Active session state has a validated memory bound.
+    BoundedMemory,
+    /// Active session state has validated spill authority.
+    BoundedSpill,
+    /// The complete input must remain resident.
+    ResidentInput,
+}
+
+/// Session-program placement behavior.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionPlacement {
+    /// All canonical session state remains controller-local.
+    ControllerCanonical,
+    /// Stable sessions may be routed to fenced worker owners.
+    RoutedByStableSession,
 }
 
 /// Type-erased, strictly validated session-program configuration.
