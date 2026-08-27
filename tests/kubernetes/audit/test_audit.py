@@ -57,7 +57,7 @@ async def test_operator_vs_bare_pod(
     bare_pod_config: BarePodConfig,
 ) -> None:
     """One audit case: operator path vs bare-pod path, three-bucket diff."""
-    namespace = f"audit-{case.case_id}-{uuid.uuid4().hex[:6]}"
+    namespace = f"aiperf-audit-{case.case_id}-{uuid.uuid4().hex[:6]}"
     op_dir = audit_artifacts_dir / "operator"
     bare_dir = audit_artifacts_dir / "bare"
 
@@ -147,7 +147,7 @@ async def test_operator_vs_bare_pod_sweep(
     bare_pod_config: BarePodConfig,
 ) -> None:
     """Sweep-with-trials audit: AIPerfSweep vs N sequential bare-pod runs."""
-    namespace = f"audit-{case.case_id}-{uuid.uuid4().hex[:6]}"
+    namespace = f"aiperf-audit-{case.case_id}-{uuid.uuid4().hex[:6]}"
     op_root = audit_artifacts_dir / "operator"
     bare_root = audit_artifacts_dir / "bare"
 
@@ -292,7 +292,7 @@ async def test_operator_index_matches_disk(
     only; the standard three-bucket diff in ``test_operator_vs_bare_pod``
     continues to be the cross-mode oracle.
     """
-    namespace = f"audit-idx-{case.case_id}-{uuid.uuid4().hex[:6]}"
+    namespace = f"aiperf-audit-idx-{case.case_id}-{uuid.uuid4().hex[:6]}"
     op_dir = audit_artifacts_dir / "operator"
 
     operator_runner = OperatorAuditRunner(
