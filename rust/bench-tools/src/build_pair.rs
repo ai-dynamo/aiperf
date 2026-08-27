@@ -143,6 +143,8 @@ pub struct BuildPairPlanV1 {
 pub struct BuildPairMemberReportV1 {
     /// Member role.
     pub variant: Variant,
+    /// Retained canonical source root revalidated by runtime consumers.
+    pub source_root: String,
     /// Digest of the canonical complete source-tree census.
     pub source_identity_blake3: String,
     /// Canonical JCS census covering the complete source tree.
@@ -232,6 +234,7 @@ struct CanonicalBuildReceiptV1<'a> {
     source_commit: &'a str,
     experiment_identity_blake3: &'a str,
     source_identity_blake3: &'a str,
+    source_root: &'a str,
     cargo_lock_blake3: &'a str,
     cargo_executable_blake3: &'a str,
     rustc_executable_blake3: &'a str,
@@ -282,6 +285,7 @@ struct CanonicalPairRecordV1<'a> {
     build_order: [Variant; 2],
     build_duration_use: BuildDurationUseV1,
     member_source_identity_blake3: [&'a str; 2],
+    member_source_roots: [&'a str; 2],
     member_cargo_lock_blake3: [&'a str; 2],
     member_target_roots: [&'a str; 2],
     member_build_receipt_blake3: [&'a str; 2],
@@ -451,6 +455,17 @@ pub(crate) fn validate_authoritative_build_report_v1(
             &member.source_tree_receipt_bytes,
             &member.source_identity_blake3,
         )?;
+        let source_root = PathBuf::from(&member.source_root);
+        canonical_directory(&source_root, "reported source_root")?;
+        let observed_source = census_source_tree(&source_root)?;
+        if observed_source.receipt_bytes != member.source_tree_receipt_bytes
+            || observed_source.identity_blake3 != member.source_identity_blake3
+            || observed_source.cargo_lock_blake3 != member.cargo_lock_blake3
+        {
+            return Err(BuildPairError::new(
+                "reported complete source tree no longer matches its build authority",
+            ));
+        }
         let target_root = PathBuf::from(&member.target_root);
         canonical_directory(&target_root, "reported target_root")?;
         let artifact_relative_path = PathBuf::from(&member.artifact_relative_path);
@@ -475,6 +490,7 @@ pub(crate) fn validate_authoritative_build_report_v1(
             source_commit: &report.source_commit,
             experiment_identity_blake3: &report.experiment_identity_blake3,
             source_identity_blake3: &member.source_identity_blake3,
+            source_root: &member.source_root,
             cargo_lock_blake3: &member.cargo_lock_blake3,
             cargo_executable_blake3: &report.cargo_executable_blake3,
             rustc_executable_blake3: &report.rustc_executable_blake3,
@@ -548,6 +564,10 @@ fn canonical_pair_record_bytes(report: &BuildPairReportV1) -> Result<Vec<u8>, Bu
         member_source_identity_blake3: [
             &report.members[0].source_identity_blake3,
             &report.members[1].source_identity_blake3,
+        ],
+        member_source_roots: [
+            &report.members[0].source_root,
+            &report.members[1].source_root,
         ],
         member_cargo_lock_blake3: [
             &report.members[0].cargo_lock_blake3,
@@ -817,8 +837,19 @@ fn acquire_source_tree_authority(
     member: &BuildPairMemberV1,
 ) -> Result<SourceTreeAuthorityV1, BuildPairError> {
     validate_member_identity(member)?;
+    let authority = census_source_tree(&member.source_root)?;
+    if authority.cargo_lock_blake3 != member.cargo_lock_blake3 {
+        return Err(BuildPairError::new(format!(
+            "{:?} Cargo.lock digest mismatch",
+            member.variant
+        )));
+    }
+    Ok(authority)
+}
+
+fn census_source_tree(source_root: &Path) -> Result<SourceTreeAuthorityV1, BuildPairError> {
     let mut entries = Vec::new();
-    collect_source_tree_entries(&member.source_root, &member.source_root, &mut entries)?;
+    collect_source_tree_entries(source_root, source_root, &mut entries)?;
     let receipt = SourceTreeReceiptV1 {
         schema_version: "plugin_complete_source_tree/v1".to_owned(),
         exclusions: Vec::new(),
@@ -827,10 +858,14 @@ fn acquire_source_tree_authority(
     let receipt_bytes = canonical_bytes(&receipt)?;
     let identity_blake3 = digest(&receipt_bytes);
     validate_source_tree_receipt(&receipt_bytes, &identity_blake3)?;
+    let lock_path = source_root.join("Cargo.lock");
+    let cargo_lock = fs::read(&lock_path).map_err(|error| {
+        BuildPairError::new(format!("cannot read {}: {error}", lock_path.display()))
+    })?;
     Ok(SourceTreeAuthorityV1 {
         receipt_bytes,
         identity_blake3,
-        cargo_lock_blake3: member.cargo_lock_blake3.clone(),
+        cargo_lock_blake3: digest(&cargo_lock),
     })
 }
 
@@ -1036,6 +1071,7 @@ fn run_member(
     })?;
 
     let target_root = path_text(&member.target_root, "target_root")?;
+    let source_root = path_text(&member.source_root, "source_root")?;
     let artifact_relative_path =
         path_text(&member.artifact_relative_path, "artifact_relative_path")?;
     let artifact_blake3 = digest(&artifact);
@@ -1053,6 +1089,7 @@ fn run_member(
         source_commit: &plan.source_commit,
         experiment_identity_blake3: &plan.experiment_identity_blake3,
         source_identity_blake3: &source_authority.identity_blake3,
+        source_root: &source_root,
         cargo_lock_blake3: &source_authority.cargo_lock_blake3,
         cargo_executable_blake3: &plan.cargo_executable_blake3,
         rustc_executable_blake3: &plan.rustc_executable_blake3,
@@ -1085,6 +1122,7 @@ fn run_member(
 
     Ok(BuildPairMemberReportV1 {
         variant: member.variant,
+        source_root,
         source_identity_blake3: source_authority.identity_blake3.clone(),
         source_tree_receipt_bytes: source_authority.receipt_bytes.clone(),
         cargo_lock_blake3: source_authority.cargo_lock_blake3.clone(),

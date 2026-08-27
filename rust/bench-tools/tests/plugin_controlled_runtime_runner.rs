@@ -229,6 +229,19 @@ impl Fixture {
         }
     }
 
+    fn synchronize_source_artifacts(&self) {
+        for source in [&self.static_source, &self.dynamic_source] {
+            write_executable(
+                &source.join("static-artifact-source"),
+                &self.static_artifact,
+            );
+            write_executable(
+                &source.join("dynamic-artifact-source"),
+                &self.dynamic_artifact,
+            );
+        }
+    }
+
     fn build_report(&self) -> BuildPairReportV1 {
         run_paired_build_v1(&BuildPairPlanV1 {
             scenario: "runtime-full-matrix".to_owned(),
@@ -330,14 +343,7 @@ fn controller_owned_exporter_adapter_seals_history_without_invoking_exporter_chi
     let mut fixture = Fixture::new();
     fixture.static_artifact = runtime_artifact_rejecting_exporter("static authority fixture");
     fixture.dynamic_artifact = runtime_artifact_rejecting_exporter("dynamic authority fixture");
-    write_executable(
-        &fixture.static_source.join("artifact-source"),
-        &fixture.static_artifact,
-    );
-    write_executable(
-        &fixture.dynamic_source.join("artifact-source"),
-        &fixture.dynamic_artifact,
-    );
+    fixture.synchronize_source_artifacts();
     let build_report = fixture.build_report();
     let mut factory = FakeExporterFactory {
         mode: FakeExporterMode::Complete,
@@ -411,11 +417,8 @@ fn standalone_caller_authored_evaluation_remains_refused() {
 fn terminal_failure_is_retained_once_with_its_exact_empty_output_digest() {
     let mut fixture = Fixture::new();
     let failing_artifact = b"#!/bin/sh\nexit 9\n".to_vec();
-    write_executable(
-        &fixture.static_source.join("artifact-source"),
-        &failing_artifact,
-    );
     fixture.static_artifact = failing_artifact;
+    fixture.synchronize_source_artifacts();
     let build_report = fixture.build_report();
 
     let report = run_controlled_runtime_v1(&build_report)
