@@ -26,4 +26,18 @@ mod tests {
         let report = crate::metrics_core::report::test_util::two_metric_report();
         assert_eq!(summarize(&report), 2);
     }
+
+    #[test]
+    fn exporter_boundary_accepts_the_narrow_view() {
+        fn export(
+            exporter: &dyn crate::export::Exporter,
+            view: &dyn ReportView,
+            artifact_dir: &std::path::Path,
+            cfg: &crate::export::ExportConfig,
+        ) -> anyhow::Result<()> {
+            exporter.export(view, artifact_dir, cfg)
+        }
+
+        let _ = export;
+    }
 }
