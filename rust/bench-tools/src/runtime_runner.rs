@@ -444,9 +444,11 @@ pub struct TerminalMemberEvidenceV1 {
     pub stdout: BoundedChildOutput,
     /// Bounded standard error.
     pub stderr: BoundedChildOutput,
-    /// Whether the affinity monitor ever observed this member holding its
-    /// checked-in pin exactly. A member that terminated before the monitor
-    /// armed ran unmonitored, and a reader of the retained evidence can see it.
+    /// Whether the affinity monitor armed for this member. It arms on the first
+    /// observed mask that is a subset of the member's checked-in pin and differs
+    /// from the controller's own mask at spawn; when no such observation was
+    /// made the monitor stays `NeverArmed`, the member ran unmonitored, and a
+    /// reader of the retained evidence can see it. See `AffinityMonitorState`.
     pub is_affinity_monitored: bool,
 }
 
@@ -1717,7 +1719,7 @@ fn execute_monitored_child(
         {
             injected_child_fault("affinity")?;
             if let Some(observed) = process_affinity(pid)? {
-                *state = advance_affinity_monitor(state, &observed, pinned, inherited);
+                advance_affinity_monitor(state, &observed, pinned, inherited);
                 if matches!(state, AffinityMonitorState::ArmedThenLost { .. }) {
                     infrastructure_event = Some(InfrastructureEvent::AffinityLoss);
                 }
@@ -2047,22 +2049,25 @@ enum AffinityMonitorState {
     },
 }
 
-/// Advances the affinity monitor by one observation.
+/// Advances the affinity monitor by one observation, in place.
 ///
 /// Deliberately I/O-free: `sched_getaffinity` stays at the call site so the whole
 /// arming decision is testable as a pure transition table. `inherited_at_spawn`
 /// is the controller's own mask sampled immediately before `fork`; it is used
 /// only to refuse an observation, never to predict one, so a wrong value can
 /// only leave a member unmonitored and can never manufacture a loss.
+///
+/// Mutating in place keeps the steady state — an armed member still holding its
+/// baseline, polled every 5 ms for the whole member duration — allocation-free.
 fn advance_affinity_monitor(
-    state: &AffinityMonitorState,
+    state: &mut AffinityMonitorState,
     observed: &BTreeSet<usize>,
     pinned: &BTreeSet<usize>,
     inherited_at_spawn: &BTreeSet<usize>,
-) -> AffinityMonitorState {
+) {
     match state {
         AffinityMonitorState::NeverArmed { .. } => {
-            if observed != inherited_at_spawn && observed.is_subset(pinned) {
+            *state = if observed != inherited_at_spawn && observed.is_subset(pinned) {
                 AffinityMonitorState::ArmedAndStable {
                     baseline: observed.clone(),
                 }
@@ -2070,19 +2075,18 @@ fn advance_affinity_monitor(
                 AffinityMonitorState::NeverArmed {
                     has_observation: true,
                 }
-            }
+            };
         }
         AffinityMonitorState::ArmedAndStable { baseline } => {
-            if observed == baseline {
-                state.clone()
-            } else {
-                AffinityMonitorState::ArmedThenLost {
+            if observed != baseline {
+                *state = AffinityMonitorState::ArmedThenLost {
                     observed: observed.clone(),
-                }
+                };
             }
         }
-        // Terminal: the loss is already recorded and further polling stops.
-        AffinityMonitorState::ArmedThenLost { .. } => state.clone(),
+        // Terminal: the loss is already recorded and further polling stops, so
+        // production never reaches this arm.
+        AffinityMonitorState::ArmedThenLost { .. } => {}
     }
 }
 
@@ -2731,25 +2735,30 @@ mod tests {
         let unarmed = AffinityMonitorState::NeverArmed {
             has_observation: false,
         };
+        let advanced = |from: &AffinityMonitorState, observed: &BTreeSet<usize>| {
+            let mut state = from.clone();
+            advance_affinity_monitor(&mut state, observed, &pinned, &inherited);
+            state
+        };
 
         // The pre-exec window: identical to the inherited mask, so not evidence
         // that `taskset` ran, however far inside the pin it lies.
         assert_eq!(
-            advance_affinity_monitor(&unarmed, &inherited, &pinned, &inherited),
+            advanced(&unarmed, &inherited),
             AffinityMonitorState::NeverArmed {
                 has_observation: true
             }
         );
         // A mask reaching outside the pin is not a credible baseline either.
         assert_eq!(
-            advance_affinity_monitor(&unarmed, &BTreeSet::from([3, 5, 9]), &pinned, &inherited),
+            advanced(&unarmed, &BTreeSet::from([3, 5, 9])),
             AffinityMonitorState::NeverArmed {
                 has_observation: true
             }
         );
         // Inside the pin and not the inherited mask: `taskset` took effect.
         assert_eq!(
-            advance_affinity_monitor(&unarmed, &pinned, &pinned, &inherited),
+            advanced(&unarmed, &pinned),
             AffinityMonitorState::ArmedAndStable {
                 baseline: pinned.clone()
             }
@@ -2758,13 +2767,10 @@ mod tests {
         let armed = AffinityMonitorState::ArmedAndStable {
             baseline: pinned.clone(),
         };
-        assert_eq!(
-            advance_affinity_monitor(&armed, &pinned, &pinned, &inherited),
-            armed
-        );
+        assert_eq!(advanced(&armed, &pinned), armed);
         // Once armed, any deviation is real affinity loss, named by its mask.
         assert_eq!(
-            advance_affinity_monitor(&armed, &BTreeSet::from([4]), &pinned, &inherited),
+            advanced(&armed, &BTreeSet::from([4])),
             AffinityMonitorState::ArmedThenLost {
                 observed: BTreeSet::from([4])
             }
@@ -2785,7 +2791,7 @@ mod tests {
         };
 
         for observed in [&inherited, &inherited, &installed, &installed] {
-            state = advance_affinity_monitor(&state, observed, &pinned, &inherited);
+            advance_affinity_monitor(&mut state, observed, &pinned, &inherited);
         }
 
         assert_eq!(
