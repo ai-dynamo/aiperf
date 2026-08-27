@@ -302,8 +302,10 @@ name = "aiperf-xtask"
 version = "0.12.0"
 dependencies = [
  "anyhow",
+ "proc-macro2",
  "serde",
  "serde_json",
+ "syn",
  "toml",
 ]
 
