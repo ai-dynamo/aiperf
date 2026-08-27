@@ -2208,7 +2208,7 @@ impl BudgetOwnedStreamingIssueReporter {
         if self
             .input_frontiers
             .get(&input_domain)
-            .is_some_and(|through| position <= *through)
+            .is_some_and(|frontier| position <= frontier.through)
         {
             return Err((
                 StreamingReliabilityError::NonContiguousIssueFrontier,
@@ -2251,8 +2251,9 @@ impl BudgetOwnedStreamingIssueReporter {
     }
 
     fn pending_issue_exists(&self, issue_id: &ContentDigest) -> bool {
-        self.pending_inputs.values().any(|pending| {
-            pending
+        self.pending_inputs.values().any(|domain| {
+            domain
+                .pending
                 .values()
                 .any(|candidate| candidate.issue.issue_id() == *issue_id)
         }) || self
@@ -2686,7 +2687,7 @@ impl BudgetOwnedStreamingIssueReporter {
         let counter_lease = if self.counters.contains_key(&key) {
             None
         } else {
-            let bytes = match counter_entry_bytes() {
+            let bytes = match counter_entry_bytes(&key) {
                 Ok(bytes) => bytes,
                 Err(_) => return Err((StreamingReliabilityError::CounterOverflow, pending)),
             };
@@ -3020,7 +3021,8 @@ impl BudgetOwnedStreamingIssueReporter {
         };
         let encoded = serde_json::to_vec(&persisted)
             .map_err(|_| StreamingReliabilityError::CorruptCheckpointState)?;
-        let parsed_charge_bytes = parsed_export_receipt_bytes(&persisted);
+        let parsed_charge_bytes = parsed_export_receipt_bytes(&persisted)
+            .map_err(|_| StreamingReliabilityError::CounterOverflow)?;
         let (encoded_lease, parsed_lease) = budget
             .acquire_pair(
                 super::budget::BudgetCharge {
@@ -3623,7 +3625,8 @@ pub async fn restore_durable_export_issue_receipt(
         embedded_receipt_length: wire.embedded_receipt_length,
         embedded_receipt,
     };
-    let parsed_charge_bytes = parsed_export_receipt_bytes(&receipt);
+    let parsed_charge_bytes = parsed_export_receipt_bytes(&receipt)
+        .map_err(|_| StreamingReliabilityError::CounterOverflow)?;
     let parsed_lease = parsed_budget
         .acquire(1, parsed_charge_bytes)
         .await
