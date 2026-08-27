@@ -96,6 +96,32 @@ impl Baseline {
     }
 }
 
+/// Reject newly reachable type identities, including count-preserving substitutions.
+pub fn ensure_no_growth(measured: &Baseline, baseline: &Baseline) -> Result<()> {
+    let accepted: BTreeSet<(&str, &str)> = baseline
+        .entries
+        .iter()
+        .map(|entry| (entry.name.as_str(), entry.file.as_str()))
+        .collect();
+    let added = measured
+        .entries
+        .iter()
+        .filter(|entry| !accepted.contains(&(entry.name.as_str(), entry.file.as_str())))
+        .map(|entry| format!("{} ({})", entry.name, entry.file))
+        .collect::<Vec<_>>();
+    if !added.is_empty() {
+        bail!("new ABI-facing types: {}", added.join(", "));
+    }
+    if measured.types > baseline.types {
+        bail!(
+            "ABI closure grew from {} to {} types",
+            baseline.types,
+            measured.types
+        );
+    }
+    Ok(())
+}
+
 /// Return the Cargo workspace root containing the xtask package.
 pub fn workspace_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))

@@ -6,7 +6,9 @@
 use std::path::PathBuf;
 
 use aiperf_xtask::abi_churn::measure;
-use aiperf_xtask::abi_closure::{Baseline, Seeds, compute, compute_in, workspace_root};
+use aiperf_xtask::abi_closure::{
+    Baseline, Seeds, compute, compute_in, ensure_no_growth, workspace_root,
+};
 use anyhow::{Context, Result, bail};
 
 fn main() -> Result<()> {
@@ -46,13 +48,7 @@ fn main() -> Result<()> {
                     .with_context(|| format!("reading {}", baseline_path.display()))?,
             )
             .with_context(|| format!("parsing {}", baseline_path.display()))?;
-            if measured.types > baseline.types {
-                bail!(
-                    "ABI closure grew from {} to {} types; update the boundary or review the baseline",
-                    baseline.types,
-                    measured.types
-                );
-            }
+            ensure_no_growth(&measured, &baseline)?;
         }
         "abi-churn" => {
             let (since, merges) = churn_options(arguments)?;

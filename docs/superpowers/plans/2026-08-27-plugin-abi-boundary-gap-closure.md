@@ -91,7 +91,9 @@ and `53,768` total lines in contributing files.
 | Total lines in those files | 53,767 |
 | Implementation lines co-resident with ABI types | 49,879 (93%) |
 | Universe-bump rate, file-granular, 120 merge units | 19 / 54 code units (35%) |
-| Universe-bump rate, type-granular | 13 / 54 code units (24%) |
+| Universe-bump rate, type-granular | 15 / 54 code units (28%) |
+| Present-base universe rate, file-granular | 20 / 55 code units (36%) |
+| Present-base universe rate, type-granular | 15 / 55 code units (27%) |
 | Target after Tasks 2–6 | present-tree closure minus the independently measured Task 2–6 deltas |
 
 ## File Structure
@@ -392,8 +394,10 @@ source .venv/bin/activate && cd rust
 cargo run -p aiperf-xtask -- abi-churn --merges 120
 ```
 
-Expected: `code_units: 54`, file-granular `universe: 19` (35%), type-granular
-`universe: 13` (24%), `one_plugin: 1`.
+Expected at historical commit `110e00321a`: `code_units: 54`, file-granular
+`universe: 19` (35%), type-granular `universe: 15` (28%), `one_plugin: 1`.
+The present integration base independently measures 55 code units, with
+file-granular `universe: 20` and type-granular `universe: 15`.
 
 - [ ] **Step 9: Wire the CI gate and commit**
 
@@ -410,7 +414,7 @@ feat(xtask): gate ABI-closure growth and report universe-bump rate
 
 abi-churn replays first-parent merge history against per-commit type spans
 and reports how many units would rebuild every plugin. Baseline at this
-commit: 35% file-granular, 24% type-granular, 1 single-plugin unit of 54.
+commit: 35% file-granular, 28% type-granular, 1 single-plugin unit of 54.
 EOF
 ```
 
