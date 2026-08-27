@@ -93,6 +93,12 @@ class BenchmarkConfig:
     priority_class: str | None = None
     """Kubernetes PriorityClass name, or None."""
 
+    tolerations: list[dict] | None = None
+    """Pod tolerations to apply to benchmark pods, or None."""
+
+    node_selector: dict[str, str] | None = None
+    """Node selector labels for benchmark pods, or None."""
+
     def to_temp_file(self) -> Path:
         """Write a placeholder config file (not used by generate, kept for API compat).
 
