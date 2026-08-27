@@ -7,7 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Shrink the host/plugin ABI closure from 193 types to ~118 and instrument the universe-rebuild rate, so the recompile-boundary matrix in the plugin design is true of this codebase instead of aspirational.
+**Goal:** Shrink the measured host/plugin ABI closure by the Task 2–6 deltas and instrument the universe-rebuild rate, so the recompile-boundary matrix in the plugin design is true of this codebase instead of aspirational.
 
 **Architecture:** Six independent refactors of `rust/runtime`, each cutting one measured leak edge that drags host-private implementation into the plugin ABI closure. Every task is behavior-preserving; the observable deliverable is a smaller measured ABI closure and a lower measured universe-bump rate. Task 1 builds the measurement first so every later task proves its own effect.
 
@@ -65,18 +65,30 @@ twice.
 
 ## Baseline Numbers (measured 2026-08-27 at `110e00321a`)
 
-These are the numbers Task 1 must reproduce before any other task runs. If the
-tool disagrees with these, the tool is wrong — fix the tool, not the baseline.
+Task 1 originally quoted `193 types / 52 files`. That figure came from
+`/tmp/closure2.py`, a regular-expression source scan that matched types by bare
+name. Comparing its retained `/tmp/abi_types.txt` evidence with pinned rustdoc
+JSON showed known false positives (`Distribution`, `Peak`, `Rankings`,
+`Tokenizer`, `ToolCall`, and `ToolFunction`, among others) and missed real
+structural types (`Conversation`, `EndpointDescriptor`, `ErrorKind`,
+`MetricValueType`, `Modality`, `Response`, `SseMessage`, and `Unit`, among
+others). It is not an authoritative ABI measurement.
+
+**Ruling (2026-08-27):** pinned rustdoc JSON structural reachability is
+authoritative. At historical commit `110e00321a`, format 61 with private items
+and the `engine` feature measures `230 types / 55 files`. Later task deltas use
+the independently measured present-tree baseline, not the discarded regex
+count.
 
 | Measure | Value |
 |---|---:|
-| ABI closure, `RunContext` narrowed | 193 types / 52 files |
-| ABI type-definition lines | 2,083 |
-| Total lines in those files | 32,461 |
-| Implementation lines co-resident with ABI types | 30,378 (94%) |
+| ABI closure, `RunContext` narrowed | 230 types / 55 files |
+| ABI type-definition lines | 3,888 |
+| Total lines in those files | 53,767 |
+| Implementation lines co-resident with ABI types | 49,879 (93%) |
 | Universe-bump rate, file-granular, 120 merge units | 19 / 54 code units (35%) |
 | Universe-bump rate, type-granular | 13 / 54 code units (24%) |
-| Target after Tasks 2–6 | ~118 types, 7–8 / 54 (13–15%) |
+| Target after Tasks 2–6 | present-tree closure minus the independently measured Task 2–6 deltas |
 
 ## File Structure
 
@@ -314,12 +326,13 @@ pub fn compute(seeds: &Seeds) -> Result<Closure> {
 }
 ```
 
-Implement the supporting `rustdoc` module in the same crate: it shells out to
-`cargo +nightly rustdoc -p aiperf-runtime --lib -- -Z unstable-options
---output-format json`, deserializes `target/doc/aiperf_runtime.json`, and maps
-each item id to its `span` (file, `begin.0`, `end.0`) and its structural type
-references. Record the exact nightly toolchain in `rust-toolchain.toml` so the
-gate is reproducible — rustdoc JSON has no format stability guarantee.
+Implement the supporting `rustdoc` module in the same crate. It invokes the
+explicitly pinned `nightly-2026-08-01` Cargo, rustc, and rustdoc only for this
+measurement, with `--features engine --document-private-items -Z
+unstable-options --output-format json`. It deserializes
+`target/doc/aiperf_runtime.json`, validates format 61, and maps each item id to
+its source span and structural references. Stable Rust remains authoritative
+for the product workspace; do not add or change `rust-toolchain.toml`.
 
 - [ ] **Step 5: Run to verify the baseline reproduces**
 
@@ -329,12 +342,11 @@ source .venv/bin/activate && cd rust
 cargo run -p aiperf-xtask -- abi-closure --seeds xtask/abi-seeds.toml --json | tee /tmp/abi.json
 ```
 
-Expected: `types` is `193` and `files` is `52`, matching the Baseline Numbers
-table. If it does not, the traversal rules are wrong — most likely it is
-following doc mentions (too many) or missing types behind `Box`/`Rc`/`Arc`/
-`Result`/`Option`/futures (too few). Both count as reachable per
-`design.md`: "including behind `Box`, `Rc`, `Arc`, `Result`, a future, a private
-field, or another container."
+First run against archived historical commit `110e00321a`; expected output is
+`230 types / 55 files`. Then measure the present integration head independently
+and commit that JSON as `abi-baseline.json`. A different present value is data,
+not a calibration failure. Both measurements include types behind
+`Box`/`Rc`/`Arc`/`Result`/`Option`/futures and private fields.
 
 - [ ] **Step 6: Commit the tool and the baseline**
 
@@ -349,7 +361,7 @@ Computes the ABI-facing type closure from rustdoc JSON and pins it in
 abi-baseline.json so a boundary regression fails CI. Seeds and forbidden
 edges are checked in and reviewed rather than inferred.
 
-Measured at this commit: 193 types across 52 files.
+Measured at this commit: <present-tree measurement>.
 EOF
 ```
 

@@ -205,6 +205,7 @@ impl RustdocIndex {
             .current_dir(workspace)
             .args([
                 "rustdoc",
+                "--quiet",
                 "--config",
                 &rustc_config,
                 "--config",
