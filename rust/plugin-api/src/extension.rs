@@ -112,6 +112,9 @@ impl PluginRegistrar<'_> {
     /// and has no way to mint one over a package it did not come from. The
     /// out-of-crate seam the loader calls to bind a registrar lands with the
     /// loader itself; nothing outside this crate constructs one yet.
+    // The first non-test caller is that loader, so within this crate the
+    // constructor is reachable only from the tests below.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn new(package: &'static PluginPackageDescriptor) -> Self {
         Self {
             package,
