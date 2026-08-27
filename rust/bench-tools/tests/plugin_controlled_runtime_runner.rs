@@ -508,7 +508,10 @@ fn controller_affinity_monitor_replaces_the_whole_pair_in_seeded_order() {
         .as_ref()
         .expect("replacement remains a complete statistical attempt");
     assert_eq!(statistical_report.invalidation_attempts.len(), 1);
-    assert_eq!(statistical_report.invalidation_attempts[0].reason, "affinity_loss");
+    assert_eq!(
+        statistical_report.invalidation_attempts[0].reason,
+        "affinity_loss"
+    );
     assert_eq!(
         digest(&report.attempt_evidence_tree_bytes),
         report.attempt_evidence_tree_blake3

@@ -118,6 +118,10 @@ pub struct ControlledRuntimeReportV1 {
     pub statistical_report: Option<SimultaneousGateReport>,
     /// Append-only attempt ledger for this invocation.
     pub attempt_history: Vec<ControlledAttemptRecord>,
+    /// Exact canonical evidence-tree bytes for this terminal attempt.
+    pub attempt_evidence_tree_bytes: Vec<u8>,
+    /// Digest of the exact canonical attempt evidence-tree bytes.
+    pub attempt_evidence_tree_blake3: String,
     /// Paired build record bound into the experiment identity.
     pub paired_build_record_blake3: String,
     /// Checked-in exporter observable policy bound into the identity.
@@ -157,6 +161,7 @@ struct RuntimeEvidenceV1<'a> {
     decision: ControlledAttemptDecision,
     statistical_report: Option<&'a SimultaneousGateReport>,
     attempt_history: &'a [ControlledAttemptRecord],
+    attempt_evidence_tree_blake3: &'a str,
     paired_build_record_blake3: &'a str,
     observable_policy_blake3: &'a str,
     receiver_protocol_authority_blake3: &'a str,
@@ -841,9 +846,15 @@ fn run_controlled_runtime_internal(
                             &inherited_environment,
                         )?;
                         executed_member_count += 1;
+                        let terminal_evidence_index = terminal_member_evidence.len();
                         terminal_output_blake3.push(terminal_evidence.stdout.blake3.clone());
                         terminal_member_evidence.push(terminal_evidence);
-                        member_records.push(RawMemberTerminalRecord { variant, outcome });
+                        member_records.push(RawMemberTerminalRecord {
+                            variant,
+                            outcome,
+                            samples: samples.clone(),
+                            terminal_evidence_index: Some(terminal_evidence_index),
+                        });
                         pair_samples.extend(samples);
                     }
                 }
@@ -1431,10 +1442,16 @@ fn runtime_report(
             "controlled runtime report requires one terminal attempt ledger entry",
         )
     })?;
-    let attempt_evidence_bytes = evaluator.last_attempt_evidence_bytes().ok_or_else(|| {
-        ControlledRuntimeError::new("controlled runtime report lacks exact attempt evidence bytes")
-    })?;
-    attempt_ledger.append_attempt(terminal_attempt, attempt_evidence_bytes)?;
+    let attempt_evidence_tree_bytes = evaluator
+        .last_attempt_evidence_bytes()
+        .ok_or_else(|| {
+            ControlledRuntimeError::new(
+                "controlled runtime report lacks exact attempt evidence bytes",
+            )
+        })?
+        .to_vec();
+    let attempt_evidence_tree_blake3 = digest(&attempt_evidence_tree_bytes);
+    attempt_ledger.append_attempt(terminal_attempt, &attempt_evidence_tree_bytes)?;
     let statistical_report = evaluator.last_statistical_report().cloned();
     let attempt_history = evaluator.history().to_vec();
     let raw_pair_history = evaluator.raw_pair_history().to_vec();
@@ -1449,6 +1466,7 @@ fn runtime_report(
         decision,
         statistical_report: statistical_report.as_ref(),
         attempt_history: &attempt_history,
+        attempt_evidence_tree_blake3: &attempt_evidence_tree_blake3,
         paired_build_record_blake3: &context.build_report.pair_record_blake3,
         observable_policy_blake3: context.observable_policy_blake3,
         receiver_protocol_authority_blake3: context.receiver_protocol_authority_blake3,
@@ -1473,6 +1491,8 @@ fn runtime_report(
         decision,
         statistical_report,
         attempt_history,
+        attempt_evidence_tree_bytes,
+        attempt_evidence_tree_blake3,
         paired_build_record_blake3: context.build_report.pair_record_blake3.clone(),
         observable_policy_blake3: context.observable_policy_blake3.to_owned(),
         receiver_protocol_authority_blake3: context.receiver_protocol_authority_blake3.to_owned(),

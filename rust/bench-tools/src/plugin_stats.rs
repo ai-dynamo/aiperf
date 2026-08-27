@@ -638,16 +638,20 @@ pub enum MemberTerminalOutcome {
 }
 
 /// One member's raw terminal record in exact execution order.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct RawMemberTerminalRecord {
     /// Static or dynamic artifact that ran.
     pub variant: Variant,
     /// Raw terminal outcome observed by the controller.
     pub outcome: MemberTerminalOutcome,
+    /// Raw measurement rows emitted by this member before pair classification.
+    pub samples: Vec<PairedSample>,
+    /// Index of this member's bounded output in the controller report.
+    pub terminal_evidence_index: Option<usize>,
 }
 
 /// One whole pair attempt observed by the same-process controller.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct RawPairTerminalRecord {
     /// Frozen inventory scenario name.
     pub scenario: String,
@@ -711,7 +715,7 @@ pub struct ControlledAttemptRecord {
 }
 
 /// One retained raw pair attempt and its controller-derived classification.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct ControlledPairAttemptRecord {
     /// Complete experiment attempt that owned this pair attempt.
     pub experiment_attempt: u8,
@@ -1218,6 +1222,8 @@ impl ControlledMeasurementEvaluator {
             .map(|variant| RawMemberTerminalRecord {
                 variant,
                 outcome: MemberTerminalOutcome::Completed,
+                samples: Vec::new(),
+                terminal_evidence_index: None,
             })
             .collect();
         let decision = self.record_pair(RawPairTerminalRecord {
@@ -1378,7 +1384,7 @@ impl ControlledMeasurementEvaluator {
             }
         }
 
-        let input = match self.derive_authoritative_exporter_rows(
+        let mut input = match self.derive_authoritative_exporter_rows(
             active_ordinal,
             input,
             AuthoritativeExporterRowIdentity {
@@ -1395,6 +1401,37 @@ impl ControlledMeasurementEvaluator {
                 return Ok(decision);
             }
         };
+        for case in &mut input.cases {
+            case.invalidation_attempts = self
+                .raw_pair_history
+                .iter()
+                .filter_map(|record| {
+                    let PairAttemptDecision::ReplaceWholePair {
+                        member_order,
+                        replacement_ordinal,
+                    } = record.decision
+                    else {
+                        return None;
+                    };
+                    (record.experiment_attempt == active_ordinal
+                        && record.raw.scenario == case.scenario)
+                        .then(|| InvalidationAttempt {
+                            pair_id: record.raw.pair_id.clone(),
+                            experiment_attempt: record.experiment_attempt,
+                            replacement_ordinal,
+                            member_order,
+                            members: record
+                                .raw
+                                .members
+                                .iter()
+                                .flat_map(|member| member.samples.iter().cloned())
+                                .collect(),
+                            reason: record.derived_reason.clone(),
+                            disposition: AttemptDisposition::InfrastructureInvalid,
+                        })
+                })
+                .collect();
+        }
 
         let report = match evaluate_non_authoritative_simultaneous_fixture(
             &input,
@@ -1456,6 +1493,13 @@ impl ControlledMeasurementEvaluator {
             .iter()
             .filter(|record| record.experiment_attempt == active_ordinal)
             .collect::<Vec<_>>();
+        if retained.is_empty() {
+            // The authoritative runtime path executes the exact acquired pair
+            // artifacts as children. Exporter history is needed only for the
+            // sealed in-process harness path, which public runtime authority
+            // refuses when it cannot bind a workload to those artifacts.
+            return Ok(input.clone());
+        }
         let retained_keys = retained
             .iter()
             .map(|record| (record.scenario.as_str(), record.pair_id.as_str()))
