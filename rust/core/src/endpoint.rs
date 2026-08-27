@@ -125,6 +125,13 @@ impl Overrides {
     /// braces stripped, so callers can insert them into an existing object.
     /// Public so callers can pre-serialize a reusable tail once and feed it to
     /// the wire-parts body builder instead of re-serializing per dispatch.
+    ///
+    /// The error type is narrower than the runtime's pre-move
+    /// `dataset::error::Result`: this crate must not know the dataset error
+    /// taxonomy. The only failure remains a `serde_json` encoding failure, and
+    /// `DatasetError: From<serde_json::Error>` absorbs it at the runtime's `?`,
+    /// so runtime behavior is unchanged. This is an intentional contract change
+    /// and the one signature delta in the extraction.
     pub fn inner_bytes(&self) -> serde_json::Result<Vec<u8>> {
         if self.fields.is_empty() {
             return Ok(Vec::new());

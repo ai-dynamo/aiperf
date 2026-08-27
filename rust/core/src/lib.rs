@@ -4,10 +4,12 @@
 //! Shared value boundary for native AIPerf plugins.
 //!
 //! Every type and trait reachable from a plugin category SDK lives here, not in
-//! `aiperf-runtime`. The crate deliberately has no dependency on the runtime:
-//! the measured plugin ABI closure is exactly what this crate exposes, so a
-//! leak edge back into runtime implementation is a compile error rather than a
-//! review finding.
+//! `aiperf-runtime`. The crate deliberately has no `[dependencies]` edge to the
+//! runtime, and `aiperf-runtime` now depends on this crate, so Cargo's
+//! normal-dependency cycle rejection makes a leak edge back into runtime
+//! implementation a compile error rather than a review finding. Cargo does
+//! permit dev-dependency cycles, so that one edge is a review matter rather
+//! than a structural one.
 //!
 //! - [`artifact`] — the capability-limited artifact access every SDK consumes.
 //! - [`clock`] — the sleepable time source all measurement routes through.
@@ -16,6 +18,8 @@
 //!   overrides, and store-free WebSocket operation values.
 //! - [`measure`] — transport-neutral response, record, trace, and framing values.
 //! - [`report`] — the atomic commit of a finalized report projection.
+
+#![warn(missing_docs)]
 
 pub mod artifact;
 pub mod clock;

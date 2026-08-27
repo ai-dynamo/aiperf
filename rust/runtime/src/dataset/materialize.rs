@@ -23,6 +23,14 @@ const MESSAGE_HEAD: &[u8] = b"{\"messages\":[";
 ///
 /// Boundary-owned: defined in `aiperf_core::endpoint` because endpoint
 /// formatters author the override tail across the plugin boundary.
+///
+/// One signature changed in the move, deliberately and unavoidably:
+/// [`Overrides::inner_bytes`] returned `crate::dataset::error::Result<Vec<u8>>`
+/// here and now returns `serde_json::Result<Vec<u8>>`. The boundary crate
+/// cannot name `DatasetError`, and `DatasetError: From<serde_json::Error>` so
+/// every runtime caller still absorbs it at `?` with identical behavior. Only a
+/// caller that matched on the returned error type is affected; there are none
+/// in this workspace.
 pub use aiperf_core::endpoint::Overrides;
 
 /// One instruction in a prompt assembly program.
