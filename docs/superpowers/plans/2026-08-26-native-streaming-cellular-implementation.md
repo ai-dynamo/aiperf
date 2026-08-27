@@ -394,20 +394,34 @@ pub struct StickySessionPlacement {
     cell_count: u32,
     routes: BTreeMap<StableSessionKey, BudgetOwnedSessionRoute>,
     pending_reservation: Option<(StableSessionKey, BudgetLease)>,
-    route_budget: StreamingResourceBudget,
 }
 
 pub struct BudgetOwnedSessionRoute { pub route: SessionRoute, pub lease: BudgetLease }
 
+pub struct CellularRouteAdmission {
+    route_budget: StreamingResourceBudget,
+}
+
 #[async_trait(?Send)]
-impl StreamingPlacement for StickySessionPlacement {
-    async fn reserve_route(&mut self, action: &OrderedDatasetAction)
-        -> Result<(), PlacementError> {
-        self.reserve_sticky_route(action).await
+impl StreamingPlacementAdmission for CellularRouteAdmission {
+    async fn reserve_route(&mut self, charge: PlacementRouteCharge)
+        -> Result<PlacementRouteReservation, PlacementError> {
+        let lease = self.route_budget.acquire(charge.items, charge.bytes).await?;
+        Ok(PlacementRouteReservation { session: charge.session, lease })
     }
 }
 
 impl StreamingPlacementPolicy for StickySessionPlacement {
+    fn route_admission(&self, action: &OrderedDatasetAction)
+        -> Result<Option<PlacementRouteCharge>, PlacementError> {
+        self.required_route_charge(action)
+    }
+    fn install_route_reservation(
+        &mut self,
+        reservation: PlacementRouteReservation,
+    ) -> Result<(), PlacementError> {
+        self.install_pending_reservation(reservation)
+    }
     fn place(&mut self, action: &OrderedDatasetAction)
         -> Result<PlacementDecision, PlacementError> { self.place_sticky(action) }
     fn observe_session_terminal(
@@ -472,18 +486,20 @@ CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime -
 
 - [ ] **Step 3: Implement sticky routing and fenced cell admission**
 
-Hash `(plan_digest, StableSessionKey)` to the initial cell once. The fused
-pipeline first awaits `reserve_route` and then calls `place` for the same action
-without an intervening `.await`. An existing route needs no new reservation;
-for a new session, `reserve_route` acquires one item plus the exact serialized
-route byte charge and stores the non-cloneable lease in
-`pending_reservation`. `place_sticky` must consume a matching reservation into
-`BudgetOwnedSessionRoute`; a missing or mismatched reservation is the typed
-`PlacementFailureCode::RouteUnavailable` invariant failure. Budget exhaustion
-therefore remains ordinary async backpressure at the admission seam rather
-than blocking or bypassing capacity inside synchronous placement. Only one
-reservation may be pending because the fused worker performs these adjacent
-operations serially.
+Hash `(plan_digest, StableSessionKey)` to the initial cell once. For an existing
+route, `route_admission` returns `None`. For a new session it returns one item
+plus the exact serialized route byte charge. The separately owned
+`CellularRouteAdmission` awaits that charge while the pipeline continues to
+poll placement-driver events; it never borrows `StickySessionPlacement`.
+Terminal processing can therefore retire a route and wake the capacity wait.
+After the wait resolves, the fused pipeline synchronously installs the
+non-cloneable lease in `pending_reservation` and calls `place` for the same
+action without an intervening `.await`. `place_sticky` consumes the matching
+reservation into `BudgetOwnedSessionRoute`; a missing or mismatched reservation
+is the typed `PlacementFailureCode::RouteUnavailable` invariant failure.
+Budget exhaustion remains ordinary async backpressure, and a pending wait does
+not block route retirement. Only one reservation may be pending because the
+fused worker performs install/place as adjacent serial operations.
 
 A terminal session receipt removes its route after the causal frontier and
 checkpoint participant no longer reference it, dropping the lease back to the
@@ -494,7 +510,7 @@ terminal/cancel acknowledgement; it cannot call the endpoint action submitter.
 `accept_release` validates the exact tuple then submits once. An absent, stale,
 duplicate-conflicting, or wrong-route release returns a typed failure and
 leaves the action fenced. Add
-`route_reservation_backpressures_until_a_terminal_route_retires` and
+`route_reservation_selects_terminal_retirement_and_then_completes` and
 `million_sequential_closed_sessions_reclaim_routes_with_constant_high_water`.
 
 - [ ] **Step 4: Verify sticky-session and event-return tests**

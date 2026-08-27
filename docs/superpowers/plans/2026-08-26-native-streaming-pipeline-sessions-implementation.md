@@ -262,6 +262,12 @@ pub struct StreamingRunOutcome {
 
 ```rust
 pub trait StreamingPlacementPolicy: StreamingCheckpointParticipant {
+    fn route_admission(&self, action: &OrderedDatasetAction)
+        -> Result<Option<PlacementRouteCharge>, PlacementError>;
+    fn install_route_reservation(
+        &mut self,
+        reservation: PlacementRouteReservation,
+    ) -> Result<(), PlacementError>;
     fn place(&mut self, action: &OrderedDatasetAction)
         -> Result<PlacementDecision, PlacementError>;
     fn observe_session_terminal(
@@ -272,16 +278,22 @@ pub trait StreamingPlacementPolicy: StreamingCheckpointParticipant {
     ) -> Result<(), PlacementError>;
 }
 
-/// Async capacity admission paired with the deterministic synchronous policy.
-///
-/// The fused pipeline always awaits this seam immediately before `place` for
-/// the same action. Implementations retain the resulting permit internally;
-/// there is no await or cancellation point between successful reservation and
-/// synchronous placement.
+pub struct PlacementRouteCharge {
+    pub session: StableSessionKey,
+    pub items: usize,
+    pub bytes: usize,
+}
+
+pub struct PlacementRouteReservation {
+    pub session: StableSessionKey,
+    pub lease: BudgetLease,
+}
+
+/// Separately borrowable async capacity owner for deterministic placement.
 #[async_trait(?Send)]
-pub trait StreamingPlacement: StreamingPlacementPolicy {
-    async fn reserve_route(&mut self, action: &OrderedDatasetAction)
-        -> Result<(), PlacementError>;
+pub trait StreamingPlacementAdmission {
+    async fn reserve_route(&mut self, charge: PlacementRouteCharge)
+        -> Result<PlacementRouteReservation, PlacementError>;
 }
 
 #[async_trait(?Send)]
@@ -312,6 +324,8 @@ pub enum PlacementEvent {
 }
 
 pub struct PreparedStreamingPlacementBinding {
+    pub admission: Box<dyn StreamingPlacementAdmission>,
+    pub policy: Box<dyn StreamingPlacementPolicy>,
     pub submitter: Box<dyn StreamingPlacementSubmitter>,
     pub driver: Box<dyn StreamingPlacementDriver>,
     pub control: Box<dyn StreamingPlacementControl>,
@@ -390,14 +404,19 @@ impl StreamingPipeline {
 Pull a new unit only when the next stage owns permits. Prefer inline/fused calls on the worker `LocalSet`; bounded leased channels are allowed only at measured concurrency boundaries. `Pending`, `Seal`, and `Cancelled` remain distinct. Shutdown fences admission, wakes pending source/decode/order, drains or cancels accepted actions through phase policy, checkpoints only a valid cut, and joins all owners.
 
 Before calling the synchronous `StreamingPlacementPolicy::place`, the fused
-pipeline awaits `StreamingPlacement::reserve_route` for that exact action.
-Capacity exhaustion therefore backpressures the pipeline without changing the
-approved deterministic policy seam. A successful reservation and `place` are
-adjacent operations with no intervening `.await`; cancellation of a pending
-reservation leaves no permit or route behind. The local implementation's
-reservation is a bounded no-op because it introduces no persistent route map.
+pipeline asks `route_admission` whether that exact action needs a new route.
+When it does, the pipeline polls the separately owned
+`StreamingPlacementAdmission::reserve_route` future in the same `select!` loop
+as placement-driver events and shutdown. A terminal event can therefore call
+`observe_session_terminal` on the policy and release route capacity while a
+reservation is pending; the capacity wait never holds a borrow of the policy
+or route map. Once ready, the pipeline synchronously calls
+`install_route_reservation` and `place` for the same action with no intervening
+`.await`. Cancellation drops the returned move-only reservation or the pending
+budget future without installing a route. The local implementation returns no
+route charge because it introduces no persistent route map.
 
-`LocalStreamingPlacement` implements the same admission/policy/submitter/driver/control split as cellular without a transport hop. Placement policy, placement driver, `ActiveExecutionSet`, `StreamingBlockingExecutor`, and `EpochResultCoordinator` are stable checkpoint participants; dynamic handles, blocking jobs, and result segments aggregate beneath them. Pipeline preparation freezes the exact required participant set before source polling. `PlacementEvent::Action` is the only route back into session state.
+`LocalStreamingPlacement` implements the same separately owned admission/policy/submitter/driver/control split as cellular without a transport hop. Placement policy, placement driver, `ActiveExecutionSet`, `StreamingBlockingExecutor`, and `EpochResultCoordinator` are stable checkpoint participants; dynamic handles, blocking jobs, and result segments aggregate beneath them. Pipeline preparation freezes the exact required participant set before source polling. `PlacementEvent::Action` is the only route back into session state.
 
 - [ ] **Step 4: Verify green**
 
