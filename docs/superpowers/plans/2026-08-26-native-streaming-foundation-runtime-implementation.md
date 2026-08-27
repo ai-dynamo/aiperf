@@ -949,16 +949,22 @@ git commit -m "feat(runtime): define streaming extension contracts"
 
 **Files:**
 - Create: `rust/runtime/src/streaming/reliability.rs`
+- Modify: `rust/runtime/src/streaming/budget.rs`
+- Modify: `rust/runtime/src/streaming/blocking.rs`
 - Modify: `rust/runtime/src/streaming/failure.rs`
 - Modify: `rust/runtime/src/streaming/action.rs`
 - Modify: `rust/runtime/src/streaming/session.rs`
 - Modify: `rust/runtime/src/streaming/checkpoint.rs`
 - Modify: `rust/runtime/src/streaming/checkpoint_backend.rs`
 - Modify: `rust/runtime/src/streaming/checkpoints/memory.rs`
+- Modify: `rust/runtime/src/streaming/results.rs`
 - Modify: `rust/runtime/src/streaming.rs`
 - Unit tests: `#[cfg(test)]` in `rust/runtime/src/streaming/reliability.rs`
 - Unit tests: `#[cfg(test)]` in `rust/runtime/src/streaming/checkpoint_backend.rs`
 - Extend: `rust/runtime/tests/support/streaming_checkpoint.rs`
+- Extend: `rust/runtime/tests/streaming_budget.rs`
+- Extend: `rust/runtime/tests/streaming_blocking.rs`
+- Extend: `rust/runtime/tests/streaming_checkpoint_participants.rs`
 - Extend: `rust/runtime/tests/streaming_checkpoint_backend.rs`
 - Create: `rust/runtime/tests/streaming_reliability.rs`
 
@@ -966,6 +972,15 @@ git commit -m "feat(runtime): define streaming extension contracts"
 - Consumes: concrete typed failure enums, `StreamRunIdentity`, `StreamingCheckpointParticipant`, `CheckpointGeneration`, stable record/session/action identities, typed source positions, `ContentDigest`, and `StreamingResourceBudget`.
 - Produces: the exact live/persisted split, prepared policy, ordered sequencer, budget-owned receipt/view, handled-cut, action/tombstone/export preparation methods, and reporter vocabulary in the reliability course correction. `CheckpointCut` gains `HandledIssueCut`; canonical generation hashing moves to v4. Backend open returns sealed versioned leased authority, and generation begin accepts only `CurrentV4CheckpointGeneration` as predecessor; legacy participant reads return only non-convertible `LegacyParticipantState`.
 - Contract: public owners construct only ordinary live facts. A module-private exhaustive classifier is the sole `FailRun` authority; serde cannot restore live authority. The central sequencer, not worker arrival, owns threshold order.
+
+**Implementation-readiness correction:**
+`artifacts/streaming-design/task-1dr-implementation-readiness-correction.md`
+is normative for this task. Implement its exact synchronous and paired budget
+seams, public checked constructor/accessor surface, clone-safe handled cut,
+result-index-root receipt authority, versioned leased generation API, bounded
+legacy-v3 fixture, and non-fallback wire discriminator. Preserve the landed
+Task 5B validation, acquisition, fault-point, head-comparison, and publication
+order verbatim.
 
 - [ ] **Step 1: Add the RED policy, receipt, and restore matrix**
 
@@ -1132,12 +1147,37 @@ also copies those bytes into a newly budgeted payload and proves the retired pub
 `CommittedParticipantState::new` cannot bypass current-v4 context promotion. Add
 `begin_with_none_over_legacy_v3_returns_legacy_read_only_head_without_mutation`
 so omission cannot replace the legacy head.
-In `checkpoint_backend.rs`'s crate unit module add
-`current_v4_projection_exists_only_for_verified_v4` and
-`legacy_v3_has_no_current_predecessor_projection`; memory/backend behavior adds
+In backend integration support add
+`verified_current_reader_publicly_mints_move_only_begin_predecessor` and the
+rustdoc compile-fail case `legacy_reader_has_no_current_predecessor_accessor`;
+memory/backend behavior also adds
 `begin_with_none_over_legacy_v3_returns_legacy_read_only_head_without_mutation`.
-Those unit tests alone may
-invoke crate-private `CurrentV4PredecessorProjection`.
+No crate-private predecessor projection exists.
+
+Also add the readiness REDs
+`synchronous_action_enqueue_refuses_immediately_without_advancing_state`,
+`combined_pair_acquisition_cannot_hold_one_sublease_while_waiting_for_other`,
+`cancelled_combined_pair_acquisition_leaves_zero_charge`,
+`handled_issue_cut_is_clone_compatible_with_checkpoint_cut`,
+`committed_receipt_binds_exact_result_index_root`,
+`mismatched_result_index_root_retains_detailed_receipts`,
+`pre_cas_result_epoch_binding_is_required_and_matches_committed_root`,
+`cancelled_or_dropped_receipt_partition_handoff_retains_reporter_retry`,
+`receipt_partition_handoff_moves_payload_and_both_leases_without_copy`,
+`export_persistence_handoff_keeps_encoded_and_parsed_leases_intact`,
+`verified_current_reader_publicly_mints_move_only_begin_predecessor`,
+`stale_opened_head_refuses_before_predecessor_mint_without_adoption`,
+`legacy_reader_has_no_current_predecessor_accessor`,
+`current_participant_restore_uses_verified_reader_not_public_constructor`,
+`checked_legacy_fixture_is_bounded_read_only_and_cannot_overwrite_head`,
+`oversized_legacy_fixture_refuses_before_backend_budget_or_state_access`,
+`cancelled_legacy_import_releases_fixture_and_storage_charges`,
+`dropped_legacy_fixture_releases_exact_payload_and_inventory_precharge`,
+`unknown_or_malformed_explicit_v4_never_falls_back_to_v3`,
+`v4_shape_without_explicit_v4_discriminator_is_refused`,
+`action_disposition_variants_expose_only_their_approved_type_state`, and
+`first_and_later_exhaustion_compare_status_owned_ordinal_and_counter` in the
+owned unit/integration files named above.
 
 - [ ] **Step 2: Run the suite and verify RED**
 
@@ -1146,23 +1186,41 @@ Run:
 ```bash
 source /home/anthony/nvidia/projects/aiperf/ajc/rust/.venv/bin/activate
 cd rust
-CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime --features streaming --test streaming_reliability --test streaming_checkpoint_backend
+CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime --features streaming --test streaming_budget --test streaming_blocking --test streaming_checkpoint_participants --test streaming_reliability --test streaming_checkpoint_backend
 ```
 
-Expected: compilation fails because the sealed classifier/action authority, v4
-handled cut, versioned backend authority, non-destructive tombstone install,
-ordered sequencer, and budget-owned receipt view do not exist.
+Expected: compilation fails because the synchronous and paired budget seams,
+sealed classifier/action authority, v4 handled cut, versioned backend
+authority, non-destructive tombstone install, ordered sequencer, and
+budget-owned receipt view do not exist.
 
 - [ ] **Step 3: Implement the minimal host authority**
 
 Implement the exact public vocabulary frozen in
 `artifacts/streaming-design/reliability-continuation-course-correction.md`.
-Implement the exact course-correction vocabulary. Keep the host failure enum,
+Apply the exact readiness seams frozen in
+`artifacts/streaming-design/task-1dr-implementation-readiness-correction.md`.
+Keep the host failure enum,
 verified terminal/no-membership-loss proofs, classifier, persisted-wire
 verifier, and decision constructor module-private. The public reporter accepts
 only `IssueSequenceUpdate` and returns a fixed-size outcome. Detailed encoded
 receipts remain non-Clone and budget-owned inside the ledger until the exact
 generation callback proves their partition reachable.
+
+Consume the prepared receipt view only through its reliability-owned
+`into_result_partition` handoff. Task 1D-R's `results.rs` owns
+`PreparedCheckpointResultInput`; Task 5E owns the coordinator signature that
+accepts it and passes both its ordinary partitions and optional issue-receipt
+wrapper into `stage_results`. Task 6B returns that existing input type and does
+not overlap `checkpoint_coordinator.rs`. The post-1D-R transaction `stage_results`
+takes `&mut Option<PreparedIssueReceiptResultPartition>` and returns a move-only
+`PreparedResultEpoch` carrying the backend-computed
+`PreparedIssueReceiptEpochBinding`; commit consumes that same prepared epoch.
+Task 5E calls `bind_prepared_result_epoch` synchronously before CAS. Candidate
+prevalidation compares its descriptor, handled cut, receipt root, and exact
+result-index root, while `checkpoint_committed` compares the independently
+derived root in `CommittedParticipantReceipt` with the reporter-retained staged
+binding. Cancellation, refusal, or pre-CAS drop never retires reporter detail.
 
 The central sequencer owns per-input-domain pending maps, domain-local rule
 counters, and checkpointed contiguous/no-more-before frontiers. It separately
@@ -1190,9 +1248,38 @@ erased into a raw predecessor or participate in v4 succession. The versioned
 common reader exposes no participant initializer state; its legacy branch
 returns only opaque `LegacyParticipantState`, which has no conversion to
 `CommittedParticipantState` and cannot enter `StreamingCheckpointParticipant::initialize`.
+The sealed current-v4 reader exposes the only public
+`current_v4_predecessor(expected)` mint; shared integration support calls it
+only after the verified opened generation equals the retained cloneable
+`CheckpointGeneration` identity, then moves the non-Clone result into
+`begin_generation`. The
+legacy reader trait has no corresponding method, and no crate-private
+projection is required by public successor tests.
+Task 5E retains `Option<CheckpointGeneration>`, never the move-only authority.
+For each non-fresh transaction it opens and leases the current head, compares
+it exactly with that retained identity, and only then mints authority. Missing,
+different, or legacy heads refuse without adoption; a concurrent advance after
+open is still rejected by Task 5B's expected-head prevalidation/final compare.
+After CAS it advances the retained identity before notification, and restart
+reconstructs it from the exact verified restored generation.
 Committed-state storage promotion becomes crate-private and requires the
 private current-v4 reader context; test support must obtain current state
 through the verified current reader rather than a public constructor.
+`LegacyParticipantState` lives in `checkpoint.rs`; its doctests import it from
+`aiperf_runtime::streaming::checkpoint`. The memory integration fixture may
+install only a strictly verified, completely precharged legacy-v3 read-only
+head into an empty run and cannot overwrite or mint current authority. Its
+whole-fixture precharge checks explicit item/byte limits and atomically acquires
+payload plus structural capacity before its only compact-copy and inventory-box
+methods become callable; no independent raw object, inventory, or fixture
+constructor exists. Cancellation/drop releases all fixture and backend-
+acquisition charges before any mutation.
+
+Task 6C1 consumes `PreparedExportAttemptFailure::into_persistence()` and passes
+the resulting private-field `PreparedExportReceiptPersistence` into its checked
+status transition. The durable store may borrow encoded bytes only while that
+intact move-only owner retains both leases and the checked decision; no public
+consumer can split raw bytes, receipt authority, and decision state.
 
 Define the public borrowed view traits in `action.rs` and `session.rs`, each
 with a private sealed supertrait in that same parent module. Later P2/P4 child
@@ -1223,7 +1310,7 @@ Review that no adapter-specific code or Config-v2 surface entered this task,
 then commit:
 
 ```bash
-git add rust/runtime/src/streaming.rs rust/runtime/src/streaming/failure.rs rust/runtime/src/streaming/action.rs rust/runtime/src/streaming/session.rs rust/runtime/src/streaming/checkpoint.rs rust/runtime/src/streaming/checkpoint_backend.rs rust/runtime/src/streaming/checkpoints/memory.rs rust/runtime/src/streaming/reliability.rs rust/runtime/tests/support/streaming_checkpoint.rs rust/runtime/tests/streaming_checkpoint_backend.rs rust/runtime/tests/streaming_reliability.rs
+git add rust/runtime/src/streaming.rs rust/runtime/src/streaming/budget.rs rust/runtime/src/streaming/blocking.rs rust/runtime/src/streaming/failure.rs rust/runtime/src/streaming/action.rs rust/runtime/src/streaming/session.rs rust/runtime/src/streaming/checkpoint.rs rust/runtime/src/streaming/checkpoint_backend.rs rust/runtime/src/streaming/checkpoints/memory.rs rust/runtime/src/streaming/reliability.rs rust/runtime/src/streaming/results.rs rust/runtime/tests/support/streaming_checkpoint.rs rust/runtime/tests/streaming_budget.rs rust/runtime/tests/streaming_blocking.rs rust/runtime/tests/streaming_checkpoint_participants.rs rust/runtime/tests/streaming_checkpoint_backend.rs rust/runtime/tests/streaming_reliability.rs
 git commit -m "feat(runtime): classify streaming issues for continuation"
 ```
 
@@ -1239,8 +1326,16 @@ git commit -m "feat(runtime): classify streaming issues for continuation"
 - Produces:
 
 ```rust
-pub async fn assert_source_conformance(factory: &dyn StreamingDatasetSourceFactory, cases: SourceConformanceCases);
-pub async fn assert_format_conformance(factory: &dyn StreamingDatasetFormatFactory, cases: FormatConformanceCases);
+pub async fn assert_source_conformance(
+    factory: &dyn StreamingDatasetSourceFactory,
+    reporter: Box<dyn StreamingIssueReporter>,
+    cases: SourceConformanceCases,
+);
+pub async fn assert_format_conformance(
+    factory: &dyn StreamingDatasetFormatFactory,
+    reporter: Box<dyn StreamingIssueReporter>,
+    cases: FormatConformanceCases,
+);
 ```
 
 - [ ] **Step 1: Add RED fake adapters and harness calls**
@@ -1256,18 +1351,42 @@ mod streaming_format_conformance;
 
 Create a fake source whose scripted events are `Pending`, one immutable partition, duplicate rediscovery, frontier, and seal; its control handle must wake the pending `next_event`. Create a fake decoder that emits one leased batch, blocks while its output lease is held, resumes from the exact cursor, then returns `DecodeStep::End`.
 
+Task 1D represents stop with a private source-module kind carrying a private
+host-stop token; only the paired `StreamingStopReceiver` path can construct it.
+`StreamSourceError` exposes `pub fn is_stopped(&self) -> bool`, and its
+`StableStreamingFailure` observation is exactly stage `Source`, code
+`"stopped"`. It has no public `Stopped` variant or stopped constructor. Add a
+rustdoc `compile_fail` proof that external source implementations cannot
+construct stopped state, while the host-control fixture obtains it only by
+calling `opened.control.stop()`.
+
 Representative harness assertion:
 
 ```rust
-pub async fn assert_pending_is_not_seal(mut opened: OpenedStreamingDatasetSource) {
+pub async fn assert_pending_is_not_seal(
+    mut opened: OpenedStreamingDatasetSource,
+    reporter: Box<dyn StreamingIssueReporter>,
+) {
     let pending = opened.source.next_event();
     tokio::pin!(pending);
     assert!(futures::poll!(&mut pending).is_pending());
     opened.control.stop();
     let error = pending.await.expect_err("stop wakes pending source");
-    assert!(matches!(error, StreamSourceError::Stopped));
+    assert!(error.is_stopped());
+    assert_eq!(reporter.summary().unwrap().total, 0);
 }
 ```
+
+The harness takes ownership of the separately constructed reporter; no adapter
+owns it. Borrow it only after a source/format future returns and release the
+borrow before every later source, format, checkpoint, or control await.
+Ordinary scripted faults are reported and the next valid unit is then observed.
+The stopped observation belongs only to host stop control: it follows an
+explicit `opened.control.stop()`, creates no issue receipt, and is neither a
+source seal nor an adapter-selected disposition. Add
+`conformance_reporter_is_released_before_each_await` and
+`host_stop_wakes_pending_source_without_issue_or_seal`, plus
+`external_source_cannot_construct_stopped_error` as the compile-fail case.
 
 - [ ] **Step 2: Run the task suite and verify RED**
 
@@ -1281,7 +1400,7 @@ Expected: fake adapters demonstrate missing reusable harness functions.
 
 - [ ] **Step 3: Implement the reusable harness functions**
 
-Cover pending-versus-seal, stop wakeup, immutable identity, mutation refusal, backpressure, lease lifetime, exact cursor restore, duplicate replay, and idempotent post-commit notification. Harnesses accept factories and case data; they do not inspect concrete adapter types.
+Cover pending-versus-seal, stop wakeup without an issue receipt, immutable identity, mutation refusal, ordinary-fault reporter continuation, backpressure, lease lifetime, exact cursor restore, duplicate replay, and idempotent post-commit notification. Harnesses accept factories, the separately owned reporter, and case data; they do not inspect concrete adapter types.
 
 - [ ] **Step 4: Run the suite and verify GREEN**
 
