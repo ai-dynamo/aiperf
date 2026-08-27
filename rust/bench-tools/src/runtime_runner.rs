@@ -1292,43 +1292,53 @@ fn execute_monitored_child(
             });
         }
     }
-    let mut child = command.spawn().map_err(|error| {
+    let child = command.spawn().map_err(|error| {
         ControlledRuntimeError::new(format!("cannot spawn controlled runtime member: {error}"))
     })?;
-    let pid = libc::pid_t::try_from(child.id())
+    // Every fallible step below can return early. The guard owns the spawned
+    // group from here on, so an early return still kills the group, reaps the
+    // leader, closes the pipes, and joins both reader threads.
+    let mut owned = OwnedChildGroup::new(child);
+    let pid = libc::pid_t::try_from(owned.child.id())
         .map_err(|_| ControlledRuntimeError::new("runtime member PID does not fit pid_t"))?;
-    let stdout = child
+    owned.pid = Some(pid);
+    let stdout = owned
+        .child
         .stdout
         .take()
         .ok_or_else(|| ControlledRuntimeError::new("runtime member stdout pipe was not created"))?;
-    let stderr = child
+    let stderr = owned
+        .child
         .stderr
         .take()
         .ok_or_else(|| ControlledRuntimeError::new("runtime member stderr pipe was not created"))?;
-    let stdout_reader = drain_bounded_output(stdout, output_limit);
-    let stderr_reader = drain_bounded_output(stderr, output_limit);
+    owned.stdout_reader = Some(drain_bounded_output(stdout, output_limit));
+    owned.stderr_reader = Some(drain_bounded_output(stderr, output_limit));
     let started = Instant::now();
     let mut has_seen_expected_affinity = false;
     let mut infrastructure_event = None;
     let terminal_status = loop {
-        if let Some(status) = child.try_wait().map_err(|error| {
+        injected_child_fault("poll")?;
+        if let Some(status) = owned.child.try_wait().map_err(|error| {
             ControlledRuntimeError::new(format!("cannot poll runtime member: {error}"))
         })? {
             break child_terminal_status(status);
         }
         if infrastructure_event.is_none()
             && let Some(expected) = expected_affinity
-            && let Some(observed) = process_affinity(pid)?
         {
-            if observed == *expected {
-                has_seen_expected_affinity = true;
-            } else if has_seen_expected_affinity {
-                infrastructure_event = Some(InfrastructureEvent::AffinityLoss);
+            injected_child_fault("affinity")?;
+            if let Some(observed) = process_affinity(pid)? {
+                if observed == *expected {
+                    has_seen_expected_affinity = true;
+                } else if has_seen_expected_affinity {
+                    infrastructure_event = Some(InfrastructureEvent::AffinityLoss);
+                }
             }
         }
         if started.elapsed() >= deadline {
             kill_process_group(pid)?;
-            child.wait().map_err(|error| {
+            owned.child.wait().map_err(|error| {
                 ControlledRuntimeError::new(format!(
                     "cannot reap timed-out runtime member: {error}"
                 ))
@@ -1337,9 +1347,7 @@ fn execute_monitored_child(
         }
         sleep(Duration::from_millis(5));
     };
-    kill_process_group_if_present(pid)?;
-    let stdout = join_bounded_output(stdout_reader, "stdout")?;
-    let stderr = join_bounded_output(stderr_reader, "stderr")?;
+    let (stdout, stderr) = owned.release()?;
     Ok(BoundedChildResult {
         pid,
         terminal_status,
@@ -1347,6 +1355,151 @@ fn execute_monitored_child(
         stderr,
         infrastructure_event,
     })
+}
+
+/// Owns one spawned member's process group, leader, and both bounded readers.
+///
+/// Cleanup is identical on the terminal path and on every early return: the
+/// group dies before the leader is reaped, and both reader threads are joined
+/// after the pipes are closed so a descendant holding a pipe cannot block.
+struct OwnedChildGroup {
+    child: std::process::Child,
+    pid: Option<libc::pid_t>,
+    stdout_reader: Option<JoinHandle<Result<BoundedChildOutput, std::io::Error>>>,
+    stderr_reader: Option<JoinHandle<Result<BoundedChildOutput, std::io::Error>>>,
+}
+
+impl OwnedChildGroup {
+    fn new(child: std::process::Child) -> Self {
+        Self {
+            child,
+            pid: None,
+            stdout_reader: None,
+            stderr_reader: None,
+        }
+    }
+
+    /// Run the complete cleanup and return both bounded spools.
+    ///
+    /// Every step runs even after an earlier one fails; the first error is the
+    /// one reported, so a cleanup fault cannot mask the primary failure.
+    fn cleanup(
+        &mut self,
+    ) -> (
+        Option<ControlledRuntimeError>,
+        Option<BoundedChildOutput>,
+        Option<BoundedChildOutput>,
+    ) {
+        let mut first_error = injected_child_fault("cleanup").err();
+        let mut retain = |error: ControlledRuntimeError| {
+            if first_error.is_none() {
+                first_error = Some(error);
+            }
+        };
+        match self.pid {
+            Some(pid) => {
+                if let Err(error) = kill_process_group_if_present(pid) {
+                    retain(error);
+                }
+            }
+            None => {
+                // No usable pid_t means no group to signal; the leader is all
+                // this controller can still reach.
+                let _ = self.child.kill();
+            }
+        }
+        if let Err(error) = self.child.wait() {
+            retain(ControlledRuntimeError::new(format!(
+                "cannot reap runtime member: {error}"
+            )));
+        }
+        // Readers own the pipes once installed; close whatever is still held on
+        // the child so a pending reader always observes EOF.
+        drop(self.child.stdout.take());
+        drop(self.child.stderr.take());
+        if let Err(error) = injected_child_fault("output") {
+            retain(error);
+        }
+        let stdout = self
+            .stdout_reader
+            .take()
+            .map(|reader| join_bounded_output(reader, "stdout"));
+        let stderr = self
+            .stderr_reader
+            .take()
+            .map(|reader| join_bounded_output(reader, "stderr"));
+        let stdout = match stdout {
+            Some(Ok(output)) => Some(output),
+            Some(Err(error)) => {
+                retain(error);
+                None
+            }
+            None => None,
+        };
+        let stderr = match stderr {
+            Some(Ok(output)) => Some(output),
+            Some(Err(error)) => {
+                retain(error);
+                None
+            }
+            None => None,
+        };
+        (first_error, stdout, stderr)
+    }
+
+    /// Consume the guard on the terminal path and surface both spools.
+    fn release(
+        mut self,
+    ) -> Result<(BoundedChildOutput, BoundedChildOutput), ControlledRuntimeError> {
+        let (error, stdout, stderr) = self.cleanup();
+        if let Some(error) = error {
+            return Err(error);
+        }
+        match (stdout, stderr) {
+            (Some(stdout), Some(stderr)) => Ok((stdout, stderr)),
+            _ => Err(ControlledRuntimeError::new(
+                "runtime member output readers were not installed",
+            )),
+        }
+    }
+}
+
+impl Drop for OwnedChildGroup {
+    fn drop(&mut self) {
+        // An early return already carries the primary error, so cleanup faults
+        // here are discarded rather than masking it.
+        let _ = self.cleanup();
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    static INJECTED_CHILD_FAULT: std::cell::Cell<Option<&'static str>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// Arm or disarm a controller-stage fault for the current test thread.
+#[cfg(test)]
+fn set_injected_child_fault(stage: Option<&'static str>) {
+    INJECTED_CHILD_FAULT.with(|cell| cell.set(stage));
+}
+
+#[cfg(test)]
+fn injected_child_fault(stage: &'static str) -> Result<(), ControlledRuntimeError> {
+    INJECTED_CHILD_FAULT.with(|cell| {
+        if cell.get() == Some(stage) {
+            return Err(ControlledRuntimeError::new(format!(
+                "injected controller {stage} failure"
+            )));
+        }
+        Ok(())
+    })
+}
+
+#[cfg(not(test))]
+#[inline]
+fn injected_child_fault(_stage: &'static str) -> Result<(), ControlledRuntimeError> {
+    Ok(())
 }
 
 #[cfg(target_os = "linux")]
@@ -2063,7 +2216,7 @@ mod tests {
             set_injected_child_fault(Some(stage));
             let error = execute_monitored_child(
                 &mut command,
-                Duration::from_secs(5),
+                Duration::from_millis(300),
                 4096,
                 Some(&BTreeSet::from([0_usize])),
             )
