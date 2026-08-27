@@ -6668,4 +6668,164 @@ mod tests {
         assert_eq!(budget.snapshot().used_bytes, full_bytes);
         assert_eq!(budget.snapshot().used_items, full_items);
     }
+
+    #[test]
+    fn owner_drop_closes_endpoint_and_releases_queue_lease() {
+        let (budget, reporter, _input_domain) =
+            submission_test_reporter(64, QUEUE_CHARGE_BYTES + 256 * 1024);
+        let handle = reporter.handle();
+        assert!(matches!(
+            futures::executor::block_on(handle.report(record_issue())),
+            Ok(StreamingIssueReportStatus::Accepted)
+        ));
+        let queue_lease_bytes = reporter
+            .submission
+            .queue_lease
+            .borrow()
+            .as_ref()
+            .map(BudgetLease::charged_bytes)
+            .unwrap_or_else(|| panic!("live ring-buffer lease"));
+        assert!(queue_lease_bytes >= submission_queue_charge_bytes());
+        assert_ne!(budget.snapshot().used_bytes, 0);
+
+        drop(reporter);
+
+        // The queued reservation and the endpoint-parked ring-buffer lease both
+        // return to the caller-supplied budget, which is shared with other
+        // participants and must never be starved by a dead reporter.
+        assert_eq!(budget.snapshot().used_items, 0);
+        assert_eq!(budget.snapshot().used_bytes, 0);
+        assert!(matches!(
+            futures::executor::block_on(handle.report(record_issue())),
+            Err(StreamingIssueReportError::Closed)
+        ));
+        assert_eq!(budget.snapshot().used_bytes, 0);
+    }
+
+    #[test]
+    fn close_is_idempotent_and_reports_released_bytes() {
+        let run = StreamRunIdentity::new(LogicalReplayRunId::from_bytes([0x81; 32]));
+        let budget = StreamingResourceBudget::new(super::super::budget::BudgetLimits {
+            max_items: 64,
+            max_bytes: QUEUE_CHARGE_BYTES + 256 * 1024,
+        })
+        .unwrap_or_else(|error| panic!("valid budget: {error}"));
+        let policy = PreparedStreamingIssuePolicy::new([action_rule(
+            "action_default",
+            4,
+            StreamingIssueDisposition::TerminalActionReceipt,
+        )])
+        .unwrap_or_else(|error| panic!("valid action policy: {error}"));
+        let mut reporter = BudgetOwnedStreamingIssueReporter::new(run, policy, budget.clone())
+            .unwrap_or_else(|error| panic!("budget-owned reporter: {error}"));
+        let queue_lease_bytes = reporter
+            .submission
+            .queue_lease
+            .borrow()
+            .as_ref()
+            .map(BudgetLease::charged_bytes)
+            .unwrap_or_else(|| panic!("live ring-buffer lease"));
+
+        // An undecided retained action failure is exactly the owner-side state
+        // a typed error path preserves rather than destroys. It is charged
+        // against the same budget and must not be counted by the endpoint close.
+        let issue = action_issue(0, 0);
+        let evidence = CheckedActionFailureTerminalEvidence::for_test(
+            run,
+            issue
+                .scope()
+                .action_id()
+                .unwrap_or_else(|| panic!("action ID")),
+            GlobalSequence::new(0),
+            ContentDigest::from_bytes([0xa4; 32]),
+        );
+        reporter
+            .enqueue_failed_action(&evidence, issue)
+            .unwrap_or_else(|error| panic!("retain action failure: {error}"));
+        assert_eq!(reporter.pending_actions.len(), 1);
+
+        let pending = reserve_pending_issue(&budget, record_issue())
+            .unwrap_or_else(|error| panic!("reserve pending issue: {error}"));
+        let queued_items = pending.reservation.charged_items();
+        let queued_bytes = pending.reservation.charged_bytes();
+        reporter
+            .submission
+            .queue
+            .borrow_mut()
+            .push_back(QueuedHandleIssue {
+                pending,
+                requeue_attempts: 0,
+            });
+
+        let accounting = reporter.close();
+
+        assert_eq!(
+            accounting,
+            ReporterCloseAccounting {
+                released_items: queued_items + 1,
+                released_bytes: queued_bytes + queue_lease_bytes,
+            }
+        );
+        assert!(!reporter.is_open());
+        // The retained action failure is still charged: close is an endpoint
+        // transition, not a ledger teardown, and its accounting says so.
+        assert_ne!(budget.snapshot().used_bytes, 0);
+        assert_eq!(reporter.pending_actions.len(), 1);
+        assert_eq!(
+            reporter
+                .summary()
+                .unwrap_or_else(|error| panic!("readable summary: {error}"))
+                .total,
+            0
+        );
+
+        assert_eq!(
+            reporter.close(),
+            ReporterCloseAccounting {
+                released_items: 0,
+                released_bytes: 0,
+            }
+        );
+
+        drop(reporter);
+
+        // Ordinary field drop releases the owner-retained charge the close
+        // deliberately left alone, so the two paths together leak nothing.
+        assert_eq!(budget.snapshot().used_items, 0);
+        assert_eq!(budget.snapshot().used_bytes, 0);
+    }
+
+    #[test]
+    fn submit_after_close_reports_closed_endpoint() {
+        let (budget, mut reporter, _input_domain) =
+            submission_test_reporter(64, QUEUE_CHARGE_BYTES + 256 * 1024);
+        let handle = reporter.handle();
+        assert!(reporter.is_open());
+
+        reporter.close();
+
+        assert!(!reporter.is_open());
+        assert!(matches!(
+            futures::executor::block_on(handle.report(record_issue())),
+            Err(StreamingIssueReportError::Closed)
+        ));
+        assert!(matches!(
+            futures::executor::block_on(
+                reporter.report(IssueSequenceUpdate::Issue(record_issue()))
+            ),
+            Err(StreamingReliabilityError::ReporterClosed)
+        ));
+        // A refused submission on either side advances no ledger state and
+        // charges nothing.
+        assert_eq!(
+            reporter
+                .summary()
+                .unwrap_or_else(|error| panic!("readable summary: {error}"))
+                .total,
+            0
+        );
+        assert!(reporter.receipts.is_empty());
+        assert_eq!(budget.snapshot().used_items, 0);
+        assert_eq!(budget.snapshot().used_bytes, 0);
+    }
 }
