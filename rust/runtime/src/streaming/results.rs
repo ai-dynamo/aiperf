@@ -14,7 +14,7 @@ use super::{
     budget::BudgetLease,
     checkpoint::{BudgetedCheckpointBytes, CheckpointEpoch, CheckpointError, StreamRunIdentity},
     identity::{ContentDigest, GlobalSequence},
-    reliability::{PreparedIssueReceiptEpochBinding, PreparedIssueReceiptResultPartition},
+    reliability::PreparedIssueReceiptEpochBinding,
 };
 
 /// Stable cell coordinate attached to one result segment.
@@ -375,64 +375,6 @@ impl PreparedResultEpoch {
             self.byte_length,
             self.issue_receipts,
         )
-    }
-}
-
-/// Coordinator-owned staging input: ordinary partitions plus the optional
-/// detailed-receipt partition.
-///
-/// ```compile_fail
-/// # use aiperf_runtime::streaming::results::PreparedCheckpointResultInput;
-/// # fn cannot_take_issue_receipts(value: PreparedCheckpointResultInput) {
-/// let _receipts = value.issue_receipts;
-/// # }
-/// ```
-#[derive(Default)]
-pub struct PreparedCheckpointResultInput {
-    partitions: Vec<ResultPartition>,
-    /// Read only through [`PreparedCheckpointResultInput::stage_inputs`], whose
-    /// coordinator caller is a later task.
-    #[allow(dead_code)]
-    issue_receipts: Option<PreparedIssueReceiptResultPartition>,
-}
-
-impl PreparedCheckpointResultInput {
-    /// Construct one staging input from owned partitions.
-    #[must_use]
-    pub fn new(
-        partitions: Vec<ResultPartition>,
-        issue_receipts: Option<PreparedIssueReceiptResultPartition>,
-    ) -> Self {
-        Self {
-            partitions,
-            issue_receipts,
-        }
-    }
-
-    /// Construct the canonical empty staging input.
-    #[must_use]
-    pub fn empty() -> Self {
-        Self {
-            partitions: Vec::new(),
-            issue_receipts: None,
-        }
-    }
-
-    /// Borrow the ordinary result partitions.
-    #[must_use]
-    pub fn partitions(&self) -> &[ResultPartition] {
-        &self.partitions
-    }
-
-    /// Borrow both staging inputs mutably for exactly one staging call.
-    #[allow(dead_code)]
-    pub(crate) fn stage_inputs(
-        &mut self,
-    ) -> (
-        &mut Vec<ResultPartition>,
-        &mut Option<PreparedIssueReceiptResultPartition>,
-    ) {
-        (&mut self.partitions, &mut self.issue_receipts)
     }
 }
 

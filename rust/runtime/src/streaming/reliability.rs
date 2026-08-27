@@ -4204,11 +4204,6 @@ impl PreparedIssueReceiptResultPartition {
         self.view_lease.charged_bytes()
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn into_parts(self) -> (ResultPartition, HandledIssueCut, BudgetLease) {
-        (self.partition, self.handled_cut, self.view_lease)
-    }
-
     /// Consume the handoff into the payload the backend stages plus the binding
     /// the prepared epoch carries back to the reporter.
     ///
