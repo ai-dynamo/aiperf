@@ -219,12 +219,22 @@ fn the_dispatch_seam_is_worker_local() {
 
 #[test]
 fn measurement_values_are_boundary_owned() {
-    let response = Response::Text(TextResponse::new(Bytes::from_static(b"hello")));
+    let response = Response::Text(TextResponse {
+        perf_ns: 42,
+        text: "hello".to_owned(),
+        body: Bytes::from_static(b"hello"),
+        content_type: Some("text/plain".to_owned()),
+    });
+    assert_eq!(response.perf_ns(), 42);
     assert!(matches!(response, Response::Text(_)));
-    let message = SseMessage::parse(b"data: {\"a\":1}");
-    assert!(message.is_some());
-    let error = ErrorDetails::new(ErrorKind::Http, "boom");
+
+    let message = SseMessage::parse("data: {\"a\":1}", 7);
+    assert_eq!(message.perf_ns, 7);
+    assert!(!message.packets.is_empty());
+
+    let error = ErrorDetails::http(503, "boom");
     assert_eq!(error.kind, ErrorKind::Http);
+    assert_eq!(error.code, Some(503));
 }
 
 #[test]
