@@ -10,7 +10,7 @@ use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 use std::time::Instant;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::plugin_stats::Variant;
 
@@ -143,8 +143,10 @@ pub struct BuildPairPlanV1 {
 pub struct BuildPairMemberReportV1 {
     /// Member role.
     pub variant: Variant,
-    /// Revalidated source identity digest.
+    /// Digest of the canonical complete source-tree census.
     pub source_identity_blake3: String,
+    /// Canonical JCS census covering the complete source tree.
+    pub source_tree_receipt_bytes: Vec<u8>,
     /// Revalidated Cargo.lock digest.
     pub cargo_lock_blake3: String,
     /// Explicit target root used for the member.
@@ -285,13 +287,43 @@ struct CanonicalPairRecordV1<'a> {
     member_build_receipt_blake3: [&'a str; 2],
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct SourceTreeReceiptV1 {
+    schema_version: String,
+    exclusions: Vec<String>,
+    entries: Vec<SourceTreeEntryV1>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct SourceTreeEntryV1 {
+    path: String,
+    kind: SourceTreeEntryKindV1,
+    canonical_mode: u32,
+    length: u64,
+    blake3: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum SourceTreeEntryKindV1 {
+    Directory,
+    File,
+}
+
+struct SourceTreeAuthorityV1 {
+    receipt_bytes: Vec<u8>,
+    identity_blake3: String,
+    cargo_lock_blake3: String,
+}
+
 /// Validate and run both builds under one frozen same-process authority.
 pub fn run_paired_build_v1(plan: &BuildPairPlanV1) -> Result<BuildPairReportV1, BuildPairError> {
     validate_plan(plan)?;
     let inherited_environment = capture_environment()?;
     validate_toolchain(plan, &inherited_environment)?;
-    validate_member_identity(&plan.static_member)?;
-    validate_member_identity(&plan.dynamic_member)?;
+    let source_authority = acquire_pair_source_authority(plan)?;
     let inherited_environment_blake3 = canonical_digest(&inherited_environment)?;
     let inherited_build_environment = RECORDED_BUILD_ENVIRONMENT
         .iter()
@@ -319,16 +351,14 @@ pub fn run_paired_build_v1(plan: &BuildPairPlanV1) -> Result<BuildPairReportV1, 
         sysroot_root: &sysroot_root,
     };
 
-    let static_report = run_member(&run_context, &plan.static_member)?;
+    let static_report = run_member(&run_context, &plan.static_member, &source_authority[0])?;
     validate_cargo_executable(plan)?;
     validate_toolchain(plan, &inherited_environment)?;
-    validate_member_identity(&plan.static_member)?;
-    validate_member_identity(&plan.dynamic_member)?;
-    let dynamic_report = run_member(&run_context, &plan.dynamic_member)?;
+    revalidate_pair_source_authority(plan, &source_authority)?;
+    let dynamic_report = run_member(&run_context, &plan.dynamic_member, &source_authority[1])?;
     validate_cargo_executable(plan)?;
     validate_toolchain(plan, &inherited_environment)?;
-    validate_member_identity(&plan.static_member)?;
-    validate_member_identity(&plan.dynamic_member)?;
+    revalidate_pair_source_authority(plan, &source_authority)?;
 
     let mut report = BuildPairReportV1 {
         authority: BuildPairAuthorityV1,
@@ -368,6 +398,19 @@ pub fn run_paired_build_v1(plan: &BuildPairPlanV1) -> Result<BuildPairReportV1, 
 pub fn build_pair_authority_blake3_v1(
     report: &BuildPairReportV1,
 ) -> Result<String, BuildPairError> {
+    if report.members[0].source_tree_receipt_bytes != report.members[1].source_tree_receipt_bytes
+        || report.members[0].source_identity_blake3 != report.members[1].source_identity_blake3
+    {
+        return Err(BuildPairError::new(
+            "reported paired build complete source tree authority mismatch",
+        ));
+    }
+    for member in &report.members {
+        validate_source_tree_receipt(
+            &member.source_tree_receipt_bytes,
+            &member.source_identity_blake3,
+        )?;
+    }
     let expected_pair_record = canonical_pair_record_bytes(report)?;
     if expected_pair_record != report.pair_record_bytes
         || digest(&report.pair_record_bytes) != report.pair_record_blake3
@@ -394,8 +437,20 @@ pub(crate) fn validate_authoritative_build_report_v1(
             "paired build report has a non-authoritative shape",
         ));
     }
+    if report.members[0].source_tree_receipt_bytes != report.members[1].source_tree_receipt_bytes
+        || report.members[0].source_identity_blake3 != report.members[1].source_identity_blake3
+        || report.members[0].cargo_lock_blake3 != report.members[1].cargo_lock_blake3
+    {
+        return Err(BuildPairError::new(
+            "reported paired build complete source tree authority mismatch",
+        ));
+    }
     let mut artifact_paths = Vec::with_capacity(report.members.len());
     for member in &report.members {
+        validate_source_tree_receipt(
+            &member.source_tree_receipt_bytes,
+            &member.source_identity_blake3,
+        )?;
         let target_root = PathBuf::from(&member.target_root);
         canonical_directory(&target_root, "reported target_root")?;
         let artifact_relative_path = PathBuf::from(&member.artifact_relative_path);
@@ -720,6 +775,197 @@ fn validate_member_identity(member: &BuildPairMemberV1) -> Result<(), BuildPairE
     Ok(())
 }
 
+fn acquire_pair_source_authority(
+    plan: &BuildPairPlanV1,
+) -> Result<[SourceTreeAuthorityV1; 2], BuildPairError> {
+    let static_authority = acquire_source_tree_authority(&plan.static_member)?;
+    let dynamic_authority = acquire_source_tree_authority(&plan.dynamic_member)?;
+    if static_authority.receipt_bytes != dynamic_authority.receipt_bytes
+        || static_authority.identity_blake3 != dynamic_authority.identity_blake3
+    {
+        return Err(BuildPairError::new(
+            "paired build members must have an identical complete source tree",
+        ));
+    }
+    if static_authority.cargo_lock_blake3 != dynamic_authority.cargo_lock_blake3 {
+        return Err(BuildPairError::new(
+            "paired build members must share one Cargo.lock identity",
+        ));
+    }
+    Ok([static_authority, dynamic_authority])
+}
+
+fn revalidate_pair_source_authority(
+    plan: &BuildPairPlanV1,
+    expected: &[SourceTreeAuthorityV1; 2],
+) -> Result<(), BuildPairError> {
+    let observed = acquire_pair_source_authority(plan)?;
+    for (observed, expected) in observed.iter().zip(expected) {
+        if observed.receipt_bytes != expected.receipt_bytes
+            || observed.identity_blake3 != expected.identity_blake3
+            || observed.cargo_lock_blake3 != expected.cargo_lock_blake3
+        {
+            return Err(BuildPairError::new(
+                "complete source tree changed during the paired build",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn acquire_source_tree_authority(
+    member: &BuildPairMemberV1,
+) -> Result<SourceTreeAuthorityV1, BuildPairError> {
+    validate_member_identity(member)?;
+    let mut entries = Vec::new();
+    collect_source_tree_entries(&member.source_root, &member.source_root, &mut entries)?;
+    let receipt = SourceTreeReceiptV1 {
+        schema_version: "plugin_complete_source_tree/v1".to_owned(),
+        exclusions: Vec::new(),
+        entries,
+    };
+    let receipt_bytes = canonical_bytes(&receipt)?;
+    let identity_blake3 = digest(&receipt_bytes);
+    validate_source_tree_receipt(&receipt_bytes, &identity_blake3)?;
+    Ok(SourceTreeAuthorityV1 {
+        receipt_bytes,
+        identity_blake3,
+        cargo_lock_blake3: member.cargo_lock_blake3.clone(),
+    })
+}
+
+fn collect_source_tree_entries(
+    root: &Path,
+    directory: &Path,
+    entries: &mut Vec<SourceTreeEntryV1>,
+) -> Result<(), BuildPairError> {
+    let mut children = fs::read_dir(directory)
+        .map_err(|error| {
+            BuildPairError::new(format!(
+                "cannot read complete source tree directory {}: {error}",
+                directory.display()
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| BuildPairError::new(format!("cannot enumerate source tree: {error}")))?;
+    children.sort_by_key(|entry| entry.file_name());
+
+    for child in children {
+        let path = child.path();
+        let relative = path.strip_prefix(root).map_err(|error| {
+            BuildPairError::new(format!("cannot derive source tree relative path: {error}"))
+        })?;
+        validate_relative_path(relative, "source tree entry")?;
+        let relative = path_text(relative, "source tree entry")?;
+        let metadata = fs::symlink_metadata(&path).map_err(|error| {
+            BuildPairError::new(format!(
+                "cannot inspect source tree entry {}: {error}",
+                path.display()
+            ))
+        })?;
+        let file_type = metadata.file_type();
+        if file_type.is_symlink() {
+            return Err(BuildPairError::new(format!(
+                "source tree links are not allowed: {}",
+                path.display()
+            )));
+        }
+        if file_type.is_dir() {
+            entries.push(SourceTreeEntryV1 {
+                path: relative,
+                kind: SourceTreeEntryKindV1::Directory,
+                canonical_mode: 0o755,
+                length: 0,
+                blake3: None,
+            });
+            collect_source_tree_entries(root, &path, entries)?;
+        } else if file_type.is_file() {
+            let bytes = fs::read(&path).map_err(|error| {
+                BuildPairError::new(format!(
+                    "cannot read source tree file {}: {error}",
+                    path.display()
+                ))
+            })?;
+            entries.push(SourceTreeEntryV1 {
+                path: relative,
+                kind: SourceTreeEntryKindV1::File,
+                canonical_mode: canonical_file_mode(&metadata),
+                length: u64::try_from(bytes.len())
+                    .map_err(|_| BuildPairError::new("source tree file length does not fit u64"))?,
+                blake3: Some(digest(&bytes)),
+            });
+        } else {
+            return Err(BuildPairError::new(format!(
+                "unsupported source tree entry kind: {}",
+                path.display()
+            )));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn canonical_file_mode(metadata: &fs::Metadata) -> u32 {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    if metadata.permissions().mode() & 0o111 == 0 {
+        0o644
+    } else {
+        0o755
+    }
+}
+
+#[cfg(not(unix))]
+fn canonical_file_mode(_metadata: &fs::Metadata) -> u32 {
+    0o644
+}
+
+fn validate_source_tree_receipt(
+    receipt_bytes: &[u8],
+    expected_identity_blake3: &str,
+) -> Result<(), BuildPairError> {
+    let receipt: SourceTreeReceiptV1 = serde_json::from_slice(receipt_bytes).map_err(|error| {
+        BuildPairError::new(format!(
+            "cannot parse complete source tree receipt: {error}"
+        ))
+    })?;
+    if receipt.schema_version != "plugin_complete_source_tree/v1"
+        || !receipt.exclusions.is_empty()
+        || canonical_bytes(&receipt)? != receipt_bytes
+        || digest(receipt_bytes) != expected_identity_blake3
+    {
+        return Err(BuildPairError::new(
+            "complete source tree receipt identity mismatch",
+        ));
+    }
+    let mut previous: Option<&str> = None;
+    for entry in &receipt.entries {
+        validate_relative_path(Path::new(&entry.path), "source tree receipt entry")?;
+        if previous.is_some_and(|path| path >= entry.path.as_str()) {
+            return Err(BuildPairError::new(
+                "complete source tree receipt entries must be sorted and unique",
+            ));
+        }
+        previous = Some(&entry.path);
+        match entry.kind {
+            SourceTreeEntryKindV1::Directory
+                if entry.canonical_mode == 0o755 && entry.length == 0 && entry.blake3.is_none() => {
+            }
+            SourceTreeEntryKindV1::File
+                if matches!(entry.canonical_mode, 0o644 | 0o755)
+                    && entry.blake3.as_deref().is_some_and(|value| {
+                        validate_digest("source tree file blake3", value).is_ok()
+                    }) => {}
+            _ => {
+                return Err(BuildPairError::new(
+                    "complete source tree receipt entry is invalid",
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 struct BuildMemberRunContext<'a> {
     plan: &'a BuildPairPlanV1,
     arguments: &'a [String],
@@ -734,6 +980,7 @@ struct BuildMemberRunContext<'a> {
 fn run_member(
     context: &BuildMemberRunContext<'_>,
     member: &BuildPairMemberV1,
+    source_authority: &SourceTreeAuthorityV1,
 ) -> Result<BuildPairMemberReportV1, BuildPairError> {
     let plan = context.plan;
     validated_target_root(&member.target_root, "target_root")?;
@@ -805,8 +1052,8 @@ fn run_member(
         variant: member.variant,
         source_commit: &plan.source_commit,
         experiment_identity_blake3: &plan.experiment_identity_blake3,
-        source_identity_blake3: &member.source_identity_blake3,
-        cargo_lock_blake3: &member.cargo_lock_blake3,
+        source_identity_blake3: &source_authority.identity_blake3,
+        cargo_lock_blake3: &source_authority.cargo_lock_blake3,
         cargo_executable_blake3: &plan.cargo_executable_blake3,
         rustc_executable_blake3: &plan.rustc_executable_blake3,
         rustc_verbose_version: &plan.rustc_verbose_version,
@@ -838,8 +1085,9 @@ fn run_member(
 
     Ok(BuildPairMemberReportV1 {
         variant: member.variant,
-        source_identity_blake3: member.source_identity_blake3.clone(),
-        cargo_lock_blake3: member.cargo_lock_blake3.clone(),
+        source_identity_blake3: source_authority.identity_blake3.clone(),
+        source_tree_receipt_bytes: source_authority.receipt_bytes.clone(),
+        cargo_lock_blake3: source_authority.cargo_lock_blake3.clone(),
         target_root,
         artifact_relative_path,
         artifact_blake3,

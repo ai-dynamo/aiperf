@@ -215,11 +215,19 @@ fn one_controller_executes_both_members_with_one_frozen_command_and_environment(
     );
     assert_eq!(
         report.members[0].source_identity_blake3,
+        report.members[1].source_identity_blake3
+    );
+    assert_ne!(
+        report.members[0].source_identity_blake3,
         fixture.static_identity
     );
     assert_eq!(
-        report.members[1].source_identity_blake3,
-        fixture.dynamic_identity
+        report.members[0].source_tree_receipt_bytes,
+        report.members[1].source_tree_receipt_bytes
+    );
+    assert_eq!(
+        digest(&report.members[0].source_tree_receipt_bytes),
+        report.members[0].source_identity_blake3
     );
     assert_eq!(report.cargo_incremental, "1");
     assert_eq!(report.lto, BuildLtoV1::Thin);
