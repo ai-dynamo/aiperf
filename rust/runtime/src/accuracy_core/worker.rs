@@ -102,14 +102,14 @@ impl WorkerProcessConfig {
         }
     }
 
-    /// Build the standard `python -u -m aiperf.accuracy.worker` command.
+    /// Build the standard `python -u -m aiperf.rust_shims.accuracy_worker` command.
     pub fn python_module() -> Self {
         let program =
             std::env::var_os("AIPERF_ACCURACY_PYTHON").unwrap_or_else(|| OsString::from("python"));
         Self::new(program)
             .arg("-u")
             .arg("-m")
-            .arg("aiperf.accuracy.worker")
+            .arg("aiperf.rust_shims.accuracy_worker")
     }
 
     /// Append one literal argv element.

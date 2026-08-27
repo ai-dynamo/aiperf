@@ -388,28 +388,43 @@ class _RNGManager:
     hierarchical child RNG creation with reproducible seeds.
     """
 
-    def __init__(self, root_seed: int | None):
+    def __init__(self, root_seed: int | None, backend: str = "python"):
         """Initialize the RNG manager.
 
         Args:
             root_seed: Root seed for derivation. If None, all derived RNGs
                       will be non-deterministic (seeded with None).
+            backend: ``"python"`` uses Python MT and NumPy with SHA-256
+                derivation. ``"rust"`` uses Pcg64 with BLAKE3
+                derivation. Selected from ``Environment.RNG.BACKEND`` by
+                :func:`init`.
         """
         self._root_seed = root_seed
+        self._backend = backend
 
-    def derive(self, identifier: str) -> RandomGenerator:
+    def derive(self, identifier: str):
         """Derive a child RNG with deterministic seed from identifier.
 
         Args:
             identifier: Unique dotted identifier (e.g., "dataset.loader").
 
         Returns:
-            New RandomGenerator with derived seed (or None if root is None).
+            New RNG with a derived seed, or an entropy-seeded RNG when the root
+            is ``None``. ``python`` returns :class:`RandomGenerator`;
+            ``rust`` returns ``ParityRandomGenerator``.
 
         Note:
-            Same identifier always produces same derived seed, ensuring
-            reproducible sequences. Uses SHA-256 for stable hashing.
+            The same identifier produces the same derived seed. ``python`` uses
+            SHA-256; ``rust`` uses BLAKE3 to match the Rust
+            ``aiperf::rng`` reproducibility contract.
         """
+        if self._backend == "rust":
+            # Byte-exact Rust parity: BLAKE3 seed algebra + Pcg64 generator. RngRoot
+            # handles the seedless (entropy) case with the same semantics as Rust.
+            from aiperf.rust_shims.rng_parity import RngRoot
+
+            return RngRoot(self._root_seed).derive(identifier)
+
         if self._root_seed is not None:
             # Deterministic: derive seed from root + identifier
             seed_string = f"{self._root_seed}:{identifier}"
@@ -475,7 +490,10 @@ def init(seed: int | None) -> None:
         random.seed(seed)
         np.random.seed(fold_seed_to_uint32(seed))
 
-    _manager = _RNGManager(seed)
+    # Select the random-number backend from the environment.
+    from aiperf.common.environment import Environment
+
+    _manager = _RNGManager(seed, backend=Environment.RNG.BACKEND)
 
 
 def derive(identifier: str) -> RandomGenerator:
@@ -544,6 +562,16 @@ def derive_variation_seed(
     # additive `base + idx` derivation in `_apply_sweep_seed_derivation`.
     if root_seed is None:
         return None
+
+    # rust uses the Rust runtime's BLAKE3 variation-seed algebra; python
+    # uses SHA-256.
+    from aiperf.common.environment import Environment
+
+    if Environment.RNG.BACKEND == "rust":
+        from aiperf.rust_shims.rng_parity import RngRoot
+
+        return RngRoot(root_seed).derive_variation_seed(variation_label)
+
     seed_string = f"{root_seed}:variation:{variation_label}"
     hash_bytes = hashlib.sha256(seed_string.encode("utf-8")).digest()
     return int.from_bytes(hash_bytes[:8], byteorder="big")

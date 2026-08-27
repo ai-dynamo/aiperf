@@ -11,7 +11,7 @@ from pathlib import Path
 import orjson
 import pytest
 
-from aiperf.dataset.loader.recorded_graph import (
+from aiperf.rust_shims.recorded_graph import (
     DynamoTraceNativeLoader,
     WekaTraceNativeLoader,
 )

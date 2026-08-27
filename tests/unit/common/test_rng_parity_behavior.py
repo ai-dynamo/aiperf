@@ -14,7 +14,7 @@ import math
 
 import pytest
 
-from aiperf.common.rng_parity import (
+from aiperf.rust_shims.rng_parity import (
     HashIdRandomGenerator,
     ParityRandomGenerator,
     RngError,
@@ -24,7 +24,7 @@ from aiperf.common.rng_parity import (
     SequenceLengthPair,
     namespace,
 )
-from aiperf.common.rng_parity import ziggurat_tables as zt
+from aiperf.rust_shims.rng_parity import ziggurat_tables as zt
 
 
 # --------------------------------------------------------------------- ziggurat tables

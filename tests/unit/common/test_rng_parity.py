@@ -5,7 +5,7 @@
 
 Replays the operation script from the Rust golden-vector generator
 (``rust/aiperf/examples/rng_parity_vectors.rs``) through
-:class:`aiperf.common.rng_parity.ParityRandomGenerator` and asserts every output matches
+:class:`aiperf.rust_shims.rng_parity.ParityRandomGenerator` and asserts every output matches
 bit-for-bit. Floats are compared via their raw IEEE-754 ``u64`` bit pattern (the golden
 stores ``f64::to_bits``), so the assertion is exact.
 
@@ -23,7 +23,7 @@ from pathlib import Path
 
 import pytest
 
-from aiperf.common.rng_parity import (
+from aiperf.rust_shims.rng_parity import (
     HashIdRandomGenerator,
     ParityRandomGenerator,
     RngRoot,

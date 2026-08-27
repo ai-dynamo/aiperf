@@ -11,7 +11,7 @@ import pytest
 
 from aiperf.common import random_generator as rng
 from aiperf.common.random_generator import RandomGenerator, _RNGManager
-from aiperf.common.rng_parity import ParityRandomGenerator, RngRoot
+from aiperf.rust_shims.rng_parity import ParityRandomGenerator, RngRoot
 
 
 @pytest.fixture(autouse=True)

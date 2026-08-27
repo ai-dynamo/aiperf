@@ -1182,7 +1182,7 @@ struct StaticAccuracyConfigV2 {
 }
 
 fn default_accuracy_worker_module() -> String {
-    "aiperf.accuracy.worker".into()
+    "aiperf.rust_shims.accuracy_worker".into()
 }
 
 impl StaticAccuracyConfigV2 {

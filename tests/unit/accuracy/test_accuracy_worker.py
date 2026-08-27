@@ -16,7 +16,7 @@ import pytest
 
 from aiperf.accuracy import worker as worker_module
 from aiperf.accuracy.graders._codegen_worker_client import CodegenWorkerError
-from aiperf.accuracy.worker import AccuracyWorker, _Problem, _Registration
+from aiperf.rust_shims.accuracy_worker import AccuracyWorker, _Problem, _Registration
 
 
 def test_stdio_reserves_stdout_for_correlated_protocol_messages() -> None:
@@ -28,7 +28,7 @@ def test_stdio_reserves_stdout_for_correlated_protocol_messages() -> None:
         ]
     )
     completed = subprocess.run(
-        [sys.executable, "-u", "-m", "aiperf.accuracy.worker"],
+        [sys.executable, "-u", "-m", "aiperf.rust_shims.accuracy_worker"],
         input=requests,
         text=True,
         capture_output=True,
