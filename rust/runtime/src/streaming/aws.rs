@@ -675,6 +675,14 @@ impl AwsS3ClientFactory {
         &self.authority
     }
 
+    /// The validated settings installed into every client this factory builds.
+    ///
+    /// `aws_sdk_s3::config::Config` exposes no endpoint or path-style getter, so
+    /// this is how a consumer or a test observes what was resolved.
+    pub fn settings(&self) -> &AwsClientSettings {
+        &self.settings
+    }
+
     /// Build one worker-local client.
     ///
     /// `clock` binds this worker's run clock to the authority's shared time

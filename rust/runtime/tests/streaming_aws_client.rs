@@ -51,11 +51,15 @@ async fn client_factory_honors_endpoint_and_redacts_credentials() {
     .expect("authored MinIO settings prepare");
 
     let clock: Rc<dyn Clock> = Rc::new(SimClock::new());
-    let (client, _projection) = factory.build_client(clock);
+    // `aws_sdk_s3::config::Config` exposes no `endpoint_url` getter, so the
+    // authored endpoint is asserted on the retained settings the factory
+    // installs into every client it builds.
+    let (_client, _projection) = factory.build_client(clock);
     assert_eq!(
-        client.config().endpoint_url(),
+        factory.settings().endpoint_url.as_deref(),
         Some("http://127.0.0.1:9000")
     );
+    assert!(factory.settings().force_path_style);
     assert_eq!(authority.kind(), AwsCredentialSourceKind::AuthoredStatic);
 
     for rendered in [format!("{factory:?}"), format!("{authority:?}")] {
