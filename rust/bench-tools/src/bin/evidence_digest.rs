@@ -2807,6 +2807,7 @@ fn validate_exporter_expected(
 
 fn validate_exporter_policy(
     policy: &ExporterObservablePolicyV1,
+    authenticated_receiver_protocols: &BTreeSet<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if policy.schema_version != 1 {
         return Err("exporter observable policy schema_version must be 1".into());
@@ -2817,6 +2818,12 @@ fn validate_exporter_policy(
             || previous_protocol.is_some_and(|previous| previous >= removal.protocol.as_str())
         {
             return Err("exporter policy protocols must be sorted and unique".into());
+        }
+        if !authenticated_receiver_protocols.contains(removal.protocol.as_str()) {
+            return Err(
+                "exporter policy contains a transport removal absent from the authenticated receiver protocols"
+                    .into(),
+            );
         }
         previous_protocol = Some(removal.protocol.as_str());
         let mut previous_key = None;
@@ -3010,10 +3017,11 @@ fn reject_duplicate_json_keys(bytes: &[u8]) -> Result<(), Box<dyn std::error::Er
 
 fn parse_exporter_observable_policy(
     bytes: &[u8],
+    authenticated_receiver_protocols: &BTreeSet<&str>,
 ) -> Result<ExporterObservablePolicyV1, Box<dyn std::error::Error>> {
     reject_duplicate_json_keys(bytes)?;
     let policy: ExporterObservablePolicyV1 = serde_json::from_slice(bytes)?;
-    validate_exporter_policy(&policy)?;
+    validate_exporter_policy(&policy, authenticated_receiver_protocols)?;
     let mut canonical = serde_json_canonicalizer::to_vec(&policy)?;
     canonical.push(b'\n');
     if canonical != bytes {
@@ -3081,7 +3089,8 @@ fn exporter_authored_contract(
     identity_root: &Path,
 ) -> Result<serde_json::Map<String, serde_json::Value>, Box<dyn std::error::Error>> {
     let policy_path = required_receipt(identity_root, "exporter-observable-policy.json")?;
-    let policy = parse_exporter_observable_policy(&snapshot_regular_file(&policy_path)?)?;
+    let policy =
+        parse_exporter_observable_policy(&snapshot_regular_file(&policy_path)?, &BTreeSet::new())?;
     if policy.mode != ExporterPolicyMode::StaticCalibration
         || !policy.receiver_transport_fields_removed.is_empty()
         || policy.scenarios.len() != 1
@@ -5030,7 +5039,7 @@ mod tests {
 
         for (name, bytes) in mutations {
             assert!(
-                parse_exporter_observable_policy(bytes.as_bytes()).is_err(),
+                parse_exporter_observable_policy(bytes.as_bytes(), &BTreeSet::new()).is_err(),
                 "accepted policy mutation: {name}"
             );
         }
@@ -5040,14 +5049,14 @@ mod tests {
     fn exporter_policy_rejects_a_selector_from_the_wrong_observable_class() {
         let bytes = b"{\"mode\":\"static_calibration\",\"receiver_transport_fields_removed\":[],\"scenarios\":[{\"allows_empty\":false,\"observable_kind\":\"artifact_tree\",\"provenance_slots\":[{\"locator\":{\"kind\":\"json_pointer\",\"pointer\":\"/digest\"},\"output_selector\":{\"kind\":\"captured_stream\"},\"replacement\":{\"encoding\":\"canonical_json\",\"value\":\"replacement\"},\"slot_id\":\"lock\",\"static_expected\":{\"encoding\":\"canonical_json\",\"value\":\"static\"}}],\"scenario_id\":\"exporter\"}],\"schema_version\":1}\n";
 
-        assert!(parse_exporter_observable_policy(bytes).is_err());
+        assert!(parse_exporter_observable_policy(bytes, &BTreeSet::new()).is_err());
     }
 
     #[test]
     fn exporter_policy_accepts_normative_rfc8785_numbers_and_utf16_key_order() {
         let bytes = "{\"mode\":\"static_calibration\",\"receiver_transport_fields_removed\":[],\"scenarios\":[{\"allows_empty\":false,\"observable_kind\":\"artifact_tree\",\"provenance_slots\":[{\"locator\":{\"kind\":\"json_pointer\",\"pointer\":\"/identity\"},\"output_selector\":{\"kind\":\"artifact_content\",\"path\":\"out.json\"},\"replacement\":{\"encoding\":\"canonical_json\",\"value\":{\"𐀀\":0,\"\":1e+30}},\"slot_id\":\"identity\",\"static_expected\":{\"encoding\":\"canonical_json\",\"value\":{\"𐀀\":0,\"\":1e+30}}}],\"scenario_id\":\"exporter\"}],\"schema_version\":1}\n";
 
-        parse_exporter_observable_policy(bytes.as_bytes())
+        parse_exporter_observable_policy(bytes.as_bytes(), &BTreeSet::new())
             .expect("the literal RFC 8785 counterexample must validate");
 
         for noncanonical in [
@@ -5058,10 +5067,26 @@ mod tests {
             bytes.replace("\"𐀀\":0", "\"𐀀\":0,\"𐀀\":1"),
         ] {
             assert!(
-                parse_exporter_observable_policy(noncanonical.as_bytes()).is_err(),
+                parse_exporter_observable_policy(noncanonical.as_bytes(), &BTreeSet::new())
+                    .is_err(),
                 "noncanonical RFC 8785 mutation was accepted"
             );
         }
+    }
+
+    #[test]
+    fn exporter_policy_rejects_removal_protocol_absent_from_authenticated_receiver_set() {
+        const USED_ONLY: &[u8] = b"{\"mode\":\"static_calibration\",\"receiver_transport_fields_removed\":[{\"keys\":[\"date\"],\"protocol\":\"otel_http_v1\"}],\"scenarios\":[{\"allows_empty\":false,\"observable_kind\":\"receiver_transcript\",\"provenance_slots\":[],\"scenario_id\":\"receiver\"}],\"schema_version\":1}\n";
+        const USED_PLUS_EXTRA: &[u8] = b"{\"mode\":\"static_calibration\",\"receiver_transport_fields_removed\":[{\"keys\":[\"date\"],\"protocol\":\"otel_http_v1\"},{\"keys\":[\"x-amzn-requestid\"],\"protocol\":\"sagemaker_eventstream\"}],\"scenarios\":[{\"allows_empty\":false,\"observable_kind\":\"receiver_transcript\",\"provenance_slots\":[],\"scenario_id\":\"receiver\"}],\"schema_version\":1}\n";
+        let authenticated_receiver_protocols = BTreeSet::from(["otel_http_v1"]);
+
+        parse_exporter_observable_policy(USED_ONLY, &authenticated_receiver_protocols)
+            .expect("removal for the authenticated receiver protocol must validate");
+        assert!(
+            parse_exporter_observable_policy(USED_PLUS_EXTRA, &authenticated_receiver_protocols)
+                .is_err(),
+            "removal for a protocol absent from the authenticated receiver set was accepted"
+        );
     }
 
     #[test]
@@ -5162,7 +5187,7 @@ mod tests {
             let policy: ExporterObservablePolicyV1 =
                 serde_json::from_value(case).expect("counterexample policy parses");
             assert!(
-                validate_exporter_policy(&policy).is_err(),
+                validate_exporter_policy(&policy, &BTreeSet::new()).is_err(),
                 "structurally overlapping policy was accepted"
             );
         }

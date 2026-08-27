@@ -1297,7 +1297,7 @@ fn prepublication_gate_runs_from_the_complete_current_tracked_package() {
     let directory = tempfile::tempdir().expect("clean tracked package root");
     let clean = directory.path().join("source");
     let cloned = std::process::Command::new("git")
-        .args(["clone", "--shared", "--no-checkout"])
+        .args(["clone", "--no-local", "--no-hardlinks", "--no-checkout"])
         .arg(&source)
         .arg(&clean)
         .output()
@@ -1306,6 +1306,10 @@ fn prepublication_gate_runs_from_the_complete_current_tracked_package() {
         cloned.status.success(),
         "ephemeral tracked checkout failed: {}",
         String::from_utf8_lossy(&cloned.stderr)
+    );
+    assert!(
+        !clean.join(".git/objects/info/alternates").exists(),
+        "clean tracked package depends on an external Git object store"
     );
     let checked_out = std::process::Command::new("git")
         .args(["-C"])
@@ -1417,6 +1421,22 @@ fn prepublication_gate_runs_from_the_complete_current_tracked_package() {
         .expect("ephemeral tracked status starts");
     assert!(status.status.success() && status.stdout.is_empty());
     assert!(clean.join(".git").is_dir());
+    let owned_object_store = fs::canonicalize(clean.join(".git/objects"))
+        .expect("clean tracked package owns a Git object store");
+    let object_check = std::process::Command::new("git")
+        .args(["-C"])
+        .arg(&clean)
+        .args(["fsck", "--full", "--no-dangling"])
+        .env("GIT_OBJECT_DIRECTORY", &owned_object_store)
+        .env_remove("GIT_ALTERNATE_OBJECT_DIRECTORIES")
+        .env("GIT_NO_LAZY_FETCH", "1")
+        .output()
+        .expect("owned Git object verification starts");
+    assert!(
+        object_check.status.success(),
+        "clean tracked package lacks required owned Git objects: {}",
+        String::from_utf8_lossy(&object_check.stderr)
+    );
     assert!(!clean.join("rust/target").exists());
     for relative in [
         "artifacts/native-plugin-baseline/evidence-manifest.json",
@@ -1445,6 +1465,9 @@ fn prepublication_gate_runs_from_the_complete_current_tracked_package() {
         ])
         .env("CARGO_TARGET_DIR", directory.path().join("target"))
         .env("AIPERF_PLUGIN_BASELINE_VALIDATION_ROOT", &clean)
+        .env("GIT_OBJECT_DIRECTORY", &owned_object_store)
+        .env_remove("GIT_ALTERNATE_OBJECT_DIRECTORIES")
+        .env("GIT_NO_LAZY_FETCH", "1")
         .output()
         .expect("clean-package Cargo gate starts");
     assert!(
