@@ -850,6 +850,7 @@ async fn scripted_format_satisfies_the_shared_conformance_harness() {
         &factory,
         Box::new(CountingReporter::new(run_identity())),
         FormatConformanceCases {
+            run: run_identity(),
             authored: raw(serde_json::json!({ "fragments": 1 })),
             rejected_authored: raw(serde_json::json!({ "fragments": 1, "extra": true })),
             source_descriptor: &SOURCE_DESCRIPTOR,

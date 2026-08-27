@@ -21,6 +21,7 @@ use std::rc::Rc;
 
 use aiperf_runtime::streaming::{
     budget::StreamingResourceBudget,
+    checkpoint::StreamRunIdentity,
     failure::{StreamFormatError, StreamingIssueReporter},
     format::{
         DecodeBatchBudget, DecodeStep, DecoderCheckpoint, DecoderResumeState, FormatEvent,
@@ -44,6 +45,8 @@ pub type FormatAdvance = Rc<dyn Fn()>;
 
 /// Everything one format implementation contributes to the shared harness.
 pub struct FormatConformanceCases {
+    /// Logical run bound into the prepare context.
+    pub run: StreamRunIdentity,
     /// Strictly authored configuration the factory must accept.
     pub authored: Box<RawValue>,
     /// Authored configuration the factory must refuse before any effect.
@@ -110,7 +113,9 @@ pub async fn assert_format_conformance(
     let handle = reporter.handle();
     // Borrow of the owned reporter ends here, before every await below.
     let context = StreamingFormatPrepareContext {
+        run: cases.run,
         stream_semantic_digest: cases.stream_semantic_digest,
+        fragment_budget: cases.fragment_budget.clone(),
         issue_reporter: handle,
     };
     let validated = factory

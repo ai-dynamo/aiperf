@@ -11,8 +11,8 @@ use serde::Serialize;
 use serde_json::value::RawValue;
 
 use super::{
-    budget::BudgetLease,
-    checkpoint::StreamingCheckpointParticipant,
+    budget::{BudgetLease, StreamingResourceBudget},
+    checkpoint::{StreamRunIdentity, StreamingCheckpointParticipant},
     failure::StreamingIssueReporterHandle,
     identity::{ContentDigest, ImmutableObjectIdentity},
     source::{
@@ -100,8 +100,15 @@ where
 /// Host-owned format preparation context.
 #[derive(Clone, Debug)]
 pub struct StreamingFormatPrepareContext {
+    /// Logical run every format-minted reliability fact is bound to.
+    ///
+    /// A decoder can quarantine a record before the first checkpoint barrier, so
+    /// the run identity cannot be discovered from barrier state.
+    pub run: StreamRunIdentity,
     /// Semantic namespace of the selected stream.
     pub stream_semantic_digest: ContentDigest,
+    /// Budget every emitted fragment's retained bytes are charged against.
+    pub fragment_budget: StreamingResourceBudget,
     /// Host-owned reliability issue reporting boundary.
     pub issue_reporter: StreamingIssueReporterHandle,
 }
