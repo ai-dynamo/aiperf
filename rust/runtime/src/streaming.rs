@@ -11,6 +11,7 @@ pub mod checkpoint_backend;
 pub mod checkpoints;
 pub mod failure;
 pub mod format;
+pub mod hf_credentials;
 pub mod identity;
 pub mod reliability;
 pub mod results;
