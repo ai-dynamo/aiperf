@@ -24,7 +24,12 @@ fn terminal_pair(outcomes: [MemberTerminalOutcome; 2]) -> RawPairTerminalRecord 
         members: member_order
             .into_iter()
             .zip(outcomes)
-            .map(|(variant, outcome)| RawMemberTerminalRecord { variant, outcome })
+            .map(|(variant, outcome)| RawMemberTerminalRecord {
+                variant,
+                outcome,
+                samples: Vec::new(),
+                terminal_evidence_index: None,
+            })
             .collect(),
         asserted_reason: Some("forged infrastructure label".to_owned()),
         asserted_disposition: Some(AttemptDisposition::InfrastructureInvalid),

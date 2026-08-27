@@ -1,7 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-//! Contract for the reviewed native-plugin package and feature projection.
+//! Contract for the reviewed native-plugin package and feature projection, and
+//! for the per-task implemented-topology witnesses that make it real.
+//!
+//! The projection half binds Task 3's reviewed ownership matrix to the exact
+//! Task-1 Cargo census. The witness half is not projection: it derives each
+//! finalizing task's package set, Rust source census, local dependency edges,
+//! and feature map from the live workspace and rejects any drift. A witness may
+//! mirror its projection row's justification prose, but only the exact
+//! `(package, kind)` edge is ever validated against Cargo.
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -181,8 +189,23 @@ struct ImplementationWitness {
 struct ImplementedPackageWitness {
     package: String,
     source_files: Vec<String>,
-    dependencies: Vec<OwnedDependency>,
+    dependencies: Vec<WitnessDependency>,
     features: BTreeMap<String, Vec<String>>,
+}
+
+/// A witness dependency edge. Only the exact `(package, kind)` pair is
+/// validated against live Cargo metadata; the projection's `OwnedDependency`
+/// owns the reviewed justification prose. The authored witnesses mirror their
+/// projection row verbatim, so the prose is accepted here and carried inert,
+/// with a blank one refused so a mirrored justification cannot rot into an
+/// empty string.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(deny_unknown_fields)]
+struct WitnessDependency {
+    package: String,
+    kind: String,
+    #[serde(default)]
+    justification: Option<String>,
 }
 
 fn workspace_root() -> PathBuf {
@@ -254,6 +277,20 @@ fn collect_rust_sources(
     Ok(())
 }
 
+/// Renders the symmetric difference of a hand-authored census and the census
+/// derived from the live workspace. Twenty later tasks author these by hand, so
+/// a failure has to say which entries are absent and which are surplus.
+fn census_difference<T: Ord + std::fmt::Debug>(
+    declared: &BTreeSet<T>,
+    actual: &BTreeSet<T>,
+) -> String {
+    format!(
+        "missing {:?}, unexpected {:?}",
+        actual.difference(declared).collect::<Vec<_>>(),
+        declared.difference(actual).collect::<Vec<_>>()
+    )
+}
+
 fn validate_implementation_witness(
     workspace: &std::path::Path,
     matrix: &OwnershipMatrix,
@@ -275,10 +312,17 @@ fn validate_implementation_witness(
         .iter()
         .map(|package| package.package.as_str())
         .collect::<BTreeSet<_>>();
-    if witnessed.len() != witness.packages.len()
-        || witnessed != required.iter().copied().collect::<BTreeSet<_>>()
-    {
-        return Err(format!("inexact implemented package set for Task {task}"));
+    if witnessed.len() != witness.packages.len() {
+        return Err(format!(
+            "duplicate implemented package rows for Task {task}"
+        ));
+    }
+    let required = required.iter().copied().collect::<BTreeSet<_>>();
+    if witnessed != required {
+        return Err(format!(
+            "inexact implemented package set for Task {task}: {}",
+            census_difference(&witnessed, &required)
+        ));
     }
     let matrix_packages = matrix
         .package_ownership
@@ -302,17 +346,26 @@ fn validate_implementation_witness(
             .ok_or_else(|| format!("manifest has no parent for {}", package.package))?;
         let mut source_files = Vec::new();
         collect_rust_sources(workspace, package_root, &mut source_files)?;
-        source_files.sort();
-        let mut declared_sources = package.source_files.clone();
-        declared_sources.sort();
-        declared_sources.dedup();
-        if package.source_files.is_empty()
-            || declared_sources.len() != package.source_files.len()
-            || declared_sources != source_files
-        {
+        let actual_sources = source_files.into_iter().collect::<BTreeSet<_>>();
+        let declared_sources = package
+            .source_files
+            .iter()
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        if package.source_files.is_empty() {
+            return Err(format!("empty source-file census for {}", package.package));
+        }
+        if declared_sources.len() != package.source_files.len() {
             return Err(format!(
-                "source-file census mismatch for {}",
+                "duplicate source-file census rows for {}",
                 package.package
+            ));
+        }
+        if declared_sources != actual_sources {
+            return Err(format!(
+                "source-file census mismatch for {}: {}",
+                package.package,
+                census_difference(&declared_sources, &actual_sources)
             ));
         }
         let actual_dependencies = actual
@@ -326,21 +379,45 @@ fn validate_implementation_witness(
                 )
             })
             .collect::<BTreeSet<_>>();
+        for dependency in &package.dependencies {
+            if dependency
+                .justification
+                .as_ref()
+                .is_some_and(|prose| prose.trim().is_empty())
+            {
+                return Err(format!(
+                    "empty dependency justification in {}",
+                    package.package
+                ));
+            }
+        }
         let declared_dependencies = package
             .dependencies
             .iter()
             .map(|dependency| (dependency.package.as_str(), dependency.kind.as_str()))
             .collect::<BTreeSet<_>>();
-        if declared_dependencies.len() != package.dependencies.len()
-            || declared_dependencies != actual_dependencies
-        {
+        if declared_dependencies.len() != package.dependencies.len() {
             return Err(format!(
-                "dependency census mismatch for {}",
+                "duplicate dependency census rows for {}",
                 package.package
             ));
         }
+        if declared_dependencies != actual_dependencies {
+            return Err(format!(
+                "dependency census mismatch for {}: {}",
+                package.package,
+                census_difference(&declared_dependencies, &actual_dependencies)
+            ));
+        }
         if package.features != actual.features {
-            return Err(format!("feature census mismatch for {}", package.package));
+            return Err(format!(
+                "feature census mismatch for {}: {}",
+                package.package,
+                census_difference(
+                    &package.features.iter().collect::<BTreeSet<_>>(),
+                    &actual.features.iter().collect::<BTreeSet<_>>()
+                )
+            ));
         }
     }
     Ok(())
@@ -871,6 +948,55 @@ fn every_plugin_dependency_and_baseline_feature_has_one_reviewed_projection() {
     }
 }
 
+/// Parses the plan's witness table. The table is what a future task author
+/// reads before writing a witness, so it is bound to the constant the gate
+/// enforces rather than left to drift as prose.
+fn planned_witness_tasks(plan: &str) -> Vec<(u64, Vec<String>)> {
+    plan.split_once("| Witness task | Exact packages |")
+        .expect("plan must document the witness table")
+        .1
+        .lines()
+        .skip(1)
+        .map(str::trim)
+        .take_while(|line| line.starts_with('|'))
+        .filter_map(|line| {
+            let cells = line.split('|').map(str::trim).collect::<Vec<_>>();
+            let task = cells.get(1)?.parse::<u64>().ok()?;
+            let packages = cells
+                .get(2)?
+                .split(',')
+                .map(|package| package.trim().trim_matches('`').to_owned())
+                .collect();
+            Some((task, packages))
+        })
+        .collect()
+}
+
+#[test]
+fn planned_witness_table_matches_the_implementation_task_map() {
+    let plan_path = workspace_root()
+        .join("../docs/superpowers/plans/2026-08-26-native-rust-runtime-plugins-implementation.md");
+    let plan = std::fs::read_to_string(&plan_path)
+        .unwrap_or_else(|error| panic!("cannot read {}: {error}", plan_path.display()));
+    let enforced = IMPLEMENTATION_TASK_PACKAGES
+        .iter()
+        .map(|(task, packages)| {
+            (
+                *task,
+                packages
+                    .iter()
+                    .map(|package| (*package).to_owned())
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        planned_witness_tasks(&plan),
+        enforced,
+        "the plan's witness table and IMPLEMENTATION_TASK_PACKAGES must agree exactly"
+    );
+}
+
 #[test]
 fn implementation_task_map_assigns_every_projected_package_once() {
     let (matrix, _) = fixture_from_checked_files();
@@ -890,54 +1016,448 @@ fn implementation_task_map_assigns_every_projected_package_once() {
     );
 }
 
+/// Every authored witness under `plugin-api/implemented-topology/` has to load
+/// under this file's witness DTOs. The authored corpus mirrors the projection
+/// matrix's dependency rows verbatim, justification prose included, so both the
+/// mirrored and the bare edge shape must load. The inline fixtures keep that
+/// binding non-vacuous on a checkout that carries no authored witness yet.
 #[test]
-fn implemented_witness_matches_real_package_sources_dependencies_and_features() {
-    let root = workspace_root();
-    let (matrix, metadata) = checked_matrix_and_metadata(&root);
+fn authored_implemented_topology_witnesses_load_under_the_witness_schema() {
+    const MIRRORED: &str = r#"
+schema_version = 1
+task = 5
+packages = [
+  { package = "aiperf-plugin-api", source_files = ["plugin-api/src/lib.rs"], dependencies = [{ package = "aiperf-core", kind = "normal", justification = "API boundary values are owned by aiperf-core" }], features = {} }
+]
+"#;
+    const BARE: &str = r#"
+schema_version = 1
+task = 5
+packages = [
+  { package = "aiperf-plugin-api", source_files = ["plugin-api/src/lib.rs"], dependencies = [{ package = "aiperf-core", kind = "normal" }], features = {} }
+]
+"#;
+    for text in [MIRRORED, BARE] {
+        let witness: ImplementationWitness =
+            toml::from_str(text).expect("both authored dependency-row shapes load");
+        assert_eq!(witness.packages[0].dependencies.len(), 1);
+    }
+
+    let directory = workspace_root().join("plugin-api/implemented-topology");
+    for (task, packages) in IMPLEMENTATION_TASK_PACKAGES {
+        let path = directory.join(format!("task-{task}.toml"));
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let witness: ImplementationWitness = toml::from_str(&text)
+            .unwrap_or_else(|error| panic!("cannot load {}: {error}", path.display()));
+        assert_eq!(
+            (witness.schema_version, witness.task),
+            (1, *task),
+            "{} must declare schema 1 and its own task",
+            path.display()
+        );
+        assert_eq!(
+            witness
+                .packages
+                .iter()
+                .map(|row| row.package.as_str())
+                .collect::<BTreeSet<_>>(),
+            packages.iter().copied().collect::<BTreeSet<_>>(),
+            "{} must witness exactly its task's packages",
+            path.display()
+        );
+    }
+}
+
+/// A self-contained `aiperf-core` package tree, Cargo projection, and exact
+/// witness. Witness validation is behavior, so its positive and negative arms
+/// are asserted here rather than against the live workspace, whose contents 36
+/// later tasks rewrite.
+struct SyntheticPackage {
+    _directory: tempfile::TempDir,
+    workspace: PathBuf,
+    matrix: OwnershipMatrix,
+    metadata: Metadata,
+    witness: ImplementationWitness,
+}
+
+fn synthetic_core_package() -> SyntheticPackage {
+    let directory = tempfile::tempdir().expect("temporary workspace");
+    let workspace = directory.path().to_path_buf();
+    let sources = [
+        "core/src/lib.rs",
+        "core/src/clock.rs",
+        "core/tests/public_contract.rs",
+    ];
+    for source in sources {
+        let path = workspace.join(source);
+        std::fs::create_dir_all(path.parent().expect("source has a parent"))
+            .expect("source directory");
+        std::fs::write(&path, "// synthetic\n").expect("source file");
+    }
+    std::fs::write(workspace.join("core/Cargo.toml"), "# synthetic\n").expect("manifest");
+    // A non-Rust sibling proves the census walks by extension, not by entry.
+    std::fs::write(workspace.join("core/README.md"), "synthetic\n").expect("sibling");
+
+    let features = BTreeMap::from([("default".to_owned(), vec!["clock".to_owned()])]);
+    let metadata = Metadata {
+        packages: vec![MetadataPackage {
+            id: "aiperf-core 0.0.0".to_owned(),
+            name: "aiperf-core".to_owned(),
+            dependencies: vec![MetadataDependency {
+                name: "aiperf-plugin-api".to_owned(),
+                kind: None,
+                path: Some(workspace.join("plugin-api").display().to_string()),
+            }],
+            features: features.clone(),
+            manifest_path: workspace.join("core/Cargo.toml").display().to_string(),
+        }],
+        workspace_members: vec!["aiperf-core 0.0.0".to_owned()],
+        metadata: serde_json::Value::Null,
+    };
+    let (mut matrix, _) = fixture();
+    matrix.package_ownership[0].package = "aiperf-core".to_owned();
+    let mut source_files = sources.map(str::to_owned).to_vec();
+    source_files.sort();
     let witness = ImplementationWitness {
         schema_version: 1,
         task: 4,
         packages: vec![ImplementedPackageWitness {
             package: "aiperf-core".to_owned(),
-            source_files: vec!["core/src/lib.rs".to_owned()],
-            dependencies: vec![],
-            features: BTreeMap::new(),
+            source_files,
+            dependencies: vec![WitnessDependency {
+                package: "aiperf-plugin-api".to_owned(),
+                kind: "normal".to_owned(),
+                justification: None,
+            }],
+            features,
         }],
     };
-    validate_implementation_witness(&root, &matrix, &metadata, 4, &witness)
-        .expect("exact core witness");
+    SyntheticPackage {
+        _directory: directory,
+        workspace,
+        matrix,
+        metadata,
+        witness,
+    }
+}
 
-    let mut missing_source = witness.clone();
-    missing_source.packages[0].source_files.clear();
+impl SyntheticPackage {
+    fn validate(&self, witness: &ImplementationWitness) -> Result<(), String> {
+        validate_implementation_witness(
+            &self.workspace,
+            &self.matrix,
+            &self.metadata,
+            witness.task,
+            witness,
+        )
+    }
+}
+
+#[test]
+fn implemented_witness_census_failures_name_the_exact_difference() {
+    let synthetic = synthetic_core_package();
+    synthetic
+        .validate(&synthetic.witness)
+        .expect("exact synthetic witness");
+
+    let mut stale_source = synthetic.witness.clone();
+    stale_source.packages[0].source_files =
+        vec!["core/src/gone.rs".to_owned(), "core/src/lib.rs".to_owned()];
+    let error = synthetic.validate(&stale_source).unwrap_err();
     assert!(
-        validate_implementation_witness(&root, &matrix, &metadata, 4, &missing_source)
-            .unwrap_err()
-            .contains("source-file census")
+        error.contains("core/src/gone.rs")
+            && error.contains("core/src/clock.rs")
+            && error.contains("core/tests/public_contract.rs"),
+        "source census failure must name both sides: {error}"
     );
 
-    let mut wrong_dependency = witness;
-    wrong_dependency.packages[0]
-        .dependencies
-        .push(OwnedDependency {
-            package: "aiperf-plugin-api".to_owned(),
-            kind: "normal".to_owned(),
-            justification: "not present in Cargo metadata".to_owned(),
-        });
+    let mut empty_source = synthetic.witness.clone();
+    empty_source.packages[0].source_files.clear();
     assert!(
-        validate_implementation_witness(&root, &matrix, &metadata, 4, &wrong_dependency)
+        synthetic
+            .validate(&empty_source)
             .unwrap_err()
-            .contains("dependency census")
+            .contains("empty source-file census"),
+        "an empty census must never satisfy a package that has sources"
     );
+
+    let mut duplicate_source = synthetic.witness.clone();
+    duplicate_source.packages[0]
+        .source_files
+        .push("core/src/lib.rs".to_owned());
+    assert!(
+        synthetic
+            .validate(&duplicate_source)
+            .unwrap_err()
+            .contains("duplicate source-file census"),
+        "a duplicated census row must be rejected as a duplicate"
+    );
+
+    let mut wrong_dependency = synthetic.witness.clone();
+    wrong_dependency.packages[0].dependencies[0].package = "aiperf-core-utils".to_owned();
+    let error = synthetic.validate(&wrong_dependency).unwrap_err();
+    assert!(
+        error.contains("aiperf-core-utils") && error.contains("aiperf-plugin-api"),
+        "dependency census failure must name both sides: {error}"
+    );
+
+    let mut wrong_feature = synthetic.witness.clone();
+    wrong_feature.packages[0]
+        .features
+        .insert("extra".to_owned(), vec![]);
+    let error = synthetic.validate(&wrong_feature).unwrap_err();
+    assert!(
+        error.contains("extra"),
+        "feature census failure must name the differing entry: {error}"
+    );
+
+    let mut wrong_packages = synthetic.witness.clone();
+    wrong_packages.packages[0].package = "aiperf-plugin-api".to_owned();
+    let error = synthetic.validate(&wrong_packages).unwrap_err();
+    assert!(
+        error.contains("aiperf-plugin-api") && error.contains("aiperf-core"),
+        "package-set failure must name both sides: {error}"
+    );
+}
+
+/// Resolves the implementation task the gate was configured for. An absent
+/// variable is the only legitimate skip: a present value that is not a task
+/// number is a gate failure, so a typo cannot report a green topology gate
+/// having validated no witness at all.
+fn configured_topology_task(value: Option<std::ffi::OsString>) -> Result<Option<u64>, String> {
+    let Some(raw) = value else {
+        return Ok(None);
+    };
+    let text = raw.to_str().ok_or_else(|| {
+        format!(
+            "AIPERF_PLUGIN_TOPOLOGY_TASK={} is not a task number",
+            raw.to_string_lossy()
+        )
+    })?;
+    text.parse::<u64>().map(Some).map_err(|error| {
+        format!("AIPERF_PLUGIN_TOPOLOGY_TASK={text} is not a task number: {error}")
+    })
 }
 
 #[test]
 fn configured_task_requires_its_implemented_topology_witness() {
-    let Some(task) = std::env::var("AIPERF_PLUGIN_TOPOLOGY_TASK")
-        .ok()
-        .and_then(|task| task.parse::<u64>().ok())
-    else {
+    let configured = configured_topology_task(std::env::var_os("AIPERF_PLUGIN_TOPOLOGY_TASK"))
+        .expect("AIPERF_PLUGIN_TOPOLOGY_TASK must name a task number when it is set");
+    let Some(task) = configured else {
         return;
     };
     validate_configured_implementation_task(&workspace_root(), task)
         .expect("configured implementation topology witness");
+}
+
+#[test]
+fn configured_topology_task_rejects_a_present_but_invalid_value() {
+    assert_eq!(configured_topology_task(None), Ok(None));
+    assert_eq!(
+        configured_topology_task(Some(std::ffi::OsString::from("4"))),
+        Ok(Some(4))
+    );
+    for invalid in ["task-4", "12-elf", ""] {
+        assert!(
+            configured_topology_task(Some(std::ffi::OsString::from(invalid)))
+                .unwrap_err()
+                .contains("is not a task number"),
+            "{invalid} must fail the gate rather than skip it"
+        );
+    }
+}
+
+/// Builds a witness for one package entirely from the live workspace: the
+/// source census from the package's own tree, the dependency census from its
+/// path dependencies, and the feature table verbatim from Cargo metadata.
+///
+/// Deriving the expectation is what keeps this usable past Task 4. A witness
+/// with a hand-written source list would have to be re-authored every time a
+/// task adds a file to the package it owns.
+fn witness_from_live_metadata(
+    workspace: &std::path::Path,
+    metadata: &Metadata,
+    task: u64,
+    packages: &[&str],
+) -> ImplementationWitness {
+    let built = packages
+        .iter()
+        .map(|package| package_witness_from_live_metadata(workspace, metadata, package))
+        .collect();
+    ImplementationWitness {
+        schema_version: 1,
+        task,
+        packages: built,
+    }
+}
+
+/// Builds the single-package half of a live witness.
+fn package_witness_from_live_metadata(
+    workspace: &std::path::Path,
+    metadata: &Metadata,
+    package: &str,
+) -> ImplementedPackageWitness {
+    let actual = metadata
+        .packages
+        .iter()
+        .find(|candidate| candidate.name == package)
+        .unwrap_or_else(|| panic!("Cargo metadata must describe {package}"));
+    let package_root = std::path::Path::new(&actual.manifest_path)
+        .parent()
+        .unwrap_or_else(|| panic!("manifest for {package} must have a parent"));
+    let mut source_files = Vec::new();
+    collect_rust_sources(workspace, package_root, &mut source_files)
+        .unwrap_or_else(|error| panic!("cannot census {package}: {error}"));
+    let dependencies = actual
+        .dependencies
+        .iter()
+        .filter(|dependency| dependency.path.is_some())
+        .map(|dependency| WitnessDependency {
+            package: dependency.name.clone(),
+            kind: dependency
+                .kind
+                .clone()
+                .unwrap_or_else(|| "normal".to_owned()),
+            justification: None,
+        })
+        .collect();
+    ImplementedPackageWitness {
+        package: package.to_owned(),
+        source_files,
+        dependencies,
+        features: actual.features.clone(),
+    }
+}
+
+/// Runs the witness validator against the real workspace on every `cargo test`,
+/// with no environment selector in front of it.
+///
+/// The task-selected gate reaches `checked_matrix_and_metadata` only when
+/// `AIPERF_PLUGIN_TOPOLOGY_TASK` names an owning task, so without this test a
+/// bare `cargo test` never executes `cargo metadata --locked`, never walks a
+/// real package tree, and never proves the projection is exact against checked
+/// files. The negative arms below are what make the positive arm meaningful:
+/// they prove the census actually compared something.
+#[test]
+fn implemented_witness_validates_against_the_live_workspace() {
+    let workspace = workspace_root();
+    let (matrix, metadata) = checked_matrix_and_metadata(&workspace);
+
+    // One witness per task covering every package that task owns: the validator
+    // requires the package set to be exact, and several tasks own more than one
+    // crate. Validating all present tasks rather than only the first also keeps
+    // the dependency and feature comparisons from being permanently
+    // empty-against-empty, which they would be if the test pinned itself to
+    // `aiperf-core`.
+    let mut validated = 0usize;
+    let mut with_dependencies: Option<(u64, Vec<&str>)> = None;
+    for (task, packages) in IMPLEMENTATION_TASK_PACKAGES {
+        let present = packages
+            .iter()
+            .all(|package| metadata.packages.iter().any(|c| c.name == *package));
+        if !present {
+            // A task may be mapped before its crates exist, which is the only
+            // legitimate reason to skip. A package that the reviewed matrix
+            // still projects but the workspace no longer contains is a shrinking
+            // workspace, not a future task, and must not skip silently.
+            for package in *packages {
+                assert!(
+                    !matrix
+                        .package_ownership
+                        .iter()
+                        .any(|row| row.package == *package),
+                    "Task {task} package {package} is projected by the ownership \
+                     matrix but absent from the live workspace"
+                );
+            }
+            continue;
+        }
+        let witness = witness_from_live_metadata(&workspace, &metadata, *task, packages);
+        for built in &witness.packages {
+            assert!(
+                !built.source_files.is_empty(),
+                "{} must own at least one Rust source file",
+                built.package
+            );
+        }
+        if with_dependencies.is_none()
+            && witness
+                .packages
+                .iter()
+                .any(|built| !built.dependencies.is_empty())
+        {
+            with_dependencies = Some((*task, packages.to_vec()));
+        }
+        validate_implementation_witness(&workspace, &matrix, &metadata, *task, &witness)
+            .unwrap_or_else(|error| panic!("live witness for Task {task} must validate: {error}"));
+        validated += 1;
+    }
+    assert!(
+        validated > 0,
+        "at least one mapped task must be fully present in the live workspace"
+    );
+
+    // Negative arms run against the first mapped task, which is enough to prove
+    // the census compared something rather than short-circuiting.
+    let (task, packages) = IMPLEMENTATION_TASK_PACKAGES
+        .first()
+        .expect("the implementation task map is never empty");
+    let witness = witness_from_live_metadata(&workspace, &metadata, *task, packages);
+
+    let mut empty_sources = witness.clone();
+    empty_sources.packages[0].source_files.clear();
+    assert!(
+        validate_implementation_witness(&workspace, &matrix, &metadata, *task, &empty_sources)
+            .expect_err("an empty source census must be refused")
+            .contains("empty source-file census"),
+    );
+
+    let mut surplus_source = witness.clone();
+    surplus_source.packages[0]
+        .source_files
+        .push("core/src/this-file-does-not-exist.rs".to_owned());
+    assert!(
+        validate_implementation_witness(&workspace, &matrix, &metadata, *task, &surplus_source)
+            .expect_err("a surplus source row must be refused")
+            .contains("source-file census mismatch"),
+    );
+
+    // A package name no crate in the workspace bears, so the row can only be
+    // refused as a census mismatch and never as a duplicate.
+    let mut surplus_dependency = witness;
+    surplus_dependency.packages[0]
+        .dependencies
+        .push(WitnessDependency {
+            package: "aiperf-no-such-crate".to_owned(),
+            kind: "normal".to_owned(),
+            justification: None,
+        });
+    assert!(
+        validate_implementation_witness(&workspace, &matrix, &metadata, *task, &surplus_dependency)
+            .expect_err("a dependency absent from Cargo metadata must be refused")
+            .contains("dependency census mismatch"),
+    );
+
+    // The dependency census only bites where a package has path dependencies at
+    // all, so drop them from a task that actually has some. This must be a hard
+    // requirement rather than a skip: the positive arms above compare a derived
+    // witness against a derived expectation through the same path-dependency
+    // filter, so a filter that stopped matching would leave every census empty,
+    // every positive arm passing as empty-against-empty, and — under a skip —
+    // this arm silently absent. Requiring it here is what keeps dependency
+    // comparison from switching itself off while the suite stays green.
+    let (task, packages) = with_dependencies
+        .expect("at least one mapped task must have live path dependencies to compare");
+    let mut dropped = witness_from_live_metadata(&workspace, &metadata, task, &packages);
+    for built in &mut dropped.packages {
+        built.dependencies.clear();
+    }
+    assert!(
+        validate_implementation_witness(&workspace, &matrix, &metadata, task, &dropped)
+            .expect_err("a missing dependency row must be refused")
+            .contains("dependency census mismatch"),
+        "Task {task} has path dependencies, so dropping them must be refused"
+    );
 }

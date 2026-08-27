@@ -757,6 +757,12 @@ ID, and integrate.
 - Create: `rust/bench-tools/tests/plugin_stats.rs`
 - Create: `rust/bench-tools/tests/plugin_topology.rs`
 - Create: `rust/scripts/run-plugin-parity.sh`
+- Modify: `rust/scripts/run-plugin-task-gates.sh` — Task 1 owns this dispatcher;
+  Task 3 is explicitly sanctioned to append the Task 4–40 topology-revalidation
+  block and nothing else
+- Modify: `rust/e2e-tests/tests/plugin_task_gate_inventory.rs` — Task 1 owns
+  this contract test; Task 3 is explicitly sanctioned to pin the appended block
+  and its failure-propagation idiom
 
 **Interfaces:**
 - Produces canonical JSONL samples with `{scenario, pair_id, variant, metric,
@@ -3805,7 +3811,9 @@ The final conformance test now executes the deferred `packaging` and
 sources/versions, target/toolchain, ABI artifacts, allocator, universe record,
 hermetic/linker policy, schema, and no orchestration-private crates), and checks
 post-cutover package/static-path evidence against the exact Task-38 candidate
-object IDs.
+object IDs. It also derives the final dependency/feature graph from Cargo
+metadata and verifies every edge against the implemented source/package owner;
+no Task-3 `reviewed_projection` row is accepted as final coupling evidence.
 
 - [ ] **Step 5: Whole-branch Graham approval, final bundle audit, and commit**
 

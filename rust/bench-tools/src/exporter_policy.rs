@@ -338,8 +338,8 @@ fn canonical_protocol_set_blake3(
 }
 
 /// Exact backing bytes for one selector named by a policy slot.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields, tag = "kind", rename_all = "snake_case")]
 pub enum SelectedBackingPayloadV1 {
     /// Exact bytes of one retained regular file at `path`.
     ArtifactContent {

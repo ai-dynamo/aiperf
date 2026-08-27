@@ -6,7 +6,8 @@
 use std::path::{Path, PathBuf};
 
 use aiperf_bench_tools::build_pair::{
-    BuildLtoV1, BuildPairMemberV1, BuildPairPlanV1, run_paired_build_v1,
+    BuildDurationUseV1, BuildLtoV1, BuildPairMemberV1, BuildPairPlanV1,
+    build_pair_authority_blake3_v1, run_paired_build_v1,
 };
 use aiperf_bench_tools::plugin_stats::Variant;
 
@@ -51,7 +52,7 @@ impl Fixture {
     fn new() -> Self {
         let directory = tempfile::tempdir().expect("temporary fixture directory");
         let cargo = directory.path().join("cargo");
-        let script = b"#!/bin/sh\nset -eu\nprintf '%s\\n' \"$@\" > \"$CARGO_TARGET_DIR/argv\"\nprintf 'incremental=%s\\nlto=%s\\n' \"$CARGO_INCREMENTAL\" \"$CARGO_PROFILE_RELEASE_LTO\" > \"$CARGO_TARGET_DIR/environment\"\ncp artifact-source \"$CARGO_TARGET_DIR/artifact.bin\"\n";
+        let script = b"#!/bin/sh\nset -eu\nprintf '%s\\n' \"$@\" > \"$CARGO_TARGET_DIR/argv\"\nprintf 'incremental=%s\\nlto=%s\\n' \"$CARGO_INCREMENTAL\" \"$CARGO_PROFILE_RELEASE_LTO\" > \"$CARGO_TARGET_DIR/environment\"\ncp implementation.rs \"$CARGO_TARGET_DIR/implementation-seen\"\ncase \"$CARGO_TARGET_DIR\" in\n  *static-target) cp static-artifact-source \"$CARGO_TARGET_DIR/artifact.bin\" ;;\n  *dynamic-target) cp dynamic-artifact-source \"$CARGO_TARGET_DIR/artifact.bin\" ;;\n  *) exit 65 ;;\nesac\n";
         write_executable(&cargo, script);
         let sysroot = directory.path().join("sysroot");
         std::fs::create_dir_all(&sysroot).expect("sysroot exists");
@@ -71,10 +72,10 @@ impl Fixture {
         let dynamic_source = directory.path().join("dynamic-source");
         std::fs::create_dir_all(&static_source).expect("static source exists");
         std::fs::create_dir_all(&dynamic_source).expect("dynamic source exists");
-        let static_identity_bytes = b"static source identity\n";
-        let dynamic_identity_bytes = b"dynamic source identity\n";
-        let static_lock_bytes = b"static lock\n";
-        let dynamic_lock_bytes = b"dynamic lock\n";
+        let static_identity_bytes = b"shared complete source identity\n";
+        let dynamic_identity_bytes = b"shared complete source identity\n";
+        let static_lock_bytes = b"shared lock\n";
+        let dynamic_lock_bytes = b"shared lock\n";
         std::fs::write(static_source.join("source.identity"), static_identity_bytes)
             .expect("static source identity is written");
         std::fs::write(
@@ -86,10 +87,16 @@ impl Fixture {
             .expect("static lock is written");
         std::fs::write(dynamic_source.join("Cargo.lock"), dynamic_lock_bytes)
             .expect("dynamic lock is written");
-        std::fs::write(static_source.join("artifact-source"), b"static artifact")
-            .expect("static artifact input is written");
-        std::fs::write(dynamic_source.join("artifact-source"), b"dynamic artifact")
-            .expect("dynamic artifact input is written");
+        for source in [&static_source, &dynamic_source] {
+            std::fs::write(source.join("static-artifact-source"), b"static artifact")
+                .expect("static artifact input is written");
+            std::fs::write(source.join("dynamic-artifact-source"), b"dynamic artifact")
+                .expect("dynamic artifact input is written");
+            std::fs::write(source.join("implementation.rs"), b"shared implementation\n")
+                .expect("implementation input is written");
+            std::fs::create_dir_all(source.join("retained-empty-directory"))
+                .expect("empty source directory is retained");
+        }
 
         let static_target = directory.path().join("static-target");
         let dynamic_target = directory.path().join("dynamic-target");
@@ -208,11 +215,19 @@ fn one_controller_executes_both_members_with_one_frozen_command_and_environment(
     );
     assert_eq!(
         report.members[0].source_identity_blake3,
+        report.members[1].source_identity_blake3
+    );
+    assert_ne!(
+        report.members[0].source_identity_blake3,
         fixture.static_identity
     );
     assert_eq!(
-        report.members[1].source_identity_blake3,
-        fixture.dynamic_identity
+        report.members[0].source_tree_receipt_bytes,
+        report.members[1].source_tree_receipt_bytes
+    );
+    assert_eq!(
+        digest(&report.members[0].source_tree_receipt_bytes),
+        report.members[0].source_identity_blake3
     );
     assert_eq!(report.cargo_incremental, "1");
     assert_eq!(report.lto, BuildLtoV1::Thin);
@@ -241,10 +256,32 @@ fn one_controller_executes_both_members_with_one_frozen_command_and_environment(
         assert_eq!(receipt["rustc_executable_blake3"], fixture.rustc_digest);
         assert_eq!(receipt["sysroot_identity_blake3"], fixture.sysroot_identity);
         assert_eq!(receipt["cargo_incremental"], "1");
+        assert!(receipt.get("active_duration_ns").is_none());
         let mut canonical = Vec::new();
         serde_json_canonicalizer::to_writer(&receipt, &mut canonical)
             .expect("receipt canonicalizes");
         assert_eq!(member.build_receipt_bytes, canonical);
+
+        assert_eq!(
+            report.build_duration_use,
+            BuildDurationUseV1::DescriptiveNonGating
+        );
+        assert_eq!(
+            digest(&member.build_observation_receipt_bytes),
+            member.build_observation_receipt_blake3
+        );
+        let observation: serde_json::Value =
+            serde_json::from_slice(&member.build_observation_receipt_bytes)
+                .expect("observation receipt is canonical JSON");
+        assert_eq!(
+            observation["active_duration_ns"],
+            serde_json::json!(member.active_duration_ns)
+        );
+        assert_eq!(observation["duration_use"], "descriptive_non_gating");
+        assert_eq!(
+            observation["build_authority_receipt_blake3"],
+            member.build_receipt_blake3
+        );
     }
     assert_eq!(digest(&report.pair_record_bytes), report.pair_record_blake3);
     let pair_record: serde_json::Value =
@@ -255,6 +292,69 @@ fn one_controller_executes_both_members_with_one_frozen_command_and_environment(
             report.members[0].build_receipt_blake3,
             report.members[1].build_receipt_blake3
         ])
+    );
+    assert_eq!(
+        pair_record["build_order"],
+        serde_json::json!(["static", "dynamic"])
+    );
+    assert_eq!(pair_record["build_duration_use"], "descriptive_non_gating");
+    assert!(
+        pair_record
+            .get("member_build_observation_receipt_blake3")
+            .is_none()
+    );
+}
+
+#[test]
+fn ordinary_same_stem_file_and_directory_layout_is_accepted() {
+    let fixture = Fixture::new();
+    for source in [&fixture.static_source, &fixture.dynamic_source] {
+        std::fs::write(source.join("foo.rs"), b"pub mod foo;\n")
+            .expect("same-stem Rust source file is written");
+        std::fs::create_dir(source.join("foo")).expect("same-stem module directory is created");
+        std::fs::write(source.join("foo/child.rs"), b"pub fn child() {}\n")
+            .expect("nested Rust source file is written");
+    }
+
+    run_paired_build_v1(&fixture.plan())
+        .expect("ordinary same-stem Rust module layouts must build authoritatively");
+}
+
+#[test]
+fn duration_only_observations_leave_build_authority_identity_unchanged() {
+    let fixture = Fixture::new();
+    let report = run_paired_build_v1(&fixture.plan()).expect("paired build completes");
+    let original_authority =
+        build_pair_authority_blake3_v1(&report).expect("build authority validates");
+    let mut changed_observations = report.clone();
+
+    for (member, duration) in changed_observations
+        .members
+        .iter_mut()
+        .zip([11_u128, 99_u128])
+    {
+        member.active_duration_ns = duration;
+        let mut receipt: serde_json::Value =
+            serde_json::from_slice(&member.build_observation_receipt_bytes)
+                .expect("observation receipt parses");
+        receipt["active_duration_ns"] = serde_json::json!(duration);
+        member.build_observation_receipt_bytes =
+            serde_json_canonicalizer::to_vec(&receipt).expect("observation canonicalizes");
+        member.build_observation_receipt_blake3 = digest(&member.build_observation_receipt_bytes);
+    }
+
+    assert_ne!(
+        report.members[0].build_observation_receipt_blake3,
+        changed_observations.members[0].build_observation_receipt_blake3
+    );
+    assert_eq!(
+        report.members[0].build_receipt_blake3,
+        changed_observations.members[0].build_receipt_blake3
+    );
+    assert_eq!(
+        original_authority,
+        build_pair_authority_blake3_v1(&changed_observations)
+            .expect("duration-only mutation preserves immutable authority")
     );
 }
 
@@ -319,6 +419,103 @@ fn source_identity_and_explicit_target_roots_are_validated_before_execution() {
 }
 
 #[test]
+fn both_members_require_one_source_and_lock_authority_before_execution() {
+    let fixture = Fixture::new();
+    let mut mismatched_source = fixture.plan();
+    let other_source_identity = b"other complete source identity\n";
+    std::fs::write(
+        fixture.dynamic_source.join("source.identity"),
+        other_source_identity,
+    )
+    .expect("different dynamic source identity is written");
+    mismatched_source.dynamic_member.source_identity_blake3 = digest(other_source_identity);
+    let error = run_paired_build_v1(&mismatched_source)
+        .expect_err("different complete source identities must fail closed");
+    assert!(error.to_string().contains("source identity"));
+    assert!(!fixture.static_target.exists());
+    assert!(!fixture.dynamic_target.exists());
+
+    let fixture = Fixture::new();
+    let mut mismatched_lock = fixture.plan();
+    let other_lock = b"other lock\n";
+    std::fs::write(fixture.dynamic_source.join("Cargo.lock"), other_lock)
+        .expect("different dynamic lock is written");
+    mismatched_lock.dynamic_member.cargo_lock_blake3 = digest(other_lock);
+    let error = run_paired_build_v1(&mismatched_lock)
+        .expect_err("different Cargo.lock identities must fail closed");
+    assert!(error.to_string().contains("Cargo.lock"));
+    assert!(!fixture.static_target.exists());
+    assert!(!fixture.dynamic_target.exists());
+}
+
+#[test]
+fn complete_source_tree_must_match_before_either_build_runs() {
+    let fixture = Fixture::new();
+    std::fs::write(
+        fixture.dynamic_source.join("implementation.rs"),
+        b"different build-reachable implementation\n",
+    )
+    .expect("dynamic implementation is changed outside the receipt and lock");
+
+    let error = run_paired_build_v1(&fixture.plan())
+        .expect_err("different complete source trees must fail closed");
+    assert!(
+        error.to_string().contains("complete source tree"),
+        "unexpected refusal: {error}"
+    );
+    assert!(!fixture.static_target.exists());
+    assert!(!fixture.dynamic_target.exists());
+}
+
+#[test]
+fn source_entry_mode_and_empty_directories_are_part_of_tree_identity() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let fixture = Fixture::new();
+    let implementation = fixture.dynamic_source.join("implementation.rs");
+    let mut permissions = std::fs::metadata(&implementation)
+        .expect("implementation metadata is available")
+        .permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&implementation, permissions)
+        .expect("dynamic implementation mode changes");
+    let error = run_paired_build_v1(&fixture.plan())
+        .expect_err("different canonical entry modes must fail closed");
+    assert!(error.to_string().contains("complete source tree"));
+    assert!(!fixture.static_target.exists());
+    assert!(!fixture.dynamic_target.exists());
+
+    let fixture = Fixture::new();
+    std::fs::create_dir(fixture.dynamic_source.join("additional-empty-directory"))
+        .expect("dynamic-only empty directory is created");
+    let error = run_paired_build_v1(&fixture.plan())
+        .expect_err("different empty directory census must fail closed");
+    assert!(error.to_string().contains("complete source tree"));
+    assert!(!fixture.static_target.exists());
+    assert!(!fixture.dynamic_target.exists());
+}
+
+#[test]
+fn source_links_are_refused_before_either_build_runs() {
+    use std::os::unix::fs::symlink;
+
+    let fixture = Fixture::new();
+    symlink(
+        fixture.dynamic_source.join("implementation.rs"),
+        fixture.dynamic_source.join("implementation-link.rs"),
+    )
+    .expect("source symlink is created");
+
+    let error = run_paired_build_v1(&fixture.plan()).expect_err("source links must fail closed");
+    assert!(
+        error.to_string().contains("source tree") || error.to_string().contains("link"),
+        "unexpected refusal: {error}"
+    );
+    assert!(!fixture.static_target.exists());
+    assert!(!fixture.dynamic_target.exists());
+}
+
+#[test]
 fn compiler_and_sysroot_identity_mismatches_are_rejected_before_execution() {
     let fixture = Fixture::new();
     let mut wrong_version = fixture.plan();
@@ -342,7 +539,7 @@ fn compiler_identity_is_revalidated_between_pair_members() {
     let fixture = Fixture::new();
     let mut plan = fixture.plan();
     let mutating_cargo = format!(
-        "#!/bin/sh\nset -eu\nprintf '%s\\n' \"$@\" > \"$CARGO_TARGET_DIR/argv\"\nprintf 'incremental=%s\\nlto=%s\\n' \"$CARGO_INCREMENTAL\" \"$CARGO_PROFILE_RELEASE_LTO\" > \"$CARGO_TARGET_DIR/environment\"\ncp artifact-source \"$CARGO_TARGET_DIR/artifact.bin\"\nprintf '# mutation\\n' >> '{}'\n",
+        "#!/bin/sh\nset -eu\nprintf '%s\\n' \"$@\" > \"$CARGO_TARGET_DIR/argv\"\nprintf 'incremental=%s\\nlto=%s\\n' \"$CARGO_INCREMENTAL\" \"$CARGO_PROFILE_RELEASE_LTO\" > \"$CARGO_TARGET_DIR/environment\"\ncase \"$CARGO_TARGET_DIR\" in\n  *static-target) cp static-artifact-source \"$CARGO_TARGET_DIR/artifact.bin\" ;;\n  *dynamic-target) cp dynamic-artifact-source \"$CARGO_TARGET_DIR/artifact.bin\" ;;\n  *) exit 65 ;;\nesac\nprintf '# mutation\\n' >> '{}'\n",
         fixture.rustc.display()
     );
     write_executable(&fixture.cargo, mutating_cargo.as_bytes());
