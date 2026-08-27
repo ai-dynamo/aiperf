@@ -2789,7 +2789,7 @@ async def handle_pod_recovery_event(
                 job_id=job_id,
                 key=key,
                 sb=sb,
-                pods=[body],
+                pods=None,
             )
             if not handled:
                 sb.finalize()
