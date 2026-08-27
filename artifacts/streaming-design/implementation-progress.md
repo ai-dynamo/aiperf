@@ -9,7 +9,7 @@ SPDX-License-Identifier: Apache-2.0
 - Normative specification: base `505efc06b0`, content-reconstruction amendment `3fea6f2fe0`
 - Approved executable plan set: base `e16aa2c71f802a9ad17a241464374e4d7b5ba19b`, content amendment final `3621ec56e5`, checkpoint run-authority amendment `f4bd60e95b`
 - Implementation start: `cd4a600e6c`
-- Status: foundation contract wave started
+- Status: foundation and checkpoint-authority contract wave in progress
 
 ## Durable milestones
 
@@ -26,6 +26,7 @@ SPDX-License-Identifier: Apache-2.0
 | Task 5A — typed checkpoint cuts and authority | Complete | Task head `407116c2a2`; merge `20cf021e93`; checkpoint 13/13, authority 2/2, API doctests 8/8, budget/identity 25/25; two exact-head reviews approved |
 | Task 1C — bounded blocking execution owner | Complete | Task head `f7af2069e8`; merge `b82ff70942`; blocking 11/11, budget 15/15, participants 13/13, authority 2/2, doctests 9/9; two exact-head reviews approved |
 | Checkpoint logical-run authority plan correction | Complete | Plan head `f4bd60e95b`; merge `11f41a3b2a`; two exact-head reviews approved; mandatory Task 5A-R inserted before 5B |
+| Task 5A-R — logical-run checkpoint authority retrofit | Complete | Task head `d020f3c616`; merge `f44863b7df`; checkpoint units 5/5, blocking units 2/2, targeted integrations 52/52, doctests 10/10; two exact-head reviews approved |
 
 Baseline note: the full feature-off runtime suite reached execution after the
 repair and reported 1907 passing tests plus one pre-existing version-fixture
@@ -65,6 +66,14 @@ are quiescent single-flight operations; shutdown is terminal and restored or
 committed decode horizons cannot move backward. A subsequent run-identity
 authority amendment is an explicit prerequisite to Task 5B; it is not folded
 silently into the completed 1C contract.
+
+Task 5A-R makes logical replay-run identity part of every durable checkpoint
+authority boundary without conflating it with process incarnation. Barriers,
+prepared and committed participant state, generation candidates, publication
+promotion, committed generations, and release receipts all reject cross-run
+substitution before mutation. The canonical generation digest uses the frozen
+v3 domain and binds the raw logical-run bytes; participant descriptors remain
+content-addressed and deliberately run-neutral.
 
 ## Implementation rulings
 
