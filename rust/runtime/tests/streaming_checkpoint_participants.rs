@@ -196,6 +196,7 @@ async fn tiny_slice_is_normalized_to_compact_owned_checkpoint_storage() {
 #[tokio::test(flavor = "current_thread")]
 async fn committed_state_requires_exact_digest_and_length() {
     let prepared = PreparedParticipantState::new(
+        support::run_id(1),
         id("session"),
         "session.v1",
         1,
@@ -205,15 +206,17 @@ async fn committed_state_requires_exact_digest_and_length() {
     )
     .expect("prepared state");
     let descriptor = prepared.descriptor().clone();
-    let (_, prepared_payload) = prepared.into_parts();
-    assert!(CommittedParticipantState::new(descriptor.clone(), prepared_payload).is_ok());
+    let (run, prepared_descriptor, prepared_payload) = prepared.into_parts();
+    assert_eq!(run, support::run_id(1));
+    assert_eq!(prepared_descriptor, descriptor);
+    assert!(CommittedParticipantState::new(run, descriptor.clone(), prepared_payload).is_ok());
 
     let bad_length = ParticipantStateDescriptor {
         byte_length: 4,
         ..descriptor.clone()
     };
     assert!(matches!(
-        CommittedParticipantState::new(bad_length, payload(b"state").await),
+        CommittedParticipantState::new(support::run_id(1), bad_length, payload(b"state").await,),
         Err(aiperf_runtime::streaming::checkpoint::CheckpointError::ObjectVerification)
     ));
 
@@ -222,7 +225,7 @@ async fn committed_state_requires_exact_digest_and_length() {
         ..descriptor
     };
     assert!(matches!(
-        CommittedParticipantState::new(bad_digest, payload(b"state").await),
+        CommittedParticipantState::new(support::run_id(1), bad_digest, payload(b"state").await,),
         Err(aiperf_runtime::streaming::checkpoint::CheckpointError::ObjectVerification)
     ));
 }
@@ -233,6 +236,7 @@ async fn descriptor_for(
     bytes: &[u8],
 ) -> ParticipantStateDescriptor {
     PreparedParticipantState::new(
+        support::run_id(1),
         id(participant),
         format!("{participant}.v1"),
         1,
@@ -242,7 +246,53 @@ async fn descriptor_for(
     )
     .expect("prepared descriptor")
     .into_parts()
-    .0
+    .1
+}
+
+fn candidate_for_run(run: u8) -> CheckpointGenerationCandidate {
+    let cut = support::cut_at(7);
+    let descriptor = ParticipantStateDescriptor {
+        participant_id: id("session"),
+        schema_id: "session.v1".into(),
+        schema_version: 1,
+        represented_cut: cut.clone(),
+        content_digest: ContentDigest::from_bytes([0x44; 32]),
+        item_count: 1,
+        byte_length: 4,
+    };
+    let plan = CheckpointParticipantPlan::new([id("session")]).expect("valid plan");
+    CheckpointGenerationCandidate::new(
+        support::run_id(run),
+        CheckpointEpoch::new(7),
+        None,
+        cut,
+        &plan,
+        ContentDigest::from_bytes([0x11; 32]),
+        ContentDigest::from_bytes([0x12; 32]),
+        vec![descriptor],
+        ContentDigest::from_bytes([0x55; 32]),
+        false,
+        None,
+    )
+    .expect("valid run-bound generation candidate")
+}
+
+#[test]
+fn identical_generation_content_in_distinct_runs_has_distinct_digest() {
+    let first = candidate_for_run(1);
+    let second = candidate_for_run(2);
+
+    assert_ne!(first.generation().digest(), second.generation().digest());
+}
+
+#[test]
+fn serialized_candidate_rejects_tampered_run() {
+    let candidate = candidate_for_run(1);
+    let mut serialized = serde_json::to_value(&candidate).expect("serialize candidate");
+    serialized["run"] =
+        serde_json::to_value(support::run_id(2)).expect("serialize replacement run");
+
+    assert!(serde_json::from_value::<CheckpointGenerationCandidate>(serialized).is_err());
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -256,6 +306,7 @@ async fn generation_candidate_is_canonical_and_digest_verified() {
     let result_root = ContentDigest::from_bytes([0x61; 32]);
 
     let staged_ba = CheckpointGenerationCandidate::new(
+        support::run_id(1),
         CheckpointEpoch::new(4),
         Some(ContentDigest::from_bytes([0x41; 32])),
         cut.clone(),
@@ -269,6 +320,7 @@ async fn generation_candidate_is_canonical_and_digest_verified() {
     )
     .expect("canonical generation");
     let staged_ab = CheckpointGenerationCandidate::new(
+        support::run_id(1),
         CheckpointEpoch::new(4),
         Some(ContentDigest::from_bytes([0x41; 32])),
         cut,
@@ -284,7 +336,7 @@ async fn generation_candidate_is_canonical_and_digest_verified() {
 
     assert_eq!(staged_ba, staged_ab);
     staged_ba
-        .verify_against(&plan, &execution_plan, &result_plan)
+        .verify_against(&support::run_id(1), &plan, &execution_plan, &result_plan)
         .expect("generation digest and plan bindings verify");
 
     let mut encoded = serde_json::to_value(&staged_ba).expect("serialize generation");
@@ -306,6 +358,7 @@ async fn semantic_plan_digests_change_generation_identity_and_verify_exactly() {
     let result_plan = ContentDigest::from_bytes([0x72; 32]);
     let construct = |execution_plan, result_plan| {
         CheckpointGenerationCandidate::new(
+            support::run_id(1),
             CheckpointEpoch::new(2),
             None,
             cut.clone(),
@@ -329,12 +382,18 @@ async fn semantic_plan_digests_change_generation_identity_and_verify_exactly() {
     assert_eq!(baseline.result_plan_digest(), &result_plan);
     assert!(
         baseline
-            .verify_against(&plan, &ContentDigest::from_bytes([0x81; 32]), &result_plan,)
+            .verify_against(
+                &support::run_id(1),
+                &plan,
+                &ContentDigest::from_bytes([0x81; 32]),
+                &result_plan,
+            )
             .is_err()
     );
     assert!(
         baseline
             .verify_against(
+                &support::run_id(1),
                 &plan,
                 &execution_plan,
                 &ContentDigest::from_bytes([0x82; 32]),
@@ -352,6 +411,7 @@ async fn self_valid_candidate_from_another_participant_plan_is_refused() {
     let execution_plan = ContentDigest::from_bytes([0x31; 32]);
     let result_plan = ContentDigest::from_bytes([0x32; 32]);
     let candidate = CheckpointGenerationCandidate::new(
+        support::run_id(1),
         CheckpointEpoch::new(1),
         None,
         cut,
@@ -366,10 +426,20 @@ async fn self_valid_candidate_from_another_participant_plan_is_refused() {
     .expect("self-valid candidate from another plan");
 
     candidate
-        .verify_against(&other_plan, &execution_plan, &result_plan)
+        .verify_against(
+            &support::run_id(1),
+            &other_plan,
+            &execution_plan,
+            &result_plan,
+        )
         .expect("candidate is self-valid for its authored plan");
     assert!(matches!(
-        candidate.verify_against(&expected_plan, &execution_plan, &result_plan),
+        candidate.verify_against(
+            &support::run_id(1),
+            &expected_plan,
+            &execution_plan,
+            &result_plan,
+        ),
         Err(aiperf_runtime::streaming::checkpoint::CheckpointError::ParticipantSetMismatch)
     ));
 }
@@ -384,6 +454,7 @@ async fn generation_candidate_rejects_invalid_participants_and_terminal_state() 
 
     assert!(matches!(
         CheckpointGenerationCandidate::new(
+            support::run_id(1),
             CheckpointEpoch::new(1),
             None,
             cut.clone(),
@@ -403,6 +474,7 @@ async fn generation_candidate_rejects_invalid_participants_and_terminal_state() 
     };
     assert!(matches!(
         CheckpointGenerationCandidate::new(
+            support::run_id(1),
             CheckpointEpoch::new(1),
             None,
             cut.clone(),
@@ -418,6 +490,7 @@ async fn generation_candidate_rejects_invalid_participants_and_terminal_state() 
     ));
     assert!(matches!(
         CheckpointGenerationCandidate::new(
+            support::run_id(1),
             CheckpointEpoch::new(1),
             None,
             cut.clone(),
@@ -433,6 +506,7 @@ async fn generation_candidate_rejects_invalid_participants_and_terminal_state() 
     ));
     assert!(
         CheckpointGenerationCandidate::new(
+            support::run_id(1),
             CheckpointEpoch::new(1),
             None,
             cut.clone(),
@@ -448,6 +522,7 @@ async fn generation_candidate_rejects_invalid_participants_and_terminal_state() 
     );
     assert!(
         CheckpointGenerationCandidate::new(
+            support::run_id(1),
             CheckpointEpoch::new(1),
             None,
             cut.clone(),
@@ -462,6 +537,7 @@ async fn generation_candidate_rejects_invalid_participants_and_terminal_state() 
         .is_err()
     );
     let terminal = CheckpointGenerationCandidate::new(
+        support::run_id(1),
         CheckpointEpoch::new(1),
         None,
         cut,

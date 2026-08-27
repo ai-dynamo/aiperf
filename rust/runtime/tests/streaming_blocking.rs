@@ -69,6 +69,7 @@ async fn committed_blocking_state(
     let lease = budget.acquire(1, bytes.len()).await.expect("state lease");
     let payload = BudgetedCheckpointBytes::new(bytes.clone(), lease).expect("state payload");
     let prepared = PreparedParticipantState::new(
+        support::run_id(1),
         owner.participant_id(),
         BLOCKING_CHECKPOINT_SCHEMA_ID,
         BLOCKING_CHECKPOINT_SCHEMA_VERSION,
@@ -85,12 +86,14 @@ async fn committed_blocking_state(
         .await
         .expect("committed state lease");
     let payload = BudgetedCheckpointBytes::new(bytes, lease).expect("committed state payload");
-    CommittedParticipantState::new(descriptor, payload).expect("verified committed state")
+    CommittedParticipantState::new(support::run_id(1), descriptor, payload)
+        .expect("verified committed state")
 }
 
 #[tokio::test(flavor = "current_thread")]
 async fn full_authored_output_reservation_lives_with_arbitrary_typed_output() {
-    let executor = StreamingBlockingExecutor::for_test(1, 8, 16).expect("executor");
+    let executor =
+        StreamingBlockingExecutor::for_test(support::run_id(1), 1, 8, 16).expect("executor");
     let output = executor
         .run(
             BlockingWorkClass::Decode,
@@ -118,7 +121,8 @@ async fn full_authored_output_reservation_lives_with_arbitrary_typed_output() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn accepted_job_capacity_blocks_before_spawn_blocking_enqueue() {
-    let executor = StreamingBlockingExecutor::for_test(1, 8, 8).expect("executor");
+    let executor =
+        StreamingBlockingExecutor::for_test(support::run_id(1), 1, 8, 8).expect("executor");
     let release = Arc::new(AtomicBool::new(false));
     let (first_started_tx, first_started_rx) = tokio::sync::oneshot::channel();
     let mut first = Box::pin(executor.run(
@@ -168,7 +172,8 @@ async fn accepted_job_capacity_blocks_before_spawn_blocking_enqueue() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn dropped_run_is_reaped_and_capacity_one_admits_the_next_job() {
-    let executor = StreamingBlockingExecutor::for_test(1, 8, 8).expect("executor");
+    let executor =
+        StreamingBlockingExecutor::for_test(support::run_id(1), 1, 8, 8).expect("executor");
     let release = Arc::new(AtomicBool::new(false));
     let release_in_work = Arc::clone(&release);
     let (started_tx, started_rx) = tokio::sync::oneshot::channel();
@@ -217,7 +222,8 @@ async fn dropped_run_is_reaped_and_capacity_one_admits_the_next_job() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn dropping_the_last_owner_cancels_an_abandoned_accepted_job() {
-    let executor = StreamingBlockingExecutor::for_test(1, 8, 8).expect("executor");
+    let executor =
+        StreamingBlockingExecutor::for_test(support::run_id(1), 1, 8, 8).expect("executor");
     let (started_tx, started_rx) = tokio::sync::oneshot::channel();
     let (cancelled_tx, cancelled_rx) = tokio::sync::oneshot::channel();
     let mut abandoned = Box::pin(executor.run(
@@ -250,7 +256,8 @@ async fn dropping_the_last_owner_cancels_an_abandoned_accepted_job() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn cancel_and_join_waits_for_cooperative_worker_exit() {
-    let executor = StreamingBlockingExecutor::for_test(1, 8, 8).expect("executor");
+    let executor =
+        StreamingBlockingExecutor::for_test(support::run_id(1), 1, 8, 8).expect("executor");
     let release_after_cancel = Arc::new(AtomicBool::new(false));
     let release_in_work = Arc::clone(&release_after_cancel);
     let (started_tx, started_rx) = tokio::sync::oneshot::channel();
@@ -298,7 +305,8 @@ async fn cancel_and_join_waits_for_cooperative_worker_exit() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn dropping_cancel_and_join_does_not_lose_later_join_authority() {
-    let executor = StreamingBlockingExecutor::for_test(1, 8, 8).expect("executor");
+    let executor =
+        StreamingBlockingExecutor::for_test(support::run_id(1), 1, 8, 8).expect("executor");
     let release_after_cancel = Arc::new(AtomicBool::new(false));
     let release_in_work = Arc::clone(&release_after_cancel);
     let (started_tx, started_rx) = tokio::sync::oneshot::channel();
@@ -344,7 +352,8 @@ async fn dropping_cancel_and_join_does_not_lose_later_join_authority() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn checkpoint_refuses_inflight_work_and_advances_only_its_prepared_view() {
-    let mut owner = StreamingBlockingExecutor::for_test(1, 8, 8).expect("executor");
+    let mut owner =
+        StreamingBlockingExecutor::for_test(support::run_id(1), 1, 8, 8).expect("executor");
     let worker = owner.clone();
     let release = Arc::new(AtomicBool::new(false));
     let (started_tx, started_rx) = tokio::sync::oneshot::channel();
@@ -388,8 +397,25 @@ async fn checkpoint_refuses_inflight_work_and_advances_only_its_prepared_view() 
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn foreign_barrier_is_rejected_before_blocking_owner_fences() {
+    let mut owner =
+        StreamingBlockingExecutor::for_test(support::run_id(1), 1, 8, 8).expect("executor");
+    let before = owner.snapshot();
+
+    assert!(matches!(
+        owner.checkpoint_view(&support::barrier_for_run(2, 7)).await,
+        Err(CheckpointError::ObjectVerification)
+    ));
+    assert_eq!(owner.snapshot(), before);
+    assert!(owner.snapshot().is_accepting);
+
+    owner.cancel_and_join().await.expect("clean shutdown");
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn restore_rejects_any_claimed_inflight_closure() {
-    let mut owner = StreamingBlockingExecutor::for_test(1, 8, 8).expect("executor");
+    let mut owner =
+        StreamingBlockingExecutor::for_test(support::run_id(1), 1, 8, 8).expect("executor");
     let state = BlockingCheckpointState::new(support::cut_at(3).decoded, 1);
     let committed = committed_blocking_state(&owner, state).await;
 
@@ -403,7 +429,8 @@ async fn restore_rejects_any_claimed_inflight_closure() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn restored_horizon_refuses_a_lower_checkpoint_barrier() {
-    let mut owner = StreamingBlockingExecutor::for_test(1, 8, 8).expect("executor");
+    let mut owner =
+        StreamingBlockingExecutor::for_test(support::run_id(1), 1, 8, 8).expect("executor");
     let committed = committed_blocking_state(
         &owner,
         BlockingCheckpointState::new(support::cut_at(7).decoded, 0),
@@ -431,7 +458,8 @@ async fn restored_horizon_refuses_a_lower_checkpoint_barrier() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn checkpoint_clone_contention_is_immediate_and_shutdown_is_terminal() {
-    let mut owner = StreamingBlockingExecutor::for_test(1, 8, 8).expect("executor");
+    let mut owner =
+        StreamingBlockingExecutor::for_test(support::run_id(1), 1, 8, 8).expect("executor");
     let mut duplicate = owner.clone();
     let barrier = support::barrier_at(4);
     let prepared = owner
@@ -463,7 +491,8 @@ async fn checkpoint_clone_contention_is_immediate_and_shutdown_is_terminal() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn blocking_work_does_not_stall_sim_clock_progress() {
-    let executor = StreamingBlockingExecutor::for_test(1, 8, 8).expect("executor");
+    let executor =
+        StreamingBlockingExecutor::for_test(support::run_id(1), 1, 8, 8).expect("executor");
     let release = Arc::new(AtomicBool::new(false));
     let (started_tx, started_rx) = tokio::sync::oneshot::channel();
     let mut run = Box::pin(executor.run(

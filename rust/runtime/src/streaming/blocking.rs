@@ -24,7 +24,7 @@ use super::{
         BudgetedCheckpointBytes, CheckpointBarrier, CheckpointError, CheckpointParticipantId,
         CommittedParticipantReceipt, CommittedParticipantState, DecodeHorizon,
         ParticipantInitialization, ParticipantStateDescriptor, PreparedParticipantState,
-        StreamingCheckpointParticipant,
+        StreamRunIdentity, StreamingCheckpointParticipant,
     },
     unit::SourcePosition,
 };
@@ -229,6 +229,7 @@ struct AcceptedJob {
 }
 
 struct ExecutorInner {
+    run: StreamRunIdentity,
     participant_id: CheckpointParticipantId,
     is_accepting: Cell<bool>,
     is_shutdown: Cell<bool>,
@@ -277,6 +278,7 @@ impl fmt::Debug for StreamingBlockingExecutor {
 impl StreamingBlockingExecutor {
     /// Construct a bounded blocking owner with a stable participant identity.
     pub fn new(
+        run: StreamRunIdentity,
         participant_id: CheckpointParticipantId,
         max_accepted_jobs: usize,
         max_input_bytes: usize,
@@ -300,6 +302,7 @@ impl StreamingBlockingExecutor {
         })?;
         Ok(Self {
             inner: Rc::new(ExecutorInner {
+                run,
                 participant_id,
                 is_accepting: Cell::new(true),
                 is_shutdown: Cell::new(false),
@@ -319,11 +322,13 @@ impl StreamingBlockingExecutor {
 
     /// Construct the standard test owner.
     pub fn for_test(
+        run: StreamRunIdentity,
         max_accepted_jobs: usize,
         max_input_bytes: usize,
         max_output_bytes: usize,
     ) -> Result<Self, BlockingWorkError> {
         Self::new(
+            run,
             CheckpointParticipantId::new(DEFAULT_BLOCKING_PARTICIPANT_ID),
             max_accepted_jobs,
             max_input_bytes,
@@ -534,6 +539,9 @@ impl StreamingBlockingExecutor {
         &self,
         barrier: &CheckpointBarrier,
     ) -> Result<PreparedParticipantState, CheckpointError> {
+        if barrier.run != self.inner.run {
+            return Err(CheckpointError::ObjectVerification);
+        }
         if self.inner.is_shutdown.get() {
             return Err(CheckpointError::ParticipantUnavailable {
                 participant: self.inner.participant_id.clone(),
@@ -580,6 +588,7 @@ impl StreamingBlockingExecutor {
         }
         let payload = BudgetedCheckpointBytes::new(bytes, lease)?;
         let prepared = PreparedParticipantState::new(
+            self.inner.run,
             self.inner.participant_id.clone(),
             BLOCKING_CHECKPOINT_SCHEMA_ID,
             BLOCKING_CHECKPOINT_SCHEMA_VERSION,
@@ -595,6 +604,12 @@ impl StreamingBlockingExecutor {
         &self,
         state: Option<CommittedParticipantState>,
     ) -> Result<(), CheckpointError> {
+        if state
+            .as_ref()
+            .is_some_and(|state| state.run() != &self.inner.run)
+        {
+            return Err(CheckpointError::ObjectVerification);
+        }
         self.inner.initialization.borrow_mut().initialize_once()?;
         if self.inner.accepted_budget.snapshot().used_items != 0 {
             return Err(CheckpointError::ObjectVerification);
@@ -627,6 +642,9 @@ impl StreamingBlockingExecutor {
         &self,
         receipt: &CommittedParticipantReceipt,
     ) -> Result<(), CheckpointError> {
+        if receipt.run() != &self.inner.run {
+            return Err(CheckpointError::ObjectVerification);
+        }
         if receipt.participant_id() != &self.inner.participant_id {
             return Err(CheckpointError::ParticipantSetMismatch);
         }
@@ -716,10 +734,14 @@ mod tests {
             AcquisitionHorizon, AdmissionHorizon, CheckpointCut, CheckpointEpoch,
             CheckpointGenerationCandidate, CheckpointGenerationPublicationProof,
             CheckpointParticipantPlan, DiscoveryHorizon, EventTimeWatermark, OrderedActionHorizon,
-            TerminalActionHorizon,
+            StreamRunIdentity, TerminalActionHorizon,
         },
-        identity::{ContentDigest, GlobalSequence, SessionCausalFrontier},
+        identity::{ContentDigest, GlobalSequence, LogicalReplayRunId, SessionCausalFrontier},
     };
+
+    fn run_id(value: u8) -> StreamRunIdentity {
+        StreamRunIdentity::new(LogicalReplayRunId::from_bytes([value; 32]))
+    }
 
     fn cut_at(value: u64) -> CheckpointCut {
         CheckpointCut {
@@ -739,6 +761,7 @@ mod tests {
     }
 
     fn authoritative_receipt(
+        run: StreamRunIdentity,
         participant_id: CheckpointParticipantId,
         epoch: u64,
         previous: Option<ContentDigest>,
@@ -753,7 +776,7 @@ mod tests {
             schema_id: BLOCKING_CHECKPOINT_SCHEMA_ID.into(),
             schema_version: BLOCKING_CHECKPOINT_SCHEMA_VERSION,
             represented_cut: cut.clone(),
-            content_digest: ContentDigest::from_bytes([epoch as u8; 32]),
+            content_digest: ContentDigest::from_bytes([0x44; 32]),
             item_count: 1,
             byte_length: BLOCKING_CHECKPOINT_PAYLOAD_BYTES as u64,
         };
@@ -761,6 +784,7 @@ mod tests {
         let execution_plan = ContentDigest::from_bytes([0x41; 32]);
         let result_plan = ContentDigest::from_bytes([0x42; 32]);
         let candidate = CheckpointGenerationCandidate::new(
+            run,
             CheckpointEpoch::new(epoch),
             previous,
             cut,
@@ -776,7 +800,7 @@ mod tests {
         let generation_digest = *candidate.generation().digest();
         let proof = CheckpointGenerationPublicationProof::for_generation(candidate.generation());
         let committed = candidate
-            .promote(&plan, &execution_plan, &result_plan, proof)
+            .promote(&run, &plan, &execution_plan, &result_plan, proof)
             .expect("authoritative generation");
         let receipt = CommittedParticipantReceipt::new(&committed, &descriptor)
             .expect("authoritative participant receipt");
@@ -785,18 +809,23 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn greater_epoch_receipt_cannot_regress_committed_decode_horizon() {
-        let mut owner = StreamingBlockingExecutor::for_test(1, 8, 8).expect("executor");
+        let mut owner = StreamingBlockingExecutor::for_test(run_id(1), 1, 8, 8).expect("executor");
         let participant_id = owner.participant_id();
         let (baseline, baseline_descriptor, baseline_digest) =
-            authoritative_receipt(participant_id.clone(), 1, None, cut_at(7));
+            authoritative_receipt(run_id(1), participant_id.clone(), 1, None, cut_at(7));
         *owner.inner.prepared_descriptor.borrow_mut() = Some(baseline_descriptor);
         owner
             .checkpoint_committed(&baseline)
             .await
             .expect("baseline commit");
 
-        let (regressing, regressing_descriptor, _) =
-            authoritative_receipt(participant_id, 2, Some(baseline_digest), cut_at(3));
+        let (regressing, regressing_descriptor, _) = authoritative_receipt(
+            run_id(1),
+            participant_id,
+            2,
+            Some(baseline_digest),
+            cut_at(3),
+        );
         *owner.inner.prepared_descriptor.borrow_mut() = Some(regressing_descriptor);
         assert!(matches!(
             owner.checkpoint_committed(&regressing).await,
@@ -807,5 +836,39 @@ mod tests {
             }) if completed == cut_at(7).decoded && proposed == cut_at(3).decoded
         ));
         assert_eq!(owner.snapshot().completed_horizon, Some(cut_at(7).decoded));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn greater_epoch_foreign_receipt_does_not_mutate_blocking_owner() {
+        let mut owner = StreamingBlockingExecutor::for_test(run_id(1), 1, 8, 8).expect("executor");
+        let participant_id = owner.participant_id();
+        let (local, _, _) =
+            authoritative_receipt(run_id(1), participant_id.clone(), 1, None, cut_at(7));
+        let (foreign, foreign_descriptor, _) =
+            authoritative_receipt(run_id(2), participant_id, 99, None, cut_at(7));
+        assert_eq!(local.descriptor_digest(), foreign.descriptor_digest());
+        *owner.inner.prepared_descriptor.borrow_mut() = Some(foreign_descriptor);
+        let before = owner.snapshot();
+        let checkpoint_budget_before = owner.inner.checkpoint_budget.snapshot();
+        let prepared_before = owner.inner.prepared_descriptor.borrow().clone();
+        let receipt_before = owner.inner.committed_receipt.borrow().clone();
+
+        assert_eq!(
+            owner.checkpoint_committed(&foreign).await,
+            Err(CheckpointError::ObjectVerification)
+        );
+        assert_eq!(owner.snapshot(), before);
+        assert_eq!(
+            owner.inner.checkpoint_budget.snapshot(),
+            checkpoint_budget_before
+        );
+        assert_eq!(
+            owner.inner.prepared_descriptor.borrow().as_ref(),
+            prepared_before.as_ref()
+        );
+        assert_eq!(
+            owner.inner.committed_receipt.borrow().as_ref(),
+            receipt_before.as_ref()
+        );
     }
 }
