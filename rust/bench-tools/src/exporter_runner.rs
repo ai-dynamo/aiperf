@@ -22,10 +22,10 @@ use crate::exporter_policy::{
     SelectedBackingPayloadV1, apply_exporter_observable_policy_v1,
 };
 use crate::plugin_stats::{
-    ExporterEvidenceMode, ExporterMember, ExporterMemberBinding, ExporterMemberEvidence,
-    ExporterMemberRecord, ExporterMemberSummary, ExporterObservableKind, ExporterRepetitionReceipt,
-    ExporterSampleContract, RetainedExporterEvidence, validate_exporter_member_evidence,
-    validate_exporter_member_record,
+    ArtifactBoundExporterMemberV1, ExporterEvidenceMode, ExporterMember, ExporterMemberBinding,
+    ExporterMemberEvidence, ExporterMemberRecord, ExporterMemberSummary, ExporterObservableKind,
+    ExporterRepetitionReceipt, ExporterSampleContract, RetainedExporterEvidence,
+    validate_exporter_member_evidence, validate_exporter_member_record,
 };
 
 const CORPUS_RECORDS: u64 = 100_000;
@@ -326,16 +326,27 @@ impl HostExporterCapture {
             CaptureStorage::ArtifactTree(capture) => {
                 for file in capture.files.values_mut() {
                     file.flush().map_err(io_error("flush artifact file"))?;
-                    file.sync_all().map_err(io_error("sync artifact file"))?;
                 }
             }
             CaptureStorage::CapturedStream(writer) => {
                 writer.flush().map_err(io_error("flush captured stream"))?;
-                writer
-                    .get_mut()
-                    .sync_all()
-                    .map_err(io_error("sync captured stream"))?;
             }
+            CaptureStorage::ReceiverTranscript { .. } => {}
+        }
+        Ok(())
+    }
+
+    fn sync_all(&mut self) -> Result<(), ExporterHarnessError> {
+        match &mut self.storage {
+            CaptureStorage::ArtifactTree(capture) => {
+                for file in capture.files.values_mut() {
+                    file.sync_all().map_err(io_error("sync artifact file"))?;
+                }
+            }
+            CaptureStorage::CapturedStream(writer) => writer
+                .get_mut()
+                .sync_all()
+                .map_err(io_error("sync captured stream"))?,
             CaptureStorage::ReceiverTranscript { .. } => {}
         }
         Ok(())
@@ -444,6 +455,23 @@ impl CompletedExporterMember {
     pub fn summary(&self) -> &ExporterMemberSummary {
         &self.summary
     }
+
+    pub(crate) fn into_artifact_bound(self) -> ArtifactBoundExporterMemberV1 {
+        ArtifactBoundExporterMemberV1 {
+            binding: self.binding,
+            evidence: self.evidence,
+            backing_payloads: self.backing_payloads,
+            record_bytes: self.record_bytes,
+            receiver_protocol: self
+                .receiver_protocol
+                .as_ref()
+                .map(|protocol| protocol.protocol().to_owned()),
+            receiver_protocol_authority_blake3: self
+                .receiver_protocol
+                .as_ref()
+                .map(|protocol| protocol.authority_blake3().to_owned()),
+        }
+    }
 }
 
 /// Concrete owner of the generation-1 exporter corpus and capture lifecycle.
@@ -451,6 +479,7 @@ pub struct ExporterHarnessRunner {
     policy: ExporterObservablePolicyV1,
     corpus: Vec<Vec<u8>>,
     corpus_blake3: String,
+    durability_barrier: fn(&mut HostExporterCapture) -> Result<(), ExporterHarnessError>,
 }
 
 impl ExporterHarnessRunner {
@@ -465,7 +494,18 @@ impl ExporterHarnessRunner {
             policy,
             corpus,
             corpus_blake3: format!("blake3:{}", hasher.finalize()),
+            durability_barrier: HostExporterCapture::sync_all,
         })
+    }
+
+    #[cfg(test)]
+    fn new_with_durability_barrier(
+        policy: ExporterObservablePolicyV1,
+        durability_barrier: fn(&mut HostExporterCapture) -> Result<(), ExporterHarnessError>,
+    ) -> Result<Self, ExporterHarnessError> {
+        let mut runner = Self::new(policy)?;
+        runner.durability_barrier = durability_barrier;
+        Ok(runner)
     }
 
     /// Digest of the internally generated fixed corpus.
@@ -519,6 +559,7 @@ impl ExporterHarnessRunner {
             let active_duration_ns = u64::try_from(started.elapsed().as_nanos()).map_err(|_| {
                 ExporterHarnessError::acquisition("active exporter duration does not fit u64")
             })?;
+            (self.durability_barrier)(&mut capture)?;
 
             if records.processed_records() != CORPUS_RECORDS {
                 return Err(ExporterHarnessError::product(
@@ -866,4 +907,81 @@ fn policy_error(error: impl fmt::Display) -> ExporterHarnessError {
 
 fn stats_error(error: impl fmt::Display) -> ExporterHarnessError {
     ExporterHarnessError::product(format!("exporter evidence validation failed: {error}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::thread::sleep;
+    use std::time::{Duration, Instant};
+
+    use super::*;
+    use crate::exporter_policy::parse_exporter_observable_policy;
+
+    struct CompleteArtifactExporter;
+
+    impl ExporterWorkload for CompleteArtifactExporter {
+        fn export(
+            &mut self,
+            _repetition_ordinal: u64,
+            records: &mut ExporterRecordStream<'_>,
+            capture: &mut HostExporterCapture,
+        ) -> Result<(), ExporterHarnessError> {
+            for record in records {
+                std::hint::black_box(record.ordinal());
+            }
+            capture.write_artifact("result.json", b"{}")
+        }
+    }
+
+    #[test]
+    fn durability_barrier_runs_after_the_active_exporter_timer_stops() {
+        const BARRIER_DELAY: Duration = Duration::from_millis(20);
+        thread_local! {
+            static BARRIER_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+        }
+        // A `fn` barrier cannot capture, and the barrier runs on the calling
+        // thread, so the injected count is thread-local to this test.
+        fn counted_barrier(_: &mut HostExporterCapture) -> Result<(), ExporterHarnessError> {
+            BARRIER_CALLS.with(|calls| calls.set(calls.get() + 1));
+            sleep(BARRIER_DELAY);
+            Ok(())
+        }
+
+        let policy = parse_exporter_observable_policy(
+            b"{\"mode\":\"paired\",\"receiver_transport_fields_removed\":[],\"scenarios\":[{\"allows_empty\":false,\"observable_kind\":\"artifact_tree\",\"provenance_slots\":[],\"scenario_id\":\"exporter_100k\"}],\"schema_version\":1}\n",
+            &BTreeSet::new(),
+        )
+        .expect("test policy validates");
+        let runner = ExporterHarnessRunner::new_with_durability_barrier(policy, counted_barrier)
+            .expect("runner accepts a durability barrier");
+        let artifact = tempfile::tempfile().expect("artifact descriptor");
+        let started = Instant::now();
+        let completed = runner
+            .run_member(
+                ExporterMemberSource {
+                    experiment_identity_bytes: b"timer-scope-identity",
+                    attempt_ordinal: 0,
+                    scenario_id: "exporter_100k",
+                    pair_id: "pair-00",
+                    member: ExporterMember::Static,
+                    build_artifact: &artifact,
+                    build_receipt_bytes: b"build receipt",
+                    receiver_protocol: None,
+                },
+                &mut CompleteArtifactExporter,
+            )
+            .expect("controlled exporter member completes");
+
+        let wall = started.elapsed();
+        let active = Duration::from_nanos(completed.summary().active_duration_nanoseconds);
+        let barrier_calls = BARRIER_CALLS.with(std::cell::Cell::get);
+        assert_eq!(barrier_calls, REPETITIONS);
+        let injected_delay = BARRIER_DELAY * u32::try_from(barrier_calls).expect("call count fits");
+        // Every injected barrier delay is outside the reported active time, so
+        // the wall clock must account for both.
+        assert!(
+            wall >= active + injected_delay,
+            "wall {wall:?} is shorter than active {active:?} plus injected {injected_delay:?}"
+        );
+    }
 }

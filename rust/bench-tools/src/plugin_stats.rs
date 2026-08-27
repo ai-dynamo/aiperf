@@ -638,16 +638,20 @@ pub enum MemberTerminalOutcome {
 }
 
 /// One member's raw terminal record in exact execution order.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct RawMemberTerminalRecord {
     /// Static or dynamic artifact that ran.
     pub variant: Variant,
     /// Raw terminal outcome observed by the controller.
     pub outcome: MemberTerminalOutcome,
+    /// Raw measurement rows emitted by this member before pair classification.
+    pub samples: Vec<PairedSample>,
+    /// Index of this member's bounded output in the controller report.
+    pub terminal_evidence_index: Option<usize>,
 }
 
 /// One whole pair attempt observed by the same-process controller.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct RawPairTerminalRecord {
     /// Frozen inventory scenario name.
     pub scenario: String,
@@ -683,7 +687,7 @@ pub enum PairAttemptDecision {
 }
 
 /// Controller-derived outcome of one complete experiment attempt.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ControlledAttemptDecision {
     /// Infrastructure/noise rules invalidated the attempt.
@@ -695,7 +699,8 @@ pub enum ControlledAttemptDecision {
 }
 
 /// One retained complete-attempt decision.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct ControlledAttemptRecord {
     /// One-based contiguous attempt ordinal.
     pub ordinal: u8,
@@ -710,7 +715,7 @@ pub struct ControlledAttemptRecord {
 }
 
 /// One retained raw pair attempt and its controller-derived classification.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct ControlledPairAttemptRecord {
     /// Complete experiment attempt that owned this pair attempt.
     pub experiment_attempt: u8,
@@ -766,18 +771,6 @@ struct AuthoritativeExporterRowIdentity<'a> {
     dynamic_artifact_blake3: &'a str,
 }
 
-struct ExporterPairEvidenceInput<'a> {
-    static_binding: &'a ExporterMemberBinding,
-    static_evidence: &'a ExporterMemberEvidence,
-    static_backing_payloads: &'a [SelectedBackingPayloadV1],
-    static_record_bytes: &'a [u8],
-    dynamic_binding: &'a ExporterMemberBinding,
-    dynamic_evidence: &'a ExporterMemberEvidence,
-    dynamic_backing_payloads: &'a [SelectedBackingPayloadV1],
-    dynamic_record_bytes: &'a [u8],
-    receiver_identity: Option<(String, String)>,
-}
-
 /// Same-process authority for pair replacement and complete-attempt lifecycle.
 ///
 /// The evaluator reads classifiers and limits only from the compiled inventory.
@@ -794,6 +787,15 @@ pub struct ControlledMeasurementEvaluator {
     raw_pair_history: Vec<ControlledPairAttemptRecord>,
     exporter_pair_history: Vec<ControlledExporterPairRecord>,
     last_statistical_report: Option<SimultaneousGateReport>,
+    last_attempt_evidence_bytes: Option<Vec<u8>>,
+    terminal_member_evidence: Vec<(u8, serde_json::Value)>,
+}
+
+pub(crate) struct ControlledMeasurementReportParts {
+    pub(crate) history: Vec<ControlledAttemptRecord>,
+    pub(crate) raw_pair_history: Vec<ControlledPairAttemptRecord>,
+    pub(crate) exporter_pair_history: Vec<ControlledExporterPairRecord>,
+    pub(crate) statistical_report: Option<SimultaneousGateReport>,
 }
 
 impl ControlledMeasurementEvaluator {
@@ -813,7 +815,29 @@ impl ControlledMeasurementEvaluator {
             raw_pair_history: Vec::new(),
             exporter_pair_history: Vec::new(),
             last_statistical_report: None,
+            last_attempt_evidence_bytes: None,
+            terminal_member_evidence: Vec::new(),
         })
+    }
+
+    pub(crate) fn resume(history: Vec<ControlledAttemptRecord>) -> Result<Self, PluginStatsError> {
+        let mut evaluator = Self::new()?;
+        for (index, attempt) in history.iter().enumerate() {
+            let ordinal = u8::try_from(index + 1)
+                .map_err(|_| PluginStatsError::new("experiment attempt ordinal overflow"))?;
+            if attempt.ordinal != ordinal {
+                return Err(PluginStatsError::new(
+                    "persisted attempt ordinals are not contiguous",
+                ));
+            }
+            if index + 1 < history.len() && attempt.decision != ControlledAttemptDecision::Invalid {
+                return Err(PluginStatsError::new(
+                    "persisted attempt history extends a valid terminal result",
+                ));
+            }
+        }
+        evaluator.history = history;
+        Ok(evaluator)
     }
 
     /// Exact seeded pair schedule whose order every replacement must preserve.
@@ -841,6 +865,39 @@ impl ControlledMeasurementEvaluator {
         self.last_statistical_report.as_ref()
     }
 
+    /// Retain one member's complete terminal evidence for the active attempt.
+    ///
+    /// The evidence tree is the only thing a later invocation can read, so the
+    /// raw child output is retained there rather than summarized away.
+    pub(crate) fn retain_terminal_member_evidence(
+        &mut self,
+        evidence: serde_json::Value,
+    ) -> Result<(), PluginStatsError> {
+        let ordinal = self
+            .active
+            .as_ref()
+            .ok_or_else(|| PluginStatsError::new("no controlled experiment attempt is active"))?
+            .ordinal;
+        self.terminal_member_evidence.push((ordinal, evidence));
+        Ok(())
+    }
+
+    /// Take ownership of the active attempt's exact evidence bytes.
+    pub(crate) fn take_last_attempt_evidence_bytes(&mut self) -> Option<Vec<u8>> {
+        self.last_attempt_evidence_bytes.take()
+    }
+
+    pub(crate) fn into_report_parts(
+        self,
+    ) -> Result<ControlledMeasurementReportParts, PluginStatsError> {
+        Ok(ControlledMeasurementReportParts {
+            history: self.history,
+            raw_pair_history: self.raw_pair_history,
+            exporter_pair_history: self.exporter_pair_history,
+            statistical_report: self.last_statistical_report,
+        })
+    }
+
     /// Start the next attempt after no attempt or an invalid attempt.
     pub fn begin_attempt(&mut self) -> Result<u8, PluginStatsError> {
         if self.active.is_some() {
@@ -865,6 +922,7 @@ impl ControlledMeasurementEvaluator {
         let ordinal = u8::try_from(self.history.len() + 1)
             .map_err(|_| PluginStatsError::new("experiment attempt ordinal overflow"))?;
         self.last_statistical_report = None;
+        self.last_attempt_evidence_bytes = None;
         self.active = Some(ActiveControlledAttempt {
             ordinal,
             replacements_by_scenario: BTreeMap::new(),
@@ -1013,21 +1071,34 @@ impl ControlledMeasurementEvaluator {
     pub fn record_completed_exporter_pair(
         &mut self,
         policy: &ExporterObservablePolicyV1,
-        static_member: &CompletedExporterMember,
-        dynamic_member: &CompletedExporterMember,
+        static_member: CompletedExporterMember,
+        dynamic_member: CompletedExporterMember,
+    ) -> Result<PairAttemptDecision, PluginStatsError> {
+        self.record_artifact_bound_exporter_pair(
+            policy,
+            static_member.into_artifact_bound(),
+            dynamic_member.into_artifact_bound(),
+        )
+    }
+
+    pub(crate) fn record_artifact_bound_exporter_pair(
+        &mut self,
+        policy: &ExporterObservablePolicyV1,
+        static_member: ArtifactBoundExporterMemberV1,
+        dynamic_member: ArtifactBoundExporterMemberV1,
     ) -> Result<PairAttemptDecision, PluginStatsError> {
         let receiver_identity = match (
-            static_member.binding().observable_kind,
-            dynamic_member.binding().observable_kind,
+            static_member.binding.observable_kind,
+            dynamic_member.binding.observable_kind,
         ) {
             (
                 ExporterObservableKind::ReceiverTranscript,
                 ExporterObservableKind::ReceiverTranscript,
             ) => match (
-                static_member.receiver_protocol(),
-                static_member.receiver_protocol_authority_blake3(),
-                dynamic_member.receiver_protocol(),
-                dynamic_member.receiver_protocol_authority_blake3(),
+                static_member.receiver_protocol.as_deref(),
+                static_member.receiver_protocol_authority_blake3.as_deref(),
+                dynamic_member.receiver_protocol.as_deref(),
+                dynamic_member.receiver_protocol_authority_blake3.as_deref(),
             ) {
                 (
                     Some(static_protocol),
@@ -1037,6 +1108,19 @@ impl ControlledMeasurementEvaluator {
                 ) if static_protocol == dynamic_protocol
                     && static_authority == dynamic_authority =>
                 {
+                    let authenticated = policy
+                        .authenticate_receiver_protocol(static_protocol)
+                        .map_err(|error| PluginStatsError::new(error.to_string()))?;
+                    if authenticated.authority_blake3() != static_authority {
+                        self.finish_active(
+                            ControlledAttemptDecision::ValidFailure,
+                            Some(
+                                "controlled exporter evidence has an unauthenticated receiver protocol authority"
+                                    .to_owned(),
+                            ),
+                        )?;
+                        return Ok(PairAttemptDecision::ExperimentFailed);
+                    }
                     Some((static_protocol.to_owned(), static_authority.to_owned()))
                 }
                 _ => {
@@ -1051,12 +1135,10 @@ impl ControlledMeasurementEvaluator {
                 }
             },
             (_, _) => {
-                if static_member.receiver_protocol().is_some()
-                    || static_member.receiver_protocol_authority_blake3().is_some()
-                    || dynamic_member.receiver_protocol().is_some()
-                    || dynamic_member
-                        .receiver_protocol_authority_blake3()
-                        .is_some()
+                if static_member.receiver_protocol.is_some()
+                    || static_member.receiver_protocol_authority_blake3.is_some()
+                    || dynamic_member.receiver_protocol.is_some()
+                    || dynamic_member.receiver_protocol_authority_blake3.is_some()
                 {
                     self.finish_active(
                         ControlledAttemptDecision::ValidFailure,
@@ -1070,20 +1152,7 @@ impl ControlledMeasurementEvaluator {
                 None
             }
         };
-        self.record_exporter_pair_evidence(
-            policy,
-            ExporterPairEvidenceInput {
-                static_binding: static_member.binding(),
-                static_evidence: static_member.evidence(),
-                static_backing_payloads: static_member.backing_payloads(),
-                static_record_bytes: static_member.record_bytes(),
-                dynamic_binding: dynamic_member.binding(),
-                dynamic_evidence: dynamic_member.evidence(),
-                dynamic_backing_payloads: dynamic_member.backing_payloads(),
-                dynamic_record_bytes: dynamic_member.record_bytes(),
-                receiver_identity,
-            },
-        )
+        self.record_exporter_pair_evidence(policy, static_member, dynamic_member, receiver_identity)
     }
 
     /// Validate and classify one complete exporter pair inside the controller.
@@ -1094,19 +1163,26 @@ impl ControlledMeasurementEvaluator {
     fn record_exporter_pair_evidence(
         &mut self,
         policy: &ExporterObservablePolicyV1,
-        input: ExporterPairEvidenceInput<'_>,
+        static_member: ArtifactBoundExporterMemberV1,
+        dynamic_member: ArtifactBoundExporterMemberV1,
+        receiver_identity: Option<(String, String)>,
     ) -> Result<PairAttemptDecision, PluginStatsError> {
-        let ExporterPairEvidenceInput {
-            static_binding,
-            static_evidence,
-            static_backing_payloads,
-            static_record_bytes,
-            dynamic_binding,
-            dynamic_evidence,
-            dynamic_backing_payloads,
-            dynamic_record_bytes,
-            receiver_identity,
-        } = input;
+        let ArtifactBoundExporterMemberV1 {
+            binding: static_binding,
+            evidence: static_evidence,
+            backing_payloads: static_backing_payloads,
+            record_bytes: static_record_bytes,
+            receiver_protocol: _,
+            receiver_protocol_authority_blake3: _,
+        } = static_member;
+        let ArtifactBoundExporterMemberV1 {
+            binding: dynamic_binding,
+            evidence: dynamic_evidence,
+            backing_payloads: dynamic_backing_payloads,
+            record_bytes: dynamic_record_bytes,
+            receiver_protocol: _,
+            receiver_protocol_authority_blake3: _,
+        } = dynamic_member;
         let active_ordinal = self
             .active
             .as_ref()
@@ -1125,34 +1201,34 @@ impl ControlledMeasurementEvaluator {
             }
             validate_exporter_policy_application(
                 policy,
-                static_binding,
-                static_evidence,
-                static_backing_payloads,
+                &static_binding,
+                &static_evidence,
+                &static_backing_payloads,
             )?;
             validate_exporter_policy_application(
                 policy,
-                dynamic_binding,
-                dynamic_evidence,
-                dynamic_backing_payloads,
+                &dynamic_binding,
+                &dynamic_evidence,
+                &dynamic_backing_payloads,
             )?;
             let pair = validate_exporter_pair_evidence(
                 &ExporterSampleContract::normative(),
-                static_binding,
-                static_evidence,
-                dynamic_binding,
-                dynamic_evidence,
+                &static_binding,
+                &static_evidence,
+                &dynamic_binding,
+                &dynamic_evidence,
             )?;
             let static_record = validate_exporter_member_record(
                 &ExporterSampleContract::normative(),
-                static_binding,
-                static_evidence,
-                static_record_bytes,
+                &static_binding,
+                &static_evidence,
+                &static_record_bytes,
             )?;
             let dynamic_record = validate_exporter_member_record(
                 &ExporterSampleContract::normative(),
-                dynamic_binding,
-                dynamic_evidence,
-                dynamic_record_bytes,
+                &dynamic_binding,
+                &dynamic_evidence,
+                &dynamic_record_bytes,
             )?;
             if !self
                 .inventory
@@ -1190,6 +1266,8 @@ impl ControlledMeasurementEvaluator {
             .map(|variant| RawMemberTerminalRecord {
                 variant,
                 outcome: MemberTerminalOutcome::Completed,
+                samples: Vec::new(),
+                terminal_evidence_index: None,
             })
             .collect();
         let decision = self.record_pair(RawPairTerminalRecord {
@@ -1213,12 +1291,12 @@ impl ControlledMeasurementEvaluator {
                     receiver_protocol_authority_blake3,
                     static_record,
                     static_member: pair.static_member,
-                    static_evidence: static_evidence.clone(),
-                    static_backing_payloads: static_backing_payloads.to_vec(),
+                    static_evidence,
+                    static_backing_payloads,
                     dynamic_record,
                     dynamic_member: pair.dynamic_member,
-                    dynamic_evidence: dynamic_evidence.clone(),
-                    dynamic_backing_payloads: dynamic_backing_payloads.to_vec(),
+                    dynamic_evidence,
+                    dynamic_backing_payloads,
                 });
         }
         Ok(decision)
@@ -1300,7 +1378,7 @@ impl ControlledMeasurementEvaluator {
 
     pub(crate) fn finish_authoritative_measurements(
         &mut self,
-        input: &SimultaneousGateInput,
+        input: SimultaneousGateInput,
         observed: NonAuthoritativeExperimentFixture,
     ) -> Result<ControlledAttemptDecision, PluginStatsError> {
         let active_ordinal = self
@@ -1350,7 +1428,7 @@ impl ControlledMeasurementEvaluator {
             }
         }
 
-        let input = match self.derive_authoritative_exporter_rows(
+        let mut input = match self.derive_authoritative_exporter_rows(
             active_ordinal,
             input,
             AuthoritativeExporterRowIdentity {
@@ -1367,6 +1445,37 @@ impl ControlledMeasurementEvaluator {
                 return Ok(decision);
             }
         };
+        for case in &mut input.cases {
+            case.invalidation_attempts = self
+                .raw_pair_history
+                .iter()
+                .filter_map(|record| {
+                    let PairAttemptDecision::ReplaceWholePair {
+                        member_order,
+                        replacement_ordinal,
+                    } = record.decision
+                    else {
+                        return None;
+                    };
+                    (record.experiment_attempt == active_ordinal
+                        && record.raw.scenario == case.scenario)
+                        .then(|| InvalidationAttempt {
+                            pair_id: record.raw.pair_id.clone(),
+                            experiment_attempt: record.experiment_attempt,
+                            replacement_ordinal,
+                            member_order,
+                            members: record
+                                .raw
+                                .members
+                                .iter()
+                                .flat_map(|member| member.samples.iter().cloned())
+                                .collect(),
+                            reason: record.derived_reason.clone(),
+                            disposition: AttemptDisposition::InfrastructureInvalid,
+                        })
+                })
+                .collect();
+        }
 
         let report = match evaluate_non_authoritative_simultaneous_fixture(
             &input,
@@ -1406,7 +1515,7 @@ impl ControlledMeasurementEvaluator {
     fn derive_authoritative_exporter_rows(
         &self,
         active_ordinal: u8,
-        input: &SimultaneousGateInput,
+        input: SimultaneousGateInput,
         identity: AuthoritativeExporterRowIdentity<'_>,
     ) -> Result<SimultaneousGateInput, PluginStatsError> {
         let exporter_cases = self
@@ -1450,7 +1559,7 @@ impl ControlledMeasurementEvaluator {
         let expected_attempt = u64::from(active_ordinal)
             .checked_sub(1)
             .ok_or_else(|| PluginStatsError::new("experiment attempt ordinal underflow"))?;
-        let mut authoritative = input.clone();
+        let mut authoritative = input;
         for case in &mut authoritative.cases {
             if !exporter_cases
                 .iter()
@@ -1546,6 +1655,12 @@ impl ControlledMeasurementEvaluator {
             .iter()
             .filter(|record| record.experiment_attempt == active.ordinal)
             .collect::<Vec<_>>();
+        let terminal_members = self
+            .terminal_member_evidence
+            .iter()
+            .filter(|(ordinal, _)| *ordinal == active.ordinal)
+            .map(|(_, evidence)| evidence)
+            .collect::<Vec<_>>();
         let evidence_tree = serde_json::json!({
             "decision": decision,
             "experiment_attempt": active.ordinal,
@@ -1553,10 +1668,17 @@ impl ControlledMeasurementEvaluator {
             "raw_pair_history": raw_pairs,
             "reason": reason,
             "report_blake3": report_blake3,
-            "schema_version": 1
+            "schema_version": 1,
+            "terminal_member_evidence": terminal_members
         });
-        let evidence_tree_blake3 =
-            canonical_jcs_blake3(&evidence_tree, "controlled attempt evidence tree")?;
+        let evidence_tree_bytes =
+            serde_json_canonicalizer::to_vec(&evidence_tree).map_err(|error| {
+                PluginStatsError::new(format!(
+                    "cannot canonicalize controlled attempt evidence tree: {error}"
+                ))
+            })?;
+        let evidence_tree_blake3 = format!("blake3:{}", blake3::hash(&evidence_tree_bytes));
+        self.last_attempt_evidence_bytes = Some(evidence_tree_bytes);
         self.history.push(ControlledAttemptRecord {
             ordinal: active.ordinal,
             decision,
@@ -1933,7 +2055,8 @@ pub struct ExporterRepetitionReceipt {
 }
 
 /// Complete retained bytes for one repetition selected as evidence.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct RetainedExporterEvidence {
     /// Receipt ordinal whose evidence is retained.
     pub repetition_ordinal: usize,
@@ -1946,12 +2069,31 @@ pub struct RetainedExporterEvidence {
 }
 
 /// Canonical receipt vector and the retained bytes that authenticate one row.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct ExporterMemberEvidence {
     /// Canonical compact receipt array with one trailing newline.
     pub repetition_receipt_bytes: Vec<u8>,
     /// Complete retained evidence for one repetition.
     pub retained: RetainedExporterEvidence,
+}
+
+/// Complete artifact-bound exporter member evidence returned by a child.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ArtifactBoundExporterMemberV1 {
+    /// Immutable member binding, including exact artifact and build receipt.
+    pub binding: ExporterMemberBinding,
+    /// All repetition receipts and complete retained observable evidence.
+    pub evidence: ExporterMemberEvidence,
+    /// Exact policy-selected backing payloads used during validation.
+    pub backing_payloads: Vec<SelectedBackingPayloadV1>,
+    /// Canonical exporter member record with one trailing newline.
+    pub record_bytes: Vec<u8>,
+    /// Controller-authenticated receiver protocol for receiver scenarios.
+    pub receiver_protocol: Option<String>,
+    /// Digest of the receiver protocol authority, when applicable.
+    pub receiver_protocol_authority_blake3: Option<String>,
 }
 
 /// Validated exporter-member evidence ready for statistical reduction.
@@ -3692,7 +3834,7 @@ mod authoritative_exporter_tests {
         let derived = evaluator
             .derive_authoritative_exporter_rows(
                 1,
-                &input,
+                input,
                 AuthoritativeExporterRowIdentity {
                     experiment_identity_blake3: EXPERIMENT,
                     source_commit: COMMIT,
