@@ -390,6 +390,9 @@ impl PreparedResultEpoch {
 #[derive(Default)]
 pub struct PreparedCheckpointResultInput {
     partitions: Vec<ResultPartition>,
+    /// Read only through [`PreparedCheckpointResultInput::stage_inputs`], whose
+    /// coordinator caller is a later task.
+    #[allow(dead_code)]
     issue_receipts: Option<PreparedIssueReceiptResultPartition>,
 }
 
@@ -422,6 +425,7 @@ impl PreparedCheckpointResultInput {
     }
 
     /// Borrow both staging inputs mutably for exactly one staging call.
+    #[allow(dead_code)]
     pub(crate) fn stage_inputs(
         &mut self,
     ) -> (

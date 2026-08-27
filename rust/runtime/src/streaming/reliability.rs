@@ -1976,6 +1976,12 @@ pub struct CheckedNoMoreActionsBefore {
 }
 
 /// Ordered facts accepted by the future budget-owned reporter ledger.
+///
+/// The acknowledgement variant is the largest by a wide margin, but boxing it
+/// would add one heap allocation to every move of a wrapper whose whole purpose
+/// is to carry its exact leases without a copy, so the size difference is
+/// accepted deliberately.
+#[allow(clippy::large_enum_variant)]
 pub enum IssueSequenceUpdate {
     /// One ordinary non-action fact.
     Issue(OrdinaryStreamingIssue),
@@ -4390,7 +4396,10 @@ impl DerivedExportReceiptReference {
     ///
     /// This is the sole reconstruction seam for a post-restart status owner. It is
     /// private to `reliability`: outside this module the only way to obtain a
-    /// reference remains an in-process prepared failure.
+    /// reference remains an in-process prepared failure. The durable status
+    /// owner that calls it is a later task, so the mint is currently exercised
+    /// only by this module's tests.
+    #[allow(dead_code)]
     const fn from_status_fields(
         receipt_digest: ContentDigest,
         receipt_length: u64,
@@ -4563,7 +4572,10 @@ impl VerifiedDerivedSinkAttemptStatus {
     /// from the caller, so a status owner cannot name a generation it does not
     /// hold. Density is enforced here, once, rather than at every reader: the
     /// forward path defines `counter_before` as `u64::from(attempt_ordinal)`, so
-    /// any other pairing is not a reachable predecessor status.
+    /// any other pairing is not a reachable predecessor status. The durable
+    /// status owner that calls it is a later task, so the mint is currently
+    /// exercised only by this module's tests.
+    #[allow(dead_code)]
     fn from_status_owner(
         final_generation: &CommittedCheckpointGeneration,
         sink_id: StreamingIssueComponentId,
@@ -4649,7 +4661,10 @@ impl<'policy> DurableExportReceiptValidationContext<'policy> {
     /// Both authorities are required and cross-checked. The status already
     /// carries the run and generation it was minted against; passing the
     /// committed generation again proves the caller is restoring under the
-    /// generation it currently holds, not under a stale status object.
+    /// generation it currently holds, not under a stale status object. The
+    /// durable status owner that calls it is a later task, so the mint is
+    /// currently exercised only by this module's tests.
+    #[allow(dead_code)]
     fn from_final_generation_status(
         final_generation: &CommittedCheckpointGeneration,
         policy: &'policy PreparedStreamingIssuePolicy,
