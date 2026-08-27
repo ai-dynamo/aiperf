@@ -131,6 +131,25 @@ impl<T> BudgetedBlockingOutput<T> {
     pub const fn class(&self) -> BlockingWorkClass {
         self.class
     }
+
+    /// Move the typed value out, releasing its output allocation reservation.
+    ///
+    /// The reservation covers the closure's *allocation* while it runs. A
+    /// caller that must keep an owned, non-`Copy` result — a moved descriptor,
+    /// a decoded buffer it re-charges against its own budget — cannot reach it
+    /// through [`Deref`], so this is the one release-and-move seam. Retained
+    /// bytes must be charged to the caller's own lease before the reservation
+    /// is dropped here.
+    #[must_use]
+    pub fn into_inner(self) -> T {
+        let Self {
+            value,
+            _lease,
+            class: _,
+        } = self;
+        drop(_lease);
+        value
+    }
 }
 
 impl<T> Deref for BudgetedBlockingOutput<T> {

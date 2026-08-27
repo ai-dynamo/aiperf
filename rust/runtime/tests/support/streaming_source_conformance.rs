@@ -66,6 +66,8 @@ pub struct SourceConformanceCases {
     pub expected_issue_count: u64,
     /// Logical run the harness binds into checkpoint barriers.
     pub run: StreamRunIdentity,
+    /// Semantic namespace the harness binds into source preparation.
+    pub stream_semantic_digest: ContentDigest,
     /// Hook releasing one parked discovery step.
     pub advance: SourceAdvance,
 }
@@ -261,6 +263,8 @@ async fn assert_idempotent_commit_notification(
         .validate(&cases.authored)
         .expect("authored source configuration validates");
     let context = StreamingSourcePrepareContext {
+        run: cases.run,
+        stream_semantic_digest: cases.stream_semantic_digest,
         acquisition_budget: acquisition_budget(cases),
         issue_reporter: handle,
     };
@@ -345,6 +349,8 @@ async fn open_source(
         .validate(&cases.authored)
         .expect("authored source configuration validates");
     let context = StreamingSourcePrepareContext {
+        run: cases.run,
+        stream_semantic_digest: cases.stream_semantic_digest,
         acquisition_budget: acquisition_budget(cases),
         issue_reporter: handle,
     };

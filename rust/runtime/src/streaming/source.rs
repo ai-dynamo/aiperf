@@ -140,6 +140,16 @@ where
 /// Host-owned source preparation context.
 #[derive(Clone, Debug)]
 pub struct StreamingSourcePrepareContext {
+    /// Logical run bound into every issue this source reports.
+    ///
+    /// A source can fault on its very first acquisition, before any checkpoint
+    /// barrier has been presented, so the run cannot be read out of restore.
+    pub run: super::checkpoint::StreamRunIdentity,
+    /// Semantic namespace of the selected stream.
+    ///
+    /// Partition identity and issue input domains are derived under this
+    /// digest, so the same object under two streams is two distinct inputs.
+    pub stream_semantic_digest: ContentDigest,
     /// Budget used for immutable acquired partition bytes.
     pub acquisition_budget: AcquisitionBudget,
     /// Host-owned reliability issue reporting boundary.
