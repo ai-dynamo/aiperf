@@ -37,3 +37,19 @@ jobs:
         run: git fetch --no-tags --depth=200 origin main
       - name: Check architecture map is current
         run: python3 tools/check_docs_current.py --base origin/main
+
+  plugin-api-ownership:
+    name: Plugin API boundary documented in its ownership table
+    runs-on: prod-aiperf-default-v1
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      # Fails when an item in aiperf_plugin_api::GENERATION_1_SURFACE is absent
+      # from docs/specs/plugin-api-ownership.md, so a new boundary item cannot
+      # land without its allocation/drop-owner and phase facts.
+      - name: Check plugin API ownership table
+        working-directory: rust
+        env:
+          RUSTFLAGS: --cfg tokio_unstable
+        run: cargo run --manifest-path plugin-api/Cargo.toml --bin check-plugin-api-ownership

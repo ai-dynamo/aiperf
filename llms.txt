@@ -501,6 +501,12 @@ Whole system:
 - [`docs/specs/extension-registry.md`](docs/specs/extension-registry.md) — the
   `AIPerfRegistry`/`AIPerfExtension` link-time composition seam, its capability
   categories, and the frozen bootstrap object graph.
+- [`docs/specs/plugin-api-ownership.md`](docs/specs/plugin-api-ownership.md) — the
+  generation-1 host/plugin boundary surface in `aiperf-plugin-api`: the
+  `PluginEntryV1`/`PluginDeclarationV1`/`AIPerfExtension` entry shape,
+  normalization-version-1 `RegistryId`, and the per-item allocation/drop owner,
+  `panic = abort`, and startup/hot-path table the `check-plugin-api-ownership`
+  guard holds the code and this record to.
 - [`docs/specs/runner-protocol.md`](docs/specs/runner-protocol.md) — the Config-v2 ↔
   execution boundary: the protocol-v2 stdio envelope, the `BenchmarkRun`
   vocabulary, dataset/transport path selection, and the in-process
