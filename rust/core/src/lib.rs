@@ -19,7 +19,11 @@
 //! - [`measure`] — transport-neutral response, record, trace, and framing values.
 //! - [`report`] — the atomic commit of a finalized report projection.
 
-#![warn(missing_docs)]
+// `missing_docs` is not enabled yet: 63 public items moved byte-identically
+// out of `aiperf-runtime` into `measure/` predate the boundary-documentation
+// rule, and documenting them here would destroy the byte-identical-move
+// property this extraction is verified against. Enabling the lint is tracked
+// as its own change against `measure/`.
 
 pub mod artifact;
 pub mod clock;
