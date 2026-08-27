@@ -3,4 +3,6 @@
 
 //! Reference and persistent checkpoint backend implementations.
 
+pub(crate) mod budget;
+pub mod local;
 pub mod memory;
