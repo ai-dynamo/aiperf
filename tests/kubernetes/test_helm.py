@@ -422,12 +422,13 @@ class TestHelmErrorHandling:
         """Verify invalid config results in failure with error message."""
         import yaml
 
+        job_namespace = helm_deployed.default_job_namespace
         cr = {
             "apiVersion": "aiperf.nvidia.com/v1alpha1",
             "kind": "AIPerfJob",
             "metadata": {
                 "name": "invalid-config-test",
-                "namespace": "default",
+                "namespace": job_namespace,
             },
             "spec": {
                 "image": "aiperf:local",
@@ -454,7 +455,7 @@ class TestHelmErrorHandling:
             deadline = loop.time() + TEST_PHASE_TIMEOUT
             while True:
                 status = await helm_deployed.get_job_status(
-                    "invalid-config-test", "default"
+                    "invalid-config-test", job_namespace
                 )
                 if status.is_terminal or loop.time() >= deadline:
                     break
@@ -475,7 +476,7 @@ class TestHelmErrorHandling:
 
         finally:
             await helm_deployed.kubectl.delete(
-                "aiperfjob", "invalid-config-test", namespace="default"
+                "aiperfjob", "invalid-config-test", namespace=job_namespace
             )
 
     # The preflight's endpoint reachability check has its own retry/backoff
