@@ -408,7 +408,7 @@ fn full_non_authoritative_joint_bootstrap_retains_the_golden_distribution() {
         .metric_reports
         .iter()
         .find(|metric| {
-            metric.scenario == "http_streaming_c1"
+            metric.scenario == "exporter_100k"
                 && metric.metric == "allocation_count_per_successful_request"
         })
         .expect("exact allocation metric is retained");
@@ -433,7 +433,7 @@ fn full_non_authoritative_joint_bootstrap_retains_the_golden_distribution() {
     let allocation_case = allocation_regression
         .cases
         .iter_mut()
-        .find(|case| case.scenario == "http_streaming_c1")
+        .find(|case| case.scenario == "exporter_100k")
         .expect("allocation case exists");
     let static_value = allocation_case
         .samples
@@ -465,7 +465,7 @@ fn full_non_authoritative_joint_bootstrap_retains_the_golden_distribution() {
         .metric_reports
         .iter()
         .find(|metric| {
-            metric.scenario == "http_streaming_c1"
+            metric.scenario == "exporter_100k"
                 && metric.metric == "allocation_count_per_successful_request"
         })
         .expect("regressed allocation metric is retained");
