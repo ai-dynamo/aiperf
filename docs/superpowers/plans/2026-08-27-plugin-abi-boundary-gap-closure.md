@@ -1204,8 +1204,10 @@ git commit -m 'docs(plugins): reject per-request executor erasure'
 digest` (`design.md:488`). That is the digest of the compiled `.rlib`, which
 changes for **any** change to the crate — including a private function body. So
 the universe-bump rate is driven by the ABI crates' whole contents, not just
-their type definitions. Today, 94% of the lines in the 52 would-be ABI files are
-implementation:
+their type definitions. Today, 94% of the lines in the 52 would-be ABI files
+(the superseded regex measurement described under "Baseline Numbers (measured
+2026-08-27 at `110e00321a`)" above; the authoritative rustdoc closure on the
+present tree is 177 types across 56 files) are implementation:
 
 ```
 impl / total   (ABI)  commits/400   file
@@ -1237,10 +1239,23 @@ file keeps a foot in both camps.
 - Modify: `rust/runtime/src/scheduled.rs` → extract `TurnResponseObserver` and
   the observation values to `scheduled/observe.rs`
 - Create: `rust/xtask/src/abi_impl_budget.rs`
+- Create: `rust/xtask/tests/impl_budget.rs`
+- Modify: `rust/xtask/src/lib.rs` and `rust/xtask/src/main.rs` to declare the
+  `abi_impl_budget` module and dispatch the `abi-impl-budget` subcommand
+- Modify: `rust/xtask/abi-baseline.json` — `ensure_no_growth`
+  (`rust/xtask/src/abi_closure.rs:100-114`) keys accepted types on
+  `(name, file)`, so relocating type definitions into `body_plan/model.rs`,
+  `multiturn/model.rs`, `metrics_core/accumulator_model.rs`, and
+  `scheduled/observe.rs` requires refreshing the closure snapshot before
+  `abi-gate` can pass. That refresh cannot launder growth past the pinned
+  177/56: `MAX_ABI_TYPES` and `MAX_ABI_FILES` are compile-time constants checked
+  by `abi-impl-budget`.
 - Modify: `.github/workflows/rust-abi-closure.yml`
 
 **Interfaces:**
-- Consumes: the closure tool from Task 1 and every eviction from Tasks 2–5.
+- Consumes: the closure tool from Task 1 and every accepted eviction from Tasks
+  2–4. Task 5 made no production eviction; its replacement is implemented by
+  40-task Task 6.
 - Produces: `cargo xtask abi-impl-budget` printing
   `{"type_lines": <usize>, "impl_lines": <usize>, "ratio": <f64>}` and failing
   when the live closure violates the committed scoped budget: global
@@ -1264,7 +1279,10 @@ scoped, and it is exactly what `ensure_within_budget` in
    (`MAX_GLOBAL_IMPL_LINES`). Measured: 43,552 -> 33,417 implementation lines, a
    reduction of 10,135 (-23.2710%). Implementation lines are contributing-file
    lines minus type lines, so `46,467 - 2,915 = 43,552` before the splits and
-   `36,332 - 2,915 = 33,417` after, from `rust/xtask/abi-baseline.json`.
+   `36,332 - 2,915 = 33,417` after. Both pairs come from
+   `rust/xtask/abi-baseline.json` at different revisions: `46,467` is the value
+   recorded by `b99f323acc` and still current at the Task 6 base `e68ca98c9d`,
+   and `36,332` is the same file after the refresh in `da60f2ed14`.
 2. **ABI-facing types must not grow beyond 177** (`MAX_ABI_TYPES`).
    Measured: 177 -> 177.
 3. **ABI-contributing files must not grow beyond 56** (`MAX_ABI_FILES`).
@@ -1361,9 +1379,10 @@ source .venv/bin/activate && cd rust
 cargo test -p aiperf-xtask --test impl_budget
 ```
 
-Expected: FAIL. The first failure is before compilation, because
+Expected: FAIL. The test target does not compile, because
 `aiperf_xtask::abi_impl_budget` and its `MAX_*` constants, `Measurement` closure
-fields, boundary measurements, and `ensure_within_budget` API do not exist yet.
+fields, boundary measurements, and `ensure_within_budget` API do not exist yet,
+so the test's imports do not resolve; nothing runs before that.
 Once the minimal measurement command exists but before the splits land, the test
 fails on the live measurement instead: 177 types, 56 files, 2,915 type lines,
 46,467 contributing-file lines, 43,552 implementation lines, ratio
@@ -1391,12 +1410,25 @@ cargo test -p aiperf-runtime && cargo test -p aiperf-runtime --features engine
 
 Expected: PASS, byte-identical report snapshots.
 
+Blocked on this tree (measured 2026-08-27; pre-existing and unrelated to this
+task). `cargo test -p aiperf-runtime` cannot build here. `rust/runtime/Cargo.toml`
+gives `required-features = ["streaming"]` only to the `streaming_feature_inventory`
+target (`:258-261`); the other five auto-discovered `tests/streaming_*.rs` targets
+carry no such gate, so under default features they reference the feature-gated
+`pub mod streaming` (`rust/runtime/src/lib.rs:81-82`) and fail to compile —
+`cargo check -p aiperf-runtime --test streaming_checkpoint_participants` reports 35
+`E0433` errors. This task modifies no Cargo manifest and no streaming source, so
+the expectation above is not weakened: it stands as written, and Step 4 stays
+unchecked until the manifest gates those five targets.
+
 - [ ] **Step 5: Verify the budget and the churn rate together**
 
 Run:
 ```bash
 source .venv/bin/activate && cd rust
 cargo test -p aiperf-xtask --test impl_budget
+cargo run -p aiperf-xtask -- abi-impl-budget
+cargo run -p aiperf-xtask -- abi-gate
 cargo run -p aiperf-xtask -- abi-churn --merges 120
 ```
 
@@ -1414,8 +1446,9 @@ The two granularities have **not** converged, and that residual difference is
 retained honestly as evidence rather than asserted as this task's acceptance
 criterion. Full convergence needs the compiled-artifact separation — zero
 boundary type definitions in any category SDK — which is owned by Tasks 4 and 6
-of the 40-task plan. `abi-churn` is a reporting gate here: it must exit 0, and
-its output is recorded, but it does not assert convergence.
+of the 40-task plan. `abi-churn` is not a gate here: it must exit 0, and its
+output is recorded evidence, not an acceptance criterion. It asserts no
+convergence.
 
 - [ ] **Step 6: Commit and wire the gate**
 
