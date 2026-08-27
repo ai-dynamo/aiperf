@@ -43,7 +43,7 @@ repos:
     - id: codespell
       additional_dependencies: [tomli]
       args: ["--toml", "pyproject.toml", "--ignore-words-list", "timeslice,timeslices,optiona,disjointness,concurency,mot,ser,nowns,afterall,caf,ot"]
-      exclude: (?x)^(.*stemmer.*|.*stop_words.*|^CHANGELOG.md$|.*shakespeare.txt|ATTRIBUTIONS-.*\.md|.*package-lock\.json$|rust/e2e-tests/tests/assets/canary_reference_inputs\.json$|docs/canvases/.*\.canvas\.tsx$)
+      exclude: (?x)^(.*stemmer.*|.*stop_words.*|^CHANGELOG.md$|.*shakespeare.txt|ATTRIBUTIONS-.*\.md|.*package-lock\.json$|rust/Cargo\.lock$|rust/e2e-tests/tests/assets/canary_reference_inputs\.json$|docs/canvases/.*\.canvas\.tsx$)
   - repo: local
     hooks:
       - id: add-license

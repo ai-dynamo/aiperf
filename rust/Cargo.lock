@@ -87,6 +87,7 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "toml",
+ "tracing",
 ]
 
 [[package]]
