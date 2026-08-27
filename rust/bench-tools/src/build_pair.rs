@@ -279,33 +279,23 @@ pub fn run_paired_build_v1(plan: &BuildPairPlanV1) -> Result<BuildPairReportV1, 
     let lto_environment_name = profile_lto_environment_name(&plan.profile);
     let rustc_verbose_version_blake3 = digest(&plan.rustc_verbose_version);
     let sysroot_root = path_text(&plan.sysroot_root, "sysroot_root")?;
-
-    let static_report = run_member(
+    let run_context = BuildMemberRunContext {
         plan,
-        &plan.static_member,
-        &arguments,
-        &inherited_environment,
-        &lto_environment_name,
-        &command,
-        &inherited_environment_blake3,
-        &rustc_verbose_version_blake3,
-        &sysroot_root,
-    )?;
+        arguments: &arguments,
+        inherited_environment: &inherited_environment,
+        lto_environment_name: &lto_environment_name,
+        report_command: &command,
+        inherited_environment_blake3: &inherited_environment_blake3,
+        rustc_verbose_version_blake3: &rustc_verbose_version_blake3,
+        sysroot_root: &sysroot_root,
+    };
+
+    let static_report = run_member(&run_context, &plan.static_member)?;
     validate_cargo_executable(plan)?;
     validate_toolchain(plan, &inherited_environment)?;
     validate_member_identity(&plan.static_member)?;
     validate_member_identity(&plan.dynamic_member)?;
-    let dynamic_report = run_member(
-        plan,
-        &plan.dynamic_member,
-        &arguments,
-        &inherited_environment,
-        &lto_environment_name,
-        &command,
-        &inherited_environment_blake3,
-        &rustc_verbose_version_blake3,
-        &sysroot_root,
-    )?;
+    let dynamic_report = run_member(&run_context, &plan.dynamic_member)?;
     validate_cargo_executable(plan)?;
     validate_toolchain(plan, &inherited_environment)?;
     validate_member_identity(&plan.static_member)?;
@@ -679,17 +669,22 @@ fn validate_member_identity(member: &BuildPairMemberV1) -> Result<(), BuildPairE
     Ok(())
 }
 
+struct BuildMemberRunContext<'a> {
+    plan: &'a BuildPairPlanV1,
+    arguments: &'a [String],
+    inherited_environment: &'a BTreeMap<String, String>,
+    lto_environment_name: &'a str,
+    report_command: &'a [String],
+    inherited_environment_blake3: &'a str,
+    rustc_verbose_version_blake3: &'a str,
+    sysroot_root: &'a str,
+}
+
 fn run_member(
-    plan: &BuildPairPlanV1,
+    context: &BuildMemberRunContext<'_>,
     member: &BuildPairMemberV1,
-    arguments: &[String],
-    inherited_environment: &BTreeMap<String, String>,
-    lto_environment_name: &str,
-    report_command: &[String],
-    inherited_environment_blake3: &str,
-    rustc_verbose_version_blake3: &str,
-    sysroot_root: &str,
 ) -> Result<BuildPairMemberReportV1, BuildPairError> {
+    let plan = context.plan;
     validated_target_root(&member.target_root, "target_root")?;
     fs::create_dir_all(&member.target_root).map_err(|error| {
         BuildPairError::new(format!(
@@ -700,17 +695,17 @@ fn run_member(
     canonical_directory(&member.target_root, "target_root")?;
     let mut command = Command::new(&plan.cargo_executable);
     command
-        .args(arguments)
+        .args(context.arguments)
         .current_dir(&member.source_root)
         .env_clear();
-    for (name, value) in inherited_environment {
+    for (name, value) in context.inherited_environment {
         command.env(name, value);
     }
     command
         .env("CARGO_INCREMENTAL", "1")
         .env("CARGO_TARGET_DIR", &member.target_root)
         .env("RUSTC", &plan.rustc_executable)
-        .env(lto_environment_name, plan.lto.cargo_value());
+        .env(context.lto_environment_name, plan.lto.cargo_value());
 
     let start = Instant::now();
     let status = command.status().map_err(|error| {
@@ -764,11 +759,11 @@ fn run_member(
         cargo_executable_blake3: &plan.cargo_executable_blake3,
         rustc_executable_blake3: &plan.rustc_executable_blake3,
         rustc_verbose_version: &plan.rustc_verbose_version,
-        rustc_verbose_version_blake3,
-        sysroot_root,
+        rustc_verbose_version_blake3: context.rustc_verbose_version_blake3,
+        sysroot_root: context.sysroot_root,
         sysroot_identity_blake3: &plan.sysroot_identity_blake3,
-        inherited_environment_blake3,
-        command: report_command,
+        inherited_environment_blake3: context.inherited_environment_blake3,
+        command: context.report_command,
         profile: &plan.profile,
         features: &plan.features,
         lto: plan.lto,

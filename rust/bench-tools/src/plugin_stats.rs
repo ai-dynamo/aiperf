@@ -766,6 +766,18 @@ struct AuthoritativeExporterRowIdentity<'a> {
     dynamic_artifact_blake3: &'a str,
 }
 
+struct ExporterPairEvidenceInput<'a> {
+    static_binding: &'a ExporterMemberBinding,
+    static_evidence: &'a ExporterMemberEvidence,
+    static_backing_payloads: &'a [SelectedBackingPayloadV1],
+    static_record_bytes: &'a [u8],
+    dynamic_binding: &'a ExporterMemberBinding,
+    dynamic_evidence: &'a ExporterMemberEvidence,
+    dynamic_backing_payloads: &'a [SelectedBackingPayloadV1],
+    dynamic_record_bytes: &'a [u8],
+    receiver_identity: Option<(String, String)>,
+}
+
 /// Same-process authority for pair replacement and complete-attempt lifecycle.
 ///
 /// The evaluator reads classifiers and limits only from the compiled inventory.
@@ -1060,15 +1072,17 @@ impl ControlledMeasurementEvaluator {
         };
         self.record_exporter_pair_evidence(
             policy,
-            static_member.binding(),
-            static_member.evidence(),
-            static_member.backing_payloads(),
-            static_member.record_bytes(),
-            dynamic_member.binding(),
-            dynamic_member.evidence(),
-            dynamic_member.backing_payloads(),
-            dynamic_member.record_bytes(),
-            receiver_identity,
+            ExporterPairEvidenceInput {
+                static_binding: static_member.binding(),
+                static_evidence: static_member.evidence(),
+                static_backing_payloads: static_member.backing_payloads(),
+                static_record_bytes: static_member.record_bytes(),
+                dynamic_binding: dynamic_member.binding(),
+                dynamic_evidence: dynamic_member.evidence(),
+                dynamic_backing_payloads: dynamic_member.backing_payloads(),
+                dynamic_record_bytes: dynamic_member.record_bytes(),
+                receiver_identity,
+            },
         )
     }
 
@@ -1080,16 +1094,19 @@ impl ControlledMeasurementEvaluator {
     fn record_exporter_pair_evidence(
         &mut self,
         policy: &ExporterObservablePolicyV1,
-        static_binding: &ExporterMemberBinding,
-        static_evidence: &ExporterMemberEvidence,
-        static_backing_payloads: &[SelectedBackingPayloadV1],
-        static_record_bytes: &[u8],
-        dynamic_binding: &ExporterMemberBinding,
-        dynamic_evidence: &ExporterMemberEvidence,
-        dynamic_backing_payloads: &[SelectedBackingPayloadV1],
-        dynamic_record_bytes: &[u8],
-        receiver_identity: Option<(String, String)>,
+        input: ExporterPairEvidenceInput<'_>,
     ) -> Result<PairAttemptDecision, PluginStatsError> {
+        let ExporterPairEvidenceInput {
+            static_binding,
+            static_evidence,
+            static_backing_payloads,
+            static_record_bytes,
+            dynamic_binding,
+            dynamic_evidence,
+            dynamic_backing_payloads,
+            dynamic_record_bytes,
+            receiver_identity,
+        } = input;
         let active_ordinal = self
             .active
             .as_ref()

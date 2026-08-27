@@ -827,12 +827,10 @@ impl JsonSpanFinder<'_> {
             }
         }
         let end = self.position;
-        if path == self.target {
-            if self.found.replace(start..end).is_some() {
-                return Err(ExporterPolicyError::new(
-                    "JSON pointer maps to more than one raw token span",
-                ));
-            }
+        if path == self.target && self.found.replace(start..end).is_some() {
+            return Err(ExporterPolicyError::new(
+                "JSON pointer maps to more than one raw token span",
+            ));
         }
         Ok(())
     }
@@ -1215,11 +1213,11 @@ fn validate_provenance_binding(
     }
 }
 
-fn expected_for_member<'a>(
+fn expected_for_member(
     mode: ExporterPolicyMode,
     member: ExporterMember,
-    slot: &'a ExporterProvenanceSlot,
-) -> Result<&'a ExporterEncodedValue, ExporterPolicyError> {
+    slot: &ExporterProvenanceSlot,
+) -> Result<&ExporterEncodedValue, ExporterPolicyError> {
     match (mode, member) {
         (ExporterPolicyMode::Paired, ExporterMember::Static)
         | (ExporterPolicyMode::StaticCalibration, ExporterMember::Static) => {
@@ -1315,7 +1313,7 @@ fn append_length(output: &mut Vec<u8>, length: usize) -> Result<(), ExporterPoli
 }
 
 fn decode_lower_hex(encoded: &str) -> Result<Vec<u8>, ExporterPolicyError> {
-    if encoded.len() % 2 != 0
+    if !encoded.len().is_multiple_of(2)
         || !encoded
             .bytes()
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
@@ -1324,9 +1322,10 @@ fn decode_lower_hex(encoded: &str) -> Result<Vec<u8>, ExporterPolicyError> {
             "hex bytes must use even-length lower-case hexadecimal",
         ));
     }
-    encoded
-        .as_bytes()
-        .chunks_exact(2)
+    let (pairs, remainder) = encoded.as_bytes().as_chunks::<2>();
+    debug_assert!(remainder.is_empty());
+    pairs
+        .iter()
         .map(|pair| {
             let high = hex_nibble(pair[0]);
             let low = hex_nibble(pair[1]);
@@ -1520,7 +1519,7 @@ fn validate_encoded_value(
             let encoded = value.value.as_str().ok_or_else(|| {
                 ExporterPolicyError::new("hex_bytes exporter policy value must be a string")
             })?;
-            if encoded.len() % 2 != 0
+            if !encoded.len().is_multiple_of(2)
                 || !encoded
                     .bytes()
                     .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))

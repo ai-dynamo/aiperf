@@ -200,6 +200,32 @@ struct MemberExecution {
     stdout_blake3: Option<String>,
 }
 
+struct ExporterExecutionContext<'a> {
+    runner: &'a ExporterHarnessRunner,
+    policy: &'a crate::exporter_policy::ExporterObservablePolicyV1,
+    artifacts: &'a [File; 2],
+    build_report: &'a BuildPairReportV1,
+    experiment_identity_bytes: &'a [u8],
+}
+
+struct ExporterMemberCoordinates<'a> {
+    case: &'a FrozenCasePlan,
+    pair_id: &'a str,
+    variant: Variant,
+}
+
+struct RuntimeReportContext<'a> {
+    experiment_identity_blake3: &'a str,
+    experiment_identity_bytes: &'a [u8],
+    build_report: &'a BuildPairReportV1,
+    observable_policy_blake3: &'a str,
+    receiver_protocol_authority_blake3: &'a str,
+    output_schema_blake3: &'a str,
+    workload_contract_blake3: &'a str,
+    corpus_blake3: &'a str,
+    scenario_count: usize,
+}
+
 /// Execute both build-bound members across the complete checked-in matrix.
 pub fn run_controlled_runtime_v1(
     build_report: &BuildPairReportV1,
@@ -338,6 +364,26 @@ fn run_controlled_runtime_internal(
     } else {
         None
     };
+    let exporter_context = exporter_artifacts
+        .as_ref()
+        .map(|artifacts| ExporterExecutionContext {
+            runner: &exporter_runner,
+            policy: &policy,
+            artifacts,
+            build_report,
+            experiment_identity_bytes: &exporter_identity_preimage_bytes,
+        });
+    let report_context = RuntimeReportContext {
+        experiment_identity_blake3: &experiment_identity_blake3,
+        experiment_identity_bytes: &experiment_identity_bytes,
+        build_report,
+        observable_policy_blake3: &observable_policy_blake3,
+        receiver_protocol_authority_blake3: &receiver_protocol_authority_blake3,
+        output_schema_blake3: &output_schema_blake3,
+        workload_contract_blake3: &workload_contract_blake3,
+        corpus_blake3: &corpus_blake3,
+        scenario_count: cases.len(),
+    };
 
     let mut evaluator = ControlledMeasurementEvaluator::new()
         .map_err(|error| ControlledRuntimeError::new(error.to_string()))?;
@@ -365,18 +411,16 @@ fn run_controlled_runtime_internal(
                                 "exporter factory disappeared during controlled execution",
                             )
                         })?,
-                        &exporter_runner,
-                        &policy,
-                        case,
-                        &pair_id,
-                        variant,
-                        exporter_artifacts.as_ref().ok_or_else(|| {
+                        exporter_context.as_ref().ok_or_else(|| {
                             ControlledRuntimeError::new(
-                                "exporter artifacts are absent under adapter authority",
+                                "exporter context is absent under adapter authority",
                             )
                         })?,
-                        build_report,
-                        &exporter_identity_preimage_bytes,
+                        ExporterMemberCoordinates {
+                            case,
+                            pair_id: &pair_id,
+                            variant,
+                        },
                     );
                     if let Err(error) = result {
                         evaluator
@@ -386,15 +430,7 @@ fn run_controlled_runtime_internal(
                             .map_err(|error| ControlledRuntimeError::new(error.to_string()))?;
                         return runtime_report(
                             &evaluator,
-                            experiment_identity_blake3,
-                            experiment_identity_bytes,
-                            build_report,
-                            observable_policy_blake3,
-                            receiver_protocol_authority_blake3,
-                            output_schema_blake3,
-                            workload_contract_blake3,
-                            corpus_blake3,
-                            cases.len(),
+                            &report_context,
                             executed_member_count,
                             terminal_output_blake3,
                         );
@@ -422,15 +458,7 @@ fn run_controlled_runtime_internal(
                             .map_err(|error| ControlledRuntimeError::new(error.to_string()))?;
                         return runtime_report(
                             &evaluator,
-                            experiment_identity_blake3,
-                            experiment_identity_bytes,
-                            build_report,
-                            observable_policy_blake3,
-                            receiver_protocol_authority_blake3,
-                            output_schema_blake3,
-                            workload_contract_blake3,
-                            corpus_blake3,
-                            cases.len(),
+                            &report_context,
                             executed_member_count,
                             terminal_output_blake3,
                         );
@@ -453,18 +481,16 @@ fn run_controlled_runtime_internal(
                                 "exporter factory disappeared during controlled execution",
                             )
                         })?,
-                        &exporter_runner,
-                        &policy,
-                        case,
-                        &scheduled.pair_id,
-                        variant,
-                        exporter_artifacts.as_ref().ok_or_else(|| {
+                        exporter_context.as_ref().ok_or_else(|| {
                             ControlledRuntimeError::new(
-                                "exporter artifacts are absent under adapter authority",
+                                "exporter context is absent under adapter authority",
                             )
                         })?,
-                        build_report,
-                        &exporter_identity_preimage_bytes,
+                        ExporterMemberCoordinates {
+                            case,
+                            pair_id: &scheduled.pair_id,
+                            variant,
+                        },
                     ) {
                         Ok(completed) => completed_exporters.push((variant, completed)),
                         Err(error) => {
@@ -475,15 +501,7 @@ fn run_controlled_runtime_internal(
                                 .map_err(|error| ControlledRuntimeError::new(error.to_string()))?;
                             return runtime_report(
                                 &evaluator,
-                                experiment_identity_blake3,
-                                experiment_identity_bytes,
-                                build_report,
-                                observable_policy_blake3,
-                                receiver_protocol_authority_blake3,
-                                output_schema_blake3,
-                                workload_contract_blake3,
-                                corpus_blake3,
-                                cases.len(),
+                                &report_context,
                                 executed_member_count,
                                 terminal_output_blake3,
                             );
@@ -547,15 +565,7 @@ fn run_controlled_runtime_internal(
             if decision != PairAttemptDecision::RetainPair {
                 return runtime_report(
                     &evaluator,
-                    experiment_identity_blake3,
-                    experiment_identity_bytes,
-                    build_report,
-                    observable_policy_blake3,
-                    receiver_protocol_authority_blake3,
-                    output_schema_blake3,
-                    workload_contract_blake3,
-                    corpus_blake3,
-                    cases.len(),
+                    &report_context,
                     executed_member_count,
                     terminal_output_blake3,
                 );
@@ -580,15 +590,7 @@ fn run_controlled_runtime_internal(
         .map_err(|error| ControlledRuntimeError::new(error.to_string()))?;
     runtime_report(
         &evaluator,
-        experiment_identity_blake3,
-        experiment_identity_bytes,
-        build_report,
-        observable_policy_blake3,
-        receiver_protocol_authority_blake3,
-        output_schema_blake3,
-        workload_contract_blake3,
-        corpus_blake3,
-        cases.len(),
+        &report_context,
         executed_member_count,
         terminal_output_blake3,
     )
@@ -596,47 +598,42 @@ fn run_controlled_runtime_internal(
 
 fn execute_exporter_member(
     factory: &mut dyn ControlledExporterWorkloadFactory,
-    runner: &ExporterHarnessRunner,
-    policy: &crate::exporter_policy::ExporterObservablePolicyV1,
-    case: &FrozenCasePlan,
-    pair_id: &str,
-    variant: Variant,
-    artifacts: &[File; 2],
-    build_report: &BuildPairReportV1,
-    experiment_identity_bytes: &[u8],
+    context: &ExporterExecutionContext<'_>,
+    coordinates: ExporterMemberCoordinates<'_>,
 ) -> Result<CompletedExporterMember, String> {
-    let member = match variant {
+    let member = match coordinates.variant {
         Variant::Static => ExporterMember::Static,
         Variant::Dynamic => ExporterMember::Dynamic,
     };
     let mut workload = factory
         .acquire(ExporterWorkloadRequest {
-            scenario: &case.scenario,
-            pair_id,
+            scenario: &coordinates.case.scenario,
+            pair_id: coordinates.pair_id,
             member,
         })
         .map_err(|error| format!("exporter adapter acquisition failed: {error}"))?;
-    if policy.observable_kind(&case.scenario)
+    if context.policy.observable_kind(&coordinates.case.scenario)
         == Some(crate::plugin_stats::ExporterObservableKind::ReceiverTranscript)
     {
         return Err(
             "paired runtime policy lacks a controller-selected receiver protocol".to_owned(),
         );
     }
-    let index = match variant {
+    let index = match coordinates.variant {
         Variant::Static => 0,
         Variant::Dynamic => 1,
     };
-    runner
+    context
+        .runner
         .run_member(
             ExporterMemberSource {
-                experiment_identity_bytes,
+                experiment_identity_bytes: context.experiment_identity_bytes,
                 attempt_ordinal: 0,
-                scenario_id: &case.scenario,
-                pair_id,
+                scenario_id: &coordinates.case.scenario,
+                pair_id: coordinates.pair_id,
                 member,
-                build_artifact: &artifacts[index],
-                build_receipt_bytes: &build_report.members[index].build_receipt_bytes,
+                build_artifact: &context.artifacts[index],
+                build_receipt_bytes: &context.build_report.members[index].build_receipt_bytes,
                 receiver_protocol: None,
             },
             workload.as_mut(),
@@ -790,15 +787,7 @@ fn decode_member_output(
 
 fn runtime_report(
     evaluator: &ControlledMeasurementEvaluator,
-    experiment_identity_blake3: String,
-    experiment_identity_bytes: Vec<u8>,
-    build_report: &BuildPairReportV1,
-    observable_policy_blake3: String,
-    receiver_protocol_authority_blake3: String,
-    output_schema_blake3: String,
-    workload_contract_blake3: String,
-    corpus_blake3: String,
-    scenario_count: usize,
+    context: &RuntimeReportContext<'_>,
     executed_member_count: usize,
     terminal_output_blake3: Vec<String>,
 ) -> Result<ControlledRuntimeReportV1, ControlledRuntimeError> {
@@ -821,17 +810,17 @@ fn runtime_report(
         .count();
     let runtime_evidence_bytes = serde_json_canonicalizer::to_vec(&RuntimeEvidenceV1 {
         schema_version: 1,
-        experiment_identity_blake3: &experiment_identity_blake3,
+        experiment_identity_blake3: context.experiment_identity_blake3,
         decision,
         statistical_report: statistical_report.as_ref(),
         attempt_history: &attempt_history,
-        paired_build_record_blake3: &build_report.pair_record_blake3,
-        observable_policy_blake3: &observable_policy_blake3,
-        receiver_protocol_authority_blake3: &receiver_protocol_authority_blake3,
-        output_schema_blake3: &output_schema_blake3,
-        workload_contract_blake3: &workload_contract_blake3,
-        corpus_blake3: &corpus_blake3,
-        scenario_count,
+        paired_build_record_blake3: &context.build_report.pair_record_blake3,
+        observable_policy_blake3: context.observable_policy_blake3,
+        receiver_protocol_authority_blake3: context.receiver_protocol_authority_blake3,
+        output_schema_blake3: context.output_schema_blake3,
+        workload_contract_blake3: context.workload_contract_blake3,
+        corpus_blake3: context.corpus_blake3,
+        scenario_count: context.scenario_count,
         retained_pair_count,
         executed_member_count,
         terminal_output_blake3: &terminal_output_blake3,
@@ -842,18 +831,18 @@ fn runtime_report(
     })?;
     let runtime_evidence_blake3 = digest(&runtime_evidence_bytes);
     Ok(ControlledRuntimeReportV1 {
-        experiment_identity_blake3,
-        experiment_identity_bytes,
+        experiment_identity_blake3: context.experiment_identity_blake3.to_owned(),
+        experiment_identity_bytes: context.experiment_identity_bytes.to_vec(),
         decision,
         statistical_report,
         attempt_history,
-        paired_build_record_blake3: build_report.pair_record_blake3.clone(),
-        observable_policy_blake3,
-        receiver_protocol_authority_blake3,
-        output_schema_blake3,
-        workload_contract_blake3,
-        corpus_blake3,
-        scenario_count,
+        paired_build_record_blake3: context.build_report.pair_record_blake3.clone(),
+        observable_policy_blake3: context.observable_policy_blake3.to_owned(),
+        receiver_protocol_authority_blake3: context.receiver_protocol_authority_blake3.to_owned(),
+        output_schema_blake3: context.output_schema_blake3.to_owned(),
+        workload_contract_blake3: context.workload_contract_blake3.to_owned(),
+        corpus_blake3: context.corpus_blake3.to_owned(),
+        scenario_count: context.scenario_count,
         retained_pair_count,
         executed_member_count,
         terminal_output_blake3,
