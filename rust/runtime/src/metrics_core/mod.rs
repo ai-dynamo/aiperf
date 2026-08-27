@@ -18,6 +18,7 @@ pub mod sidecar;
 pub mod steady_state;
 pub mod store;
 pub mod sweepline;
+pub mod tag_id;
 pub mod units;
 pub mod value;
 pub mod window;
@@ -65,6 +66,7 @@ pub use store::{
     CategoryInterner, ColumnStore, ListMetricBackend, MetricsStorageMode, NumericColumn,
     RaggedReplay, RaggedSeries, SketchColumns, TagSketch,
 };
+pub use tag_id::{MetricTagId, MetricTagRegistry};
 // Re-export the shared t-digest so the sketch retention path has a single source.
 pub use crate::cellular::sketch::{DEFAULT_COMPRESSION as SKETCH_DEFAULT_COMPRESSION, TDigest};
 pub use units::{MetricValueType, Unit, UnitConversionError};

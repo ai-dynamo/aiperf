@@ -2871,7 +2871,7 @@ mod tests {
                 is_injected(*tag)
                     || derive_scalar(*tag, &FxHashMap::default(), Some(1.0)).is_some()
                     || matches!(
-                        tag,
+                        *tag,
                         MetricTag::CompletedRequestCount
                             | MetricTag::RequestErrorRate
                             | MetricTag::Goodput

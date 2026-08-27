@@ -26,6 +26,7 @@ mod riva;
 mod sagemaker;
 mod spec_decode;
 mod tier2;
+mod type_id;
 mod usage;
 mod vllm_generate;
 
@@ -75,6 +76,7 @@ pub use tier2::{
     RawEndpointFactory, SolidoRagEndpoint, TemplateEndpoint, TemplateEndpointFactory,
     VideoGenerationEndpoint,
 };
+pub use type_id::{EndpointTypeId, EndpointTypeRegistry};
 pub use usage::UsageView;
 pub use vllm_generate::VllmGenerateFactory;
 

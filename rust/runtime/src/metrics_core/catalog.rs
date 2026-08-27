@@ -12,322 +12,11 @@ use crate::metrics_core::{MetricValueType, Unit};
 use bitflags::bitflags;
 use petgraph::algo::toposort;
 use petgraph::graphmap::DiGraphMap;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::collections::{BTreeSet, HashMap};
-use std::fmt::{Display, Formatter, Result as FmtResult};
 
-/// Metric identity.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-pub enum MetricTag {
-    RequestCount,
-    ErrorRequestCount,
-    CompletedRequestCount,
-    RequestErrorRate,
-    GoodRequestCount,
-    Goodput,
-    GoodRequestFraction,
-    MinRequestTimestamp,
-    MaxResponseTimestamp,
-    BenchmarkDuration,
-    RequestLatency,
-    TimeToFirstToken,
-    TimeToSecondToken,
-    TimeToFirstOutputToken,
-    InterTokenLatency,
-    InterChunkLatency,
-    DecodeDuration,
-    CreditDropLatency,
-    OutputSequenceLength,
-    InputSequenceLength,
-    ErrorInputSequenceLength,
-    OutputTokenCount,
-    ReasoningTokenCount,
-    TotalOutputSequenceLength,
-    TotalInputSequenceLength,
-    TotalErrorInputSequenceLength,
-    TotalOutputTokens,
-    TotalReasoningTokens,
-    RequestThroughput,
-    InputTokenThroughput,
-    OutputTokenThroughput,
-    TotalTokenThroughput,
-    OutputTokenThroughputPerUser,
-    E2eOutputTokenThroughput,
-    PrefillThroughputPerUser,
-    Rtfx,
-    UsagePromptTokens,
-    UsageCompletionTokens,
-    UsageTotalTokens,
-    UsageReasoningTokens,
-    UsagePromptAudioTokens,
-    UsageCompletionAudioTokens,
-    UsageAcceptedPredictionTokens,
-    UsageRejectedPredictionTokens,
-    UsagePromptCacheReadTokens,
-    UsagePromptCacheWriteTokens,
-    UsagePromptCacheMissTokens,
-    UsageToolUsePromptTokens,
-    UsagePromptAudioSeconds,
-    TotalUsagePromptTokens,
-    TotalUsageCompletionTokens,
-    TotalUsageTotalTokens,
-    TotalUsageReasoningTokens,
-    TotalUsagePromptCacheReadTokens,
-    TotalUsagePromptCacheWriteTokens,
-    TotalUsagePromptCacheMissTokens,
-    TotalUsagePromptAudioTokens,
-    TotalUsageCompletionAudioTokens,
-    TotalUsageAcceptedPredictionTokens,
-    TotalUsageRejectedPredictionTokens,
-    TotalUsageToolUsePromptTokens,
-    TotalUsagePromptAudioSeconds,
-    OverallUsagePromptCacheReadPct,
-    UsagePromptTokensDiffPct,
-    UsageCompletionTokensDiffPct,
-    UsageReasoningTokensDiffPct,
-    UsageDiscrepancyCount,
-    RequestedOutputSequenceLength,
-    OslMismatchDiffPct,
-    OslMismatchCount,
-    ThinkingEfficiency,
-    OverallThinkingEfficiency,
-    TotalGpuPower,
-    TotalGpuEnergy,
-    OutputTokensPerJoule,
-    EnergyPerUser,
-    NetworkAdjustedRequestLatency,
-    NetworkAdjustedTimeToFirstToken,
-    NetworkAdjustedTimeToFirstOutputToken,
-    NetworkRtt,
-    StreamSetupLatency,
-    StreamPrefillLatency,
-    AccuracyCorrect,
-    AccuracyUnparsed,
-    AudioDuration,
-    NumImages,
-    ImageThroughput,
-    ImageLatency,
-    TotalNumImages,
-    ImageSamplesPerSecond,
-    VideoInferenceTime,
-    VideoPeakMemory,
-    HttpReqBlocked,
-    HttpReqDnsLookup,
-    HttpReqConnecting,
-    HttpReqSending,
-    HttpReqWaiting,
-    HttpReqReceiving,
-    HttpReqDuration,
-    HttpReqConnectionReused,
-    HttpReqDataSent,
-    HttpReqDataReceived,
-    HttpReqChunksSent,
-    HttpReqChunksReceived,
-    HttpReqConnectionOverhead,
-    HttpReqTotal,
-    EffectiveLatency,
-    CreditToStartLatency,
-    EffectiveConcurrency,
-    EffectiveDecodeThroughput,
-    EffectivePrefillThroughput,
-    EffectiveDecodeConcurrency,
-    EffectivePrefillConcurrency,
-    EffectiveTotalThroughput,
-    EffectiveDecodeThroughputPerUser,
-    EffectivePrefillThroughputPerUser,
-    EffectiveImageSamplesPerSecond,
-    TokensInFlight,
-    ActiveDecodeThroughput,
-    ActivePrefillThroughput,
-    ActiveDecodeThroughputPerUser,
-    ActivePrefillThroughputPerUser,
-    ActiveImageSamplesPerSecond,
-    EffectiveImageSamplesPerSecondPerUser,
-    ActiveTotalThroughput,
-    TimeToLastRoundTrip,
-    AverageRoundTripTime,
-    SpecDecodeAcceptanceLength,
-    SpecDecodeTokenWeightedAcceptanceLength,
-    SpecDecodeDraftAcceptanceRate,
-    SpecDecodeOverallDraftAcceptanceRate,
-    SpecDecodeAcceptedPerVerified,
-    SpecDecodeSteps,
-    SpecDecodeAcceptedDraftTokens,
-    SpecDecodeDraftTokens,
-    TotalSpecDecodeSteps,
-    TotalAcceptedDraftTokens,
-    TotalDraftTokens,
-}
-
-impl MetricTag {
-    /// Number of distinct tags. Variants are contiguous from discriminant zero,
-    /// and new identities append at the tail so existing dense columns remain stable.
-    pub const COUNT: usize = MetricTag::TotalDraftTokens as usize + 1;
-
-    /// Dense array index for this tag — its zero-based declaration discriminant.
-    #[inline(always)]
-    pub const fn index(self) -> usize {
-        self as usize
-    }
-
-    /// Stable snake-case report spelling.
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::RequestCount => "request_count",
-            Self::ErrorRequestCount => "error_request_count",
-            Self::CompletedRequestCount => "completed_request_count",
-            Self::RequestErrorRate => "request_error_rate",
-            Self::GoodRequestCount => "good_request_count",
-            Self::Goodput => "goodput",
-            Self::GoodRequestFraction => "good_request_fraction",
-            Self::MinRequestTimestamp => "min_request_timestamp",
-            Self::MaxResponseTimestamp => "max_response_timestamp",
-            Self::BenchmarkDuration => "benchmark_duration",
-            Self::RequestLatency => "request_latency",
-            Self::TimeToFirstToken => "time_to_first_token",
-            Self::TimeToSecondToken => "time_to_second_token",
-            Self::TimeToFirstOutputToken => "time_to_first_output_token",
-            Self::TimeToLastRoundTrip => "time_to_last_round_trip",
-            Self::AverageRoundTripTime => "avg_round_trip_time",
-            Self::InterTokenLatency => "inter_token_latency",
-            Self::DecodeDuration => "decode_duration",
-            Self::InterChunkLatency => "inter_chunk_latency",
-            Self::CreditDropLatency => "credit_drop_latency",
-            Self::OutputSequenceLength => "output_sequence_length",
-            Self::InputSequenceLength => "input_sequence_length",
-            Self::ErrorInputSequenceLength => "error_isl",
-            Self::OutputTokenCount => "output_token_count",
-            Self::ReasoningTokenCount => "reasoning_token_count",
-            Self::TotalOutputSequenceLength => "total_osl",
-            Self::TotalInputSequenceLength => "total_isl",
-            Self::TotalErrorInputSequenceLength => "total_error_isl",
-            Self::TotalOutputTokens => "total_output_tokens",
-            Self::TotalReasoningTokens => "total_reasoning_tokens",
-            Self::RequestThroughput => "request_throughput",
-            Self::InputTokenThroughput => "input_token_throughput",
-            Self::OutputTokenThroughput => "output_token_throughput",
-            Self::TotalTokenThroughput => "total_token_throughput",
-            Self::OutputTokenThroughputPerUser => "output_token_throughput_per_user",
-            Self::E2eOutputTokenThroughput => "e2e_output_token_throughput",
-            Self::PrefillThroughputPerUser => "prefill_throughput_per_user",
-            Self::Rtfx => "rtfx",
-            Self::UsagePromptTokens => "usage_prompt_tokens",
-            Self::UsageCompletionTokens => "usage_completion_tokens",
-            Self::UsageTotalTokens => "usage_total_tokens",
-            Self::UsageReasoningTokens => "usage_reasoning_tokens",
-            Self::UsagePromptAudioTokens => "usage_prompt_audio_tokens",
-            Self::UsageCompletionAudioTokens => "usage_completion_audio_tokens",
-            Self::UsageAcceptedPredictionTokens => "usage_accepted_prediction_tokens",
-            Self::UsageRejectedPredictionTokens => "usage_rejected_prediction_tokens",
-            Self::UsagePromptCacheReadTokens => "usage_prompt_cache_read_tokens",
-            Self::UsagePromptCacheWriteTokens => "usage_prompt_cache_write_tokens",
-            Self::UsagePromptCacheMissTokens => "usage_prompt_cache_miss_tokens",
-            Self::UsageToolUsePromptTokens => "usage_tool_use_prompt_tokens",
-            Self::UsagePromptAudioSeconds => "usage_prompt_audio_seconds",
-            Self::TotalUsagePromptTokens => "total_usage_prompt_tokens",
-            Self::TotalUsageCompletionTokens => "total_usage_completion_tokens",
-            Self::TotalUsageTotalTokens => "total_usage_total_tokens",
-            Self::TotalUsageReasoningTokens => "total_usage_reasoning_tokens",
-            Self::TotalUsagePromptCacheReadTokens => "total_usage_prompt_cache_read_tokens",
-            Self::TotalUsagePromptCacheWriteTokens => "total_usage_prompt_cache_write_tokens",
-            Self::TotalUsagePromptCacheMissTokens => "total_usage_prompt_cache_miss_tokens",
-            Self::TotalUsagePromptAudioTokens => "total_usage_prompt_audio_tokens",
-            Self::TotalUsageCompletionAudioTokens => "total_usage_completion_audio_tokens",
-            Self::TotalUsageAcceptedPredictionTokens => "total_usage_accepted_prediction_tokens",
-            Self::TotalUsageRejectedPredictionTokens => "total_usage_rejected_prediction_tokens",
-            Self::TotalUsageToolUsePromptTokens => "total_usage_tool_use_prompt_tokens",
-            Self::TotalUsagePromptAudioSeconds => "total_usage_prompt_audio_seconds",
-            Self::OverallUsagePromptCacheReadPct => "overall_usage_prompt_cache_read_pct",
-            Self::UsagePromptTokensDiffPct => "usage_prompt_tokens_diff_pct",
-            Self::UsageCompletionTokensDiffPct => "usage_completion_tokens_diff_pct",
-            Self::UsageReasoningTokensDiffPct => "usage_reasoning_tokens_diff_pct",
-            Self::UsageDiscrepancyCount => "usage_discrepancy_count",
-            Self::RequestedOutputSequenceLength => "requested_osl",
-            Self::OslMismatchDiffPct => "osl_mismatch_diff_pct",
-            Self::OslMismatchCount => "osl_mismatch_count",
-            Self::ThinkingEfficiency => "thinking_efficiency",
-            Self::OverallThinkingEfficiency => "overall_thinking_efficiency",
-            Self::TotalGpuPower => "total_gpu_power",
-            Self::TotalGpuEnergy => "total_gpu_energy",
-            Self::OutputTokensPerJoule => "output_tokens_per_joule",
-            Self::EnergyPerUser => "energy_per_user",
-            Self::NetworkAdjustedRequestLatency => "network_adjusted_request_latency",
-            Self::NetworkAdjustedTimeToFirstToken => "network_adjusted_time_to_first_token",
-            Self::NetworkAdjustedTimeToFirstOutputToken => {
-                "network_adjusted_time_to_first_output_token"
-            }
-            Self::NetworkRtt => "network_rtt",
-            Self::StreamSetupLatency => "stream_setup_latency",
-            Self::StreamPrefillLatency => "stream_prefill_latency",
-            Self::AccuracyCorrect => "accuracy.correct",
-            Self::AccuracyUnparsed => "accuracy.unparsed",
-            Self::AudioDuration => "audio_duration",
-            Self::NumImages => "num_images",
-            Self::ImageThroughput => "image_throughput",
-            Self::ImageLatency => "image_latency",
-            Self::TotalNumImages => "total_num_images",
-            Self::ImageSamplesPerSecond => "image_samples_per_second",
-            Self::VideoInferenceTime => "video_inference_time",
-            Self::VideoPeakMemory => "video_peak_memory",
-            Self::HttpReqBlocked => "http_req_blocked",
-            Self::HttpReqDnsLookup => "http_req_dns_lookup",
-            Self::HttpReqConnecting => "http_req_connecting",
-            Self::HttpReqSending => "http_req_sending",
-            Self::HttpReqWaiting => "http_req_waiting",
-            Self::HttpReqReceiving => "http_req_receiving",
-            Self::HttpReqDuration => "http_req_duration",
-            Self::HttpReqConnectionReused => "http_req_connection_reused",
-            Self::HttpReqDataSent => "http_req_data_sent",
-            Self::HttpReqDataReceived => "http_req_data_received",
-            Self::HttpReqChunksSent => "http_req_chunks_sent",
-            Self::HttpReqChunksReceived => "http_req_chunks_received",
-            Self::HttpReqConnectionOverhead => "http_req_connection_overhead",
-            Self::HttpReqTotal => "http_req_total",
-            Self::EffectiveLatency => "effective_latency",
-            Self::CreditToStartLatency => "credit_to_start_latency",
-            Self::EffectiveConcurrency => "effective_concurrency",
-            Self::EffectiveDecodeThroughput => "effective_decode_throughput",
-            Self::EffectivePrefillThroughput => "effective_prefill_throughput",
-            Self::EffectiveDecodeConcurrency => "effective_decode_concurrency",
-            Self::EffectivePrefillConcurrency => "effective_prefill_concurrency",
-            Self::EffectiveTotalThroughput => "effective_total_throughput",
-            Self::EffectiveDecodeThroughputPerUser => "effective_decode_throughput_per_user",
-            Self::EffectivePrefillThroughputPerUser => "effective_prefill_throughput_per_user",
-            Self::EffectiveImageSamplesPerSecond => "effective_image_samples_per_second",
-            Self::TokensInFlight => "tokens_in_flight",
-            Self::ActiveDecodeThroughput => "active_decode_throughput",
-            Self::ActivePrefillThroughput => "active_prefill_throughput",
-            Self::ActiveDecodeThroughputPerUser => "active_decode_throughput_per_user",
-            Self::ActivePrefillThroughputPerUser => "active_prefill_throughput_per_user",
-            Self::ActiveImageSamplesPerSecond => "active_image_samples_per_second",
-            Self::EffectiveImageSamplesPerSecondPerUser => {
-                "effective_image_samples_per_second_per_user"
-            }
-            Self::ActiveTotalThroughput => "active_total_throughput",
-            Self::SpecDecodeAcceptanceLength => "spec_decode_acceptance_length",
-            Self::SpecDecodeTokenWeightedAcceptanceLength => {
-                "spec_decode_token_weighted_acceptance_length"
-            }
-            Self::SpecDecodeDraftAcceptanceRate => "spec_decode_draft_acceptance_rate",
-            Self::SpecDecodeOverallDraftAcceptanceRate => {
-                "spec_decode_overall_draft_acceptance_rate"
-            }
-            Self::SpecDecodeAcceptedPerVerified => "spec_decode_accepted_per_verified",
-            Self::SpecDecodeSteps => "spec_decode_steps",
-            Self::SpecDecodeAcceptedDraftTokens => "spec_decode_accepted_draft_tokens",
-            Self::SpecDecodeDraftTokens => "spec_decode_draft_tokens",
-            Self::TotalSpecDecodeSteps => "total_spec_decode_steps",
-            Self::TotalAcceptedDraftTokens => "total_accepted_draft_tokens",
-            Self::TotalDraftTokens => "total_draft_tokens",
-        }
-    }
-}
-
-impl Display for MetricTag {
-    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
-        f.write_str(self.as_str())
-    }
-}
+/// Source-compatible name for the open metric-tag ID.
+pub type MetricTag = crate::metrics_core::tag_id::MetricTagId;
 
 /// Metric compute tier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -520,322 +209,318 @@ impl MetricSpec {
 /// Per-tag short header, folded into catalog construction (was a runtime
 /// post-pass). Kept as a `const fn` so the catalog is a `const`-built static.
 const fn cfg_short_header(tag: MetricTag) -> Option<&'static str> {
-    use MetricTag::*;
     match tag {
-        AudioDuration => Some("Audio Dur"),
-        BenchmarkDuration => Some("Duration"),
-        CompletedRequestCount => Some("Completed"),
-        CreditDropLatency => Some("Credit Latency"),
-        DecodeDuration => Some("Decode Duration"),
-        E2eOutputTokenThroughput => Some("E2E Output TPS/User"),
-        ErrorInputSequenceLength => Some("Error ISL"),
-        ErrorRequestCount => Some("Error Count"),
-        GoodRequestFraction => Some("GoodReqFrac"),
-        Goodput => Some("Goodput"),
-        HttpReqBlocked => Some("Blocked"),
-        HttpReqChunksReceived => Some("Chunks Recv"),
-        HttpReqChunksSent => Some("Chunks Sent"),
-        HttpReqConnecting => Some("Connecting"),
-        HttpReqConnectionOverhead => Some("Conn Overhead"),
-        HttpReqConnectionReused => Some("Conn Reused"),
-        HttpReqDataReceived => Some("Received"),
-        HttpReqDataSent => Some("Sent"),
-        HttpReqDnsLookup => Some("DNS"),
-        HttpReqDuration => Some("Dur (excl)"),
-        HttpReqReceiving => Some("Receiving"),
-        HttpReqSending => Some("Sending"),
-        HttpReqTotal => Some("Total"),
-        HttpReqWaiting => Some("TTFB"),
-        ImageLatency => Some("Image Latency"),
-        ImageThroughput => Some("Image Throughput"),
-        InputSequenceLength => Some("ISL"),
-        InputTokenThroughput => Some("Input TPS"),
-        InterChunkLatency => Some("ICL"),
-        InterTokenLatency => Some("ITL"),
-        MaxResponseTimestamp => Some("Max Resp"),
-        MinRequestTimestamp => Some("Min Req"),
-        NetworkAdjustedRequestLatency => Some("Net-Adj Req Latency"),
-        NetworkAdjustedTimeToFirstOutputToken => Some("Net-Adj TTFO"),
-        NetworkAdjustedTimeToFirstToken => Some("Net-Adj TTFT"),
-        NetworkRtt => Some("Net RTT"),
-        NumImages => Some("Num Images"),
-        OslMismatchCount => Some("OSL Mismatches"),
-        OslMismatchDiffPct => Some("OSL Diff"),
-        OutputSequenceLength => Some("OSL"),
-        OutputTokenCount => Some("Output Tokens"),
-        OutputTokenThroughput => Some("Output TPS"),
-        OutputTokenThroughputPerUser => Some("Output TPS/User"),
-        OverallThinkingEfficiency => Some("Overall Eff."),
-        OverallUsagePromptCacheReadPct => Some("Overall Cache Read %"),
-        PrefillThroughputPerUser => Some("Prefill TPS/User"),
-        ReasoningTokenCount => Some("Reasoning Tokens"),
-        SpecDecodeAcceptanceLength => Some("Acceptance Length"),
-        SpecDecodeTokenWeightedAcceptanceLength => Some("Token-Wtd Accept Len"),
-        SpecDecodeDraftAcceptanceRate => Some("Draft Accept Rate"),
-        SpecDecodeOverallDraftAcceptanceRate => Some("Overall Draft Accept Rate"),
-        SpecDecodeAcceptedPerVerified => Some("Accepted / Verified"),
-        SpecDecodeSteps => Some("Spec Decode Steps"),
-        SpecDecodeAcceptedDraftTokens => Some("Accepted Draft"),
-        SpecDecodeDraftTokens => Some("Draft Tokens"),
-        TotalSpecDecodeSteps => Some("Total Spec Decode Steps"),
-        TotalAcceptedDraftTokens => Some("Total Accepted Draft"),
-        TotalDraftTokens => Some("Total Draft"),
-        RequestCount => Some("Requests"),
-        RequestErrorRate => Some("Err %"),
-        RequestLatency => Some("Req Latency"),
-        RequestThroughput => Some("Req/sec"),
-        RequestedOutputSequenceLength => Some("Req OSL"),
-        Rtfx => Some("RTFx"),
-        TimeToFirstOutputToken => Some("TTFO"),
-        TimeToLastRoundTrip => Some("Last Round Trip"),
-        AverageRoundTripTime => Some("Avg Round Trip"),
-        TimeToFirstToken => Some("TTFT"),
-        TimeToSecondToken => Some("TTST"),
-        TotalErrorInputSequenceLength => Some("Total Error ISL"),
-        TotalInputSequenceLength => Some("Total ISL"),
-        TotalOutputSequenceLength => Some("Total OSL"),
-        TotalOutputTokens => Some("Total Output"),
-        TotalReasoningTokens => Some("Total Reasoning"),
-        TotalTokenThroughput => Some("Total TPS"),
-        TotalUsageAcceptedPredictionTokens => Some("Total Usage Accepted Pred"),
-        TotalUsageCompletionAudioTokens => Some("Total Usage Comp Audio"),
-        TotalUsageCompletionTokens => Some("Total Usage Completion"),
-        TotalUsagePromptAudioSeconds => Some("Total Usage Prompt Audio Sec"),
-        TotalUsagePromptAudioTokens => Some("Total Usage Prompt Audio"),
-        TotalUsagePromptCacheMissTokens => Some("Total Usage Prompt Cache Miss"),
-        TotalUsagePromptCacheReadTokens => Some("Total Usage Prompt Cache Read"),
-        TotalUsagePromptCacheWriteTokens => Some("Total Usage Prompt Cache Write"),
-        TotalUsagePromptTokens => Some("Total Usage Prompt"),
-        TotalUsageReasoningTokens => Some("Total Usage Reasoning"),
-        TotalUsageRejectedPredictionTokens => Some("Total Usage Rejected Pred"),
-        TotalUsageToolUsePromptTokens => Some("Total Usage Tool Prompt"),
-        TotalUsageTotalTokens => Some("Total Usage Total"),
-        UsageAcceptedPredictionTokens => Some("Usage Accepted Pred"),
-        UsageCompletionAudioTokens => Some("Usage Completion Audio"),
-        UsageCompletionTokens => Some("Usage Completion"),
-        UsageCompletionTokensDiffPct => Some("Completion Diff"),
-        UsageDiscrepancyCount => Some("Discrepancies"),
-        UsagePromptAudioSeconds => Some("Usage Prompt Audio Sec"),
-        UsagePromptAudioTokens => Some("Usage Prompt Audio"),
-        UsagePromptCacheMissTokens => Some("Usage Prompt Cache Miss"),
-        UsagePromptCacheReadTokens => Some("Usage Prompt Cache Read"),
-        UsagePromptCacheWriteTokens => Some("Usage Prompt Cache Write"),
-        UsagePromptTokens => Some("Usage Prompt"),
-        UsagePromptTokensDiffPct => Some("Prompt Diff"),
-        UsageReasoningTokens => Some("Usage Reasoning"),
-        UsageReasoningTokensDiffPct => Some("Reasoning Diff"),
-        UsageRejectedPredictionTokens => Some("Usage Rejected Pred"),
-        UsageToolUsePromptTokens => Some("Usage Tool Prompt"),
-        UsageTotalTokens => Some("Usage Total"),
-        VideoInferenceTime => Some("Inference Time"),
-        VideoPeakMemory => Some("Peak Memory"),
+        MetricTag::AudioDuration => Some("Audio Dur"),
+        MetricTag::BenchmarkDuration => Some("Duration"),
+        MetricTag::CompletedRequestCount => Some("Completed"),
+        MetricTag::CreditDropLatency => Some("Credit Latency"),
+        MetricTag::DecodeDuration => Some("Decode Duration"),
+        MetricTag::E2eOutputTokenThroughput => Some("E2E Output TPS/User"),
+        MetricTag::ErrorInputSequenceLength => Some("Error ISL"),
+        MetricTag::ErrorRequestCount => Some("Error Count"),
+        MetricTag::GoodRequestFraction => Some("GoodReqFrac"),
+        MetricTag::Goodput => Some("Goodput"),
+        MetricTag::HttpReqBlocked => Some("Blocked"),
+        MetricTag::HttpReqChunksReceived => Some("Chunks Recv"),
+        MetricTag::HttpReqChunksSent => Some("Chunks Sent"),
+        MetricTag::HttpReqConnecting => Some("Connecting"),
+        MetricTag::HttpReqConnectionOverhead => Some("Conn Overhead"),
+        MetricTag::HttpReqConnectionReused => Some("Conn Reused"),
+        MetricTag::HttpReqDataReceived => Some("Received"),
+        MetricTag::HttpReqDataSent => Some("Sent"),
+        MetricTag::HttpReqDnsLookup => Some("DNS"),
+        MetricTag::HttpReqDuration => Some("Dur (excl)"),
+        MetricTag::HttpReqReceiving => Some("Receiving"),
+        MetricTag::HttpReqSending => Some("Sending"),
+        MetricTag::HttpReqTotal => Some("Total"),
+        MetricTag::HttpReqWaiting => Some("TTFB"),
+        MetricTag::ImageLatency => Some("Image Latency"),
+        MetricTag::ImageThroughput => Some("Image Throughput"),
+        MetricTag::InputSequenceLength => Some("ISL"),
+        MetricTag::InputTokenThroughput => Some("Input TPS"),
+        MetricTag::InterChunkLatency => Some("ICL"),
+        MetricTag::InterTokenLatency => Some("ITL"),
+        MetricTag::MaxResponseTimestamp => Some("Max Resp"),
+        MetricTag::MinRequestTimestamp => Some("Min Req"),
+        MetricTag::NetworkAdjustedRequestLatency => Some("Net-Adj Req Latency"),
+        MetricTag::NetworkAdjustedTimeToFirstOutputToken => Some("Net-Adj TTFO"),
+        MetricTag::NetworkAdjustedTimeToFirstToken => Some("Net-Adj TTFT"),
+        MetricTag::NetworkRtt => Some("Net RTT"),
+        MetricTag::NumImages => Some("Num Images"),
+        MetricTag::OslMismatchCount => Some("OSL Mismatches"),
+        MetricTag::OslMismatchDiffPct => Some("OSL Diff"),
+        MetricTag::OutputSequenceLength => Some("OSL"),
+        MetricTag::OutputTokenCount => Some("Output Tokens"),
+        MetricTag::OutputTokenThroughput => Some("Output TPS"),
+        MetricTag::OutputTokenThroughputPerUser => Some("Output TPS/User"),
+        MetricTag::OverallThinkingEfficiency => Some("Overall Eff."),
+        MetricTag::OverallUsagePromptCacheReadPct => Some("Overall Cache Read %"),
+        MetricTag::PrefillThroughputPerUser => Some("Prefill TPS/User"),
+        MetricTag::ReasoningTokenCount => Some("Reasoning Tokens"),
+        MetricTag::SpecDecodeAcceptanceLength => Some("Acceptance Length"),
+        MetricTag::SpecDecodeTokenWeightedAcceptanceLength => Some("Token-Wtd Accept Len"),
+        MetricTag::SpecDecodeDraftAcceptanceRate => Some("Draft Accept Rate"),
+        MetricTag::SpecDecodeOverallDraftAcceptanceRate => Some("Overall Draft Accept Rate"),
+        MetricTag::SpecDecodeAcceptedPerVerified => Some("Accepted / Verified"),
+        MetricTag::SpecDecodeSteps => Some("Spec Decode Steps"),
+        MetricTag::SpecDecodeAcceptedDraftTokens => Some("Accepted Draft"),
+        MetricTag::SpecDecodeDraftTokens => Some("Draft Tokens"),
+        MetricTag::TotalSpecDecodeSteps => Some("Total Spec Decode Steps"),
+        MetricTag::TotalAcceptedDraftTokens => Some("Total Accepted Draft"),
+        MetricTag::TotalDraftTokens => Some("Total Draft"),
+        MetricTag::RequestCount => Some("Requests"),
+        MetricTag::RequestErrorRate => Some("Err %"),
+        MetricTag::RequestLatency => Some("Req Latency"),
+        MetricTag::RequestThroughput => Some("Req/sec"),
+        MetricTag::RequestedOutputSequenceLength => Some("Req OSL"),
+        MetricTag::Rtfx => Some("RTFx"),
+        MetricTag::TimeToFirstOutputToken => Some("TTFO"),
+        MetricTag::TimeToLastRoundTrip => Some("Last Round Trip"),
+        MetricTag::AverageRoundTripTime => Some("Avg Round Trip"),
+        MetricTag::TimeToFirstToken => Some("TTFT"),
+        MetricTag::TimeToSecondToken => Some("TTST"),
+        MetricTag::TotalErrorInputSequenceLength => Some("Total Error ISL"),
+        MetricTag::TotalInputSequenceLength => Some("Total ISL"),
+        MetricTag::TotalOutputSequenceLength => Some("Total OSL"),
+        MetricTag::TotalOutputTokens => Some("Total Output"),
+        MetricTag::TotalReasoningTokens => Some("Total Reasoning"),
+        MetricTag::TotalTokenThroughput => Some("Total TPS"),
+        MetricTag::TotalUsageAcceptedPredictionTokens => Some("Total Usage Accepted Pred"),
+        MetricTag::TotalUsageCompletionAudioTokens => Some("Total Usage Comp Audio"),
+        MetricTag::TotalUsageCompletionTokens => Some("Total Usage Completion"),
+        MetricTag::TotalUsagePromptAudioSeconds => Some("Total Usage Prompt Audio Sec"),
+        MetricTag::TotalUsagePromptAudioTokens => Some("Total Usage Prompt Audio"),
+        MetricTag::TotalUsagePromptCacheMissTokens => Some("Total Usage Prompt Cache Miss"),
+        MetricTag::TotalUsagePromptCacheReadTokens => Some("Total Usage Prompt Cache Read"),
+        MetricTag::TotalUsagePromptCacheWriteTokens => Some("Total Usage Prompt Cache Write"),
+        MetricTag::TotalUsagePromptTokens => Some("Total Usage Prompt"),
+        MetricTag::TotalUsageReasoningTokens => Some("Total Usage Reasoning"),
+        MetricTag::TotalUsageRejectedPredictionTokens => Some("Total Usage Rejected Pred"),
+        MetricTag::TotalUsageToolUsePromptTokens => Some("Total Usage Tool Prompt"),
+        MetricTag::TotalUsageTotalTokens => Some("Total Usage Total"),
+        MetricTag::UsageAcceptedPredictionTokens => Some("Usage Accepted Pred"),
+        MetricTag::UsageCompletionAudioTokens => Some("Usage Completion Audio"),
+        MetricTag::UsageCompletionTokens => Some("Usage Completion"),
+        MetricTag::UsageCompletionTokensDiffPct => Some("Completion Diff"),
+        MetricTag::UsageDiscrepancyCount => Some("Discrepancies"),
+        MetricTag::UsagePromptAudioSeconds => Some("Usage Prompt Audio Sec"),
+        MetricTag::UsagePromptAudioTokens => Some("Usage Prompt Audio"),
+        MetricTag::UsagePromptCacheMissTokens => Some("Usage Prompt Cache Miss"),
+        MetricTag::UsagePromptCacheReadTokens => Some("Usage Prompt Cache Read"),
+        MetricTag::UsagePromptCacheWriteTokens => Some("Usage Prompt Cache Write"),
+        MetricTag::UsagePromptTokens => Some("Usage Prompt"),
+        MetricTag::UsagePromptTokensDiffPct => Some("Prompt Diff"),
+        MetricTag::UsageReasoningTokens => Some("Usage Reasoning"),
+        MetricTag::UsageReasoningTokensDiffPct => Some("Reasoning Diff"),
+        MetricTag::UsageRejectedPredictionTokens => Some("Usage Rejected Pred"),
+        MetricTag::UsageToolUsePromptTokens => Some("Usage Tool Prompt"),
+        MetricTag::UsageTotalTokens => Some("Usage Total"),
+        MetricTag::VideoInferenceTime => Some("Inference Time"),
+        MetricTag::VideoPeakMemory => Some("Peak Memory"),
         _ => None,
     }
 }
 
 /// Per-tag flag: hide the unit suffix on the short header.
 const fn cfg_short_header_hide_unit(tag: MetricTag) -> bool {
-    use MetricTag::*;
     matches!(
         tag,
-        BenchmarkDuration
-            | CompletedRequestCount
-            | E2eOutputTokenThroughput
-            | ErrorRequestCount
-            | GoodRequestCount
-            | GoodRequestFraction
-            | Goodput
-            | InputTokenThroughput
-            | MaxResponseTimestamp
-            | MinRequestTimestamp
-            | OslMismatchCount
-            | OslMismatchDiffPct
-            | OutputTokenCount
-            | OutputTokenThroughput
-            | OutputTokenThroughputPerUser
-            | OverallThinkingEfficiency
-            | OverallUsagePromptCacheReadPct
-            | PrefillThroughputPerUser
-            | ReasoningTokenCount
-            | SpecDecodeAcceptanceLength
-            | SpecDecodeTokenWeightedAcceptanceLength
-            | SpecDecodeDraftAcceptanceRate
-            | SpecDecodeOverallDraftAcceptanceRate
-            | SpecDecodeAcceptedPerVerified
-            | SpecDecodeSteps
-            | SpecDecodeAcceptedDraftTokens
-            | SpecDecodeDraftTokens
-            | TotalSpecDecodeSteps
-            | TotalAcceptedDraftTokens
-            | TotalDraftTokens
-            | RequestCount
-            | RequestErrorRate
-            | RequestThroughput
-            | Rtfx
-            | ThinkingEfficiency
-            | TotalErrorInputSequenceLength
-            | TotalInputSequenceLength
-            | TotalOutputSequenceLength
-            | TotalOutputTokens
-            | TotalReasoningTokens
-            | TotalTokenThroughput
-            | TotalUsageAcceptedPredictionTokens
-            | TotalUsageCompletionAudioTokens
-            | TotalUsageCompletionTokens
-            | TotalUsagePromptAudioTokens
-            | TotalUsagePromptCacheMissTokens
-            | TotalUsagePromptCacheReadTokens
-            | TotalUsagePromptCacheWriteTokens
-            | TotalUsagePromptTokens
-            | TotalUsageReasoningTokens
-            | TotalUsageRejectedPredictionTokens
-            | TotalUsageToolUsePromptTokens
-            | TotalUsageTotalTokens
-            | UsageAcceptedPredictionTokens
-            | UsageCompletionAudioTokens
-            | UsageCompletionTokens
-            | UsageCompletionTokensDiffPct
-            | UsageDiscrepancyCount
-            | UsagePromptAudioTokens
-            | UsagePromptCacheMissTokens
-            | UsagePromptCacheReadTokens
-            | UsagePromptCacheWriteTokens
-            | UsagePromptTokens
-            | UsagePromptTokensDiffPct
-            | UsageReasoningTokens
-            | UsageReasoningTokensDiffPct
-            | UsageRejectedPredictionTokens
-            | UsageToolUsePromptTokens
-            | UsageTotalTokens
+        MetricTag::BenchmarkDuration
+            | MetricTag::CompletedRequestCount
+            | MetricTag::E2eOutputTokenThroughput
+            | MetricTag::ErrorRequestCount
+            | MetricTag::GoodRequestCount
+            | MetricTag::GoodRequestFraction
+            | MetricTag::Goodput
+            | MetricTag::InputTokenThroughput
+            | MetricTag::MaxResponseTimestamp
+            | MetricTag::MinRequestTimestamp
+            | MetricTag::OslMismatchCount
+            | MetricTag::OslMismatchDiffPct
+            | MetricTag::OutputTokenCount
+            | MetricTag::OutputTokenThroughput
+            | MetricTag::OutputTokenThroughputPerUser
+            | MetricTag::OverallThinkingEfficiency
+            | MetricTag::OverallUsagePromptCacheReadPct
+            | MetricTag::PrefillThroughputPerUser
+            | MetricTag::ReasoningTokenCount
+            | MetricTag::SpecDecodeAcceptanceLength
+            | MetricTag::SpecDecodeTokenWeightedAcceptanceLength
+            | MetricTag::SpecDecodeDraftAcceptanceRate
+            | MetricTag::SpecDecodeOverallDraftAcceptanceRate
+            | MetricTag::SpecDecodeAcceptedPerVerified
+            | MetricTag::SpecDecodeSteps
+            | MetricTag::SpecDecodeAcceptedDraftTokens
+            | MetricTag::SpecDecodeDraftTokens
+            | MetricTag::TotalSpecDecodeSteps
+            | MetricTag::TotalAcceptedDraftTokens
+            | MetricTag::TotalDraftTokens
+            | MetricTag::RequestCount
+            | MetricTag::RequestErrorRate
+            | MetricTag::RequestThroughput
+            | MetricTag::Rtfx
+            | MetricTag::ThinkingEfficiency
+            | MetricTag::TotalErrorInputSequenceLength
+            | MetricTag::TotalInputSequenceLength
+            | MetricTag::TotalOutputSequenceLength
+            | MetricTag::TotalOutputTokens
+            | MetricTag::TotalReasoningTokens
+            | MetricTag::TotalTokenThroughput
+            | MetricTag::TotalUsageAcceptedPredictionTokens
+            | MetricTag::TotalUsageCompletionAudioTokens
+            | MetricTag::TotalUsageCompletionTokens
+            | MetricTag::TotalUsagePromptAudioTokens
+            | MetricTag::TotalUsagePromptCacheMissTokens
+            | MetricTag::TotalUsagePromptCacheReadTokens
+            | MetricTag::TotalUsagePromptCacheWriteTokens
+            | MetricTag::TotalUsagePromptTokens
+            | MetricTag::TotalUsageReasoningTokens
+            | MetricTag::TotalUsageRejectedPredictionTokens
+            | MetricTag::TotalUsageToolUsePromptTokens
+            | MetricTag::TotalUsageTotalTokens
+            | MetricTag::UsageAcceptedPredictionTokens
+            | MetricTag::UsageCompletionAudioTokens
+            | MetricTag::UsageCompletionTokens
+            | MetricTag::UsageCompletionTokensDiffPct
+            | MetricTag::UsageDiscrepancyCount
+            | MetricTag::UsagePromptAudioTokens
+            | MetricTag::UsagePromptCacheMissTokens
+            | MetricTag::UsagePromptCacheReadTokens
+            | MetricTag::UsagePromptCacheWriteTokens
+            | MetricTag::UsagePromptTokens
+            | MetricTag::UsagePromptTokensDiffPct
+            | MetricTag::UsageReasoningTokens
+            | MetricTag::UsageReasoningTokensDiffPct
+            | MetricTag::UsageRejectedPredictionTokens
+            | MetricTag::UsageToolUsePromptTokens
+            | MetricTag::UsageTotalTokens
     )
 }
 
 /// Per-tag display-unit override.
 const fn cfg_display_unit(tag: MetricTag) -> Option<Unit> {
-    use MetricTag::*;
     match tag {
-        BenchmarkDuration => Some(Unit::Second),
-        RequestLatency
-        | TimeToFirstToken
-        | TimeToSecondToken
-        | TimeToFirstOutputToken
-        | TimeToLastRoundTrip
-        | AverageRoundTripTime
-        | InterTokenLatency
-        | InterChunkLatency
-        | DecodeDuration
-        | CreditDropLatency
-        | StreamSetupLatency
-        | StreamPrefillLatency
-        | HttpReqBlocked
-        | HttpReqDnsLookup
-        | HttpReqConnecting
-        | HttpReqSending
-        | HttpReqWaiting
-        | HttpReqReceiving
-        | HttpReqDuration
-        | HttpReqConnectionOverhead
-        | HttpReqTotal
-        | NetworkAdjustedRequestLatency
-        | NetworkAdjustedTimeToFirstToken
-        | NetworkAdjustedTimeToFirstOutputToken
-        | NetworkRtt
-        | VideoInferenceTime => Some(Unit::Millisecond),
-        HttpReqDataSent | HttpReqDataReceived => Some(Unit::Kilobyte),
+        MetricTag::BenchmarkDuration => Some(Unit::Second),
+        MetricTag::RequestLatency
+        | MetricTag::TimeToFirstToken
+        | MetricTag::TimeToSecondToken
+        | MetricTag::TimeToFirstOutputToken
+        | MetricTag::TimeToLastRoundTrip
+        | MetricTag::AverageRoundTripTime
+        | MetricTag::InterTokenLatency
+        | MetricTag::InterChunkLatency
+        | MetricTag::DecodeDuration
+        | MetricTag::CreditDropLatency
+        | MetricTag::StreamSetupLatency
+        | MetricTag::StreamPrefillLatency
+        | MetricTag::HttpReqBlocked
+        | MetricTag::HttpReqDnsLookup
+        | MetricTag::HttpReqConnecting
+        | MetricTag::HttpReqSending
+        | MetricTag::HttpReqWaiting
+        | MetricTag::HttpReqReceiving
+        | MetricTag::HttpReqDuration
+        | MetricTag::HttpReqConnectionOverhead
+        | MetricTag::HttpReqTotal
+        | MetricTag::NetworkAdjustedRequestLatency
+        | MetricTag::NetworkAdjustedTimeToFirstToken
+        | MetricTag::NetworkAdjustedTimeToFirstOutputToken
+        | MetricTag::NetworkRtt
+        | MetricTag::VideoInferenceTime => Some(Unit::Millisecond),
+        MetricTag::HttpReqDataSent | MetricTag::HttpReqDataReceived => Some(Unit::Kilobyte),
         _ => None,
     }
 }
 
 /// Per-tag display-order override.
 const fn cfg_display_order(tag: MetricTag) -> Option<u32> {
-    use MetricTag::*;
     match tag {
-        AudioDuration => Some(870),
-        CompletedRequestCount => Some(1075),
-        DecodeDuration => Some(350),
-        E2eOutputTokenThroughput => Some(510),
-        EnergyPerUser => Some(903),
-        ErrorInputSequenceLength => Some(700),
-        Goodput => Some(1000),
-        HttpReqBlocked => Some(2000),
-        HttpReqChunksReceived => Some(2100),
-        HttpReqChunksSent => Some(2080),
-        HttpReqConnecting => Some(2020),
-        HttpReqConnectionOverhead => Some(2110),
-        HttpReqConnectionReused => Some(2060),
-        HttpReqDataReceived => Some(2090),
-        HttpReqDataSent => Some(2070),
-        HttpReqDnsLookup => Some(2010),
-        HttpReqDuration => Some(2120),
-        HttpReqReceiving => Some(2050),
-        HttpReqSending => Some(2030),
-        HttpReqTotal => Some(2130),
-        HttpReqWaiting => Some(2040),
-        ImageLatency => Some(861),
-        ImageThroughput => Some(860),
-        InputSequenceLength => Some(700),
-        InputTokenThroughput => Some(805),
-        InterTokenLatency => Some(400),
-        NetworkAdjustedRequestLatency => Some(301),
-        NetworkAdjustedTimeToFirstOutputToken => Some(211),
-        NetworkAdjustedTimeToFirstToken => Some(101),
-        NetworkRtt => Some(305),
-        OutputSequenceLength => Some(600),
-        OutputTokenThroughput => Some(800),
-        OutputTokenThroughputPerUser => Some(500),
-        OutputTokensPerJoule => Some(902),
-        OverallUsagePromptCacheReadPct => Some(2012),
-        RequestCount => Some(1100),
-        RequestErrorRate => Some(1080),
-        RequestLatency => Some(300),
-        RequestThroughput => Some(900),
-        Rtfx => Some(850),
-        SpecDecodeAcceptanceLength => Some(5000),
-        SpecDecodeTokenWeightedAcceptanceLength => Some(5010),
-        SpecDecodeDraftAcceptanceRate => Some(5020),
-        SpecDecodeOverallDraftAcceptanceRate => Some(5025),
-        SpecDecodeAcceptedPerVerified => Some(5030),
-        SpecDecodeSteps => Some(5040),
-        SpecDecodeAcceptedDraftTokens => Some(5050),
-        SpecDecodeDraftTokens => Some(5060),
-        TotalSpecDecodeSteps => Some(5140),
-        TotalAcceptedDraftTokens => Some(5150),
-        TotalDraftTokens => Some(5160),
-        TimeToFirstOutputToken => Some(210),
-        TimeToLastRoundTrip => Some(220),
-        AverageRoundTripTime => Some(230),
-        TimeToFirstToken => Some(100),
-        TimeToSecondToken => Some(200),
-        TotalGpuEnergy => Some(901),
-        TotalGpuPower => Some(900),
-        TotalUsageAcceptedPredictionTokens => Some(2130),
-        TotalUsageCompletionAudioTokens => Some(2120),
-        TotalUsageCompletionTokens => Some(2100),
-        TotalUsagePromptAudioSeconds => Some(2040),
-        TotalUsagePromptAudioTokens => Some(2020),
-        TotalUsagePromptCacheMissTokens => Some(2017),
-        TotalUsagePromptCacheReadTokens => Some(2010),
-        TotalUsagePromptCacheWriteTokens => Some(2015),
-        TotalUsagePromptTokens => Some(2000),
-        TotalUsageReasoningTokens => Some(2110),
-        TotalUsageRejectedPredictionTokens => Some(2140),
-        TotalUsageToolUsePromptTokens => Some(2030),
-        TotalUsageTotalTokens => Some(2200),
-        UsageAcceptedPredictionTokens => Some(1130),
-        UsageCompletionAudioTokens => Some(1120),
-        UsageCompletionTokens => Some(1100),
-        UsagePromptAudioSeconds => Some(1040),
-        UsagePromptAudioTokens => Some(1020),
-        UsagePromptCacheMissTokens => Some(1017),
-        UsagePromptCacheReadTokens => Some(1010),
-        UsagePromptCacheWriteTokens => Some(1015),
-        UsagePromptTokens => Some(1000),
-        UsageReasoningTokens => Some(1110),
-        UsageRejectedPredictionTokens => Some(1140),
-        UsageToolUsePromptTokens => Some(1030),
-        UsageTotalTokens => Some(1200),
-        VideoInferenceTime => Some(310),
-        VideoPeakMemory => Some(311),
+        MetricTag::AudioDuration => Some(870),
+        MetricTag::CompletedRequestCount => Some(1075),
+        MetricTag::DecodeDuration => Some(350),
+        MetricTag::E2eOutputTokenThroughput => Some(510),
+        MetricTag::EnergyPerUser => Some(903),
+        MetricTag::ErrorInputSequenceLength => Some(700),
+        MetricTag::Goodput => Some(1000),
+        MetricTag::HttpReqBlocked => Some(2000),
+        MetricTag::HttpReqChunksReceived => Some(2100),
+        MetricTag::HttpReqChunksSent => Some(2080),
+        MetricTag::HttpReqConnecting => Some(2020),
+        MetricTag::HttpReqConnectionOverhead => Some(2110),
+        MetricTag::HttpReqConnectionReused => Some(2060),
+        MetricTag::HttpReqDataReceived => Some(2090),
+        MetricTag::HttpReqDataSent => Some(2070),
+        MetricTag::HttpReqDnsLookup => Some(2010),
+        MetricTag::HttpReqDuration => Some(2120),
+        MetricTag::HttpReqReceiving => Some(2050),
+        MetricTag::HttpReqSending => Some(2030),
+        MetricTag::HttpReqTotal => Some(2130),
+        MetricTag::HttpReqWaiting => Some(2040),
+        MetricTag::ImageLatency => Some(861),
+        MetricTag::ImageThroughput => Some(860),
+        MetricTag::InputSequenceLength => Some(700),
+        MetricTag::InputTokenThroughput => Some(805),
+        MetricTag::InterTokenLatency => Some(400),
+        MetricTag::NetworkAdjustedRequestLatency => Some(301),
+        MetricTag::NetworkAdjustedTimeToFirstOutputToken => Some(211),
+        MetricTag::NetworkAdjustedTimeToFirstToken => Some(101),
+        MetricTag::NetworkRtt => Some(305),
+        MetricTag::OutputSequenceLength => Some(600),
+        MetricTag::OutputTokenThroughput => Some(800),
+        MetricTag::OutputTokenThroughputPerUser => Some(500),
+        MetricTag::OutputTokensPerJoule => Some(902),
+        MetricTag::OverallUsagePromptCacheReadPct => Some(2012),
+        MetricTag::RequestCount => Some(1100),
+        MetricTag::RequestErrorRate => Some(1080),
+        MetricTag::RequestLatency => Some(300),
+        MetricTag::RequestThroughput => Some(900),
+        MetricTag::Rtfx => Some(850),
+        MetricTag::SpecDecodeAcceptanceLength => Some(5000),
+        MetricTag::SpecDecodeTokenWeightedAcceptanceLength => Some(5010),
+        MetricTag::SpecDecodeDraftAcceptanceRate => Some(5020),
+        MetricTag::SpecDecodeOverallDraftAcceptanceRate => Some(5025),
+        MetricTag::SpecDecodeAcceptedPerVerified => Some(5030),
+        MetricTag::SpecDecodeSteps => Some(5040),
+        MetricTag::SpecDecodeAcceptedDraftTokens => Some(5050),
+        MetricTag::SpecDecodeDraftTokens => Some(5060),
+        MetricTag::TotalSpecDecodeSteps => Some(5140),
+        MetricTag::TotalAcceptedDraftTokens => Some(5150),
+        MetricTag::TotalDraftTokens => Some(5160),
+        MetricTag::TimeToFirstOutputToken => Some(210),
+        MetricTag::TimeToLastRoundTrip => Some(220),
+        MetricTag::AverageRoundTripTime => Some(230),
+        MetricTag::TimeToFirstToken => Some(100),
+        MetricTag::TimeToSecondToken => Some(200),
+        MetricTag::TotalGpuEnergy => Some(901),
+        MetricTag::TotalGpuPower => Some(900),
+        MetricTag::TotalUsageAcceptedPredictionTokens => Some(2130),
+        MetricTag::TotalUsageCompletionAudioTokens => Some(2120),
+        MetricTag::TotalUsageCompletionTokens => Some(2100),
+        MetricTag::TotalUsagePromptAudioSeconds => Some(2040),
+        MetricTag::TotalUsagePromptAudioTokens => Some(2020),
+        MetricTag::TotalUsagePromptCacheMissTokens => Some(2017),
+        MetricTag::TotalUsagePromptCacheReadTokens => Some(2010),
+        MetricTag::TotalUsagePromptCacheWriteTokens => Some(2015),
+        MetricTag::TotalUsagePromptTokens => Some(2000),
+        MetricTag::TotalUsageReasoningTokens => Some(2110),
+        MetricTag::TotalUsageRejectedPredictionTokens => Some(2140),
+        MetricTag::TotalUsageToolUsePromptTokens => Some(2030),
+        MetricTag::TotalUsageTotalTokens => Some(2200),
+        MetricTag::UsageAcceptedPredictionTokens => Some(1130),
+        MetricTag::UsageCompletionAudioTokens => Some(1120),
+        MetricTag::UsageCompletionTokens => Some(1100),
+        MetricTag::UsagePromptAudioSeconds => Some(1040),
+        MetricTag::UsagePromptAudioTokens => Some(1020),
+        MetricTag::UsagePromptCacheMissTokens => Some(1017),
+        MetricTag::UsagePromptCacheReadTokens => Some(1010),
+        MetricTag::UsagePromptCacheWriteTokens => Some(1015),
+        MetricTag::UsagePromptTokens => Some(1000),
+        MetricTag::UsageReasoningTokens => Some(1110),
+        MetricTag::UsageRejectedPredictionTokens => Some(1140),
+        MetricTag::UsageToolUsePromptTokens => Some(1030),
+        MetricTag::UsageTotalTokens => Some(1200),
+        MetricTag::VideoInferenceTime => Some(310),
+        MetricTag::VideoPeakMemory => Some(311),
         _ => None,
     }
 }
@@ -843,188 +528,186 @@ const fn cfg_display_order(tag: MetricTag) -> Option<u32> {
 /// Per-tag console grouping.
 const fn cfg_console_group(tag: MetricTag) -> MetricConsoleGroup {
     use MetricConsoleGroup::{Active, Effective, None as Hidden, SpecDecode, Usage};
-    use MetricTag::*;
     match tag {
-        UsagePromptTokens
-        | UsageCompletionTokens
-        | UsageTotalTokens
-        | UsageReasoningTokens
-        | UsagePromptAudioTokens
-        | UsageCompletionAudioTokens
-        | UsageAcceptedPredictionTokens
-        | UsageRejectedPredictionTokens
-        | UsagePromptCacheReadTokens
-        | UsagePromptCacheWriteTokens
-        | UsagePromptCacheMissTokens
-        | UsageToolUsePromptTokens
-        | UsagePromptAudioSeconds
-        | TotalUsagePromptTokens
-        | TotalUsageCompletionTokens
-        | TotalUsageTotalTokens
-        | TotalUsageReasoningTokens
-        | TotalUsagePromptAudioTokens
-        | TotalUsageCompletionAudioTokens
-        | TotalUsageAcceptedPredictionTokens
-        | TotalUsageRejectedPredictionTokens
-        | TotalUsagePromptCacheReadTokens
-        | TotalUsagePromptCacheWriteTokens
-        | TotalUsagePromptCacheMissTokens
-        | TotalUsageToolUsePromptTokens
-        | TotalUsagePromptAudioSeconds
-        | OverallUsagePromptCacheReadPct => Usage,
-        EffectiveLatency
-        | EffectiveConcurrency
-        | EffectiveDecodeThroughput
-        | EffectivePrefillThroughput
-        | EffectiveDecodeConcurrency
-        | EffectivePrefillConcurrency
-        | EffectiveTotalThroughput
-        | EffectiveDecodeThroughputPerUser
-        | EffectivePrefillThroughputPerUser
-        | TokensInFlight => Effective,
-        ActiveDecodeThroughput
-        | ActivePrefillThroughput
-        | ActiveDecodeThroughputPerUser
-        | ActivePrefillThroughputPerUser
-        | ActiveTotalThroughput => Active,
-        SpecDecodeAcceptanceLength
-        | SpecDecodeTokenWeightedAcceptanceLength
-        | SpecDecodeDraftAcceptanceRate
-        | SpecDecodeOverallDraftAcceptanceRate
-        | SpecDecodeAcceptedPerVerified
-        | SpecDecodeSteps => SpecDecode,
-        GoodRequestCount
-        | GoodRequestFraction
-        | MinRequestTimestamp
-        | MaxResponseTimestamp
-        | BenchmarkDuration
-        | InterChunkLatency
-        | CreditDropLatency
-        | OutputTokenCount
-        | ReasoningTokenCount
-        | ErrorInputSequenceLength
-        | TotalOutputSequenceLength
-        | TotalInputSequenceLength
-        | TotalErrorInputSequenceLength
-        | TotalOutputTokens
-        | TotalReasoningTokens
-        | SpecDecodeAcceptedDraftTokens
-        | SpecDecodeDraftTokens
-        | TotalSpecDecodeSteps
-        | TotalAcceptedDraftTokens
-        | TotalDraftTokens
-        | TotalTokenThroughput
-        | PrefillThroughputPerUser
-        | UsagePromptTokensDiffPct
-        | UsageCompletionTokensDiffPct
-        | UsageReasoningTokensDiffPct
-        | UsageDiscrepancyCount
-        | RequestedOutputSequenceLength
-        | OslMismatchDiffPct
-        | OslMismatchCount
-        | CreditToStartLatency
-        | AccuracyCorrect
-        | AccuracyUnparsed
-        | AudioDuration
-        | NumImages
-        | HttpReqBlocked
-        | HttpReqDnsLookup
-        | HttpReqConnecting
-        | HttpReqSending
-        | HttpReqWaiting
-        | HttpReqReceiving
-        | HttpReqDuration
-        | HttpReqConnectionReused
-        | HttpReqDataSent
-        | HttpReqDataReceived
-        | HttpReqChunksSent
-        | HttpReqChunksReceived
-        | HttpReqConnectionOverhead
-        | HttpReqTotal => Hidden,
+        MetricTag::UsagePromptTokens
+        | MetricTag::UsageCompletionTokens
+        | MetricTag::UsageTotalTokens
+        | MetricTag::UsageReasoningTokens
+        | MetricTag::UsagePromptAudioTokens
+        | MetricTag::UsageCompletionAudioTokens
+        | MetricTag::UsageAcceptedPredictionTokens
+        | MetricTag::UsageRejectedPredictionTokens
+        | MetricTag::UsagePromptCacheReadTokens
+        | MetricTag::UsagePromptCacheWriteTokens
+        | MetricTag::UsagePromptCacheMissTokens
+        | MetricTag::UsageToolUsePromptTokens
+        | MetricTag::UsagePromptAudioSeconds
+        | MetricTag::TotalUsagePromptTokens
+        | MetricTag::TotalUsageCompletionTokens
+        | MetricTag::TotalUsageTotalTokens
+        | MetricTag::TotalUsageReasoningTokens
+        | MetricTag::TotalUsagePromptAudioTokens
+        | MetricTag::TotalUsageCompletionAudioTokens
+        | MetricTag::TotalUsageAcceptedPredictionTokens
+        | MetricTag::TotalUsageRejectedPredictionTokens
+        | MetricTag::TotalUsagePromptCacheReadTokens
+        | MetricTag::TotalUsagePromptCacheWriteTokens
+        | MetricTag::TotalUsagePromptCacheMissTokens
+        | MetricTag::TotalUsageToolUsePromptTokens
+        | MetricTag::TotalUsagePromptAudioSeconds
+        | MetricTag::OverallUsagePromptCacheReadPct => Usage,
+        MetricTag::EffectiveLatency
+        | MetricTag::EffectiveConcurrency
+        | MetricTag::EffectiveDecodeThroughput
+        | MetricTag::EffectivePrefillThroughput
+        | MetricTag::EffectiveDecodeConcurrency
+        | MetricTag::EffectivePrefillConcurrency
+        | MetricTag::EffectiveTotalThroughput
+        | MetricTag::EffectiveDecodeThroughputPerUser
+        | MetricTag::EffectivePrefillThroughputPerUser
+        | MetricTag::TokensInFlight => Effective,
+        MetricTag::ActiveDecodeThroughput
+        | MetricTag::ActivePrefillThroughput
+        | MetricTag::ActiveDecodeThroughputPerUser
+        | MetricTag::ActivePrefillThroughputPerUser
+        | MetricTag::ActiveTotalThroughput => Active,
+        MetricTag::SpecDecodeAcceptanceLength
+        | MetricTag::SpecDecodeTokenWeightedAcceptanceLength
+        | MetricTag::SpecDecodeDraftAcceptanceRate
+        | MetricTag::SpecDecodeOverallDraftAcceptanceRate
+        | MetricTag::SpecDecodeAcceptedPerVerified
+        | MetricTag::SpecDecodeSteps => SpecDecode,
+        MetricTag::GoodRequestCount
+        | MetricTag::GoodRequestFraction
+        | MetricTag::MinRequestTimestamp
+        | MetricTag::MaxResponseTimestamp
+        | MetricTag::BenchmarkDuration
+        | MetricTag::InterChunkLatency
+        | MetricTag::CreditDropLatency
+        | MetricTag::OutputTokenCount
+        | MetricTag::ReasoningTokenCount
+        | MetricTag::ErrorInputSequenceLength
+        | MetricTag::TotalOutputSequenceLength
+        | MetricTag::TotalInputSequenceLength
+        | MetricTag::TotalErrorInputSequenceLength
+        | MetricTag::TotalOutputTokens
+        | MetricTag::TotalReasoningTokens
+        | MetricTag::SpecDecodeAcceptedDraftTokens
+        | MetricTag::SpecDecodeDraftTokens
+        | MetricTag::TotalSpecDecodeSteps
+        | MetricTag::TotalAcceptedDraftTokens
+        | MetricTag::TotalDraftTokens
+        | MetricTag::TotalTokenThroughput
+        | MetricTag::PrefillThroughputPerUser
+        | MetricTag::UsagePromptTokensDiffPct
+        | MetricTag::UsageCompletionTokensDiffPct
+        | MetricTag::UsageReasoningTokensDiffPct
+        | MetricTag::UsageDiscrepancyCount
+        | MetricTag::RequestedOutputSequenceLength
+        | MetricTag::OslMismatchDiffPct
+        | MetricTag::OslMismatchCount
+        | MetricTag::CreditToStartLatency
+        | MetricTag::AccuracyCorrect
+        | MetricTag::AccuracyUnparsed
+        | MetricTag::AudioDuration
+        | MetricTag::NumImages
+        | MetricTag::HttpReqBlocked
+        | MetricTag::HttpReqDnsLookup
+        | MetricTag::HttpReqConnecting
+        | MetricTag::HttpReqSending
+        | MetricTag::HttpReqWaiting
+        | MetricTag::HttpReqReceiving
+        | MetricTag::HttpReqDuration
+        | MetricTag::HttpReqConnectionReused
+        | MetricTag::HttpReqDataSent
+        | MetricTag::HttpReqDataReceived
+        | MetricTag::HttpReqChunksSent
+        | MetricTag::HttpReqChunksReceived
+        | MetricTag::HttpReqConnectionOverhead
+        | MetricTag::HttpReqTotal => Hidden,
         _ => MetricConsoleGroup::Default,
     }
 }
 
 /// Per-tag value type.
 const fn cfg_value_type(tag: MetricTag) -> MetricValueType {
-    use MetricTag::*;
     match tag {
-        InterChunkLatency => MetricValueType::IntList,
-        BenchmarkDuration
-        | CompletedRequestCount
-        | CreditDropLatency
-        | ErrorInputSequenceLength
-        | ErrorRequestCount
-        | MinRequestTimestamp
-        | MaxResponseTimestamp
-        | RequestCount
-        | RequestLatency
-        | TimeToFirstToken
-        | TimeToSecondToken
-        | TimeToFirstOutputToken
-        | TimeToLastRoundTrip
-        | OutputSequenceLength
-        | InputSequenceLength
-        | OutputTokenCount
-        | ReasoningTokenCount
-        | TotalOutputSequenceLength
-        | TotalInputSequenceLength
-        | TotalErrorInputSequenceLength
-        | TotalOutputTokens
-        | TotalReasoningTokens
-        | RequestedOutputSequenceLength
-        | OslMismatchCount
-        | UsageDiscrepancyCount
-        | UsagePromptTokens
-        | UsageCompletionTokens
-        | UsageTotalTokens
-        | UsageReasoningTokens
-        | UsagePromptAudioTokens
-        | UsageCompletionAudioTokens
-        | UsageAcceptedPredictionTokens
-        | UsageRejectedPredictionTokens
-        | UsagePromptCacheReadTokens
-        | UsagePromptCacheWriteTokens
-        | UsagePromptCacheMissTokens
-        | UsageToolUsePromptTokens
-        | TotalUsagePromptTokens
-        | TotalUsageCompletionTokens
-        | TotalUsageTotalTokens
-        | TotalUsageReasoningTokens
-        | TotalUsagePromptAudioTokens
-        | TotalUsageCompletionAudioTokens
-        | TotalUsageAcceptedPredictionTokens
-        | TotalUsageRejectedPredictionTokens
-        | TotalUsagePromptCacheReadTokens
-        | TotalUsagePromptCacheWriteTokens
-        | TotalUsagePromptCacheMissTokens
-        | TotalUsageToolUsePromptTokens
-        | SpecDecodeSteps
-        | SpecDecodeAcceptedDraftTokens
-        | SpecDecodeDraftTokens
-        | TotalSpecDecodeSteps
-        | TotalAcceptedDraftTokens
-        | TotalDraftTokens
-        | NetworkAdjustedRequestLatency
-        | NetworkAdjustedTimeToFirstToken
-        | NetworkAdjustedTimeToFirstOutputToken
-        | StreamSetupLatency
-        | StreamPrefillLatency
-        | NumImages
-        | HttpReqBlocked
-        | HttpReqDnsLookup
-        | HttpReqConnecting
-        | HttpReqSending
-        | HttpReqWaiting
-        | HttpReqReceiving
-        | HttpReqDuration
-        | HttpReqConnectionReused
-        | HttpReqDataSent
-        | HttpReqDataReceived
-        | HttpReqChunksSent
-        | HttpReqChunksReceived
-        | HttpReqConnectionOverhead
-        | HttpReqTotal => MetricValueType::Int,
+        MetricTag::InterChunkLatency => MetricValueType::IntList,
+        MetricTag::BenchmarkDuration
+        | MetricTag::CompletedRequestCount
+        | MetricTag::CreditDropLatency
+        | MetricTag::ErrorInputSequenceLength
+        | MetricTag::ErrorRequestCount
+        | MetricTag::MinRequestTimestamp
+        | MetricTag::MaxResponseTimestamp
+        | MetricTag::RequestCount
+        | MetricTag::RequestLatency
+        | MetricTag::TimeToFirstToken
+        | MetricTag::TimeToSecondToken
+        | MetricTag::TimeToFirstOutputToken
+        | MetricTag::TimeToLastRoundTrip
+        | MetricTag::OutputSequenceLength
+        | MetricTag::InputSequenceLength
+        | MetricTag::OutputTokenCount
+        | MetricTag::ReasoningTokenCount
+        | MetricTag::TotalOutputSequenceLength
+        | MetricTag::TotalInputSequenceLength
+        | MetricTag::TotalErrorInputSequenceLength
+        | MetricTag::TotalOutputTokens
+        | MetricTag::TotalReasoningTokens
+        | MetricTag::RequestedOutputSequenceLength
+        | MetricTag::OslMismatchCount
+        | MetricTag::UsageDiscrepancyCount
+        | MetricTag::UsagePromptTokens
+        | MetricTag::UsageCompletionTokens
+        | MetricTag::UsageTotalTokens
+        | MetricTag::UsageReasoningTokens
+        | MetricTag::UsagePromptAudioTokens
+        | MetricTag::UsageCompletionAudioTokens
+        | MetricTag::UsageAcceptedPredictionTokens
+        | MetricTag::UsageRejectedPredictionTokens
+        | MetricTag::UsagePromptCacheReadTokens
+        | MetricTag::UsagePromptCacheWriteTokens
+        | MetricTag::UsagePromptCacheMissTokens
+        | MetricTag::UsageToolUsePromptTokens
+        | MetricTag::TotalUsagePromptTokens
+        | MetricTag::TotalUsageCompletionTokens
+        | MetricTag::TotalUsageTotalTokens
+        | MetricTag::TotalUsageReasoningTokens
+        | MetricTag::TotalUsagePromptAudioTokens
+        | MetricTag::TotalUsageCompletionAudioTokens
+        | MetricTag::TotalUsageAcceptedPredictionTokens
+        | MetricTag::TotalUsageRejectedPredictionTokens
+        | MetricTag::TotalUsagePromptCacheReadTokens
+        | MetricTag::TotalUsagePromptCacheWriteTokens
+        | MetricTag::TotalUsagePromptCacheMissTokens
+        | MetricTag::TotalUsageToolUsePromptTokens
+        | MetricTag::SpecDecodeSteps
+        | MetricTag::SpecDecodeAcceptedDraftTokens
+        | MetricTag::SpecDecodeDraftTokens
+        | MetricTag::TotalSpecDecodeSteps
+        | MetricTag::TotalAcceptedDraftTokens
+        | MetricTag::TotalDraftTokens
+        | MetricTag::NetworkAdjustedRequestLatency
+        | MetricTag::NetworkAdjustedTimeToFirstToken
+        | MetricTag::NetworkAdjustedTimeToFirstOutputToken
+        | MetricTag::StreamSetupLatency
+        | MetricTag::StreamPrefillLatency
+        | MetricTag::NumImages
+        | MetricTag::HttpReqBlocked
+        | MetricTag::HttpReqDnsLookup
+        | MetricTag::HttpReqConnecting
+        | MetricTag::HttpReqSending
+        | MetricTag::HttpReqWaiting
+        | MetricTag::HttpReqReceiving
+        | MetricTag::HttpReqDuration
+        | MetricTag::HttpReqConnectionReused
+        | MetricTag::HttpReqDataSent
+        | MetricTag::HttpReqDataReceived
+        | MetricTag::HttpReqChunksSent
+        | MetricTag::HttpReqChunksReceived
+        | MetricTag::HttpReqConnectionOverhead
+        | MetricTag::HttpReqTotal => MetricValueType::Int,
         _ => MetricValueType::Float,
     }
 }
@@ -1034,7 +717,7 @@ macro_rules! spec {
         MetricSpec {
             tag: MetricTag::$tag,
             def: Definition {
-                id: MetricTag::$tag.as_str(),
+                id: crate::metrics_core::tag_id::builtin_name(MetricTag::$tag),
                 header: $header,
                 short_header: cfg_short_header(MetricTag::$tag),
                 short_header_hide_unit: cfg_short_header_hide_unit(MetricTag::$tag),
@@ -2563,19 +2246,19 @@ mod tests {
     #[test]
     fn catalog_is_discriminant_ordered() {
         for (i, s) in CATALOG.iter().enumerate() {
-            assert_eq!(s.tag as usize, i, "row {i} is {:?}", s.tag);
+            assert_eq!(s.tag.index(), i, "row {i} is {:?}", s.tag);
         }
     }
 
     #[test]
     fn websocket_lag_tags_append_after_existing_dense_identities() {
         assert_eq!(
-            MetricTag::TimeToLastRoundTrip as usize,
-            MetricTag::ActiveTotalThroughput as usize + 1
+            MetricTag::TimeToLastRoundTrip.index(),
+            MetricTag::ActiveTotalThroughput.index() + 1
         );
         assert_eq!(
-            MetricTag::AverageRoundTripTime as usize,
-            MetricTag::ActiveTotalThroughput as usize + 2
+            MetricTag::AverageRoundTripTime.index(),
+            MetricTag::ActiveTotalThroughput.index() + 2
         );
     }
 

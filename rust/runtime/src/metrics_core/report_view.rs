@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use crate::export::otel::OtelRecordAccumulator;
 use crate::metrics_core::AccuracyAnalysis;
-use crate::metrics_core::catalog::MetricTag;
+use crate::metrics_core::MetricTagId;
 use crate::metrics_core::report::{MetricEntry, ReportError, ReportSteadyState, ReportSummary};
 
 /// Read-only accessors an exporter needs from a finalized report.
@@ -20,7 +20,7 @@ pub trait ReportView {
     fn run_summary(&self) -> &ReportSummary;
 
     /// One profiling metric entry, absent when the run produced none.
-    fn metric(&self, tag: MetricTag) -> Option<&MetricEntry>;
+    fn metric(&self, tag: MetricTagId) -> Option<&MetricEntry>;
 
     /// Names of every profiling metric present, in stable report order.
     fn metric_names(&self) -> Vec<Arc<str>>;

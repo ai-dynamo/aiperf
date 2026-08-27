@@ -9,7 +9,7 @@
 
 use crate::dispatch::sink::ObservedSpecDecodeAcceptance;
 use crate::dispatch::sink::{TransportFallbackReason, TransportRoute};
-use crate::metrics_core::catalog::MetricTag;
+use crate::metrics_core::MetricTagId;
 use crate::metrics_core::value::MetricValue;
 use crate::metrics_core::window::Phase;
 use serde::{Deserialize, Serialize};
@@ -214,7 +214,7 @@ pub struct RecordIngest {
     /// Video peak memory in megabytes.
     pub video_peak_memory_mb: Option<f64>,
     /// Explicit metric values injected by endpoint, telemetry, or tests.
-    pub metric_overrides: Vec<(MetricTag, MetricValue)>,
+    pub metric_overrides: Vec<(MetricTagId, MetricValue)>,
     /// Canonical per-request speculative-decoding acceptance facts.
     #[serde(default)]
     pub spec_decode_acceptance: Option<ObservedSpecDecodeAcceptance>,
