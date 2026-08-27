@@ -1,8 +1,8 @@
 {
-  "types": 195,
-  "files": 53,
-  "type_lines": 3324,
-  "file_lines": 46106,
+  "types": 175,
+  "files": 54,
+  "type_lines": 3091,
+  "file_lines": 46264,
   "entries": [
     {
       "name": "AIPerfExtension",
@@ -27,12 +27,6 @@
       "file": "runtime/src/export/accuracy_csv.rs",
       "start": 27,
       "end": 30
-    },
-    {
-      "name": "AccuracyRecord",
-      "file": "runtime/src/metrics_core/accuracy.rs",
-      "start": 118,
-      "end": 131
     },
     {
       "name": "AccuracyRollup",
@@ -93,12 +87,6 @@
       "file": "runtime/src/export/console_txt.rs",
       "start": 51,
       "end": 68
-    },
-    {
-      "name": "CorrelationId",
-      "file": "runtime/src/metrics_core/accuracy.rs",
-      "start": 24,
-      "end": 24
     },
     {
       "name": "CreditIdentity",
@@ -227,18 +215,6 @@
       "end": 23
     },
     {
-      "name": "EvaluatorDatasetReportInfo",
-      "file": "runtime/src/metrics_core/report.rs",
-      "start": 882,
-      "end": 903
-    },
-    {
-      "name": "EvaluatorReportInfo",
-      "file": "runtime/src/metrics_core/report.rs",
-      "start": 907,
-      "end": 935
-    },
-    {
       "name": "ExecutionBackendConfig",
       "file": "runtime/src/engine/turn_execution.rs",
       "start": 117,
@@ -299,12 +275,6 @@
       "end": 144
     },
     {
-      "name": "FiniteReportValue",
-      "file": "runtime/src/metrics_core/report.rs",
-      "start": 187,
-      "end": 187
-    },
-    {
       "name": "GenaiPerfEnvelope",
       "file": "runtime/src/export/genai_perf.rs",
       "start": 83,
@@ -315,12 +285,6 @@
       "file": "runtime/src/export/genai_perf.rs",
       "start": 45,
       "end": 62
-    },
-    {
-      "name": "GradingResult",
-      "file": "runtime/src/metrics_core/accuracy.rs",
-      "start": 80,
-      "end": 97
     },
     {
       "name": "Handle",
@@ -385,14 +349,14 @@
     {
       "name": "MetricEntry",
       "file": "runtime/src/metrics_core/report.rs",
-      "start": 155,
-      "end": 167
+      "start": 156,
+      "end": 168
     },
     {
       "name": "MetricSeries",
       "file": "runtime/src/metrics_core/report.rs",
-      "start": 140,
-      "end": 151
+      "start": 141,
+      "end": 152
     },
     {
       "name": "MetricTag",
@@ -447,12 +411,6 @@
       "file": "runtime/src/scheduled.rs",
       "start": 101,
       "end": 120
-    },
-    {
-      "name": "NativeReport",
-      "file": "runtime/src/metrics_core/report.rs",
-      "start": 1082,
-      "end": 1131
     },
     {
       "name": "ObservedEndpointMetrics",
@@ -671,166 +629,88 @@
       "end": 314
     },
     {
-      "name": "ReportClockKind",
-      "file": "runtime/src/metrics_core/report.rs",
-      "start": 462,
-      "end": 467
-    },
-    {
       "name": "ReportCounterStats",
       "file": "runtime/src/metrics_core/report.rs",
-      "start": 81,
-      "end": 87
+      "start": 82,
+      "end": 88
     },
     {
       "name": "ReportDistributionStats",
       "file": "runtime/src/metrics_core/report.rs",
-      "start": 52,
-      "end": 70
-    },
-    {
-      "name": "ReportDynamoCapacityInfo",
-      "file": "runtime/src/metrics_core/report.rs",
-      "start": 534,
-      "end": 545
-    },
-    {
-      "name": "ReportDynamoParityInfo",
-      "file": "runtime/src/metrics_core/report.rs",
-      "start": 493,
-      "end": 502
-    },
-    {
-      "name": "ReportDynamoRouter",
-      "file": "runtime/src/metrics_core/report.rs",
-      "start": 484,
-      "end": 489
-    },
-    {
-      "name": "ReportDynamoRunInfo",
-      "file": "runtime/src/metrics_core/report.rs",
-      "start": 579,
-      "end": 599
-    },
-    {
-      "name": "ReportDynamoTopology",
-      "file": "runtime/src/metrics_core/report.rs",
-      "start": 472,
-      "end": 479
-    },
-    {
-      "name": "ReportEndpointProfileIdentity",
-      "file": "runtime/src/metrics_core/report.rs",
-      "start": 265,
-      "end": 270
+      "start": 53,
+      "end": 71
     },
     {
       "name": "ReportError",
       "file": "runtime/src/metrics_core/report.rs",
-      "start": 868,
-      "end": 878
-    },
-    {
-      "name": "ReportExtensionIdentity",
-      "file": "runtime/src/metrics_core/report.rs",
-      "start": 240,
-      "end": 246
-    },
-    {
-      "name": "ReportGraphOutcomeInfo",
-      "file": "runtime/src/metrics_core/report.rs",
-      "start": 426,
-      "end": 433
-    },
-    {
-      "name": "ReportGraphRunInfo",
-      "file": "runtime/src/metrics_core/report.rs",
-      "start": 356,
-      "end": 370
+      "start": 869,
+      "end": 879
     },
     {
       "name": "ReportHistogramStats",
       "file": "runtime/src/metrics_core/report.rs",
-      "start": 91,
-      "end": 109
-    },
-    {
-      "name": "ReportPairRunFacts",
-      "file": "runtime/src/metrics_core/report.rs",
-      "start": 657,
-      "end": 664
-    },
-    {
-      "name": "ReportRun",
-      "file": "runtime/src/metrics_core/report.rs",
-      "start": 688,
-      "end": 698
-    },
-    {
-      "name": "ReportRunInfo",
-      "file": "runtime/src/metrics_core/report.rs",
-      "start": 171,
-      "end": 178
-    },
-    {
-      "name": "ReportRunMetadata",
-      "file": "runtime/src/metrics_core/report.rs",
-      "start": 295,
-      "end": 306
+      "start": 92,
+      "end": 110
     },
     {
       "name": "ReportScalarStats",
       "file": "runtime/src/metrics_core/report.rs",
-      "start": 74,
-      "end": 77
+      "start": 75,
+      "end": 78
     },
     {
       "name": "ReportServerMetricsEndpointInfo",
       "file": "runtime/src/metrics_core/report.rs",
-      "start": 821,
-      "end": 843
+      "start": 822,
+      "end": 844
     },
     {
       "name": "ReportServerMetricsMetadata",
       "file": "runtime/src/metrics_core/report.rs",
-      "start": 847,
-      "end": 864
+      "start": 848,
+      "end": 865
     },
     {
       "name": "ReportServerMetricsPhaseRange",
       "file": "runtime/src/metrics_core/report.rs",
-      "start": 812,
-      "end": 817
+      "start": 813,
+      "end": 818
     },
     {
       "name": "ReportStats",
       "file": "runtime/src/metrics_core/report.rs",
-      "start": 114,
-      "end": 123
+      "start": 115,
+      "end": 124
     },
     {
       "name": "ReportSteadyState",
       "file": "runtime/src/metrics_core/report.rs",
-      "start": 943,
-      "end": 963
+      "start": 944,
+      "end": 964
     },
     {
       "name": "ReportSummary",
       "file": "runtime/src/metrics_core/report.rs",
-      "start": 787,
-      "end": 808
+      "start": 788,
+      "end": 809
     },
     {
       "name": "ReportTimeslice",
       "file": "runtime/src/metrics_core/report.rs",
-      "start": 127,
-      "end": 136
+      "start": 128,
+      "end": 137
     },
     {
       "name": "ReportValue",
       "file": "runtime/src/metrics_core/report.rs",
-      "start": 31,
-      "end": 36
+      "start": 32,
+      "end": 37
+    },
+    {
+      "name": "ReportView",
+      "file": "runtime/src/metrics_core/report_view.rs",
+      "start": 15,
+      "end": 54
     },
     {
       "name": "Request",
@@ -967,8 +847,8 @@
     {
       "name": "ServerMetricsExportConfig",
       "file": "runtime/src/export/server_metrics/mod.rs",
-      "start": 42,
-      "end": 60
+      "start": 43,
+      "end": 61
     },
     {
       "name": "ServerProfilerConfig",
@@ -1039,8 +919,8 @@
     {
       "name": "TimesliceExportConfig",
       "file": "runtime/src/export/timeslice.rs",
-      "start": 34,
-      "end": 53
+      "start": 35,
+      "end": 54
     },
     {
       "name": "TokenCounts",
