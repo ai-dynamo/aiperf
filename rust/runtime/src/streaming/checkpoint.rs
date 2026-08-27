@@ -912,6 +912,9 @@ impl LegacyV3CheckpointCutWire {
             terminal: self.terminal,
             event_watermark: self.event_watermark,
             causal_frontier: self.causal_frontier,
+            // Legacy-v3 generations carry no acknowledgement authority, so the
+            // canonical empty roots are the only representable handled cut.
+            handled_issues: HandledIssueCut::empty(),
         }
     }
 }
@@ -2091,6 +2094,30 @@ mod tests {
         }
     }
 
+    /// Unpinned v4 generation-digest golden.
+    ///
+    /// This value is a deliberate placeholder, not a derived digest. The v4
+    /// digest changes for two reasons that land together: the hash domain moved
+    /// from `aiperf.streaming.committed-checkpoint-generation.v3` to `.v4`, and
+    /// `CheckpointCut` gained `handled_issues`, which the digest absorbs through
+    /// the single opaque `serde_json::to_vec(cut)` field. Neither is derivable on
+    /// paper, so the golden is cut exactly once, after both are in the tree.
+    ///
+    /// Re-pin procedure:
+    /// 1. `cargo test -p aiperf-runtime --features streaming --lib
+    ///    checkpoint::tests::v4_run_bound_generation_digest_is_stable --
+    ///    --exact --nocapture`
+    /// 2. Transcribe the LEFT side of the `assert_eq!` failure verbatim into this
+    ///    array and rename the constant to `V4_RUN_BOUND_GENERATION_DIGEST`.
+    /// 3. Re-run the same command; it must be green, and the full
+    ///    `--lib checkpoint` filter must be 14/14.
+    ///
+    /// Sanity gate: the transcribed value MUST differ from the retired v3 pin
+    /// `519bf192518f43e9d4accd6bd8ed38e885a1dce06d8d35579bf5f99b794d10f1`. If it
+    /// does not, neither the domain rename nor the handled cut reached the digest
+    /// and the integration is wrong.
+    const PLACEHOLDER_REPIN_AFTER_BUILD: [u8; 32] = [0x00; 32];
+
     #[test]
     fn v4_run_bound_generation_digest_is_stable() {
         let (_, _, candidate) = candidate(
@@ -2104,12 +2131,120 @@ mod tests {
 
         assert_eq!(
             candidate.generation().digest(),
-            &ContentDigest::from_bytes([
-                0x74, 0x81, 0x44, 0x6c, 0x4a, 0x43, 0x37, 0x3d, 0x89, 0x42, 0x2d, 0x5a, 0x6a, 0x3d,
-                0x1b, 0xda, 0x4f, 0x84, 0x13, 0xf3, 0x52, 0xd5, 0x76, 0xd1, 0xdb, 0x96, 0xd2, 0x56,
-                0xfd, 0x8e, 0xaf, 0x52,
-            ])
+            &ContentDigest::from_bytes(PLACEHOLDER_REPIN_AFTER_BUILD)
         );
+    }
+
+    /// Cross-plane binding proof for the handled cut (finding-02 item 6).
+    ///
+    /// The checkpoint plane must carry the reliability plane's handled-issue
+    /// authority verbatim. This fails closed if candidate construction ever
+    /// synthesizes, folds, or re-derives a handled cut of its own.
+    #[tokio::test(flavor = "current_thread")]
+    async fn candidate_handled_cut_equals_the_reporter_receipt_partition_view() {
+        use crate::streaming::{
+            failure::{DecodeFailureCode, OrdinaryStreamingFailure, StreamFormatError},
+            identity::{ImmutableObjectIdentity, StableRecordId},
+            reliability::{
+                BudgetOwnedStreamingIssueReporter, IssueSequenceUpdate, OrdinaryStreamingIssue,
+                PreparedStreamingIssuePolicy, StreamingInputDomainIdentity, StreamingIssueClass,
+                StreamingIssueComponentId, StreamingIssueDisposition, StreamingIssueReporter,
+                StreamingIssueScopeKind, StreamingIssueThresholdRule,
+                submission_queue_charge_bytes,
+            },
+        };
+        use std::num::NonZeroU64;
+
+        let run = run_id(1);
+        let input_domain = StreamingInputDomainIdentity::new(
+            ContentDigest::from_bytes([0x21; 32]),
+            ImmutableObjectIdentity::from_bytes([0x20; 32]),
+        );
+        let policy = PreparedStreamingIssuePolicy::new(vec![
+            StreamingIssueThresholdRule::new(
+                StreamingIssueComponentId::new("record_default").expect("valid rule identity"),
+                StreamingIssueScopeKind::Record,
+                StreamingIssueClass::Permanent,
+                None,
+                0,
+                StreamingIssueDisposition::Quarantine,
+                NonZeroU64::new(3),
+            )
+            .expect("valid wildcard record rule"),
+        ])
+        .expect("valid record policy");
+        let reporter_budget = StreamingResourceBudget::new(BudgetLimits {
+            max_items: 65,
+            max_bytes: submission_queue_charge_bytes() + 64 * 1024,
+        })
+        .expect("valid reporter budget");
+        let mut reporter = BudgetOwnedStreamingIssueReporter::new(run, policy, reporter_budget)
+            .expect("budget-owned reporter");
+
+        reporter
+            .report(IssueSequenceUpdate::Issue(
+                OrdinaryStreamingIssue::record(
+                    run,
+                    input_domain.clone(),
+                    StableRecordId::from_bytes([0x22; 32]),
+                    StreamingIssueClass::Permanent,
+                    ContentDigest::from_bytes([0x33; 32]),
+                    SourcePosition::new(7),
+                    0,
+                    ContentDigest::from_bytes([0x44; 32]),
+                    OrdinaryStreamingFailure::Format(StreamFormatError::decode(
+                        DecodeFailureCode::Syntax,
+                    )),
+                )
+                .expect("valid record issue"),
+            ))
+            .await
+            .expect("retain one detailed receipt");
+        reporter
+            .report(IssueSequenceUpdate::NoMoreBefore {
+                input_domain,
+                through: SourcePosition::new(7),
+            })
+            .await
+            .expect("advance the input frontier");
+
+        let barrier = CheckpointBarrier {
+            run,
+            epoch: CheckpointEpoch::new(7),
+            cut: cut_at(7),
+            plan_digest: ContentDigest::from_bytes([0x11; 32]),
+        };
+        let view = reporter
+            .receipt_partition_view(&barrier)
+            .await
+            .expect("prepared receipt partition view");
+
+        // A retained receipt and an advanced frontier both move the cut off the
+        // canonical empty roots, so the equality below is a live binding rather
+        // than a comparison of two default values.
+        assert_ne!(*view.handled_cut(), HandledIssueCut::empty());
+
+        let mut cut = cut_at(7);
+        cut.handled_issues = view.handled_cut().clone();
+        let descriptor = descriptor("session", cut.clone());
+        let plan = CheckpointParticipantPlan::new([descriptor.participant_id.clone()])
+            .expect("valid participant plan");
+        let candidate = CheckpointGenerationCandidate::new(
+            run,
+            CheckpointEpoch::new(7),
+            None,
+            cut,
+            &plan,
+            ContentDigest::from_bytes([0x11; 32]),
+            ContentDigest::from_bytes([0x12; 32]),
+            vec![descriptor],
+            ContentDigest::from_bytes([0x55; 32]),
+            false,
+            None,
+        )
+        .expect("valid candidate");
+
+        assert_eq!(&candidate.cut().handled_issues, view.handled_cut());
     }
 
     #[test]
