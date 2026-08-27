@@ -128,6 +128,7 @@ pub struct ReleaseAction {
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum CellPlacementEvent {
+    ContentSynthesisProfileBound(ContentSynthesisProfileBoundReceipt),
     Prepared(PlacementPreparedReceipt),
     Released(PlacementReleasedReceipt),
     Action(ActionExecutionEvent),
@@ -136,8 +137,14 @@ pub enum CellPlacementEvent {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ControllerStreamingPurpose {
+    BindContentSynthesisProfile,
     PrepareAction,
     ReleaseAction,
+}
+
+pub struct ContentSynthesisProfileBoundReceipt {
+    pub authored_profile_digest: [u8; 32],
+    pub bound_profile_digest: [u8; 32],
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -155,6 +162,10 @@ pub(crate) struct ControllerAuthenticatedFrame {
 pub(crate) struct BudgetOwnedFrame { bytes: Bytes, lease: BudgetLease }
 pub(crate) struct AuthenticatedStreamingPayload { bytes: Bytes, lease: BudgetLease }
 pub(crate) struct BudgetOwnedPrepareAction { action: PrepareAction, lease: BudgetLease }
+pub(crate) struct BudgetOwnedSynthesisProfileBinding {
+    binding: BindContentSynthesisProfileV1,
+    lease: BudgetLease,
+}
 pub(crate) struct FrameBudgetReservation { lease: BudgetLease, max_frame_bytes: usize }
 
 ```
@@ -186,6 +197,12 @@ impl CellSecurityContext {
         payload: AuthenticatedStreamingPayload,
         limits: StreamingCellularLimits,
     ) -> Result<BudgetOwnedPrepareAction, AdmissionRejection>;
+
+    pub(crate) fn decode_content_synthesis_profile_binding(
+        &self,
+        payload: AuthenticatedStreamingPayload,
+        limits: StreamingCellularLimits,
+    ) -> Result<BudgetOwnedSynthesisProfileBinding, AdmissionRejection>;
 }
 ```
 
@@ -292,6 +309,10 @@ synthesis-profile digest. Binding mismatch fails as
 `PlacementFailureCode::DigestMismatch` before content allocation, prepare,
 release, or endpoint issue. The cell does not infer or re-resolve profile state
 from ambient environment.
+The bind purpose has its own fixed outbound sequence and inbound replay-window
+slot. Its bounded visitor checks the complete fixed-size payload before
+allocation, and the worker-signed bound acknowledgement is authenticated and
+ordered before the first prepare event for that route.
 
 - [ ] **Step 5: Verify GREEN and commit**
 
@@ -326,10 +347,11 @@ pub(crate) struct PreparedCellularPlacementBinding {
     pub bound_synthesis_profile_digest: Option<[u8; 32]>,
 }
 
-pub(crate) fn prepare_cellular_placement_binding(
+pub(crate) async fn prepare_cellular_placement_binding(
     routes: Box<[PreparedCellRoute]>,
     budget: StreamingResourceBudget,
     limits: CellularTransferLimits,
+    synthesis_profile: Option<BindContentSynthesisProfileV1>,
 ) -> Result<PreparedCellularPlacementBinding, CellularStreamingError>;
 
 impl StreamingPlacementSubmitter for CellularPlacementSubmitter {
@@ -481,6 +503,11 @@ for mismatch-before-prepare with zero issued requests, restart preservation, and
 migration preservation. The controller-owned canonical request remains budgeted
 by ordinary content leases; no cell-local unbounded reconstruction cache is
 introduced in generation 1.
+The async binding constructor owns this handshake and returns no submitter until
+every selected route acknowledges the exact authored/bound digest. A missing,
+duplicate, replayed, out-of-order, or mismatched acknowledgement fails and
+cancels the partial binding; there is no synchronous constructor that can skip
+the bind phase.
 
 - [ ] **Step 1: Add the SimClock no-early-issue RED test**
 

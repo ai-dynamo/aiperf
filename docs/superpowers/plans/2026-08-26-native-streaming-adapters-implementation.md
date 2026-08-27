@@ -306,6 +306,9 @@ git commit -m "feat(dataset): stream Baseten parquet traces"
 
 **Files:**
 - Modify: `rust/runtime/src/graph/recorded/content.rs`
+- Modify: `rust/runtime/src/graph/recorded/mod.rs`
+- Modify: `rust/runtime/src/graph/recorded/trie/mod.rs`
+- Modify: `rust/runtime/src/graph/recorded/trie/messages.rs`
 - Modify: `rust/runtime/src/dataset/tokenizer.rs`
 - Modify: `rust/runtime/src/engine/protocol.rs`
 - Modify: `rust/runtime/src/engine/online_execution.rs`
@@ -319,6 +322,9 @@ The profile binds tokenizer artifact/revision/vocabulary/decode/chat-template
 semantics, corpus ID and implementation version, content root seed, sampling
 algorithm, empty-hash scope, and tail/seed rule version. Diagnostic tokenizer
 names are never semantic identity.
+The tokenizer receipt also exposes an explicit checked conservative
+decoded-byte bound for a requested token count; preparation refuses a tokenizer
+whose immutable semantics cannot provide one.
 
 - [ ] **Step 1: Write the RED profile/purity tests**
 
@@ -340,6 +346,10 @@ map. Preserve finite byte behavior and default `coding` corpus. Resolve
 read ambient environment. Preserve authored tokenizer revision through
 acquisition and derive a semantic receipt from immutable resolved inputs. Keep
 memoization outside the pure seam.
+Extract a narrow crate-visible closed-tree message-role planning seam from the
+finite future-descendant pass. Both finite Dynamo and P1C must call the same
+function; neither `content` nor private `trie::messages` implementation details
+become public API.
 
 - [ ] **Step 4: Verify GREEN and commit**
 
@@ -374,9 +384,11 @@ files with `feat(runtime): freeze recorded content synthesis`.
 async fn parent_in_later_object_does_not_create_an_early_root() {
     let mut format = dynamo_fixture([child_record("child", "parent"), parent_record("parent")]);
     let child = format.decode_next_object().await.unwrap();
-    assert!(child.released_actions().is_empty());
+    assert_eq!(child.deferred_requests().len(), 1);
+    assert_eq!(child.deferred_requests()[0].parent_id(), Some("parent"));
     let parent = format.decode_next_object().await.unwrap();
-    assert_eq!(parent.newly_ready_action_ids(), ["parent", "child"]);
+    assert_eq!(parent.deferred_requests().len(), 1);
+    assert!(parent.deferred_requests()[0].parent_id().is_none());
 }
 
 #[test]
@@ -408,9 +420,11 @@ Run the same cache-free synthesis/profile seam in finite parity fixtures. Cover
 repeated/shared hashes; zero, tiny, full, and full-plus-partial inputs; missing
 replay; nonzero input with empty hashes; resume before and after binding; record
 identity stability across unbound-to-bound authority; and a trailing-descendant
-lookahead case. Streaming either waits for the closure proof needed by the
-finite future-aware message-role pass or fails the unsupported shape explicitly;
-it must not release content whose roles can be retroactively changed.
+lookahead input facts. A5 never releases an action: P1C waits for a typed
+whole-producer-tree closure receipt before invoking the shared future-aware
+message-role pass. Indefinite shapes without a configured closure proof are
+refused by P1C using the stable unbounded-causality session failure; A5 only
+retains the typed parent/descendant facts needed to decide later.
 
 - [ ] **Step 4: Verify green**
 

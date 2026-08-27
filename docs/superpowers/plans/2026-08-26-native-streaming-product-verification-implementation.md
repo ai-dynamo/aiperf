@@ -229,8 +229,7 @@ Build the feature-matched binary, then run the Step-3 command and record the int
 
 The strict Dynamo row includes checkpoint-before-profile-bind and checkpoint-
 after-bind cases; finite/streaming parity for token IDs, roles, decoded text,
-and prefix relationships; block-size/profile mismatch refusal; and a cellular
-bind mismatch that proves zero prepare/release/endpoint issues. It uses valid
+and prefix relationships; and local block-size/profile mismatch refusal. It uses valid
 `request.replay` metadata and does not exercise finite-only virtual fallback
 hashes.
 
@@ -263,6 +262,11 @@ Run: `CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo build -p aiperf-cl
 - [ ] **Step 1: Write and observe the RED endpoint/cellular matrix**
 
 Create one parameterized `StreamingServerCase` matrix for HTTP, gRPC, local/S3-compatible source, prepare/release skew, controller/cell restart, and checkpoint-result convergence. Each case launches the exact `AIPERF_E2E_BIN`, the in-repo mock server or bounded fake S3 service, and asserts stable logical membership plus final report order. Run Step 3 before implementing the support module and record the intended unresolved-helper failure.
+
+The cellular matrix includes a bound synthesis-profile mismatch and proves zero
+prepare acknowledgements, releases, and endpoint issues. This product evidence
+lives here, not in V4A's socket-free dry-run fixture; focused C1/C3 unit tests
+still pin the same no-early-issue invariant.
 
 - [ ] **Step 2: Implement fixed-lifetime test owners**
 
@@ -313,9 +317,16 @@ fn baseten_hf_and_follow_resources_are_bounded() {
 fn dynamo_reconstruction_cache_and_transient_content_are_bounded() {
     let report = support::run_dynamo_unique_hash_soak(support::SoakConfig::from_env()).unwrap();
     assert!(report.cache_high_water_bytes <= report.authored_cache_bytes);
+    assert!(report.deferred_descriptor_high_water_bytes <= report.authored_descriptor_bytes);
+    assert!(report.token_vector_high_water_bytes <= report.authored_token_bytes);
+    assert!(report.decoded_text_high_water_bytes <= report.authored_decoded_text_bytes);
     assert!(report.action_content_high_water_bytes <= report.authored_action_content_bytes);
     assert!(report.rss_slope_bytes_per_input_gib <= 1 * MIB);
     assert!(report.resume_output_is_byte_identical);
+    assert_eq!(report.finite_output_digest, report.cache_disabled_output_digest);
+    assert_eq!(report.finite_output_digest, report.forced_eviction_output_digest);
+    assert_eq!(report.finite_output_digest, report.resumed_output_digest);
+    assert!(report.zero_capacity_disabled_cache_construction);
 }
 ```
 

@@ -198,7 +198,7 @@ impl CheckpointGeneration {
     pub const fn digest(&self) -> &ContentDigest { &self.digest }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct CheckpointGenerationCandidate { /* private canonical fields */ }
 
@@ -280,7 +280,9 @@ but it exposes no participant/result state and cannot mint a commit receipt.
 and both semantic plan digests. `CommittedCheckpointGeneration` is an opaque,
 serialize-only authoritative wrapper with no public constructor or
 `Deserialize`; Task 5B promotes a candidate only with an opaque move-only proof
-created after successful CAS or a leased current-root read. Only that wrapper
+created after successful CAS or a leased current-root read. Candidate
+deserialization is a custom private-wire-DTO implementation that performs
+self-verification; unchecked derived `Deserialize` is forbidden. Only that wrapper
 can construct `CommittedParticipantReceipt`.
 
 All invariant-bearing state fields are private and checked-construction-only.
@@ -312,16 +314,11 @@ fn horizon_domains_cannot_be_substituted_and_round_trip() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn participant_view_is_non_destructive_until_commit_receipt() {
+async fn participant_view_is_non_destructive_before_backend_commit() {
     let mut participant = support::CountingParticipant::new("session", 4);
     participant.initialize(None).await.unwrap();
-    let prepared = participant.checkpoint_view(&support::barrier_at(4)).await.unwrap();
+    let _prepared = participant.checkpoint_view(&support::barrier_at(4)).await.unwrap();
     assert_eq!(participant.released_items(), 0);
-    participant
-        .checkpoint_committed(&support::receipt_for(&prepared))
-        .await
-        .unwrap();
-    assert_eq!(participant.released_items(), 4);
 }
 ```
 
@@ -355,7 +352,10 @@ Add checked constructors for every horizon; do not implement cross-domain `From`
 
 - [ ] **Step 4: Verify GREEN**
 
-Run the Step-2 command. Expected: all typed-domain, duplicate-ID, one-shot initialization, non-destructive-view, and idempotent-receipt tests pass.
+Run the Step-2 command. Expected: all typed-domain, duplicate-ID, one-shot
+initialization, compact byte ownership, candidate verification, plan binding,
+and non-destructive-view tests pass. Post-CAS receipt/idempotent-notification
+tests belong to Tasks 5B/5E after a backend returns authoritative commitment.
 
 - [ ] **Step 5: Commit**
 
@@ -384,10 +384,12 @@ pub trait StreamingCheckpointBackend {
     async fn open_latest(
         &self,
         run: &StreamRunIdentity,
+        expected: &CheckpointGenerationExpectations,
     ) -> Result<Option<Box<dyn LeasedGenerationReader>>, CheckpointError>;
     async fn begin_generation(
         &self,
         expected: Option<CheckpointGeneration>,
+        expectations: CheckpointGenerationExpectations,
     ) -> Result<Box<dyn StreamingGenerationTransaction>, CheckpointError>;
 }
 
@@ -510,12 +512,27 @@ pub struct CheckpointCommitMetadata {
     pub previous: Option<CheckpointGeneration>,
     pub epoch: CheckpointEpoch,
     pub cut: CheckpointCut,
-    pub plan_digest: ContentDigest,
+    pub execution_plan_digest: ContentDigest,
     pub result_plan_digest: ContentDigest,
     pub is_final: bool,
     pub terminal_reason: Option<CheckpointTerminalReason>,
 }
+
+pub struct CheckpointGenerationExpectations {
+    pub participant_plan: CheckpointParticipantPlan,
+    pub execution_plan_digest: ContentDigest,
+    pub result_plan_digest: ContentDigest,
+}
 ```
+
+`begin_generation` freezes these expectations into the transaction before any
+staging. `commit` requires metadata's explicitly named semantic digests to
+match, builds the canonical candidate, performs the backend's conditional
+publication, and only then creates the opaque exact-generation proof used for
+promotion. `open_latest` acquires the current-root lease, decodes a candidate,
+calls `verify_against` with the supplied expectations, and only then exposes an
+authoritative reader. No participant or result bytes are readable before this
+promotion boundary.
 
 - [ ] **Step 1: Write representative RED tests**
 
@@ -524,8 +541,8 @@ pub struct CheckpointCommitMetadata {
 async fn stale_writer_cannot_merge_or_replace_head() {
     let backend = MemoryCheckpointBackend::new(support::backend_limits());
     let first = support::commit_empty(&backend, None, 1).await.unwrap();
-    let stale = backend.begin_generation(None).await.unwrap();
-    let current = backend.begin_generation(Some(first.generation())).await.unwrap();
+    let stale = backend.begin_generation(None, support::expectations()).await.unwrap();
+    let current = backend.begin_generation(Some(first.generation()), support::expectations()).await.unwrap();
     current.commit(support::metadata_at(2)).await.unwrap();
     let error = stale.commit(support::metadata_at(1)).await.unwrap_err();
     assert!(matches!(error, CheckpointError::GenerationConflict { .. }));
@@ -534,11 +551,11 @@ async fn stale_writer_cannot_merge_or_replace_head() {
 #[tokio::test(flavor = "current_thread")]
 async fn dropped_transaction_publishes_nothing_and_releases_budget() {
     let backend = MemoryCheckpointBackend::new(support::backend_limits());
-    let transaction = backend.begin_generation(None).await.unwrap();
+    let transaction = backend.begin_generation(None, support::expectations()).await.unwrap();
     assert_eq!(backend.prepared_transactions(), 1);
     drop(transaction);
     assert_eq!(backend.prepared_transactions(), 0);
-    assert!(backend.open_latest(&support::run_id()).await.unwrap().is_none());
+    assert!(backend.open_latest(&support::run_id(), &support::expectations()).await.unwrap().is_none());
 }
 ```
 
@@ -629,10 +646,10 @@ async fn every_pre_current_fault_preserves_previous_generation() {
         let backend = support::local_backend(directory.path(), None);
         let first = support::commit_empty(&backend, None, 1).await.unwrap();
         backend.inject_fault(fault);
-        let transaction = backend.begin_generation(Some(first.generation())).await.unwrap();
+        let transaction = backend.begin_generation(Some(first.generation()), support::expectations()).await.unwrap();
         assert!(transaction.commit(support::metadata_at(2)).await.is_err());
         let reopened = support::local_backend(directory.path(), None);
-        let latest = reopened.open_latest(&support::run_id()).await.unwrap().unwrap();
+        let latest = reopened.open_latest(&support::run_id(), &support::expectations()).await.unwrap().unwrap();
     assert_eq!(latest.generation().generation(), first.generation());
     }
 }
@@ -640,7 +657,7 @@ async fn every_pre_current_fault_preserves_previous_generation() {
 #[tokio::test(flavor = "current_thread")]
 async fn checkpoint_tree_is_private_no_follow_and_tmp_is_raii_cleaned() {
     let fixture = support::local_filesystem_fixture();
-    let transaction = fixture.backend.begin_generation(None).await.unwrap();
+    let transaction = fixture.backend.begin_generation(None, support::expectations()).await.unwrap();
     assert_eq!(fixture.mode(fixture.run_root()), 0o700);
     assert!(fixture.all_regular_file_modes_are(0o600));
     assert!(fixture.symlink_swap_current().is_err());
@@ -728,7 +745,7 @@ pub struct CheckpointRetentionPolicy {
 #[tokio::test(flavor = "current_thread")]
 async fn reader_lease_prevents_reachable_object_collection() {
     let fixture = support::local_generation_with_segments(5).await;
-    let reader = fixture.backend.open_latest(&fixture.run).await.unwrap().unwrap();
+    let reader = fixture.backend.open_latest(&fixture.run, &fixture.expectations).await.unwrap().unwrap();
     fixture.backend.retain_last_generations(0).await.unwrap();
     fixture.backend.collect_garbage().await.unwrap();
     let page = reader
@@ -741,7 +758,7 @@ async fn reader_lease_prevents_reachable_object_collection() {
 #[tokio::test(flavor = "current_thread")]
 async fn renewal_failure_fences_read_before_gc() {
     let fixture = support::local_generation_with_segments(1).await;
-    let reader = fixture.backend.open_latest(&fixture.run).await.unwrap().unwrap();
+    let reader = fixture.backend.open_latest(&fixture.run, &fixture.expectations).await.unwrap().unwrap();
     fixture.clock.advance(fixture.lease_duration + 1);
     fixture.backend.fail_next_renewal();
     assert!(matches!(
@@ -809,7 +826,7 @@ async fn post_commit_failure_does_not_roll_back_authoritative_head() {
         Vec::new(),
     ).await.unwrap_err();
     assert!(matches!(error, CheckpointError::PostCommitNotification { .. }));
-    let latest = fixture.backend.open_latest(&fixture.run).await.unwrap().unwrap();
+    let latest = fixture.backend.open_latest(&fixture.run, &fixture.expectations).await.unwrap().unwrap();
     assert_eq!(latest.generation().generation(), coordinator_support::generation(1));
     fixture.restore_and_replay_notifications().await.unwrap();
     assert_eq!(fixture.participant("session").commit_notifications(), 1);
@@ -828,7 +845,10 @@ CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime -
 // barrier -> views -> validate -> stage -> CAS -> notifications
 let views = self.collect_views(&barrier).await?;
 self.plan.validate_exact_set(&views)?;
-let mut transaction = self.backend.begin_generation(self.expected).await?;
+let mut transaction = self.backend.begin_generation(
+    self.expected,
+    self.generation_expectations.clone(),
+).await?;
 for view in views {
     transaction.stage_participant(view).await?;
 }

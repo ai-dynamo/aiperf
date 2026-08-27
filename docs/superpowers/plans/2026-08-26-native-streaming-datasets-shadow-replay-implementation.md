@@ -108,8 +108,8 @@ Initial worktree waves after the serialized 0/1A-1B → 5A → 1C → 5B → 1D-
 | 4 | Result epochs 6B → compaction 6C1 → delivery 6C2 → report order 6D | Conversation P1 → closure P1B → Action P2 | HF A3 |
 | 5 | Pipeline P3 | Baseten A4 | JSONL A2 |
 | 6 | Shared synthesis A5P → Dynamo A5 | Graph P5 | review/fix |
-| 7 | Deferred reconstruction P1C → Workload P4 | Sensitive state P6 | S3 A6 |
-| 8 | Observability P7 | Local/none backends 5F1 | review/fix |
+| 7 | Deferred reconstruction P1C → Workload P4 | review/fix | S3 A6 |
+| 8 | Observability P7 | Local/none backends 5F1 | Sensitive state P6 |
 | 9 | Object CAS 5F2 | Cellular C1 | review/fix |
 | 10 | Object retention 5F3 | Cellular C2 | review/fix |
 | 11 | Cellular C3 | review/fix | review/fix |

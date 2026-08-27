@@ -182,6 +182,8 @@ deferred Dynamo replay descriptors only after root/parent closure, expands them
 through the shared pure synthesis profile, and emits ordinary canonical action
 content. Its checkpoint state retains exact producer root/tail scope and the
 bound session-program semantic digest; it never checkpoints memoized blocks.
+The release gate consumes a typed whole-producer-tree closure receipt from P1B;
+partition EOF or mere root discovery is insufficient.
 
 - [ ] **Step 1: Write RED parity, closure, and resume tests**
 
@@ -189,6 +191,8 @@ Cover repeated/shared hashes; zero, tiny, full, and full-plus-partial inputs;
 checkpoint before and after profile binding; root/tail-scope restore; and the
 finite future-descendant/trailing-user-cap case. No action may release while a
 later descendant can still alter finite message-role reconstruction.
+Add an indefinite-follow case that lacks a whole-tree closure proof and fails
+with `SessionFailureCode::UnboundedCausalityState` rather than guessing roles.
 
 - [ ] **Step 2: Verify RED**
 
@@ -198,12 +202,19 @@ Run: `CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-run
 
 Keep hash descriptors checkpointed under the session owner until the same
 closure evidence needed by the finite future-aware message pass is proven.
-Before allocating tokens or decoded text, reserve a separate action-content
-lease using checked `hash_count * block_size` and the tokenizer receipt's
-conservative decoded-byte bound. Expansion uses the shared cache-free pure seam.
+Before allocating tokens or decoded text, normalize replay geometry and reserve
+a separate action-content lease. The token charge is `input_length` on the
+nonzero tiny-prompt path with no complete block, otherwise exactly the retained
+complete-block count times block size; partial residual metadata is not
+materialized. Checked accounting also includes token-vector capacity,
+tokenizer-receipt conservative decoded-text bytes, message/string/vector
+capacity, wire-body capacity, and action overhead. Expansion uses the shared
+cache-free pure seam.
 Generation 1 may run with cache capacity zero; if enabled, the cache is worker-
 or cell-local, byte-bounded, evicting, non-waiting, accounts key and value
 capacity, skips oversize entries, and never participates in checkpoints.
+Capacity zero disables cache construction entirely; it is not passed to the
+foundation's nonzero-capacity budget constructor.
 
 - [ ] **Step 4: Verify GREEN and commit**
 
@@ -447,8 +458,9 @@ impl StreamingPipeline {
 Pull a new unit only when the next stage owns permits. Prefer inline/fused calls on the worker `LocalSet`; bounded leased channels are allowed only at measured concurrency boundaries. `Pending`, `Seal`, and `Cancelled` remain distinct. Shutdown fences admission, wakes pending source/decode/order, drains or cancels accepted actions through phase policy, checkpoints only a valid cut, and joins all owners.
 
 For deferred recorded content, downstream readiness includes a pre-allocation
-action-content reservation sized from checked token geometry and the prepared
-tokenizer's conservative decode bound. The pipeline must acquire that lease
+action-content reservation sized from P1C's normalized tiny/full-block token
+geometry, all retained collection/wire capacities, and the prepared tokenizer's
+checked conservative decode bound. The pipeline must acquire that lease
 before token-vector/text allocation and must stop upstream pulls while it is
 pending. A small hash descriptor never authorizes a large uncharged decoded
 request. Optional reconstruction-cache admission is non-waiting and separate
@@ -535,10 +547,12 @@ impl PreparedRunnerOperation for ShadowReplayPreparedOperation {
 Materialize requests through the selected endpoint, submit through extracted dispatcher/runtime facilities, and translate observer events to action events without new token-path hooks. Produce and register the `scheduled_request` action-sink factory and the `shadow_replay` workload only in this executable commit. Prepare every selected factory once and initialize participants before polling. Refuse unsupported phase/resource/exporter/accuracy combinations during validation.
 
 Dynamo actions arrive here only after P1C has reconstructed canonical content;
-P4 never interprets Dynamo hashes or owns a second synthesis cache. The frozen
-execution plan binds the authored and, once available, bound synthesis-profile
-digests so checkpoint restore cannot combine request bytes with different
-tokenizer/corpus/sampling semantics.
+P4 never interprets Dynamo hashes or owns a second synthesis cache. The static
+frozen execution identity binds the authored synthesis profile. The dynamic
+checkpoint/session authority separately binds
+`SynthesisAuthority::{Unbound, Bound}` plus the bound session-program digest;
+resume compares that authority before participant initialization without ever
+mutating the frozen execution plan.
 
 - [ ] **Step 4: Verify green**
 
