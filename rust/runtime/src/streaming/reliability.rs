@@ -1667,6 +1667,10 @@ pub enum StreamingReliabilityError {
     /// The retained entry is returned to the ledger before this is reported, so
     /// its reporter token stays addressable and no charge is released twice.
     MissingPendingActionIssue,
+    /// Different issue content claims one stable ordered submission slot.
+    ConflictingIssueSubmission,
+    /// An input-scoped fact carries no deterministic source position.
+    MissingInputSourcePosition,
 }
 
 impl fmt::Display for StreamingReliabilityError {
@@ -2018,6 +2022,11 @@ struct CurrentActionAttempt {
 
 struct QueuedHandleIssue {
     pending: PendingIssue,
+    /// Requeues already spent on this exact reservation.
+    ///
+    /// Bounding the retry keeps a deterministic capacity failure from parking a
+    /// live lease at the head of the queue forever.
+    requeue_attempts: u32,
 }
 
 /// Maximum queued host submissions awaiting the next owner drain.
@@ -2026,6 +2035,13 @@ struct QueuedHandleIssue {
 /// so a host that never drains cannot grow reporter residency. A full queue is
 /// reported as backpressure, not as a budget failure.
 const MAX_QUEUED_SUBMISSIONS: usize = 256;
+
+/// Bounded retry budget for one requeued reserved submission.
+///
+/// Only capacity failures requeue, and shared-budget headroom either returns
+/// within a few drains or is structurally unavailable. The bound converts that
+/// deterministic case from an unbounded loop into one released reservation.
+const MAX_SUBMISSION_REQUEUE_ATTEMPTS: u32 = 8;
 
 /// Return the exact byte charge every reporter takes for its submission queue.
 ///
@@ -2070,7 +2086,10 @@ impl StreamingIssueReporterEndpoint for ReporterSubmissionEndpoint {
             // submission costs the budget nothing.
             return Ok(StreamingIssueReportStatus::Backpressured);
         }
-        queue.push_back(QueuedHandleIssue { pending });
+        queue.push_back(QueuedHandleIssue {
+            pending,
+            requeue_attempts: 0,
+        });
         Ok(StreamingIssueReportStatus::Accepted)
     }
 }
@@ -2161,19 +2180,98 @@ impl BudgetOwnedStreamingIssueReporter {
         self.receipts.get(issue_id).map(|value| &value.receipt)
     }
 
+    /// Return the retained prior disposition for one deterministic identity.
+    ///
+    /// The reserved submission path is deferred: a handle cannot classify, so
+    /// its exact replay returns the prior state here rather than through
+    /// [`StreamingIssueReportStatus`]. The value is byte-identical to the
+    /// outcome the first submission of this identity produced, because a replay
+    /// never re-enters classification.
+    #[must_use]
+    pub fn retained_outcome(&self, issue_id: &ContentDigest) -> Option<StreamingIssueOutcome> {
+        self.receipts.get(issue_id).map(|value| value.outcome)
+    }
+
     fn drain_submission_queue(&mut self) -> Result<(), StreamingReliabilityError> {
         loop {
+            // The `RefMut` temporary ends with this statement, so nothing below
+            // runs while the shared queue is borrowed.
             let queued = self.submission.queue.borrow_mut().pop_front();
             let Some(queued) = queued else {
                 return Ok(());
             };
-            if let Err((error, pending)) = self.submit_reserved_issue(queued.pending) {
-                self.submission
-                    .queue
-                    .borrow_mut()
-                    .push_front(QueuedHandleIssue { pending });
+            let issue_id = queued.pending.issue.issue_id();
+            match self.resolve_issue_identity(&issue_id) {
+                IssueIdentityResolution::RetainedOutcome(outcome) => {
+                    // Exact replay of an already-classified identity. The prior
+                    // state stands unchanged and is readable through
+                    // `retained_outcome`; dropping the duplicate reservation
+                    // returns its exact charge through `BudgetLease`.
+                    drop(queued);
+                    tracing::debug!(
+                        issue_id = ?issue_id,
+                        disposition = ?outcome.disposition,
+                        component = "streaming_issue_ledger",
+                        "replayed reserved submission returned the retained disposition"
+                    );
+                    continue;
+                }
+                IssueIdentityResolution::AlreadyPending => {
+                    drop(queued);
+                    tracing::debug!(
+                        issue_id = ?issue_id,
+                        component = "streaming_issue_ledger",
+                        "replayed reserved submission is already retained"
+                    );
+                    continue;
+                }
+                IssueIdentityResolution::Novel => {}
+            }
+            let QueuedHandleIssue {
+                pending,
+                requeue_attempts,
+            } = queued;
+            let Err((error, pending)) = self.submit_reserved_issue(pending) else {
+                continue;
+            };
+            if !is_retryable_submission_error(&error) {
+                // The failure is a deterministic function of this issue, the
+                // frozen policy, and monotone ledger state, so requeueing it
+                // could only reproduce it. Drop the reservation, releasing its
+                // exact charge, and surface the error exactly once.
+                drop(pending);
+                tracing::error!(
+                    error = %error,
+                    issue_id = ?issue_id,
+                    component = "streaming_issue_ledger",
+                    "dropped a reserved submission that cannot be retried"
+                );
                 return Err(error);
             }
+            let Some(next_attempts) = requeue_attempts
+                .checked_add(1)
+                .filter(|attempts| *attempts <= MAX_SUBMISSION_REQUEUE_ATTEMPTS)
+            else {
+                drop(pending);
+                tracing::error!(
+                    error = %error,
+                    issue_id = ?issue_id,
+                    requeue_attempts,
+                    component = "streaming_issue_ledger",
+                    "dropped a reserved submission after exhausting its retry bound"
+                );
+                return Err(error);
+            };
+            // The move-only reservation goes back with its lease intact, so a
+            // later drain retries against fresher shared-budget headroom.
+            self.submission
+                .queue
+                .borrow_mut()
+                .push_front(QueuedHandleIssue {
+                    pending,
+                    requeue_attempts: next_attempts,
+                });
+            return Err(error);
         }
     }
 
@@ -2182,19 +2280,22 @@ impl BudgetOwnedStreamingIssueReporter {
         issue: OrdinaryStreamingIssue,
     ) -> Result<Option<StreamingIssueOutcome>, StreamingReliabilityError> {
         let issue_id = issue.issue_id();
-        if let Some(retained) = self.receipts.get(&issue_id) {
-            return Ok(Some(retained.outcome));
+        match self.resolve_issue_identity(&issue_id) {
+            IssueIdentityResolution::RetainedOutcome(outcome) => return Ok(Some(outcome)),
+            IssueIdentityResolution::AlreadyPending => return Ok(None),
+            IssueIdentityResolution::Novel => {}
         }
-        if self.pending_issue_exists(&issue_id) {
-            return Ok(None);
-        }
+        // Reserving only after the identity is proven novel keeps an exact
+        // replay from taking a receipt-sized charge it can never consume.
         let pending = reserve_pending_issue(&self.budget, issue)?;
         self.submit_reserved_issue(pending)
             .map_err(|(error, _pending)| error)
     }
 
     // Returning the move-only pending reservation preserves retry authority
-    // without an unbudgeted recovery allocation.
+    // without an unbudgeted recovery allocation. Callers must first prove the
+    // identity novel through `resolve_issue_identity`; this primitive assumes
+    // novelty and mutates counters, the summary, and retained receipts.
     #[allow(clippy::result_large_err)]
     fn submit_reserved_issue(
         &mut self,
@@ -2212,11 +2313,15 @@ impl BudgetOwnedStreamingIssueReporter {
         let Some(input_domain) = pending.issue.scope.input_domain().cloned() else {
             return self.classify_pending(pending).map(Some);
         };
-        let position = pending
-            .issue
-            .order
-            .source_position
-            .unwrap_or_else(|| unreachable!("input-scoped constructors set a source position"));
+        // Input-scoped constructors set a source position, but the reserved
+        // path accepts facts an adapter minted, so unwind with a typed error
+        // and the intact lease rather than aborting the worker.
+        let Some(position) = pending.issue.order.source_position else {
+            return Err((
+                StreamingReliabilityError::MissingInputSourcePosition,
+                pending,
+            ));
+        };
         if self
             .input_frontiers
             .get(&input_domain)
@@ -2235,7 +2340,12 @@ impl BudgetOwnedStreamingIssueReporter {
         };
         if let Some(domain) = self.pending_inputs.get_mut(&input_domain) {
             if domain.pending.contains_key(&key) {
-                return Err((StreamingReliabilityError::CorruptCheckpointState, pending));
+                // The caller proved this exact identity novel, so an occupied
+                // ordering slot means different content claims one stable slot.
+                return Err((
+                    StreamingReliabilityError::ConflictingIssueSubmission,
+                    pending,
+                ));
             }
             domain.pending.insert(key, pending);
             return Ok(None);
@@ -2262,8 +2372,11 @@ impl BudgetOwnedStreamingIssueReporter {
         Ok(None)
     }
 
-    fn pending_issue_exists(&self, issue_id: &ContentDigest) -> bool {
-        self.pending_inputs.values().any(|domain| {
+    fn resolve_issue_identity(&self, issue_id: &ContentDigest) -> IssueIdentityResolution {
+        if let Some(retained) = self.receipts.get(issue_id) {
+            return IssueIdentityResolution::RetainedOutcome(retained.outcome);
+        }
+        let is_pending = self.pending_inputs.values().any(|domain| {
             domain
                 .pending
                 .values()
@@ -2271,7 +2384,11 @@ impl BudgetOwnedStreamingIssueReporter {
         }) || self
             .pending_actions
             .values()
-            .any(|candidate| candidate.issue_id == *issue_id)
+            .any(|candidate| candidate.issue_id == *issue_id);
+        if is_pending {
+            return IssueIdentityResolution::AlreadyPending;
+        }
+        IssueIdentityResolution::Novel
     }
 
     fn enqueue_action_failure(
@@ -3075,6 +3192,64 @@ impl BudgetOwnedStreamingIssueReporter {
         })
     }
 }
+
+/// Outcome of resolving one deterministic issue identity against the ledger.
+///
+/// Both the direct and the reserved submission paths resolve through this so an
+/// exact replay observes the prior state and never re-enters classification.
+enum IssueIdentityResolution {
+    /// The identity is already classified; this is its retained prior outcome.
+    RetainedOutcome(StreamingIssueOutcome),
+    /// The identity is retained for ordered classification but not decided.
+    AlreadyPending,
+    /// The identity is unknown to the ledger.
+    Novel,
+}
+
+/// Return whether one ordered-submission failure can succeed on a later drain.
+///
+/// Only the shared-budget capacity families are transient: their headroom is
+/// released by other participants over time. Every other variant is a
+/// deterministic function of the issue, the frozen policy, and monotone ledger
+/// state, so requeueing it would reproduce it forever. The match is exhaustive
+/// with no wildcard so a future variant must be classified deliberately.
+fn is_retryable_submission_error(error: &StreamingReliabilityError) -> bool {
+    match error {
+        StreamingReliabilityError::StateBudget(_)
+        | StreamingReliabilityError::QuarantineInstallBudget(_)
+        | StreamingReliabilityError::ExportReceiptBudget(_) => true,
+        StreamingReliabilityError::InvalidComponentId
+        | StreamingReliabilityError::InvalidScopeOrder
+        | StreamingReliabilityError::PolicyDigestMismatch
+        | StreamingReliabilityError::CounterOverflow
+        | StreamingReliabilityError::IllegalDisposition
+        | StreamingReliabilityError::IllegalFailRun
+        | StreamingReliabilityError::IllegalTerminalInvariant
+        | StreamingReliabilityError::ForeignRun
+        | StreamingReliabilityError::CorruptCheckpointState
+        | StreamingReliabilityError::AmbiguousPolicyRule
+        | StreamingReliabilityError::MissingPolicyRule
+        | StreamingReliabilityError::NonContiguousIssueFrontier
+        | StreamingReliabilityError::InvalidActionTerminalMembership
+        | StreamingReliabilityError::IncompleteActionInventory
+        | StreamingReliabilityError::ReliabilityStateUnavailable
+        | StreamingReliabilityError::QuarantineReceiptUnavailable
+        | StreamingReliabilityError::StaleQuarantineTombstoneView
+        | StreamingReliabilityError::ExportReceiptRunMismatch
+        | StreamingReliabilityError::ExportReceiptGenerationMismatch
+        | StreamingReliabilityError::ExportReceiptSinkMismatch
+        | StreamingReliabilityError::ExportReceiptAttemptMismatch
+        | StreamingReliabilityError::ExportReceiptPolicyMismatch
+        | StreamingReliabilityError::ExportReceiptDigestLengthMismatch
+        | StreamingReliabilityError::NonContiguousExportCounter
+        | StreamingReliabilityError::DerivedExportReceiptUnreachable
+        | StreamingReliabilityError::CorruptActionAttemptIndex
+        | StreamingReliabilityError::MissingPendingActionIssue
+        | StreamingReliabilityError::ConflictingIssueSubmission
+        | StreamingReliabilityError::MissingInputSourcePosition => false,
+    }
+}
+
 
 #[derive(Serialize)]
 #[serde(deny_unknown_fields)]
