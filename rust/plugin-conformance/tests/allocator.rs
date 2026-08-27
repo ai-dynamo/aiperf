@@ -27,7 +27,7 @@ use std::sync::OnceLock;
 // search path is provided by the conformance build.rs.
 #[cfg(unix)]
 #[link(name = "mimalloc", kind = "static")]
-extern "C" {}
+unsafe extern "C" {}
 
 // ── compile-time constants injected by build.rs ───────────────────────────
 
