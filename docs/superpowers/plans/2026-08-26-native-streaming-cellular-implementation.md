@@ -158,7 +158,7 @@ impl CellSecurityContext {
         destination: CellularRole,
         peer: &velo::PeerInfo,
         payload: &T,
-    ) -> anyhow::Result<ControllerAuthenticatedFrame>;
+    ) -> anyhow::Result<BudgetOwnedFrame>;
 
     pub(crate) fn authenticate_streaming_from_controller(
         &self,
@@ -211,7 +211,8 @@ fn prepare_action_rejects_unknown_fields() {
     }))
     .expect("test fixture encodes");
 
-    let error = rmp_serde::from_slice::<PrepareAction>(&encoded)
+    let error = StreamingAuthorityFixture::default()
+        .decode_authenticated_prepare_payload(encoded)
         .expect_err("unknown fields must fail closed");
     assert!(error.to_string().contains("unknown field"));
 }
@@ -388,8 +389,11 @@ git commit -m "feat(cellular): multiplex bounded streaming transfer"
 pub struct StickySessionPlacement {
     plan_digest: [u8; 32],
     cell_count: u32,
-    routes: BTreeMap<StableSessionKey, SessionRoute>,
+    routes: BTreeMap<StableSessionKey, BudgetOwnedSessionRoute>,
+    route_budget: StreamingResourceBudget,
 }
+
+pub struct BudgetOwnedSessionRoute { pub route: SessionRoute, pub lease: BudgetLease }
 
 impl StreamingPlacementPolicy for StickySessionPlacement {
     fn place(&mut self, action: &OrderedDatasetAction)
@@ -408,7 +412,7 @@ pub(crate) async fn release_at_controller_target(
 }
 
 impl CellularExecutionEndpoint {
-    pub(crate) async fn accept_prepare(&mut self, command: PrepareAction)
+    pub(crate) async fn accept_prepare(&mut self, command: BudgetOwnedPrepareAction)
         -> Result<PlacementPreparedReceipt, CellularStreamingError> { self.stage_without_issue(command).await }
     pub(crate) async fn accept_release(&mut self, command: ReleaseAction)
         -> Result<PlacementReleasedReceipt, CellularStreamingError> { self.issue_if_fenced(command).await }
@@ -447,7 +451,7 @@ CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime -
 
 - [ ] **Step 3: Implement sticky routing and fenced cell admission**
 
-Hash `(plan_digest, StableSessionKey)` to the initial cell once and retain the route until an explicit migration. `accept_prepare` validates and stores immutable content under its item/byte permit but cannot call the endpoint action submitter. `release_at_controller_target` uses only `Clock::now_ns`/`Clock::sleep`; `accept_release` validates the exact tuple then submits once. An absent, stale, duplicate-conflicting, or wrong-route release returns a typed failure and leaves the action fenced.
+Hash `(plan_digest, StableSessionKey)` to the initial cell once. Charge every route entry to an item/byte budget; a terminal session receipt removes its route after the causal frontier and checkpoint participant no longer reference it. `accept_prepare` consumes and stores the non-cloneable `BudgetOwnedPrepareAction` under its original permit through release and terminal/cancel acknowledgement; it cannot call the endpoint action submitter. `release_at_controller_target` uses only `Clock::now_ns`/`Clock::sleep`; `accept_release` validates the exact tuple then submits once. An absent, stale, duplicate-conflicting, or wrong-route release returns a typed failure and leaves the action fenced. Add `million_sequential_closed_sessions_reclaim_routes_with_constant_high_water`.
 
 - [ ] **Step 4: Verify sticky-session and event-return tests**
 
@@ -579,6 +583,15 @@ pub(crate) trait BoundedImmutableObjectWriter {
         bytes: BudgetedBlockingOutput<Vec<u8>>,
     ) -> Result<(), CellularResultError>;
 }
+
+#[async_trait::async_trait(?Send)]
+pub(crate) trait CellResultPayloadFetcher {
+    async fn fetch_verified_partition(
+        &mut self,
+        receipt: &CellResultPartitionReceipt,
+        budget: ResultIndexReadBudget,
+    ) -> Result<ResultPartition, CellularResultError>;
+}
 ```
 
 - [ ] **Step 1: Add the retransmission RED test**
@@ -647,6 +660,7 @@ pub(crate) struct CellularBarrierPlan {
 pub(crate) async fn commit_cellular_generation(
     plan: CellularBarrierPlan,
     receipts: &mut dyn CellularResultReceiptStream,
+    payloads: &mut dyn CellResultPayloadFetcher,
     backend: &dyn StreamingCheckpointBackend,
     participants: &mut CheckpointParticipantSet,
 ) -> Result<CommittedCheckpointGeneration, CellularConvergenceError>;
@@ -691,7 +705,7 @@ CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime -
 
 - [ ] **Step 3: Implement controller-last publication**
 
-At the barrier, freeze the expected `(cell, worker, projection, sequence range, membership)` set. Receive through the bounded authenticated stream; validate plan/schema/ownership epoch/count/length/digest and exact disjoint coverage before staging bytes. Stage every cell result plus every stable participant in one `StreamingGenerationTransaction`; commit the global generation once and only then call `checkpoint_committed` in frozen order. Missing cells, gaps, overlap, conflicting duplicates, topology mismatch, or stale CAS leave the previous generation authoritative. On controller restart, ignore unreachable cell staging and restore only the last committed global root.
+At the barrier, freeze the expected `(cell, worker, projection, sequence range, membership)` set. Receive receipts through the bounded authenticated stream and validate exact disjoint coverage. For each receipt, `CellResultPayloadFetcher` streams the cell-staged immutable object under the read budget, verifies schema/ownership/count/length/digest/membership, and returns a move-only budget-owned `ResultPartition`. Only after the exact set is present and verified does the controller call `begin_generation`, move those partitions through `stage_results(Vec<ResultPartition>)`, stage every stable participant, and commit the global generation. It then calls `checkpoint_committed` in frozen order. Missing payloads/cells, corruption, gaps, overlap, conflicting duplicates, topology mismatch, or stale CAS leave the previous generation authoritative. On controller restart, ignore unreachable cell staging and restore only the last committed global root.
 
 - [ ] **Step 4: Verify restart and final report-order tests**
 

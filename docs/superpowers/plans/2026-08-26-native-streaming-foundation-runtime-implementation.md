@@ -185,7 +185,7 @@ git commit -m "build: add native streaming feature gates"
 
 **Interfaces:**
 - Consumes: BLAKE3 and Serde.
-- Produces: checked `EventTimeUtc`, `SourcePosition`, `GlobalSequence`, `ImmutableObjectIdentity`, `StableRecordId`, `StableSessionKey`, `StableActionId`, `ActionAttemptId`, `LogicalReplayRunId`, `RunIncarnationId`, `StableOrderKey`, `UnitProvenance`, `StreamingSessionFragment`, and `ExecutableDatasetAction`.
+- Produces: checked `EventTimeUtc`, `SourcePosition`, `GlobalSequence`, `ImmutableObjectIdentity`, `StableRecordId`, `StableSessionKey`, `StableActionId`, `ActionAttemptId`, `LogicalReplayRunId`, `RunIncarnationId`, `StableOrderKey`, `SessionCausalFrontier`, `SessionOwnershipEpoch`, `UnitProvenance`, `StreamingSessionFragment`, and `ExecutableDatasetAction`.
 
 The public identity constructors are:
 
@@ -209,6 +209,23 @@ impl GlobalSequence {
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct ContentDigest([u8; 32]);
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SessionCausalFrontier {
+    pub through_sequence: GlobalSequence,
+    pub event_time: Option<EventTimeUtc>,
+    pub digest: ContentDigest,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct SessionOwnershipEpoch(u64);
+
+impl SessionOwnershipEpoch {
+    pub const fn new(value: u64) -> Self { Self(value) }
+    pub const fn get(self) -> u64 { self.0 }
+}
 
 pub fn stable_record_id_from_key(namespace: &[u8], producer_key: &[u8]) -> StableRecordId;
 pub fn stable_session_key(namespace: &[u8], producer_key: &[u8]) -> StableSessionKey;
@@ -410,6 +427,23 @@ impl StreamingResourceBudget {
     pub fn close(&self);
     pub fn snapshot(&self) -> BudgetSnapshot;
 }
+
+pub struct RetainedContentLease(Rc<RetainedContentLeaseInner>);
+struct RetainedContentLeaseInner { lease: BudgetLease }
+
+impl Clone for RetainedContentLease {
+    fn clone(&self) -> Self { Self(Rc::clone(&self.0)) }
+}
+
+pub struct ActionContentLeaseSet {
+    leases: smallvec::SmallVec<[RetainedContentLease; 2]>,
+}
+
+impl ActionContentLeaseSet {
+    pub fn retain_for_continuation(&self) -> Self {
+        Self { leases: self.leases.iter().cloned().collect() }
+    }
+}
 ```
 
 - [ ] **Step 1: Add the RED ownership tests**
@@ -437,6 +471,21 @@ async fn cancellation_wakes_blocked_acquire() {
     budget.close();
     assert!(budget.acquire(1, 1).await.is_err());
 }
+
+#[test]
+fn content_permit_releases_only_after_every_terminal_continuation_and_receipt_owner() {
+    let fixture = content_lifetime_fixture(4096);
+    let action = fixture.action_from_fragment();
+    let continuation = action.content_leases().retain_for_continuation();
+    let raw_capture = action.content_leases().retain_for_continuation();
+    let checkpoint_receipt = action.content_leases().retain_for_continuation();
+    drop(action);
+    drop(continuation);
+    drop(raw_capture);
+    assert_eq!(fixture.budget().snapshot().used_bytes, 4096);
+    drop(checkpoint_receipt);
+    assert_eq!(fixture.budget().snapshot().used_bytes, 0);
+}
 ```
 
 Add move-without-minting, zero capacity, request-larger-than-capacity, overflow, and high-water tests.
@@ -451,7 +500,7 @@ CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime -
 
 - [ ] **Step 3: Implement two-dimensional RAII capacity**
 
-Use two owned Tokio semaphore permits acquired in a fixed item-then-byte order. Store exact charged counts in `BudgetLease`; implement no `Clone`. `close` closes both semaphores and wakes waiters. Snapshot counters and high-water marks use atomics outside the per-token path. Convert `SessionFragmentLease` into a newtype over `BudgetLease`.
+Use two owned Tokio semaphore permits acquired in a fixed item-then-byte order. Store exact charged counts in `BudgetLease`; implement no `Clone`. `close` closes both semaphores and wakes waiters. Snapshot counters and high-water marks use atomics outside the per-token path. Convert `SessionFragmentLease` into a newtype over `BudgetLease`; incorporation consumes it into one `RetainedContentLease`. `ExecutableDatasetAction` owns an `ActionContentLeaseSet`. Admission, graph continuations, raw capture, session state, and prepared checkpoint receipts explicitly retain handles; cloning a handle only shares the original permit and never acquires or mints capacity. The final owner drop releases capacity.
 
 Representative constructor:
 
@@ -508,10 +557,10 @@ impl StreamingCheckpointParticipant for StreamingBlockingExecutor {
     fn participant_id(&self) -> CheckpointParticipantId { self.participant_id.clone() }
     async fn checkpoint_view(&mut self, barrier: &CheckpointBarrier)
         -> Result<PreparedParticipantState, CheckpointError> {
-        self.prepare_inflight_view(barrier).await
+        self.prepare_quiescent_view_or_refuse(barrier).await
     }
     async fn initialize(&mut self, state: Option<CommittedParticipantState>)
-        -> Result<(), CheckpointError> { self.restore_inflight(state).await }
+        -> Result<(), CheckpointError> { self.restore_completed_horizon_only(state).await }
     async fn checkpoint_committed(&mut self, receipt: &CommittedParticipantReceipt)
         -> Result<(), CheckpointError> { self.advance_committed(receipt) }
 }
@@ -537,9 +586,22 @@ async fn output_permit_lives_until_output_drop() {
     assert_eq!(executor.snapshot().output_bytes, 0);
     executor.cancel_and_join().await.expect("clean shutdown");
 }
+
+#[tokio::test(flavor = "current_thread")]
+async fn checkpoint_never_serializes_or_skips_an_accepted_blocking_closure() {
+    let fixture = BlockingCheckpointFixture::held_job();
+    let (mut owner, barrier, job, probe) = fixture.into_parts();
+    assert!(matches!(owner.checkpoint_view(&barrier).await,
+        Err(CheckpointError::CutBlockedByInflight { .. })));
+    assert_eq!(probe.backend_commit_count(), 0);
+    job.complete();
+    let state = owner.checkpoint_view(&barrier).await.unwrap();
+    assert_eq!(state.inflight_job_count(), 0);
+    assert_eq!(state.completed_horizon(), &barrier.cut.decoded);
+}
 ```
 
-Add a barrier-controlled accepted job proving `cancel_and_join` waits until cooperative cancellation is observed, plus saturation and `SimClock` responsiveness tests.
+Add a barrier-controlled accepted job proving `cancel_and_join` waits until cooperative cancellation is observed, plus saturation, cut rollback, restore rejection for any in-flight-job claim, and `SimClock` responsiveness tests.
 
 - [ ] **Step 2: Run the task suite and verify RED**
 
@@ -552,6 +614,8 @@ CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime -
 - [ ] **Step 3: Implement the bounded owner**
 
 Use one fixed count of accepted `spawn_blocking` jobs guarded before enqueue. Retain accepted join handles in a slab whose entries are removed when joined; never use Tokio's global blocking queue as capacity authority. `BlockingCancellation` wraps an atomic flag; long work calls `is_cancelled()` between bounded chunks. `BudgetedBlockingOutput<T>` owns its output-byte lease and dereferences to `T` without exposing the permit.
+
+Arbitrary `FnOnce` closures are never serialized or replayed. A checkpoint barrier first fences new blocking acceptance. If any accepted job can affect or precede the requested cut, the participant returns `CutBlockedByInflight` and the coordinator retains the prior generation; after cooperative drain it stores only the completed typed horizon and an empty in-flight count. Restore rejects any state claiming an in-flight closure.
 
 ```rust
 pub struct BudgetedBlockingOutput<T> {
@@ -594,12 +658,14 @@ git commit -m "feat(runtime): add bounded streaming blocking owner"
 ```rust
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum StreamingFailureStage { Source, Acquisition, Decode, Ordering, Session, Dispatch, Checkpoint, Result }
+pub enum StreamingFailureStage { Source, Acquisition, Decode, Ordering, StateBudget, Session, Placement, Dispatch, Checkpoint, Result }
 pub enum SourceFailureCode { Discovery, Snapshot, MutatedObject, SourceUnavailable }
 pub enum AcquisitionFailureCode { Open, Read, IdentityMismatch, ObjectLimitExceeded }
 pub enum DecodeFailureCode { Syntax, Schema, OversizedRecord, InvalidCursor }
 pub enum OrderingFailureCode { LateData, WatermarkViolation, CoordinateOverflow }
+pub enum StateBudgetFailureCode { ItemCapacity, ByteCapacity, SpillCapacity, ProvisionalCapacity }
 pub enum SessionFailureCode { MissingPredecessor, ConflictingMutation, UnboundedCausalityState }
+pub enum PlacementFailureCode { RouteUnavailable, StaleOwnershipEpoch, DigestMismatch, Cancelled }
 pub enum ActionFailureCode { MissingBinding, Dispatch, Endpoint, Cancelled }
 
 pub trait StableStreamingFailure: std::error::Error {
@@ -803,9 +869,13 @@ fn failure_stages_and_codes_do_not_collapse() {
     let acquisition = test_acquisition_failure(AcquisitionFailureCode::Read);
     let decode = test_decode_failure(DecodeFailureCode::Syntax);
     let late = test_ordering_failure(OrderingFailureCode::LateData);
+    let budget = test_budget_failure(StateBudgetFailureCode::ByteCapacity);
+    let placement = test_placement_failure(PlacementFailureCode::RouteUnavailable);
     assert_eq!((acquisition.stage(), acquisition.code()), (StreamingFailureStage::Acquisition, "read"));
     assert_eq!((decode.stage(), decode.code()), (StreamingFailureStage::Decode, "syntax"));
     assert_eq!((late.stage(), late.code()), (StreamingFailureStage::Ordering, "late_data"));
+    assert_eq!((budget.stage(), budget.code()), (StreamingFailureStage::StateBudget, "byte_capacity"));
+    assert_eq!((placement.stage(), placement.code()), (StreamingFailureStage::Placement, "route_unavailable"));
 }
 ```
 
@@ -951,9 +1021,25 @@ fn duplicate_stream_source_registration_is_atomic() {
     assert!(error.to_string().contains("duplicate streaming source ID"));
     assert_eq!(registry.stream_source_descriptors().len(), 1);
 }
+
+#[test]
+fn supported_capability_cross_product_composes_without_concrete_type_switches() {
+    let registry = fake_cross_product_registry(
+        ["finite", "follow"],
+        ["jsonl", "columnar"],
+        ["conversation", "agent_graph"],
+        ["scheduled_request", "session_state"],
+        ["dry_run", "http"],
+    );
+    for selection in registry.declared_supported_cross_product() {
+        let plan = StreamingCapabilityAgreement::validate(selection.descriptors()).unwrap();
+        assert_eq!(plan.selected_ids(), selection.ids());
+        assert_eq!(plan.preparation_count_per_factory(), 1);
+    }
+}
 ```
 
-Add ordered-inventory, unknown lookup, transactional extension rollback, cross-product mismatch, and catalog serialization tests. Extend the compile-time extension test with one custom factory in every category.
+Add ordered-inventory, unknown lookup, transactional extension rollback, cross-product mismatch, and catalog serialization tests. The positive matrix varies source × format × session program × action sink × transport and asserts preparation remains descriptor-driven with no concrete source-format branch. Extend the compile-time extension test with one custom factory in every category.
 
 - [ ] **Step 2: Run the single task suite and verify RED**
 

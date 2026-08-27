@@ -198,6 +198,12 @@ git commit -m "test(runtime): inject streaming checkpoint failures"
 - Create: `rust/dry-run-tests/tests/support/streaming_product.rs`
 - Create fixtures: `rust/dry-run-tests/fixtures/streaming/`
 
+- [ ] **Step 0: Build the exact fresh product binary**
+
+Run: `CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo build -p aiperf-cli --release --features streaming-s3,cellular,parquet,grpc`
+
+Record the resulting binary digest; every V4A invocation uses `/mnt/4tb/aiperf-streaming-target/release/aiperf` with that digest.
+
 - [ ] **Step 1: Write and observe the RED process scenario**
 
 ```rust
@@ -243,6 +249,10 @@ git commit -m "test(dry-run): cover streaming replay restart"
 - Create: `rust/e2e-tests/tests/test_streaming_checkpoint_results.rs`
 - Create fixtures: `rust/e2e-tests/fixtures/streaming/`
 
+- [ ] **Step 0: Rebuild and pin the exact product binary**
+
+Run: `CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo build -p aiperf-cli --release --features streaming-s3,cellular,parquet,grpc`
+
 - [ ] **Step 1: Write and observe the RED endpoint/cellular matrix**
 
 Create one parameterized `StreamingServerCase` matrix for HTTP, gRPC, local/S3-compatible source, prepare/release skew, controller/cell restart, and checkpoint-result convergence. Each case launches the exact `AIPERF_E2E_BIN`, the in-repo mock server or bounded fake S3 service, and asserts stable logical membership plus final report order. Run Step 3 before implementing the support module and record the intended unresolved-helper failure.
@@ -275,6 +285,8 @@ git commit -m "test(e2e): cover streaming transports and cellular"
 #[ignore = "release-mode multi-GiB resource gate"]
 fn baseten_hf_and_follow_resources_are_bounded() {
     let report = support::run_soak(support::SoakConfig::from_env()).unwrap();
+    assert_eq!(report.selected_source_id, "hf_hub");
+    assert_eq!(report.selected_format_id, "baseten_trace");
     assert!(report.rss_peak_bytes <= report.baseline_rss_bytes + report.authored_memory_bytes + 256 * MIB);
     assert!(report.rss_slope_bytes_per_input_gib <= 1 * MIB);
     assert!(report.fd_peak <= report.baseline_fds + 2 * report.object_concurrency + 32);
@@ -291,7 +303,7 @@ Run Step 3 before implementing support and record the unresolved-helper RED resu
 
 - [ ] **Step 2: Implement deterministic generation and sampling**
 
-Generate 8 GiB of Parquet/HF-compatible shards with bounded writes and no second resident copy. Accelerate 24 logical hours with `SimClock`; sample after 10% warmup and at every checkpoint. Emit machine-readable RSS/tasks/FDs/stage items+bytes/session/provisional/index/disk/watermark/schedule/admission/endpoint/drop/duplicate/gap/horizon/cellular-window observations. Enforce the frozen slope, p99, and CPU/action thresholds above.
+Generate an 8-GiB pinned Hugging Face repository of Baseten Parquet shards with bounded writes and no second resident copy. Serve its exact revision/inventory/ranged shard responses through a bounded local HF-compatible fixture, and execute Config-v2 with source `hf_hub` plus format `baseten_trace`—not a local-source shortcut. Accelerate 24 logical hours with `SimClock`; sample after 10% warmup and at every checkpoint. Emit machine-readable RSS/tasks/FDs/stage items+bytes/session/provisional/index/disk/watermark/schedule/admission/endpoint/drop/duplicate/gap/horizon/cellular-window observations. Enforce the frozen slope, p99, and CPU/action thresholds above.
 
 - [ ] **Step 3: Verify GREEN**
 

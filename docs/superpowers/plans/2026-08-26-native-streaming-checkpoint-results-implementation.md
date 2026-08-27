@@ -111,11 +111,32 @@ pub struct CheckpointCut {
     pub acquired: AcquisitionHorizon,
     pub decoded: DecodeHorizon,
     pub ordered: OrderedActionHorizon,
+    pub scheduled: ScheduledActionHorizon,
     pub admitted: AdmissionHorizon,
     pub terminal: TerminalActionHorizon,
     pub event_watermark: EventTimeWatermark,
     pub causal_frontier: SessionCausalFrontier,
 }
+
+macro_rules! typed_horizon {
+    ($name:ident, $inner:ty) => {
+        #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+        #[serde(transparent)]
+        pub struct $name($inner);
+        impl $name {
+            pub const fn new(value: $inner) -> Self { Self(value) }
+            pub const fn get(&self) -> &$inner { &self.0 }
+        }
+    };
+}
+
+typed_horizon!(DiscoveryHorizon, SourcePosition);
+typed_horizon!(AcquisitionHorizon, SourcePosition);
+typed_horizon!(DecodeHorizon, SourcePosition);
+typed_horizon!(OrderedActionHorizon, GlobalSequence);
+typed_horizon!(ScheduledActionHorizon, GlobalSequence);
+typed_horizon!(AdmissionHorizon, GlobalSequence);
+typed_horizon!(TerminalActionHorizon, GlobalSequence);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CheckpointBarrier {
@@ -593,6 +614,15 @@ async fn checkpoint_tree_is_private_no_follow_and_tmp_is_raii_cleaned() {
     drop(transaction);
     assert!(!tmp.exists());
 }
+
+#[tokio::test(flavor = "current_thread")]
+async fn process_crash_tmp_is_reclaimed_by_bounded_lease_aware_startup_scan() {
+    let fixture = support::crashed_local_transaction_fixture();
+    fixture.clock.advance_past_prepare_lease();
+    let reopened = fixture.reopen_with_gc_page_limit(2).await.unwrap();
+    assert!(!fixture.orphan_tmp_path().exists());
+    assert!(reopened.gc_high_water().page_items <= 2);
+}
 ```
 
 `before_current_publication()` enumerates faults after object write, object fsync, object-parent fsync, generation write, generation fsync, generation-parent fsync, temporary CURRENT write, and temporary CURRENT fsync. Separate tests fault after rename and before CURRENT-parent fsync; reopen must yield either the complete old or complete new head, never mixed metadata.
@@ -619,7 +649,7 @@ fn publish_current(
 }
 ```
 
-Create every run/tmp/lease directory as exact `0700` through no-follow directory descriptors and every regular file as create-new `0600`; reject symlinks and ownership/type/mode drift. A transaction-owned guard removes only its validated private tmp subtree on drop, including cancellation/fault paths; committed immutable objects remain durable. The blocking job performs: validate writer lease and expected CURRENT; write immutable participant/result/index objects with create-new; fsync each new object and parent; write and fsync `generation-N`; fsync its parent; write/fsync temporary CURRENT; rename over CURRENT; fsync root. Decode and validate the current generation after reopen before returning it.
+Create every run/tmp/lease directory as exact `0700` through no-follow directory descriptors and every regular file as create-new `0600`; reject symlinks and ownership/type/mode drift. A transaction-owned guard removes only its validated private tmp subtree on drop, including cancellation/fault paths; committed immutable objects remain durable. On startup and Task-5D GC, traverse tmp transaction directories in bounded cursor pages and reclaim only those whose prepare/writer lease is absent or expired according to injected `Clock`; never use mtime or delete a live transaction. The blocking job performs: validate writer lease and expected CURRENT; write immutable participant/result/index objects with create-new; fsync each new object and parent; write and fsync `generation-N`; fsync its parent; write/fsync temporary CURRENT; rename over CURRENT; fsync root. Decode and validate the current generation after reopen before returning it.
 
 - [ ] **Step 4: Verify GREEN**
 
@@ -1156,9 +1186,6 @@ git commit -m "feat(runtime): index streaming result segments"
 **Produces:** `EpochResultCoordinator`, bounded `ProvisionalResultStore`, terminal-contiguous cut selection, worker accumulator rotation, and `CommittedPartialResult`.
 
 ```rust
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct TerminalActionHorizon(GlobalSequence);
-
 pub struct CommittedPartialResult {
     pub generation: CheckpointGeneration,
     pub cut: CheckpointCut,
@@ -1231,7 +1258,7 @@ async fn closing_hole_commits_each_logical_action_once() {
     fixture.observe(1).unwrap();
     fixture.commit_terminal_at(2).await.unwrap();
     let partial = fixture.latest_partial().await.unwrap();
-    assert_eq!(partial.terminal_horizon, TerminalActionHorizon::at(2));
+    assert_eq!(partial.terminal_horizon, TerminalActionHorizon::new(GlobalSequence::new(2)));
     assert_eq!(partial.authoritative_request_count, 2);
     assert_eq!(partial.provisional_request_count, 0);
 }

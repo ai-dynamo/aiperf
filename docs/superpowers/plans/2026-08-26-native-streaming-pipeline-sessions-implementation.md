@@ -35,7 +35,7 @@ SPDX-License-Identifier: Apache-2.0
 
 **Interfaces:**
 - Consumes: `StreamingSessionProgramFactory`, `StreamingSessionCoordinator`, `StreamingCheckpointParticipant`, `StreamingSessionFragment`.
-- Produces and registers session-program ID `conversation`; `StreamingConversationCoordinator`; `SessionCausalFrontier`; cross-partition continuity, duplicate/conflict handling, and producer-authored explicit close. Task P1B exclusively owns inferred closure, missing-predecessor, completeness, spill, and bounded-state policies.
+- Produces and registers session-program ID `conversation`; `StreamingConversationCoordinator`; cross-partition continuity, duplicate/conflict handling, and producer-authored explicit close. It consumes neutral `SessionCausalFrontier` from foundation Task 1A. Task P1B exclusively owns inferred closure, missing-predecessor, completeness, spill, and bounded-state policies.
 
 ```rust
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
@@ -138,6 +138,16 @@ fn spill_tree_is_private_no_follow_and_cleanup_is_raii() {
     drop(spill);
     assert!(!fixture.run_path().exists());
 }
+
+
+#[test]
+fn crashed_spill_run_is_reclaimed_only_after_owner_lease_expiry() {
+    let fixture = crashed_spill_fixture_with_manual_clock();
+    assert!(!fixture.reclaim().unwrap().removed_live_owner());
+    fixture.clock.advance_past_owner_lease();
+    assert!(fixture.reclaim_bounded(2).unwrap().removed_orphan());
+    assert!(fixture.max_scan_page_items() <= 2);
+}
 ```
 
 - [ ] **Step 2: Verify RED**
@@ -146,7 +156,7 @@ Run: `CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-run
 
 - [ ] **Step 3: Implement explicit closure proofs**
 
-Partition EOF is never closure evidence. Inactivity closes only below the soft event-time watermark; hard session watermarks close exactly once; a finite seal fails incomplete sessions; external sort closes only from a verified complete run; indefinite follow waits for a missing predecessor. Charge active frontier, pending predecessor, and spill descriptors to configured item/byte budgets. `PrivateSessionSpill` owns a no-follow `0700` run directory, creates `0600` files, rejects link/type/mode drift, and removes only its validated run subtree through RAII on success, error, and cancellation.
+Partition EOF is never closure evidence. Inactivity closes only below the soft event-time watermark; hard session watermarks close exactly once; a finite seal fails incomplete sessions; external sort closes only from a verified complete run; indefinite follow waits for a missing predecessor. Charge active frontier, pending predecessor, and spill descriptors to configured item/byte budgets. `PrivateSessionSpill` owns a no-follow `0700` run directory, creates `0600` files, rejects link/type/mode drift, and removes only its validated run subtree through RAII on success, error, and cancellation. A renewable owner lease uses injected `Clock`; startup performs a bounded cursor scan and reclaims crash-orphaned run directories only after lease expiry.
 
 - [ ] **Step 4: Verify GREEN and commit**
 
@@ -205,13 +215,7 @@ Run: `CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-run
 
 - [ ] **Step 3: Implement run-scoped multiplexing**
 
-```rust
-pub struct PreparedStreamingActionBinding {
-    pub submitter: Box<dyn StreamingActionSubmitter>,
-    pub driver: Box<dyn StreamingActionDriver>,
-    pub control: Box<dyn StreamingActionDriverControl>,
-}
-```
+Consume the exact `PreparedStreamingActionBinding` defined by foundation Task 1D; do not redeclare or wrap it. `StreamingActionHost` owns the binding's submitter and driver while phase control retains the separately borrowable control.
 
 Validate exactly one binding per emitted schema before preparation. Bound active handles/items/bytes and driver events. Assign dense global sequence only after causal+event safety. `session_state` produces admitted/terminal membership without endpoint execution. Cancellation uses the separately borrowable control and joins the driver.
 
@@ -297,10 +301,6 @@ pub struct PreparedStreamingPlacementBinding {
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(transparent)]
-pub struct SessionOwnershipEpoch(u64);
-
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
-#[serde(transparent)]
 pub struct PlacementHandleId(u64);
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -332,14 +332,7 @@ pub struct PlacementFailureReceipt {
     pub code: PlacementFailureCode,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PlacementFailureCode {
-    RouteUnavailable,
-    StaleOwnershipEpoch,
-    DigestMismatch,
-    Cancelled,
-}
+// `PlacementFailureCode` is the stable failure vocabulary owned by foundation Task 1D.
 ```
 
 - [ ] **Step 1: Write the RED backpressure/shutdown test**
@@ -580,17 +573,7 @@ pub struct StreamingDistributionSnapshot { pub count: u64, pub sum_ns: u128, pub
 pub struct QueueHighWater { pub items: usize, pub bytes: usize, pub item_limit: usize, pub byte_limit: usize }
 pub enum StreamingStage { Source, Acquire, Decode, Order, Session, Placement, Action, Terminal, Result }
 pub enum StreamingDropReason { Late, Overload, AuthoredPolicy, Duplicate }
-pub struct CheckpointHorizonSnapshot {
-    pub discovered: SourcePosition,
-    pub acquired: GlobalSequence,
-    pub decoded: GlobalSequence,
-    pub ordered: GlobalSequence,
-    pub scheduled: GlobalSequence,
-    pub admitted: GlobalSequence,
-    pub terminal: GlobalSequence,
-    pub event_watermark: Option<EventTimeUtc>,
-    pub causal_frontier: SessionCausalFrontier,
-}
+pub struct CheckpointHorizonSnapshot { pub cut: CheckpointCut }
 
 pub struct StreamingPlaneMetrics {
     pub publication_lag_ns: StreamingDistributionSnapshot,
@@ -620,7 +603,8 @@ async fn stage_metrics_separate_lag_wait_slip_and_endpoint_time() {
     assert_eq!(metrics.schedule_slip_ns.count, 1);
     assert_eq!(metrics.endpoint_ns.count, 1);
     assert!(metrics.queues.values().all(|q| q.items <= q.item_limit && q.bytes <= q.byte_limit));
-    assert_eq!(metrics.checkpoint_horizons.terminal, GlobalSequence::new(0));
+    assert_eq!(metrics.checkpoint_horizons.cut.terminal,
+        TerminalActionHorizon::new(GlobalSequence::new(0)));
 }
 ```
 

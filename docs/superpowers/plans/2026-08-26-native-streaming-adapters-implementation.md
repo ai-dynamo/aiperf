@@ -56,7 +56,7 @@ rust/runtime/src/streaming/formats/streaming_dynamo.rs strict Dynamo decoder
 
 - [ ] **Step 1: Write and observe RED**
 
-Add `client_factory_honors_endpoint_and_redacts_credentials` and `feature_off_inventory_has_no_aws_constructor`; run `CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime --features streaming-s3 --test streaming_aws_client`.
+Add `client_factory_honors_endpoint_and_redacts_credentials`; run `CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime --features streaming-s3 --test streaming_aws_client`. Feature-off absence is owned by the adapter completion gate's exact `lightweight_streaming_inventory_excludes_s3` test.
 
 - [ ] **Step 2: Implement and verify GREEN**
 
@@ -409,7 +409,7 @@ Notifications are hints; reconciliation is authority. Add named mutation cases `
 
 - [ ] **Step 4: Verify green and feature-off absence**
 
-Run Step 2. Expected: pagination, versioned/unversioned identity, multipart ETag, listing mutation, notification loss, hard-no-backfill, lossy labeling, and bounded reconciliation cases pass. The adapter completion gate separately runs `streaming_without_s3_omits_s3_capabilities` under `--no-default-features --features streaming` to prove feature-off absence.
+Run Step 2. Expected: pagination, versioned/unversioned identity, multipart ETag, listing mutation, notification loss, hard-no-backfill, lossy labeling, and bounded reconciliation cases pass. The adapter completion gate separately runs `lightweight_streaming_inventory_excludes_s3` under `--no-default-features --features streaming` to prove feature-off absence.
 
 - [ ] **Step 5: Commit**
 
@@ -422,7 +422,7 @@ git commit -m "feat(dataset): follow immutable S3 partitions"
 
 ```bash
 CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime --features streaming-s3,parquet --test streaming_contract_conformance --test streaming_local_source --test streaming_jsonl_format --test streaming_hf_source --test streaming_baseten_format --test streaming_dynamo_format --test streaming_s3_source
-CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime --no-default-features --features streaming --test streaming_feature_inventory streaming_without_s3_omits_s3_capabilities -- --exact
+CARGO_TARGET_DIR=/mnt/4tb/aiperf-streaming-target cargo test -p aiperf-runtime --no-default-features --features streaming --test streaming_feature_inventory lightweight_streaming_inventory_excludes_s3 -- --exact
 ```
 
 Every adapter must pass Graham and independent review with no source×format branching, unbounded inventory, blocking hot-path work, leaked secret, or cursor ambiguity.
