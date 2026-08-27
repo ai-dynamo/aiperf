@@ -6,7 +6,7 @@
 seeds = [
   "ExecutionBackendConfig", "PreparedTurn", "TurnToSend", "MeasuredContext",
   "DispatchResult", "InferenceDimensions", "PreparedEndpointTable",
-  "WorkerMaterializer", "RequestObserver", "TurnResponseObserver",
+  "CreditMaterializer", "RequestObserver", "TurnResponseObserver",
   "RequestExecutor", "Clock", "WorkerSink", "ExecutionSinkBuilder",
   "Exporter", "EndpointFactory", "AIPerfExtension", "Request",
 ]

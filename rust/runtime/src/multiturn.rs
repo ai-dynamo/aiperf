@@ -41,6 +41,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
+mod materializer;
+
+pub use materializer::CreditMaterializer;
+
 /// Policy for deriving the input length attached to one materialized request.
 ///
 /// The endpoint and decoded body are passed together because endpoint dialects
