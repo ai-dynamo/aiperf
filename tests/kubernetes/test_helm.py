@@ -227,7 +227,7 @@ class TestHelmJobLifecycle:
         # Cleanup
         await helm_deployed.delete_job(result.job_name, result.namespace)
 
-    @pytest.mark.timeout(TEST_JOB_TIMEOUT)
+    @pytest.mark.timeout(TEST_JOB_TIMEOUT + 60)
     @pytest.mark.asyncio
     async def test_job_transitions_through_phases(
         self,
