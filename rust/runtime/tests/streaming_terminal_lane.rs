@@ -437,14 +437,19 @@ fn unbounded_terminal_payload_is_refused_before_dispatch() {
 #[test]
 fn actual_terminal_bytes_never_exceed_reserved_bound() {
     local(async {
+        const RECORDS: usize = 6;
+        // No drain owner runs yet, so every settled record stays charged. That
+        // is what makes the shrink observable: a lane that only released at
+        // drain would still hold `RECORDS * bound`.
         let lane = BoundedTerminalProcessorLane::new_for_test(TerminalLaneLimits {
-            max_items: 2,
+            max_items: RECORDS,
             max_bytes: TEST_LANE_BYTES,
         })
         .expect("lane");
         let control = lane.control();
-        lane.start_local_drain().expect("one drain owner");
-        for record in terminal_records(6, &[0, 1, 512, 2_048]).await {
+        let mut settled_bytes = 0usize;
+        let mut reserved_if_unshrunk = 0usize;
+        for record in terminal_records(RECORDS, &[0, 1, 512, 2_048]).await {
             let measured = terminal_record_bytes(&record.credit, &record.outcome);
             assert!(
                 measured <= record.bound.get(),
@@ -455,9 +460,14 @@ fn actual_terminal_bytes_never_exceed_reserved_bound() {
             permit
                 .settle(record.credit, record.outcome)
                 .expect("settlement within bound");
+            settled_bytes += measured;
+            reserved_if_unshrunk += record.bound.get();
             // The lease shrank to the actual size at settlement, not at drain.
-            assert!(control.snapshot().reserved_bytes <= measured);
+            let snapshot = control.snapshot();
+            assert_eq!(snapshot.reserved_bytes, settled_bytes);
+            assert!(settled_bytes < reserved_if_unshrunk);
         }
+        lane.start_local_drain().expect("one drain owner");
         control.close();
         control.drain().await.expect("drain");
         assert_eq!(control.snapshot().checked_invariant, None);
@@ -609,9 +619,13 @@ fn finite_session_numbers_are_unchanged_by_the_bounded_allocator() {
         let mut ordinals_b = Vec::new();
         for turn_index in 0..3 {
             for (slot, session) in sessions.iter().enumerate() {
+                // Deferred turns carry the scheduling identity without
+                // materializing a body. The prepared chat endpoint splices live
+                // captured replies into context, so a jump-resume materialization
+                // past turn 0 is refused by design; identity is all this pins.
                 let turn = session
-                    .build_turn_at(turn_index, None)
-                    .expect("materialized turn");
+                    .build_deferred_turn(turn_index, None)
+                    .expect("deferred turn identity");
                 let admitted =
                     runtime.issue_turn(turn, start_ns, None, noop_completion());
                 assert!(admitted);
