@@ -1349,6 +1349,22 @@ fn execute_member(
             });
         }
     };
+    if case
+        .measured_metrics
+        .iter()
+        .any(|metric| metric == "exporter_nanoseconds_per_record")
+        && decoded
+            .metrics
+            .contains_key("exporter_nanoseconds_per_record")
+    {
+        return Ok(MemberExecution {
+            outcome: MemberTerminalOutcome::MalformedOutput(
+                "bare exporter metric lacks complete artifact-bound sealed evidence".to_owned(),
+            ),
+            samples: Vec::new(),
+            terminal_evidence,
+        });
+    }
     let samples = decoded
         .metrics
         .into_iter()

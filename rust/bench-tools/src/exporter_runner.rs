@@ -22,10 +22,10 @@ use crate::exporter_policy::{
     SelectedBackingPayloadV1, apply_exporter_observable_policy_v1,
 };
 use crate::plugin_stats::{
-    ExporterEvidenceMode, ExporterMember, ExporterMemberBinding, ExporterMemberEvidence,
-    ExporterMemberRecord, ExporterMemberSummary, ExporterObservableKind, ExporterRepetitionReceipt,
-    ExporterSampleContract, RetainedExporterEvidence, validate_exporter_member_evidence,
-    validate_exporter_member_record,
+    ArtifactBoundExporterMemberV1, ExporterEvidenceMode, ExporterMember, ExporterMemberBinding,
+    ExporterMemberEvidence, ExporterMemberRecord, ExporterMemberSummary, ExporterObservableKind,
+    ExporterRepetitionReceipt, ExporterSampleContract, RetainedExporterEvidence,
+    validate_exporter_member_evidence, validate_exporter_member_record,
 };
 
 const CORPUS_RECORDS: u64 = 100_000;
@@ -411,13 +411,6 @@ pub struct CompletedExporterMember {
     receiver_protocol: Option<AuthenticatedReceiverProtocolV1>,
 }
 
-pub(crate) struct CompletedExporterMemberParts {
-    pub(crate) binding: ExporterMemberBinding,
-    pub(crate) evidence: ExporterMemberEvidence,
-    pub(crate) backing_payloads: Vec<SelectedBackingPayloadV1>,
-    pub(crate) record_bytes: Vec<u8>,
-}
-
 impl CompletedExporterMember {
     /// Controller-authenticated receiver protocol retained with this member.
     pub fn receiver_protocol(&self) -> Option<&str> {
@@ -463,12 +456,20 @@ impl CompletedExporterMember {
         &self.summary
     }
 
-    pub(crate) fn into_parts(self) -> CompletedExporterMemberParts {
-        CompletedExporterMemberParts {
+    pub(crate) fn into_artifact_bound(self) -> ArtifactBoundExporterMemberV1 {
+        ArtifactBoundExporterMemberV1 {
             binding: self.binding,
             evidence: self.evidence,
             backing_payloads: self.backing_payloads,
             record_bytes: self.record_bytes,
+            receiver_protocol: self
+                .receiver_protocol
+                .as_ref()
+                .map(|protocol| protocol.protocol().to_owned()),
+            receiver_protocol_authority_blake3: self
+                .receiver_protocol
+                .as_ref()
+                .map(|protocol| protocol.authority_blake3().to_owned()),
         }
     }
 }
