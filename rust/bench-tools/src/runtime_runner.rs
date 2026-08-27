@@ -1449,15 +1449,18 @@ fn run_controlled_runtime_internal(
                 {
                     first.outcome = MemberTerminalOutcome::Infrastructure(event);
                 }
-                let raw_pair = RawPairTerminalRecord {
-                    scenario: case.scenario.clone(),
-                    pair_id: scheduled.pair_id.clone(),
-                    member_order: scheduled.member_order,
-                    members: member_records,
-                    asserted_reason: None,
-                    asserted_disposition: None,
-                };
-                let decision = if is_exporter_case
+                // An exporter member that lost its pinned affinity, or one
+                // measured across a host reboot or a mock-server death, is
+                // still returned with its admitted artifact-bound evidence.
+                // Only a pair whose members both completed may be recorded as
+                // an authoritative parity sample; anything else goes to the
+                // ordinary pair path, which replaces the whole pair in seeded
+                // member order.
+                let is_pair_completed = member_records
+                    .iter()
+                    .all(|record| record.outcome == MemberTerminalOutcome::Completed);
+                let decision = if is_pair_completed
+                    && is_exporter_case
                     && exporter_factory.is_none()
                     && admitted_exporters.len() == 2
                 {
@@ -1478,7 +1481,8 @@ fn run_controlled_runtime_internal(
                     evaluator
                         .record_artifact_bound_exporter_pair(&policy, static_member, dynamic_member)
                         .map_err(|error| ControlledRuntimeError::new(error.to_string()))?
-                } else if is_exporter_case
+                } else if is_pair_completed
+                    && is_exporter_case
                     && exporter_factory.is_some()
                     && completed_exporters.len() == 2
                 {
@@ -1501,7 +1505,14 @@ fn run_controlled_runtime_internal(
                         .map_err(|error| ControlledRuntimeError::new(error.to_string()))?
                 } else {
                     evaluator
-                        .record_pair(raw_pair)
+                        .record_pair(RawPairTerminalRecord {
+                            scenario: case.scenario.clone(),
+                            pair_id: scheduled.pair_id.clone(),
+                            member_order: scheduled.member_order,
+                            members: member_records,
+                            asserted_reason: None,
+                            asserted_disposition: None,
+                        })
                         .map_err(|error| ControlledRuntimeError::new(error.to_string()))?
                 };
                 match decision {
