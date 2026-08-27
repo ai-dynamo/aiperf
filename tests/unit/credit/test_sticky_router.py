@@ -570,6 +570,39 @@ class TestStickyCreditRouterCancellation:
 
         assert router._cancellation_pending is True
 
+    async def test_cancellation_suppression_expires_and_is_not_latched(
+        self, benchmark_run
+    ) -> None:
+        """Suppression is a drain window, not a permanent latch.
+
+        Cancellation is global while begin_phase is per-phase, so under
+        seamless overlap a warmup drain can cancel after profiling has already
+        called begin_phase. A latched flag would then disable reconciliation,
+        orphan detection and in-flight warnings for the whole remaining run.
+        """
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
+        router._router_client.send_to = AsyncMock()
+
+        await router.cancel_all_credits()
+        assert router._cancellation_pending is True
+
+        # Nothing calls begin_phase again (profiling already started); the
+        # window must still lapse on its own.
+        router._cancellation_pending_until_ns -= int(1e12)
+        assert router._cancellation_pending is False
+
+    async def test_begin_phase_closes_cancellation_window(self, benchmark_run) -> None:
+        """A new phase starting still clears suppression immediately."""
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
+        router._router_client.send_to = AsyncMock()
+
+        await router.cancel_all_credits()
+        assert router._cancellation_pending is True
+
+        router.begin_phase(CreditPhase.PROFILING, phase_index=None)
+
+        assert router._cancellation_pending is False
+
 
 class TestStickyCreditRouterWorkerUnregistration:
     """Test worker unregistration edge cases."""

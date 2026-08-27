@@ -342,7 +342,9 @@ class StickyCreditRouter(CommunicationMixin):
         self._terminally_lost_workers: set[str] = set()
         self._gracefully_shutdown_workers: set[str] = set()
 
-        self._cancellation_pending: bool = False
+        # Monotonic deadline through which cancellation-related warnings stay
+        # suppressed; see the _cancellation_pending property.
+        self._cancellation_pending_until_ns: int = 0
         self._credits_complete: bool = False
 
         # Snapshot list for iteration - avoids dict.values() overhead in hot path.
@@ -602,10 +604,39 @@ class StickyCreditRouter(CommunicationMixin):
 
         await self._router_client.send_to(worker_id, credit)
 
+    @property
+    def _cancellation_pending(self) -> bool:
+        """Whether a cancellation drain is still expected to be in progress.
+
+        Suppression is time-bounded rather than latched. Cancellation is
+        global (``cancel_all_credits`` cancels every in-flight credit
+        regardless of phase) while ``begin_phase`` is per-phase, so under
+        seamless overlap a warmup drain that cancels *after* profiling has
+        already begun would latch the flag for the entire remaining run --
+        silently disabling reconciliation sends, orphan detection,
+        missed-cycle escalation and in-flight warnings just when they matter
+        most. The window covers exactly the drain the runner waits out.
+        """
+        return time.monotonic_ns() < self._cancellation_pending_until_ns
+
+    @_cancellation_pending.setter
+    def _cancellation_pending(self, value: bool) -> None:
+        """Open a fresh drain window, or close it immediately."""
+        if value:
+            self._begin_cancellation_window()
+        else:
+            self._cancellation_pending_until_ns = 0
+
+    def _begin_cancellation_window(self) -> None:
+        """Open (or extend) the drain window during which warnings are suppressed."""
+        self._cancellation_pending_until_ns = time.monotonic_ns() + int(
+            Environment.TIMING.CANCEL_DRAIN_TIMEOUT * NANOS_PER_SECOND
+        )
+
     async def cancel_all_credits(self) -> None:
         """Send cancellation requests to all workers with in-flight credits."""
         # Mark cancellation first, so we suppress warnings for workers that unregister with in-flight credits.
-        self._cancellation_pending = True
+        self._begin_cancellation_window()
 
         # Build up the map of worker_id to credit_ids snapshot to cancel in an atomic way
         # This works because there are no await calls in this loop, they are all done afterwards.
@@ -653,7 +684,7 @@ class StickyCreditRouter(CommunicationMixin):
         phase may still dispatch DAG descendants, so this must touch nothing
         the still-draining phase is using.
         """
-        self._cancellation_pending = False
+        self._cancellation_pending_until_ns = 0
 
     def end_phase(self, phase: CreditPhase, phase_index: int | None = None) -> None:
         """Phase-drain hook: the router holds no per-phase state to release.

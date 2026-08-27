@@ -570,6 +570,62 @@ class TestOnBenchmarkCompleteAdversarial:
         progress_client.send_shutdown.assert_awaited_once()
         mock_close.assert_awaited_once_with(_JOB_KEY)
 
+    @pytest.mark.asyncio
+    async def test_on_benchmark_complete_closed_session_runtime_error_is_contained(
+        self,
+    ) -> None:
+        """A cross-CR session close must not fail an already-completed run.
+
+        ``ProgressClient`` raises ``RuntimeError`` when its session is None, which
+        happens when another job's cache eviction closed the shared client between
+        the cache read and the send. Results are already stored at that point, so
+        the handler must degrade to a ShutdownSignalFailed event and still release
+        the cache entry rather than raising into kopf.
+        """
+        progress_client = AsyncMock(name="ProgressClient")
+        progress_client.send_shutdown.side_effect = RuntimeError(
+            "ProgressClient must be used as an async context manager"
+        )
+        patch = _patch()
+
+        async def _complete(*_args: Any, sb: Any, **_kwargs: Any) -> None:
+            sb.set_phase(Phase.COMPLETED)
+
+        with (
+            _stub_parent_fence(),
+            mock_patch(
+                "aiperf.operator.handlers.lifecycle.try_claim_completion",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.lifecycle.handle_completion",
+                new_callable=AsyncMock,
+                side_effect=_complete,
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.lifecycle.get_or_create_progress_client",
+                new_callable=AsyncMock,
+                return_value=progress_client,
+            ),
+            mock_patch(
+                "aiperf.operator.handlers.lifecycle.close_progress_client",
+                new_callable=AsyncMock,
+            ) as mock_close,
+            mock_patch("kopf.event") as mock_event,
+        ):
+            await on_benchmark_complete(
+                body=_body(generation="59"),
+                status=_running_status(),
+                name=_JOB_NAME,
+                namespace=_NAMESPACE,
+                patch=patch,
+            )
+
+        assert mock_event.call_args.kwargs["reason"] == "ShutdownSignalFailed"
+        assert patch.status["observedGeneration"] == 59
+        mock_close.assert_awaited_once_with(_JOB_KEY)
+
 
 # =============================================================================
 # Delete path

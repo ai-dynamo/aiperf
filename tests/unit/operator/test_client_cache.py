@@ -21,7 +21,9 @@ from aiperf.operator.client_cache import (
     _warned_pod_restarts,
     close_progress_client,
     get_or_create_progress_client,
+    is_cancellation_requested,
     job_key,
+    request_cancellation,
     try_claim_completion,
 )
 
@@ -42,6 +44,45 @@ class TestJobKey:
 
     def test_different_namespaces_different_keys(self) -> None:
         assert job_key("ns1", "job") != job_key("ns2", "job")
+
+    def test_same_name_replacement_cr_gets_a_distinct_key(self) -> None:
+        """A deleted-and-recreated AIPerfJob must not inherit the dead CR's caches."""
+        assert job_key("ns", "job", "uid-old") != job_key("ns", "job", "uid-new")
+
+    def test_uid_scoped_key_differs_from_bare_key(self) -> None:
+        """Delayed callbacks holding a bare key cannot address CR-scoped state."""
+        assert job_key("ns", "job", "uid-1") != job_key("ns", "job")
+
+    @pytest.mark.asyncio
+    async def test_recreated_cr_does_not_inherit_prior_incarnation_state(self) -> None:
+        """Closing the old incarnation leaves the replacement's caches untouched."""
+        from aiperf.operator.client_cache import _cancellation_events
+
+        old_key = job_key("ns", "job", "uid-old")
+        new_key = job_key("ns", "job", "uid-new")
+
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        with mock_patch(
+            "aiperf.operator.client_cache.ProgressClient", return_value=mock_client
+        ):
+            await get_or_create_progress_client(old_key)
+            new_client = await get_or_create_progress_client(new_key)
+
+        _shutdown_sent.add(old_key)
+        _warned_pod_restarts[old_key] = {("pod-0", 1)}
+        request_cancellation(old_key)
+
+        await close_progress_client(old_key)
+
+        assert _progress_clients[new_key] is new_client
+        assert new_key not in _shutdown_sent
+        assert new_key not in _warned_pod_restarts
+        assert not is_cancellation_requested(new_key)
+        # The old incarnation's SET flag survives its own close for in-flight
+        # observers; only the replacement's key must be unaffected.
+        assert is_cancellation_requested(old_key)
+        _cancellation_events.clear()
 
 
 class TestGetOrCreateProgressClient:

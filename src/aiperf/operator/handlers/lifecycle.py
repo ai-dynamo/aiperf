@@ -302,7 +302,11 @@ async def _shutdown_after_completion(
     try:
         progress_client = await get_or_create_progress_client(key)
         await progress_client.send_shutdown(host)
-    except (TimeoutError, aiohttp.ClientError, OSError) as e:
+    # RuntimeError covers the cross-CR case where the cached session was closed
+    # by another job's cache eviction between the get and the send: ProgressClient
+    # raises RuntimeError on a None session, and letting that escape would fail
+    # the kopf handler for a run whose results are already stored.
+    except (TimeoutError, aiohttp.ClientError, OSError, RuntimeError) as e:
         logger.exception(f"Failed to send shutdown to {host}")
         kopf.event(
             body,
