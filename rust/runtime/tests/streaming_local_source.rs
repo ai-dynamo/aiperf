@@ -16,9 +16,10 @@ use std::rc::Rc;
 
 use aiperf_runtime::streaming::{
     budget::BudgetLimits,
-    checkpoint::{CheckpointError, StreamingCheckpointParticipant},
+    checkpoint::CheckpointError,
     failure::{StableStreamingFailure, StreamingInputDomainIdentity},
     identity::{ContentDigest, ImmutableObjectIdentity},
+    reliability::StreamingIssueReporter,
     source::{
         PartitionAccessRequest, SourceEvent, StreamingDatasetSourceFactory,
         StreamingSourceMode,
