@@ -508,15 +508,22 @@ fn controller_affinity_monitor_replaces_the_whole_pair_in_seeded_order() {
         assert_eq!(terminal.variant, member.variant);
     }
     assert_eq!(pair_attempts[1].decision, PairAttemptDecision::RetainPair);
-    let statistical_report = report
-        .statistical_report
-        .as_ref()
-        .expect("replacement remains a complete statistical attempt");
-    assert_eq!(statistical_report.invalidation_attempts.len(), 1);
-    assert_eq!(
-        statistical_report.invalidation_attempts[0].reason,
-        "affinity_loss"
-    );
+    // The sealed matrix ends on the exporter scenario, which the checked-in
+    // calibration-mode observable policy cannot admit as a pair, so the attempt
+    // is a product failure rather than a complete statistical attempt. The
+    // replacement itself stays fully observable in retained raw evidence.
+    let replacements = report
+        .raw_pair_history
+        .iter()
+        .filter(|record| {
+            matches!(
+                record.decision,
+                PairAttemptDecision::ReplaceWholePair { .. }
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(replacements.len(), 1);
+    assert_eq!(replacements[0].derived_reason, "affinity_loss");
     assert_eq!(
         digest(&report.attempt_evidence_tree_bytes),
         report.attempt_evidence_tree_blake3
