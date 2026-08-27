@@ -54,9 +54,8 @@ use crate::{
 };
 
 #[cfg(feature = "engine")]
-use super::native_graph_episode::{
-    run_externally_driven_episode_session, run_native_graph_episode_callback_with_agent_deadline,
-};
+use super::native_graph_episode::run_externally_driven_episode_session;
+use super::native_graph_episode::run_native_graph_episode_callback_with_agent_deadline;
 use super::{
     AuthorizedExternalDriverSpawn, BenchmarkExecutionPlan, BenchmarkStepPlan, ComposeProjectId,
     DockerAdapterLease, DockerAdapterProcess, DockerAdapterSpawnerRequest, DockerBuildRequest,
