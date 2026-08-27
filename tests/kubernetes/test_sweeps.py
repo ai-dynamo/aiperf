@@ -112,6 +112,7 @@ async def _submit_sweep(
     namespace: str,
     image: str,
     kube_context: str,
+    image_pull_policy: str = "IfNotPresent",
 ) -> None:
     result = await run_command(
         [
@@ -129,7 +130,7 @@ async def _submit_sweep(
             "--image",
             image,
             "--image-pull-policy",
-            "Never",
+            image_pull_policy,
             "--kube-context",
             kube_context,
             "--detach",
@@ -269,6 +270,7 @@ async def test_grid_sweep_completes_and_harvests_aggregate(
         namespace=operator_job_namespace,
         image=k8s_settings.aiperf_image,
         kube_context=kubectl.context,
+        image_pull_policy=k8s_settings.image_pull_policy,
     )
     try:
         doc = await _wait_for_durable_sweep(
@@ -396,6 +398,7 @@ async def test_adaptive_sweep_runs_shared_planner_and_archives_history(
         namespace=operator_job_namespace,
         image=k8s_settings.aiperf_image,
         kube_context=kubectl.context,
+        image_pull_policy=k8s_settings.image_pull_policy,
     )
     try:
         doc = await _wait_for_durable_sweep(
@@ -485,6 +488,7 @@ async def test_sobol_sweep_archives_sampling_design_with_parent_epoch(
         namespace=operator_job_namespace,
         image=k8s_settings.aiperf_image,
         kube_context=kubectl.context,
+        image_pull_policy=k8s_settings.image_pull_policy,
     )
     try:
         doc = await _wait_for_durable_sweep(
@@ -551,6 +555,7 @@ async def test_multi_run_without_parameter_axis_uses_one_cell_sweep(
         namespace=operator_job_namespace,
         image=k8s_settings.aiperf_image,
         kube_context=kubectl.context,
+        image_pull_policy=k8s_settings.image_pull_policy,
     )
     try:
         doc = await _wait_for_durable_sweep(
