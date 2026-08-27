@@ -355,6 +355,7 @@ fn bare_exact_artifact_exporter_metric_is_a_product_failure() {
     let report = run_controlled_runtime_with_ledger_v1(
         &build_report,
         &fixture._directory.path().join("raw-member-attempts.jsonl"),
+        None,
     )
     .expect("controlled runtime matrix executes and evaluates");
 
@@ -486,6 +487,7 @@ fn terminal_failure_is_retained_once_with_its_exact_empty_output_digest() {
     let report = run_controlled_runtime_with_ledger_v1(
         &build_report,
         &fixture._directory.path().join("terminal-attempts.jsonl"),
+        None,
     )
     .expect("terminal product failure is retained as an authoritative outcome");
 
@@ -508,11 +510,11 @@ fn valid_terminal_attempt_refuses_a_second_runner_invocation() {
     let build_report = fixture.build_report();
     let ledger = fixture._directory.path().join("attempt-ledger.jsonl");
 
-    let first = run_controlled_runtime_with_ledger_v1(&build_report, &ledger)
+    let first = run_controlled_runtime_with_ledger_v1(&build_report, &ledger, None)
         .expect("first invocation records its terminal attempt");
     assert_eq!(first.decision, ControlledAttemptDecision::ValidFailure);
 
-    let error = run_controlled_runtime_with_ledger_v1(&build_report, &ledger)
+    let error = run_controlled_runtime_with_ledger_v1(&build_report, &ledger, None)
         .expect_err("the first valid attempt is authoritative across invocations");
     assert!(
         error
@@ -553,6 +555,7 @@ fn controller_affinity_monitor_replaces_the_whole_pair_in_seeded_order() {
     let report = run_controlled_runtime_with_ledger_v1(
         &build_report,
         &fixture._directory.path().join("replacement-attempts.jsonl"),
+        None,
     )
     .expect("controller completes after one infrastructure replacement");
 
@@ -640,11 +643,11 @@ fn one_experiment_identity_owns_one_ledger_across_requested_output_paths() {
     let first_request = fixture._directory.path().join("first-ledger.jsonl");
     let second_request = fixture._directory.path().join("second-ledger.jsonl");
 
-    let first = run_controlled_runtime_with_ledger_v1(&build_report, &first_request)
+    let first = run_controlled_runtime_with_ledger_v1(&build_report, &first_request, None)
         .expect("first invocation records its terminal attempt");
     assert_eq!(first.decision, ControlledAttemptDecision::ValidFailure);
 
-    let error = run_controlled_runtime_with_ledger_v1(&build_report, &second_request)
+    let error = run_controlled_runtime_with_ledger_v1(&build_report, &second_request, None)
         .expect_err("a second requested filename cannot restart the same identity");
     assert!(
         error
@@ -692,7 +695,7 @@ fn three_invalid_attempts_block_the_identity_across_requested_output_paths() {
             ._directory
             .path()
             .join(format!("attempt-{attempt}.jsonl"));
-        let report = run_controlled_runtime_with_ledger_v1(&build_report, &requested)
+        let report = run_controlled_runtime_with_ledger_v1(&build_report, &requested, None)
             .expect("each invalid attempt is recorded");
         assert_eq!(report.decision, ControlledAttemptDecision::Invalid);
         identity = report.experiment_identity_blake3.clone();
@@ -701,6 +704,7 @@ fn three_invalid_attempts_block_the_identity_across_requested_output_paths() {
     let error = run_controlled_runtime_with_ledger_v1(
         &build_report,
         &fixture._directory.path().join("attempt-3.jsonl"),
+        None,
     )
     .expect_err("three invalid attempts block another invocation");
     assert!(
@@ -801,6 +805,63 @@ fn controller_observed_mock_death_replaces_the_whole_pair_in_seeded_order() {
         &build_report,
         &fixture._directory.path().join("mock-death-attempts.jsonl"),
         &HostLivenessSourceV1::new(boot_identity.clone(), Some(mock_pid_path.clone())),
+    )
+    .expect("controller completes after one observed mock death");
+    let _ = mock.kill();
+    let _ = mock.wait();
+
+    let attempts = report
+        .raw_pair_history
+        .iter()
+        .filter(|record| {
+            record.raw.scenario == "http_non_streaming_c1" && record.raw.pair_id == "pair-00"
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(attempts.len(), 2);
+    assert_eq!(attempts[0].derived_reason, "mock_death_unrelated_to_member");
+    assert!(matches!(
+        attempts[0].decision,
+        PairAttemptDecision::ReplaceWholePair {
+            replacement_ordinal: 1,
+            ..
+        }
+    ));
+    assert_eq!(attempts[0].raw.member_order, attempts[1].raw.member_order);
+}
+
+#[test]
+fn the_ledger_entry_point_observes_the_mock_server_it_is_given() {
+    let mut fixture = Fixture::new();
+    let mock_pid_path = fixture._directory.path().join("mock-server.pid");
+    let mut mock = std::process::Command::new("/bin/sh")
+        .args(["-c", "sleep 300"])
+        .spawn()
+        .expect("mock stand-in starts");
+    std::fs::write(&mock_pid_path, mock.id().to_string()).expect("mock pid file is written");
+    let marker = fixture._directory.path().join("mock-death-once");
+    fixture.static_artifact =
+        runtime_artifact_killing_the_mock_once("static authority fixture", &mock_pid_path, &marker);
+    fixture.dynamic_artifact = runtime_artifact_killing_the_mock_once(
+        "dynamic authority fixture",
+        &mock_pid_path,
+        &marker,
+    );
+    write_executable(
+        &fixture.static_source.join("artifact-source"),
+        &fixture.static_artifact,
+    );
+    write_executable(
+        &fixture.dynamic_source.join("artifact-source"),
+        &fixture.dynamic_artifact,
+    );
+    let build_report = fixture.build_report();
+
+    // The documented entry point observes the real host boot identity, so only
+    // the mock-server pid path it is handed can raise this classification.
+    let report = run_controlled_runtime_with_ledger_v1(
+        &build_report,
+        &fixture._directory.path().join("ledger-mock-death.jsonl"),
+        Some(&mock_pid_path),
     )
     .expect("controller completes after one observed mock death");
     let _ = mock.kill();

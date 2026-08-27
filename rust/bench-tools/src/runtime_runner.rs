@@ -716,23 +716,34 @@ pub fn run_controlled_runtime_v1(
 }
 
 /// Execute both build-bound members under one persistent attempt ledger.
+///
+/// `mock_server_pid_path` names the pid file of the mock server the members
+/// are measured against. It is required for `mock_death_unrelated_to_member`
+/// to be observable: the controller can only classify a mock-server death it
+/// can see, and passing `None` runs with host-reboot observation alone.
 pub fn run_controlled_runtime_with_ledger_v1(
     build_report: &BuildPairReportV1,
     attempt_ledger_path: &Path,
+    mock_server_pid_path: Option<&Path>,
 ) -> Result<ControlledRuntimeReportV1, ControlledRuntimeError> {
     run_controlled_runtime_internal(
         build_report,
         None,
         CALIBRATION_POLICY_BYTES,
         attempt_ledger_path,
-        &HostLivenessSourceV1::host_default(),
+        &HostLivenessSourceV1::new(
+            PathBuf::from(HOST_BOOT_IDENTITY_PATH),
+            mock_server_pid_path.map(Path::to_path_buf),
+        ),
     )
 }
 
 /// Refuse an exporter implementation that is unrelated to the acquired artifacts.
 ///
 /// Exporter performance authority comes only from executing the exact artifact
-/// descriptors validated by [`run_controlled_runtime_v1`]. An in-process
+/// descriptors the ledger-bound entry points validate, which are
+/// [`run_controlled_runtime_with_ledger_v1`] and
+/// [`run_controlled_runtime_with_liveness_v1`]. An in-process
 /// factory cannot prove that its Rust implementation was loaded from either
 /// descriptor, so accepting one would let both pair members measure unrelated
 /// code while retaining the paired build identities.
