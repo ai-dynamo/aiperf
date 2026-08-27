@@ -58,7 +58,6 @@ fn runtime_artifact_rejecting_exporter(label: &str) -> Vec<u8> {
 
 #[derive(Clone, Copy)]
 enum FakeExporterMode {
-    Complete,
     AcquisitionFailure,
     ProductFailure,
 }

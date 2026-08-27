@@ -27,8 +27,6 @@ use crate::plugin_stats::{
 const OUTPUT_SCHEMA_V1: &[u8] = b"plugin_runtime_member_output/v1;closed-jcs-line;scenario,pair_id,variant,experiment_identity_blake3,completed_budget,active_duration_nanoseconds,metrics";
 const CALIBRATION_POLICY_BYTES: &[u8] =
     include_bytes!("../../benchmarks/exporter-observable-policy.json");
-const PAIRED_POLICY_BYTES: &[u8] =
-    include_bytes!("../../benchmarks/exporter-paired-runtime-policy.json");
 const TASKSET: &str = "/usr/bin/taskset";
 
 /// Read-only controller coordinates for acquiring one exporter implementation.
@@ -233,12 +231,20 @@ pub fn run_controlled_runtime_v1(
     run_controlled_runtime_internal(build_report, None, CALIBRATION_POLICY_BYTES)
 }
 
-/// Execute the complete matrix with controller-owned exporter acquisition.
+/// Refuse an exporter implementation that is unrelated to the acquired artifacts.
+///
+/// Exporter performance authority comes only from executing the exact artifact
+/// descriptors validated by [`run_controlled_runtime_v1`]. An in-process
+/// factory cannot prove that its Rust implementation was loaded from either
+/// descriptor, so accepting one would let both pair members measure unrelated
+/// code while retaining the paired build identities.
 pub fn run_controlled_runtime_with_exporters_v1(
-    build_report: &BuildPairReportV1,
-    exporter_factory: &mut dyn ControlledExporterWorkloadFactory,
+    _build_report: &BuildPairReportV1,
+    _exporter_factory: &mut dyn ControlledExporterWorkloadFactory,
 ) -> Result<ControlledRuntimeReportV1, ControlledRuntimeError> {
-    run_controlled_runtime_internal(build_report, Some(exporter_factory), PAIRED_POLICY_BYTES)
+    Err(ControlledRuntimeError::new(
+        "unrelated in-process exporter workload cannot acquire the already-open artifact authority",
+    ))
 }
 
 fn run_controlled_runtime_internal(
