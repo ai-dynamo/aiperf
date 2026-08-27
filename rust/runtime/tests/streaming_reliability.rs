@@ -497,9 +497,12 @@ async fn ordered_reporter_is_arrival_invariant_and_replay_counts_once() {
         .unwrap_or_else(|error| panic!("valid ordered issue: {error}"))
     };
 
-    let mut reverse =
-        BudgetOwnedStreamingIssueReporter::new(run(0x11), record_policy(), budget(65, submission_queue_charge_bytes() + 64 * 1024))
-            .unwrap_or_else(|error| panic!("budget-owned reporter: {error}"));
+    let mut reverse = BudgetOwnedStreamingIssueReporter::new(
+        run(0x11),
+        record_policy(),
+        budget(65, submission_queue_charge_bytes() + 64 * 1024),
+    )
+    .unwrap_or_else(|error| panic!("budget-owned reporter: {error}"));
     assert_eq!(
         reverse
             .report(IssueSequenceUpdate::Issue(make_issue(9, 9)))
@@ -531,9 +534,12 @@ async fn ordered_reporter_is_arrival_invariant_and_replay_counts_once() {
     assert_eq!(replay.issue_id(), replay_id);
     assert_eq!(reverse.summary().unwrap().total, 2);
 
-    let mut forward =
-        BudgetOwnedStreamingIssueReporter::new(run(0x11), record_policy(), budget(65, submission_queue_charge_bytes() + 64 * 1024))
-            .unwrap_or_else(|error| panic!("budget-owned reporter: {error}"));
+    let mut forward = BudgetOwnedStreamingIssueReporter::new(
+        run(0x11),
+        record_policy(),
+        budget(65, submission_queue_charge_bytes() + 64 * 1024),
+    )
+    .unwrap_or_else(|error| panic!("budget-owned reporter: {error}"));
     for (position, tie) in [(7, 7), (9, 9)] {
         forward
             .report(IssueSequenceUpdate::Issue(make_issue(position, tie)))
@@ -729,7 +735,10 @@ async fn ledger_participant_state_is_budget_owned() {
         .checkpoint_view(&at)
         .await
         .unwrap_or_else(|error| panic!("wire ledger state: {error}"));
-    assert_eq!(prepared.descriptor().schema_id, "aiperf.streaming.issue-ledger");
+    assert_eq!(
+        prepared.descriptor().schema_id,
+        "aiperf.streaming.issue-ledger"
+    );
     assert_eq!(prepared.descriptor().schema_version, 1);
     assert_eq!(prepared.descriptor().represented_cut, at.cut);
     assert_eq!(prepared.descriptor().item_count, 2);
@@ -809,7 +818,12 @@ async fn participant_state_prepare_releases_on_error() {
 
     // A foreign-run barrier refuses the participant view and installs no
     // retirement authority, so a later commit notification retires nothing.
-    assert!(reporter.checkpoint_view(&barrier(run(0x12), 4)).await.is_err());
+    assert!(
+        reporter
+            .checkpoint_view(&barrier(run(0x12), 4))
+            .await
+            .is_err()
+    );
     reporter
         .report(IssueSequenceUpdate::Issue(record_issue(
             DecodeFailureCode::Syntax,

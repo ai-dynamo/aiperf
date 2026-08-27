@@ -357,7 +357,9 @@ pub async fn commit_empty(
     transaction
         .stage_participant(prepared_participant(run, epoch).await)
         .await?;
-    transaction.stage_results(&mut Vec::new(), &mut None).await?;
+    transaction
+        .stage_results(&mut Vec::new(), &mut None)
+        .await?;
     transaction
         .commit(metadata_with_lineage(previous, epoch))
         .await

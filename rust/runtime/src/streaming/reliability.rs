@@ -35,10 +35,10 @@ use super::{
     },
     budget::{BudgetError, BudgetLease, LeasedByteBuffer, StreamingResourceBudget},
     checkpoint::{
-        BudgetedCheckpointBytes, CheckpointBarrier, CheckpointCut, CheckpointEpoch, CheckpointError,
-        CheckpointGeneration, CheckpointParticipantId, CommittedCheckpointGeneration,
-        CommittedParticipantReceipt, CommittedParticipantState, PreparedParticipantState,
-        StreamRunIdentity, StreamingCheckpointParticipant,
+        BudgetedCheckpointBytes, CheckpointBarrier, CheckpointCut, CheckpointEpoch,
+        CheckpointError, CheckpointGeneration, CheckpointParticipantId,
+        CommittedCheckpointGeneration, CommittedParticipantReceipt, CommittedParticipantState,
+        PreparedParticipantState, StreamRunIdentity, StreamingCheckpointParticipant,
     },
     failure::{
         OrdinaryStreamingFailure, ResultExportError, ResultExportFailureCode,
@@ -1254,8 +1254,12 @@ struct RestoredIssueLedgerState {
     wire_version: u32,
     run: StreamRunIdentity,
     policy_digest: ContentDigest,
-    barrier_epoch: CheckpointEpoch,
     handled_cut: HandledIssueCut,
+    /// Provenance of the barrier the state was wired at. Strict decoding
+    /// requires the field, but restore takes its authority from the committed
+    /// descriptor rather than from the payload, so nothing reads it.
+    #[allow(dead_code)]
+    barrier_epoch: CheckpointEpoch,
     action_frontier: Option<GlobalSequence>,
     input_frontiers: Vec<RestoredIssueLedgerFrontier>,
     counters: Vec<RestoredIssueLedgerCounter>,
@@ -1452,8 +1456,7 @@ struct HandledIssueCutWire {
 const QUARANTINE_TOMBSTONE_ROOT_DOMAIN: &[u8] = b"aiperf.streaming.quarantine-tombstone-root.v1";
 
 /// Canonical hash domain binding one quarantine receipt to a tombstone view.
-const QUARANTINE_RECEIPT_BINDING_DOMAIN: &[u8] =
-    b"aiperf.streaming.quarantine-receipt-binding.v1";
+const QUARANTINE_RECEIPT_BINDING_DOMAIN: &[u8] = b"aiperf.streaming.quarantine-receipt-binding.v1";
 
 impl HandledIssueCut {
     /// Construct the canonical cut containing no handled issues.
@@ -2805,8 +2808,9 @@ impl BudgetOwnedStreamingIssueReporter {
         let attempt_entry_lease = if self.current_action_attempts.contains_key(&sequence) {
             None
         } else {
-            let bytes = super::budget::ordered_map_entry_bytes::<GlobalSequence, CurrentActionAttempt>()
-                .map_err(|_| StreamingReliabilityError::CounterOverflow)?;
+            let bytes =
+                super::budget::ordered_map_entry_bytes::<GlobalSequence, CurrentActionAttempt>()
+                    .map_err(|_| StreamingReliabilityError::CounterOverflow)?;
             Some(
                 self.budget
                     .try_acquire(1, bytes)
@@ -2971,11 +2975,9 @@ impl BudgetOwnedStreamingIssueReporter {
             }
         }
         let sequence = fact.sequence;
-        let entry_bytes = super::budget::ordered_map_entry_bytes::<
-            GlobalSequence,
-            RetainedActionTerminal,
-        >()
-        .map_err(|_| StreamingReliabilityError::CounterOverflow)?;
+        let entry_bytes =
+            super::budget::ordered_map_entry_bytes::<GlobalSequence, RetainedActionTerminal>()
+                .map_err(|_| StreamingReliabilityError::CounterOverflow)?;
         let entry_lease = self
             .budget
             .try_acquire(1, entry_bytes)
@@ -3224,23 +3226,24 @@ impl BudgetOwnedStreamingIssueReporter {
         if let Err(error) = update_summary(&mut next_summary, &receipt, needs_admission_fence) {
             return Err((error, pending));
         }
-        let (owned, receipt_entry_lease, pending_lease) = match budget_owned_receipt_from_reservation(
-            receipt,
-            pending.reservation,
-            pending.retained_issue_bytes,
-        ) {
-            Ok(value) => value,
-            Err((error, reservation)) => {
-                return Err((
-                    error,
-                    PendingIssue {
-                        issue: pending.issue,
-                        reservation,
-                        retained_issue_bytes: pending.retained_issue_bytes,
-                    },
-                ));
-            }
-        };
+        let (owned, receipt_entry_lease, pending_lease) =
+            match budget_owned_receipt_from_reservation(
+                receipt,
+                pending.reservation,
+                pending.retained_issue_bytes,
+            ) {
+                Ok(value) => value,
+                Err((error, reservation)) => {
+                    return Err((
+                        error,
+                        PendingIssue {
+                            issue: pending.issue,
+                            reservation,
+                            retained_issue_bytes: pending.retained_issue_bytes,
+                        },
+                    ));
+                }
+            };
         let outcome = StreamingIssueOutcome {
             issue_id,
             disposition,
@@ -3354,8 +3357,8 @@ impl BudgetOwnedStreamingIssueReporter {
         };
         // Measure before admission: the encoder streams, so the exact payload
         // length is known without materializing a single payload byte.
-        let payload_bytes_len =
-            measured_json_len(&wire).map_err(|_| StreamingReliabilityError::CorruptCheckpointState)?;
+        let payload_bytes_len = measured_json_len(&wire)
+            .map_err(|_| StreamingReliabilityError::CorruptCheckpointState)?;
         let view_charge_bytes = size_of::<PreparedIssueReceiptPartitionView>();
         let aggregate_bytes = payload_bytes_len
             .checked_add(view_charge_bytes)
@@ -3440,29 +3443,26 @@ impl BudgetOwnedStreamingIssueReporter {
             .checked_add(self.counters.len())
             .and_then(|total| u64::try_from(total).ok())
             .ok_or(CheckpointError::ObjectVerification)?;
-        let lease = self
-            .budget
-            .acquire(1, encoded_len)
-            .await
-            .map_err(|error| CheckpointError::StateBudget {
-                participant: participant.clone(),
-                code: budget_failure_code(error),
-            })?;
-        let mut buffer =
-            LeasedByteBuffer::with_exact_capacity(lease).map_err(|error| {
-                CheckpointError::StateBudget {
-                    participant: participant.clone(),
-                    code: budget_failure_code(error),
-                }
-            })?;
-        serde_json::to_writer(&mut buffer, &wire)
-            .map_err(|_| CheckpointError::ObjectVerification)?;
-        let (bytes, lease) = buffer.into_full().map_err(|error| {
+        let lease = self.budget.acquire(1, encoded_len).await.map_err(|error| {
             CheckpointError::StateBudget {
                 participant: participant.clone(),
                 code: budget_failure_code(error),
             }
         })?;
+        let mut buffer = LeasedByteBuffer::with_exact_capacity(lease).map_err(|error| {
+            CheckpointError::StateBudget {
+                participant: participant.clone(),
+                code: budget_failure_code(error),
+            }
+        })?;
+        serde_json::to_writer(&mut buffer, &wire)
+            .map_err(|_| CheckpointError::ObjectVerification)?;
+        let (bytes, lease) = buffer
+            .into_full()
+            .map_err(|error| CheckpointError::StateBudget {
+                participant: participant.clone(),
+                code: budget_failure_code(error),
+            })?;
         let payload = BudgetedCheckpointBytes::from_compact(bytes, lease)?;
         let prepared = PreparedParticipantState::new(
             self.run,
@@ -3550,8 +3550,8 @@ impl BudgetOwnedStreamingIssueReporter {
         // empty rather than partially charged.
         let mut retained_frontiers = BTreeMap::new();
         for (domain, through) in input_frontiers {
-            let bytes = input_frontier_entry_bytes()
-                .map_err(|_| CheckpointError::ObjectVerification)?;
+            let bytes =
+                input_frontier_entry_bytes().map_err(|_| CheckpointError::ObjectVerification)?;
             let entry_lease = self.budget.try_acquire(1, bytes).map_err(|error| {
                 CheckpointError::StateBudget {
                     participant: participant.clone(),
@@ -4000,7 +4000,6 @@ fn is_retryable_submission_error(error: &StreamingReliabilityError) -> bool {
         | StreamingReliabilityError::ForgedActionGapClosure => false,
     }
 }
-
 
 #[derive(Serialize)]
 #[serde(deny_unknown_fields)]
@@ -4702,7 +4701,11 @@ fn export_failure_for_stage_and_code(
     FAILURE_CODES
         .into_iter()
         .map(ResultExportError::failure)
-        .chain(BUDGET_CODES.into_iter().map(ResultExportError::state_budget))
+        .chain(
+            BUDGET_CODES
+                .into_iter()
+                .map(ResultExportError::state_budget),
+        )
         .find(|error| error.stage() == stage && error.code() == code.as_str())
         .map(OrdinaryStreamingFailure::Export)
 }
@@ -4732,8 +4735,8 @@ pub async fn restore_durable_export_issue_receipt(
     }
     // Admit the proved parse upper bound before the parse allocates anything.
     // Every refusal below drops this lease, releasing the whole reservation.
-    let parsed_reservation_bytes =
-        restored_export_receipt_bound_bytes().map_err(|_| StreamingReliabilityError::CounterOverflow)?;
+    let parsed_reservation_bytes = restored_export_receipt_bound_bytes()
+        .map_err(|_| StreamingReliabilityError::CounterOverflow)?;
     let mut parsed_lease = parsed_budget
         .acquire(1, parsed_reservation_bytes)
         .await
@@ -6820,7 +6823,7 @@ mod tests {
         .unwrap_or_else(|error| panic!("valid action policy: {error}"));
         let mut reporter =
             BudgetOwnedStreamingIssueReporter::new(run, policy, action_budget.clone())
-            .unwrap_or_else(|error| panic!("budget-owned reporter: {error}"));
+                .unwrap_or_else(|error| panic!("budget-owned reporter: {error}"));
         let issue = action_issue(0, 0);
         let evidence = CheckedActionFailureTerminalEvidence::for_test(
             run,
@@ -6919,7 +6922,8 @@ mod tests {
         assert_eq!(prepared.view_revision(), 4);
         assert_eq!(prepared.payload_bytes(), entries);
 
-        let replayed_digest = CheckedSessionQuarantineTombstoneView::for_test(run, root, 5, entries);
+        let replayed_digest =
+            CheckedSessionQuarantineTombstoneView::for_test(run, root, 5, entries);
         assert_eq!(
             reporter.verify_session_quarantine_install(&prepared, &replayed_digest, &barrier,),
             Err(StreamingReliabilityError::StaleQuarantineTombstoneView)
@@ -6988,9 +6992,12 @@ mod tests {
         session: u8,
         position: u64,
     ) -> (BudgetOwnedStreamingIssueReporter, ContentDigest) {
-        let mut reporter =
-            BudgetOwnedStreamingIssueReporter::new(run, session_quarantine_policy(), quarantine_reporter_budget())
-                .unwrap_or_else(|error| panic!("budget-owned reporter: {error}"));
+        let mut reporter = BudgetOwnedStreamingIssueReporter::new(
+            run,
+            session_quarantine_policy(),
+            quarantine_reporter_budget(),
+        )
+        .unwrap_or_else(|error| panic!("budget-owned reporter: {error}"));
         let issue = session_quarantine_issue(run, input_domain.clone(), session, position);
         let issue_id = issue.issue_id();
         futures::executor::block_on(reporter.report(IssueSequenceUpdate::Issue(issue)))
@@ -7041,11 +7048,9 @@ mod tests {
         .unwrap_or_else(|error| panic!("prepare quarantine install: {error}"));
         let binding_root = *prepared.receipt_binding_root();
         assert_eq!(
-            futures::executor::block_on(
-                reporter.report(IssueSequenceUpdate::PreparedSessionQuarantineInstall(
-                    prepared
-                ))
-            ),
+            futures::executor::block_on(reporter.report(
+                IssueSequenceUpdate::PreparedSessionQuarantineInstall(prepared)
+            )),
             Ok(None)
         );
         assert!(reporter.accepted_quarantine_install().is_some());
@@ -7071,7 +7076,10 @@ mod tests {
             partition.handled_cut().quarantine_tombstone_root(),
             HandledIssueCut::empty().quarantine_tombstone_root()
         );
-        assert_eq!(partition.handled_cut().receipt_root(), partition.receipt_root());
+        assert_eq!(
+            partition.handled_cut().receipt_root(),
+            partition.receipt_root()
+        );
     }
 
     #[test]
@@ -7095,11 +7103,9 @@ mod tests {
             &install_budget,
         ))
         .unwrap_or_else(|error| panic!("prepare quarantine install: {error}"));
-        futures::executor::block_on(
-            reporter.report(IssueSequenceUpdate::PreparedSessionQuarantineInstall(
-                prepared,
-            )),
-        )
+        futures::executor::block_on(reporter.report(
+            IssueSequenceUpdate::PreparedSessionQuarantineInstall(prepared),
+        ))
         .unwrap_or_else(|error| panic!("accept quarantine install: {error}"));
 
         // A later detailed receipt moves the receipt root, so the acknowledgement
@@ -7148,17 +7154,14 @@ mod tests {
             &install_budget,
         ))
         .unwrap_or_else(|error| panic!("prepare current install: {error}"));
-        futures::executor::block_on(
-            reporter.report(IssueSequenceUpdate::PreparedSessionQuarantineInstall(
-                accepted,
-            )),
-        )
+        futures::executor::block_on(reporter.report(
+            IssueSequenceUpdate::PreparedSessionQuarantineInstall(accepted),
+        ))
         .unwrap_or_else(|error| panic!("accept current install: {error}"));
-        let accepted_root =
-            *futures::executor::block_on(reporter.receipt_partition_view(&barrier))
-                .unwrap_or_else(|error| panic!("prepare partition view: {error}"))
-                .handled_cut()
-                .quarantine_tombstone_root();
+        let accepted_root = *futures::executor::block_on(reporter.receipt_partition_view(&barrier))
+            .unwrap_or_else(|error| panic!("prepare partition view: {error}"))
+            .handled_cut()
+            .quarantine_tombstone_root();
         let retained = install_budget.snapshot();
 
         let regressed_view = CheckedSessionQuarantineTombstoneView::for_test(run, root, 4, entries);
@@ -7266,8 +7269,8 @@ mod tests {
 
         // The export budget is touched by this preparation alone, so its peak is
         // the aggregate acquisition and its retained total is the exact split.
-        let expected = prepared.receipt.encoded.charged_bytes()
-            + prepared.receipt.parsed_charge_bytes();
+        let expected =
+            prepared.receipt.encoded.charged_bytes() + prepared.receipt.parsed_charge_bytes();
         let snapshot = export_budget.snapshot();
         assert_eq!(snapshot.used_items, 2);
         assert_eq!(snapshot.used_bytes, expected);
@@ -7301,12 +7304,9 @@ mod tests {
         })
         .unwrap_or_else(|error| panic!("valid starved budget: {error}"));
         assert!(matches!(
-            futures::executor::block_on(reporter.prepare_session_quarantine_install(
-                &view,
-                issue_id,
-                &barrier,
-                &starved,
-            )),
+            futures::executor::block_on(
+                reporter.prepare_session_quarantine_install(&view, issue_id, &barrier, &starved,)
+            ),
             Err(StreamingReliabilityError::QuarantineInstallBudget(_))
         ));
         assert_eq!(starved.snapshot().used_items, 0);
@@ -7556,12 +7556,16 @@ mod tests {
         let committed = committed_final_generation(run, 9);
         let generation = committed.generation();
         let sink_id = component("native_report");
-        let (bytes, reference, issue_id) =
-            prepared_export_bytes(run, &generation, &sink_id, StreamingIssueClass::Permanent, 0);
+        let (bytes, reference, issue_id) = prepared_export_bytes(
+            run,
+            &generation,
+            &sink_id,
+            StreamingIssueClass::Permanent,
+            0,
+        );
 
         let policy = export_recomputation_policy();
-        let context =
-            export_restore_context(&committed, &policy, sink_id, 0, reference.clone());
+        let context = export_restore_context(&committed, &policy, sink_id, 0, reference.clone());
         let budget = export_restore_budget();
         let restored = futures::executor::block_on(restore_durable_export_issue_receipt(
             charged_bytes(&budget, &bytes),
@@ -7595,8 +7599,13 @@ mod tests {
         let committed = committed_final_generation(run, 4);
         let generation = committed.generation();
         let sink_id = component("native_report");
-        let (bytes, _, _) =
-            prepared_export_bytes(run, &generation, &sink_id, StreamingIssueClass::Permanent, 0);
+        let (bytes, _, _) = prepared_export_bytes(
+            run,
+            &generation,
+            &sink_id,
+            StreamingIssueClass::Permanent,
+            0,
+        );
         let policy = export_recomputation_policy();
         let budget = export_restore_budget();
 
@@ -7684,8 +7693,13 @@ mod tests {
 
         // Retryable rule, limit three: ordinal one is below the limit, so the
         // recomputed decision is a non-exhausted retry.
-        let (bytes, reference, issue_id) =
-            prepared_export_bytes(run, &generation, &sink_id, StreamingIssueClass::Retryable, 1);
+        let (bytes, reference, issue_id) = prepared_export_bytes(
+            run,
+            &generation,
+            &sink_id,
+            StreamingIssueClass::Retryable,
+            1,
+        );
         let context = export_restore_context(&committed, &policy, sink_id.clone(), 1, reference);
         let restored = futures::executor::block_on(restore_durable_export_issue_receipt(
             charged_bytes(&budget, &bytes),
@@ -7727,8 +7741,13 @@ mod tests {
         let committed = committed_final_generation(run, 3);
         let generation = committed.generation();
         let sink_id = component("native_report");
-        let (bytes, _, _) =
-            prepared_export_bytes(run, &generation, &sink_id, StreamingIssueClass::Permanent, 0);
+        let (bytes, _, _) = prepared_export_bytes(
+            run,
+            &generation,
+            &sink_id,
+            StreamingIssueClass::Permanent,
+            0,
+        );
         let policy = export_recomputation_policy();
         let budget = export_restore_budget();
 
@@ -7757,8 +7776,13 @@ mod tests {
         let committed = committed_final_generation(run, 11);
         let generation = committed.generation();
         let sink_id = component("native_report");
-        let (bytes, reference, issue_id) =
-            prepared_export_bytes(run, &generation, &sink_id, StreamingIssueClass::Permanent, 1);
+        let (bytes, reference, issue_id) = prepared_export_bytes(
+            run,
+            &generation,
+            &sink_id,
+            StreamingIssueClass::Permanent,
+            1,
+        );
 
         // A non-dense predecessor pair is not a reachable status.
         assert_eq!(
@@ -7790,11 +7814,7 @@ mod tests {
         // A status minted against one generation cannot restore under another.
         let policy = export_recomputation_policy();
         let status = VerifiedDerivedSinkAttemptStatus::from_status_owner(
-            &committed,
-            sink_id,
-            1,
-            1,
-            reference,
+            &committed, sink_id, 1, 1, reference,
         )
         .unwrap_or_else(|error| panic!("verified status: {error}"));
         let other_final = committed_final_generation(run, 13);
@@ -7832,12 +7852,9 @@ mod tests {
         exhausted: StreamingIssueDisposition,
     ) -> BudgetOwnedStreamingIssueReporter {
         let run = StreamRunIdentity::new(LogicalReplayRunId::from_bytes([0x81; 32]));
-        let policy = PreparedStreamingIssuePolicy::new([action_rule(
-            "action_default",
-            0,
-            exhausted,
-        )])
-        .unwrap_or_else(|error| panic!("valid action policy: {error}"));
+        let policy =
+            PreparedStreamingIssuePolicy::new([action_rule("action_default", 0, exhausted)])
+                .unwrap_or_else(|error| panic!("valid action policy: {error}"));
         BudgetOwnedStreamingIssueReporter::new(run, policy, budget)
             .unwrap_or_else(|error| panic!("budget-owned reporter: {error}"))
     }
@@ -8105,8 +8122,8 @@ mod tests {
             "counts": [1, 2, 3],
             "nested": {"unicode": "\u{00e9}\u{4e2d}"},
         });
-        let encoded = serde_json::to_vec(&value)
-            .unwrap_or_else(|error| panic!("encodable value: {error}"));
+        let encoded =
+            serde_json::to_vec(&value).unwrap_or_else(|error| panic!("encodable value: {error}"));
         let measured =
             measured_json_len(&value).unwrap_or_else(|error| panic!("measurable: {error}"));
         assert_eq!(measured, encoded.len());
@@ -8130,8 +8147,9 @@ mod tests {
         let queue: VecDeque<QueuedHandleIssue> = VecDeque::with_capacity(MAX_QUEUED_SUBMISSIONS);
         assert!(queue.capacity() >= MAX_QUEUED_SUBMISSIONS);
 
-        let realized = super::super::budget::ring_buffer_bytes::<QueuedHandleIssue>(queue.capacity())
-            .unwrap_or_else(|error| panic!("representable ring charge: {error}"));
+        let realized =
+            super::super::budget::ring_buffer_bytes::<QueuedHandleIssue>(queue.capacity())
+                .unwrap_or_else(|error| panic!("representable ring charge: {error}"));
         assert!(realized >= submission_queue_charge_bytes());
 
         let budget = StreamingResourceBudget::new(super::super::budget::BudgetLimits {
@@ -8365,8 +8383,10 @@ mod tests {
 
     #[test]
     fn queue_at_capacity_rejects_without_allocating() {
-        let (budget, reporter, _input_domain) =
-            submission_test_reporter(4 * MAX_QUEUED_SUBMISSIONS, QUEUE_CHARGE_BYTES + 8 * 1024 * 1024);
+        let (budget, reporter, _input_domain) = submission_test_reporter(
+            4 * MAX_QUEUED_SUBMISSIONS,
+            QUEUE_CHARGE_BYTES + 8 * 1024 * 1024,
+        );
         let handle = reporter.handle();
         for _ in 0..MAX_QUEUED_SUBMISSIONS {
             assert!(matches!(
