@@ -35,6 +35,7 @@ use aiperf_runtime::streaming::{
         StableStreamingFailure, StreamingFailureStage, StreamingIssueReporter,
     },
     identity::{ContentDigest, GlobalSequence, ImmutableObjectIdentity, SessionCausalFrontier},
+    reliability::HandledIssueCut,
     source::{
         AcquisitionBudget, OpenedStreamingDatasetSource, PartitionAccessRequest, SourceEvent,
         StreamingDatasetSourceFactory, StreamingSourcePrepareContext, streaming_stop_channel,
@@ -142,7 +143,12 @@ async fn assert_pending_is_not_seal(
             "a source with no ready event parks instead of sealing"
         );
         opened.control.stop();
-        let error = pending.await.expect_err("stop wakes the pending source");
+        // `SourceEvent` carries opaque content authority and is not `Debug`, so
+        // the failure path is matched rather than unwrapped.
+        let error = match pending.await {
+            Ok(_) => panic!("stop wakes the pending source"),
+            Err(error) => error,
+        };
         assert!(error.is_stopped(), "controlled stop is distinguishable");
         assert_eq!(error.stage(), StreamingFailureStage::Source);
         assert_eq!(error.code(), "stopped");
@@ -300,7 +306,7 @@ async fn assert_idempotent_commit_notification(
         .await
         .expect("stage the source participant");
     transaction
-        .stage_results(&mut Vec::new())
+        .stage_results(&mut Vec::new(), &mut None)
         .await
         .expect("stage empty results");
     let generation = transaction
@@ -390,6 +396,7 @@ fn barrier_for(run: StreamRunIdentity, value: u64) -> CheckpointBarrier {
             ordered: OrderedActionHorizon::new(GlobalSequence::new(value)),
             admitted: AdmissionHorizon::new(GlobalSequence::new(value)),
             terminal: TerminalActionHorizon::new(GlobalSequence::new(value)),
+            handled_issues: HandledIssueCut::empty(),
             event_watermark: EventTimeWatermark::Hard {
                 through: event_time,
             },

@@ -768,7 +768,12 @@ async fn host_stop_wakes_pending_source_without_issue_or_seal() {
     );
 
     opened.control.stop();
-    let error = pending.await.expect_err("stop wakes the pending source");
+    // `SourceEvent` carries opaque content authority and is not `Debug`, so the
+    // failure path is matched rather than unwrapped.
+    let error = match pending.await {
+        Ok(_) => panic!("stop wakes the pending source"),
+        Err(error) => error,
+    };
     assert!(error.is_stopped());
     assert_eq!(error.stage(), StreamingFailureStage::Source);
     assert_eq!(error.code(), "stopped");
