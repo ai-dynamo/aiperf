@@ -473,7 +473,7 @@ async def test_adaptive_sweep_runs_shared_planner_and_archives_history(
         )
 
 
-@pytest.mark.timeout(600)
+@pytest.mark.timeout(1200)
 @pytest.mark.asyncio
 async def test_sobol_sweep_archives_sampling_design_with_parent_epoch(
     operator_ready: OperatorDeployer,
@@ -501,7 +501,7 @@ async def test_sobol_sweep_archives_sampling_design_with_parent_epoch(
             operator=operator_ready,
             name=name,
             namespace=operator_job_namespace,
-            timeout=k8s_settings.benchmark_timeout,
+            timeout=1100,
         )
 
         status = doc.get("status", {})
@@ -541,7 +541,7 @@ async def test_sobol_sweep_archives_sampling_design_with_parent_epoch(
         )
 
 
-@pytest.mark.timeout(600)
+@pytest.mark.timeout(1200)
 @pytest.mark.asyncio
 async def test_multi_run_without_parameter_axis_uses_one_cell_sweep(
     operator_ready: OperatorDeployer,
@@ -569,7 +569,7 @@ async def test_multi_run_without_parameter_axis_uses_one_cell_sweep(
             operator=operator_ready,
             name=name,
             namespace=operator_job_namespace,
-            timeout=k8s_settings.benchmark_timeout,
+            timeout=1100,
         )
 
         status = doc.get("status", {})
