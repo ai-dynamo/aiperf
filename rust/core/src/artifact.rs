@@ -17,10 +17,11 @@
 //! host, not an adversarial filesystem; see [`DirectoryArtifacts`] for the
 //! exact per-operation behavior.
 //!
-//! The `E0599` pin below is deliberate: an unpinned `compile_fail` would also
-//! "pass" on a renamed crate, a broken `use`, or a typo.
+//! The doctest below illustrates the absence of a raw-path accessor. It makes
+//! no claim about which compile error is produced; the guard that actually
+//! discriminates is `NoRawPathEscapeHatch` in `core/tests/public_contract.rs`.
 //!
-//! ```compile_fail,E0599
+//! ```compile_fail
 //! use aiperf_core::artifact::ArtifactAccess;
 //! fn escape(access: &dyn ArtifactAccess) -> &std::path::Path {
 //!     // There is no `raw_path` on the capability, by design.
