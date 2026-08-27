@@ -6,3 +6,20 @@ name = "aiperf-core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+
+# Boundary-owned values and host-service traits only. This crate must never
+# depend on `aiperf-runtime`: every category SDK links it, and the plugin ABI
+# closure is measured from what is reachable here.
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+base64.workspace = true
+bytes.workspace = true
+serde = { workspace = true }
+serde_json.workspace = true
+smallvec.workspace = true
+tokio = { workspace = true }
+uuid.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
