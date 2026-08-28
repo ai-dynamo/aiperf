@@ -646,7 +646,7 @@ mod tests {
     use super::*;
 
     use crate::engine::registry::{ClockKind, TransportDescriptor};
-    use crate::streaming::action::StreamingActionSinkDescriptor;
+    use crate::streaming::action::{EndpointRetrySafety, StreamingActionSinkDescriptor};
     use crate::streaming::format::StreamingFormatDescriptor;
     use crate::streaming::identity::ContentDigest;
     use crate::streaming::session::{SessionClosureCapability, StreamingSessionProgramDescriptor};
@@ -720,6 +720,7 @@ mod tests {
         retention: ActionResultRetention::StreamingTerminal,
         placement: ActionPlacement::WorkerLocal,
         supports_virtual_clock: true,
+        endpoint_retry_safety: EndpointRetrySafety::Unproven,
     };
 
     static TRANSPORT: TransportDescriptor = TransportDescriptor {
