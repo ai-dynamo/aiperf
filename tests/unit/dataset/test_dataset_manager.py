@@ -665,19 +665,76 @@ class TestDatasetManagerTokenizerSkip:
 
         assert dataset_manager.tokenizer is not None
 
-    @pytest.mark.skip(
-        reason="v1 CLIConfig validator that rejected tokenizer options on "
-        "non-tokenizing endpoints was not ported to v2; equivalent v2 validation "
-        "(if any) would live on BenchmarkConfig.",
-    )
     def test_tokenizer_rejected_when_explicitly_set_on_non_tokenizing_endpoint(self):
         """Tokenizer options are rejected for endpoints that don't tokenize input or produce tokens."""
+        from aiperf.config import BenchmarkConfig
+
         with pytest.raises(ValidationError, match="Tokenizer options cannot be used"):
-            CLIConfig(
-                model_names=["nvidia/nemoretriever-page-elements-v3"],
-                endpoint_type="image_retrieval",
-                tokenizer_name="test-model",
+            BenchmarkConfig(
+                models=["nvidia/nemoretriever-page-elements-v3"],
+                endpoint={"urls": ["http://x"], "type": "image_retrieval"},
+                datasets=[
+                    {
+                        "name": "main",
+                        "type": "synthetic",
+                        "prompts": {"isl": 64, "osl": 32},
+                    }
+                ],
+                phases=[
+                    {
+                        "name": "profiling",
+                        "type": "concurrency",
+                        "duration": 10,
+                        "concurrency": 8,
+                    }
+                ],
+                tokenizer={"name": "test-model"},
             )
+
+    def test_tokenizer_allowed_when_unset_on_non_tokenizing_endpoint(self):
+        """The defaulted TokenizerConfig must not trip the rejection."""
+        from aiperf.config import BenchmarkConfig
+
+        config = BenchmarkConfig(
+            models=["nvidia/nemoretriever-page-elements-v3"],
+            endpoint={"urls": ["http://x"], "type": "image_retrieval"},
+            datasets=[
+                {"name": "main", "type": "synthetic", "prompts": {"isl": 64, "osl": 32}}
+            ],
+            phases=[
+                {
+                    "name": "profiling",
+                    "type": "concurrency",
+                    "duration": 10,
+                    "concurrency": 8,
+                }
+            ],
+        )
+
+        assert config.tokenizer is not None
+
+    def test_tokenizer_allowed_on_tokenizing_endpoint(self):
+        """A chat endpoint tokenizes input, so explicit options are honored."""
+        from aiperf.config import BenchmarkConfig
+
+        config = BenchmarkConfig(
+            models=["test-model"],
+            endpoint={"urls": ["http://x"], "type": "chat"},
+            datasets=[
+                {"name": "main", "type": "synthetic", "prompts": {"isl": 64, "osl": 32}}
+            ],
+            phases=[
+                {
+                    "name": "profiling",
+                    "type": "concurrency",
+                    "duration": 10,
+                    "concurrency": 8,
+                }
+            ],
+            tokenizer={"name": "explicit-tokenizer"},
+        )
+
+        assert config.tokenizer.name == "explicit-tokenizer"
 
 
 # ============================================================================
