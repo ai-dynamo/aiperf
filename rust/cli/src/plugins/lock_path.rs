@@ -20,9 +20,7 @@ use std::path::{Path, PathBuf};
 /// The caller supplies the config path and may override the result with a
 /// `--plugin-lock` CLI flag.
 pub fn default_lock_path(config_path: &Path) -> PathBuf {
-    let stem = config_path
-        .file_stem()
-        .unwrap_or(config_path.as_os_str());
+    let stem = config_path.file_stem().unwrap_or(config_path.as_os_str());
     let mut name = stem.to_os_string();
     name.push(".plugin-lock");
     config_path
