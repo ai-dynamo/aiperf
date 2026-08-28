@@ -444,11 +444,10 @@ impl ResultIndexBuilder {
         // A single-block root is byte-identical to the flat canonical index the
         // landed backend re-derives, so staging changes no stored encoding.
         let (root, _encoded) =
-            canonical_result_index_object(entries.iter().map(ResultIndexEntry::descriptor)).map_err(
-                |error| ResultPlaneError::Compaction {
+            canonical_result_index_object(entries.iter().map(ResultIndexEntry::descriptor))
+                .map_err(|error| ResultPlaneError::Compaction {
                     message: format!("could not encode result index: {error}"),
-                },
-            )?;
+                })?;
         Ok(StagedResultIndex {
             epoch,
             root,
@@ -608,7 +607,9 @@ mod tests {
     #[test]
     fn conflicting_payload_for_committed_membership_is_rejected() {
         let mut builder = ResultIndexBuilder::new(run(), limits());
-        builder.insert(entry("records", 1, 2, b"first")).expect("insert");
+        builder
+            .insert(entry("records", 1, 2, b"first"))
+            .expect("insert");
         let error = builder
             .insert(entry("records", 1, 2, b"second"))
             .expect_err("conflicting payload must be refused");
@@ -619,7 +620,8 @@ mod tests {
     fn identical_insert_is_idempotent_and_order_does_not_change_the_root() {
         let mut left = ResultIndexBuilder::new(run(), limits());
         left.insert(entry("records", 1, 2, b"a")).expect("insert");
-        left.insert(entry("records", 1, 2, b"a")).expect("idempotent");
+        left.insert(entry("records", 1, 2, b"a"))
+            .expect("idempotent");
         left.insert(entry("records", 3, 4, b"b")).expect("insert");
 
         let mut right = ResultIndexBuilder::new(run(), limits());
@@ -641,12 +643,9 @@ mod tests {
 
     #[test]
     fn interval_and_enumerated_memberships_do_not_collide() {
-        let interval = ResultMembershipKey::interval(
-            GlobalSequence::new(1),
-            GlobalSequence::new(3),
-            3,
-        )
-        .expect("valid interval");
+        let interval =
+            ResultMembershipKey::interval(GlobalSequence::new(1), GlobalSequence::new(3), 3)
+                .expect("valid interval");
         let enumerated = ResultMembershipKey::enumerated(vec![
             StableActionId::from_bytes([1; 32]),
             StableActionId::from_bytes([2; 32]),
@@ -659,7 +658,9 @@ mod tests {
     #[test]
     fn committed_root_mismatch_leaves_the_index_unchanged() {
         let mut builder = ResultIndexBuilder::new(run(), limits());
-        builder.insert(entry("records", 1, 2, b"a")).expect("insert");
+        builder
+            .insert(entry("records", 1, 2, b"a"))
+            .expect("insert");
         let staged = builder.stage(CheckpointEpoch::new(1)).expect("stage");
         let error = builder
             .confirm_committed(staged, &ContentDigest::from_bytes([9; 32]))
@@ -672,8 +673,12 @@ mod tests {
     #[test]
     fn overlapping_intervals_in_one_projection_are_invalid_coverage() {
         let mut builder = ResultIndexBuilder::new(run(), limits());
-        builder.insert(entry("records", 1, 3, b"a")).expect("insert");
-        builder.insert(entry("records", 2, 4, b"b")).expect("insert");
+        builder
+            .insert(entry("records", 1, 3, b"a"))
+            .expect("insert");
+        builder
+            .insert(entry("records", 2, 4, b"b"))
+            .expect("insert");
         let error = builder
             .stage(CheckpointEpoch::new(1))
             .expect_err("overlapping exclusive intervals must refuse");
@@ -684,8 +689,12 @@ mod tests {
     fn restore_rebuilds_exactly_the_reachable_set() {
         let epoch = CheckpointEpoch::new(1);
         let mut builder = ResultIndexBuilder::new(run(), limits());
-        builder.insert(entry("records", 1, 2, b"a")).expect("insert");
-        builder.insert(entry("records", 3, 4, b"b")).expect("insert");
+        builder
+            .insert(entry("records", 1, 2, b"a"))
+            .expect("insert");
+        builder
+            .insert(entry("records", 3, 4, b"b"))
+            .expect("insert");
         let staged = builder.stage(epoch).expect("stage");
         let root = *staged.root();
         builder.confirm_committed(staged, &root).expect("promote");
