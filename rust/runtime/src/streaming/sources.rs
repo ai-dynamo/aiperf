@@ -17,20 +17,27 @@ pub mod s3_client;
 #[cfg(feature = "streaming-s3")]
 pub mod s3;
 
+use std::sync::Arc;
+
 use super::source::StreamingDatasetSourceFactory;
 
 /// Return every streaming source factory compiled into this build.
 ///
 /// Feature-gated sources append themselves here; the lightweight `streaming`
 /// build contains only `local`.
+///
+/// Sources that need host-resolved authority to exist at all — `hf_rows` binds
+/// an [`hf_rows::HfPageTransportFactory`] carrying credentials and the HTTP
+/// client — are not built-ins: they are constructed by the run's composition
+/// root once that authority is resolved and registered as an extension.
 #[must_use]
-pub fn builtin_source_factories() -> Vec<Box<dyn StreamingDatasetSourceFactory>> {
+pub fn builtin_source_factories() -> Vec<Arc<dyn StreamingDatasetSourceFactory>> {
     #[allow(unused_mut)]
-    let mut factories: Vec<Box<dyn StreamingDatasetSourceFactory>> =
-        vec![Box::new(local::LocalSourceFactory)];
+    let mut factories: Vec<Arc<dyn StreamingDatasetSourceFactory>> =
+        vec![Arc::new(local::LocalSourceFactory)];
 
     #[cfg(feature = "streaming-s3")]
-    factories.push(Box::new(s3::S3SourceFactory));
+    factories.push(Arc::new(s3::S3SourceFactory));
 
     factories
 }
