@@ -80,13 +80,42 @@ impl FrozenPluginUniverse {
 #[derive(Debug)]
 pub struct FrozenAIPerfRegistry {
     universes: Vec<FrozenPluginUniverse>,
+    // Capability identifier to (universe index, registration index). Built once
+    // at construction because the entry set is fixed afterwards, so resolving a
+    // capability never walks the flattened registration list.
+    index: HashMap<String, (usize, usize)>,
 }
 
 impl FrozenAIPerfRegistry {
     /// Merge an ordered set of per-package frozen universes into one
     /// immutable registry snapshot.
+    ///
+    /// The lookup index is built here.  When two packages register the same
+    /// capability identifier the first in load order is indexed; deciding which
+    /// of the two wins is the host's priority resolution, not this snapshot's.
     pub fn new(universes: Vec<FrozenPluginUniverse>) -> Self {
-        Self { universes }
+        let mut index =
+            HashMap::with_capacity(universes.iter().map(FrozenPluginUniverse::len).sum());
+        for (universe_index, universe) in universes.iter().enumerate() {
+            for (registration_index, descriptor) in universe.registrations().iter().enumerate() {
+                index
+                    .entry(descriptor.id().as_str().to_string())
+                    .or_insert((universe_index, registration_index));
+            }
+        }
+        Self { universes, index }
+    }
+
+    /// Resolve a capability descriptor by its normalized identifier.
+    ///
+    /// Returns the load-order-first registration of `id`, or `None` when no
+    /// package in the universe registered it.
+    pub fn lookup_by_id(&self, id: &str) -> Option<&PluginCategoryDescriptor> {
+        let (universe_index, registration_index) = *self.index.get(id)?;
+        self.universes
+            .get(universe_index)?
+            .registrations()
+            .get(registration_index)
     }
 
     /// All per-package frozen universes in load order.
