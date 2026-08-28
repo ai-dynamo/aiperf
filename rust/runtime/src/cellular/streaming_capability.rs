@@ -719,7 +719,6 @@ mod tests {
         endpoint_kinds: &["chat"],
         retention: ActionResultRetention::StreamingTerminal,
         placement: ActionPlacement::WorkerLocal,
-        endpoint_retry_safety: EndpointRetrySafety::Unproven,
         supports_virtual_clock: true,
         endpoint_retry_safety: EndpointRetrySafety::Unproven,
     };
