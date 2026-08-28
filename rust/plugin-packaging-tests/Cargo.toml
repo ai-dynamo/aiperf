@@ -18,6 +18,9 @@ thiserror = { workspace = true }
 toml = { workspace = true }
 
 [dev-dependencies]
+# The census test recomputes each artifact digest independently rather than
+# trusting the assembler's own arithmetic, so it needs its own blake3 link.
+blake3 = { workspace = true }
 tempfile = { workspace = true }
 
 # Release tooling lives under `rust/scripts/` but is a real target of this
