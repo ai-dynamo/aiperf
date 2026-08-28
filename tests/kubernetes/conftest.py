@@ -825,6 +825,7 @@ async def _purge_stale_aiperf_resources(
     kubectl: KubectlClient,
     k8s_settings: K8sTestSettings,
     worker_namespace_suffix: str,
+    operator_job_namespace: str,
 ) -> AsyncGenerator[None, None]:
     """Aggressively purge any stale AIPerf resources from prior aborted runs.
 
@@ -838,7 +839,9 @@ async def _purge_stale_aiperf_resources(
         yield
         return
 
-    await _purge_reused_cluster_resources(kubectl, worker_namespace_suffix)
+    await _purge_reused_cluster_resources(
+        kubectl, worker_namespace_suffix, operator_job_namespace
+    )
 
     yield
 
@@ -846,8 +849,14 @@ async def _purge_stale_aiperf_resources(
 async def _purge_reused_cluster_resources(
     kubectl: KubectlClient,
     worker_namespace_suffix: str,
+    operator_job_namespace: str,
 ) -> None:
-    """Remove stale workloads from namespaces owned by this pytest worker."""
+    """Remove stale workloads from namespaces owned by this pytest session.
+
+    Uses operator_job_namespace (which includes the session PID) to avoid
+    touching namespaces owned by other concurrently-running pytest sessions.
+    Also purges dead-PID operator namespaces that were left by killed sessions.
+    """
 
     async def _purge_ns(ns: str) -> None:
         # Strip operator finalizer first so the CR delete actually completes.
@@ -922,13 +931,70 @@ async def _purge_reused_cluster_resources(
                 check=False,
             )
 
+    # Purge shared namespaces and this session's own operator namespace.
     for ns in (
         "default",
         "aiperf-benchmarks",
         f"aiperf-bench-{worker_namespace_suffix}",
-        f"aiperf-jobs-{worker_namespace_suffix}",
+        operator_job_namespace,
     ):
         await _purge_ns(ns)
+
+    # Also clean up operator namespaces from dead pytest sessions
+    # (killed sessions leave stale resources behind under their PID-suffixed ns).
+    await _purge_dead_session_operator_namespaces(
+        kubectl, worker_namespace_suffix, operator_job_namespace
+    )
+
+
+async def _purge_dead_session_operator_namespaces(
+    kubectl: KubectlClient,
+    worker_namespace_suffix: str,
+    current_operator_ns: str,
+) -> None:
+    """Delete operator job namespaces left by killed pytest sessions.
+
+    Namespaces matching ``aiperf-jobs-{suffix}-{5-digit-pid}`` that belong to
+    a PID that is no longer alive are safe to purge — their session is gone.
+    """
+    result = await kubectl.run(
+        "get",
+        "namespaces",
+        "-o",
+        "jsonpath={.items[*].metadata.name}",
+        check=False,
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        return
+    prefix = f"aiperf-jobs-{worker_namespace_suffix}-"
+    for ns in result.stdout.strip().split():
+        if ns == current_operator_ns or not ns.startswith(prefix):
+            continue
+        pid_part = ns[len(prefix) :]
+        if not pid_part.isdigit():
+            continue
+        pid = int(pid_part)
+        try:
+            os.kill(pid, 0)  # process still alive — skip
+        except OSError:
+            # PID is dead: purge the namespace and then delete it.
+            await kubectl.run(
+                "delete",
+                "aiperfjobs,aiperfsweeps,jobsets",
+                "--all",
+                "-n",
+                ns,
+                "--ignore-not-found",
+                check=False,
+            )
+            await kubectl.run(
+                "delete",
+                "namespace",
+                ns,
+                "--ignore-not-found",
+                "--wait=false",
+                check=False,
+            )
 
 
 def _image_config(
@@ -1440,15 +1506,25 @@ def worker_namespace_suffix(worker_id: str) -> str:
 
 
 @pytest.fixture(scope="session")
+def _session_pid() -> str:
+    """Unique 5-char zero-padded PID for per-session namespace isolation."""
+    return f"{os.getpid() % 100000:05d}"
+
+
+@pytest.fixture(scope="session")
 def benchmark_namespace(worker_namespace_suffix: str) -> str:
     """Per-worker namespace used by BenchmarkDeployer (xdist isolation)."""
     return f"aiperf-bench-{worker_namespace_suffix}"
 
 
 @pytest.fixture(scope="session")
-def operator_job_namespace(worker_namespace_suffix: str) -> str:
-    """Per-worker namespace used for AIPerfJob CRs (xdist isolation)."""
-    return f"aiperf-jobs-{worker_namespace_suffix}"
+def operator_job_namespace(worker_namespace_suffix: str, _session_pid: str) -> str:
+    """Per-session namespace used for AIPerfJob CRs.
+
+    Includes the current process PID so concurrent pytest sessions cannot
+    purge each other's live jobs via _purge_stale_aiperf_resources.
+    """
+    return f"aiperf-jobs-{worker_namespace_suffix}-{_session_pid}"
 
 
 @pytest_asyncio.fixture(scope="package", loop_scope="package")
