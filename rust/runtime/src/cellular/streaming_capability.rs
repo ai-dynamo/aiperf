@@ -217,9 +217,7 @@ impl std::fmt::Display for StreamingCapabilityNegotiationError {
                 "streaming capability propagation version {received} is not supported \
                  (this cell implements {expected})"
             ),
-            Self::Malformed => {
-                formatter.write_str("streaming capability propagation is malformed")
-            }
+            Self::Malformed => formatter.write_str("streaming capability propagation is malformed"),
             Self::MissingFactory { category, id } => write!(
                 formatter,
                 "this cell has no registered {category} factory {id:?} selected by the controller"
@@ -387,8 +385,10 @@ impl StreamingCapabilityPropagation {
 
         let source_digest = seal_digest(StreamingCapabilityCategory::Source, selected.source)?;
         let format_digest = seal_digest(StreamingCapabilityCategory::Format, selected.format)?;
-        let session_digest =
-            seal_digest(StreamingCapabilityCategory::SessionProgram, selected.session)?;
+        let session_digest = seal_digest(
+            StreamingCapabilityCategory::SessionProgram,
+            selected.session,
+        )?;
         let action_sink_digest = seal_digest(
             StreamingCapabilityCategory::ActionSink,
             selected.action_sink,
@@ -649,9 +649,7 @@ mod tests {
     use crate::streaming::action::StreamingActionSinkDescriptor;
     use crate::streaming::format::StreamingFormatDescriptor;
     use crate::streaming::identity::ContentDigest;
-    use crate::streaming::session::{
-        SessionClosureCapability, StreamingSessionProgramDescriptor,
-    };
+    use crate::streaming::session::{SessionClosureCapability, StreamingSessionProgramDescriptor};
     use crate::streaming::source::{
         PartitionAccessKind, StreamingResumeGranularity, StreamingSourceDescriptor,
         StreamingSourceMode, StreamingSourceOrdering, StreamingSourcePlacement,
@@ -760,10 +758,9 @@ mod tests {
 
     #[test]
     fn plan_digest_covers_retention_and_placement() {
-        let controller_plan = StreamingCapabilityAgreement::validate(selection(
-            &SESSION_CONTROLLER,
-        ))
-        .expect("the fixture selection is agreed");
+        let controller_plan =
+            StreamingCapabilityAgreement::validate(selection(&SESSION_CONTROLLER))
+                .expect("the fixture selection is agreed");
         let routed_plan = StreamingCapabilityAgreement::validate(selection(&SESSION_ROUTED))
             .expect("the fixture selection is agreed");
 

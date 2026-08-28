@@ -925,9 +925,11 @@ fn negotiate_streaming_capability(
     {
         let _ = (cell_id, registry_factory);
         if propagated.is_some() {
-            return Err("controller propagated a streaming capability agreement to a cell built \
+            return Err(
+                "controller propagated a streaming capability agreement to a cell built \
                  without the streaming feature"
-                .to_owned());
+                    .to_owned(),
+            );
         }
         Ok(())
     }
@@ -1952,7 +1954,8 @@ mod tests {
         use crate::cellular::streaming_capability::StreamingCapabilityPropagation;
 
         let propagation = StreamingCapabilityPropagation {
-            version: crate::cellular::streaming_capability::STREAMING_CAPABILITY_PROPAGATION_VERSION,
+            version:
+                crate::cellular::streaming_capability::STREAMING_CAPABILITY_PROPAGATION_VERSION,
             source: "not-a-registered-source".to_owned(),
             format: "not-a-registered-format".to_owned(),
             session: "not-a-registered-session".to_owned(),
