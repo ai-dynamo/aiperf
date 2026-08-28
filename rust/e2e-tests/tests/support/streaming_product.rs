@@ -418,8 +418,19 @@ impl StreamingServerOutcome {
     /// Timestamps, ports, and scratch paths differ between two rows that must
     /// nonetheless agree on *why* the product refused. Stripping them makes the
     /// transport-invariance comparison meaningful rather than trivially false.
+    ///
+    /// The timestamp strip is not cosmetic: the tracing prefix appears twice on
+    /// a cellular line (once from the controller, once from the forwarded cell
+    /// record), so without it two invocations of the *same* topology already
+    /// compare unequal and the assertion proves nothing.
     #[must_use]
     pub fn stable_refusal(&self) -> String {
+        static TIMESTAMP: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+        // Wall-clock prefix emitted by the tracing subscriber: `HH:MM:SS.mmm`.
+        let timestamp = TIMESTAMP.get_or_init(|| {
+            #[allow(clippy::expect_used)]
+            regex::Regex::new(r"\d{2}:\d{2}:\d{2}\.\d{3}\s*").expect("static timestamp pattern")
+        });
         self.combined_output()
             .lines()
             .filter(|line| line.contains("Native AIPerf run failed") || line.contains("aiperf:"))
@@ -427,6 +438,7 @@ impl StreamingServerOutcome {
                 Some(index) => line[index + "failed: ".len()..].to_owned(),
                 None => line.trim().to_owned(),
             })
+            .map(|line| timestamp.replace_all(&line, "").into_owned())
             .collect::<Vec<_>>()
             .join("\n")
     }
