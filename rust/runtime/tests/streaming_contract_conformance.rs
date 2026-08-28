@@ -18,6 +18,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use aiperf_runtime::clock::RealClock;
 use aiperf_runtime::streaming::{
     budget::{BudgetLimits, StreamingResourceBudget},
     checkpoint::{
@@ -750,6 +751,7 @@ async fn host_stop_wakes_pending_source_without_issue_or_seal() {
     let context = StreamingSourcePrepareContext {
         acquisition_budget: harness_acquisition_budget(),
         issue_reporter: reporter.handle(),
+        clock: RealClock::new(),
     };
     let validated = factory
         .validate(&raw(serde_json::json!({ "partitions": 1 })))

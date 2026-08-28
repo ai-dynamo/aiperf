@@ -19,6 +19,7 @@
 use std::collections::BTreeSet;
 use std::rc::Rc;
 
+use aiperf_runtime::clock::RealClock;
 use aiperf_runtime::streaming::{
     budget::{BudgetLimits, StreamingResourceBudget},
     checkpoint::{
@@ -263,6 +264,7 @@ async fn assert_idempotent_commit_notification(
     let context = StreamingSourcePrepareContext {
         acquisition_budget: acquisition_budget(cases),
         issue_reporter: handle,
+        clock: RealClock::new(),
     };
     let prepared = factory
         .prepare(validated, &context)
@@ -347,6 +349,7 @@ async fn open_source(
     let context = StreamingSourcePrepareContext {
         acquisition_budget: acquisition_budget(cases),
         issue_reporter: handle,
+        clock: RealClock::new(),
     };
     let prepared = factory
         .prepare(validated, &context)

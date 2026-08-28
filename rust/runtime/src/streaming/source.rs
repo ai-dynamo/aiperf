@@ -3,12 +3,14 @@
 
 //! Streaming source discovery, immutable acquisition, and stop contracts.
 
-use std::{any::Any, num::NonZeroUsize};
+use std::{any::Any, num::NonZeroUsize, rc::Rc};
 
 use async_trait::async_trait;
 use bytes::Bytes;
 use serde::Serialize;
 use serde_json::value::RawValue;
+
+use crate::clock::Clock;
 
 use super::{
     budget::{BudgetLease, StreamingResourceBudget},
@@ -138,12 +140,32 @@ where
 }
 
 /// Host-owned source preparation context.
-#[derive(Clone, Debug)]
+///
+/// The run [`Clock`] is carried here because preparation is where a source both
+/// decides whether it can honor the run's time discipline at all and captures
+/// the handle its later worker-local backoff needs; `prepare` is sync, so a
+/// source that must construct a clocked client defers that to `open`.
+#[derive(Clone)]
 pub struct StreamingSourcePrepareContext {
     /// Budget used for immutable acquired partition bytes.
     pub acquisition_budget: AcquisitionBudget,
     /// Host-owned reliability issue reporting boundary.
     pub issue_reporter: StreamingIssueReporterHandle,
+    /// Run clock every source-owned wait and measurement must route through.
+    pub clock: Rc<dyn Clock>,
+}
+
+impl std::fmt::Debug for StreamingSourcePrepareContext {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // `Clock` is not `Debug`; its only preparation-relevant fact is whether
+        // the run is virtual.
+        formatter
+            .debug_struct("StreamingSourcePrepareContext")
+            .field("acquisition_budget", &self.acquisition_budget)
+            .field("issue_reporter", &self.issue_reporter)
+            .field("is_virtual_clock", &self.clock.is_virtual())
+            .finish()
+    }
 }
 
 /// Startup source validation and preparation contract.
