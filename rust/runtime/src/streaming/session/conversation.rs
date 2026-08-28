@@ -364,8 +364,10 @@ impl StreamingSessionProgramFactory for StreamingConversationProgramFactory {
         config: Box<dyn ValidatedStreamingSessionProgramConfig>,
         context: &StreamingSessionPrepareContext,
     ) -> Result<Box<dyn StreamingSessionCoordinator>, SessionCoordinatorError> {
-        let config = *config
-            .as_any()
+        // `Box<dyn ValidatedStreamingSessionProgramConfig>` itself satisfies the
+        // blanket impl, so the erased value must be reached through an explicit
+        // reborrow: `config.as_any()` would erase the box rather than the value.
+        let config = *ValidatedStreamingSessionProgramConfig::as_any(config.as_ref())
             .downcast_ref::<ConversationProgramConfig>()
             .ok_or_else(|| {
                 SessionCoordinatorError::session(SessionFailureCode::UnsupportedMutation)
