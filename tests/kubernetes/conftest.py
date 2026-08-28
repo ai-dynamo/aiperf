@@ -1278,6 +1278,19 @@ async def jobset_controller(
         await _ensure_jobset_controller_ready(kubectl)
         return
 
+    # Skip re-installation if the controller is already running; re-applying the
+    # manifests triggers admission webhooks from concurrently-installed components
+    # (e.g. Kueue) that may not yet be fully ready, causing spurious failures.
+    already_ready = await kubectl.wait_for_condition(
+        "deployment",
+        "jobset-controller-manager",
+        "available",
+        namespace="jobset-system",
+        timeout=5,
+    )
+    if already_ready:
+        return
+
     version = k8s_settings.jobset_version
     async with timed_operation(f"Installing JobSet controller {version}"):
         url = JOBSET_CRD_URL_TEMPLATE.format(version=version)
