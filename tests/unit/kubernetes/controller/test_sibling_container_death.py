@@ -75,7 +75,6 @@ class TestDeadSiblingContainers:
         "container",
         [
             param(Containers.CONTROL_PLANE, id="control-plane"),
-            param(Containers.EVENT_BUS_PROXY, id="event-bus-proxy"),
             param(Containers.RESULTS_SIDECAR, id="results-sidecar"),
         ],
     )  # fmt: skip
@@ -85,6 +84,19 @@ class TestDeadSiblingContainers:
             _pod("job-controller-0-0", "controller", [_cs(container, terminated=True)])
         ]
         assert dead_sibling_containers(pods) == []
+
+    def test_detects_dead_event_bus_proxy(self):
+        """EVENT_BUS_PROXY must never exit; its death should abort the controller."""
+        pods = [
+            _pod(
+                "job-controller-0-0",
+                "controller",
+                [_cs(Containers.EVENT_BUS_PROXY, terminated=True)],
+            )
+        ]
+        assert dead_sibling_containers(pods) == [
+            (Containers.EVENT_BUS_PROXY, "Error", 1)
+        ]
 
     def test_ignores_clean_exit(self):
         """A zero exit is an optional service finishing, not a failure."""
