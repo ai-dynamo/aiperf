@@ -234,7 +234,7 @@ aiperf profile \
 
 ---
 
-## Multi-Turn Conversations
+## Multi-Turn Conversations & Stateful Chaining
 
 Benchmark multi-turn conversations using the Responses API:
 
@@ -250,6 +250,13 @@ aiperf profile \
     --output-tokens-mean 200 \
     --url localhost:8000
 ```
+
+### Stateful Chaining with `previous_response_id`
+
+When running multi-turn benchmarks with `--endpoint-type responses`:
+- On **Turn 0**, AIPerf sends the initial prompt and captures the server-generated `response.id` (e.g. `resp_<hash>`) from the `response.created` SSE event (or non-streaming response object).
+- On **Turn 1+**, AIPerf automatically sets `previous_response_id: <resp_id>` in the payload and sends only the single newest turn in the `input` array rather than re-sending the entire accumulated conversation history.
+- When server-side conversation storage is required (e.g., vLLM with `VLLM_ENABLE_RESPONSES_API_STORE=1`), enable `store: true` via `--extra-inputs '{"store": true}'`.
 
 See the [Multi-Turn Conversations](multi-turn.md) tutorial for details on conversation control parameters.
 
@@ -348,10 +355,13 @@ For reference, AIPerf processes these Responses API streaming events:
 
 | Event Type | Data Extracted |
 |---|---|
+| `response.created` | Server-generated response ID (`resp_<hash>`) for stateful session chaining |
 | `response.output_text.delta` | Text content delta |
 | `response.reasoning_text.delta` | Reasoning content delta |
+| `response.function_call_arguments.delta` | Tool call arguments delta |
 | `response.output_text.done` | Final text (fallback for providers that emit text only in done events) |
-| `response.completed` | Usage statistics |
+| `response.completed` | Usage statistics and response ID |
 | All other events | Skipped |
 
 This enables accurate measurement of TTFT, ITL, and token throughput metrics when streaming is enabled.
+

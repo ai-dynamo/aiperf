@@ -95,6 +95,11 @@ class UserSession(AIPerfBaseModel):
         "find any children to pin yet — orchestrator dispatches them on "
         "the credit-return path AFTER this terminal eviction runs).",
     )
+    previous_response_id: str | None = Field(
+        default=None,
+        description="Response ID from the previous turn (e.g. 'resp_<hash>') "
+        "used for stateful chaining in the Responses API.",
+    )
 
     def advance_turn(self, turn_index: int) -> Turn:
         """Append the next turn onto ``turn_list`` and return it.
@@ -124,6 +129,9 @@ class UserSession(AIPerfBaseModel):
             )
 
         turn = self.conversation.turns[turn_index]
+        if turn.reset_context:
+            self.previous_response_id = None
+
         if self.context_mode == ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES:
             self.turn_list = [turn]
         else:
@@ -161,6 +169,10 @@ class UserSession(AIPerfBaseModel):
         Store the response for the turn.
         """
         self.turn_list.append(response_turn)
+
+    def store_response_id(self, response_id: str | None) -> None:
+        """Store the response ID from the server for stateful chaining."""
+        self.previous_response_id = response_id
 
 
 class UserSessionManager:

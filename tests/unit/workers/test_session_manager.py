@@ -421,3 +421,63 @@ class TestMessageArrayWithoutResponsesRejected:
                 sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
                 default_context_mode=ConversationContextMode.MESSAGE_ARRAY_WITHOUT_RESPONSES,
             )
+
+
+class TestSessionPreviousResponseId:
+    """Tests for UserSession previous_response_id storage and reset_context handling."""
+
+    def test_store_response_id(self) -> None:
+        session = _make_session(
+            context_mode=ConversationContextMode.DELTAS_WITHOUT_RESPONSES,
+            num_turns=3,
+        )
+        assert session.previous_response_id is None
+        session.store_response_id("resp_12345")
+        assert session.previous_response_id == "resp_12345"
+
+    def test_advance_turn_clears_previous_response_id_on_reset_context(self) -> None:
+        conv = Conversation(
+            conversation_id="test-conv-reset",
+            turns=[
+                Turn(messages=[{"role": "user", "content": "Q1"}]),
+                Turn(messages=[{"role": "user", "content": "Q2"}], reset_context=True),
+            ],
+        )
+        session = UserSession(
+            x_correlation_id="test-corr",
+            num_turns=2,
+            conversation=conv,
+            context_mode=ConversationContextMode.DELTAS_WITHOUT_RESPONSES,
+        )
+        session.advance_turn(0)
+        session.store_response_id("resp_turn0")
+        assert session.previous_response_id == "resp_turn0"
+
+        # Advance to turn 1 with reset_context=True clears previous_response_id
+        session.advance_turn(1)
+        assert session.previous_response_id is None
+
+    def test_advance_turn_preserves_previous_response_id_without_reset_context(
+        self,
+    ) -> None:
+        conv = Conversation(
+            conversation_id="test-conv-normal",
+            turns=[
+                Turn(messages=[{"role": "user", "content": "Q1"}]),
+                Turn(messages=[{"role": "user", "content": "Q2"}]),
+            ],
+        )
+        session = UserSession(
+            x_correlation_id="test-corr",
+            num_turns=2,
+            conversation=conv,
+            context_mode=ConversationContextMode.DELTAS_WITHOUT_RESPONSES,
+        )
+        session.advance_turn(0)
+        session.store_response_id("resp_turn0")
+        assert session.previous_response_id == "resp_turn0"
+
+        # Advance to turn 1 without reset_context preserves previous_response_id
+        session.advance_turn(1)
+        assert session.previous_response_id == "resp_turn0"
+

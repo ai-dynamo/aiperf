@@ -189,15 +189,20 @@ class ResponsesEndpoint(BaseEndpoint):
         # lives in top-level ``instructions``. The per-conversation
         # ``user_context_message`` is prepended as a leading user item.
         input_items: list[dict[str, Any]] = []
-        if request_info.user_context_message:
-            input_items.append(
-                {
-                    "type": "message",
-                    "role": self.DEFAULT_TURN_ROLE,
-                    "content": request_info.user_context_message,
-                }
-            )
-        input_items.extend(self.build_messages(turns))
+        if request_info.previous_response_id:
+            # Stateful chaining: previous_response_id points to server-side history.
+            # Only send the newest turn's messages in `input`.
+            input_items.extend(self.build_messages([turns[-1]]))
+        else:
+            if request_info.user_context_message:
+                input_items.append(
+                    {
+                        "type": "message",
+                        "role": self.DEFAULT_TURN_ROLE,
+                        "content": request_info.user_context_message,
+                    }
+                )
+            input_items.extend(self.build_messages(turns))
 
         # Conversation-level fields walk turns from the end so FORK-mode
         # children whose final turn lacks model/tools still inherit the parent's
@@ -211,6 +216,9 @@ class ResponsesEndpoint(BaseEndpoint):
             "model": model_name or model_endpoint.primary_model_name,
             "stream": model_endpoint.endpoint.streaming,
         }
+        if request_info.previous_response_id:
+            payload["previous_response_id"] = request_info.previous_response_id
+
         for key, value in (
             ("instructions", request_info.system_message or None),
             ("max_output_tokens", max_tokens),
@@ -228,6 +236,43 @@ class ResponsesEndpoint(BaseEndpoint):
 
         self.trace(lambda: f"Formatted payload: {payload}")
         return payload
+
+    def extract_response_id(self, record: RequestRecord) -> str | None:
+        """Extract the server-generated response ID (e.g. ``resp_<hash>``) from the response.
+
+        For streaming responses, inspects the ``response.created`` or ``response.completed``
+        SSE events for ``response.id`` or top-level ``id``.
+        For non-streaming responses, inspects the top-level ``id`` or ``response.id``.
+        """
+        for response in record.responses:
+            json_obj = response.get_json()
+            if not json_obj or not isinstance(json_obj, dict):
+                continue
+            event_type = json_obj.get("type")
+            if event_type in (
+                "response.created",
+                "response.completed",
+                "response.in_progress",
+            ):
+                resp = json_obj.get("response")
+                if isinstance(resp, dict) and (resp_id := resp.get("id")):
+                    if isinstance(resp_id, str) and resp_id:
+                        return resp_id
+                if resp_id := json_obj.get("id"):
+                    if isinstance(resp_id, str) and resp_id:
+                        return resp_id
+                if resp_id := json_obj.get("response_id"):
+                    if isinstance(resp_id, str) and resp_id:
+                        return resp_id
+            if json_obj.get("object") == "response" or "id" in json_obj:
+                if resp_id := json_obj.get("id"):
+                    if isinstance(resp_id, str) and resp_id:
+                        return resp_id
+                resp = json_obj.get("response")
+                if isinstance(resp, dict) and (resp_id := resp.get("id")):
+                    if isinstance(resp_id, str) and resp_id:
+                        return resp_id
+        return None
 
     @staticmethod
     def _maybe_enable_usage_stream_options(

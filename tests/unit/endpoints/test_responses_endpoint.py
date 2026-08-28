@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import orjson
 import pytest
 from pytest import param
 
@@ -12,7 +13,13 @@ from aiperf.common.models.model_endpoint_info import (
     ModelInfo,
     ModelListInfo,
 )
-from aiperf.common.models.record_models import ReasoningResponseData, TextResponseData
+from aiperf.common.models.record_models import (
+    ReasoningResponseData,
+    RequestRecord,
+    TextResponse,
+    TextResponseData,
+)
+
 from aiperf.common.models.usage_models import Usage
 from aiperf.endpoints.openai_responses import ResponsesEndpoint
 from aiperf.plugin.enums import EndpointType
@@ -960,3 +967,156 @@ class TestResponsesBuildMessagesResetContext:
         ]
         msgs = endpoint.build_messages(turns)
         assert [m["content"] for m in msgs] == ["A", "B"]
+
+
+class TestResponsesStatefulChaining:
+    """ResponsesEndpoint must extract response ID from server responses and thread
+    it as `previous_response_id` on subsequent turns while sending only the latest turn."""
+
+    @pytest.fixture
+    def endpoint(self):
+        return create_endpoint_with_mock_transport(
+            ResponsesEndpoint, create_model_endpoint(EndpointType.RESPONSES)
+        )
+
+    def test_extract_response_id_streaming_created(self, endpoint):
+        record = RequestRecord(
+            responses=[
+                TextResponse(
+                    perf_ns=1,
+                    text=orjson.dumps(
+                        {
+                            "type": "response.created",
+                            "response": {
+                                "id": "resp_b6c65395f4fb8c7d",
+                                "object": "response",
+                                "status": "in_progress",
+                            },
+                        }
+                    ).decode(),
+                ),
+                TextResponse(
+                    perf_ns=2,
+                    text=orjson.dumps(
+                        {
+                            "type": "response.output_text.delta",
+                            "delta": "Hello",
+                        }
+                    ).decode(),
+                ),
+            ]
+        )
+        assert endpoint.extract_response_id(record) == "resp_b6c65395f4fb8c7d"
+
+    def test_extract_response_id_streaming_completed(self, endpoint):
+        record = RequestRecord(
+            responses=[
+                TextResponse(
+                    perf_ns=1,
+                    text=orjson.dumps(
+                        {
+                            "type": "response.completed",
+                            "response": {
+                                "id": "resp_a66a66950cac5561",
+                                "object": "response",
+                                "status": "completed",
+                            },
+                        }
+                    ).decode(),
+                )
+            ]
+        )
+        assert endpoint.extract_response_id(record) == "resp_a66a66950cac5561"
+
+    def test_extract_response_id_streaming_flat_id(self, endpoint):
+        record = RequestRecord(
+            responses=[
+                TextResponse(
+                    perf_ns=1,
+                    text=orjson.dumps(
+                        {
+                            "type": "response.created",
+                            "id": "resp_flat_id_123",
+                            "status": "in_progress",
+                        }
+                    ).decode(),
+                )
+            ]
+        )
+        assert endpoint.extract_response_id(record) == "resp_flat_id_123"
+
+    def test_extract_response_id_non_streaming(self, endpoint):
+        record = RequestRecord(
+            responses=[
+                TextResponse(
+                    perf_ns=1,
+                    text=orjson.dumps(
+                        {
+                            "id": "resp_non_stream_456",
+                            "object": "response",
+                            "status": "completed",
+                        }
+                    ).decode(),
+                )
+            ]
+        )
+        assert endpoint.extract_response_id(record) == "resp_non_stream_456"
+
+    def test_extract_response_id_none_when_absent(self, endpoint):
+        record = RequestRecord(
+            responses=[
+                TextResponse(
+                    perf_ns=1,
+                    text=orjson.dumps(
+                        {
+                            "type": "response.output_text.delta",
+                            "delta": "Hello",
+                        }
+                    ).decode(),
+                )
+            ]
+        )
+        assert endpoint.extract_response_id(record) is None
+
+
+    def test_format_payload_turn0_without_previous_response_id(self, endpoint):
+        turn0 = Turn(
+            role="user",
+            texts=[Text(contents=["First message"])],
+        )
+        turn1 = Turn(
+            role="user",
+            texts=[Text(contents=["Second message"])],
+        )
+        request_info = create_request_info(
+            model_endpoint=endpoint.model_endpoint,
+            turns=[turn0, turn1],
+            previous_response_id=None,
+        )
+        payload = endpoint.format_payload(request_info)
+        assert "previous_response_id" not in payload
+        # Without previous_response_id, full history is sent
+        assert len(payload["input"]) == 2
+        assert payload["input"][0]["content"] == "First message"
+        assert payload["input"][1]["content"] == "Second message"
+
+    def test_format_payload_turn1_with_previous_response_id(self, endpoint):
+        turn0 = Turn(
+            role="user",
+            texts=[Text(contents=["First message"])],
+        )
+        turn1 = Turn(
+            role="user",
+            texts=[Text(contents=["Second message"])],
+        )
+        request_info = create_request_info(
+            model_endpoint=endpoint.model_endpoint,
+            turns=[turn0, turn1],
+            previous_response_id="resp_b6c65395f4fb8c7d",
+        )
+        payload = endpoint.format_payload(request_info)
+        assert payload["previous_response_id"] == "resp_b6c65395f4fb8c7d"
+        # Stateful chain: only newest turn is sent in input
+        assert len(payload["input"]) == 1
+        assert payload["input"][0]["content"] == "Second message"
+

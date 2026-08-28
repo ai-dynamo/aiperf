@@ -1225,6 +1225,10 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         )
         if assistant_turn is not None:
             session.store_response(assistant_turn)
+        if extract_response_id := getattr(
+            self.inference_client.endpoint, "extract_response_id", None
+        ):
+            session.store_response_id(extract_response_id(record))
         self._populate_response_metrics(credit_context, record, parsed_responses)
 
     def _populate_response_metrics(
@@ -1523,6 +1527,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             source_inner_idx=source_turn.source_inner_idx if source_turn else None,
             source_kind=source_turn.source_kind if source_turn else None,
             turns=turns,
+            previous_response_id=session.previous_response_id if session else None,
             drop_perf_ns=credit_context.drop_perf_ns,
             credit_issued_ns=credit.issued_at_ns,
             system_message=system_message,
