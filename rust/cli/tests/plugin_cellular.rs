@@ -9,7 +9,9 @@
 
 use std::collections::BTreeMap;
 
-use aiperf_runtime::engine::cell_launcher::{CellLaunchContext, LocalLauncher, CELL_PLUGIN_LOCK_ENV};
+use aiperf_runtime::engine::cell_launcher::{
+    CELL_PLUGIN_LOCK_ENV, CellLaunchContext, LocalLauncher,
+};
 
 /// `CellLaunchContext` exposes a `plugin_lock_digest` field; when `None` the
 /// cell command does not inject the env variable.
