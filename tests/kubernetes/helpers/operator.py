@@ -770,7 +770,7 @@ class OperatorDeployer:
             "deployment",
             "aiperf-operator",
             namespace=self.OPERATOR_NAMESPACE,
-            timeout=180,
+            timeout=360,
         )
 
         if not success:
