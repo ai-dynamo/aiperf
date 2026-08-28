@@ -1738,13 +1738,16 @@ scope for this record, exactly as for the first MLPerf instantiation. Offline is
 approximated by the existing concurrency workload with
 `type: concurrency`, `concurrency == requests == N`, one turn, and no ramp.
 
-That mapping is exact for `rag_ingest` and is *not* what the reference does for
-QnA: the reference's scored QnA workload admits 10 concurrent queries against 824,
-and declares it Offline anyway (`user.conf`, `reference_mlperf_perf.sh:31`-`:32`).
-So `rag_qna` pins the admission bound explicitly, records it in
-`pipeline_digest`, and reports a bounded-concurrency completion rate rather than
-an unqualified Offline throughput. The four imperfections below apply to both, and
-the full comparison is in
+That mapping is exact for both workloads. LoadGen hands the SUT the entire query
+set in a single `issue_queries` call under Offline, and the reference's
+concurrency of 10 is its own `ThreadPoolExecutor` width applied *after* delivery
+(`reference_SUT.py:204`, `:334`-`:349`), not a bound on admission. The AIPerf
+analogue of that 10 is a worker count, not a `concurrency` setting, so a
+comparable run still declares `concurrency == requests == N` and expresses the
+reference's pool width as workers. `pipeline_digest` records both, because two
+runs over the same corpus that differ in how much of the delivered set they hold
+in flight are not the same measurement. The four imperfections below apply to
+both, and the full comparison is in
 `## Compared to the MLPerf reference implementation`. The
 approximation is good in the one place that matters most and imperfect in four
 places that must be named, because each is a way for a run to look Offline and
@@ -2020,8 +2023,8 @@ protects.
 | An index seal missing any worker or cell part, or whose passage ordinals are not a permutation of `0..N` | I1 |
 | A sealed index exceeding the Kubernetes publication cap of 512 MiB, refused at seal rather than at publish | I1 |
 | A run asserting reference-profile comparability whose resolved parameters diverge from that profile | I24 |
-| A `rag_ingest` run declaring the Offline scenario whose phase is not single-turn with `concurrency == requests` and no ramp | Offline mapping |
-| A `rag_qna` run reporting an Offline throughput without recording its admission bound | Offline mapping, I23 |
+| Any `rag_*` run declaring the Offline scenario whose phase is not single-turn with `concurrency == requests` and no ramp | Offline mapping |
+| A scored run whose in-flight width is not recorded alongside its throughput | Offline mapping, I23 |
 | `aiperf rag score --gate` without an authored reference accuracy | validity gate |
 | A scored run that reports served-model provenance it did not observe | I25 |
 | A scored run whose resolved plan omits any parameter `pipeline_digest` covers | I23 |
@@ -2070,31 +2073,34 @@ accelerator-memory framing: the reference's own retrieval is host-memory-bound,
 so our ceiling estimate is the *right shape* against the wrong bandwidth number,
 and T7 measures rather than assumes.
 
-**The Offline mapping is per-workload, and the QnA half is not Offline-shaped.**
-`user.conf` carries two LoadGen models with deliberately opposite admission:
+**The Offline mapping holds for both workloads, and an earlier reading of this
+record said otherwise.** `user.conf` carries two LoadGen models whose
+`max_async_queries` values look like opposite admission policies:
 
 ```
 e2e-rag-db.Offline.min_query_count  = 2515    max_async_queries = 2515
 e2e-rag-qna.Offline.min_query_count = 824     max_async_queries = 10
 ```
 
-Ingestion is genuine Offline — one query per frozen document, the whole set
-admissible at once, which is exactly this record's `concurrency == requests == N`
-mapping. QnA is a **concurrency-10 closed loop over 824 queries**, matched by a
-SUT thread pool of the same size (`reference_mlperf_perf.sh:31`-`:32`,
-`MAX_ASYNC_QUERIES=10` / `MAX_WORKERS=10`), and declared Offline anyway. By this
-record's own language that is "a Server-shaped closed loop with no diagnostic" —
-so the refusal row added for the Offline declaration would reject the reference
-configuration as written.
+Reading the QnA line as a concurrency-10 closed loop, and therefore as something
+this record's Offline refusal would reject, was **wrong**. Under Offline, LoadGen
+delivers the entire sample set to the SUT in one `issue_queries` call; the
+reference sorts it and submits every sample to a `ThreadPoolExecutor` whose width
+is 10 (`reference_SUT.py:202`-`:205`, `:334`-`:349`). The announcement post states
+the same thing from the other side: LoadGen provides all 824 tasks at once, and
+how a submitter spreads them across cores and accelerators is named as the
+optimization opportunity. So admission is genuinely unmetered in both workloads
+and the 10 is an implementation choice inside the reference SUT.
 
-The resolution is that the refusal is right and the *scope* was wrong. It applies
-to `rag_ingest`, where the full-set mapping is exact. For `rag_qna` the honest
-statement is that the reference number is a bounded-concurrency completion rate,
-not an Offline throughput, and a comparable AIPerf run declares
-`concurrency = 10` explicitly and reports it as such. `pipeline_digest` covers the
-admission bound for exactly this reason: two runs at concurrency 10 and
-concurrency 824 over the same corpus are not the same measurement, and nothing in
-the reference's artifact set distinguishes them.
+The consequence is that the refusal needs no per-workload scope and `rag_qna`
+needs no special admission bound. The AIPerf analogue of the reference's 10 is a
+**worker count**, not a `concurrency` setting: both express how much of an
+already-delivered set is in flight, but only one of them is an admission gate, and
+conflating them would have had us declare `concurrency = 10` and thereby measure a
+closed loop the reference does not run. `pipeline_digest` still records the
+in-flight width, because two runs over the same corpus that hold different amounts
+in flight are not the same measurement and the reference's artifact set does not
+distinguish them.
 
 **The hop bound is load-bearing on the score, and that is measured rather than
 argued.** `max_iterations` defaults to 10 in three signatures
@@ -2435,6 +2441,13 @@ the number is emitted, not only here. What does transfer cleanly is the corpus
 integrity check, which the post confirms is the actual purpose of the retrieval
 overlap metric.
 
+**The published passage count does not match the shipped manifest.** The post says
+roughly 107,000 passages; the manifest records 108,711. `total_passages` is one of
+the four *gated* manifest checks, so this is not a cosmetic disagreement — a run
+built to the published figure fails verification against the shipped artifact. The
+manifest is what a run reproduces, and our `corpus_digest` binds the actual count
+rather than a documented one.
+
 **Retrieval quality is not an official metric.** The post states it plainly: the
 precision, recall, and F1 figures are a database-integrity check, not a score.
 This vindicates adopting the seeded probe set as a gated check in
@@ -2478,6 +2491,27 @@ tables produces a different corpus, a different index, and a different token bil
 so the flattening requirement belongs in `### Ingestion: parse -> chunk -> embed
 -> index` as a behavioural requirement and not merely as an extraction
 preference.
+
+**The post names our per-role reporting as the reference's own future work.** It
+states that TEST09 is a single aggregate on one pipeline stage, providing no guard
+on retrieval, reranking, or the intermediate query and sufficiency calls, and that
+future revisions could add distribution-level or per-component compliance
+coverage. That is exactly the gap I16 and I20 close here: per-role mean and p90
+output length beside every scored rate, and per-node terminal classification. Our
+scope for `aiperf rag compliance` still matches the reference's aggregate check so
+the numbers are comparable, but the per-role series exists underneath it, so the
+distribution-level and per-component coverage the post anticipates is a reporting
+change here rather than new measurement.
+
+**Growing multi-hop context is stated design intent, and prefix caching is the
+named lever.** The post calls out that the multi-hop context grows each hop, so
+reusing the shared prefix trades compute-bound prefills for memory-bound work.
+That confirms the ISL asymmetry measured above as intentional rather than
+incidental, and it makes the per-role ISL series the direct diagnostic for whether
+a submitter's prefix caching is working: the answer role's input length should
+climb with hop index while the grader and rewriter stay flat, and the answer
+role's TTFT should not climb with it. AIPerf's existing prefix-reuse controls and
+prefix-dependent segment identity are the levers on our side of that measurement.
 
 **A per-reasoning-type breakdown is published.** The post reports five reasoning
 types with per-type accuracy, labelled insights only and noted as multi-label.

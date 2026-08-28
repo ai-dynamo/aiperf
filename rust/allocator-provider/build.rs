@@ -7,10 +7,9 @@
 //! statically linked mimalloc so that host and plugin processes share one
 //! allocator instance through the provider shared library.
 //!
-//! Also compiles `src/options.c`, which contains the priority-100 process
-//! constructor that sets mimalloc defaults before its own priority-101
-//! constructor runs, and the `mi_aiperf_option_purge_delay()` helper that
-//! returns the `mi_option_purge_delay` enum index from the exact linked header.
+//! Also compiles `src/options.c`, which contains the
+//! `mi_aiperf_option_purge_delay()` helper that returns the
+//! `mi_option_purge_delay` enum index from the exact linked header.
 
 use std::env;
 use std::io::Write;
@@ -50,10 +49,16 @@ fn main() {
     let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap();
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
 
-    // Compile src/options.c: process constructor (priority 100) and the
-    // mi_aiperf_option_purge_delay() helper.  The mimalloc include directory
-    // is propagated by libmimalloc-sys through the DEP_MIMALLOC_INCLUDE_DIR
-    // metadata variable (set via its `links = "mimalloc"` key).
+    // Compile src/options.c: the mi_aiperf_option_purge_delay() helper.
+    // The mimalloc include directory is propagated by libmimalloc-sys through
+    // the DEP_MIMALLOC_INCLUDE_DIR metadata variable (set via its
+    // `links = "mimalloc"` key).
+    //
+    // cargo_metadata(false) suppresses cc's automatic `cargo:rustc-link-lib`
+    // emission so we can link with `+whole-archive` below.  Without
+    // whole-archive, the linker GC's mi_aiperf_option_purge_delay because no
+    // Rust code references it, even though it appears in the version-script
+    // global: section.
     let include_dir = env::var_os("DEP_MIMALLOC_INCLUDE_DIR")
         .map(PathBuf::from)
         .expect("libmimalloc-sys did not expose its compiled header directory");
@@ -62,7 +67,11 @@ fn main() {
         .include(&include_dir)
         .file("src/options.c")
         .warnings_into_errors(true)
+        .cargo_metadata(false)
         .compile("aiperf_alloc_options");
+    // Link with whole-archive so the GC root from the version script can reach it.
+    println!("cargo:rustc-link-lib=static:+whole-archive=aiperf_alloc_options");
+    println!("cargo:rustc-link-search=native={}", out_dir.display());
 
     // Cargo does NOT propagate `cargo:rustc-link-lib` from a dependency's
     // build script into a cdylib link command; it only propagates the search

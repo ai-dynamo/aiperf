@@ -2358,15 +2358,21 @@ instead of asserting against it (`:23, 26-27`). No in-tree generator produces
 them. `tools/parity/` holds exactly four Python dumps — `dump_bayes.py`,
 `dump_isotonic.py`, `dump_monotonic.py`, and `dump_tokenizer_parity.py` — and
 `dump_monotonic.py:5-8` refers to a `dump_sweep` as the static counterpart it
-cannot use, and no such file exists. The remaining golden in that directory,
+cannot use. That reference is not stale authorship: `tools/parity/dump_sweep.py`
+existed and was deleted by `e8d5c172b9` along with the projector it called, so the
+comment points at a real generator whose restoration cost is bounded and known
+(see "Rust config goldens are Rust-only self-checks"). The remaining golden in that directory,
 `sweep_agg.json`, backs `single_trial_sweep_aggregate_matches_python` and has no
 generator either. So the planner is compared against bytes the planner wrote,
 under a name and a directory that read as Python-authoritative.
 
 This is P1.46's shape applied to sweep and search planning, which P1.46 does not
 cover, and the naming makes it harder to see: the monotonic, isotonic, and Bayes
-suites in the same crate are genuine cross-engine gates driven by real Python
-dumps, so `match_oracle` means two different things among neighboring files.
+suites in the same crate hold genuine Python-authored goldens, so `match_oracle`
+means two different things among neighboring files. Those three are frozen rather
+than live — the Rust side reads committed bytes and never invokes the dump — but
+the bytes came from Python, predate the projector deletion, and have no
+regeneration escape, which is the distinction that matters here.
 
 **Evidence:** `rust/cli/tests/sweep_parity.rs`,
 `rust/cli/tests/sweep_aggregate_parity.rs`, `tools/parity/sweep_golden/`,
@@ -2928,6 +2934,53 @@ comparison also returns early when a golden's whole `export` section is null
 (`:156-159`), so every console, MLflow, W&B, and OTLP assertion for that fixture
 disappears without a diagnostic, unlike the narrower per-exporter guards inside
 it.
+
+The 81 vectors in `tools/parity/golden/` were not authored natively. They are the
+frozen output of a deleted Python projector, and they have since drifted from it.
+`tools/parity/dump_golden.py` drove `resolve_config` → `build_benchmark_plan` →
+`BenchmarkRun` → `build_authored_run_request` and printed the exact protocol-v2
+request Python would hand the runner; commit `e8d5c172b9` ("delete the
+Python→Rust native-execution bridge", 2026-07-16) removed it together with
+`dump_sweep.py`, `dump_sweep_aggregate.py`, and the dependencies that made all
+three work — `src/aiperf/orchestrator/rust_wire.py` (1797 lines, holding
+`build_authored_run_request`), `native_report.py` (899 lines, holding
+`project_native_summary`), and `src/aiperf/exporters/aggregate.py`. Recovering the
+283 lines of dump script therefore restores no oracle by itself; the projector it
+calls is what was deleted. What survives is `resolve_config`, `resolve_run_seed`,
+`_resolve_artifact_dir`, `_sweep_aggregate`, and `build_benchmark_plan` (the
+`config.loader` module became a package and still re-exports it).
+
+Since that deletion, ten commits have edited the goldens and nothing else — no
+Rust source, no Python source — under messages that describe recording native
+fields into them: "record `runtime.hop_routing` in the request goldens", "add the
+16 missing effective/active console metrics", "record `phases[].kind`", "record
+console model names". With the projector gone no Python process could have emitted
+those values, so they were written in from native output. All 81 of the 81
+goldens now differ from their last Python-authored form; `accuracy.request.json`
+alone differs by 174 lines. The suite can therefore detect native resolution
+drifting from its own last blessing, and nothing else.
+
+The same measurement makes a cheap oracle available with no authoring at all: the
+goldens at `e8d5c172b9^` are genuine Python output, so diffing them against the
+current tree yields a field-by-field list of everything native resolution has
+changed since Python last spoke. Some of that drift is legitimately native-only
+(fields Python never had), which is exactly the partition a restored gate needs.
+
+Of the twelve test files that read `tools/parity/`, eleven never invoke Python at
+all — `parity.rs`, `sweep_parity.rs`, `sweep_aggregate_parity.rs`,
+`bayes_parity.rs`, `isotonic_parity.rs`, `monotonic_parity.rs`, `validate.rs`,
+`synthesize_parity.rs`, `speed_bench.rs`, `analyze_trace.rs`, and
+`cellular/sketch.rs`. Only `rust/runtime/tests/tokenizer_parity.rs` runs a live
+Python leg, through the surviving `dump_tokenizer_parity.py`. In
+`sweep_aggregate_parity.rs` the sole occurrence of the word "python" is the test's
+own name, `single_trial_sweep_aggregate_matches_python`.
+
+The Bayes, isotonic, and monotonic goldens are the defensible exception and should
+not be swept in with the rest. `tools/parity/{bayes,isotonic,monotonic}_golden/`
+were last written on 2026-07-15, before the projector deletion; their suites carry
+no `AIPERF_UPDATE_*` regeneration escape; and their dump scripts still exist and
+still import live modules. Those are frozen Python oracles rather than
+self-blessed bytes — stale, but real.
 
 ## RNG parity can skip silently
 
