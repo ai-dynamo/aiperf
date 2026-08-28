@@ -10,6 +10,7 @@ from collections.abc import AsyncGenerator
 from pathlib import Path
 from typing import Any
 
+import orjson
 import pytest
 import pytest_asyncio
 import yaml
@@ -532,12 +533,15 @@ class TestDynamoSweep:
                     else []
                 ),
                 *(
-                    ["--tolerations", str(gpu_settings.tolerations)]
+                    ["--tolerations", orjson.dumps(gpu_settings.tolerations).decode()]
                     if gpu_settings.tolerations
                     else []
                 ),
                 *(
-                    ["--node-selector", str(gpu_settings.node_selector)]
+                    [
+                        "--node-selector",
+                        orjson.dumps(gpu_settings.node_selector).decode(),
+                    ]
                     if gpu_settings.node_selector
                     else []
                 ),
