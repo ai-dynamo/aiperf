@@ -316,7 +316,9 @@ class TestCalculateWorkers:
             (500, 500, 1),
             (501, 500, 2),
             (1000, 100, 10),
-            (1001, 100, 11),
+            # ceil(1001/100) = 11, which fills neither one pod nor a whole
+            # number of them, so a derived total rounds up to the next.
+            (1001, 100, 20),
             (50, 100, 1),
         ],
     )  # fmt: skip
@@ -499,7 +501,9 @@ class TestWorkersForConcurrency:
         }
         converter = AIPerfJobSpecConverter(spec, "test-job", "default")
 
-        assert converter.calculate_workers() == 16
+        # The divisor falls back to 1, so every unit of concurrency wants its
+        # own worker: 16, rounded up to two whole 10-worker pods.
+        assert converter.calculate_workers() == 20
 
     def test_deployment_config_divisor_wins_over_hostile_raw_spec(self) -> None:
         """The operator reconcile path passes a ``ge=1``-validated DeploymentConfig."""

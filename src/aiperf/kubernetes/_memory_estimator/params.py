@@ -198,8 +198,8 @@ def _derive_topology(
     """Derive the pod layout by running the deployment path's own normalizer.
 
     ``spec_converter.apply_worker_config`` is the single source of truth for the
-    JobSet topology: the single-pod collapse for worker totals that are not a
-    multiple of ``workers_per_pod``, the split of an authored
+    JobSet topology: the rejection of worker totals that can fill neither one
+    pod nor a whole number of them, the split of an authored
     ``runtime.record_processors`` total across pods, and the scale-factor
     fallback all live there. A re-derivation here drifted from it once already,
     so the estimator calls it instead of restating the rules.

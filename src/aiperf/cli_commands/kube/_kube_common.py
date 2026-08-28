@@ -101,12 +101,18 @@ def resolve_total_workers(
     concurrency: int,
     connections_per_worker: int,
     configured_workers: int | None = None,
+    workers_per_pod: int | None = None,
 ) -> int:
     """Resolve direct-mode worker count without materializing the CLI default.
 
     An explicit ``--total-workers`` owns the direct deployment fan-out. When
     omitted, ``benchmark.runtime.workers`` from YAML is the canonical total;
     only an absent total falls back to the concurrency-per-connection ratio.
+
+    Both authored forms pass through untouched, so a total that cannot fill
+    uniform pods still fails loudly in ``apply_worker_config``. The derived
+    ratio is rounded up to a whole number of pods instead: nobody typed it, and
+    failing on it would report a worker count the user never chose.
 
     ``connections_per_worker`` arrives straight off an unvalidated CR spec dict
     here, so the ratio goes through ``workers_for_concurrency`` rather than
@@ -117,9 +123,16 @@ def resolve_total_workers(
     if isinstance(configured_workers, int) and not isinstance(configured_workers, bool):
         return configured_workers
 
-    from aiperf.kubernetes.spec_converter import workers_for_concurrency
+    from aiperf.common.environment import Environment
+    from aiperf.kubernetes.spec_converter import (
+        round_workers_to_pod_multiple,
+        workers_for_concurrency,
+    )
 
-    return workers_for_concurrency(concurrency, connections_per_worker)
+    return round_workers_to_pod_multiple(
+        workers_for_concurrency(concurrency, connections_per_worker),
+        workers_per_pod or Environment.WORKER.DEFAULT_WORKERS_PER_POD,
+    )
 
 
 def print_memory_estimate(
@@ -152,6 +165,7 @@ def print_memory_estimate(
         concurrency=phase_concurrency,
         connections_per_worker=spec.get("connectionsPerWorker", 100),
         configured_workers=config.benchmark.runtime.workers,
+        workers_per_pod=config.benchmark.runtime.workers_per_pod,
     )
     mem_est = estimate_memory(
         config,

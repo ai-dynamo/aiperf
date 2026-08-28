@@ -43,6 +43,10 @@ def _make_config(concurrency: int | None = 8) -> MagicMock:
     config.benchmark.endpoint.headers = {}
     config.benchmark.endpoint.urls = ["http://svc:8000/v1/chat/completions"]
     config.benchmark.get_model_names.return_value = ["test-model"]
+    # Real values, not auto-created MagicMocks: the worker resolver does integer
+    # arithmetic on these and a MagicMock would pass silently as "unset".
+    config.benchmark.runtime.workers = None
+    config.benchmark.runtime.workers_per_pod = None
     # model_dump (used by _prepare_direct_deploy before apply_k8s_runtime_config)
     config.model_dump.return_value = {"phases": [{"concurrency": concurrency}]}
     return config
@@ -95,6 +99,8 @@ class TestPrepareDirectDeploy:
         revalidated_phase = MagicMock()
         revalidated_phase.concurrency = 8
         revalidated.benchmark.phases = [revalidated_phase]
+        revalidated.benchmark.runtime.workers = None
+        revalidated.benchmark.runtime.workers_per_pod = None
 
         deploy_config = MagicMock()
         deploy_config.connections_per_worker = 4
@@ -186,6 +192,8 @@ class TestPrepareDirectDeploy:
         revalidated_phase.concurrency = 1
         revalidated = MagicMock()
         revalidated.phases = [revalidated_phase]
+        revalidated.benchmark.runtime.workers = None
+        revalidated.benchmark.runtime.workers_per_pod = None
 
         deploy_config = MagicMock()
         deploy_config.connections_per_worker = 1
@@ -225,6 +233,8 @@ class TestPrepareDirectDeploy:
         revalidated_phase.concurrency = 1
         revalidated = MagicMock()
         revalidated.phases = [revalidated_phase]
+        revalidated.benchmark.runtime.workers = None
+        revalidated.benchmark.runtime.workers_per_pod = None
 
         deploy_config = MagicMock()
         deploy_config.connections_per_worker = 1
@@ -277,6 +287,8 @@ class TestPrepareDirectDeploy:
         revalidated_phase.concurrency = concurrency
         revalidated = MagicMock()
         revalidated.benchmark.phases = [revalidated_phase]
+        revalidated.benchmark.runtime.workers = None
+        revalidated.benchmark.runtime.workers_per_pod = None
 
         deploy_config = MagicMock()
         deploy_config.connections_per_worker = connections_per_worker
@@ -314,6 +326,8 @@ class TestPrepareDirectDeploy:
         revalidated_phase.concurrency = 100
         revalidated = MagicMock()
         revalidated.benchmark.phases = [revalidated_phase]
+        revalidated.benchmark.runtime.workers = None
+        revalidated.benchmark.runtime.workers_per_pod = None
 
         deploy_config = MagicMock()
         deploy_config.connections_per_worker = 4

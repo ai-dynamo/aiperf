@@ -21,12 +21,18 @@ from aiperf.config.kube import KubeOptions
     ("options", "expected_workers"),
     [
         param({"total_workers": 7}, 7, id="explicit-total"),
-        param({}, 25, id="omitted-derives-from-connections"),
+        param({}, 30, id="omitted-derives-then-rounds-to-whole-pods"),
     ],
 )  # fmt: skip
 def test_dump_raw_manifests_resolves_direct_worker_count(
     options: dict[str, int], expected_workers: int
 ) -> None:
+    """An explicit total is passed through; a derived one is rounded up.
+
+    ceil(100/4) = 25 workers, which cannot fill uniform 10-worker pods and
+    would be rejected downstream. Nobody typed 25, so it becomes 30 rather than
+    failing the run on a number the user never chose.
+    """
     source_config = MagicMock()
     source_config.model_dump.return_value = {"benchmark": {}}
 
@@ -34,6 +40,8 @@ def test_dump_raw_manifests_resolves_direct_worker_count(
     phase.concurrency = 100
     resolved_config = MagicMock()
     resolved_config.benchmark.phases = [phase]
+    resolved_config.benchmark.runtime.workers = None
+    resolved_config.benchmark.runtime.workers_per_pod = None
 
     deployment_config = MagicMock()
     deployment_config.connections_per_worker = 4

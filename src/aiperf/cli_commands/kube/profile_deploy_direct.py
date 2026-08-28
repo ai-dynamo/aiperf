@@ -128,6 +128,7 @@ def _prepare_direct_deploy(
         concurrency=concurrency,
         connections_per_worker=deploy_config.connections_per_worker,
         configured_workers=config.benchmark.runtime.workers,
+        workers_per_pod=config.benchmark.runtime.workers_per_pod,
     )
     num_pods = apply_worker_config(config, total_workers)
     return config, deploy_config, num_pods

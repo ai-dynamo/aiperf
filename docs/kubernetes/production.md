@@ -319,11 +319,16 @@ AIPerf distributes workers across pods automatically. The `--total-workers` flag
 | 100 | 10 | 10 |
 | 200 | 20 | 10 |
 
-A `--total-workers` value that is not a multiple of the per-pod count cannot be
-expressed as a JobSet of identical pods, so all workers collapse onto a single
-pod and the operator logs a warning. Keep the total a multiple of 10, or set
-`benchmark.runtime.workersPerPod` to change the packing factor -- there is no
-CLI flag for it.
+A `--total-workers` value above the per-pod count that is not a multiple of it
+cannot be expressed as a JobSet of identical pods, so it is rejected with an
+error naming the two nearest usable totals. Keep the total a multiple of 10, or
+set `benchmark.runtime.workersPerPod` to change the packing factor -- there is
+no CLI flag for it. A total at or below the per-pod count runs on a single pod.
+
+Only an authored total is rejected. When you omit `--total-workers` and
+`benchmark.runtime.workers`, the count derived from `ceil(concurrency /
+connectionsPerWorker)` is rounded up to a whole number of pods instead, since
+failing on it would report a worker count you never chose.
 
 Each worker maintains up to `connectionsPerWorker` concurrent requests (default: 100). When you pass `--total-workers` explicitly, the CLI derives this from your concurrency and worker count: `connectionsPerWorker = ceil(concurrency / workers)`. Left unset, the relationship inverts and the worker count is derived instead: `workers = ceil(concurrency / connectionsPerWorker)`.
 

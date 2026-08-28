@@ -401,8 +401,10 @@ class AIPerfJobSpecConverter:
     def calculate_workers(self, dc: DeploymentConfig | None = None) -> int:
         """Calculate optimal worker count based on concurrency.
 
-        Uses an explicit runtime.workers override when provided. Otherwise,
-        workers = ceil(concurrency / connections_per_worker).
+        Uses an explicit runtime.workers override when provided, verbatim --
+        an authored total that cannot fill uniform pods is an error, not
+        something to reshape. Otherwise workers = ceil(concurrency /
+        connections_per_worker), rounded up to a whole number of pods.
 
         Args:
             dc: Optional DeploymentConfig to read connections_per_worker from.
@@ -453,7 +455,12 @@ class AIPerfJobSpecConverter:
                 "connectionsPerWorker", DEFAULT_CONNECTIONS_PER_WORKER
             )
 
-        return workers_for_concurrency(concurrency, connections_per_worker)
+        derived = workers_for_concurrency(concurrency, connections_per_worker)
+        return round_workers_to_pod_multiple(
+            derived,
+            _int(runtime.get("workers_per_pod"), 0)
+            or Environment.WORKER.DEFAULT_WORKERS_PER_POD,
+        )
 
 
 def build_benchmark_run(
@@ -530,6 +537,26 @@ def build_benchmark_run(
         plot=run_config.get("plot"),
         run_meta=run_meta,
     )
+
+
+def round_workers_to_pod_multiple(total_workers: int, workers_per_pod: int) -> int:
+    """Round a *derived* worker total up to a whole number of uniform pods.
+
+    ``apply_worker_config`` rejects a total that cannot fill identical pods,
+    which is the right answer for a number the user typed: silently reshaping
+    ``--total-workers 25`` would hide the topology they asked for. But most
+    totals are never typed -- they fall out of ``ceil(concurrency /
+    connections_per_worker)``, so ``--concurrency 1500`` derives 15 and would
+    otherwise fail the CR with a number the user cannot trace back to anything
+    they set. Workers are capacity, not load, so rounding 15 up to 20 costs a
+    little headroom and keeps the multi-pod spread the ratio asked for.
+    """
+    if total_workers <= workers_per_pod:
+        return total_workers
+    remainder = total_workers % workers_per_pod
+    if not remainder:
+        return total_workers
+    return total_workers + (workers_per_pod - remainder)
 
 
 def apply_worker_config(config: AIPerfConfig, total_workers: int) -> int:

@@ -209,6 +209,7 @@ def _dump_raw_manifests(
         concurrency=concurrency,
         connections_per_worker=deploy_config.connections_per_worker,
         configured_workers=config.benchmark.runtime.workers,
+        workers_per_pod=config.benchmark.runtime.workers_per_pod,
     )
     num_pods = apply_worker_config(config, total_workers)
 
@@ -256,6 +257,7 @@ def _print_memory_estimate(config, kube_options: KubeOptions, spec) -> None:
         concurrency=concurrency,
         connections_per_worker=connections_per_worker,
         configured_workers=config.benchmark.runtime.workers,
+        workers_per_pod=config.benchmark.runtime.workers_per_pod,
     )
     mem_est = estimate_memory(
         config,
