@@ -46,6 +46,11 @@ pub enum PropagateError {
     MalformedDigest { value: String },
     /// [`ENV_LOCK_PATH`] is not an absolute path.
     NonAbsolutePath { value: String },
+    /// An environment variable is set but its bytes are not valid UTF-8.
+    ///
+    /// A non-UTF-8 value cannot be a valid lock path or BLAKE3 hex digest, so
+    /// the child refuses rather than silently treating it as absent.
+    NonUnicode { variable: &'static str },
 }
 
 impl fmt::Display for PropagateError {
@@ -68,6 +73,11 @@ impl fmt::Display for PropagateError {
             Self::NonAbsolutePath { value } => write!(
                 f,
                 "malformed {ENV_LOCK_PATH}: expected an absolute path, got {value:?}"
+            ),
+            Self::NonUnicode { variable } => write!(
+                f,
+                "plugin lock environment variable {variable} contains non-UTF-8 bytes; \
+                 the child refuses rather than treating it as absent"
             ),
         }
     }
@@ -100,8 +110,8 @@ pub fn set_lock_env(cmd: &mut Command, lock_path: &Path, lock_digest: &str) {
 /// environment silently downgrade a locked run to an unlocked one, so the
 /// caller must refuse instead.
 pub fn read_lock_env() -> Result<Option<(PathBuf, String)>, PropagateError> {
-    let path_var = std::env::var(ENV_LOCK_PATH).ok();
-    let digest_var = std::env::var(ENV_LOCK_DIGEST).ok();
+    let path_var = env_opt(ENV_LOCK_PATH)?;
+    let digest_var = env_opt(ENV_LOCK_DIGEST)?;
 
     let (path_str, digest) = match (path_var, digest_var) {
         (None, None) => return Ok(None),
@@ -130,6 +140,21 @@ pub fn read_lock_env() -> Result<Option<(PathBuf, String)>, PropagateError> {
     }
 
     Ok(Some((path, digest)))
+}
+
+/// Return `Ok(None)` when the variable is absent, `Ok(Some(v))` when it is set
+/// and valid UTF-8, and `Err(NonUnicode)` when it is set but not valid UTF-8.
+///
+/// `std::env::var(..).ok()` collapses both cases into `None`, which would let a
+/// non-UTF-8 lock path silently downgrade a locked run to an unlocked one.
+fn env_opt(variable: &'static str) -> Result<Option<String>, PropagateError> {
+    match std::env::var(variable) {
+        Ok(value) => Ok(Some(value)),
+        Err(std::env::VarError::NotPresent) => Ok(None),
+        Err(std::env::VarError::NotUnicode(_)) => {
+            Err(PropagateError::NonUnicode { variable })
+        }
+    }
 }
 
 /// Verify that a loaded bundle's digest matches the propagated digest.
