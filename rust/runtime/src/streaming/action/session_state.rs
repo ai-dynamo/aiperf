@@ -322,7 +322,7 @@ impl StreamingCheckpointParticipant for SessionStateDriver {
         let Some(state) = state else {
             return Ok(());
         };
-        if state.descriptor().schema_id() != STATE_SCHEMA_ID {
+        if state.descriptor().schema_id != STATE_SCHEMA_ID {
             return Err(CheckpointError::ObjectVerification);
         }
         let restored: SessionStateCheckpoint = serde_json::from_slice(state.payload_bytes())
