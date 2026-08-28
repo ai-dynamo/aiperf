@@ -300,6 +300,14 @@ path = "tests/streaming_checkpoint_factories.rs"
 required-features = ["streaming"]
 
 [[test]]
+# Gated on `streaming`, not `streaming-s3`: the memory and local conformance
+# rows must run in every streaming build, and only the object row is
+# `#[cfg(feature = "streaming-s3")]` inside the binary.
+name = "streaming_checkpoint_conformance"
+path = "tests/streaming_checkpoint_conformance.rs"
+required-features = ["streaming"]
+
+[[test]]
 name = "streaming_object_checkpoint"
 path = "tests/streaming_object_checkpoint.rs"
 required-features = ["streaming-s3"]
