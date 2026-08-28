@@ -752,6 +752,32 @@ impl CheckpointGenerationCandidate {
         Ok(())
     }
 
+    /// Borrow the participant descriptors this generation makes reachable.
+    ///
+    /// Crate-internal: reachability is a store concern, and exposing it publicly
+    /// would let a caller treat a decoded candidate as committed authority.
+    pub(crate) fn reachable_participant_descriptors(&self) -> &[ParticipantStateDescriptor] {
+        &self.participant_descriptors
+    }
+
+    /// Borrow the result-index root this generation makes reachable.
+    pub(crate) const fn reachable_result_index_root(&self) -> &ContentDigest {
+        &self.result_index_root
+    }
+
+    /// Borrow the progress cut this generation represents.
+    pub(crate) const fn represented_cut(&self) -> &CheckpointCut {
+        &self.cut
+    }
+
+    /// Verify this decoded candidate against itself alone.
+    ///
+    /// Collection decodes generations it has no frozen plan expectations for, so
+    /// it proves the self-hash without claiming lineage or plan conformance.
+    pub(crate) fn verify_decoded(&self) -> Result<(), CheckpointError> {
+        self.verify_self()
+    }
+
     pub(crate) fn prevalidate_for_publication(
         self,
         expected_run: &StreamRunIdentity,

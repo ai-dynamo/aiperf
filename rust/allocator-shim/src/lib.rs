@@ -30,8 +30,21 @@
 //! static GLOBAL: MiMallocShim = MiMallocShim;
 //! ```
 //!
-//! The binary must also link against `aiperf-allocator-provider` to satisfy
-//! the `mi_*` symbol references at link time.
+//! The binary must link against `libaiperf_alloc_v1.so` (or the platform
+//! equivalent) at link time.  **Do not** add `aiperf-allocator-provider` as a
+//! Cargo `[dependency]` — that links the static mimalloc rlib and defeats the
+//! single-shared-instance guarantee.  Instead, use a build script:
+//!
+//! ```rust,ignore
+//! // build.rs
+//! let provider_dir = std::env::var("AIPERF_ALLOC_V1_DIR").unwrap();
+//! println!("cargo:rustc-link-lib=dylib=aiperf_alloc_v1");
+//! println!("cargo:rustc-link-search=native={provider_dir}");
+//! // Unix only: rpath so the loader finds the provider at runtime.
+//! // On Windows, place the DLL next to the executable instead.
+//! #[cfg(unix)]
+//! println!("cargo:rustc-link-arg=-Wl,-rpath,{provider_dir}");
+//! ```
 
 use std::alloc::{GlobalAlloc, Layout};
 
@@ -80,9 +93,10 @@ pub struct MiSubprocId {
 unsafe impl Send for MiSubprocId {}
 unsafe impl Sync for MiSubprocId {}
 
-// Standard allocation alignment threshold.  mimalloc's alignment guarantee
-// for the basic (non-aligned) allocation path is 8 bytes on 64-bit platforms.
-const BASIC_ALIGN: usize = 8;
+// mimalloc guarantees MI_MAX_ALIGN_SIZE == 16-byte alignment on all platforms
+// for the basic (non-aligned) allocation path (mi_malloc / mi_zalloc /
+// mi_realloc).  Use aligned variants only for stricter requirements.
+const BASIC_ALIGN: usize = 16;
 
 // SAFETY: every method calls a matching mi_* function from the provider
 // cdylib.  mimalloc's contract matches the GlobalAlloc contract:

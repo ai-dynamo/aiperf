@@ -18,3 +18,5 @@ crate-type = ["cdylib", "rlib"]
 libmimalloc-sys.workspace = true
 
 [build-dependencies]
+# Compiles src/options.c (constructor + option-index helpers) into the cdylib.
+cc = "1"

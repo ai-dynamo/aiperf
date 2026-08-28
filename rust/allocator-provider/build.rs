@@ -6,6 +6,11 @@
 //! When building the cdylib, exports the required `mi_*` symbols from the
 //! statically linked mimalloc so that host and plugin processes share one
 //! allocator instance through the provider shared library.
+//!
+//! Also compiles `src/options.c`, which contains the priority-100 process
+//! constructor that sets mimalloc defaults before its own priority-101
+//! constructor runs, and the `mi_aiperf_option_purge_delay()` helper that
+//! returns the `mi_option_purge_delay` enum index from the exact linked header.
 
 use std::env;
 use std::io::Write;
@@ -13,8 +18,11 @@ use std::path::PathBuf;
 
 /// Symbols that must be exported from the provider cdylib.
 ///
-/// These are the symbols that `aiperf-allocator-shim` imports directly.
-/// The list is the canonical boundary: add here only, never remove.
+/// These are the symbols that `aiperf-allocator-shim` and the CLI import
+/// directly.  The list is the canonical boundary: add here only, never remove.
+///
+/// `mi_option_set` and `mi_aiperf_option_purge_delay` are added to support
+/// the CLI's execute-mode purge-delay adjustment without re-linking mimalloc.
 const EXPORTED_SYMBOLS: &[&str] = &[
     "mi_malloc",
     "mi_zalloc",
@@ -31,11 +39,30 @@ const EXPORTED_SYMBOLS: &[&str] = &[
     "mi_malloc_size",
     "mi_malloc_good_size",
     "mi_malloc_usable_size",
+    // Runtime option mutation (used by the CLI execute-mode to disable purge).
+    "mi_option_set",
+    // Returns the `mi_option_purge_delay` index from the provider's header;
+    // defined in src/options.c so consumers never duplicate the numeric value.
+    "mi_aiperf_option_purge_delay",
 ];
 
 fn main() {
     let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap();
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
+
+    // Compile src/options.c: process constructor (priority 100) and the
+    // mi_aiperf_option_purge_delay() helper.  The mimalloc include directory
+    // is propagated by libmimalloc-sys through the DEP_MIMALLOC_INCLUDE_DIR
+    // metadata variable (set via its `links = "mimalloc"` key).
+    let include_dir = env::var_os("DEP_MIMALLOC_INCLUDE_DIR")
+        .map(PathBuf::from)
+        .expect("libmimalloc-sys did not expose its compiled header directory");
+    println!("cargo:rerun-if-changed=src/options.c");
+    cc::Build::new()
+        .include(&include_dir)
+        .file("src/options.c")
+        .warnings_into_errors(true)
+        .compile("aiperf_alloc_options");
 
     // Cargo does NOT propagate `cargo:rustc-link-lib` from a dependency's
     // build script into a cdylib link command; it only propagates the search
@@ -57,16 +84,6 @@ fn main() {
         other => {
             println!("cargo:warning=aiperf-allocator-provider: unknown target_os={other}; skipping symbol export");
         }
-    }
-
-    // Emit the cdylib filename pattern so that conformance tests can locate
-    // the built artifact without hard-coding platform-specific names.
-    let cdylib_name = cdylib_filename(&target_os);
-    println!("cargo:CDYLIB_NAME={cdylib_name}");
-
-    // Propagate the mimalloc include directory for any C bridge consumers.
-    if let Ok(include) = env::var("DEP_LIBMIMALLOC_SYS_INCLUDE_DIR") {
-        println!("cargo:MIMALLOC_INCLUDE_DIR={include}");
     }
 }
 
@@ -119,12 +136,4 @@ fn export_windows(out_dir: &PathBuf) {
     }
 
     println!("cargo:rustc-link-arg=/DEF:{}", def_path.display());
-}
-
-fn cdylib_filename(target_os: &str) -> String {
-    match target_os {
-        "windows" => "aiperf_alloc_v1.dll".to_string(),
-        "macos" | "ios" => "libaiperf_alloc_v1.dylib".to_string(),
-        _ => "libaiperf_alloc_v1.so".to_string(),
-    }
 }
