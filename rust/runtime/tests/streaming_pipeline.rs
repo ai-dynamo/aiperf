@@ -249,7 +249,7 @@ fn cancelled_route_reservation_installs_no_route() {
             placement_run(),
             budget(4, 4096),
         );
-        let before = route_budget.snapshot();
+        let before = route_budget.snapshot().used_bytes;
 
         let reservation = admission
             .reserve_route(PlacementRouteCharge {
@@ -260,15 +260,15 @@ fn cancelled_route_reservation_installs_no_route() {
             .await
             .expect("route capacity");
         assert_eq!(reservation.charged_bytes(), 64);
-        assert_ne!(
-            route_budget.snapshot(),
-            before,
+        assert_eq!(
+            route_budget.snapshot().used_bytes,
+            before + 64,
             "a held reservation must occupy exact capacity"
         );
 
         drop(reservation);
         assert_eq!(
-            route_budget.snapshot(),
+            route_budget.snapshot().used_bytes,
             before,
             "dropping a reservation must return the whole charge"
         );

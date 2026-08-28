@@ -463,6 +463,23 @@ profiler.
   horizon. The terminal lane pushes through the sync
   `StreamingTurnClosureProcessor`; the pipeline task drains it.
   Coverage is in `rust/runtime/tests/streaming_conversation_closure.rs`.
+- **What keeps an unbounded stream bounded?**
+  `rust/runtime/src/streaming/pipeline.rs` (`StreamingPipeline`) fuses source
+  acquisition, decode, session coordination, ordering, placement, submission,
+  settlement, checkpointing, and shutdown into one current-thread future. A
+  unit is pulled only when every downstream stage owns the permits it will
+  consume, and those permits nest strictly — acquisition lease, session state
+  charge, placement route reservation, placement slab entry, active-execution
+  lease, and the terminal-record permit innermost — so a saturated downstream
+  pins every upstream stage rather than merely slowing it.
+  `PlacementEvent::Action` is the only route back into session state, the
+  action host assigns every `GlobalSequence`, and only the reliability module's
+  private classifier can answer `FailRun`.
+  `rust/runtime/src/streaming/placement.rs` splits placement into five
+  separately owned halves so a capacity wait never holds a borrow of the route
+  map, and its worker-local implementation declares no persistent route map and
+  therefore returns no route charge. Coverage is in
+  `rust/runtime/tests/streaming_pipeline.rs`.
 - **How do user-centric and fixed-schedule runs work?**
   `rust/runtime/src/{scheduled,scheduler,user_centric,fixed_schedule,multiturn}.rs`;
   exact virtual-time coverage is in `rust/runtime/tests/scheduled_sim.rs`, and real HTTP

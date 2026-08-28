@@ -339,8 +339,6 @@ impl GraphSessionScope {
             if !is_source_terminal && let Some(node) = self.nodes.get_mut(&to) {
                 node.pending_predecessors = node.pending_predecessors.saturating_add(1);
             }
-        } else {
-            self.orphan_edges.entry(to).or_default().push(from);
         }
         self.version = self.version.saturating_add(1);
         Ok(())

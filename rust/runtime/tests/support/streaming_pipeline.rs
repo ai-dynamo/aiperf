@@ -20,12 +20,12 @@ use std::{
 use aiperf_runtime::streaming::{
     action::{
         ActionAdmissionReceipt, ActionCancelReceipt, ActionDrainReceipt, ActionEventIdentity,
-        ActionExecutionCancelReceiver, ActionExecutionError, ActionExecutionEvent,
-        ActionFailureCode, ActionHandleId, ActionTerminalDisposition, ActionTerminalReceipt,
-        DatasetActionSchema, OrderedDatasetAction, PreparedStreamingActionBinding,
-        StreamingActionBindingSet, StreamingActionDriver, StreamingActionDriverControl,
-        StreamingActionDriverControlOps, StreamingActionHost, StreamingActionSubmitter,
-        SubmittedAction, action_execution_control, canonical_action_schema,
+        ActionExecutionError, ActionExecutionEvent, ActionFailureCode, ActionHandleId,
+        ActionTerminalDisposition, ActionTerminalReceipt, DatasetActionSchema,
+        OrderedDatasetAction, PreparedStreamingActionBinding, StreamingActionBindingSet,
+        StreamingActionDriver, StreamingActionDriverControl, StreamingActionDriverControlOps,
+        StreamingActionHost, StreamingActionSubmitter, SubmittedAction, action_execution_control,
+        canonical_action_schema,
     },
     budget::{BudgetLimits, StreamingResourceBudget},
     checkpoint::{
@@ -847,21 +847,18 @@ pub fn build(spec: FixtureSpec) -> Result<PipelineFixture, StreamingPipelineErro
     });
     let mut bindings = StreamingActionBindingSet::new();
     bindings
-        .insert(
-            schema.clone(),
-            PreparedStreamingActionBinding {
-                submitter: Box::new(FakeSubmitter {
-                    schema: schema.clone(),
-                    probes: Rc::clone(&probes),
-                }),
-                driver: Box::new(FakeDriver {
-                    participant_id: CheckpointParticipantId::new("action_driver"),
-                    run,
-                    probes: Rc::clone(&probes),
-                }),
-                control,
-            },
-        )
+        .insert(PreparedStreamingActionBinding {
+            submitter: Box::new(FakeSubmitter {
+                schema: schema.clone(),
+                probes: Rc::clone(&probes),
+            }),
+            driver: Box::new(FakeDriver {
+                participant_id: CheckpointParticipantId::new("action_driver"),
+                run,
+                probes: Rc::clone(&probes),
+            }),
+            control,
+        })
         .expect("one binding per schema");
     let emitted: BTreeSet<_> = [schema].into_iter().collect();
     let (action, _controls) =

@@ -44,8 +44,7 @@ use serde::Serialize;
 use std::num::{NonZeroU64, NonZeroUsize};
 
 use aiperf_runtime::streaming::failure::{
-    DecodeFailureCode, OrdinaryStreamingFailure, ResultExportError, ResultExportFailureCode,
-    StreamFormatError,
+    DecodeFailureCode, OrdinaryStreamingFailure, StreamFormatError,
 };
 
 pub fn cut_at(value: u64) -> CheckpointCut {
