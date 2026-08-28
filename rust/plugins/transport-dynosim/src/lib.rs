@@ -11,7 +11,7 @@ use aiperf_plugin_sdk_macros::aiperf_plugin;
 static PKG: LazyLock<aiperf_plugin_api::descriptor::PluginPackageDescriptor> =
     LazyLock::new(|| {
         aiperf_plugin_api::descriptor::PluginPackageDescriptor::from_authored(
-            "aiperf-plugin-transport-dynosim",
+            "nvidia/transport-dynosim",
             env!("CARGO_PKG_VERSION"),
             "Dynosim transport plugin candidate",
         )
